@@ -73,6 +73,43 @@ class TestBuildLayeredProductsPipeline(IsolatedAsyncioTestCase):
 
         self.assertIn("--variant=oadp", command)
 
+    @patch("pyartcd.pipelines.build_layered_products.increment_fail_counter", new_callable=AsyncMock)
+    @patch("pyartcd.pipelines.build_layered_products.reset_fail_counter", new_callable=AsyncMock)
+    async def test_update_build_fail_counters_tags_layered_failures_with_variant(self, mock_reset, mock_increment):
+        """Layered-product build counters store the product build variant."""
+        record_log_path = Path(self.runtime.doozer_working, "record.log")
+        record_log_path.write_text(
+            "\n".join(
+                [
+                    "image_build_konflux|name=oadp-operator|status=0|nvrs=oadp-operator-1.0-1",
+                    "image_build_konflux|name=oadp-velero|status=-1|nvrs=oadp-velero-1.0-1|build_pipeline_url=http://plr/1",
+                ]
+            )
+            + "\n"
+        )
+
+        await self.pipeline.update_build_fail_counters("oadp", BuildVariant.OADP)
+
+        mock_reset.assert_awaited_once_with("count:build-failure:konflux:oadp-1.4:oadp-operator")
+        mock_increment.assert_awaited_once_with(
+            "count:build-failure:konflux:oadp-1.4:oadp-velero",
+            build_variant="oadp",
+            jenkins_url=None,
+            nvr="oadp-velero-1.0-1",
+            pipeline_url="http://plr/1",
+        )
+
+    @patch("pyartcd.pipelines.build_layered_products.increment_fail_counter", new_callable=AsyncMock)
+    @patch("pyartcd.pipelines.build_layered_products.reset_fail_counter", new_callable=AsyncMock)
+    async def test_update_build_fail_counters_propagates_redis_errors(self, mock_reset, mock_increment):
+        """Redis counter errors propagate instead of being silently discarded."""
+        record_log_path = Path(self.runtime.doozer_working, "record.log")
+        record_log_path.write_text("image_build_konflux|name=oadp-operator|status=0\n")
+        mock_reset.side_effect = RuntimeError("Redis unavailable")
+
+        with self.assertRaisesRegex(RuntimeError, "Redis unavailable"):
+            await self.pipeline.update_build_fail_counters("oadp", BuildVariant.OADP)
+
     async def test_rebase_success_returns_no_excluded_images(self):
         """When rebase succeeds, no images are excluded."""
         with patch('pyartcd.pipelines.build_layered_products.exectools.cmd_assert_async', new_callable=AsyncMock):

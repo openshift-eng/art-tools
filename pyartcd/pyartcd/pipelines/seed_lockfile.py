@@ -10,6 +10,7 @@ from urllib.parse import quote
 import click
 from artcommonlib import exectools
 from artcommonlib.konflux.konflux_build_record import KonfluxBuildOutcome
+from artcommonlib.variants import BuildVariant
 from doozerlib.constants import ART_BUILD_HISTORY_URL
 
 from pyartcd import constants, jenkins
@@ -304,6 +305,7 @@ class SeedLockfilePipeline:
             increment_tasks.append(
                 increment_fail_counter(
                     f'count:build-failure:konflux:{group}:{image}',
+                    build_variant=BuildVariant.OCP.value,
                     jenkins_url=job_url,
                     nvr=entry.get('nvrs'),
                     pipeline_url=entry.get('build_pipeline_url'),
@@ -314,6 +316,7 @@ class SeedLockfilePipeline:
             increment_tasks.append(
                 increment_fail_counter(
                     f'count:ec-failure:konflux:{group}:{image}',
+                    build_variant=BuildVariant.OCP.value,
                     jenkins_url=job_url,
                     nvr=entry.get('nvrs'),
                     pipeline_url=entry.get('ec_pipeline_url'),
@@ -324,6 +327,7 @@ class SeedLockfilePipeline:
             increment_tasks.append(
                 increment_fail_counter(
                     f'count:release-failure:konflux:{group}:{image}',
+                    build_variant=BuildVariant.OCP.value,
                     jenkins_url=job_url,
                     nvr=entry.get('nvrs'),
                     pipeline_url=entry.get('release_pipeline'),

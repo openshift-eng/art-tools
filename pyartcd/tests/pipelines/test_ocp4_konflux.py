@@ -103,6 +103,30 @@ class TestUpdateBuildFailCounters(unittest.IsolatedAsyncioTestCase):
         mock_reset.assert_not_called()
         mock_increment.assert_not_called()
 
+    @patch.dict(os.environ, {"BUILD_URL": "https://jenkins.example.com/job/1"})
+    @patch("pyartcd.pipelines.ocp4_konflux.reset_fail_counter", new_callable=AsyncMock)
+    @patch("pyartcd.pipelines.ocp4_konflux.increment_fail_counter", new_callable=AsyncMock)
+    async def test_build_failure_counter_stores_ocp_variant(self, mock_increment, mock_reset):
+        """OCP Konflux build failures include the OCP build variant metadata."""
+        pipeline = self._make_pipeline()
+        record_log = {
+            "image_build_konflux": [
+                {
+                    "name": "ironic",
+                    "status": "1",
+                    "task_id": "plr-1",
+                    "task_url": "https://konflux.example.com/plr-1",
+                    "outcome": "build_error",
+                    "nvrs": "ironic-1.0-1",
+                    "build_pipeline_url": "https://konflux.example.com/plr-1",
+                }
+            ]
+        }
+
+        await pipeline.update_build_fail_counters([], ["ironic"], record_log)
+
+        self.assertEqual(mock_increment.call_args.kwargs["build_variant"], "ocp")
+
 
 if __name__ == '__main__':
     unittest.main()

@@ -14,6 +14,7 @@ import yaml
 from artcommonlib import exectools
 from artcommonlib.arch_util import go_arch_for_brew_arch, go_suffix_for_arch
 from artcommonlib.util import oc_image_info_for_arch_async
+from artcommonlib.variants import BuildVariant
 from doozerlib.cli.images_okd import OKD_DEFAULT_IMAGE_REPO
 from doozerlib.state import STATE_PASS
 
@@ -330,7 +331,11 @@ class KonfluxOkdPipeline:
         job_url = os.getenv('BUILD_URL')
         await asyncio.gather(
             *[
-                increment_fail_counter(f'count:rebase-failure:konflux:{group}:{image}', jenkins_url=job_url)
+                increment_fail_counter(
+                    f'count:rebase-failure:konflux:{group}:{image}',
+                    build_variant=BuildVariant.OKD.value,
+                    jenkins_url=job_url,
+                )
                 for image in failed_images
             ]
         )
@@ -483,6 +488,7 @@ class KonfluxOkdPipeline:
             *[
                 increment_fail_counter(
                     f'count:build-failure:konflux:{group}:{image}',
+                    build_variant=BuildVariant.OKD.value,
                     jenkins_url=job_url,
                     nvr=failed_entries.get(image, {}).get('nvrs'),
                     pipeline_url=failed_entries.get(image, {}).get('build_pipeline_url'),

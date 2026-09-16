@@ -1474,3 +1474,4 @@ class TestRebaseFailCounters(IsolatedAsyncioTestCase):
         incr_names = {c.args[0].split(':')[-1] for c in mock_incr.call_args_list}
         self.assertEqual(reset_names, {'img-a', 'extra-parent'})
         self.assertEqual(incr_names, {'parent-img'})
+        self.assertEqual(mock_incr.call_args.kwargs["build_variant"], "okd")

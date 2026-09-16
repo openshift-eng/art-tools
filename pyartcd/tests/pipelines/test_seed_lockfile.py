@@ -602,6 +602,7 @@ class TestSeedLockfilePipeline(unittest.IsolatedAsyncioTestCase):
         mock_inc.assert_awaited_once()
         call_args = mock_inc.call_args
         self.assertIn('count:build-failure:konflux:openshift-4.22:ironic', call_args.args)
+        self.assertEqual(call_args.kwargs["build_variant"], "ocp")
 
     @patch('pyartcd.pipelines.seed_lockfile.increment_fail_counter', new_callable=AsyncMock)
     @patch('pyartcd.pipelines.seed_lockfile.reset_fail_counter', new_callable=AsyncMock)

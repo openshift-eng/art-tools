@@ -973,6 +973,7 @@ class TestKonfluxOcpPipelineRebaseFailures(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(incr_names, {'parent-img'})
         self.assertNotIn('child-a', reset_names)
         self.assertNotIn('child-a', incr_names)
+        self.assertEqual(mock_incr.call_args.kwargs["build_variant"], "ocp")
 
     @patch('pyartcd.pipelines.ocp4_konflux.increment_fail_counter', new_callable=AsyncMock)
     @patch('pyartcd.pipelines.ocp4_konflux.reset_fail_counter', new_callable=AsyncMock)

@@ -1,3 +1,4 @@
+import asyncio
 import logging
 import os
 import sys
@@ -20,7 +21,12 @@ from pyartcd.cli import cli, click_coroutine, pass_runtime
 from pyartcd.locks import Lock
 from pyartcd.pipelines.ocp4_konflux import BuildStrategy
 from pyartcd.runtime import Runtime
-from pyartcd.util import default_release_suffix, load_group_config
+from pyartcd.util import (
+    default_release_suffix,
+    increment_fail_counter,
+    load_group_config,
+    reset_fail_counter,
+)
 
 
 class BuildLayeredProductsPipeline:
@@ -229,7 +235,42 @@ class BuildLayeredProductsPipeline:
         try:
             await self._build(strategy, build_image_list, excluded, product, image_repo, build_variant)
         finally:
+            await self.update_build_fail_counters(product, build_variant)
             self._update_build_description()
+
+    async def update_build_fail_counters(self, product: str, build_variant: BuildVariant | None = None):
+        """Update Redis build-failure counters for the latest layered-product build records."""
+        if self.assembly != "stream" or self.runtime.dry_run:
+            return
+
+        record_log = self.parse_record_log() or {}
+        records_by_image = {
+            entry["name"]: entry for entry in record_log.get("image_build_konflux", []) if entry.get("name")
+        }
+        if not records_by_image:
+            return
+
+        variant = build_variant.value if build_variant is not None else product
+        job_url = os.getenv("BUILD_URL")
+        group = self.group
+        built_images = [image for image, entry in records_by_image.items() if int(entry.get("status", -1)) == 0]
+        failed_images = [image for image, entry in records_by_image.items() if int(entry.get("status", -1)) != 0]
+
+        await asyncio.gather(
+            *[reset_fail_counter(f"count:build-failure:konflux:{group}:{image}") for image in built_images],
+        )
+        await asyncio.gather(
+            *[
+                increment_fail_counter(
+                    f"count:build-failure:konflux:{group}:{image}",
+                    build_variant=variant,
+                    jenkins_url=job_url,
+                    nvr=records_by_image[image].get("nvrs"),
+                    pipeline_url=records_by_image[image].get("build_pipeline_url"),
+                )
+                for image in failed_images
+            ],
+        )
 
     async def _rebase(self, image_list: Optional[str], build_variant: BuildVariant | None = None) -> List[str]:
         """Rebase layered product images.

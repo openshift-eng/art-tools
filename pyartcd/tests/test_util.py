@@ -321,6 +321,79 @@ class TestUtil(IsolatedAsyncioTestCase):
         result = await util.get_counter_failures('build-failure', 'openshift-4.21')
         self.assertEqual(result, {})
 
+    @patch("artcommonlib.redis.get_value", new_callable=AsyncMock)
+    @patch("artcommonlib.redis.get_keys", new_callable=AsyncMock)
+    async def test_get_counter_failures_filters_by_build_variant(self, mock_get_keys, mock_get_value):
+        """Only failure records matching the requested build variant are returned."""
+
+        def mock_get_keys_side_effect(pattern):
+            if pattern.endswith(":*:failure"):
+                return [
+                    "count:build-failure:konflux:oadp-1.4:shared-image:failure",
+                    "count:build-failure:konflux:logging-6.6:shared-image:failure",
+                ]
+            if "oadp-1.4:shared-image" in pattern:
+                return [
+                    "count:build-failure:konflux:oadp-1.4:shared-image:failure",
+                    "count:build-failure:konflux:oadp-1.4:shared-image:build_variant",
+                ]
+            if "logging-6.6:shared-image" in pattern:
+                return [
+                    "count:build-failure:konflux:logging-6.6:shared-image:failure",
+                    "count:build-failure:konflux:logging-6.6:shared-image:build_variant",
+                ]
+            return []
+
+        mock_get_keys.side_effect = mock_get_keys_side_effect
+        mock_get_value.side_effect = lambda key: {
+            "count:build-failure:konflux:oadp-1.4:shared-image:failure": "3",
+            "count:build-failure:konflux:oadp-1.4:shared-image:build_variant": "oadp",
+            "count:build-failure:konflux:logging-6.6:shared-image:failure": "5",
+            "count:build-failure:konflux:logging-6.6:shared-image:build_variant": "openshift-logging",
+        }.get(key)
+
+        result = await util.get_counter_failures("build-failure", "*", build_variant="oadp")
+
+        self.assertEqual(set(result), {"shared-image"})
+        self.assertEqual(result["shared-image"]["build_variant"], "oadp")
+
+    @patch("artcommonlib.redis.get_value", new_callable=AsyncMock)
+    @patch("artcommonlib.redis.get_keys", new_callable=AsyncMock)
+    async def test_get_rebase_failures_filters_by_build_variant(self, mock_get_keys, mock_get_value):
+        """Rebase failure queries support the same build variant filter as other counters."""
+
+        def mock_get_keys_side_effect(pattern):
+            if pattern.endswith(":*:failure"):
+                return [
+                    "count:rebase-failure:konflux:openshift-4.21:shared-image:failure",
+                    "count:rebase-failure:konflux:okd-4.21:shared-image:failure",
+                ]
+            if "openshift-4.21:shared-image" in pattern:
+                return [
+                    "count:rebase-failure:konflux:openshift-4.21:shared-image:failure",
+                    "count:rebase-failure:konflux:openshift-4.21:shared-image:build_variant",
+                ]
+            if "okd-4.21:shared-image" in pattern:
+                return [
+                    "count:rebase-failure:konflux:okd-4.21:shared-image:failure",
+                    "count:rebase-failure:konflux:okd-4.21:shared-image:build_variant",
+                ]
+            return []
+
+        mock_get_keys.side_effect = mock_get_keys_side_effect
+        mock_get_value.side_effect = lambda key: {
+            "count:rebase-failure:konflux:openshift-4.21:shared-image:failure": "3",
+            "count:rebase-failure:konflux:openshift-4.21:shared-image:build_variant": "ocp",
+            "count:rebase-failure:konflux:okd-4.21:shared-image:failure": "2",
+            "count:rebase-failure:konflux:okd-4.21:shared-image:build_variant": "okd",
+        }.get(key)
+
+        result = await util.get_rebase_failures("*", ["rebase-failure"], ["konflux"], build_variant="okd")
+
+        self.assertEqual(set(result), {"shared-image"})
+        self.assertEqual(result["shared-image"]["failure_count"], 2)
+        self.assertEqual(result["shared-image"]["build_variant"], "okd")
+
     @patch("artcommonlib.redis.get_keys", new_callable=AsyncMock)
     async def test_get_counter_failures_redis_error(self, mock_get_keys):
         mock_get_keys.side_effect = Exception("Redis connection refused")

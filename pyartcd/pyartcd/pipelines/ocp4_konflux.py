@@ -32,6 +32,7 @@ from artcommonlib.util import (
     uses_konflux_imagestream_override,
     validate_build_priority,
 )
+from artcommonlib.variants import BuildVariant
 
 from pyartcd import constants, jenkins, locks, util
 from pyartcd import record as record_util
@@ -254,7 +255,11 @@ class KonfluxOcpPipeline:
         job_url = os.getenv('BUILD_URL')
         await asyncio.gather(
             *[
-                increment_fail_counter(f'count:rebase-failure:konflux:{group}:{image}', jenkins_url=job_url)
+                increment_fail_counter(
+                    f'count:rebase-failure:konflux:{group}:{image}',
+                    build_variant=BuildVariant.OCP.value,
+                    jenkins_url=job_url,
+                )
                 for image in failed_images
             ]
         )
@@ -359,6 +364,7 @@ class KonfluxOcpPipeline:
             *[
                 increment_fail_counter(
                     f'count:build-failure:konflux:{group}:{image}',
+                    build_variant=BuildVariant.OCP.value,
                     jenkins_url=job_url,
                     nvr=failed_entries.get(image, {}).get('nvrs'),
                     pipeline_url=failed_entries.get(image, {}).get('build_pipeline_url'),
@@ -368,6 +374,7 @@ class KonfluxOcpPipeline:
             *[
                 increment_fail_counter(
                     f'count:ec-failure:konflux:{group}:{image}',
+                    build_variant=BuildVariant.OCP.value,
                     jenkins_url=job_url,
                     nvr=failed_entries.get(image, {}).get('nvrs'),
                     pipeline_url=failed_entries.get(image, {}).get('ec_pipeline_url'),
@@ -377,6 +384,7 @@ class KonfluxOcpPipeline:
             *[
                 increment_fail_counter(
                     f'count:release-failure:konflux:{group}:{image}',
+                    build_variant=BuildVariant.OCP.value,
                     jenkins_url=job_url,
                     nvr=failed_entries.get(image, {}).get('nvrs'),
                     pipeline_url=failed_entries.get(image, {}).get('release_pipeline'),

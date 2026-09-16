@@ -1143,7 +1143,13 @@ async def reset_fail_counter(branch: str):
     await redis.delete_keys_by_pattern(f'{branch}:*')
 
 
-async def get_failures(pattern: str, entity_index: int = -2, logger=None, **context):
+async def get_failures(
+    pattern: str,
+    entity_index: int = -2,
+    logger=None,
+    build_variant: str | None = None,
+    **context,
+):
     """
     Generic function to fetch failure data from Redis.
     Dynamically discovers all metadata fields stored with each failure.
@@ -1153,6 +1159,7 @@ async def get_failures(pattern: str, entity_index: int = -2, logger=None, **cont
                       (e.g., 'count:build-failure:konflux:openshift-4.18:*:failure')
         entity_index (int): Index in the split key where entity name is located (default: -2, second from end)
         logger (Logger): Optional logger for debugging
+        build_variant (str | None): Optional build variant filter to apply before entity deduplication.
         **context: Additional context to include in each failure record (e.g., build_system='konflux')
 
     Return Value(s):
@@ -1218,6 +1225,10 @@ async def get_failures(pattern: str, entity_index: int = -2, logger=None, **cont
             # Add any context passed in (e.g., build_system, branch)
             failure_data.update(context)
 
+            # Filter by build variant before deduplicating entities from wildcard patterns.
+            if build_variant is not None and failure_data.get('build_variant') != build_variant:
+                continue
+
             # If entity already exists (from previous pattern match), keep the one with higher count
             if entity_name in failures:
                 existing_count = failures[entity_name]['failure_count']
@@ -1239,7 +1250,13 @@ async def get_failures(pattern: str, entity_index: int = -2, logger=None, **cont
     return failures
 
 
-async def get_rebase_failures(group: str, branches: list[str], build_systems: list[str], logger=None):
+async def get_rebase_failures(
+    group: str,
+    branches: list[str],
+    build_systems: list[str],
+    logger=None,
+    build_variant: str | None = None,
+):
     """
     Fetch rebase failure data from Redis for a specific group.
     Checks multiple branch patterns and build systems.
@@ -1249,6 +1266,7 @@ async def get_rebase_failures(group: str, branches: list[str], build_systems: li
         branches (list[str]): Branch identifiers (e.g., ['rebase-failure'])
         build_systems (list[str]): Build systems to check (e.g., ['brew', 'konflux'])
         logger (Logger): Optional logger for debugging
+        build_variant (str | None): Optional build variant filter.
     Return Value(s):
         dict: {image_name: {failure_count, <all_metadata>, build_system, branch}}
     """
@@ -1258,7 +1276,12 @@ async def get_rebase_failures(group: str, branches: list[str], build_systems: li
         for build_system in build_systems:
             pattern = f'count:{branch}:{build_system}:{group}:*:failure'
             failures = await get_failures(
-                pattern, entity_index=-2, logger=logger, build_system=build_system, branch=branch
+                pattern,
+                entity_index=-2,
+                logger=logger,
+                build_variant=build_variant,
+                build_system=build_system,
+                branch=branch,
             )
 
             # Merge results, keeping highest failure count for each image
@@ -1277,6 +1300,7 @@ async def get_counter_failures(
     group: str,
     build_system: str = 'konflux',
     logger=None,
+    build_variant: str | None = None,
 ):
     """
     Fetch failure data from Redis for a specific counter type and group.
@@ -1286,11 +1310,12 @@ async def get_counter_failures(
         group (str): Group name (e.g., 'openshift-4.18', 'okd-4.21')
         build_system (str): Build system (default: 'konflux')
         logger (Logger): Optional logger for debugging
+        build_variant (str | None): Optional build variant filter.
     Return Value(s):
         dict: {image_name: {failure_count, <all_metadata>}}
     """
     pattern = f'count:{counter_type}:{build_system}:{group}:*:failure'
-    return await get_failures(pattern, entity_index=-2, logger=logger)
+    return await get_failures(pattern, entity_index=-2, logger=logger, build_variant=build_variant)
 
 
 async def create_or_update_assembly_pr(
