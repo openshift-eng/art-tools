@@ -97,8 +97,11 @@ def get_image_digest(pullspec: str, registry_config: Optional[str] = None) -> Op
 
 
 def _check_upstream_image_exists(runtime, upstream_image: str) -> None:
-    """Check that an upstream image exists using the runtime registry credentials."""
-    util.oc_image_info_for_arch(upstream_image, registry_config=runtime.registry_config)
+    """Check that an upstream image exists through the authenticated QCI registry."""
+    util.oc_image_info_for_arch(
+        _to_qci_pullspec(upstream_image),
+        registry_config=runtime.registry_config,
+    )
 
 
 def _to_qci_pullspec(pullspec: str) -> str:
@@ -132,6 +135,15 @@ def _get_image_stream_coordinate(pullspec: str) -> dict[str, str]:
     pre_tag, tag = pullspec.rsplit(':', 1)
     _, namespace, image_name = pre_tag.rsplit('/', 2)
     return {'namespace': namespace, 'name': image_name, 'tag': tag}
+
+
+def _to_upstream_pullspec(pullspec: str) -> str:
+    """Convert a QCI pullspec to the public CI pullspec used by upstream Dockerfiles."""
+    if not isinstance(pullspec, str) or not pullspec.startswith(QCI_PULLSPEC_PREFIXES):
+        return pullspec
+
+    coordinate = _get_image_stream_coordinate(pullspec)
+    return f"{REGISTRY_CI_OPENSHIFT}/{coordinate['namespace']}/{coordinate['name']}:{coordinate['tag']}"
 
 
 @cli.group("images:streams", short_help="Manage ART equivalent images in upstream CI.")
@@ -1503,7 +1515,7 @@ def resolve_upstream_from(runtime, image_entry):
         if target_meta.config.content.source.ci_alignment.upstream_image is not Missing:
             # If the upstream is specified in the metadata, use this information
             # directly instead of a heuristic.
-            return _to_qci_pullspec(target_meta.config.content.source.ci_alignment.upstream_image)
+            return _to_upstream_pullspec(target_meta.config.content.source.ci_alignment.upstream_image)
         else:
             # If payload_name is specified, this is what we need
             # Otherwise, fallback to the legacy "name" field
@@ -1513,13 +1525,13 @@ def resolve_upstream_from(runtime, image_entry):
             # tag name without the ose- prefix.
             image_name = remove_prefix(image_name, 'ose-')
             # e.g. <CI registry>/ocp/4.6:base
-            return _to_qci_pullspec(f'{REGISTRY_CI_OPENSHIFT}/ocp/{major}.{minor}:{image_name}')
+            return f'{REGISTRY_CI_OPENSHIFT}/ocp/{major}.{minor}:{image_name}'
 
     if image_entry.image:
         # CI is on its own. We can't give them an image that isn't available outside the firewall.
         return None
     elif image_entry.stream:
-        return _to_qci_pullspec(runtime.resolve_stream(image_entry.stream).upstream_image)
+        return _to_upstream_pullspec(runtime.resolve_stream(image_entry.stream).upstream_image)
 
 
 def _get_upstream_source(runtime, image_meta, skip_branch_check=False):
@@ -2006,7 +2018,9 @@ def images_streams_prs(
         #      source.ci_alignment.streams_prs.from: [ list of full pullspecs ]
         # We check for option 2 first
         if streams_pr_config['from'] is not Missing:
-            desired_parents = streams_pr_config['from'].primitive()  # This should be list; so we're done.
+            desired_parents = [
+                _to_upstream_pullspec(pullspec) for pullspec in streams_pr_config['from'].primitive()
+            ]  # This should be a list; so we're done.
         else:
             builders = from_config.builder or []
             for builder in builders:
@@ -2291,7 +2305,7 @@ Fork build_root (in .ci-operator.yaml): {fork_ci_build_root_coordinate}
                     )
                 handle.write(dfp.content)
 
-            exectools.cmd_assert(f'git add {str(df_path)}')
+            exectools.cmd_assert(f'git add -f {str(df_path)}')
 
             if desired_ci_build_root_coordinate:
                 if ci_operator_config_path.exists():
