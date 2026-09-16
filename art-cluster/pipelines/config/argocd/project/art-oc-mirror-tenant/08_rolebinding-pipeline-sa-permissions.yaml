@@ -1,0 +1,13 @@
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: pipeline-sa-permissions
+  namespace: art-oc-mirror-tenant
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: pipeline-sa-permissions
+subjects:
+- kind: ServiceAccount
+  name: pipeline
+  namespace: art-oc-mirror-tenant

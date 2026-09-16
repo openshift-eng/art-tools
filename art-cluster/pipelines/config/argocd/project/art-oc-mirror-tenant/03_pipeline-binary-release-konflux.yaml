@@ -1,0 +1,131 @@
+apiVersion: tekton.dev/v1
+kind: Pipeline
+metadata:
+  labels:
+    app: artcd
+  name: binary-release-konflux
+  namespace: art-oc-mirror-tenant
+spec:
+  description: Create a shipment MR for an oc-mirror binary built via Konflux using the artcd binary-release-konflux command.
+  params:
+  - default: oc-mirror-2.0
+    description: 'ocp-build-data group branch for this product'
+    enum:
+    - oc-mirror-2.0
+    name: group
+    type: string
+  - default: stream
+    description: The assembly to create the release for
+    name: assembly
+    type: string
+  - default: ''
+    description: 'Comma-separated list of build NVR(s) to release (e.g. oc-mirror-container-2.0-202607291654.p2.g90b54b1.assembly.stream.el9)'
+    name: nvrs
+    type: string
+  - default: ''
+    description: 'Target ship date (e.g. 2026-Mar-31 or 2026-03-31). Included in shipment MR title. Leave empty to omit.'
+    name: target-release-date
+    type: string
+  - default: 'false'
+    description: Take no action, just echo what the job would have done
+    name: dry-run
+    type: string
+  - default: ''
+    description: '(Optional) Override art-tools version. Format: ghuser@branch (e.g. ashwindasr@my-feature)'
+    name: art-tools-commit
+    type: string
+  tasks:
+  - name: binary-release-konflux
+    params:
+    - name: script
+      value: |
+        #!/usr/bin/env python3
+        import os
+        import subprocess
+
+        subprocess.run(["kinit", "-f", "-k", "-t", "/tmp/keytab/keytab", "exd-ocp-buildvm-bot-prod@IPA.REDHAT.COM"], check=True)
+
+        # Ensure oras can find registry credentials via ~/.docker/config.json
+        auth_file = os.environ.get("QUAY_AUTH_FILE", "/tmp/konflux-art-images-auth/config.json")
+        if os.path.exists(auth_file):
+            os.makedirs("/root/.docker", exist_ok=True)
+            docker_config = "/root/.docker/config.json"
+            if not os.path.exists(docker_config):
+                os.symlink(auth_file, docker_config)
+
+        os.makedirs("/root/.config", exist_ok=True)
+        open("/root/.config/artcd.toml", "a").close()
+
+        os.environ["TEKTON_PIPELINERUN_NAME"] = "$(context.pipelineRun.name)"
+        os.environ["TEKTON_PIPELINE_NAME"] = "$(context.pipeline.name)"
+        os.environ["BUILD_URL"] = "https://console-openshift-console.apps.artc2023.pc3z.p1.openshiftapps.com/k8s/ns/art-oc-mirror-tenant/tekton.dev~v1~PipelineRun/$(context.pipelineRun.name)"
+        os.environ["DOOZER_DB_NAME"] = "art_dash"
+        os.environ["ELLIOTT_DATA_PATH"] = "https://github.com/openshift-eng/ocp-build-data"
+        os.environ["DOOZER_DATA_PATH"] = "https://github.com/openshift-eng/ocp-build-data"
+
+        art_tools_commit = "$(params.art-tools-commit)"
+        if art_tools_commit:
+            allowed_owners = {
+                "adobes1",
+                "ashwindasr",
+                "fbladilo",
+                "fgallott",
+                "joepvd",
+                "jupierce",
+                "lgarciaaco",
+                "locriandev",
+                "mbiarnes",
+                "pruan-rht",
+                "rayfordj",
+                "redhat-chai-bot",
+                "thegreyd",
+            }
+            owner, branch = art_tools_commit.split("@", 1)
+            owner = owner.lower()
+            if owner not in allowed_owners:
+                raise ValueError(f"art-tools repository owner '{owner}' is not allowed")
+            subprocess.run(["git", "clone", "-b", branch, f"https://github.com/{owner}/art-tools.git"], check=True)
+            subprocess.run(["pip", "install", "./art-tools"], check=True)
+            os.environ["ART_TOOLS_COMMIT"] = art_tools_commit
+
+        group = "$(params.group)"
+        allowed_groups = {"oc-mirror-2.0"}
+        if group not in allowed_groups:
+            raise ValueError(
+                f"Group '{group}' is not valid for this product. "
+                f"Allowed: {', '.join(sorted(allowed_groups))}"
+            )
+
+        nvrs = ",".join(nvr.strip() for nvr in "$(params.nvrs)".split(",") if nvr.strip())
+        if not nvrs:
+            raise ValueError("NVR must contain at least one build NVR to release")
+
+        os.makedirs("./artcd_working", exist_ok=True)
+
+        cmd = [
+            "artcd",
+            "-v",
+            "--working-dir=./artcd_working",
+            "--config=/root/.config/artcd.toml",
+        ]
+
+        if "$(params.dry-run)" == "true":
+            cmd.append("--dry-run")
+
+        cmd.extend([
+            "binary-release-konflux",
+            "--group", group,
+            "--assembly", "$(params.assembly)",
+            "--nvrs", nvrs,
+            "--create-mr",
+        ])
+
+        target_release_date = "$(params.target-release-date)"
+        if target_release_date:
+            cmd.extend(["--target-release-date", target_release_date])
+
+        print(f"Running {cmd}...")
+        subprocess.run(cmd, check=True, env=os.environ.copy())
+    taskRef:
+      kind: Task
+      name: artcd
