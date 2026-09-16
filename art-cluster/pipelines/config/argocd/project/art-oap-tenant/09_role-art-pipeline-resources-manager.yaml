@@ -1,0 +1,46 @@
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: art-pipeline-resources-manager
+  namespace: art-oap-tenant
+rules:
+- apiGroups:
+  - tekton.dev
+  resources:
+  - pipelines
+  - tasks
+  verbs:
+  - get
+  - list
+  - create
+  - update
+  - patch
+  - delete
+- apiGroups:
+  - ''
+  resources:
+  - events
+  verbs:
+  - get
+  - list
+  - watch
+- apiGroups:
+  - events.k8s.io
+  resources:
+  - events
+  verbs:
+  - get
+  - list
+  - watch
+- apiGroups:
+  - external-secrets.io
+  resources:
+  - externalsecrets
+  - secretstores
+  verbs:
+  - get
+  - list
+  - create
+  - update
+  - patch
+  - delete

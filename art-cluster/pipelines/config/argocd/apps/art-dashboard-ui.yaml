@@ -1,0 +1,17 @@
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: 'art-dashboard-ui'
+spec:
+  project: default
+  source:
+    repoURL: 'https://github.com/openshift-eng/art-config'
+    path: clusters/artc2023/config/argocd/apps/art-dashboard-ui
+    targetRevision: main
+  destination:
+    server: 'https://kubernetes.default.svc'
+    namespace: art-dashboard-ui
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true

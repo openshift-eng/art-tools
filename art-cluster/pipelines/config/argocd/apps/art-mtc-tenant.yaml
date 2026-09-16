@@ -1,0 +1,17 @@
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: 'art-mtc-tenant'
+spec:
+  project: default
+  source:
+    repoURL: 'https://github.com/openshift-eng/art-tools'
+    path: art-cluster/pipelines/config/argocd/project/art-mtc-tenant
+    targetRevision: main
+  destination:
+    server: 'https://kubernetes.default.svc'
+    namespace: art-mtc-tenant
+  syncPolicy:
+    syncOptions:
+      - CreateNamespace=true
+      - PruneLast=true

@@ -1,0 +1,229 @@
+apiVersion: tekton.dev/v1
+kind: Pipeline
+metadata:
+  labels:
+    app: artcd
+  name: trigger-prod-release
+  namespace: art-oadp-tenant
+spec:
+  description: Validate that all YAML files in a shipment MR are for product oadp,
+    then trigger the prod-job in the prod-release-triggers stage of the MR's latest GitLab CI pipeline.
+  params:
+  - description: 'Full GitLab MR URL (e.g. https://gitlab.cee.redhat.com/hybrid-platforms/art/ocp-shipment-data/-/merge_requests/742)'
+    name: mr-url
+    type: string
+  - default: 'true'
+    description: Validate only; print what would be triggered without actually triggering
+    name: dry-run
+    type: string
+  tasks:
+  - name: trigger-prod-release
+    params:
+    - name: script
+      value: |
+        #!/usr/bin/env python3
+        import os
+        import re
+        import subprocess
+        import sys
+        import urllib.parse
+
+        import requests
+        import yaml
+
+        EXPECTED_PRODUCT = "oadp"
+        PROD_JOB_NAME = "prod-job"
+        PROD_STAGE_NAME = "prod-release-triggers"
+
+        mr_url = "$(params.mr-url)"
+        dry_run = "$(params.dry-run)" == "true"
+
+        match = re.match(
+            r"(https://[^/]+)/(.+)/-/merge_requests/(\d+)",
+            mr_url,
+        )
+        if not match:
+            print(f"ERROR: Cannot parse MR URL: {mr_url}", flush=True)
+            print("Expected format: https://<host>/<project-path>/-/merge_requests/<iid>", flush=True)
+            sys.exit(1)
+
+        gitlab_host = match.group(1)
+        project_path = match.group(2)
+        mr_iid = match.group(3)
+        encoded_path = urllib.parse.quote(project_path, safe="")
+        api_base = f"{gitlab_host}/api/v4/projects/{encoded_path}"
+
+        gitlab_token = os.environ.get("GITLAB_TOKEN", "")
+        if not gitlab_token:
+            print("ERROR: GITLAB_TOKEN environment variable is not set", flush=True)
+            sys.exit(1)
+
+        log_prefix = "[DRY-RUN] " if dry_run else ""
+
+        def log(msg):
+            print(f"{log_prefix}{msg}", flush=True)
+
+        if dry_run:
+            subprocess.run([
+                "oc", "label", "--overwrite",
+                "-n", os.environ.get("TASKRUN_NAMESPACE", "art-oadp-tenant"),
+                f"pipelinerun/$(context.pipelineRun.name)",
+                "dry-run=true",
+            ], check=False)
+
+        session = requests.Session()
+        session.headers["PRIVATE-TOKEN"] = gitlab_token
+        session.verify = "/etc/pki/ca-trust/extracted/pem/tls-ca-bundle.pem"
+
+        def api_get(path, params=None):
+            resp = session.get(f"{api_base}{path}", params=params)
+            resp.raise_for_status()
+            return resp.json()
+
+        log(f"Fetching MR !{mr_iid} from {project_path}...")
+        mr = api_get(f"/merge_requests/{mr_iid}")
+        source_branch = mr["source_branch"]
+        log(f"Source branch: {source_branch}")
+
+        labels = mr.get("labels", [])
+        if "stage-release-success" not in labels:
+            print(
+                "ERROR: MR is missing the 'stage-release-success' label. "
+                "Stage release must succeed before triggering prod release.",
+                file=sys.stderr,
+            )
+            print(f"Current labels: {labels or ['(none)']}", flush=True)
+            sys.exit(1)
+        log("Label 'stage-release-success' found.")
+
+        log("Fetching changed files...")
+        changes_data = api_get(f"/merge_requests/{mr_iid}/changes")
+        changed_files = [
+            c["new_path"]
+            for c in changes_data.get("changes", [])
+            if not c.get("deleted_file", False) and c["new_path"].endswith((".yaml", ".yml"))
+        ]
+
+        if not changed_files:
+            print("ERROR: No YAML files found in this MR (excluding deleted files).", flush=True)
+            sys.exit(1)
+
+        log(f"Validating {len(changed_files)} YAML file(s)...")
+        for file_path in changed_files:
+            encoded_file = urllib.parse.quote(file_path, safe="")
+            resp = session.get(
+                f"{api_base}/repository/files/{encoded_file}/raw",
+                params={"ref": source_branch},
+            )
+            resp.raise_for_status()
+            try:
+                content = yaml.safe_load(resp.text)
+            except yaml.YAMLError as e:
+                print(f"ERROR: Failed to parse YAML in '{file_path}': {e}", flush=True)
+                sys.exit(1)
+
+            try:
+                product = content["shipment"]["metadata"]["product"]
+            except (TypeError, KeyError):
+                print(f"ERROR: '{file_path}' has no 'shipment.metadata.product' field.", flush=True)
+                sys.exit(1)
+
+            if product != EXPECTED_PRODUCT:
+                print(
+                    f"ERROR: '{file_path}' has product '{product}', expected '{EXPECTED_PRODUCT}'.",
+                    file=sys.stderr,
+                )
+                sys.exit(1)
+
+            log(f"  OK: {file_path} (product: {product})")
+
+        log(f"All {len(changed_files)} file(s) validated as product '{EXPECTED_PRODUCT}'.")
+
+        log("Checking MR approval status...")
+        approval_state = api_get(f"/merge_requests/{mr_iid}/approval_state")
+        approval_rules = approval_state.get("rules", [])
+        missing_approvals = []
+        for rule in approval_rules:
+            approved_by = [u["username"] for u in rule.get("approved_by", [])]
+            approvals_required = rule.get("approvals_required", 1)
+            if not rule.get("approved", False):
+                missing_approvals.append(
+                    f"  - '{rule['name']}': requires {approvals_required} approval(s), "
+                    f"approved by: {approved_by or ['(none)']}"
+                )
+            else:
+                log(f"  Approved: '{rule['name']}' (approved by: {approved_by})")
+
+        if missing_approvals:
+            print("ERROR: MR is missing required approvals:", flush=True)
+            for line in missing_approvals:
+                print(line, flush=True)
+            sys.exit(1)
+
+        log("All approval rules satisfied.")
+
+        log("Fetching latest pipeline for this MR...")
+        pipelines = api_get(f"/merge_requests/{mr_iid}/pipelines")
+        if not pipelines:
+            print("ERROR: No pipelines found for this MR.", flush=True)
+            sys.exit(1)
+
+        latest_pipeline = pipelines[0]
+        pipeline_id = latest_pipeline["id"]
+        pipeline_status = latest_pipeline["status"]
+        log(f"Latest pipeline: #{pipeline_id} (status: {pipeline_status})")
+
+        log(f"Looking for job '{PROD_JOB_NAME}' in stage '{PROD_STAGE_NAME}'...")
+        # prod-job is a bridge/trigger job — must query /bridges, not /jobs
+        bridges = api_get(f"/pipelines/{pipeline_id}/bridges")
+        prod_job = next(
+            (
+                b for b in bridges
+                if b["name"] == PROD_JOB_NAME and b["stage"] == PROD_STAGE_NAME
+            ),
+            None,
+        )
+
+        if prod_job is None:
+            jobs = api_get(f"/pipelines/{pipeline_id}/jobs")
+            print(
+                f"ERROR: No bridge job named '{PROD_JOB_NAME}' in stage '{PROD_STAGE_NAME}' "
+                f"found in pipeline #{pipeline_id}.",
+                file=sys.stderr,
+            )
+            print(f"Available bridges: {[b['name'] for b in bridges]}", flush=True)
+            print(f"Available jobs: {[j['name'] for j in jobs]}", flush=True)
+            sys.exit(1)
+
+        job_id = prod_job["id"]
+        job_status = prod_job["status"]
+        log(f"Found job '{PROD_JOB_NAME}' (ID: {job_id}, status: {job_status})")
+
+        if dry_run:
+            log(f"Would trigger job '{PROD_JOB_NAME}' (ID: {job_id}) in pipeline #{pipeline_id}.")
+            log("No action taken.")
+            sys.exit(0)
+
+        if job_status == "failed":
+            action = "retry"
+        elif job_status == "manual":
+            action = "play"
+        else:
+            print(
+                f"ERROR: job '{PROD_JOB_NAME}' is in '{job_status}' state — cannot trigger. "
+                f"Expected 'manual' (pipeline reached the stage) or 'failed' (re-trigger). "
+                f"If the pipeline has not reached '{PROD_STAGE_NAME}' yet, wait for earlier stages to complete.",
+                flush=True,
+            )
+            print(f"Job URL: {gitlab_host}/{project_path}/-/jobs/{job_id}", flush=True)
+            sys.exit(1)
+
+        log(f"Triggering job '{PROD_JOB_NAME}' (ID: {job_id}, action: {action})...")
+        resp = session.post(f"{api_base}/jobs/{job_id}/{action}")
+        resp.raise_for_status()
+        result = resp.json()
+        log(f"Successfully triggered job '{PROD_JOB_NAME}' (ID: {job_id}). New status: {result.get('status')}")
+        log(f"Job URL: {gitlab_host}/{project_path}/-/jobs/{job_id}")
+    taskRef:
+      kind: Task
+      name: artcd

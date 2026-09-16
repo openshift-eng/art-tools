@@ -1,0 +1,27 @@
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: 'art-docs'
+spec:
+  project: default
+  source:
+    repoURL: 'https://github.com/openshift-eng/art-config.git'
+    path: clusters/artc2023/config/argocd/apps/art-docs
+    targetRevision: main
+  destination:
+    server: 'https://kubernetes.default.svc'
+    namespace: art-docs
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - PruneLast=true
+      - RespectIgnoreDifferences=true
+  ignoreDifferences:
+    - group: route.openshift.io
+      kind: Route
+      name: art-docs-eng
+      jsonPointers:
+        - /spec/tls/certificate
+        - /spec/tls/key

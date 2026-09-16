@@ -1,0 +1,20 @@
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: 'art-cd'
+spec:
+  project: default
+  source:
+    repoURL: 'https://github.com/openshift-eng/art-tools'
+    path: art-cluster/pipelines/config/argocd/project/art-cd
+    targetRevision: main
+    directory:
+      recurse: true
+      jsonnet: { }
+  destination:
+    server: 'https://kubernetes.default.svc'
+    namespace: art-cd
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true

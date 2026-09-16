@@ -1,0 +1,19 @@
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: 'art-bot'
+spec:
+  project: default
+  source:
+    repoURL: 'https://github.com/openshift-eng/art-config.git'
+    path: clusters/artc2023/config/argocd/apps/art-bot/
+    targetRevision: main
+  destination:
+    server: 'https://kubernetes.default.svc'
+    namespace: art-bot
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - PruneLast=true
