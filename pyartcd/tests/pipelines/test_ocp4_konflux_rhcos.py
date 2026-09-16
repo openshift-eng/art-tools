@@ -175,10 +175,10 @@ class TestRhcosPostBuildDelegation(unittest.IsolatedAsyncioTestCase):
 
         critical_failures = []
         with self.assertLogs('pyartcd.pipelines.ocp4_konflux', level='WARNING') as logs:
-            await run_safe(self.pipeline.trigger_rhcos_integration_tests, critical_failures)
+            await run_safe(self.pipeline.trigger_rhcos_node_image_post_build, critical_failures)
 
         self.assertEqual(mock_start_build.call_count, 2)
-        self.assertEqual([name for name, _ in critical_failures], ['trigger_rhcos_integration_tests'])
+        self.assertEqual([name for name, _ in critical_failures], ['trigger_rhcos_node_image_post_build'])
         self.assertTrue(any('RHCOS rhel10 integration test failed' in message for message in logs.output))
         self.assertEqual(
             mock_start_build.call_args_list[0].args[1]['NODE_IMAGE'],
@@ -204,14 +204,26 @@ class TestRhcosPostBuildDelegation(unittest.IsolatedAsyncioTestCase):
         mock_start_build.assert_not_called()
 
     @patch('pyartcd.pipelines.ocp4_konflux.jenkins.start_build')
-    async def test_non_stream_assembly_skips_rhcos_integration_tests(self, mock_start_build):
+    async def test_non_stream_assembly_skips_rhcos_node_image_post_build(self, mock_start_build):
         self.pipeline.assembly = 'test'
         self.pipeline.parse_record_log = MagicMock(return_value={'image_build_konflux': self.records})
 
-        await self.pipeline.trigger_rhcos_integration_tests()
+        await self.pipeline.trigger_rhcos_node_image_post_build()
 
         mock_start_build.assert_not_called()
         self.pipeline.parse_record_log.assert_not_called()
+
+    @patch('pyartcd.pipelines.ocp4_konflux.jenkins.start_build')
+    async def test_unsupported_version_skips_rhcos_node_image_post_build(self, mock_start_build):
+        self.pipeline.version = '5.1'
+        self.pipeline.parse_record_log = MagicMock(return_value={'image_build_konflux': self.records})
+
+        with self.assertLogs('pyartcd.pipelines.ocp4_konflux', level='WARNING') as logs:
+            await self.pipeline.trigger_rhcos_node_image_post_build()
+
+        mock_start_build.assert_not_called()
+        self.pipeline.parse_record_log.assert_not_called()
+        self.assertTrue(any('does not support this release yet' in msg for msg in logs.output))
 
 
 if __name__ == '__main__':

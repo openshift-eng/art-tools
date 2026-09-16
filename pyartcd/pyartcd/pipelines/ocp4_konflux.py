@@ -885,7 +885,7 @@ class KonfluxOcpPipeline:
         except Exception as e:
             LOGGER.exception(f"Failed to trigger bundle build: {e}")
 
-    async def trigger_rhcos_integration_tests(self):
+    async def trigger_rhcos_node_image_post_build(self):
         """Delegate RHCOS integration testing and promotion to a replayable ART job.
 
         When any RHCOS images listed in RHCOS_ART_IMAGE_KEYS are rebuilt
@@ -898,11 +898,22 @@ class KonfluxOcpPipeline:
         prevent the other pair from being tested.
         """
         if self.assembly != 'stream':
-            LOGGER.info('Skipping RHCOS integration tests for %s assembly', self.assembly)
+            LOGGER.info('Skipping RHCOS node-image post-build for %s assembly', self.assembly)
             return
 
         if self.skip_node_image_post_build_ops:
             LOGGER.warning('Skipping RHCOS post-build jobs because --skip-node-image-post-build-ops is set')
+            return
+
+        # The RHCOS Jenkins build-node-image job does not support these releases yet.
+        # Skip them until the job is updated to handle them.
+        _UNSUPPORTED_VERSIONS = {'5.1'}
+        if self.version in _UNSUPPORTED_VERSIONS:
+            LOGGER.warning(
+                'Skipping RHCOS node-image post-build for version %s: '
+                'the Jenkins build-node-image job does not support this release yet',
+                self.version,
+            )
             return
 
         record_log = self.parse_record_log()
@@ -1089,7 +1100,7 @@ class KonfluxOcpPipeline:
             )
             return
 
-        # Derive RELEASE param from group.yml (loaded by trigger_rhcos_integration_tests)
+        # Derive RELEASE param from group.yml (loaded by trigger_rhcos_node_image_post_build)
         release_stream = release_streams.get(rhel_label)
         if not release_stream:
             LOGGER.warning("No release stream found in group.yml for %s, skipping integration test", rhel_label)
@@ -1376,7 +1387,7 @@ class KonfluxOcpPipeline:
             # Keep generic image mirroring and build-sync ordering unchanged. RHCOS images
             # are promoted to art-images only after their integration tests pass.
             await run_safe(self.mirror_images, critical_failures)
-            await run_safe(self.trigger_rhcos_integration_tests, critical_failures)
+            await run_safe(self.trigger_rhcos_node_image_post_build, critical_failures)
             await run_safe(self.mirror_streams_to_ci, critical_failures)
 
             await self.clean_up()
