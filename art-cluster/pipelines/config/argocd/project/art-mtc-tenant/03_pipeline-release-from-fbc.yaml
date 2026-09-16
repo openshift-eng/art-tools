@@ -1,0 +1,175 @@
+apiVersion: tekton.dev/v1
+kind: Pipeline
+metadata:
+  labels:
+    app: artcd
+  name: release-from-fbc
+  namespace: art-mtc-tenant
+spec:
+  description: Create releases from FBC (File-Based Catalogs) for non-OpenShift products
+    (OADP, MTA, MTC, logging, etc.) using artcd release-from-fbc command.
+  params:
+  - default: mtc-1.8
+    description: 'ocp-build-data group branch for this product'
+    enum:
+    - mtc-1.8
+    name: group
+    type: string
+  - default: ''
+    description: The assembly version to create release for (e.g. 1.5.3, 6.3.3)
+    name: assembly
+    type: string
+  - default: ''
+    description: Comma-separated list of FBC image pullspecs to create release from
+    name: fbc-pullspecs
+    type: string
+  - default: ''
+    description: 'Comma-separated list of JIRA issue IDs to include in the advisory (e.g. OADP-7223,OADP-7222). Leave empty to skip.'
+    name: jira-bugs
+    type: string
+  - default: ''
+    description: 'Target ship date (e.g. 2026-Mar-31 or 2026-03-31). Included in shipment MR title. Leave empty to omit.'
+    name: target-release-date
+    type: string
+  - default: ''
+    description: 'Comma-separated list of extra image NVRs to include in the image shipment file (not part of the FBC). At least one of fbc-pullspecs or extra-image-nvrs must be provided.'
+    name: extra-image-nvrs
+    type: string
+  - default: 'false'
+    description: 'Enable OCP optional-operator mode. Not applicable for layered product tenants'
+    name: ocp-optional
+    type: string
+  - default: ''
+    description: '(Optional) Comma-separated NVR component names to explicitly exclude from shipment.'
+    name: exclude-nvr-components
+    type: string
+  - default: 'false'
+    description: Take no action, just echo what the job would have done
+    name: dry-run
+    type: string
+  - default: ''
+    description: '(Optional) Override art-tools version. Format: ghuser@branch (e.g.
+      ashwindasr@my-feature)'
+    name: art-tools-commit
+    type: string
+  tasks:
+  - name: release-from-fbc
+    params:
+    - name: script
+      value: |
+        #!/usr/bin/env python3
+        import os
+        import subprocess
+
+        subprocess.run(["kinit", "-f", "-k", "-t", "/tmp/keytab/keytab", "exd-ocp-buildvm-bot-prod@IPA.REDHAT.COM"], check=True)
+
+        # Ensure oras can find registry credentials via ~/.docker/config.json
+        auth_file = os.environ.get("QUAY_AUTH_FILE", "/tmp/konflux-art-images-auth/config.json")
+        if os.path.exists(auth_file):
+            os.makedirs("/root/.docker", exist_ok=True)
+            docker_config = "/root/.docker/config.json"
+            if not os.path.exists(docker_config):
+                os.symlink(auth_file, docker_config)
+
+        os.makedirs("/root/.config", exist_ok=True)
+        open("/root/.config/artcd.toml", "a").close()
+
+        os.environ["TEKTON_PIPELINERUN_NAME"] = "$(context.pipelineRun.name)"
+        os.environ["TEKTON_PIPELINE_NAME"] = "$(context.pipeline.name)"
+        os.environ["BUILD_URL"] = "https://console-openshift-console.apps.artc2023.pc3z.p1.openshiftapps.com/k8s/ns/art-mtc-tenant/tekton.dev~v1~PipelineRun/$(context.pipelineRun.name)"
+        os.environ["DOOZER_DB_NAME"] = "art_dash"
+        os.environ["ELLIOTT_DATA_PATH"] = "https://github.com/openshift-eng/ocp-build-data"
+        os.environ["DOOZER_DATA_PATH"] = "https://github.com/openshift-eng/ocp-build-data"
+
+        art_tools_commit = "$(params.art-tools-commit)"
+        if art_tools_commit:
+            allowed_owners = {
+                "adobes1",
+                "ashwindasr",
+                "fbladilo",
+                "fgallott",
+                "joepvd",
+                "jupierce",
+                "lgarciaaco",
+                "locriandev",
+                "mbiarnes",
+                "pruan-rht",
+                "rayfordj",
+                "redhat-chai-bot",
+                "thegreyd",
+            }
+            owner, branch = art_tools_commit.split("@", 1)
+            owner = owner.lower()
+            if owner not in allowed_owners:
+                raise ValueError(f"art-tools repository owner '{owner}' is not allowed")
+            subprocess.run(["git", "clone", "-b", branch, f"https://github.com/{owner}/art-tools.git"], check=True)
+            subprocess.run(["pip", "install", "./art-tools"], check=True)
+            os.environ["ART_TOOLS_COMMIT"] = art_tools_commit
+
+        os.makedirs("./artcd_working", exist_ok=True)
+
+        cmd = [
+            "artcd",
+            "-v",
+            "--working-dir=./artcd_working",
+            "--config=/root/.config/artcd.toml",
+        ]
+
+        if "$(params.dry-run)" == "true":
+            cmd.append("--dry-run")
+
+        fbc_pullspecs = "$(params.fbc-pullspecs)"
+        extra_image_nvrs = "$(params.extra-image-nvrs)"
+
+        if not fbc_pullspecs and not extra_image_nvrs:
+            raise ValueError("At least one of fbc-pullspecs or extra-image-nvrs must be provided")
+
+        ALLOWED_GROUPS = {"mtc-1.8"}
+        ocp_optional = "$(params.ocp-optional)" == "true"
+        group = "$(params.group)"
+
+        if group not in ALLOWED_GROUPS:
+            raise ValueError(
+                f"Group '{group}' is not valid for this product. "
+                f"Allowed: {', '.join(sorted(ALLOWED_GROUPS))}"
+            )
+
+        if ocp_optional and not group.startswith("openshift-"):
+            raise ValueError("ocp-optional requires group to start with 'openshift-' (e.g. openshift-4.22)")
+
+        if not ocp_optional and group.startswith("openshift-"):
+            raise ValueError(f"Group '{group}' is an openshift-* group and requires ocp-optional to be enabled")
+
+        cmd.extend([
+            "release-from-fbc",
+            "--group", group,
+            "--assembly", "$(params.assembly)",
+            "--create-mr",
+        ])
+
+        if fbc_pullspecs:
+            cmd.extend(["--fbc-pullspecs", fbc_pullspecs])
+
+        if extra_image_nvrs:
+            cmd.extend(["--extra-image-nvrs", extra_image_nvrs])
+
+        jira_bugs = "$(params.jira-bugs)"
+        if jira_bugs:
+            cmd.extend(["--jira-bugs", jira_bugs])
+
+        target_release_date = "$(params.target-release-date)"
+        if target_release_date:
+            cmd.extend(["--target-release-date", target_release_date])
+
+        if ocp_optional:
+            cmd.append("--ocp-optional")
+
+        exclude_nvr_components = "$(params.exclude-nvr-components)"
+        if exclude_nvr_components:
+            cmd.extend(["--exclude-nvr-components", exclude_nvr_components])
+
+        print(f"Running {cmd}...")
+        subprocess.run(cmd, check=True, env=os.environ.copy())
+    taskRef:
+      kind: Task
+      name: artcd

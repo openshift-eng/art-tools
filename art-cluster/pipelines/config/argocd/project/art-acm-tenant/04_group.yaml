@@ -1,0 +1,16 @@
+apiVersion: user.openshift.io/v1
+kind: Group
+metadata:
+  name: art-acm-team-members
+users:
+  - ahenning
+  - briansmi
+  - cwall
+  - dbennett
+  - dhaiduce
+  - emmacdon
+  - erinmurp
+  - ggn
+  - gparvin
+  - msmigiel
+  - ngraham
