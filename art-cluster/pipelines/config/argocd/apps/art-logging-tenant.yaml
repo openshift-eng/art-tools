@@ -12,6 +12,10 @@ spec:
     server: 'https://kubernetes.default.svc'
     namespace: art-logging-tenant
   syncPolicy:
+    automated:
+      enabled: true
+      prune: true
+      selfHeal: true
     syncOptions:
       - CreateNamespace=true
       - PruneLast=true
