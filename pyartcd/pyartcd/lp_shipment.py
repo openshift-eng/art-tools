@@ -123,7 +123,8 @@ def add_superseded_mr_comment(
     gitlab_client,
     superseded_mr_url: str,
     replacement_mr_url: str,
-    job_url: str | None = None,
+    operation: str,
+    run_url: str | None = None,
 ) -> None:
     """Record a successful forced replacement on the superseded MR.
 
@@ -134,14 +135,19 @@ def add_superseded_mr_comment(
         gitlab_client: Authenticated ART GitLab client.
         superseded_mr_url: Shipment MR that was replaced.
         replacement_mr_url: New authoritative shipment MR.
-        job_url: Optional Jenkins job URL that performed the replacement.
+        operation: Release operation that performed the replacement.
+        run_url: Optional Jenkins build or Tekton PipelineRun URL.
     """
+    replacement_iid = replacement_mr_url.rstrip('/').rsplit('/', 1)[-1]
+    replacement_label = f"shipment MR !{replacement_iid}" if replacement_iid.isdigit() else "replacement shipment MR"
     body = (
-        f"This shipment MR was superseded by [the replacement shipment MR]({replacement_mr_url}) "
-        "during a forced replacement. Do not use this MR for release."
+        "**DO NOT USE THIS MR FOR RELEASE.**\n\n"
+        f"This shipment was superseded by [{replacement_label}]({replacement_mr_url}) during a forced replacement"
     )
-    if job_url:
-        body += f" Replacement job: [Jenkins build]({job_url})."
+    if run_url:
+        body += f" via the [{operation} run]({run_url})."
+    else:
+        body += f" via `{operation}`."
     try:
         gitlab_client.add_mr_comment(superseded_mr_url, body)
     except Exception as exc:

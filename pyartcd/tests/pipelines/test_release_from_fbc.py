@@ -1612,6 +1612,7 @@ class TestOcpOptionalMode(unittest.TestCase):
         pipeline = self._make_pipeline(ocp_optional=False, group="oadp-1.5", assembly="1.5.8")
         pipeline.create_mr = True
         pipeline.force = True
+        pipeline.job_url = "https://jenkins.example.com/job/release-from-fbc/24/"
         pipeline.fbc_pullspecs = []
         pipeline.extra_image_nvrs = ["oadp-container-v1.5.8-1.el9"]
         pipeline._configured_shipment_mr_url = "https://gitlab.example/project/-/merge_requests/42"
@@ -1649,6 +1650,7 @@ class TestOcpOptionalMode(unittest.TestCase):
         comment_url, comment_body = pipeline._gitlab.add_mr_comment.call_args.args
         self.assertEqual(comment_url, "https://gitlab.example/project/-/merge_requests/42")
         self.assertIn("merge_requests/43", comment_body)
+        self.assertIn("release-from-fbc run", comment_body)
 
     def test_extra_image_nvrs_merged_into_extras_key(self):
         """In OCP optional mode, extra_image_nvrs should merge into 'extras', not 'image'."""

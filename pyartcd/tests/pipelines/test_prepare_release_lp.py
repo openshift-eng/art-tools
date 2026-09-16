@@ -535,6 +535,7 @@ class TestPrepareReleaseLPRun(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp_dir:
             pipeline = self._make_pipeline(tmp_dir, create_mr=True, force=True)
             pipeline.dry_run = False
+            pipeline.job_url = "https://console.example.com/tekton.dev~v1~PipelineRun/prepare-release-lp"
             pipeline._configured_shipment_mr_url = "https://gitlab.example/project/-/merge_requests/42"
             pipeline._check_env_vars = MagicMock()
             pipeline._setup_working_dir = MagicMock()
@@ -583,6 +584,7 @@ class TestPrepareReleaseLPRun(unittest.TestCase):
             comment_url, comment_body = pipeline._gitlab.add_mr_comment.call_args.args
             self.assertEqual(comment_url, "https://gitlab.example/project/-/merge_requests/42")
             self.assertIn("merge_requests/43", comment_body)
+            self.assertIn("prepare-release-lp run", comment_body)
 
     @patch.object(PrepareReleaseLPPipeline, '_load_release_notes_template', return_value=None)
     @patch.object(PrepareReleaseLPPipeline, '_create_snapshot', new_callable=AsyncMock)

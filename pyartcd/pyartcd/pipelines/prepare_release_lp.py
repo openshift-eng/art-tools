@@ -1101,7 +1101,8 @@ class PrepareReleaseLPPipeline:
                                 self._gitlab,
                                 self._configured_shipment_mr_url,
                                 mr_url,
-                                self.job_url,
+                                operation="prepare-release-lp",
+                                run_url=self.job_url,
                             )
                     await self._set_shipment_mr_ready()
             else:

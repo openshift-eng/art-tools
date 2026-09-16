@@ -1533,7 +1533,8 @@ class ReleaseFromFbcPipeline:
                             self._gitlab,
                             self._configured_shipment_mr_url,
                             mr_url,
-                            self.job_url,
+                            operation="release-from-fbc",
+                            run_url=self.job_url,
                         )
                 self.logger.info("Shipment MR: %s", mr_url)
                 self._update_jira_with_mr_link(mr_url)

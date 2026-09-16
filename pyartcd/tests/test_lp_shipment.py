@@ -67,22 +67,55 @@ def test_create_shipment_mr_does_not_retry_other_errors(mock_sleep):
     mock_sleep.assert_not_awaited()
 
 
-def test_add_superseded_mr_comment_records_replacement_and_job():
-    """Link the authoritative replacement and the job that selected it."""
+def test_add_superseded_mr_comment_records_replacement_and_run():
+    """Lead with the warning and link the replacement and initiating run."""
     gitlab_client = MagicMock()
 
     add_superseded_mr_comment(
         gitlab_client,
         "https://gitlab.example.com/group/project/-/merge_requests/10",
         "https://gitlab.example.com/group/project/-/merge_requests/11",
-        "https://jenkins.example.com/job/release/42/",
+        operation="release-from-fbc",
+        run_url="https://jenkins.example.com/job/release/42/",
     )
 
     gitlab_client.add_mr_comment.assert_called_once()
     old_mr_url, body = gitlab_client.add_mr_comment.call_args.args
     assert old_mr_url.endswith("/merge_requests/10")
-    assert "merge_requests/11" in body
-    assert "jenkins.example.com/job/release/42" in body
+    assert body.startswith("**DO NOT USE THIS MR FOR RELEASE.**")
+    assert "[shipment MR !11](https://gitlab.example.com/group/project/-/merge_requests/11)" in body
+    assert "[release-from-fbc run](https://jenkins.example.com/job/release/42/)" in body
+
+
+def test_add_superseded_mr_comment_supports_pipeline_run_url():
+    """Use the same neutral run link for a Tekton PipelineRun."""
+    gitlab_client = MagicMock()
+
+    add_superseded_mr_comment(
+        gitlab_client,
+        "https://gitlab.example.com/group/project/-/merge_requests/10",
+        "https://gitlab.example.com/group/project/-/merge_requests/11",
+        operation="prepare-release-lp",
+        run_url="https://console.example.com/tekton.dev~v1~PipelineRun/example",
+    )
+
+    body = gitlab_client.add_mr_comment.call_args.args[1]
+    assert "[prepare-release-lp run](https://console.example.com/tekton.dev~v1~PipelineRun/example)" in body
+
+
+def test_add_superseded_mr_comment_without_run_url():
+    """Retain the operation name when no initiating run URL is available."""
+    gitlab_client = MagicMock()
+
+    add_superseded_mr_comment(
+        gitlab_client,
+        "https://gitlab.example.com/group/project/-/merge_requests/10",
+        "https://gitlab.example.com/group/project/-/merge_requests/11",
+        operation="release-from-fbc",
+    )
+
+    body = gitlab_client.add_mr_comment.call_args.args[1]
+    assert body.endswith("during a forced replacement via `release-from-fbc`.")
 
 
 def test_add_superseded_mr_comment_failure_is_nonfatal(caplog):
@@ -94,6 +127,7 @@ def test_add_superseded_mr_comment_failure_is_nonfatal(caplog):
         gitlab_client,
         "https://gitlab.example.com/group/project/-/merge_requests/10",
         "https://gitlab.example.com/group/project/-/merge_requests/11",
+        operation="release-from-fbc",
     )
 
     assert "Failed to comment on superseded shipment MR" in caplog.text
