@@ -519,6 +519,79 @@ class TestPrepareReleaseLPRun(unittest.TestCase):
 
             pipeline._trigger_bundle_build.assert_not_awaited()
 
+    @patch('pyartcd.pipelines.prepare_release_lp.reconcile_shipment_mr', new_callable=AsyncMock)
+    @patch('pyartcd.pipelines.prepare_release_lp.validate_shipment_mr_for_operation', new_callable=AsyncMock)
+    def test_normal_run_reuses_existing_shipment_mr(self, mock_validate, mock_reconcile):
+        """Reconcile the configured MR without creating or persisting a new pointer."""
+        import tempfile
+
+        mr_url = "https://gitlab.example/project/-/merge_requests/42"
+        existing_mr = MagicMock(
+            state='opened',
+            title='Shipment for rhacm2 2.17.3',
+            labels=['stage-release-success', 'reviewed'],
+        )
+        mock_validate.return_value = (existing_mr, MagicMock(active_stage=(), prod_attempts=()))
+
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            pipeline = self._make_pipeline(tmp_dir, create_mr=True)
+            pipeline.dry_run = False
+            pipeline._configured_shipment_mr_url = mr_url
+            pipeline._check_env_vars = MagicMock()
+            pipeline._setup_working_dir = MagicMock()
+            pipeline._setup_shipment_repo = AsyncMock()
+            pipeline._load_product_from_group_config = AsyncMock(return_value="rhacm2")
+            pipeline._load_assembly = AsyncMock(
+                return_value={
+                    'assembly': {
+                        'type': 'standard',
+                        'basis': {'assembly': '2.17.2'},
+                        'members': {
+                            'images': [
+                                {
+                                    'distgit_key': 'search-v2-api-container',
+                                    'metadata': {'is': {'nvr': 'search-v2-api-container-2.17.3-1'}},
+                                }
+                            ]
+                        },
+                        'group': {
+                            'advisories': {'image': 12345},
+                            'shipment': {'mr': mr_url},
+                        },
+                    }
+                }
+            )
+            pipeline._trigger_bundle_build = AsyncMock(return_value=([], []))
+            pipeline._trigger_fbc_build = AsyncMock(return_value=([], []))
+            pipeline._create_snapshot = AsyncMock(return_value=[MagicMock()])
+            shipment_config = MagicMock()
+            pipeline._create_shipment_config = MagicMock(return_value=shipment_config)
+            pipeline._load_release_notes_template = MagicMock(return_value=None)
+            pipeline._verify_assembly_shipment_url = AsyncMock()
+            pipeline._create_shipment_mr = AsyncMock()
+            pipeline._update_assembly_with_shipment_url = AsyncMock()
+            pipeline._set_shipment_mr_ready = AsyncMock()
+            pipeline.__dict__['_gitlab'] = MagicMock()
+
+            asyncio.run(pipeline.run())
+
+            self.assertEqual(existing_mr.title, 'Draft: Shipment for rhacm2 2.17.3')
+            self.assertEqual(existing_mr.labels, ['reviewed'])
+            existing_mr.save.assert_called_once_with()
+            self.assertEqual(mock_validate.await_count, 3)
+            pipeline._verify_assembly_shipment_url.assert_awaited_once_with()
+            mock_reconcile.assert_awaited_once_with(
+                pipeline.shipment_data_repo,
+                existing_mr,
+                {'image': shipment_config},
+                include_fbc_ocp_version=False,
+                dry_run=False,
+            )
+            self.assertEqual(pipeline.shipment_mr_url, mr_url)
+            pipeline._create_shipment_mr.assert_not_awaited()
+            pipeline._update_assembly_with_shipment_url.assert_not_awaited()
+            pipeline._set_shipment_mr_ready.assert_awaited_once_with()
+
     @patch('pyartcd.pipelines.prepare_release_lp.validate_shipment_mr_for_operation', new_callable=AsyncMock)
     def test_force_makes_open_previous_mr_draft_before_replacement(self, mock_validate):
         """Supersede an open stage-only MR without modifying its shipment files."""
