@@ -266,12 +266,12 @@ class DirectSignatory:
 
     DEFAULT_CLIENT_COMMAND = ("rh-signing-client",)
     DEFAULT_TIMEOUT = 10 * 60
+    ON_BEHALF_OF = "jupierce@redhat.com"
 
     def __init__(
         self,
         client_command: Sequence[str],
         sig_keyname: str = "test",
-        requestor: str = "timer",
         signing_env: str | None = None,
         keytab_file: str | None = None,
         principal: str | None = None,
@@ -285,7 +285,6 @@ class DirectSignatory:
         Args:
             client_command: Executable and fixed arguments for the direct signing client.
             sig_keyname: Signing key name passed to the direct client.
-            requestor: Requester recorded by the signing server as ``--onbehalfof``.
             signing_env: Signing environment, such as ``stage`` or ``prod``.
             keytab_file: Keytab used to initialize the isolated signing credential cache.
             principal: Kerberos principal used with ``keytab_file``.
@@ -300,7 +299,6 @@ class DirectSignatory:
 
         self.client_command = tuple(client_command)
         self.sig_keyname = sig_keyname
-        self.requestor = requestor
         self.signing_env = signing_env
         self.keytab_file = keytab_file
         self.principal = principal
@@ -333,12 +331,10 @@ class DirectSignatory:
 
         command = os.environ.get("DIRECT_SIGNING_CLIENT_COMMAND")
         client_command = shlex.split(command) if command else list(cls.DEFAULT_CLIENT_COMMAND)
-        requestor = os.environ.get("DIRECT_SIGNING_REQUESTOR", "timer")
         timeout = int(os.environ.get("DIRECT_SIGNING_TIMEOUT", str(cls.DEFAULT_TIMEOUT)))
         return cls(
             client_command=client_command,
             sig_keyname=sig_keyname,
-            requestor=requestor,
             signing_env=signing_env,
             keytab_file=keytab_file,
             principal=principal,
@@ -480,7 +476,7 @@ class DirectSignatory:
                 "--output",
                 output_path,
                 "--onbehalfof",
-                self.requestor,
+                self.ON_BEHALF_OF,
             ]
 
             rc, _, stderr = await self._command_runner(
