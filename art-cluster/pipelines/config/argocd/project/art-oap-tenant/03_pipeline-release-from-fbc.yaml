@@ -50,8 +50,8 @@ spec:
     name: dry-run
     type: string
   - default: ''
-    description: '(Optional) Override art-tools version. Format: ghuser@branch (e.g.
-      ashwindasr@my-feature)'
+    description: '(Optional) Trusted openshift-eng/art-tools branch or commit SHA.
+      Any owner@ prefix is ignored.'
     name: art-tools-commit
     type: string
   tasks:
@@ -85,10 +85,29 @@ spec:
 
         art_tools_commit = "$(params.art-tools-commit)"
         if art_tools_commit:
-            owner, branch = art_tools_commit.split("@")
-            subprocess.run(["git", "clone", "-b", branch, f"https://github.com/{owner}/art-tools.git"], check=True)
+            trusted_repo = "https://github.com/openshift-eng/art-tools.git"
+            requested_revision = art_tools_commit.rsplit("@", 1)[-1]
+            subprocess.run(
+                ["git", "check-ref-format", f"refs/heads/{requested_revision}"],
+                check=True,
+            )
+            subprocess.run(["git", "init", "art-tools"], check=True)
+            subprocess.run(
+                ["git", "-C", "art-tools", "fetch", "--depth=1", "--", trusted_repo, requested_revision],
+                check=True,
+            )
+            resolved_revision = subprocess.run(
+                ["git", "-C", "art-tools", "rev-parse", "--verify", "FETCH_HEAD^{commit}"],
+                check=True,
+                capture_output=True,
+                text=True,
+            ).stdout.strip()
+            subprocess.run(
+                ["git", "-C", "art-tools", "checkout", "--detach", resolved_revision],
+                check=True,
+            )
             subprocess.run(["pip", "install", "./art-tools"], check=True)
-            os.environ["ART_TOOLS_COMMIT"] = art_tools_commit
+            os.environ["ART_TOOLS_COMMIT"] = f"openshift-eng@{resolved_revision}"
 
         os.makedirs("./artcd_working", exist_ok=True)
 
