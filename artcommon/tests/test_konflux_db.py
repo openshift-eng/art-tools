@@ -661,6 +661,7 @@ class TestKonfluxDB(IsolatedAsyncioTestCase):
             SchemaField('ec_pipeline_url', 'STRING', 'REQUIRED'),
             SchemaField('release_pipeline', 'STRING', 'REQUIRED'),
             SchemaField('released_pullspec', 'STRING', 'REQUIRED'),
+            SchemaField('build_variant', 'STRING', 'NULLABLE'),
         ]
         self.db.bind(KonfluxBuildRecord)
         self.assertEqual(self.db.generate_build_schema(), expected_fields)
@@ -697,6 +698,7 @@ class TestKonfluxDB(IsolatedAsyncioTestCase):
             SchemaField('build_component', 'STRING', 'REQUIRED'),
             SchemaField('build_priority', 'INTEGER', 'REQUIRED'),
             SchemaField('ec_pipeline_url', 'STRING', 'REQUIRED'),
+            SchemaField('build_variant', 'STRING', 'NULLABLE'),
         ]
         self.db.bind(KonfluxBundleBuildRecord)
         self.assertEqual(self.db.generate_build_schema(), expected_fields)
@@ -731,6 +733,7 @@ class TestKonfluxDB(IsolatedAsyncioTestCase):
             SchemaField('build_component', 'STRING', 'REQUIRED'),
             SchemaField('build_priority', 'INTEGER', 'REQUIRED'),
             SchemaField('ec_pipeline_url', 'STRING', 'REQUIRED'),
+            SchemaField('build_variant', 'STRING', 'NULLABLE'),
         ]
         self.db.bind(KonfluxFbcBuildRecord)
         self.assertEqual(self.db.generate_build_schema(), expected_fields)
