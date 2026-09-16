@@ -85,7 +85,25 @@ spec:
 
         art_tools_commit = "$(params.art-tools-commit)"
         if art_tools_commit:
-            owner, branch = art_tools_commit.split("@")
+            allowed_owners = {
+                "adobes1",
+                "ashwindasr",
+                "fbladilo",
+                "fgallott",
+                "joepvd",
+                "jupierce",
+                "lgarciaaco",
+                "locriandev",
+                "mbiarnes",
+                "pruan-rht",
+                "rayfordj",
+                "redhat-chai-bot",
+                "thegreyd",
+            }
+            owner, branch = art_tools_commit.split("@", 1)
+            owner = owner.lower()
+            if owner not in allowed_owners:
+                raise ValueError(f"art-tools repository owner '{owner}' is not allowed")
             subprocess.run(["git", "clone", "-b", branch, f"https://github.com/{owner}/art-tools.git"], check=True)
             subprocess.run(["pip", "install", "./art-tools"], check=True)
             os.environ["ART_TOOLS_COMMIT"] = art_tools_commit
