@@ -108,6 +108,19 @@ def test_to_qci_pullspec(pullspec, expected):
     assert images_streams._to_qci_pullspec(pullspec) == expected
 
 
+def test_check_upstream_image_exists_uses_runtime_registry_config(mocker, mock_runtime):
+    """Test upstream image checks use the runtime registry auth file."""
+    mock_runtime.registry_config = '/tmp/quay-auth.json'
+    image_info = mocker.patch.object(images_streams.util, 'oc_image_info_for_arch')
+
+    images_streams._check_upstream_image_exists(mock_runtime, 'quay-proxy.ci.openshift.org/openshift/ci:test')
+
+    image_info.assert_called_once_with(
+        'quay-proxy.ci.openshift.org/openshift/ci:test',
+        registry_config='/tmp/quay-auth.json',
+    )
+
+
 def test_get_image_stream_coordinate_from_qci_pullspec():
     """Test recovering an ImageStream coordinate from a QCI pullspec."""
     pullspec = 'quay-proxy.ci.openshift.org/openshift/ci:openshift_release_tag_with_underscores'

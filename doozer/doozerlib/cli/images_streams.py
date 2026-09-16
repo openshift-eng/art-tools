@@ -96,6 +96,11 @@ def get_image_digest(pullspec: str, registry_config: Optional[str] = None) -> Op
     return None
 
 
+def _check_upstream_image_exists(runtime, upstream_image: str) -> None:
+    """Check that an upstream image exists using the runtime registry credentials."""
+    util.oc_image_info_for_arch(upstream_image, registry_config=runtime.registry_config)
+
+
 def _to_qci_pullspec(pullspec: str) -> str:
     """Convert an app.ci ImageStreamTag pullspec to its QCI pullspec."""
     if not isinstance(pullspec, str):
@@ -1978,7 +1983,7 @@ def images_streams_prs(
                 # We don't know yet whether this image exists; perhaps a buildconfig is
                 # failing. Don't open PRs for images that don't yet exist.
                 try:
-                    util.oc_image_info_for_arch(upstream_image)
+                    _check_upstream_image_exists(runtime, upstream_image)
                 except:
                     yellow_print(
                         f'Unable to access upstream image {upstream_image} for {dgk}-- check whether buildconfigs are running successfully.'
