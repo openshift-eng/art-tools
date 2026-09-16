@@ -5,7 +5,12 @@ from pathlib import Path
 from unittest.mock import ANY, AsyncMock, MagicMock, Mock, call, patch
 
 from artcommonlib.assembly import AssemblyTypes
-from artcommonlib.konflux.konflux_build_record import KonfluxBuildOutcome, KonfluxBundleBuildRecord
+from artcommonlib.konflux.konflux_build_record import (
+    KonfluxBuildOutcome,
+    KonfluxBundleBuildRecord,
+    KonfluxFbcBuildRecord,
+)
+from artcommonlib.variants import BuildVariant
 from doozerlib.backend.build_repo import BuildRepo
 from doozerlib.backend.konflux_client import ImageBuildParams, KonfluxClient
 from doozerlib.backend.konflux_fbc import (
@@ -3064,6 +3069,60 @@ class TestKonfluxFbcBuilder(unittest.IsolatedAsyncioTestCase):
                 record_logger=self.record_logger,
                 logger=self.logger,
             )
+
+    @patch("doozerlib.backend.konflux_fbc.DockerfileParser")
+    @patch("doozerlib.backend.konflux_fbc.KonfluxClient.resource_url")
+    async def test_update_konflux_db_stores_build_variant(self, mock_resource_url, mock_dockerfile_parser):
+        metadata = MagicMock()
+        metadata.distgit_key = "test-fbc"
+        metadata.runtime.group = "test-group"
+        metadata.runtime.assembly = "test-assembly"
+        metadata.runtime.variant = BuildVariant.COO
+
+        build_repo = MagicMock()
+        build_repo.https_url = "https://example.com/fbc.git"
+        build_repo.commit_hash = "test-commit"
+        build_repo.local_dir = Path("/path/to/local/dir")
+
+        mock_dockerfile = MagicMock()
+        mock_dockerfile.labels = {
+            "com.redhat.art.name": "test-fbc",
+            "com.redhat.art.nvr": "test-fbc-1.0-1",
+            "io.openshift.build.source-location": "https://example.com/source.git",
+            "io.openshift.build.commit.id": "source-commit",
+        }
+        mock_dockerfile.envs = {
+            "__doozer_version": "1.0",
+            "__doozer_release": "1",
+            "__doozer_bundle_nvrs": "bundle-1.0-1",
+        }
+        mock_dockerfile_parser.return_value = mock_dockerfile
+        mock_resource_url.return_value = "https://example.com/pipelinerun"
+        pipelinerun = PipelineRunInfo(
+            {
+                "metadata": {
+                    "name": "test-pipelinerun",
+                    "labels": {"appstudio.openshift.io/component": "test-component"},
+                },
+                "status": {
+                    "startTime": "2023-10-01T12:00:00Z",
+                    "completionTime": "2023-10-01T12:30:00Z",
+                },
+            },
+            {},
+        )
+        self.db.record_cls = KonfluxFbcBuildRecord
+
+        await self.builder._update_konflux_db(
+            metadata,
+            build_repo,
+            pipelinerun,
+            KonfluxBuildOutcome.FAILURE,
+            ["x86_64"],
+        )
+
+        build_record = self.db.add_build.call_args[0][0]
+        self.assertEqual(build_record.build_variant, BuildVariant.COO)
 
     async def test_start_build(self):
         metadata = MagicMock(spec=ImageMetadata)

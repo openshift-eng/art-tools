@@ -2142,6 +2142,7 @@ class KonfluxFbcBuilder:
                 'bundle_nvrs': bundle_nvrs,
                 'arches': arches,
                 'build_component': build_component,
+                'build_variant': metadata.runtime.variant,
             }
 
             match outcome:

@@ -884,6 +884,7 @@ class TestKonfluxOcpPipeline(unittest.IsolatedAsyncioTestCase):
         self.assertIn('open', rebase_call)
         self.assertIn('--network-mode', build_call)
         self.assertIn('open', build_call)
+        self.assertIn('--variant=ocp', pipeline._doozer_base_command)
 
 
 class TestKonfluxOcpPipelineRebaseFailures(unittest.IsolatedAsyncioTestCase):

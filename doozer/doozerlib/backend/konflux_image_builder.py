@@ -1184,6 +1184,7 @@ class KonfluxImageBuilder:
             'pipeline_commit': 'n/a',  # TODO: populate this
             'build_component': build_component,
             'build_priority': int(build_priority),
+            'build_variant': metadata.runtime.variant,
             'ec_pipeline_url': ec_pipeline_url,
             'release_pipeline': release_pipeline,
             'released_pullspec': released_pullspec,

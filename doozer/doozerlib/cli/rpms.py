@@ -386,6 +386,7 @@ async def update_konflux_db(runtime, rpm: RPMMetadata, record: dict):
             end_time=datetime.strptime(build["completion_time"], '%Y-%m-%d %H:%M:%S.%f'),
             artifact_type=ArtifactType.RPM,
             engine=Engine.BREW,
+            build_variant=runtime.variant,
             image_pullspec="n/a",
             image_tag="n/a",
             outcome=KonfluxBuildOutcome.SUCCESS,

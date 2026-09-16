@@ -539,6 +539,7 @@ class BuildMicroShiftPipeline:
             self.doozer_group,
             "--assembly",
             self.assembly,
+            "--variant=microshift",
         ]
         if self._registry_config:
             cmd.append(f"--registry-config={self._registry_config}")

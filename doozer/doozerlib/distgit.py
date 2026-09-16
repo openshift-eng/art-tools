@@ -1433,6 +1433,7 @@ class ImageDistGitRepo(DistGitRepo):
                 'rebase_commitish': rebase_commitish.strip(),
                 'artifact_type': ArtifactType.IMAGE,
                 'engine': Engine.BREW,
+                'build_variant': self.runtime.variant,
                 'outcome': outcome,
                 'art_job_url': os.getenv('BUILD_URL', 'n/a'),
                 'build_pipeline_url': build_pipeline_url if build_pipeline_url else '',

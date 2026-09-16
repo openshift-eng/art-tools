@@ -9,6 +9,7 @@ import yaml
 from artcommonlib.konflux.konflux_build_record import KonfluxBuildOutcome, KonfluxBundleBuildRecord
 from artcommonlib.konflux.konflux_db import Engine
 from artcommonlib.model import Model
+from artcommonlib.variants import BuildVariant
 from doozerlib import constants
 from doozerlib.backend.konflux_client import ImageBuildParams
 from doozerlib.backend.konflux_olm_bundler import (
@@ -1793,6 +1794,7 @@ class TestKonfluxOlmBundleBuilder(IsolatedAsyncioTestCase):
         metadata.get_olm_bundle_short_name.return_value = "test-bundle"
         metadata.runtime.group = "test-group"
         metadata.runtime.assembly = "test-assembly"
+        metadata.runtime.variant = BuildVariant.OADP
 
         build_repo = MagicMock()
         build_repo.https_url = "https://example.com/repo.git"
@@ -1863,6 +1865,7 @@ class TestKonfluxOlmBundleBuilder(IsolatedAsyncioTestCase):
         self.assertEqual(build_record.rebase_commitish, "test-commit-hash")
         self.assertEqual(build_record.engine, Engine.KONFLUX)
         self.assertEqual(build_record.outcome, KonfluxBuildOutcome.SUCCESS)
+        self.assertEqual(build_record.build_variant, BuildVariant.OADP)
         self.assertEqual(build_record.art_job_url, 'n/a')
         self.assertEqual(build_record.build_id, "test-pipelinerun")
         self.assertEqual(build_record.build_pipeline_url, "https://example.com/pipelinerun")
@@ -1885,6 +1888,7 @@ class TestKonfluxOlmBundleBuilder(IsolatedAsyncioTestCase):
         metadata.get_olm_bundle_short_name.return_value = "test-bundle"
         metadata.runtime.group = "test-group"
         metadata.runtime.assembly = "test-assembly"
+        metadata.runtime.variant = BuildVariant.OCP
 
         build_repo = MagicMock()
         build_repo.https_url = "https://example.com/repo.git"

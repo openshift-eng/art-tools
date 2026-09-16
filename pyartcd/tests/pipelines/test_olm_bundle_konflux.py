@@ -150,6 +150,32 @@ class TestOlmBundleKonfluxStageReleaseGating(unittest.IsolatedAsyncioTestCase):
 
         mock_stage_release.assert_not_called()
         mock_jenkins.start_build_fbc.assert_called_once()
+        self.assertIn('--variant=rhacm2', mock_cmd_assert.await_args.args[0])
+
+    @mock.patch("pyartcd.pipelines.olm_bundle_konflux.jenkins")
+    @mock.patch("pyartcd.pipelines.olm_bundle_konflux.locks")
+    @mock.patch("pyartcd.pipelines.olm_bundle_konflux.exectools.cmd_assert_async", new_callable=mock.AsyncMock)
+    @mock.patch("pyartcd.pipelines.olm_bundle_konflux.load_group_config", new_callable=mock.AsyncMock)
+    @mock.patch("pyartcd.pipelines.olm_bundle_konflux._stage_release_related_images", new_callable=mock.AsyncMock)
+    async def test_standard_ocp_bundle_build_passes_explicit_variant(
+        self,
+        mock_stage_release,
+        mock_load_group_config,
+        mock_cmd_assert,
+        mock_locks,
+        mock_jenkins,
+    ):
+        """Standard OCP bundle builds must not rely on Doozer's default variant."""
+        await self._run_pipeline(
+            mock_stage_release,
+            mock_load_group_config,
+            mock_locks,
+            mock_jenkins,
+            product="ocp",
+            group_config_extra={"vars": {"MAJOR": "5", "MINOR": "1"}},
+        )
+
+        self.assertIn('--variant=ocp', mock_cmd_assert.await_args.args[0])
 
     @mock.patch("pyartcd.pipelines.olm_bundle_konflux.jenkins")
     @mock.patch("pyartcd.pipelines.olm_bundle_konflux.locks")

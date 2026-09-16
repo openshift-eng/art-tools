@@ -6,7 +6,7 @@ import os
 import tempfile
 from pathlib import Path
 from unittest import IsolatedAsyncioTestCase
-from unittest.mock import Mock
+from unittest.mock import AsyncMock, Mock, patch
 
 from pyartcd.pipelines.build_microshift import BuildMicroShiftPipeline
 from pyartcd.runtime import Runtime
@@ -37,6 +37,25 @@ class TestBuildMicroShiftPipeline(IsolatedAsyncioTestCase):
         Clean up test fixtures after each test method
         """
         os.environ.pop("GITHUB_TOKEN", None)
+
+    @patch("pyartcd.pipelines.build_microshift.exectools.cmd_assert_async", new_callable=AsyncMock)
+    async def test_rebase_and_build_rpm_uses_microshift_variant(self, mock_cmd):
+        pipeline = BuildMicroShiftPipeline(
+            runtime=self.runtime,
+            group=self.group,
+            assembly=self.assembly,
+            payloads=(),
+            no_rebase=False,
+            force=False,
+            skip_prepare_advisory=False,
+            data_path="https://github.com/openshift-eng/ocp-build-data",
+            slack_client=self.mock_slack_client,
+        )
+        pipeline.runtime.dry_run = True
+
+        await pipeline._rebase_and_build_rpm("4.17.1", "202609161200.p?", custom_payloads=None)
+
+        self.assertIn("--variant=microshift", mock_cmd.await_args.args[0])
 
     def test_pin_nvrs_no_existing_advisory(self):
         """

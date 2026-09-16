@@ -1420,6 +1420,7 @@ class KonfluxOlmBundleBuilder:
                 'operator_nvr': operator_nvr,
                 'operand_nvrs': operand_nvrs,
                 'build_component': build_component,
+                'build_variant': metadata.runtime.variant,
                 'ec_pipeline_url': ec_pipeline_url,
             }
 

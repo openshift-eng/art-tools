@@ -10,6 +10,7 @@ from artcommonlib.util import (
     resolve_konflux_kubeconfig_by_product,
     resolve_konflux_namespace_by_product,
 )
+from artcommonlib.variants import get_build_variant_for_product
 
 from pyartcd import constants, jenkins, locks
 from pyartcd.cli import cli, click_coroutine, pass_runtime
@@ -161,6 +162,15 @@ async def olm_bundle_konflux(
         f'--data-path={data_path}',
     ]
 
+    # Load group config to get product information
+    group_config = await load_group_config(
+        group=group, assembly=assembly, doozer_data_path=data_path, doozer_data_gitref=data_gitref
+    )
+    product = group_config.get('product') or 'ocp'
+    build_variant = get_build_variant_for_product(product)
+    if build_variant is not None:
+        doozer_base_cmd.append(f"--variant={build_variant.value}")
+
     # Create Doozer invocation
     cmd = doozer_base_cmd.copy()
     if only:
@@ -170,12 +180,6 @@ async def olm_bundle_konflux(
     cmd.append('beta:images:konflux:bundle')
     if force:
         cmd.append('--force')
-
-    # Load group config to get product information
-    group_config = await load_group_config(
-        group=group, assembly=assembly, doozer_data_path=data_path, doozer_data_gitref=data_gitref
-    )
-    product = group_config.get('product', 'ocp')
 
     version_str = group_config.get('version')
     if version_str:

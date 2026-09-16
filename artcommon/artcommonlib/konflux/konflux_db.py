@@ -721,6 +721,9 @@ class KonfluxDb:
         Insert a build record into Konflux DB
         """
 
+        if build.build_variant is None:
+            raise ValueError("Build records must include build_variant")
+
         def value_or_null(value):
             """
             Return the value representation to be inserted into the query String.

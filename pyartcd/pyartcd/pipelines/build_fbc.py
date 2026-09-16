@@ -8,6 +8,7 @@ import click
 from artcommonlib import exectools
 from artcommonlib.constants import PRODUCT_KUBECONFIG_MAP
 from artcommonlib.util import resolve_konflux_kubeconfig_by_product, resolve_konflux_namespace_by_product
+from artcommonlib.variants import BuildVariant, get_build_variant_for_product
 
 from pyartcd import constants, jenkins, locks
 from pyartcd.cli import cli, click_coroutine, pass_runtime
@@ -122,6 +123,7 @@ class BuildFbcPipeline:
             group=group, assembly=self.assembly, doozer_data_path=self.data_path, doozer_data_gitref=self.data_gitref
         )
         product = group_config.get('product') or 'ocp'
+        build_variant = get_build_variant_for_product(product)
         if product != 'ocp':
             self._slack_client.bind_channel(SlackClient.DEFAULT_CHANNEL_LAYERED_OPERATORS)
         else:
@@ -142,6 +144,7 @@ class BuildFbcPipeline:
                 release=release_str,
                 commit_message='Rebase FBC segment with release {}'.format(release_str),
                 group_config=group_config,
+                build_variant=build_variant,
             )
 
             # Parse doozer record.log
@@ -158,7 +161,7 @@ class BuildFbcPipeline:
             )
             raise
 
-    async def _run_doozer(self, opts: List[str], only: str, exclude: str):
+    async def _run_doozer(self, opts: List[str], only: str, exclude: str, build_variant: BuildVariant | None = None):
         # If unspecified, assume it's for openshift
         group = f"openshift-{self.version}" if not self.group else self.group
 
@@ -169,6 +172,8 @@ class BuildFbcPipeline:
             f'--assembly={self.assembly}',
             f'--group={group}{"@" + self.data_gitref if self.data_gitref else ""}',
         ]
+        if build_variant is not None:
+            cmd.append(f'--variant={build_variant.value}')
         if self.data_path:
             cmd.append(f'--data-path={self.data_path}')
         if only:
@@ -179,7 +184,13 @@ class BuildFbcPipeline:
         self._logger.info(f'Running doozer command: {" ".join(cmd)}')
         await exectools.cmd_assert_async(cmd)
 
-    async def _rebase_and_build(self, release: str, commit_message: str, group_config: dict):
+    async def _rebase_and_build(
+        self,
+        release: str,
+        commit_message: str,
+        group_config: dict,
+        build_variant: BuildVariant | None = None,
+    ):
         doozer_opts = [
             'beta:fbc:rebase-and-build',
             '--version',
@@ -235,7 +246,7 @@ class BuildFbcPipeline:
         if self.operator_nvrs:
             doozer_opts.extend([nvr for nvr in self.operator_nvrs.split(',')])
         try:
-            await self._run_doozer(doozer_opts, only=self.only, exclude=self.exclude)
+            await self._run_doozer(doozer_opts, only=self.only, exclude=self.exclude, build_variant=build_variant)
         finally:
             # Parse both rebase and build records from the combined operation
             successful_rebase_records, failed_rebase_records = await self._parse_record_log('rebase_fbc_konflux')

@@ -292,6 +292,7 @@ def rebase_and_build_olm_bundle(runtime: Runtime, operator_nvrs: Tuple[str, ...]
                 'rebase_repo_url': convert_remote_git_to_https(rebase_repo_url),
                 'rebase_commitish': rebase_commitish.strip(),
                 'engine': Engine.BREW,
+                'build_variant': runtime.variant,
                 'art_job_url': os.getenv('BUILD_URL', 'n/a'),
                 'build_pipeline_url': record['task_url'],
                 'pipeline_commit': 'n/a',
