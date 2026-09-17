@@ -57,6 +57,8 @@ class SyncCIImagesPipeline:
         skip_waits: bool = False,
         force_run: bool = False,
         update_images_only_when_missing: bool = False,
+        load_disabled: bool = False,
+        live_test_mode: bool = False,
     ) -> None:
         """
         Initialize sync-ci-images pipeline.
@@ -84,7 +86,8 @@ class SyncCIImagesPipeline:
         self.skip_waits = skip_waits
         self.force_run = force_run
         self.update_images_only_when_missing = update_images_only_when_missing
-
+        self.load_disabled = load_disabled
+        self.live_test_mode = live_test_mode
         # Validate parameters
         self._validate_parameters()
 
@@ -512,6 +515,8 @@ class SyncCIImagesPipeline:
             f"--build-system {self.BUILD_SYSTEM} "
             f"--registry-config {auth_file}"
         )
+        if self.load_disabled:
+            doozer_opts += " --load-disabled"
         return doozer_opts
 
     @property
@@ -547,6 +552,8 @@ class SyncCIImagesPipeline:
             mirror_args += "--only-if-missing "
         if self.runtime.dry_run:
             mirror_args += "--dry-run"
+        if self.live_test_mode:
+            mirror_args += "--live-test-mode"
         await self._run_doozer_command(doozer_opts, "images:streams mirror", mirror_args.strip())
 
     async def _trigger_ci_builds(self, doozer_opts: str, auth_file: str) -> None:
@@ -669,6 +676,18 @@ class SyncCIImagesPipeline:
     default=False,
     help='Pass --only-if-missing to doozer mirror (update only missing images)',
 )
+@click.option(
+    '--load-disabled',
+    is_flag=True,
+    default=False,
+    help='Pass --load-disabled to doozer mirror',
+)
+@click.option(
+    '--live-test-mode',
+    is_flag=True,
+    default=False,
+    help='Pass --live-test-mode to doozer mirror',
+)
 @pass_runtime
 @click_coroutine
 async def sync_ci_images_cli(
@@ -682,6 +701,8 @@ async def sync_ci_images_cli(
     skip_waits: bool,
     force_run: bool,
     update_images_only_when_missing: bool,
+    load_disabled: bool,
+    live_test_mode: bool,
 ):
     """
     CLI entrypoint for sync-ci-images pipeline.
@@ -709,6 +730,8 @@ async def sync_ci_images_cli(
         skip_waits=skip_waits,
         force_run=force_run,
         update_images_only_when_missing=update_images_only_when_missing,
+        load_disabled=load_disabled,
+        live_test_mode=live_test_mode,
     )
 
     # Run with per-version lock
