@@ -47,6 +47,14 @@ spec:
     name: exclude-nvr-components
     type: string
   - default: 'false'
+    description: Create a replacement shipment MR and update releases.yml. An open previous MR is closed; replacement is refused if it was merged or production was attempted
+    name: force
+    type: string
+  - default: 'false'
+    description: Mark the shipment MR as test/debug-only, keep it draft, and skip automatic Shipment CI staging. An ART operator must review and mark it ready manually
+    name: test-mode
+    type: string
+  - default: 'false'
     description: Take no action, just echo what the job would have done
     name: dry-run
     type: string
@@ -149,6 +157,12 @@ spec:
             "--assembly", "$(params.assembly)",
             "--create-mr",
         ])
+
+        if "$(params.force)" == "true":
+            cmd.append("--force")
+
+        if "$(params.test-mode)" == "true":
+            cmd.append("--test")
 
         if fbc_pullspecs:
             cmd.extend(["--fbc-pullspecs", fbc_pullspecs])
