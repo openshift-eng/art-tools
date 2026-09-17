@@ -454,3 +454,33 @@ class TestImageSchema(unittest.TestCase):
         error = image_schema.validate('filename', invalid_data)
         self.assertIsNotNone(error)
         self.assertIn("'invalid_arch' is not one of", error)
+
+    def test_validate_with_valid_el_target(self):
+        valid_data = {
+            'from': {},
+            'name': 'my-name',
+            'for_payload': True,
+            'delivery': {'delivery_repo_names': ['foo']},
+            'el_target': 9,
+        }
+        self.assertIsNone(image_schema.validate('filename', valid_data))
+
+    def test_validate_with_el_target_zero_invalid(self):
+        invalid_data = {
+            'from': {},
+            'name': 'my-name',
+            'el_target': 0,
+        }
+        error = image_schema.validate('filename', invalid_data)
+        self.assertIsNotNone(error)
+        self.assertIn("is less than the minimum of 1", error)
+
+    def test_validate_with_el_target_negative_invalid(self):
+        invalid_data = {
+            'from': {},
+            'name': 'my-name',
+            'el_target': -1,
+        }
+        error = image_schema.validate('filename', invalid_data)
+        self.assertIsNotNone(error)
+        self.assertIn("is less than the minimum of 1", error)

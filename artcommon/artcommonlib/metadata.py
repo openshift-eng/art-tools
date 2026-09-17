@@ -115,15 +115,74 @@ class MetadataBase(object):
             targets = [self._default_brew_target()]
         return targets
 
+    @staticmethod
+    def _validate_el_target(value, source: str) -> int:
+        """Validate and convert an ``el_target`` config value to a positive int.
+
+        Accepted inputs:
+        - Plain ints: 8, 9, 10
+        - String representations **without** leading zeros: "8", "9", "10"
+
+        Rejected inputs:
+        - Strings with leading zeros ("09", "08") — ambiguous
+        - Non-numeric strings ("nine", "rhel-9")
+        - Zero or negative numbers
+
+        :param value: The raw config value to validate.
+        :param source: Human-readable label for error messages (e.g. "image config").
+        :raises ValueError: If the value is not a valid RHEL major version.
+        :return: Validated RHEL major version as a positive int.
+        """
+        if isinstance(value, int):
+            if value <= 0:
+                raise ValueError(f'el_target in {source} must be a positive integer, got {value}')
+            return value
+
+        s = str(value)
+        # Reject leading zeros (ambiguous: "09" could be octal or typo)
+        if len(s) > 1 and s[0] == '0':
+            raise ValueError(f'el_target in {source} must not have leading zeros, got {s!r}')
+        # Reject non-numeric strings
+        if not s.isdigit():
+            raise ValueError(f'el_target in {source} must be a positive integer, got {s!r}')
+        result = int(s)
+        if result <= 0:
+            raise ValueError(f'el_target in {source} must be a positive integer, got {value}')
+        return result
+
     def branch_el_target(self) -> int:
         """
-        :return: Determines what rhel-# version the distgit branch is associated with and returns the RHEL version as an int
+        Determines what RHEL version this component targets and returns it as an int.
+
+        Uses a 3-level lookup chain:
+        1. Image/RPM config: ``el_target`` field in the component's own config
+        2. Group config: ``el_target`` field in group.yml (shared default for all components)
+        3. Branch fallback: parses the RHEL version from the distgit branch string
+           (e.g. ``rhaos-4.21-rhel-9`` → 9)
+
+        The explicit ``el_target`` field is intended for layered products where
+        the distgit branch is legacy and only kept to carry the RHEL version.
+
+        :return: RHEL major version as an int (e.g. 8, 9)
         """
+        # 1. Check image/RPM-level config
+        if isinstance(self.config, Model) and 'el_target' in self.config:
+            return self._validate_el_target(self.config['el_target'], 'image config')
+
+        # 2. Check group-level config
+        group_cfg = self.runtime.group_config
+        if isinstance(group_cfg, Model) and 'el_target' in group_cfg:
+            return self._validate_el_target(group_cfg['el_target'], 'group config')
+
+        # 3. Fallback: parse from the distgit branch string
         target_match = re.match(r'.*-rhel-(\d+)(?:-|$)', str(self.branch()))
         if target_match:
             return int(target_match.group(1))
         else:
-            raise IOError(f'Unable to determine rhel version from branch: {self.branch()}')
+            raise IOError(
+                f'Unable to determine RHEL version from branch: {self.branch()}. '
+                f'Set el_target explicitly in the image config or group.yml.'
+            )
 
     def determine_rhel_targets(self) -> list[int]:
         """
