@@ -1,0 +1,21 @@
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: 'art-installer-agent-tenant'
+spec:
+  project: default
+  source:
+    repoURL: 'https://github.com/openshift-eng/art-tools'
+    path: art-cluster/pipelines/config/argocd/project/art-installer-agent-tenant
+    targetRevision: main
+  destination:
+    server: 'https://kubernetes.default.svc'
+    namespace: art-installer-agent-tenant
+  syncPolicy:
+    automated:
+      enabled: true
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true
+      - PruneLast=true
