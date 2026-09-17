@@ -105,9 +105,9 @@ PRODUCT_NAMESPACE_MAP = {
     "oc-mirror": "ocp-art-tenant",
     "ocp": "ocp-art-tenant",
     "openshift-logging": "art-logging-tenant",
+    "openshift-opentelemetry-operator": "art-rhosdt-tenant",
     "quay": "art-quay-tenant",
     "rhmtc": "art-mtc-tenant",
-    "rhosdt": "art-rhosdt-tenant",
     "supplemental-tools": "ocp-art-tenant",
     "zero-trust-workload-identity-manager": "art-oap-tenant",
 }
@@ -206,7 +206,7 @@ PRODUCT_FBC_STAGE_RELEASE_PLAN_MAP: dict[str, dict[tuple[int, int], str]] = {
         (2, 16): "acm-advisory-stage-2-16",
         (5, 0): "acm-advisory-stage-5-0",
     },
-    "rhosdt": {
+    "openshift-opentelemetry-operator": {
         (3, 11): "rhosdt-stage-auto-3-11",
     },
     "zero-trust-workload-identity-manager": {
@@ -229,9 +229,9 @@ PRODUCT_KUBECONFIG_MAP = {
     "oc-mirror": "KONFLUX_SA_KUBECONFIG",
     "ocp": "KONFLUX_SA_KUBECONFIG",
     "openshift-logging": "LOGGING_KONFLUX_SA_KUBECONFIG",
+    "openshift-opentelemetry-operator": "RHOSDT_KONFLUX_SA_KUBECONFIG",
     "quay": "QUAY_KONFLUX_SA_KUBECONFIG",
     "rhmtc": "MTC_KONFLUX_SA_KUBECONFIG",
-    "rhosdt": "RHOSDT_KONFLUX_SA_KUBECONFIG",
     "supplemental-tools": "KONFLUX_SA_KUBECONFIG",
     "zero-trust-workload-identity-manager": "OAP_KONFLUX_SA_KUBECONFIG",
 }
