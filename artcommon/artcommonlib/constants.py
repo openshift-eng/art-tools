@@ -199,6 +199,18 @@ PRODUCT_FBC_STAGE_RELEASE_PLAN_MAP: dict[str, dict[tuple[int, int], str]] = {
         (2, 11): "mce-advisory-stage-2-11",
         (5, 0): "mce-advisory-stage-5-0",
     },
+    "mta": {
+        (8, 0): "mta-advisory-stage-8-0",
+        (8, 1): "mta-advisory-stage-8-1",
+        (8, 2): "mta-advisory-stage-8-2",
+        (8, 3): "mta-advisory-stage-8-3",
+    },
+    "oadp": {
+        (1, 3): "oadp-advisory-stage-1-3",
+        (1, 4): "oadp-advisory-stage-1-4",
+        (1, 5): "oadp-advisory-stage-1-5",
+        (1, 6): "oadp-advisory-stage-1-6",
+    },
     "quay": {
         (3, 17): "quay-advisory-stage-3-17",
         (3, 18): "quay-advisory-stage-3-18",
@@ -206,6 +218,9 @@ PRODUCT_FBC_STAGE_RELEASE_PLAN_MAP: dict[str, dict[tuple[int, int], str]] = {
     "rhacm2": {
         (2, 16): "acm-advisory-stage-2-16",
         (5, 0): "acm-advisory-stage-5-0",
+    },
+    "rhmtc": {
+        (1, 8): "mtc-advisory-stage-1-8",
     },
     "openshift-opentelemetry-operator": {
         (3, 11): "rhosdt-stage-auto-3-11",
