@@ -20,6 +20,7 @@ class RhcosNodeImagePostBuildPipeline:
 
     _RELEASE_PATTERN = re.compile(r'^(?P<version>\d+\.\d+)-(?P<rhel_version>\d+\.\d+)$')
     _DIGEST_PULLSPEC_PATTERN = re.compile(rf'^{re.escape(RHCOS_IMAGE_REPO)}@sha256:[0-9a-f]{{64}}$')
+    _INTEGRATION_TEST_TIMEOUT = 90 * 60
 
     def __init__(self, runtime: Runtime, release: str, node_image: str, extensions_image: str):
         self.runtime = runtime
@@ -139,7 +140,7 @@ class RhcosNodeImagePostBuildPipeline:
                 'EXTENSIONS_IMAGE': self.extensions_image,
             },
         )
-        result = client.wait_for_build('build-node-image', build_number)
+        result = client.wait_for_build('build-node-image', build_number, timeout=self._INTEGRATION_TEST_TIMEOUT)
         if result['result'] != 'SUCCESS':
             self._update_build_description(self._build_description(result))
             raise RuntimeError(
