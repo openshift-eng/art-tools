@@ -1201,13 +1201,16 @@ class KonfluxOlmBundleBuilder:
                             f"pipelinerun {pipelinerun_name}"
                         )
 
-                    # Sync the bundle to art-images-share
-                    await sync_to_quay(
-                        f"{image_pullspec.split(':')[0]}@{image_digest}", KONFLUX_DEFAULT_IMAGE_SHARE_REPO
-                    )
+                    # Sync the bundle to art-images-share (OCP groups only)
+                    is_ocp_group = self.group.startswith("openshift-")
+                    if is_ocp_group:
+                        await sync_to_quay(
+                            f"{image_pullspec.split(':')[0]}@{image_digest}", KONFLUX_DEFAULT_IMAGE_SHARE_REPO
+                        )
+                    else:
+                        logger.info("Skipping bundle sync to art-images-share for non-OCP group '%s'", self.group)
 
                     # Run EC verification after a successful bundle build
-                    is_ocp_group = self.group.startswith("openshift-")
                     if outcome is KonfluxBuildOutcome.SUCCESS and is_ocp_group and not self.skip_ec_verify:
                         app_name = util.konflux_application_name(metadata.runtime.group)
                         component_name = metadata.get_konflux_bundle_component_name(app_name)

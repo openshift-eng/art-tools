@@ -1948,8 +1948,12 @@ class KonfluxFbcBuilder:
                     record["message"] = "Success"
                     record["status"] = 0
 
-                    # Sync FBC related images to art-images-share
-                    if self.assembly == "stream":
+                    # Sync FBC related images to art-images-share (OCP groups only)
+                    if not self.group.startswith("openshift-"):
+                        logger.info(
+                            "Skipping FBC related images sync to art-images-share for non-OCP group '%s'", self.group
+                        )
+                    elif self.assembly == "stream":
                         if not self.dry_run:
                             try:
                                 results = pipelinerun_dict.get('status', {}).get('results', [])
