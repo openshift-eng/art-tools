@@ -122,6 +122,7 @@ PRODUCT_BASE_IMAGE_KONFLUX_RELEASE_MAP = {
     "oadp": ("oadp-images-base-silent", "oadp-images-base"),
     "logging": ("logging-images-base-silent", "logging-images-base"),
     "openshift-logging": ("logging-images-base-silent", "logging-images-base"),
+    "openshift-opentelemetry-operator": ("rhosdt-images-base-silent", "rhosdt-images-base"),
     "multicluster-engine": ("acm-images-base-silent", "acm-images-base"),
     "rhacm2": ("acm-images-base-silent", "acm-images-base"),
     "external-secrets-operator": ("oap-eso-images-base-silent", "oap-images-base"),
