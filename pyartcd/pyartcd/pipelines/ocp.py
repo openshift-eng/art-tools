@@ -15,7 +15,12 @@ from pyartcd import record as record_util
 from pyartcd.cli import cli, click_coroutine, pass_runtime
 from pyartcd.locks import Lock
 from pyartcd.runtime import Runtime
-from pyartcd.util import get_group_images, increment_fail_counter, mass_rebuild_score, reset_fail_counter
+from pyartcd.util import (
+    get_group_images,
+    increment_fail_counter,
+    mass_rebuild_score,
+    reset_fail_counter,
+)
 
 
 class BuildPlan:

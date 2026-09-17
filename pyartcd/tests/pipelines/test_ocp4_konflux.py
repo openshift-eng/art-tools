@@ -2,113 +2,126 @@
 
 import os
 import unittest
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, patch
 
-from pyartcd.pipelines.ocp4_konflux import KonfluxOcpPipeline
+from artcommonlib.variants import BuildVariant
+from pyartcd.counter_models import BuildFailCounterContext
+from pyartcd.util import update_build_fail_counters
 
 
 class TestUpdateBuildFailCounters(unittest.IsolatedAsyncioTestCase):
-    """
-    Tests for KonfluxOcpPipeline.update_build_fail_counters().
+    """Tests for the shared Konflux build counter utility used by OCP."""
 
-    Focus: the early-return path (all failures are infra/parent-dep) must still
-    reset counters for successfully built images before returning.
-    """
-
-    def _make_pipeline(self, assembly='stream', version='4.21'):
-        runtime = MagicMock()
-        runtime.doozer_working = '/tmp/doozer-working'
-        runtime.new_slack_client.return_value = MagicMock()
-        with patch('pyartcd.pipelines.ocp4_konflux.util.default_release_suffix', return_value='202408190000'):
-            pipeline = KonfluxOcpPipeline(
-                runtime=runtime,
+    async def _update_build_fail_counters(
+        self,
+        assembly,
+        group,
+        built_images,
+        failed_images,
+        record_log,
+        reset_counter,
+        increment_counter,
+    ):
+        failed_entries = {
+            entry["name"]: entry for entry in record_log.get("image_build_konflux", []) if int(entry["status"])
+        }
+        await update_build_fail_counters(
+            context=BuildFailCounterContext(
+                group=group,
                 assembly=assembly,
-                version=version,
-                image_build_strategy='all',
-                rpm_build_strategy='none',
-                build_priority='auto',
-                data_path='https://github.com/openshift-eng/ocp-build-data',
+                build_variant=BuildVariant.OCP,
+                jenkins_url=os.getenv("BUILD_URL"),
+                built_images=built_images,
+                failed_images=failed_images,
+                failed_entries=failed_entries,
+                reset_counter=reset_counter,
+                increment_counter=increment_counter,
             )
-        return pipeline
+        )
 
-    def _infra_failure_record_log(self, failed_image: str):
-        """Record log where the sole failure has task_id=n/a (infra failure)."""
-        return {
-            'image_build_konflux': [
+    @patch.dict(os.environ, {"BUILD_URL": "https://jenkins.example.com/job/1"})
+    async def test_infra_failure_still_resets_built_image_counters(self):
+        """Infra failures do not prevent successful images from being reset."""
+        mock_increment = AsyncMock()
+        mock_reset = AsyncMock()
+        built_images = ["driver-toolkit", "base-images"]
+        failed_images = ["enterprise-cluster-capacity"]
+        record_log = {
+            "image_build_konflux": [
                 {
-                    'name': failed_image,
-                    'status': '1',
-                    'task_id': 'n/a',
-                    'task_url': 'n/a',
-                    'message': 'infrastructure failure',
-                    'outcome': '',
-                    'nvrs': '',
-                    'build_pipeline_url': '',
+                    "name": "enterprise-cluster-capacity",
+                    "status": "1",
+                    "task_id": "n/a",
+                    "task_url": "n/a",
+                    "message": "infrastructure failure",
+                    "outcome": "",
+                    "nvrs": "",
+                    "build_pipeline_url": "",
                 }
             ]
         }
 
-    @patch.dict(os.environ, {'BUILD_URL': 'https://jenkins.example.com/job/1'})
-    @patch('pyartcd.pipelines.ocp4_konflux.reset_fail_counter', new_callable=AsyncMock)
-    @patch('pyartcd.pipelines.ocp4_konflux.increment_fail_counter', new_callable=AsyncMock)
-    async def test_infra_failure_still_resets_built_image_counters(self, mock_increment, mock_reset):
-        """
-        When all failures are infra (task_id=n/a), the early return must NOT skip
-        resetting counters for successfully built images.
+        await self._update_build_fail_counters(
+            "stream",
+            "openshift-4.21",
+            built_images,
+            failed_images,
+            record_log,
+            mock_reset,
+            mock_increment,
+        )
 
-        Regression test for ART-22800.
-        """
-        pipeline = self._make_pipeline()
-
-        built_images = ['driver-toolkit', 'base-images']
-        failed_images = ['enterprise-cluster-capacity']
-        record_log = self._infra_failure_record_log('enterprise-cluster-capacity')
-
-        await pipeline.update_build_fail_counters(built_images, failed_images, record_log)
-
-        # reset_fail_counter must be called for each built image × 3 counter types
         self.assertEqual(mock_reset.call_count, len(built_images) * 3)
         reset_keys = {call.args[0] for call in mock_reset.call_args_list}
         expected_keys = {
-            f'count:{ct}:konflux:openshift-4.21:{img}'
-            for img in built_images
-            for ct in ('build-failure', 'ec-failure', 'release-failure')
+            f"count:{counter_type}:konflux:openshift-4.21:{image}"
+            for image in built_images
+            for counter_type in ("build-failure", "ec-failure", "release-failure")
         }
         self.assertEqual(reset_keys, expected_keys)
-
-        # increment_fail_counter must NOT be called (infra failure, no real build attempted)
         mock_increment.assert_not_called()
 
-    @patch.dict(os.environ, {'BUILD_URL': 'https://jenkins.example.com/job/1'})
-    @patch('pyartcd.pipelines.ocp4_konflux.reset_fail_counter', new_callable=AsyncMock)
-    @patch('pyartcd.pipelines.ocp4_konflux.increment_fail_counter', new_callable=AsyncMock)
-    async def test_non_stream_assembly_skips_all_counters(self, mock_increment, mock_reset):
-        """Non-stream assemblies must return immediately without touching any counters."""
-        pipeline = self._make_pipeline(assembly='4.21.3')
+    async def test_non_stream_assembly_skips_all_counters(self):
+        """Non-stream assemblies do not update counters."""
+        mock_increment = AsyncMock()
+        mock_reset = AsyncMock()
 
-        await pipeline.update_build_fail_counters(['some-image'], [], {})
+        await self._update_build_fail_counters(
+            "4.21.3",
+            "openshift-4.21",
+            ["some-image"],
+            [],
+            {},
+            mock_reset,
+            mock_increment,
+        )
 
         mock_reset.assert_not_called()
         mock_increment.assert_not_called()
 
-    @patch.dict(os.environ, {'BUILD_URL': 'https://jenkins.example.com/job/1'})
-    @patch('pyartcd.pipelines.ocp4_konflux.reset_fail_counter', new_callable=AsyncMock)
-    @patch('pyartcd.pipelines.ocp4_konflux.increment_fail_counter', new_callable=AsyncMock)
-    async def test_no_built_no_failed_images_noop(self, mock_increment, mock_reset):
+    async def test_no_built_no_failed_images_noop(self):
         """Empty built and failed lists produce no counter operations."""
-        pipeline = self._make_pipeline()
+        mock_increment = AsyncMock()
+        mock_reset = AsyncMock()
 
-        await pipeline.update_build_fail_counters([], [], {})
+        await self._update_build_fail_counters(
+            "stream",
+            "openshift-4.21",
+            [],
+            [],
+            {},
+            mock_reset,
+            mock_increment,
+        )
 
         mock_reset.assert_not_called()
         mock_increment.assert_not_called()
 
     @patch.dict(os.environ, {"BUILD_URL": "https://jenkins.example.com/job/1"})
-    @patch("pyartcd.pipelines.ocp4_konflux.reset_fail_counter", new_callable=AsyncMock)
-    @patch("pyartcd.pipelines.ocp4_konflux.increment_fail_counter", new_callable=AsyncMock)
-    async def test_build_failure_counter_stores_ocp_variant(self, mock_increment, mock_reset):
-        """OCP Konflux build failures include the OCP build variant metadata."""
-        pipeline = self._make_pipeline()
+    async def test_build_failure_counter_stores_ocp_variant(self):
+        """OCP build failures include the OCP build variant metadata."""
+        mock_increment = AsyncMock()
+        mock_reset = AsyncMock()
         record_log = {
             "image_build_konflux": [
                 {
@@ -123,10 +136,18 @@ class TestUpdateBuildFailCounters(unittest.IsolatedAsyncioTestCase):
             ]
         }
 
-        await pipeline.update_build_fail_counters([], ["ironic"], record_log)
+        await self._update_build_fail_counters(
+            "stream",
+            "openshift-4.21",
+            [],
+            ["ironic"],
+            record_log,
+            mock_reset,
+            mock_increment,
+        )
 
         self.assertEqual(mock_increment.call_args.kwargs["build_variant"], "ocp")
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     unittest.main()

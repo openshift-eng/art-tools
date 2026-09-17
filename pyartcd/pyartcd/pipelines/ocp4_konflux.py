@@ -36,7 +36,9 @@ from artcommonlib.variants import BuildVariant
 
 from pyartcd import constants, jenkins, locks, util
 from pyartcd import record as record_util
+from pyartcd.build_strategy import BuildStrategy
 from pyartcd.cli import cli, click_coroutine, pass_runtime
+from pyartcd.counter_models import BuildFailCounterContext, RebaseCounterContext
 from pyartcd.locks import Lock
 from pyartcd.runtime import Runtime
 from pyartcd.util import (
@@ -63,16 +65,6 @@ RHCOS_ART_IMAGE_KEYS = frozenset(
         'rhcos-node-extensions-rhel10',
     }
 )
-
-
-class BuildStrategy(Enum):
-    ALL = 'all'
-    ONLY = 'only'
-    EXCEPT = 'except'
-    NONE = 'none'
-
-    def __str__(self):
-        return self.value
 
 
 class BuildPlan:
@@ -200,42 +192,6 @@ class KonfluxOcpPipeline:
         elif build_strategy == BuildStrategy.EXCEPT:
             return [f'--{kind}=', f'--exclude={",".join(excludes)}']
 
-    async def update_build_fail_counters(self, built_images, failed_images, record_log):
-        """
-        Update Redis failure counters after Konflux build run.
-
-        Categorizes failures into three types with separate Redis key patterns:
-        - Build failures:              count:build-failure:konflux:{group}:{image}
-        - EC (ITS) failures:           count:ec-failure:konflux:{group}:{image}
-        - Base image release failures: count:release-failure:konflux:{group}:{image}
-
-        Successfully built images reset all three counter types.
-
-        Infrastructure failures (where builds never started due to API/cluster issues)
-        are detected and skip individual image counter updates to avoid false inflation.
-        """
-        if self.assembly != 'stream':
-            return
-
-        group = f'openshift-{self.version}'
-        job_url = os.getenv('BUILD_URL')
-        # Build a lookup of failed entries for metadata
-        failed_entries = {
-            entry['name']: entry for entry in record_log.get('image_build_konflux', []) if int(entry['status'])
-        }
-        await update_build_fail_counters(
-            group=group,
-            assembly=self.assembly,
-            build_variant=BuildVariant.OCP.value,
-            jenkins_url=job_url,
-            built_images=built_images,
-            failed_images=failed_images,
-            failed_entries=failed_entries,
-            reset_counter=reset_fail_counter,
-            increment_counter=increment_fail_counter,
-            logger=LOGGER,
-        )
-
     def building_images(self):
         """
         Returns True if images are being built, False otherwise.
@@ -286,22 +242,24 @@ class KonfluxOcpPipeline:
         if not self.runtime.dry_run:
             cmd.append('--push')
 
+        rebase_counter_context = RebaseCounterContext(
+            group=f'openshift-{self.version}',
+            assembly=self.assembly,
+            build_variant=BuildVariant.OCP,
+            jenkins_url=os.getenv('BUILD_URL'),
+            image_build_strategy=self.build_plan.image_build_strategy,
+            group_images=self.group_images,
+            requested_images=[],
+            images_excluded=self.build_plan.images_excluded,
+            state_path=Path(self.runtime.doozer_working, "state.yaml"),
+            reset_counter=reset_fail_counter,
+            increment_counter=increment_fail_counter,
+        )
+
         try:
             await exectools.cmd_assert_async(cmd)
             await update_rebase_fail_counters(
-                group=f'openshift-{self.version}',
-                assembly=self.assembly,
-                build_variant=BuildVariant.OCP.value,
-                jenkins_url=os.getenv('BUILD_URL'),
-                image_build_strategy=self.build_plan.image_build_strategy.value,
-                group_images=self.group_images,
-                requested_images=[],
-                images_excluded=self.build_plan.images_excluded,
-                state_path=Path(self.runtime.doozer_working, "state.yaml"),
-                failed_images=[],
-                skipped_due_to_parent=None,
-                reset_counter=reset_fail_counter,
-                increment_counter=increment_fail_counter,
+                context=rebase_counter_context,
             )
 
         except ChildProcessError:
@@ -324,21 +282,9 @@ class KonfluxOcpPipeline:
                     ','.join(skipped_due_to_parent),
                 )
 
-            await update_rebase_fail_counters(
-                group=f'openshift-{self.version}',
-                assembly=self.assembly,
-                build_variant=BuildVariant.OCP.value,
-                jenkins_url=os.getenv('BUILD_URL'),
-                image_build_strategy=self.build_plan.image_build_strategy.value,
-                group_images=self.group_images,
-                requested_images=[],
-                images_excluded=self.build_plan.images_excluded,
-                state_path=Path(self.runtime.doozer_working, "state.yaml"),
-                failed_images=failed_images,
-                skipped_due_to_parent=skipped_due_to_parent,
-                reset_counter=reset_fail_counter,
-                increment_counter=increment_fail_counter,
-            )
+            rebase_counter_context.failed_images = failed_images
+            rebase_counter_context.skipped_due_to_parent = skipped_due_to_parent
+            await update_rebase_fail_counters(context=rebase_counter_context)
 
             # Exclude images that failed or were skipped due to parent from the build step
             if self.build_plan.image_build_strategy == BuildStrategy.ALL:
@@ -460,7 +406,22 @@ class KonfluxOcpPipeline:
         if description_parts:
             jenkins.update_description('<br/>'.join(description_parts) + '<br/>')
 
-        await self.update_build_fail_counters(built_images, failed_images, record_log)
+        failed_entries = {
+            entry['name']: entry for entry in record_log.get('image_build_konflux', []) if int(entry['status'])
+        }
+        await update_build_fail_counters(
+            context=BuildFailCounterContext(
+                group=f'openshift-{self.version}',
+                assembly=self.assembly,
+                build_variant=BuildVariant.OCP,
+                jenkins_url=os.getenv('BUILD_URL'),
+                built_images=built_images,
+                failed_images=failed_images,
+                failed_entries=failed_entries,
+                reset_counter=reset_fail_counter,
+                increment_counter=increment_fail_counter,
+            )
+        )
 
         if not built_images:
             # Nothing to do, skipping build-sync

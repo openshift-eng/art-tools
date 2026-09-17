@@ -1,12 +1,111 @@
+import asyncio
 import tempfile
 from pathlib import Path
 from unittest import IsolatedAsyncioTestCase
 from unittest.mock import AsyncMock, MagicMock, patch
 
+from artcommonlib.variants import BuildVariant
+from pyartcd.build_strategy import BuildStrategy
+from pyartcd.counter_models import (
+    BaseCounterModel,
+    BuildFailCounterContext,
+    FailedImageCategories,
+    FailedImageCounterContext,
+    RebaseCounterContext,
+)
+from pydantic import ValidationError
+
 from pyartcd import util
 
 
 class TestUtil(IsolatedAsyncioTestCase):
+    def test_fail_counter_helpers_are_defined_in_pyartcd_util(self):
+        """Failure counter helpers are owned by the pyartcd utility module."""
+        self.assertEqual(util.increment_fail_counter.__module__, util.__name__)
+        self.assertEqual(util.reset_fail_counter.__module__, util.__name__)
+
+    @patch("pyartcd.util.redis.set_value", new_callable=AsyncMock)
+    @patch("pyartcd.util.redis.call", new_callable=AsyncMock)
+    async def test_increment_fail_counter_new(self, mock_call, mock_set):
+        """Incrementing a counter stores its non-null metadata."""
+        mock_call.return_value = 1
+
+        await util.increment_fail_counter("count:test:branch", url="http://j/1", nvr="test-1.0-1")
+
+        mock_call.assert_called_once_with("incr", "count:test:branch:failure")
+        mock_set.assert_any_call(key="count:test:branch:url", value="http://j/1")
+        mock_set.assert_any_call(key="count:test:branch:nvr", value="test-1.0-1")
+
+    @patch("pyartcd.util.redis.call", new_callable=AsyncMock)
+    async def test_increment_fail_counter_existing(self, mock_call):
+        """Incrementing a counter without metadata only increments the failure field."""
+        mock_call.return_value = 6
+
+        await util.increment_fail_counter("count:test:branch")
+
+        mock_call.assert_called_once_with("incr", "count:test:branch:failure")
+
+    @patch("pyartcd.util.redis.call", new_callable=AsyncMock)
+    async def test_increment_fail_counter_limits_concurrency(self, mock_call):
+        """Counter increments are limited to fifty concurrent Redis calls."""
+        active_calls = 0
+        max_active_calls = 0
+
+        async def tracked_call(*args, **kwargs):
+            nonlocal active_calls, max_active_calls
+            active_calls += 1
+            max_active_calls = max(max_active_calls, active_calls)
+            await asyncio.sleep(0.01)
+            active_calls -= 1
+
+        mock_call.side_effect = tracked_call
+
+        await asyncio.gather(*(util.increment_fail_counter(f"count:test:branch:{index}") for index in range(100)))
+
+        self.assertLessEqual(max_active_calls, 50)
+
+    @patch("pyartcd.util.redis.delete_keys_by_pattern", new_callable=AsyncMock)
+    async def test_reset_fail_counter(self, mock_delete):
+        """Resetting a counter removes all keys in its Redis branch."""
+        await util.reset_fail_counter("count:test:branch")
+
+        mock_delete.assert_called_once_with("count:test:branch:*")
+
+    def test_counter_contexts_share_base_model(self):
+        """Counter contexts inherit their shared counter fields."""
+        self.assertTrue(issubclass(RebaseCounterContext, BaseCounterModel))
+        self.assertTrue(issubclass(FailedImageCounterContext, BaseCounterModel))
+        self.assertTrue(issubclass(BuildFailCounterContext, BaseCounterModel))
+
+    def test_rebase_counter_context_requires_build_variant(self):
+        """Rebase counters require a build variant."""
+        with self.assertRaises(ValidationError):
+            self._rebase_counter_context(build_variant=None)
+
+    def test_counter_context_normalizes_build_variant(self):
+        """Counter contexts normalize build variant values to BuildVariant."""
+        context = self._rebase_counter_context(build_variant="ocp")
+
+        self.assertIs(context.build_variant, BuildVariant.OCP)
+
+    @staticmethod
+    def _rebase_counter_context(**overrides):
+        context = {
+            "group": "openshift-4.18",
+            "assembly": "stream",
+            "build_variant": "ocp",
+            "jenkins_url": "https://jenkins/1",
+            "image_build_strategy": BuildStrategy.ALL,
+            "group_images": [],
+            "requested_images": [],
+            "images_excluded": [],
+            "state_path": None,
+            "reset_counter": AsyncMock(),
+            "increment_counter": AsyncMock(),
+        }
+        context.update(overrides)
+        return RebaseCounterContext(**context)
+
     def test_isolate_el_version_in_release(self):
         # Existing .elN patterns
         self.assertEqual(util.isolate_el_version_in_release('1.2.3-y.p.p1.assembly.4.9.99.el7'), 7)
@@ -255,26 +354,6 @@ class TestUtil(IsolatedAsyncioTestCase):
         self.assertEqual(util.get_rpm_if_pinned_directly(releases_config, '4.11.1', 'foo'), dict())
         self.assertEqual(util.get_rpm_if_pinned_directly(releases_config, '4.11.0', 'bar'), dict())
 
-    @patch("artcommonlib.redis.set_value", new_callable=AsyncMock)
-    @patch("artcommonlib.redis.call", new_callable=AsyncMock)
-    async def test_increment_fail_counter_new(self, mock_call, mock_set):
-        mock_call.return_value = 1
-        await util.increment_fail_counter('count:test:branch', url='http://j/1', nvr='test-1.0-1')
-        mock_call.assert_called_once_with('incr', 'count:test:branch:failure')
-        mock_set.assert_any_call(key='count:test:branch:url', value='http://j/1')
-        mock_set.assert_any_call(key='count:test:branch:nvr', value='test-1.0-1')
-
-    @patch("artcommonlib.redis.call", new_callable=AsyncMock)
-    async def test_increment_fail_counter_existing(self, mock_call):
-        mock_call.return_value = 6
-        await util.increment_fail_counter('count:test:branch')
-        mock_call.assert_called_once_with('incr', 'count:test:branch:failure')
-
-    @patch("artcommonlib.redis.delete_keys_by_pattern", new_callable=AsyncMock)
-    async def test_reset_fail_counter(self, mock_delete):
-        await util.reset_fail_counter('count:test:branch')
-        mock_delete.assert_called_once_with('count:test:branch:*')
-
     def test_get_failed_images_for_counter_updates_preserves_mixed_failure_behavior(self):
         """Mixed infrastructure failures preserve the existing counter behavior."""
         failed_images = ["real-failure", "infrastructure-failure", "parent-failure"]
@@ -330,10 +409,19 @@ class TestUtil(IsolatedAsyncioTestCase):
         self.assertEqual(categories.its, ["its-failure"])
         self.assertEqual(categories.release, ["release-failure"])
 
+    def test_failed_image_categories_validate_image_lists(self):
+        """Failure categories reject values that are not image lists."""
+        with self.assertRaises(ValidationError):
+            FailedImageCategories(
+                build="build-failure",
+                its=[],
+                release=[],
+            )
+
     @patch("pyartcd.util.increment_fail_counter", new_callable=AsyncMock)
     async def test_increment_failed_image_counters(self, mock_increment):
         """Failure categories map to their counter and pipeline metadata."""
-        categories = util.FailedImageCategories(
+        categories = FailedImageCategories(
             build=["build-failure"],
             its=["its-failure"],
             release=["release-failure"],
@@ -354,12 +442,14 @@ class TestUtil(IsolatedAsyncioTestCase):
         }
 
         await util.increment_failed_image_counters(
-            group="openshift-4.18",
-            build_variant="ocp",
-            jenkins_url="https://jenkins/1",
-            failure_categories=categories,
-            failed_entries=failed_entries,
-            increment_counter=mock_increment,
+            context=FailedImageCounterContext(
+                group="openshift-4.18",
+                build_variant=BuildVariant.OCP,
+                jenkins_url="https://jenkins/1",
+                failure_categories=categories,
+                failed_entries=failed_entries,
+                increment_counter=mock_increment,
+            )
         )
 
         self.assertEqual(
@@ -409,18 +499,20 @@ class TestUtil(IsolatedAsyncioTestCase):
             },
         }
 
-        await util.update_build_fail_counters(
-            group="openshift-4.18",
-            assembly="stream",
-            build_variant="ocp",
-            jenkins_url="https://jenkins/1",
-            built_images=["successful-image"],
-            failed_images=failed_images,
-            failed_entries=failed_entries,
-            reset_counter=mock_reset,
-            increment_counter=mock_increment,
-            logger=mock_logger,
-        )
+        with patch.object(util, "logger", mock_logger):
+            await util.update_build_fail_counters(
+                context=BuildFailCounterContext(
+                    group="openshift-4.18",
+                    assembly="stream",
+                    build_variant=BuildVariant.OCP,
+                    jenkins_url="https://jenkins/1",
+                    built_images=["successful-image"],
+                    failed_images=failed_images,
+                    failed_entries=failed_entries,
+                    reset_counter=mock_reset,
+                    increment_counter=mock_increment,
+                )
+            )
 
         self.assertEqual(
             {call.args[0] for call in mock_reset.await_args_list},
@@ -446,19 +538,14 @@ class TestUtil(IsolatedAsyncioTestCase):
         mock_increment = AsyncMock()
 
         await util.update_rebase_fail_counters(
-            group="openshift-4.18",
-            assembly="stream",
-            build_variant="ocp",
-            jenkins_url="https://jenkins/1",
-            image_build_strategy="all",
-            group_images=["successful-image", "failed-image", "skipped-image"],
-            requested_images=[],
-            images_excluded=[],
-            state_path=None,
-            failed_images=["failed-image"],
-            skipped_due_to_parent=["skipped-image"],
-            reset_counter=mock_reset,
-            increment_counter=mock_increment,
+            context=self._rebase_counter_context(
+                image_build_strategy=BuildStrategy.ALL,
+                group_images=["successful-image", "failed-image", "skipped-image"],
+                reset_counter=mock_reset,
+                increment_counter=mock_increment,
+                failed_images=["failed-image"],
+                skipped_due_to_parent=["skipped-image"],
+            ),
         )
 
         mock_reset.assert_awaited_once_with("count:rebase-failure:konflux:openshift-4.18:successful-image")
@@ -474,23 +561,22 @@ class TestUtil(IsolatedAsyncioTestCase):
         mock_increment = AsyncMock()
 
         await util.update_rebase_fail_counters(
-            group="openshift-4.18",
-            assembly="4.18.1",
-            build_variant="ocp",
-            jenkins_url="https://jenkins/1",
-            image_build_strategy="all",
-            group_images=["successful-image"],
-            requested_images=[],
-            images_excluded=[],
-            state_path=None,
-            failed_images=["failed-image"],
-            skipped_due_to_parent=None,
-            reset_counter=mock_reset,
-            increment_counter=mock_increment,
+            context=self._rebase_counter_context(
+                assembly="4.18.1",
+                image_build_strategy=BuildStrategy.ALL,
+                group_images=["successful-image"],
+                reset_counter=mock_reset,
+                increment_counter=mock_increment,
+            ),
         )
 
         mock_reset.assert_not_awaited()
         mock_increment.assert_not_awaited()
+
+    async def test_update_rebase_fail_counters_rejects_string_strategy(self):
+        """Rebase counters require a validated BuildStrategy value."""
+        with self.assertRaises(ValidationError):
+            self._rebase_counter_context(image_build_strategy="all")
 
     async def test_update_rebase_fail_counters_only_strategy_uses_state(self):
         """The ONLY strategy resets successful images recorded in rebase state."""
@@ -501,19 +587,15 @@ class TestUtil(IsolatedAsyncioTestCase):
             state_path = Path(tempdir, "state.yaml")
             state_path.write_text("images:konflux:rebase:\n  images:\n    parent-image:\n      status: success\n")
             await util.update_rebase_fail_counters(
-                group="openshift-4.18",
-                assembly="stream",
-                build_variant="ocp",
-                jenkins_url="https://jenkins/1",
-                image_build_strategy="only",
-                group_images=["requested-image"],
-                requested_images=["requested-image"],
-                images_excluded=[],
-                state_path=state_path,
-                failed_images=["failed-image"],
-                skipped_due_to_parent=None,
-                reset_counter=mock_reset,
-                increment_counter=mock_increment,
+                context=self._rebase_counter_context(
+                    image_build_strategy=BuildStrategy.ONLY,
+                    group_images=["requested-image"],
+                    requested_images=["requested-image"],
+                    state_path=state_path,
+                    failed_images=["failed-image"],
+                    reset_counter=mock_reset,
+                    increment_counter=mock_increment,
+                ),
             )
 
         mock_reset.assert_awaited_once_with("count:rebase-failure:konflux:openshift-4.18:parent-image")
@@ -524,19 +606,13 @@ class TestUtil(IsolatedAsyncioTestCase):
         mock_increment = AsyncMock()
 
         await util.update_rebase_fail_counters(
-            group="openshift-4.18",
-            assembly="stream",
-            build_variant="ocp",
-            jenkins_url="https://jenkins/1",
-            image_build_strategy="except",
-            group_images=["healthy-image", "excluded-image"],
-            requested_images=[],
-            images_excluded=["excluded-image"],
-            state_path=None,
-            failed_images=[],
-            skipped_due_to_parent=None,
-            reset_counter=mock_reset,
-            increment_counter=mock_increment,
+            context=self._rebase_counter_context(
+                image_build_strategy=BuildStrategy.EXCEPT,
+                group_images=["healthy-image", "excluded-image"],
+                images_excluded=["excluded-image"],
+                reset_counter=mock_reset,
+                increment_counter=mock_increment,
+            ),
         )
 
         mock_reset.assert_awaited_once_with("count:rebase-failure:konflux:openshift-4.18:healthy-image")
@@ -633,34 +709,35 @@ class TestUtil(IsolatedAsyncioTestCase):
         def mock_get_keys_side_effect(pattern):
             if pattern.endswith(":*:failure"):
                 return [
-                    "count:rebase-failure:konflux:openshift-4.21:shared-image:failure",
-                    "count:rebase-failure:konflux:okd-4.21:shared-image:failure",
+                    "count:rebase-failure:konflux:openshift-4.21:ocp-image:failure",
+                    "count:rebase-failure:konflux:okd-4.21:okd-image:failure",
                 ]
-            if "openshift-4.21:shared-image" in pattern:
+            if "openshift-4.21:ocp-image" in pattern:
                 return [
-                    "count:rebase-failure:konflux:openshift-4.21:shared-image:failure",
-                    "count:rebase-failure:konflux:openshift-4.21:shared-image:build_variant",
+                    "count:rebase-failure:konflux:openshift-4.21:ocp-image:failure",
+                    "count:rebase-failure:konflux:openshift-4.21:ocp-image:build_variant",
                 ]
-            if "okd-4.21:shared-image" in pattern:
+            if "okd-4.21:okd-image" in pattern:
                 return [
-                    "count:rebase-failure:konflux:okd-4.21:shared-image:failure",
-                    "count:rebase-failure:konflux:okd-4.21:shared-image:build_variant",
+                    "count:rebase-failure:konflux:okd-4.21:okd-image:failure",
+                    "count:rebase-failure:konflux:okd-4.21:okd-image:build_variant",
                 ]
             return []
 
         mock_get_keys.side_effect = mock_get_keys_side_effect
         mock_get_value.side_effect = lambda key: {
-            "count:rebase-failure:konflux:openshift-4.21:shared-image:failure": "3",
-            "count:rebase-failure:konflux:openshift-4.21:shared-image:build_variant": "ocp",
-            "count:rebase-failure:konflux:okd-4.21:shared-image:failure": "2",
-            "count:rebase-failure:konflux:okd-4.21:shared-image:build_variant": "okd",
+            "count:rebase-failure:konflux:openshift-4.21:ocp-image:failure": "3",
+            "count:rebase-failure:konflux:openshift-4.21:ocp-image:build_variant": "ocp",
+            "count:rebase-failure:konflux:okd-4.21:okd-image:failure": "2",
+            "count:rebase-failure:konflux:okd-4.21:okd-image:build_variant": "okd",
         }.get(key)
 
         result = await util.get_rebase_failures("*", ["rebase-failure"], ["konflux"], build_variant="okd")
 
-        self.assertEqual(set(result), {"shared-image"})
-        self.assertEqual(result["shared-image"]["failure_count"], 2)
-        self.assertEqual(result["shared-image"]["build_variant"], "okd")
+        self.assertEqual(set(result), {"okd-image"})
+        self.assertNotIn("ocp-image", result)
+        self.assertEqual(result["okd-image"]["failure_count"], 2)
+        self.assertEqual(result["okd-image"]["build_variant"], "okd")
 
     @patch("artcommonlib.redis.get_keys", new_callable=AsyncMock)
     async def test_get_counter_failures_redis_error(self, mock_get_keys):

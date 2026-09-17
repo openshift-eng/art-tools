@@ -10,10 +10,14 @@ from unittest import IsolatedAsyncioTestCase
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import yaml
-from pyartcd.pipelines.ocp4_konflux import BuildStrategy
+from artcommonlib.variants import BuildVariant
+from pyartcd.build_strategy import BuildStrategy
+from pyartcd.counter_models import BuildFailCounterContext, RebaseCounterContext
 from pyartcd.pipelines.okd import BuildPlan, KonfluxOkdPipeline
-
-from pyartcd import util
+from pyartcd.util import (
+    update_build_fail_counters,
+    update_rebase_fail_counters,
+)
 
 
 class TestKonfluxOkdPipeline(IsolatedAsyncioTestCase):
@@ -1470,21 +1474,22 @@ class TestRebaseFailCounters(IsolatedAsyncioTestCase):
         )
         self.pipeline.build_plan.image_build_strategy = BuildStrategy.ONLY
 
-        await util.update_rebase_fail_counters(
-            group='okd-4.20',
-            assembly='stream',
-            build_variant='okd',
-            jenkins_url=None,
-            image_build_strategy=self.pipeline.build_plan.image_build_strategy.value,
-            group_images=[],
-            requested_images=[],
-            images_excluded=[],
-            state_path=Path(self.mock_runtime.doozer_working) / 'state.yaml',
-            rebase_state_key='images:okd:rebase',
-            failed_images=['parent-img'],
-            skipped_due_to_parent=None,
-            reset_counter=mock_reset,
-            increment_counter=mock_incr,
+        await update_rebase_fail_counters(
+            context=RebaseCounterContext(
+                group='okd-4.20',
+                assembly='stream',
+                build_variant=BuildVariant.OKD,
+                jenkins_url=None,
+                image_build_strategy=self.pipeline.build_plan.image_build_strategy,
+                group_images=[],
+                requested_images=[],
+                images_excluded=[],
+                state_path=Path(self.mock_runtime.doozer_working) / 'state.yaml',
+                rebase_state_key='images:okd:rebase',
+                reset_counter=mock_reset,
+                increment_counter=mock_incr,
+                failed_images=['parent-img'],
+            ),
         )
 
         reset_names = {c.args[0].split(':')[-1] for c in mock_reset.call_args_list}
@@ -1511,19 +1516,21 @@ class TestRebaseFailCounters(IsolatedAsyncioTestCase):
         }
 
         failed_entries = {entry['name']: entry for entry in record_log['image_build_okd']}
-        await util.update_build_fail_counters(
-            group='okd-4.20',
-            assembly='stream',
-            build_variant='okd',
-            jenkins_url=None,
-            built_images=[],
-            failed_images=['real-failure', 'infrastructure-failure', 'parent-failure'],
-            failed_entries=failed_entries,
-            reset_counter=mock_reset,
-            increment_counter=mock_incr,
-            logger=self.pipeline.logger,
-            build_only=True,
-        )
+        with patch('pyartcd.util.logger', self.pipeline.logger):
+            await update_build_fail_counters(
+                context=BuildFailCounterContext(
+                    group='okd-4.20',
+                    assembly='stream',
+                    build_variant=BuildVariant.OKD,
+                    jenkins_url=None,
+                    built_images=[],
+                    failed_images=['real-failure', 'infrastructure-failure', 'parent-failure'],
+                    failed_entries=failed_entries,
+                    reset_counter=mock_reset,
+                    increment_counter=mock_incr,
+                    build_only=True,
+                )
+            )
 
         self.assertEqual(
             [call.args[0] for call in mock_incr.call_args_list],
@@ -1551,19 +1558,21 @@ class TestRebaseFailCounters(IsolatedAsyncioTestCase):
         }
 
         failed_entries = {entry['name']: entry for entry in record_log['image_build_okd']}
-        await util.update_build_fail_counters(
-            group='okd-4.20',
-            assembly='stream',
-            build_variant='okd',
-            jenkins_url=None,
-            built_images=[],
-            failed_images=['infrastructure-failure', 'parent-failure'],
-            failed_entries=failed_entries,
-            reset_counter=mock_reset,
-            increment_counter=mock_incr,
-            logger=self.pipeline.logger,
-            build_only=True,
-        )
+        with patch('pyartcd.util.logger', self.pipeline.logger):
+            await update_build_fail_counters(
+                context=BuildFailCounterContext(
+                    group='okd-4.20',
+                    assembly='stream',
+                    build_variant=BuildVariant.OKD,
+                    jenkins_url=None,
+                    built_images=[],
+                    failed_images=['infrastructure-failure', 'parent-failure'],
+                    failed_entries=failed_entries,
+                    reset_counter=mock_reset,
+                    increment_counter=mock_incr,
+                    build_only=True,
+                )
+            )
 
         mock_reset.assert_not_awaited()
         mock_incr.assert_not_awaited()

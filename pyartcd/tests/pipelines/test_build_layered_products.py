@@ -7,8 +7,8 @@ from unittest.mock import AsyncMock, MagicMock, Mock, patch
 import yaml
 from artcommonlib.variants import BuildVariant
 from doozerlib.constants import KONFLUX_DEFAULT_IMAGE_REPO
+from pyartcd.build_strategy import BuildStrategy
 from pyartcd.pipelines.build_layered_products import BuildLayeredProductsPipeline
-from pyartcd.pipelines.ocp4_konflux import BuildStrategy
 from pyartcd.runtime import Runtime
 
 
@@ -98,7 +98,7 @@ class TestBuildLayeredProductsPipeline(IsolatedAsyncioTestCase):
             + "\n"
         )
 
-        await self.pipeline.update_build_fail_counters("oadp", BuildVariant.OADP)
+        await self.pipeline.update_build_fail_counters(BuildVariant.OADP)
 
         self.assertEqual(
             {call.args[0] for call in mock_reset.await_args_list},
@@ -133,7 +133,7 @@ class TestBuildLayeredProductsPipeline(IsolatedAsyncioTestCase):
             + "\n"
         )
 
-        await self.pipeline.update_build_fail_counters("oadp", BuildVariant.OADP)
+        await self.pipeline.update_build_fail_counters(BuildVariant.OADP)
 
         self.assertEqual(len(mock_reset.await_args_list), 3)
         increment_calls = {call.args[0]: call for call in mock_increment.await_args_list}
@@ -169,7 +169,7 @@ class TestBuildLayeredProductsPipeline(IsolatedAsyncioTestCase):
             + "\n"
         )
 
-        await self.pipeline.update_build_fail_counters("oadp", BuildVariant.OADP)
+        await self.pipeline.update_build_fail_counters(BuildVariant.OADP)
 
         self.assertEqual(
             [call.args[0] for call in mock_increment.await_args_list],
@@ -179,9 +179,10 @@ class TestBuildLayeredProductsPipeline(IsolatedAsyncioTestCase):
             ],
         )
 
+    @patch("pyartcd.util.logger")
     @patch("pyartcd.pipelines.build_layered_products.increment_fail_counter", new_callable=AsyncMock)
     @patch("pyartcd.pipelines.build_layered_products.reset_fail_counter", new_callable=AsyncMock)
-    async def test_update_build_fail_counters_skips_unattempted_failures(self, mock_reset, mock_increment):
+    async def test_update_build_fail_counters_skips_unattempted_failures(self, mock_reset, mock_increment, mock_logger):
         """Layered-product counters skip failures when no image build was attempted."""
         record_log_path = Path(self.runtime.doozer_working, "record.log")
         record_log_path.write_text(
@@ -194,11 +195,11 @@ class TestBuildLayeredProductsPipeline(IsolatedAsyncioTestCase):
             + "\n"
         )
 
-        await self.pipeline.update_build_fail_counters("oadp", BuildVariant.OADP)
+        await self.pipeline.update_build_fail_counters(BuildVariant.OADP)
 
         mock_reset.assert_not_awaited()
         mock_increment.assert_not_awaited()
-        self.pipeline._logger.warning.assert_called_once()
+        mock_logger.warning.assert_called_once()
 
     @patch("pyartcd.pipelines.build_layered_products.increment_fail_counter", new_callable=AsyncMock)
     @patch("pyartcd.pipelines.build_layered_products.reset_fail_counter", new_callable=AsyncMock)
@@ -209,12 +210,12 @@ class TestBuildLayeredProductsPipeline(IsolatedAsyncioTestCase):
         mock_reset.side_effect = RuntimeError("Redis unavailable")
 
         with self.assertRaisesRegex(RuntimeError, "Redis unavailable"):
-            await self.pipeline.update_build_fail_counters("oadp", BuildVariant.OADP)
+            await self.pipeline.update_build_fail_counters(BuildVariant.OADP)
 
     async def test_rebase_success_returns_no_excluded_images(self):
         """When rebase succeeds, no images are excluded."""
         with patch('pyartcd.pipelines.build_layered_products.exectools.cmd_assert_async', new_callable=AsyncMock):
-            result = await self.pipeline._rebase('img-a,img-b')
+            result = await self.pipeline._rebase('img-a,img-b', BuildVariant.OADP)
         self.assertEqual(result, [])
         self.assertEqual(
             [call.args[0] for call in self.mock_rebase_reset.await_args_list],
@@ -247,13 +248,13 @@ class TestBuildLayeredProductsPipeline(IsolatedAsyncioTestCase):
             new_callable=AsyncMock,
             side_effect=ChildProcessError("exit code 1"),
         ):
-            result = await self.pipeline._rebase("healthy,failed,skipped")
+            result = await self.pipeline._rebase("healthy,failed,skipped", BuildVariant.OADP)
 
         self.assertEqual(result, ["failed", "skipped"])
         self.mock_rebase_reset.assert_awaited_once_with("count:rebase-failure:konflux:oadp-1.4:healthy")
         self.mock_rebase_increment.assert_awaited_once_with(
             "count:rebase-failure:konflux:oadp-1.4:failed",
-            build_variant=None,
+            build_variant="oadp",
             jenkins_url=os.getenv("BUILD_URL"),
         )
 
@@ -269,7 +270,7 @@ class TestBuildLayeredProductsPipeline(IsolatedAsyncioTestCase):
             new_callable=AsyncMock,
             side_effect=ChildProcessError('exit code 1'),
         ):
-            result = await self.pipeline._rebase('oadp-velero-restic-restore-helper,oadp-operator')
+            result = await self.pipeline._rebase('oadp-velero-restic-restore-helper,oadp-operator', BuildVariant.OADP)
 
         self.assertEqual(result, ['oadp-operator'])
 
@@ -290,7 +291,7 @@ class TestBuildLayeredProductsPipeline(IsolatedAsyncioTestCase):
             new_callable=AsyncMock,
             side_effect=ChildProcessError('exit code 1'),
         ):
-            result = await self.pipeline._rebase('parent-image,child-image,other-image')
+            result = await self.pipeline._rebase('parent-image,child-image,other-image', BuildVariant.OADP)
 
         self.assertEqual(result, ['parent-image', 'child-image'])
 
@@ -306,7 +307,7 @@ class TestBuildLayeredProductsPipeline(IsolatedAsyncioTestCase):
             new_callable=AsyncMock,
             side_effect=ChildProcessError('exit code 1'),
         ):
-            result = await self.pipeline._rebase('img-a,img-b')
+            result = await self.pipeline._rebase('img-a,img-b', BuildVariant.OADP)
 
         self.assertEqual(result, ['img-a', 'img-b'])
 
@@ -318,7 +319,7 @@ class TestBuildLayeredProductsPipeline(IsolatedAsyncioTestCase):
             side_effect=ChildProcessError('exit code 1'),
         ):
             with self.assertRaises(ChildProcessError):
-                await self.pipeline._rebase('img-a')
+                await self.pipeline._rebase('img-a', BuildVariant.OADP)
 
     async def test_rebase_failure_no_failed_images_in_state_reraises(self):
         """When state.yaml exists but has no failed-images, the error is re-raised."""
@@ -333,7 +334,7 @@ class TestBuildLayeredProductsPipeline(IsolatedAsyncioTestCase):
             side_effect=ChildProcessError('exit code 1'),
         ):
             with self.assertRaises(ChildProcessError):
-                await self.pipeline._rebase('img-a')
+                await self.pipeline._rebase('img-a', BuildVariant.OADP)
 
     async def test_rebase_and_build_raises_when_no_images_remain(self):
         """When all images fail rebase, ValueError is raised."""
@@ -482,7 +483,11 @@ class TestBuildLayeredProductsPipeline(IsolatedAsyncioTestCase):
             skip_rebase=True,
         )
 
-        await pipeline.run()
+        with patch(
+            "pyartcd.pipelines.build_layered_products.get_build_variant_for_product",
+            return_value=BuildVariant.OCP,
+        ):
+            await pipeline.run()
 
         build_cmd = mock_cmd.call_args[0][0]
         image_repo_args = [arg for arg in build_cmd if arg.startswith('--image-repo=')]
@@ -549,7 +554,7 @@ class TestBuildLayeredProductsPipeline(IsolatedAsyncioTestCase):
             'pyartcd.pipelines.build_layered_products.exectools.cmd_assert_async',
             new_callable=AsyncMock,
         ) as mock_cmd:
-            await self.pipeline._rebase(None)
+            await self.pipeline._rebase(None, BuildVariant.OADP)
 
         cmd = mock_cmd.call_args[0][0]
         self.assertFalse(any(arg.startswith('--images=') for arg in cmd))
@@ -566,7 +571,7 @@ class TestBuildLayeredProductsPipeline(IsolatedAsyncioTestCase):
             new_callable=AsyncMock,
             side_effect=ChildProcessError('exit code 1'),
         ):
-            result = await self.pipeline._rebase(None)
+            result = await self.pipeline._rebase(None, BuildVariant.OADP)
 
         self.assertEqual(result, ['img-a'])
 
@@ -582,7 +587,9 @@ class TestBuildLayeredProductsPipeline(IsolatedAsyncioTestCase):
                 return_value='/path/to/kubeconfig',
             ),
         ):
-            await self.pipeline._build(BuildStrategy.ALL, None, [], 'oadp', KONFLUX_DEFAULT_IMAGE_REPO)
+            await self.pipeline._build(
+                BuildStrategy.ALL, None, [], 'oadp', KONFLUX_DEFAULT_IMAGE_REPO, BuildVariant.OADP
+            )
 
         cmd = mock_cmd.call_args[0][0]
         self.assertFalse(any(arg.startswith('--images=') for arg in cmd))
@@ -735,7 +742,14 @@ class TestBuildLayeredProductsPipeline(IsolatedAsyncioTestCase):
                 return_value='/path/to/kubeconfig',
             ),
         ):
-            await self.pipeline._build(BuildStrategy.ALL, None, ['img-a', 'img-b'], 'oadp', KONFLUX_DEFAULT_IMAGE_REPO)
+            await self.pipeline._build(
+                BuildStrategy.ALL,
+                None,
+                ['img-a', 'img-b'],
+                'oadp',
+                KONFLUX_DEFAULT_IMAGE_REPO,
+                BuildVariant.OADP,
+            )
 
         cmd = mock_cmd.call_args[0][0]
         self.assertIn('--images=', cmd)

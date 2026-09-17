@@ -9,6 +9,7 @@ from urllib.parse import quote
 
 import click
 from artcommonlib import exectools
+from artcommonlib.konflux.konflux_build_record import KonfluxBuildOutcome
 from artcommonlib.variants import BuildVariant
 from doozerlib.constants import ART_BUILD_HISTORY_URL
 
@@ -18,12 +19,8 @@ from pyartcd.cli import cli, click_coroutine, pass_runtime
 from pyartcd.runtime import Runtime
 from pyartcd.util import (
     build_history_link_url,
-    categorize_failed_images,
     default_release_suffix,
-    get_failed_images_for_counter_updates,
-    get_no_attempted_builds_warning,
     increment_fail_counter,
-    increment_failed_image_counters,
     reset_fail_counter,
 )
 
@@ -285,32 +282,65 @@ class SeedLockfilePipeline:
         if not stream_failed:
             return
 
-        counter_failed_images = get_failed_images_for_counter_updates(stream_failed, self.stream_results)
-        if not counter_failed_images:
-            LOGGER.warning(get_no_attempted_builds_warning(group, len(stream_failed), job_url))
-            return
-        stream_failed = counter_failed_images
-
-        failure_categories = categorize_failed_images(stream_failed, self.stream_results)
+        ec_failed = []
+        release_failed = []
+        build_failed = []
+        for image in stream_failed:
+            entry = self.stream_results.get(image, {})
+            outcome = entry.get('outcome', '')
+            if outcome == str(KonfluxBuildOutcome.ITS_ERROR):
+                ec_failed.append(image)
+            elif outcome == str(KonfluxBuildOutcome.RELEASE_ERROR):
+                release_failed.append(image)
+            else:
+                build_failed.append(image)
 
         LOGGER.info(
             'Incrementing fail counters: build=%s, ec=%s, release=%s',
-            failure_categories.build,
-            failure_categories.its,
-            failure_categories.release,
+            build_failed,
+            ec_failed,
+            release_failed,
         )
-        results = await increment_failed_image_counters(
-            group=group,
-            build_variant=BuildVariant.OCP.value,
-            jenkins_url=job_url,
-            failure_categories=failure_categories,
-            failed_entries=self.stream_results,
-            increment_counter=increment_fail_counter,
-            return_exceptions=True,
-        )
-        for result in results:
-            if isinstance(result, Exception):
-                LOGGER.warning('Failed to increment fail counter: %s', result)
+        increment_tasks = []
+        for image in build_failed:
+            entry = self.stream_results.get(image, {})
+            increment_tasks.append(
+                increment_fail_counter(
+                    f'count:build-failure:konflux:{group}:{image}',
+                    build_variant=BuildVariant.OCP.value,
+                    jenkins_url=job_url,
+                    nvr=entry.get('nvrs'),
+                    pipeline_url=entry.get('build_pipeline_url'),
+                )
+            )
+        for image in ec_failed:
+            entry = self.stream_results.get(image, {})
+            increment_tasks.append(
+                increment_fail_counter(
+                    f'count:ec-failure:konflux:{group}:{image}',
+                    build_variant=BuildVariant.OCP.value,
+                    jenkins_url=job_url,
+                    nvr=entry.get('nvrs'),
+                    pipeline_url=entry.get('ec_pipeline_url'),
+                )
+            )
+        for image in release_failed:
+            entry = self.stream_results.get(image, {})
+            increment_tasks.append(
+                increment_fail_counter(
+                    f'count:release-failure:konflux:{group}:{image}',
+                    build_variant=BuildVariant.OCP.value,
+                    jenkins_url=job_url,
+                    nvr=entry.get('nvrs'),
+                    pipeline_url=entry.get('release_pipeline'),
+                )
+            )
+
+        if increment_tasks:
+            results = await asyncio.gather(*increment_tasks, return_exceptions=True)
+            for result in results:
+                if isinstance(result, Exception):
+                    LOGGER.warning('Failed to increment fail counter: %s', result)
 
     async def _rebase_and_build_with_seed_map(self):
         """Phase 2: Rebase and build in the target assembly with --lockfile-seed-nvrs for lockfile generation."""

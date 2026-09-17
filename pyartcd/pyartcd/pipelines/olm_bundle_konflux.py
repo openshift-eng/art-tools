@@ -168,8 +168,7 @@ async def olm_bundle_konflux(
     )
     product = group_config.get('product') or 'ocp'
     build_variant = get_build_variant_for_product(product)
-    if build_variant is not None:
-        doozer_base_cmd.append(f"--variant={build_variant.value}")
+    doozer_base_cmd.append(f"--variant={build_variant.value}")
 
     # Create Doozer invocation
     cmd = doozer_base_cmd.copy()
