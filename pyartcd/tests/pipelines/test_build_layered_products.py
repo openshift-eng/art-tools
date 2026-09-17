@@ -22,6 +22,16 @@ class TestBuildLayeredProductsPipeline(IsolatedAsyncioTestCase):
         self.runtime.dry_run = False
         self.runtime.config = {}
         self.runtime.logger = MagicMock()
+        self.rebase_reset_patcher = patch(
+            "pyartcd.pipelines.build_layered_products.reset_fail_counter", new_callable=AsyncMock
+        )
+        self.rebase_increment_patcher = patch(
+            "pyartcd.pipelines.build_layered_products.increment_fail_counter", new_callable=AsyncMock
+        )
+        self.mock_rebase_reset = self.rebase_reset_patcher.start()
+        self.mock_rebase_increment = self.rebase_increment_patcher.start()
+        self.addCleanup(self.rebase_reset_patcher.stop)
+        self.addCleanup(self.rebase_increment_patcher.stop)
 
         with patch('pyartcd.pipelines.build_layered_products.jenkins.init_jenkins'):
             self.pipeline = BuildLayeredProductsPipeline(
@@ -90,14 +100,105 @@ class TestBuildLayeredProductsPipeline(IsolatedAsyncioTestCase):
 
         await self.pipeline.update_build_fail_counters("oadp", BuildVariant.OADP)
 
-        mock_reset.assert_awaited_once_with("count:build-failure:konflux:oadp-1.4:oadp-operator")
+        self.assertEqual(
+            {call.args[0] for call in mock_reset.await_args_list},
+            {
+                "count:build-failure:konflux:oadp-1.4:oadp-operator",
+                "count:ec-failure:konflux:oadp-1.4:oadp-operator",
+                "count:release-failure:konflux:oadp-1.4:oadp-operator",
+            },
+        )
         mock_increment.assert_awaited_once_with(
             "count:build-failure:konflux:oadp-1.4:oadp-velero",
             build_variant="oadp",
-            jenkins_url=None,
+            jenkins_url=os.getenv("BUILD_URL"),
             nvr="oadp-velero-1.0-1",
             pipeline_url="http://plr/1",
         )
+
+    @patch("pyartcd.pipelines.build_layered_products.increment_fail_counter", new_callable=AsyncMock)
+    @patch("pyartcd.pipelines.build_layered_products.reset_fail_counter", new_callable=AsyncMock)
+    async def test_update_build_fail_counters_categorizes_failure_types(self, mock_reset, mock_increment):
+        """Layered-product counters use separate build, ITS, and release categories."""
+        record_log_path = Path(self.runtime.doozer_working, "record.log")
+        record_log_path.write_text(
+            "\n".join(
+                [
+                    "image_build_konflux|name=successful|status=0|nvrs=successful-1.0-1",
+                    "image_build_konflux|name=build-failure|status=-1|outcome=build_error|build_pipeline_url=http://build/1",
+                    "image_build_konflux|name=its-failure|status=-1|outcome=its_error|ec_pipeline_url=http://its/1",
+                    "image_build_konflux|name=release-failure|status=-1|outcome=release_error|release_pipeline=http://release/1",
+                ]
+            )
+            + "\n"
+        )
+
+        await self.pipeline.update_build_fail_counters("oadp", BuildVariant.OADP)
+
+        self.assertEqual(len(mock_reset.await_args_list), 3)
+        increment_calls = {call.args[0]: call for call in mock_increment.await_args_list}
+        self.assertEqual(
+            set(increment_calls),
+            {
+                "count:build-failure:konflux:oadp-1.4:build-failure",
+                "count:ec-failure:konflux:oadp-1.4:its-failure",
+                "count:release-failure:konflux:oadp-1.4:release-failure",
+            },
+        )
+        self.assertEqual(
+            increment_calls["count:ec-failure:konflux:oadp-1.4:its-failure"].kwargs["pipeline_url"], "http://its/1"
+        )
+        self.assertEqual(
+            increment_calls["count:release-failure:konflux:oadp-1.4:release-failure"].kwargs["pipeline_url"],
+            "http://release/1",
+        )
+
+    @patch("pyartcd.pipelines.build_layered_products.increment_fail_counter", new_callable=AsyncMock)
+    @patch("pyartcd.pipelines.build_layered_products.reset_fail_counter", new_callable=AsyncMock)
+    async def test_update_build_fail_counters_preserves_mixed_failure_behavior(self, mock_reset, mock_increment):
+        """Layered-product counters preserve the existing mixed-failure behavior."""
+        record_log_path = Path(self.runtime.doozer_working, "record.log")
+        record_log_path.write_text(
+            "\n".join(
+                [
+                    "image_build_konflux|name=real-failure|status=-1|task_id=plr-1|nvrs=real-1",
+                    "image_build_konflux|name=infrastructure-failure|status=-1|task_id=n/a|nvrs=",
+                    "image_build_konflux|name=parent-failure|status=-1|task_id=n/a|message=parent images failed to build",
+                ]
+            )
+            + "\n"
+        )
+
+        await self.pipeline.update_build_fail_counters("oadp", BuildVariant.OADP)
+
+        self.assertEqual(
+            [call.args[0] for call in mock_increment.await_args_list],
+            [
+                "count:build-failure:konflux:oadp-1.4:real-failure",
+                "count:build-failure:konflux:oadp-1.4:infrastructure-failure",
+            ],
+        )
+
+    @patch("pyartcd.pipelines.build_layered_products.increment_fail_counter", new_callable=AsyncMock)
+    @patch("pyartcd.pipelines.build_layered_products.reset_fail_counter", new_callable=AsyncMock)
+    async def test_update_build_fail_counters_skips_unattempted_failures(self, mock_reset, mock_increment):
+        """Layered-product counters skip failures when no image build was attempted."""
+        record_log_path = Path(self.runtime.doozer_working, "record.log")
+        record_log_path.write_text(
+            "\n".join(
+                [
+                    "image_build_konflux|name=infrastructure-failure|status=-1|task_id=n/a",
+                    "image_build_konflux|name=parent-failure|status=-1|task_id=n/a|message=parent images failed to build",
+                ]
+            )
+            + "\n"
+        )
+
+        await self.pipeline.update_build_fail_counters("oadp", BuildVariant.OADP)
+
+        mock_reset.assert_not_awaited()
+        mock_increment.assert_not_awaited()
+        self.pipeline._logger.warning.assert_called_once()
 
     @patch("pyartcd.pipelines.build_layered_products.increment_fail_counter", new_callable=AsyncMock)
     @patch("pyartcd.pipelines.build_layered_products.reset_fail_counter", new_callable=AsyncMock)
@@ -115,6 +216,46 @@ class TestBuildLayeredProductsPipeline(IsolatedAsyncioTestCase):
         with patch('pyartcd.pipelines.build_layered_products.exectools.cmd_assert_async', new_callable=AsyncMock):
             result = await self.pipeline._rebase('img-a,img-b')
         self.assertEqual(result, [])
+        self.assertEqual(
+            [call.args[0] for call in self.mock_rebase_reset.await_args_list],
+            [
+                "count:rebase-failure:konflux:oadp-1.4:img-a",
+                "count:rebase-failure:konflux:oadp-1.4:img-b",
+            ],
+        )
+        self.mock_rebase_increment.assert_not_awaited()
+
+    async def test_rebase_updates_shared_failure_counters(self):
+        """Layered-product rebase failures use the shared OCP counter behavior."""
+        state = {
+            "images:konflux:rebase": {
+                "images": {
+                    "healthy": {"status": "success"},
+                    "failed": {"status": "failure"},
+                    "skipped": {"status": "skipped"},
+                },
+                "failed-images": ["failed"],
+                "skipped-due-to-parent-rebase-failure": ["skipped"],
+            }
+        }
+        state_path = Path(self.runtime.doozer_working, "state.yaml")
+        with state_path.open("w") as f:
+            yaml.safe_dump(state, f)
+
+        with patch(
+            "pyartcd.pipelines.build_layered_products.exectools.cmd_assert_async",
+            new_callable=AsyncMock,
+            side_effect=ChildProcessError("exit code 1"),
+        ):
+            result = await self.pipeline._rebase("healthy,failed,skipped")
+
+        self.assertEqual(result, ["failed", "skipped"])
+        self.mock_rebase_reset.assert_awaited_once_with("count:rebase-failure:konflux:oadp-1.4:healthy")
+        self.mock_rebase_increment.assert_awaited_once_with(
+            "count:rebase-failure:konflux:oadp-1.4:failed",
+            build_variant=None,
+            jenkins_url=os.getenv("BUILD_URL"),
+        )
 
     async def test_rebase_failure_returns_excluded_images(self):
         """When rebase fails and state.yaml records failed images, those images are returned as excluded."""

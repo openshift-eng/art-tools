@@ -104,6 +104,50 @@ class TestSeedLockfilePipeline(unittest.IsolatedAsyncioTestCase):
             pipeline._extract_seed_map_from_record_log()
         self.assertEqual(pipeline.seed_map, {})
 
+    @patch('pyartcd.pipelines.seed_lockfile.increment_fail_counter', new_callable=AsyncMock)
+    @patch('pyartcd.pipelines.seed_lockfile.reset_fail_counter', new_callable=AsyncMock)
+    async def test_update_build_fail_counters_preserves_mixed_failure_behavior(self, mock_reset, mock_increment):
+        """Seed-lockfile counters preserve the existing mixed-failure behavior."""
+        pipeline = self._create_pipeline()
+        pipeline.stream_results = {
+            'real-failure': {'task_id': 'plr-1', 'outcome': 'build_error'},
+            'infrastructure-failure': {'task_id': 'n/a', 'outcome': 'build_error'},
+            'parent-failure': {'task_id': 'n/a', 'message': 'parent images failed to build', 'outcome': 'build_error'},
+        }
+
+        await pipeline._update_build_fail_counters(
+            [],
+            ['real-failure', 'infrastructure-failure', 'parent-failure'],
+        )
+
+        self.assertEqual(
+            [call.args[0] for call in mock_increment.call_args_list],
+            [
+                'count:build-failure:konflux:openshift-4.22:real-failure',
+                'count:build-failure:konflux:openshift-4.22:infrastructure-failure',
+            ],
+        )
+
+    @patch('pyartcd.pipelines.seed_lockfile.increment_fail_counter', new_callable=AsyncMock)
+    @patch('pyartcd.pipelines.seed_lockfile.reset_fail_counter', new_callable=AsyncMock)
+    async def test_update_build_fail_counters_skips_unattempted_failures(self, mock_reset, mock_increment):
+        """Seed-lockfile counters skip failures when no image build was attempted."""
+        pipeline = self._create_pipeline()
+        pipeline.stream_results = {
+            'infrastructure-failure': {'task_id': 'n/a', 'outcome': 'build_error'},
+            'parent-failure': {'task_id': 'n/a', 'message': 'parent images failed to build', 'outcome': 'build_error'},
+        }
+
+        with patch('pyartcd.pipelines.seed_lockfile.LOGGER') as mock_logger:
+            await pipeline._update_build_fail_counters(
+                [],
+                ['infrastructure-failure', 'parent-failure'],
+            )
+
+        mock_reset.assert_not_awaited()
+        mock_increment.assert_not_awaited()
+        mock_logger.warning.assert_called_once()
+
     def test_extract_seed_map_populates_test_results(self):
         record_log_content = (
             'image_build_konflux|name=ironic|nvrs=ironic-container-v4.22.0-assembly.test|status=0|has_olm_bundle=0\n'

@@ -1475,3 +1475,61 @@ class TestRebaseFailCounters(IsolatedAsyncioTestCase):
         self.assertEqual(reset_names, {'img-a', 'extra-parent'})
         self.assertEqual(incr_names, {'parent-img'})
         self.assertEqual(mock_incr.call_args.kwargs["build_variant"], "okd")
+
+    @patch('pyartcd.pipelines.okd.increment_fail_counter', new_callable=AsyncMock)
+    @patch('pyartcd.pipelines.okd.reset_fail_counter', new_callable=AsyncMock)
+    async def test_build_fail_counters_preserve_mixed_failure_behavior(self, mock_reset, mock_incr):
+        """OKD build counters preserve the existing mixed-failure behavior."""
+        record_log = {
+            'image_build_okd': [
+                {'name': 'real-failure', 'status': '-1', 'task_id': 'plr-1'},
+                {'name': 'infrastructure-failure', 'status': '-1', 'task_id': 'n/a'},
+                {
+                    'name': 'parent-failure',
+                    'status': '-1',
+                    'task_id': 'n/a',
+                    'message': 'parent images failed to build',
+                },
+            ]
+        }
+
+        await self.pipeline.update_build_fail_counters(
+            [],
+            ['real-failure', 'infrastructure-failure', 'parent-failure'],
+            record_log,
+        )
+
+        self.assertEqual(
+            [call.args[0] for call in mock_incr.call_args_list],
+            [
+                'count:build-failure:konflux:okd-4.20:real-failure',
+                'count:build-failure:konflux:okd-4.20:infrastructure-failure',
+            ],
+        )
+
+    @patch('pyartcd.pipelines.okd.increment_fail_counter', new_callable=AsyncMock)
+    @patch('pyartcd.pipelines.okd.reset_fail_counter', new_callable=AsyncMock)
+    async def test_build_fail_counters_skips_unattempted_failures(self, mock_reset, mock_incr):
+        """OKD counters skip failures when no image build was attempted."""
+        self.pipeline.logger = MagicMock()
+        record_log = {
+            'image_build_okd': [
+                {'name': 'infrastructure-failure', 'status': '-1', 'task_id': 'n/a'},
+                {
+                    'name': 'parent-failure',
+                    'status': '-1',
+                    'task_id': 'n/a',
+                    'message': 'parent images failed to build',
+                },
+            ]
+        }
+
+        await self.pipeline.update_build_fail_counters(
+            [],
+            ['infrastructure-failure', 'parent-failure'],
+            record_log,
+        )
+
+        mock_reset.assert_not_awaited()
+        mock_incr.assert_not_awaited()
+        self.pipeline.logger.warning.assert_called_once()

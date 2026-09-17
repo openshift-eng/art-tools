@@ -7,6 +7,8 @@ import shutil
 import sys
 import tempfile
 from collections import namedtuple
+from collections.abc import Awaitable, Callable
+from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from tempfile import TemporaryDirectory
@@ -20,6 +22,7 @@ from artcommonlib.assembly import assembly_type
 from artcommonlib.constants import ACTIVE_OCP_VERSIONS
 from artcommonlib.exectools import limit_concurrency
 from artcommonlib.github_auth import get_github_client_for_org
+from artcommonlib.konflux.konflux_build_record import KonfluxBuildOutcome
 from artcommonlib.model import Missing, Model
 from artcommonlib.release_util import (
     SoftwareLifecyclePhase,
@@ -1141,6 +1144,289 @@ async def reset_fail_counter(branch: str):
         branch (str): Full Redis key prefix
     """
     await redis.delete_keys_by_pattern(f'{branch}:*')
+
+
+async def update_rebase_fail_counters(
+    group: str,
+    assembly: str,
+    build_variant: str | None,
+    jenkins_url: str | None,
+    image_build_strategy: str,
+    group_images: list[str],
+    requested_images: list[str],
+    images_excluded: list[str],
+    state_path: Path | None,
+    failed_images: list[str],
+    skipped_due_to_parent: list[str] | None,
+    reset_counter: Callable[[str], Awaitable[None]],
+    increment_counter: Callable[..., Awaitable[None]],
+) -> None:
+    """
+    Update Redis rebase-failure counters after a Konflux rebase run.
+
+    Successful images reset their counters. Direct rebase failures increment
+    theirs, while images skipped because a parent failed remain unchanged.
+    Counter updates only apply to stream assemblies.
+
+    Arg(s):
+        group (str): Build group associated with the images.
+        assembly (str): Assembly used for the rebase.
+        build_variant (str | None): Build variant stored with each counter.
+        jenkins_url (str | None): Jenkins URL for the rebase run.
+        image_build_strategy (str): Image build strategy used for the rebase.
+        group_images (list[str]): Images in the group for ALL or EXCEPT strategies.
+        requested_images (list[str]): Images requested by the caller, used as a fallback.
+        images_excluded (list[str]): Images excluded for the EXCEPT strategy.
+        state_path (Path | None): Path to Doozer's state.yaml file.
+        failed_images (list[str]): Images that failed rebase directly.
+        skipped_due_to_parent (list[str] | None): Images skipped due to parent failure.
+        reset_counter (Callable[[str], Awaitable[None]]): Counter reset function.
+        increment_counter (Callable[..., Awaitable[None]]): Counter increment function.
+    """
+    if assembly != "stream":
+        return
+
+    rebase_state = {}
+    if state_path is not None and state_path.exists():
+        with state_path.open("r") as f:
+            state = yaml.safe_load(f) or {}
+        rebase_state = state.get("images:konflux:rebase", {})
+
+    group_images = group_images or list(rebase_state.get("images", {})) or requested_images
+    match image_build_strategy:
+        case "all":
+            successful_images = group_images
+        case "except":
+            successful_images = [image for image in group_images if image not in images_excluded]
+        case "only":
+            successful_images = [
+                image
+                for image, image_state in rebase_state.get("images", {}).items()
+                if image_state.get("status") == "success"
+            ]
+            if not successful_images:
+                successful_images = group_images
+        case _:
+            raise ValueError(
+                f"Unknown image build strategy: {image_build_strategy}. Valid strategies: all, except, only"
+            )
+
+    failed_set = set(failed_images)
+    skipped_set = set(skipped_due_to_parent or [])
+    successful_images = [image for image in successful_images if image not in failed_set and image not in skipped_set]
+
+    await asyncio.gather(
+        *[reset_counter(f"count:rebase-failure:konflux:{group}:{image}") for image in successful_images]
+    )
+    await asyncio.gather(
+        *[
+            increment_counter(
+                f"count:rebase-failure:konflux:{group}:{image}",
+                build_variant=build_variant,
+                jenkins_url=jenkins_url,
+            )
+            for image in failed_images
+        ]
+    )
+
+
+def get_failed_images_for_counter_updates(failed_images: list[str], failed_entries: dict[str, dict]) -> list[str]:
+    """
+    Return failed images that should update failure counters.
+
+    Parent-dependent failures are always excluded. Infrastructure failures are
+    excluded only when no image had an attempted build. An empty return value
+    for a non-empty failure list indicates that no build was attempted.
+
+    Arg(s):
+        failed_images (list[str]): Names of images with failed build records.
+        failed_entries (dict[str, dict]): Failed build records keyed by image name.
+    Return Value(s):
+        list[str]: Failed images that should update counters.
+    """
+    has_attempted_build = any(
+        "parent images failed to build" not in failed_entries.get(image, {}).get("message", "")
+        and failed_entries.get(image, {}).get("task_id") != "n/a"
+        for image in failed_images
+    )
+    if failed_images and not has_attempted_build:
+        return []
+
+    return [
+        image
+        for image in failed_images
+        if "parent images failed to build" not in failed_entries.get(image, {}).get("message", "")
+    ]
+
+
+def get_no_attempted_builds_warning(group: str, failed_count: int, job_url: str | None) -> str:
+    """
+    Return the warning for a build run where no failed image had a build attempt.
+
+    Arg(s):
+        group (str): Build group associated with the failed images.
+        failed_count (int): Number of failed images in the build run.
+        job_url (str | None): Jenkins URL for the build run.
+    Return Value(s):
+        str: Formatted warning message.
+    """
+    return (
+        f"No builds were actually attempted for {group}: all {failed_count} failures "
+        "have task_id=n/a (infrastructure failure) or are parent-dependency failures. "
+        f"Skipping individual image counter updates. Jenkins job: {job_url}"
+    )
+
+
+@dataclass
+class FailedImageCategories:
+    """Failed images grouped by the counter category they should update."""
+
+    build: list[str]
+    its: list[str]
+    release: list[str]
+
+
+def categorize_failed_images(failed_images: list[str], failed_entries: dict[str, dict]) -> FailedImageCategories:
+    """
+    Categorize failed images by their Konflux outcome.
+
+    ITS and release outcomes use their dedicated categories. Unknown and build
+    outcomes fall back to the build-failure category.
+
+    Arg(s):
+        failed_images (list[str]): Names of images with failed build records.
+        failed_entries (dict[str, dict]): Failed build records keyed by image name.
+    Return Value(s):
+        FailedImageCategories: Failed images grouped by counter category.
+    """
+    build_failures = []
+    its_failures = []
+    release_failures = []
+
+    for image in failed_images:
+        outcome = failed_entries.get(image, {}).get("outcome", "")
+        if outcome == str(KonfluxBuildOutcome.ITS_ERROR):
+            its_failures.append(image)
+        elif outcome == str(KonfluxBuildOutcome.RELEASE_ERROR):
+            release_failures.append(image)
+        else:
+            build_failures.append(image)
+
+    return FailedImageCategories(
+        build=build_failures,
+        its=its_failures,
+        release=release_failures,
+    )
+
+
+async def increment_failed_image_counters(
+    group: str,
+    build_variant: str,
+    jenkins_url: str | None,
+    failure_categories: FailedImageCategories,
+    failed_entries: dict[str, dict],
+    increment_counter: Callable[..., Awaitable[None]],
+    return_exceptions: bool = False,
+) -> list[None | BaseException]:
+    """
+    Increment counters for failed images grouped by failure category.
+
+    Each category uses its corresponding Redis counter and pipeline metadata.
+    The increment function is injected so callers can preserve their local
+    implementation and error-handling behavior.
+
+    Arg(s):
+        group (str): Build group associated with the failed images.
+        build_variant (str): Build variant stored with each counter.
+        jenkins_url (str | None): Jenkins URL for the build run.
+        failure_categories (FailedImageCategories): Failed images grouped by category.
+        failed_entries (dict[str, dict]): Failed build records keyed by image name.
+        increment_counter (Callable[..., Awaitable[None]]): Counter increment function.
+        return_exceptions (bool): Whether asyncio.gather should return exceptions.
+    Return Value(s):
+        list[None | BaseException]: Results from each counter increment.
+    """
+    counter_specs = (
+        ("build-failure", failure_categories.build, "build_pipeline_url"),
+        ("ec-failure", failure_categories.its, "ec_pipeline_url"),
+        ("release-failure", failure_categories.release, "release_pipeline"),
+    )
+    increment_tasks = [
+        increment_counter(
+            f"count:{counter_type}:konflux:{group}:{image}",
+            build_variant=build_variant,
+            jenkins_url=jenkins_url,
+            nvr=failed_entries.get(image, {}).get("nvrs"),
+            pipeline_url=failed_entries.get(image, {}).get(pipeline_field),
+        )
+        for counter_type, images, pipeline_field in counter_specs
+        for image in images
+    ]
+    return await asyncio.gather(*increment_tasks, return_exceptions=return_exceptions)
+
+
+async def update_build_fail_counters(
+    group: str,
+    assembly: str,
+    build_variant: str,
+    jenkins_url: str | None,
+    built_images: list[str],
+    failed_images: list[str],
+    failed_entries: dict[str, dict],
+    reset_counter: Callable[[str], Awaitable[None]],
+    increment_counter: Callable[..., Awaitable[None]],
+    logger: logging.Logger,
+) -> None:
+    """
+    Update Redis build-failure counters after a Konflux build run.
+
+    Successfully built images reset all build, ITS, and release counters.
+    Direct failures increment their categorized counter, while parent-dependent
+    failures are logged and excluded. Infrastructure failures are excluded only
+    when no image had an attempted build.
+
+    Arg(s):
+        group (str): Build group associated with the images.
+        assembly (str): Assembly used for the build.
+        build_variant (str): Build variant stored with each counter.
+        jenkins_url (str | None): Jenkins URL for the build run.
+        built_images (list[str]): Images that built successfully.
+        failed_images (list[str]): Images that failed to build.
+        failed_entries (dict[str, dict]): Failed build records keyed by image name.
+        reset_counter (Callable[[str], Awaitable[None]]): Counter reset function.
+        increment_counter (Callable[..., Awaitable[None]]): Counter increment function.
+        logger (logging.Logger): Logger used for build failure messages.
+    """
+    if assembly != "stream":
+        return
+
+    counter_types = ("build-failure", "ec-failure", "release-failure")
+    await asyncio.gather(
+        *[
+            reset_counter(f"count:{counter_type}:konflux:{group}:{image}")
+            for image in built_images
+            for counter_type in counter_types
+        ]
+    )
+
+    counter_failed_images = get_failed_images_for_counter_updates(failed_images, failed_entries)
+    for image in failed_images:
+        if "parent images failed to build" in failed_entries.get(image, {}).get("message", ""):
+            logger.info(f"Excluding {image} from counter updates (parent build failure, not a real build issue)")
+
+    if failed_images and not counter_failed_images:
+        logger.warning(get_no_attempted_builds_warning(group, len(failed_images), jenkins_url))
+        return
+
+    failure_categories = categorize_failed_images(counter_failed_images, failed_entries)
+    await increment_failed_image_counters(
+        group=group,
+        build_variant=build_variant,
+        jenkins_url=jenkins_url,
+        failure_categories=failure_categories,
+        failed_entries=failed_entries,
+        increment_counter=increment_counter,
+    )
 
 
 async def get_failures(

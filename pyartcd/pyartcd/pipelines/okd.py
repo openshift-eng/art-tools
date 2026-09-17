@@ -28,7 +28,9 @@ from pyartcd.runtime import Runtime
 from pyartcd.util import (
     build_history_link_url,
     default_release_suffix,
+    get_failed_images_for_counter_updates,
     get_group_images,
+    get_no_attempted_builds_warning,
     increment_fail_counter,
     reset_fail_counter,
 )
@@ -480,10 +482,15 @@ class KonfluxOkdPipeline:
         failed_entries = {
             entry['name']: entry for entry in record_log.get('image_build_okd', []) if int(entry['status'])
         }
+        counter_failed_images = get_failed_images_for_counter_updates(failed_images, failed_entries)
 
         await asyncio.gather(
             *[reset_fail_counter(f'count:build-failure:konflux:{group}:{image}') for image in built_images]
         )
+        if failed_images and not counter_failed_images:
+            self.logger.warning(get_no_attempted_builds_warning(group, len(failed_images), job_url))
+            return
+
         await asyncio.gather(
             *[
                 increment_fail_counter(
@@ -493,7 +500,7 @@ class KonfluxOkdPipeline:
                     nvr=failed_entries.get(image, {}).get('nvrs'),
                     pipeline_url=failed_entries.get(image, {}).get('build_pipeline_url'),
                 )
-                for image in failed_images
+                for image in counter_failed_images
             ]
         )
 

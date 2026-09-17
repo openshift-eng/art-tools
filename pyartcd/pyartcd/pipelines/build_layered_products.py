@@ -1,4 +1,3 @@
-import asyncio
 import logging
 import os
 import sys
@@ -26,6 +25,8 @@ from pyartcd.util import (
     increment_fail_counter,
     load_group_config,
     reset_fail_counter,
+    update_build_fail_counters,
+    update_rebase_fail_counters,
 )
 
 
@@ -239,7 +240,7 @@ class BuildLayeredProductsPipeline:
             self._update_build_description()
 
     async def update_build_fail_counters(self, product: str, build_variant: BuildVariant | None = None):
-        """Update Redis build-failure counters for the latest layered-product build records."""
+        """Update Redis build, ITS, and release failure counters for layered-product builds."""
         if self.assembly != "stream" or self.runtime.dry_run:
             return
 
@@ -255,21 +256,17 @@ class BuildLayeredProductsPipeline:
         group = self.group
         built_images = [image for image, entry in records_by_image.items() if int(entry.get("status", -1)) == 0]
         failed_images = [image for image, entry in records_by_image.items() if int(entry.get("status", -1)) != 0]
-
-        await asyncio.gather(
-            *[reset_fail_counter(f"count:build-failure:konflux:{group}:{image}") for image in built_images],
-        )
-        await asyncio.gather(
-            *[
-                increment_fail_counter(
-                    f"count:build-failure:konflux:{group}:{image}",
-                    build_variant=variant,
-                    jenkins_url=job_url,
-                    nvr=records_by_image[image].get("nvrs"),
-                    pipeline_url=records_by_image[image].get("build_pipeline_url"),
-                )
-                for image in failed_images
-            ],
+        await update_build_fail_counters(
+            group=group,
+            assembly=self.assembly,
+            build_variant=variant,
+            jenkins_url=job_url,
+            built_images=built_images,
+            failed_images=failed_images,
+            failed_entries=records_by_image,
+            reset_counter=reset_fail_counter,
+            increment_counter=increment_fail_counter,
+            logger=self._logger,
         )
 
     async def _rebase(self, image_list: Optional[str], build_variant: BuildVariant | None = None) -> List[str]:
@@ -299,16 +296,19 @@ class BuildLayeredProductsPipeline:
         if not self.runtime.dry_run:
             rebase_cmd.append("--push")
 
+        requested_images = [image.strip() for image in (image_list or '').split(',') if image.strip()]
+        state_path = Path(self.runtime.doozer_working, "state.yaml")
+        failed_images: list[str] = []
+        skipped_due_to_parent: list[str] = []
+        excluded: list[str] = []
         try:
             await exectools.cmd_assert_async(rebase_cmd, env=self._doozer_env_vars)
             if image_list:
                 self._logger.info(f"Successfully rebased {image_list}")
             else:
                 self._logger.info("Successfully rebased all images")
-            return []
 
         except ChildProcessError:
-            state_path = Path(self.runtime.doozer_working, 'state.yaml')
             if not state_path.exists():
                 raise
 
@@ -332,7 +332,22 @@ class BuildLayeredProductsPipeline:
                     ','.join(skipped_due_to_parent),
                 )
 
-            return excluded
+        await update_rebase_fail_counters(
+            group=self.group,
+            assembly=self.assembly,
+            build_variant=build_variant.value if build_variant is not None else None,
+            jenkins_url=os.getenv("BUILD_URL"),
+            image_build_strategy=self.image_build_strategy.value,
+            group_images=[],
+            requested_images=requested_images,
+            images_excluded=[],
+            state_path=state_path,
+            failed_images=failed_images,
+            skipped_due_to_parent=skipped_due_to_parent,
+            reset_counter=reset_fail_counter,
+            increment_counter=increment_fail_counter,
+        )
+        return excluded
 
     def _update_build_description(self):
         """Update Jenkins description with build results (succeeded/failed counts and failed image names)."""

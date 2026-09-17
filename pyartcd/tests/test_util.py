@@ -1,3 +1,5 @@
+import tempfile
+from pathlib import Path
 from unittest import IsolatedAsyncioTestCase
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -272,6 +274,272 @@ class TestUtil(IsolatedAsyncioTestCase):
     async def test_reset_fail_counter(self, mock_delete):
         await util.reset_fail_counter('count:test:branch')
         mock_delete.assert_called_once_with('count:test:branch:*')
+
+    def test_get_failed_images_for_counter_updates_preserves_mixed_failure_behavior(self):
+        """Mixed infrastructure failures preserve the existing counter behavior."""
+        failed_images = ["real-failure", "infrastructure-failure", "parent-failure"]
+        failed_entries = {
+            "real-failure": {"task_id": "plr-1", "message": "Build failed"},
+            "infrastructure-failure": {"task_id": "n/a", "message": "Infrastructure failure"},
+            "parent-failure": {
+                "task_id": "n/a",
+                "message": "The following parent images failed to build: parent-image",
+            },
+        }
+
+        counter_images = util.get_failed_images_for_counter_updates(failed_images, failed_entries)
+
+        self.assertEqual(counter_images, ["real-failure", "infrastructure-failure"])
+
+    def test_get_failed_images_for_counter_updates_skips_all_unattempted_failures(self):
+        """All infrastructure and parent-dependent failures produce no counter updates."""
+        failed_images = ["infrastructure-failure", "parent-failure"]
+        failed_entries = {
+            "infrastructure-failure": {"task_id": "n/a", "message": "Infrastructure failure"},
+            "parent-failure": {"task_id": "n/a", "message": "parent images failed to build"},
+        }
+
+        counter_images = util.get_failed_images_for_counter_updates(failed_images, failed_entries)
+
+        self.assertEqual(counter_images, [])
+
+    def test_get_no_attempted_builds_warning(self):
+        """The no-attempt warning includes the group, failure count, and Jenkins URL."""
+        warning = util.get_no_attempted_builds_warning("openshift-4.18", 2, "https://jenkins/job/1")
+
+        self.assertEqual(
+            warning,
+            "No builds were actually attempted for openshift-4.18: all 2 failures "
+            "have task_id=n/a (infrastructure failure) or are parent-dependency failures. "
+            "Skipping individual image counter updates. Jenkins job: https://jenkins/job/1",
+        )
+
+    def test_categorize_failed_images_by_outcome(self):
+        """Failure outcomes are mapped to build, ITS, and release categories."""
+        failed_images = ["build-failure", "its-failure", "release-failure", "unknown-failure"]
+        failed_entries = {
+            "build-failure": {"outcome": "build_error"},
+            "its-failure": {"outcome": "its_error"},
+            "release-failure": {"outcome": "release_error"},
+            "unknown-failure": {"outcome": "unexpected_error"},
+        }
+
+        categories = util.categorize_failed_images(failed_images, failed_entries)
+
+        self.assertEqual(categories.build, ["build-failure", "unknown-failure"])
+        self.assertEqual(categories.its, ["its-failure"])
+        self.assertEqual(categories.release, ["release-failure"])
+
+    @patch("pyartcd.util.increment_fail_counter", new_callable=AsyncMock)
+    async def test_increment_failed_image_counters(self, mock_increment):
+        """Failure categories map to their counter and pipeline metadata."""
+        categories = util.FailedImageCategories(
+            build=["build-failure"],
+            its=["its-failure"],
+            release=["release-failure"],
+        )
+        failed_entries = {
+            "build-failure": {
+                "nvrs": "build-1.0-1",
+                "build_pipeline_url": "https://build/1",
+            },
+            "its-failure": {
+                "nvrs": "its-1.0-1",
+                "ec_pipeline_url": "https://its/1",
+            },
+            "release-failure": {
+                "nvrs": "release-1.0-1",
+                "release_pipeline": "https://release/1",
+            },
+        }
+
+        await util.increment_failed_image_counters(
+            group="openshift-4.18",
+            build_variant="ocp",
+            jenkins_url="https://jenkins/1",
+            failure_categories=categories,
+            failed_entries=failed_entries,
+            increment_counter=mock_increment,
+        )
+
+        self.assertEqual(
+            [call.args[0] for call in mock_increment.await_args_list],
+            [
+                "count:build-failure:konflux:openshift-4.18:build-failure",
+                "count:ec-failure:konflux:openshift-4.18:its-failure",
+                "count:release-failure:konflux:openshift-4.18:release-failure",
+            ],
+        )
+        mock_increment.assert_any_await(
+            "count:ec-failure:konflux:openshift-4.18:its-failure",
+            build_variant="ocp",
+            jenkins_url="https://jenkins/1",
+            nvr="its-1.0-1",
+            pipeline_url="https://its/1",
+        )
+
+    async def test_update_build_fail_counters(self):
+        """Build counters reset successes and update only meaningful failures."""
+        mock_reset = AsyncMock()
+        mock_increment = AsyncMock()
+        mock_logger = MagicMock()
+        failed_images = ["build-failure", "its-failure", "release-failure", "parent-failure"]
+        failed_entries = {
+            "build-failure": {
+                "task_id": "build-task",
+                "outcome": "build_error",
+                "nvrs": "build-1.0-1",
+                "build_pipeline_url": "https://build/1",
+            },
+            "its-failure": {
+                "task_id": "its-task",
+                "outcome": "its_error",
+                "nvrs": "its-1.0-1",
+                "ec_pipeline_url": "https://its/1",
+            },
+            "release-failure": {
+                "task_id": "release-task",
+                "outcome": "release_error",
+                "nvrs": "release-1.0-1",
+                "release_pipeline": "https://release/1",
+            },
+            "parent-failure": {
+                "task_id": "n/a",
+                "message": "parent images failed to build",
+            },
+        }
+
+        await util.update_build_fail_counters(
+            group="openshift-4.18",
+            assembly="stream",
+            build_variant="ocp",
+            jenkins_url="https://jenkins/1",
+            built_images=["successful-image"],
+            failed_images=failed_images,
+            failed_entries=failed_entries,
+            reset_counter=mock_reset,
+            increment_counter=mock_increment,
+            logger=mock_logger,
+        )
+
+        self.assertEqual(
+            {call.args[0] for call in mock_reset.await_args_list},
+            {
+                "count:build-failure:konflux:openshift-4.18:successful-image",
+                "count:ec-failure:konflux:openshift-4.18:successful-image",
+                "count:release-failure:konflux:openshift-4.18:successful-image",
+            },
+        )
+        self.assertEqual(
+            [call.args[0] for call in mock_increment.await_args_list],
+            [
+                "count:build-failure:konflux:openshift-4.18:build-failure",
+                "count:ec-failure:konflux:openshift-4.18:its-failure",
+                "count:release-failure:konflux:openshift-4.18:release-failure",
+            ],
+        )
+        mock_logger.info.assert_called_once()
+
+    async def test_update_rebase_fail_counters(self):
+        """Rebase counters reset successful images and increment direct failures only."""
+        mock_reset = AsyncMock()
+        mock_increment = AsyncMock()
+
+        await util.update_rebase_fail_counters(
+            group="openshift-4.18",
+            assembly="stream",
+            build_variant="ocp",
+            jenkins_url="https://jenkins/1",
+            image_build_strategy="all",
+            group_images=["successful-image", "failed-image", "skipped-image"],
+            requested_images=[],
+            images_excluded=[],
+            state_path=None,
+            failed_images=["failed-image"],
+            skipped_due_to_parent=["skipped-image"],
+            reset_counter=mock_reset,
+            increment_counter=mock_increment,
+        )
+
+        mock_reset.assert_awaited_once_with("count:rebase-failure:konflux:openshift-4.18:successful-image")
+        mock_increment.assert_awaited_once_with(
+            "count:rebase-failure:konflux:openshift-4.18:failed-image",
+            build_variant="ocp",
+            jenkins_url="https://jenkins/1",
+        )
+
+    async def test_update_rebase_fail_counters_skips_non_stream_assemblies(self):
+        """Rebase counters are not updated outside the stream assembly."""
+        mock_reset = AsyncMock()
+        mock_increment = AsyncMock()
+
+        await util.update_rebase_fail_counters(
+            group="openshift-4.18",
+            assembly="4.18.1",
+            build_variant="ocp",
+            jenkins_url="https://jenkins/1",
+            image_build_strategy="all",
+            group_images=["successful-image"],
+            requested_images=[],
+            images_excluded=[],
+            state_path=None,
+            failed_images=["failed-image"],
+            skipped_due_to_parent=None,
+            reset_counter=mock_reset,
+            increment_counter=mock_increment,
+        )
+
+        mock_reset.assert_not_awaited()
+        mock_increment.assert_not_awaited()
+
+    async def test_update_rebase_fail_counters_only_strategy_uses_state(self):
+        """The ONLY strategy resets successful images recorded in rebase state."""
+        mock_reset = AsyncMock()
+        mock_increment = AsyncMock()
+
+        with tempfile.TemporaryDirectory() as tempdir:
+            state_path = Path(tempdir, "state.yaml")
+            state_path.write_text("images:konflux:rebase:\n  images:\n    parent-image:\n      status: success\n")
+            await util.update_rebase_fail_counters(
+                group="openshift-4.18",
+                assembly="stream",
+                build_variant="ocp",
+                jenkins_url="https://jenkins/1",
+                image_build_strategy="only",
+                group_images=["requested-image"],
+                requested_images=["requested-image"],
+                images_excluded=[],
+                state_path=state_path,
+                failed_images=["failed-image"],
+                skipped_due_to_parent=None,
+                reset_counter=mock_reset,
+                increment_counter=mock_increment,
+            )
+
+        mock_reset.assert_awaited_once_with("count:rebase-failure:konflux:openshift-4.18:parent-image")
+
+    async def test_update_rebase_fail_counters_except_strategy_uses_exclusions(self):
+        """The EXCEPT strategy does not reset explicitly excluded images."""
+        mock_reset = AsyncMock()
+        mock_increment = AsyncMock()
+
+        await util.update_rebase_fail_counters(
+            group="openshift-4.18",
+            assembly="stream",
+            build_variant="ocp",
+            jenkins_url="https://jenkins/1",
+            image_build_strategy="except",
+            group_images=["healthy-image", "excluded-image"],
+            requested_images=[],
+            images_excluded=["excluded-image"],
+            state_path=None,
+            failed_images=[],
+            skipped_due_to_parent=None,
+            reset_counter=mock_reset,
+            increment_counter=mock_increment,
+        )
+
+        mock_reset.assert_awaited_once_with("count:rebase-failure:konflux:openshift-4.18:healthy-image")
 
     @patch("artcommonlib.redis.get_value", new_callable=AsyncMock)
     @patch("artcommonlib.redis.get_keys", new_callable=AsyncMock)
