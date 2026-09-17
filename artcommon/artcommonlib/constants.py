@@ -186,7 +186,7 @@ PRODUCT_FBC_STAGE_RELEASE_PLAN_MAP: dict[str, dict[tuple[int, int], str]] = {
     "external-secrets-operator": {
         (1, 1): "eso-advisory-stage-auto-1-1",
     },
-    "logging": {
+    "openshift-logging": {
         (6, 0): "logging-advisory-stage-auto-6-0",
         (6, 2): "logging-advisory-stage-auto-6-2",
         (6, 3): "logging-advisory-stage-auto-6-3",
