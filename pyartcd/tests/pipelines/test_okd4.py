@@ -13,6 +13,8 @@ import yaml
 from pyartcd.pipelines.ocp4_konflux import BuildStrategy
 from pyartcd.pipelines.okd import BuildPlan, KonfluxOkdPipeline
 
+from pyartcd import util
+
 
 class TestKonfluxOkdPipeline(IsolatedAsyncioTestCase):
     def setUp(self):
@@ -1455,10 +1457,10 @@ class TestRebaseFailCounters(IsolatedAsyncioTestCase):
         with state_path.open('w') as f:
             yaml.safe_dump(state, f)
 
-    @patch('pyartcd.pipelines.okd.increment_fail_counter', new_callable=AsyncMock)
-    @patch('pyartcd.pipelines.okd.reset_fail_counter', new_callable=AsyncMock)
-    async def test_only_strategy_resets_successful_images_from_state(self, mock_reset, mock_incr):
+    async def test_only_strategy_resets_successful_images_from_state(self):
         """ONLY strategy reads per-image status from state.yaml and resets only status=='success'."""
+        mock_reset = AsyncMock()
+        mock_incr = AsyncMock()
         self._write_state(
             {
                 'img-a': {'status': 'success', 'private_fix': False},
@@ -1468,7 +1470,22 @@ class TestRebaseFailCounters(IsolatedAsyncioTestCase):
         )
         self.pipeline.build_plan.image_build_strategy = BuildStrategy.ONLY
 
-        await self.pipeline.update_rebase_fail_counters(['parent-img'])
+        await util.update_rebase_fail_counters(
+            group='okd-4.20',
+            assembly='stream',
+            build_variant='okd',
+            jenkins_url=None,
+            image_build_strategy=self.pipeline.build_plan.image_build_strategy.value,
+            group_images=[],
+            requested_images=[],
+            images_excluded=[],
+            state_path=Path(self.mock_runtime.doozer_working) / 'state.yaml',
+            rebase_state_key='images:okd:rebase',
+            failed_images=['parent-img'],
+            skipped_due_to_parent=None,
+            reset_counter=mock_reset,
+            increment_counter=mock_incr,
+        )
 
         reset_names = {c.args[0].split(':')[-1] for c in mock_reset.call_args_list}
         incr_names = {c.args[0].split(':')[-1] for c in mock_incr.call_args_list}
@@ -1476,10 +1493,10 @@ class TestRebaseFailCounters(IsolatedAsyncioTestCase):
         self.assertEqual(incr_names, {'parent-img'})
         self.assertEqual(mock_incr.call_args.kwargs["build_variant"], "okd")
 
-    @patch('pyartcd.pipelines.okd.increment_fail_counter', new_callable=AsyncMock)
-    @patch('pyartcd.pipelines.okd.reset_fail_counter', new_callable=AsyncMock)
-    async def test_build_fail_counters_preserve_mixed_failure_behavior(self, mock_reset, mock_incr):
+    async def test_build_fail_counters_preserve_mixed_failure_behavior(self):
         """OKD build counters preserve the existing mixed-failure behavior."""
+        mock_reset = AsyncMock()
+        mock_incr = AsyncMock()
         record_log = {
             'image_build_okd': [
                 {'name': 'real-failure', 'status': '-1', 'task_id': 'plr-1'},
@@ -1493,10 +1510,19 @@ class TestRebaseFailCounters(IsolatedAsyncioTestCase):
             ]
         }
 
-        await self.pipeline.update_build_fail_counters(
-            [],
-            ['real-failure', 'infrastructure-failure', 'parent-failure'],
-            record_log,
+        failed_entries = {entry['name']: entry for entry in record_log['image_build_okd']}
+        await util.update_build_fail_counters(
+            group='okd-4.20',
+            assembly='stream',
+            build_variant='okd',
+            jenkins_url=None,
+            built_images=[],
+            failed_images=['real-failure', 'infrastructure-failure', 'parent-failure'],
+            failed_entries=failed_entries,
+            reset_counter=mock_reset,
+            increment_counter=mock_incr,
+            logger=self.pipeline.logger,
+            build_only=True,
         )
 
         self.assertEqual(
@@ -1507,10 +1533,10 @@ class TestRebaseFailCounters(IsolatedAsyncioTestCase):
             ],
         )
 
-    @patch('pyartcd.pipelines.okd.increment_fail_counter', new_callable=AsyncMock)
-    @patch('pyartcd.pipelines.okd.reset_fail_counter', new_callable=AsyncMock)
-    async def test_build_fail_counters_skips_unattempted_failures(self, mock_reset, mock_incr):
+    async def test_build_fail_counters_skips_unattempted_failures(self):
         """OKD counters skip failures when no image build was attempted."""
+        mock_reset = AsyncMock()
+        mock_incr = AsyncMock()
         self.pipeline.logger = MagicMock()
         record_log = {
             'image_build_okd': [
@@ -1524,10 +1550,19 @@ class TestRebaseFailCounters(IsolatedAsyncioTestCase):
             ]
         }
 
-        await self.pipeline.update_build_fail_counters(
-            [],
-            ['infrastructure-failure', 'parent-failure'],
-            record_log,
+        failed_entries = {entry['name']: entry for entry in record_log['image_build_okd']}
+        await util.update_build_fail_counters(
+            group='okd-4.20',
+            assembly='stream',
+            build_variant='okd',
+            jenkins_url=None,
+            built_images=[],
+            failed_images=['infrastructure-failure', 'parent-failure'],
+            failed_entries=failed_entries,
+            reset_counter=mock_reset,
+            increment_counter=mock_incr,
+            logger=self.pipeline.logger,
+            build_only=True,
         )
 
         mock_reset.assert_not_awaited()

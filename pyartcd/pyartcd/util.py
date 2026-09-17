@@ -1160,6 +1160,7 @@ async def update_rebase_fail_counters(
     skipped_due_to_parent: list[str] | None,
     reset_counter: Callable[[str], Awaitable[None]],
     increment_counter: Callable[..., Awaitable[None]],
+    rebase_state_key: str = "images:konflux:rebase",
 ) -> None:
     """
     Update Redis rebase-failure counters after a Konflux rebase run.
@@ -1182,6 +1183,7 @@ async def update_rebase_fail_counters(
         skipped_due_to_parent (list[str] | None): Images skipped due to parent failure.
         reset_counter (Callable[[str], Awaitable[None]]): Counter reset function.
         increment_counter (Callable[..., Awaitable[None]]): Counter increment function.
+        rebase_state_key (str): State key containing rebase results.
     """
     if assembly != "stream":
         return
@@ -1190,7 +1192,7 @@ async def update_rebase_fail_counters(
     if state_path is not None and state_path.exists():
         with state_path.open("r") as f:
             state = yaml.safe_load(f) or {}
-        rebase_state = state.get("images:konflux:rebase", {})
+        rebase_state = state.get(rebase_state_key, {})
 
     group_images = group_images or list(rebase_state.get("images", {})) or requested_images
     match image_build_strategy:
@@ -1376,6 +1378,7 @@ async def update_build_fail_counters(
     reset_counter: Callable[[str], Awaitable[None]],
     increment_counter: Callable[..., Awaitable[None]],
     logger: logging.Logger,
+    build_only: bool = False,
 ) -> None:
     """
     Update Redis build-failure counters after a Konflux build run.
@@ -1396,11 +1399,12 @@ async def update_build_fail_counters(
         reset_counter (Callable[[str], Awaitable[None]]): Counter reset function.
         increment_counter (Callable[..., Awaitable[None]]): Counter increment function.
         logger (logging.Logger): Logger used for build failure messages.
+        build_only (bool): Whether to update only build-failure counters.
     """
     if assembly != "stream":
         return
 
-    counter_types = ("build-failure", "ec-failure", "release-failure")
+    counter_types = ("build-failure",) if build_only else ("build-failure", "ec-failure", "release-failure")
     await asyncio.gather(
         *[
             reset_counter(f"count:{counter_type}:konflux:{group}:{image}")
@@ -1418,7 +1422,14 @@ async def update_build_fail_counters(
         logger.warning(get_no_attempted_builds_warning(group, len(failed_images), jenkins_url))
         return
 
-    failure_categories = categorize_failed_images(counter_failed_images, failed_entries)
+    if build_only:
+        failure_categories = FailedImageCategories(
+            build=counter_failed_images,
+            its=[],
+            release=[],
+        )
+    else:
+        failure_categories = categorize_failed_images(counter_failed_images, failed_entries)
     await increment_failed_image_counters(
         group=group,
         build_variant=build_variant,
