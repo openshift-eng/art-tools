@@ -55,24 +55,16 @@
     tags_include: [shim_prevented_no_openssl]
     tags_exclude: [no_openssl]
 
-- name: SUSPECT_does_not_scrub_no_openssl_passed_via_equals_form
+- name: scrubs_caller_supplied_no_openssl_tag_equals_form
   description: >
-    SUSPECT: `-tags=no_openssl` (the equals form of the exact same flag) is
-    NOT scrubbed -- it survives untouched, letting a caller disable the
-    openssl backend FORCE_OPENSSL is supposed to mandate just by choosing
-    this spelling over `-tags no_openssl`. Only the two-argument form above
-    is covered by the sed-based scrub inline in the IN_TAGS state machine;
-    the `-tags=`/`--tags=` branch only appends strictfipsruntime, with no
-    equivalent scrub call. This looks like an oversight rather than a
-    deliberate choice -- there's no comment explaining why the two spellings
-    would be treated differently, and PR #3435's scrub_no_openssl() refactor
-    incidentally closes this exact gap (see that PR's own behavior spec)
-    without mentioning it as a fix.
+    A caller-supplied no_openssl tag, passed as `-tags=no_openssl` (the
+    equals form), is neutralized to shim_prevented_no_openssl, just like
+    the two-argument form above.
   args: [build, "-tags=no_openssl,other", ./...]
   env: {__doozer_group: openshift-4.20}
   expect:
-    tags_include: [no_openssl, other]
-    tags_exclude: [shim_prevented_no_openssl]
+    tags_include: [shim_prevented_no_openssl, other]
+    tags_exclude: [no_openssl]
 
 # ---------------------------------------------------------------------------
 # Strict mode: GO_COMPLIANCE_STRICT=basic/full make non-compliant input a
@@ -99,20 +91,16 @@
     invoked: false
     exit_code: 1
 
-- name: SUSPECT_basic_strict_mode_does_not_catch_no_openssl_via_equals_form
+- name: basic_strict_mode_rejects_no_openssl_tag_equals_form
   description: >
-    SUSPECT: direct consequence of the equals-form gap above -- because
-    `-tags=no_openssl` is never scrubbed, basic strict mode never even sees
-    a violation to reject. A CI job relying on GO_COMPLIANCE_STRICT=basic to
-    catch non-compliant builds would silently let a `-tags=no_openssl`
-    component straight through, with no error, no log line, nothing --
-    exactly the class of problem strict mode exists to catch.
+    Basic strict mode aborts rather than silently scrubbing a no_openssl tag
+    passed as `-tags=no_openssl` (the equals form), just like it does for the
+    two-argument form above.
   args: [build, "-tags=no_openssl", ./...]
   env: {__doozer_group: openshift-4.20, GO_COMPLIANCE_STRICT: basic}
   expect:
-    invoked: true
-    exit_code: 0
-    tags_include: [no_openssl]
+    invoked: false
+    exit_code: 1
 
 - name: full_strict_mode_rejects_build_without_preset_goexperiment
   description: >

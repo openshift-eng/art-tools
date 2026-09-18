@@ -16,6 +16,23 @@ stricterror() {
   fi
 }
 
+# Neutralise the no_openssl build tag, which would otherwise disable the openssl
+# crypto backend that FORCE_OPENSSL exists to mandate. Operates in place on the
+# caller's "arg" variable rather than returning the new value, because the strict
+# mode check has to be able to terminate the script -- which it could not do from
+# the subshell of a command substitution.
+scrub_no_openssl() {
+  pre_arg="${arg}"
+  arg=$(echo "${arg}" | sed 's/no_openssl/shim_prevented_no_openssl/g')
+  if [[ "${pre_arg}" != "${arg}" ]]; then
+    echoerr "non-compliant: eliminated no_openssl"
+    if [[ "${STRICT_MODE_BASIC}" == "1" ]]; then
+      stricterror
+      exit 1
+    fi
+  fi
+}
+
 run_go() {
   if [[ "${SHIM_TEST}" == "1" ]]; then
     echoerr "running with SHIM_TEST=${SHIM_TEST}"
@@ -266,6 +283,14 @@ if [[ "${EXEMPT}" != "1" ]]; then
       fi
     fi
 
+    # A tag list reaches us in one of two spellings: attached to the flag as
+    # "-tags=<list>" (handled here), or as the argument following a bare "-tags"
+    # (handled by the IN_TAGS block below). Both have to be scrubbed, and the
+    # scrub is independent of whether we are also adding tags of our own.
+    if [[ ( "${arg}" == "-tags="* || "${arg}" == "--tags="* ) && "${FORCE_OPENSSL}" == "1" ]]; then
+      scrub_no_openssl
+    fi
+
     if [[ "${IN_TAGS}" == "1" ]]; then
       if [[ "${FORCE_FOD_MODE}" == "1" ]]; then
         echoerr "adding strictfipsruntime tag to ${arg} (IN_TAGS=${IN_TAGS})"
@@ -278,15 +303,7 @@ if [[ "${EXEMPT}" != "1" ]]; then
         fi
       fi
       if [[ "${FORCE_OPENSSL}" == "1" ]]; then
-        pre_arg="${arg}"
-        arg=$(echo "${arg}" | sed 's/no_openssl/shim_prevented_no_openssl/g')
-        if [[ "${pre_arg}" != "${arg}" ]]; then
-          echoerr "non-compliant: eliminated no_openssl"
-          if [[ "${STRICT_MODE_BASIC}" == "1" ]]; then
-            stricterror
-            exit 1
-          fi
-        fi
+        scrub_no_openssl
       fi
       IN_TAGS=0
     fi
