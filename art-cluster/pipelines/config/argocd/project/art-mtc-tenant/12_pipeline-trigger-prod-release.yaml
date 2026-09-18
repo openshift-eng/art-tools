@@ -86,15 +86,18 @@ spec:
         log(f"Source branch: {source_branch}")
 
         labels = mr.get("labels", [])
-        if "stage-release-success" not in labels:
+        STAGE_READY_LABELS = {"stage-release-success", "stage-release-skipped"}
+        matched = STAGE_READY_LABELS.intersection(labels)
+        if not matched:
             print(
-                "ERROR: MR is missing the 'stage-release-success' label. "
-                "Stage release must succeed before triggering prod release.",
+                "ERROR: MR is missing a stage-ready label "
+                "('stage-release-success' or 'stage-release-skipped'). "
+                "Stage release must succeed (or be explicitly skipped) before triggering prod release.",
                 file=sys.stderr,
             )
             print(f"Current labels: {labels or ['(none)']}", flush=True)
             sys.exit(1)
-        log("Label 'stage-release-success' found.")
+        log(f"Stage-ready label found: {sorted(matched)}")
 
         log("Fetching changed files...")
         changes_data = api_get(f"/merge_requests/{mr_iid}/changes")

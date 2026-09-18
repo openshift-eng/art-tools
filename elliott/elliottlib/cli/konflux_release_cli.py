@@ -29,6 +29,7 @@ from kubernetes.dynamic import ResourceInstance, exceptions
 from elliottlib.cli.common import cli, click_coroutine
 from elliottlib.runtime import Runtime
 from elliottlib.shipment_model import Shipment, ShipmentConfig, ShipmentEnv
+from elliottlib.shipment_utils import SKIPPED_RELEASE_PLAN, is_release_plan_skipped
 
 yaml = new_roundtrip_yaml_handler()
 
@@ -327,6 +328,14 @@ class CreateReleaseCli:
     async def new_release(self, release_config: ReleaseConfig) -> dict:
         release_plan = release_config.release_plan
         snapshot = validate_k8s_dns_label(release_config.snapshot, "Release snapshot reference")
+
+        if is_release_plan_skipped(release_plan):
+            raise RuntimeError(
+                f"Cannot create a Konflux release: releasePlan is set to the skip-stage sentinel "
+                f"({release_plan!r}). Stage was configured as {SKIPPED_RELEASE_PLAN}; no Konflux "
+                f"stage release should be created. If this is unexpected, fix config.yaml / the "
+                f"shipment file and regenerate CI."
+            )
 
         # make sure releasePlan exists
         LOGGER.info(f"Fetching release plan {release_plan} ...")

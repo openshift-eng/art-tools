@@ -27,6 +27,7 @@ from elliottlib.shipment_model import (
     Snapshot,
     SnapshotSpec,
 )
+from elliottlib.shipment_utils import SKIPPED_RELEASE_PLAN, is_release_plan_skipped
 
 from pyartcd.cli import cli, click_coroutine, pass_runtime
 from pyartcd.click_validators import validate_release_date
@@ -81,6 +82,8 @@ class BinaryReleaseKonfluxPipeline:
         self.gitlab_token = None
         self.shipment_mr_url = None
         self.job_url = None
+        # Set when config.yaml stage releasePlan is the skip-stage sentinel (extraordinary).
+        self.stage_release_skipped = False
 
         # Product configuration - initialized to None, will be loaded from group config in run()
         self.product = None
@@ -332,8 +335,29 @@ class BinaryReleaseKonfluxPipeline:
             stage_rpa = app_env_config.get("stage", {}).get("releasePlan", "n/a")
             prod_rpa = app_env_config.get("prod", {}).get("releasePlan", "n/a")
 
+        effective_key = f"{application}-{rhel_suffix}" if rhel_suffix else application
+
+        # Prod must never use the skip-stage sentinel.
+        if is_release_plan_skipped(prod_rpa):
+            raise ValueError(
+                f"prod releasePlan for '{effective_key}' is set to the skip-stage sentinel "
+                f"({prod_rpa!r}). Skipping prod is forbidden; only stage may use "
+                f"releasePlan: {SKIPPED_RELEASE_PLAN}."
+            )
+
+        # EXTRAORDINARY: stage releasePlan: Skipped bypasses Konflux stage release.
+        # Use only with explicit team approval; leave a caution comment in config.yaml.
+        if is_release_plan_skipped(stage_rpa):
+            stage_rpa = SKIPPED_RELEASE_PLAN
+            self.stage_release_skipped = True
+            self.logger.warning(
+                "EXTRAORDINARY: stage releasePlan for '%s' is %r — Konflux stage release "
+                "and stage CDN publish will be skipped. Team approval required.",
+                effective_key,
+                SKIPPED_RELEASE_PLAN,
+            )
+
         if stage_rpa == "n/a" or prod_rpa == "n/a":
-            effective_key = f"{application}-{rhel_suffix}" if rhel_suffix else application
             if self.create_mr:
                 raise ValueError(
                     f"stage/prod releasePlan is not registered for '{effective_key}' in {config_path}. "
@@ -381,6 +405,14 @@ class BinaryReleaseKonfluxPipeline:
             mr_title = f"Draft: Shipment for {self.product} {self.assembly}"
         mr_description = f"Created by job: {self.job_url}\n\n" if self.job_url else ""
         mr_description += f"Shipment file created for {self.assembly} using binary-release-konflux command"
+        if self.stage_release_skipped:
+            mr_description += (
+                "\n\n**CAUTION — stage release skipped:** `config.yaml` sets stage "
+                f"`releasePlan: {SKIPPED_RELEASE_PLAN}` for this application. This is an "
+                "extraordinary, team-approved workflow that bypasses Konflux stage release "
+                "and stage CDN publish. CI will apply the `stage-release-skipped` label "
+                "instead of `stage-release-success`."
+            )
 
         if self.dry_run:
             self.logger.info("[DRY-RUN] Would have created MR with title: %s", mr_title)
