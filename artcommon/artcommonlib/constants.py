@@ -212,7 +212,6 @@ PRODUCT_FBC_STAGE_RELEASE_PLAN_MAP: dict[str, dict[tuple[int, int], str]] = {
         (1, 6): "oadp-advisory-stage-1-6",
     },
     "ocp": {
-        (5, 0): "ocp-art-advisory-stage-5-0",
         (5, 1): "ocp-art-advisory-stage-5-1",
     },
     "quay": {
