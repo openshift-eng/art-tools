@@ -389,6 +389,7 @@ class KonfluxBuildCli:
             results = await asyncio.gather(*tasks, return_exceptions=True)
             failed_images = []
             successfully_built_metas = []
+            build_nvrs: Dict[str, str] = {}  # distgit_key -> NVR for successfully built images
             for index, result in enumerate(results):
                 if isinstance(result, Exception):
                     image_name = metas[index].distgit_key
@@ -397,12 +398,15 @@ class KonfluxBuildCli:
                     LOGGER.error(f"Failed to build {image_name}: {result}; {stack_trace}")
                 else:
                     successfully_built_metas.append(metas[index])
+                    # builder.build() returns (nvr, pipelinerun_name, pipelinerun_info_dict)
+                    nvr = result[0]
+                    build_nvrs[metas[index].distgit_key] = nvr
 
             # Trigger standalone stage releases for successfully built images that opt in
             if successfully_built_metas and runtime.assembly == "stream":
                 stage_release_metas = [m for m in successfully_built_metas if m.config.konflux.stage_release]
                 if stage_release_metas:
-                    await self._trigger_standalone_stage_releases(stage_release_metas)
+                    await self._trigger_standalone_stage_releases(stage_release_metas, build_nvrs)
 
         finally:
             refresh_task.cancel()
@@ -424,11 +428,14 @@ class KonfluxBuildCli:
             raise DoozerFatalError(f"Failed to build images: {failed_images}")
         LOGGER.info("Build complete")
 
-    async def _trigger_standalone_stage_releases(self, metas: List[ImageMetadata]) -> None:
+    async def _trigger_standalone_stage_releases(self, metas: List[ImageMetadata], build_nvrs: Dict[str, str]) -> None:
         """Trigger standalone stage releases for images with ``konflux.stage_release: true``.
 
         Failures are logged but do NOT fail the overall build — the stage release is best-effort.
         All eligible images are released in parallel via ``asyncio.gather``.
+
+        :param metas: Image metadata objects for images that should be stage-released.
+        :param build_nvrs: Mapping of distgit_key → NVR from the builds that just completed.
         """
         runtime = self.runtime
         assert runtime.group_config is not None, "group_config is not initialized. Doozer bug?"
@@ -458,15 +465,22 @@ class KonfluxBuildCli:
             release_plan,
         )
         await asyncio.gather(
-            *[self._stage_release_standalone_image(meta, release_plan) for meta in metas],
+            *[self._stage_release_standalone_image(meta, release_plan, build_nvrs[meta.distgit_key]) for meta in metas],
         )
 
-    async def _stage_release_standalone_image(self, image_meta: ImageMetadata, release_plan_name: str) -> Optional[str]:
+    async def _stage_release_standalone_image(
+        self, image_meta: ImageMetadata, release_plan_name: str, nvr: str
+    ) -> Optional[str]:
         """Stage-release a single standalone image (not part of an operator bundle).
 
         Delegates Snapshot creation, Release creation, and wait-for-completion to
         :class:`~doozerlib.backend.base_image_handler.BaseImageHandler` so the
         Snapshot→Release→wait pattern is not duplicated.
+
+        :param image_meta: The image metadata.
+        :param release_plan_name: Konflux ReleasePlan to use.
+        :param nvr: Exact NVR from the build that just completed — used to look up the
+            build record without ambiguity (avoids a race with concurrent builds).
 
         Returns the release URL on success, or ``None`` on failure (logged, not raised).
         """
@@ -474,18 +488,19 @@ class KonfluxBuildCli:
         logger = LOGGER.getChild(f"[stage-release:{image_meta.distgit_key}]")
 
         try:
-            # Fetch the latest successful build record for this image
+            # Look up the build record by exact NVR from the build that just completed.
+            # Using the exact NVR avoids a race condition where get_latest_build(name=...)
+            # could pick up a different concurrent build.
             build_record = await runtime.konflux_db.get_latest_build(
-                name=image_meta.distgit_key,
-                group=runtime.group,
-                assembly=runtime.assembly,
+                nvr=nvr,
                 outcome=KonfluxBuildOutcome.SUCCESS,
                 exclude_large_columns=True,
             )
             if not build_record:
                 logger.warning(
-                    "No successful build record found for %s; skipping stage release",
+                    "No successful build record found for %s (NVR: %s); skipping stage release",
                     image_meta.distgit_key,
+                    nvr,
                 )
                 return None
 

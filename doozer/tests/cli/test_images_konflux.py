@@ -699,7 +699,7 @@ class TestKonfluxBuildCliStandaloneStageRelease(unittest.IsolatedAsyncioTestCase
         cli = self._make_build_cli(runtime)
         meta = self._make_image_meta("eventrouter", stage_release=True)
 
-        await cli._trigger_standalone_stage_releases([meta])
+        await cli._trigger_standalone_stage_releases([meta], {"eventrouter": "eventrouter-1.0.0-1"})
 
         mock_resolve.assert_called_once_with("openshift-logging", 6, 6)
 
@@ -723,9 +723,18 @@ class TestKonfluxBuildCliStandaloneStageRelease(unittest.IsolatedAsyncioTestCase
         cli = self._make_build_cli(runtime)
         meta = self._make_image_meta("eventrouter", stage_release=True)
 
-        release_url = await cli._stage_release_standalone_image(meta, "logging-advisory-stage-auto-6-6")
+        release_url = await cli._stage_release_standalone_image(
+            meta, "logging-advisory-stage-auto-6-6", "eventrouter-1.0.0-1"
+        )
 
         self.assertEqual(release_url, "https://konflux/url")
+
+        # Build record was looked up by exact NVR (not by name/group/assembly)
+        runtime.konflux_db.get_latest_build.assert_awaited_once_with(
+            nvr="eventrouter-1.0.0-1",
+            outcome=KonfluxBuildOutcome.SUCCESS,
+            exclude_large_columns=True,
+        )
 
         # Handler was created with overrides
         mock_handler_cls.assert_called_once_with(
@@ -777,7 +786,9 @@ class TestKonfluxBuildCliStandaloneStageRelease(unittest.IsolatedAsyncioTestCase
         cli = self._make_build_cli(runtime)
         meta = self._make_image_meta("eventrouter", stage_release=True)
 
-        result = await cli._stage_release_standalone_image(meta, "logging-advisory-stage-auto-6-6")
+        result = await cli._stage_release_standalone_image(
+            meta, "logging-advisory-stage-auto-6-6", "eventrouter-1.0.0-1"
+        )
 
         # Failure is swallowed — not raised
         self.assertIsNone(result)
@@ -791,9 +802,17 @@ class TestKonfluxBuildCliStandaloneStageRelease(unittest.IsolatedAsyncioTestCase
         cli = self._make_build_cli(runtime)
         meta = self._make_image_meta("eventrouter", stage_release=True)
 
-        result = await cli._stage_release_standalone_image(meta, "logging-advisory-stage-auto-6-6")
+        result = await cli._stage_release_standalone_image(
+            meta, "logging-advisory-stage-auto-6-6", "eventrouter-1.0.0-1"
+        )
 
         self.assertIsNone(result)
+        # Verify lookup was by exact NVR
+        runtime.konflux_db.get_latest_build.assert_awaited_once_with(
+            nvr="eventrouter-1.0.0-1",
+            outcome=KonfluxBuildOutcome.SUCCESS,
+            exclude_large_columns=True,
+        )
 
     @mock.patch("doozerlib.cli.images_konflux.resolve_konflux_fbc_stage_release_plan")
     async def test_trigger_standalone_stage_releases_uses_product_version(self, mock_resolve):
@@ -803,7 +822,7 @@ class TestKonfluxBuildCliStandaloneStageRelease(unittest.IsolatedAsyncioTestCase
         # Layered product: version string takes precedence
         runtime_layered = self._make_runtime(product="openshift-logging", version_str="6.6.0", major=4, minor=21)
         cli = self._make_build_cli(runtime_layered)
-        await cli._trigger_standalone_stage_releases([self._make_image_meta("img")])
+        await cli._trigger_standalone_stage_releases([self._make_image_meta("img")], {"img": "img-1.0.0-1"})
         mock_resolve.assert_called_with("openshift-logging", 6, 6)
 
         mock_resolve.reset_mock()
@@ -811,7 +830,7 @@ class TestKonfluxBuildCliStandaloneStageRelease(unittest.IsolatedAsyncioTestCase
         # OCP group: fallback to MAJOR/MINOR
         runtime_ocp = self._make_runtime(product="ocp", major=5, minor=0)
         cli = self._make_build_cli(runtime_ocp)
-        await cli._trigger_standalone_stage_releases([self._make_image_meta("img")])
+        await cli._trigger_standalone_stage_releases([self._make_image_meta("img")], {"img": "img-1.0.0-1"})
         mock_resolve.assert_called_with("ocp", 5, 0)
 
     async def test_stage_release_config_flag_defaults_to_false(self):
@@ -845,7 +864,9 @@ class TestKonfluxBuildCliStandaloneStageRelease(unittest.IsolatedAsyncioTestCase
         cli.dry_run = True
         meta = self._make_image_meta("eventrouter", stage_release=True)
 
-        result = await cli._stage_release_standalone_image(meta, "logging-advisory-stage-auto-6-6")
+        result = await cli._stage_release_standalone_image(
+            meta, "logging-advisory-stage-auto-6-6", "eventrouter-1.0.0-1"
+        )
 
         self.assertEqual(result, "https://dry-run.invalid")
         # Handler was created with dry_run=True
@@ -876,7 +897,9 @@ class TestKonfluxBuildCliStandaloneStageRelease(unittest.IsolatedAsyncioTestCase
         cli = self._make_build_cli(runtime)
         meta = self._make_image_meta("eventrouter", stage_release=True)
 
-        result = await cli._stage_release_standalone_image(meta, "logging-advisory-stage-auto-6-6")
+        result = await cli._stage_release_standalone_image(
+            meta, "logging-advisory-stage-auto-6-6", "eventrouter-1.0.0-1"
+        )
 
         self.assertIsNone(result)
         mock_handler._create_release_from_snapshot.assert_not_called()
