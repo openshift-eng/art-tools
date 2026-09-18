@@ -74,23 +74,43 @@ class BaseImageHandler:
     """
     Create a Konflux Snapshot for the product's base-image Application with **one** component, then a Release using
     the product's silent base-image ReleasePlan, and wait until the Release reports success.
+
+    The handler can also be used for non-base-image release workflows (e.g. standalone stage releases) by passing
+    explicit ``release_plan_name`` and ``application_name`` overrides to ``__init__``.  When these are provided the
+    automatic base-image-specific resolution is skipped, making the handler a generic Snapshot→Release executor.
     """
 
-    def __init__(self, runtime, dry_run: bool = False):
+    def __init__(
+        self,
+        runtime,
+        dry_run: bool = False,
+        *,
+        release_plan_name: Optional[str] = None,
+        application_name: Optional[str] = None,
+        namespace: Optional[str] = None,
+        kubeconfig: Optional[str] = None,
+        context: Optional[str] = None,
+    ):
         self.runtime = runtime
         self.dry_run = dry_run
         self.logger = logutil.EntityLoggingAdapter(self.runtime.logger, extra={'entity': 'base-image'})
 
-        self.namespace = resolve_konflux_namespace_by_product(self.runtime.product, None)
-        kubeconfig = resolve_konflux_kubeconfig_by_product(self.runtime.product, None)
+        self.namespace = namespace or resolve_konflux_namespace_by_product(self.runtime.product, None)
+        resolved_kubeconfig = kubeconfig or resolve_konflux_kubeconfig_by_product(self.runtime.product, None)
 
-        lifecycle_phase = _software_lifecycle_phase(self.runtime)
-        resolved_plan, resolved_application = resolve_konflux_base_image_release_targets(
-            self.runtime.product,
-            lifecycle_phase=lifecycle_phase,
-        )
-        self.base_image_release_plan = resolved_plan
-        self.base_image_application = resolved_application
+        if release_plan_name is not None and application_name is not None:
+            # Caller-supplied overrides: skip base-image-specific resolution.
+            self.base_image_release_plan = release_plan_name
+            self.base_image_application = application_name
+        else:
+            lifecycle_phase = _software_lifecycle_phase(self.runtime)
+            resolved_plan, resolved_application = resolve_konflux_base_image_release_targets(
+                self.runtime.product,
+                lifecycle_phase=lifecycle_phase,
+            )
+            self.base_image_release_plan = resolved_plan
+            self.base_image_application = resolved_application
+
         self.logger.info(
             f"Base image Konflux targets: namespace={self.namespace} "
             f"releasePlan={self.base_image_release_plan} application={self.base_image_application}"
@@ -98,8 +118,8 @@ class BaseImageHandler:
 
         self.konflux_client = KonfluxClient.from_kubeconfig(
             default_namespace=self.namespace,
-            config_file=kubeconfig,
-            context=None,
+            config_file=resolved_kubeconfig,
+            context=context,
             dry_run=dry_run,
         )
 
@@ -234,8 +254,14 @@ class BaseImageHandler:
 
         return component
 
-    async def _snapshot_from_component(self, component: dict) -> Optional[str]:
-        """Build Snapshot CR with one component and create it in Konflux."""
+    async def _snapshot_from_component(self, component: dict, extra_labels: Optional[dict] = None) -> Optional[str]:
+        """Build Snapshot CR with one component and create it in Konflux.
+
+        Args:
+            component: Snapshot component dict (``name``, ``containerImage``, optional ``source``).
+            extra_labels: Additional labels merged into the Snapshot metadata (e.g.
+                ``{"release.appstudio.openshift.io/auto-release": "false"}``).
+        """
         try:
             timestamp = get_utc_now_formatted_str()
             # The component name already carries the version (e.g. "ose-4-15-openshift-enterprise-base-rhel9"),
@@ -254,16 +280,20 @@ class BaseImageHandler:
                 self.logger.info(f"[DRY-RUN] Would create snapshot {snapshot_name}")
                 return snapshot_name
 
+            labels = {
+                "test.appstudio.openshift.io/type": "override",
+                "appstudio.openshift.io/application": self.base_image_application,
+            }
+            if extra_labels:
+                labels.update(extra_labels)
+
             snapshot_obj = {
                 "apiVersion": API_VERSION,
                 "kind": KIND_SNAPSHOT,
                 "metadata": {
                     "name": snapshot_name,
                     "namespace": self.namespace,
-                    "labels": {
-                        "test.appstudio.openshift.io/type": "override",
-                        "appstudio.openshift.io/application": self.base_image_application,
-                    },
+                    "labels": labels,
                 },
                 "spec": {
                     "application": self.base_image_application,
@@ -291,7 +321,11 @@ class BaseImageHandler:
             return None
 
     async def _create_release_from_snapshot(
-        self, snapshot_name: str, snapshot_input: BaseImageSnapshotInput, component_name: str = ""
+        self,
+        snapshot_name: str,
+        snapshot_input: BaseImageSnapshotInput,
+        component_name: str = "",
+        extra_annotations: Optional[dict] = None,
     ) -> Optional[Tuple[str, str]]:
         """
         Create Konflux Release from snapshot using the product's silent base-image ReleasePlan.
@@ -300,6 +334,8 @@ class BaseImageHandler:
             snapshot_name: Snapshot resource name.
             snapshot_input: Base-image component input (NVR and distgit key stored on Release annotations).
             component_name: Konflux component name, included in the Release generateName for traceability.
+            extra_annotations: Additional or overriding annotations merged into the Release metadata.
+                Use to customise ``art.redhat.com/kind`` etc. for non-base-image workflows.
 
         Returns:
             ``(release_name, release_console_url)`` or ``None`` on failure.
@@ -332,6 +368,8 @@ class BaseImageHandler:
             }
             if job_url := os.getenv("BUILD_URL"):
                 release_annotations["art.redhat.com/job-url"] = job_url
+            if extra_annotations:
+                release_annotations.update(extra_annotations)
 
             comp_safe = _truncate_for_k8s_name(component_name, 248 - len(group_safe) - 1) if component_name else ""
             generate_name = f"{group_safe}-{comp_safe}-" if comp_safe else f"{group_safe}-base-image-release-"

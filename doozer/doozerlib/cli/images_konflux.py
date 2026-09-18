@@ -27,6 +27,7 @@ from kubernetes.dynamic import exceptions as k8s_exceptions
 from opentelemetry import trace
 
 from doozerlib import constants, util
+from doozerlib.backend.base_image_handler import BaseImageHandler, BaseImageSnapshotInput
 from doozerlib.backend.konflux_client import (
     API_VERSION,
     KIND_RELEASE,
@@ -387,12 +388,22 @@ class KonfluxBuildCli:
         try:
             results = await asyncio.gather(*tasks, return_exceptions=True)
             failed_images = []
+            successfully_built_metas = []
             for index, result in enumerate(results):
                 if isinstance(result, Exception):
                     image_name = metas[index].distgit_key
                     failed_images.append(image_name)
                     stack_trace = ''.join(traceback.TracebackException.from_exception(result).format())
                     LOGGER.error(f"Failed to build {image_name}: {result}; {stack_trace}")
+                else:
+                    successfully_built_metas.append(metas[index])
+
+            # Trigger standalone stage releases for successfully built images that opt in
+            if successfully_built_metas and runtime.assembly == "stream":
+                stage_release_metas = [m for m in successfully_built_metas if m.config.konflux.stage_release]
+                if stage_release_metas:
+                    await self._trigger_standalone_stage_releases(stage_release_metas)
+
         finally:
             refresh_task.cancel()
             try:
@@ -412,6 +423,130 @@ class KonfluxBuildCli:
         if failed_images:
             raise DoozerFatalError(f"Failed to build images: {failed_images}")
         LOGGER.info("Build complete")
+
+    async def _trigger_standalone_stage_releases(self, metas: List[ImageMetadata]) -> None:
+        """Trigger standalone stage releases for images with ``konflux.stage_release: true``.
+
+        Failures are logged but do NOT fail the overall build — the stage release is best-effort.
+        All eligible images are released in parallel via ``asyncio.gather``.
+        """
+        runtime = self.runtime
+        assert runtime.group_config is not None, "group_config is not initialized. Doozer bug?"
+
+        # Resolve product version the same way BundleStageReleaseRelatedImagesCli does.
+        version_str = runtime.group_config.version
+        if version_str:
+            parts = str(version_str).split(".")
+            product_major, product_minor = int(parts[0]), int(parts[1])
+        else:
+            product_major = int(runtime.group_config.vars.MAJOR)
+            product_minor = int(runtime.group_config.vars.MINOR)
+
+        release_plan = resolve_konflux_fbc_stage_release_plan(runtime.product, product_major, product_minor)
+        if not release_plan:
+            LOGGER.info(
+                "No stage release plan configured for product '%s' (%d.%d); skipping standalone image stage releases",
+                runtime.product,
+                product_major,
+                product_minor,
+            )
+            return
+
+        LOGGER.info(
+            "Triggering standalone stage release for %d image(s) via ReleasePlan '%s'",
+            len(metas),
+            release_plan,
+        )
+        await asyncio.gather(
+            *[self._stage_release_standalone_image(meta, release_plan) for meta in metas],
+        )
+
+    async def _stage_release_standalone_image(self, image_meta: ImageMetadata, release_plan_name: str) -> Optional[str]:
+        """Stage-release a single standalone image (not part of an operator bundle).
+
+        Delegates Snapshot creation, Release creation, and wait-for-completion to
+        :class:`~doozerlib.backend.base_image_handler.BaseImageHandler` so the
+        Snapshot→Release→wait pattern is not duplicated.
+
+        Returns the release URL on success, or ``None`` on failure (logged, not raised).
+        """
+        runtime = self.runtime
+        logger = LOGGER.getChild(f"[stage-release:{image_meta.distgit_key}]")
+
+        try:
+            # Fetch the latest successful build record for this image
+            build_record = await runtime.konflux_db.get_latest_build(
+                name=image_meta.distgit_key,
+                group=runtime.group,
+                assembly=runtime.assembly,
+                outcome=KonfluxBuildOutcome.SUCCESS,
+                exclude_large_columns=True,
+            )
+            if not build_record:
+                logger.warning(
+                    "No successful build record found for %s; skipping stage release",
+                    image_meta.distgit_key,
+                )
+                return None
+
+            application_name = util.konflux_application_name(runtime.group)
+
+            # Reuse BaseImageHandler with overridden release plan and application so
+            # the Snapshot/Release/wait infrastructure is shared, not reimplemented.
+            handler = BaseImageHandler(
+                runtime,
+                dry_run=self.dry_run,
+                release_plan_name=release_plan_name,
+                application_name=application_name,
+                namespace=self.konflux_namespace,
+                kubeconfig=self.konflux_kubeconfig,
+                context=self.konflux_context,
+            )
+
+            snapshot_input = BaseImageSnapshotInput(
+                nvr=build_record.nvr,
+                distgit_key=image_meta.distgit_key,
+                container_image=build_record.image_pullspec,
+                rebase_repo_url=build_record.rebase_repo_url,
+                rebase_commitish=build_record.rebase_commitish,
+            )
+
+            component = handler._build_component_from_snapshot_input(snapshot_input)
+
+            snapshot_name = await handler._snapshot_from_component(
+                component,
+                extra_labels={"release.appstudio.openshift.io/auto-release": "false"},
+            )
+            if not snapshot_name:
+                logger.error("Failed to create snapshot for %s", image_meta.distgit_key)
+                return None
+
+            result = await handler._create_release_from_snapshot(
+                snapshot_name,
+                snapshot_input,
+                component["name"],
+                extra_annotations={"art.redhat.com/kind": "standalone-image-stage-release"},
+            )
+            if not result:
+                logger.error("Failed to create release for %s", image_meta.distgit_key)
+                return None
+
+            release_name, release_url = result
+
+            if not await handler._wait_for_release_completion(release_name):
+                raise RuntimeError(
+                    f"Stage release {release_name} for {image_meta.distgit_key} did not succeed. See {release_url}"
+                )
+
+            logger.info("Standalone stage release succeeded for %s: %s", image_meta.distgit_key, release_url)
+            return release_url
+
+        except Exception:
+            logger.exception(
+                "Standalone stage release failed for %s (non-fatal, build is not affected)",
+                image_meta.distgit_key,
+            )
+            return None
 
 
 @cli.command("beta:images:konflux:build", short_help="Build images for the group.")
