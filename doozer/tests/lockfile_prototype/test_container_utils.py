@@ -3,12 +3,9 @@ Tests for doozerlib.lockfile_prototype.container_utils.
 """
 
 import asyncio
-import base64
-import json
 import os
 import unittest
-from pathlib import Path
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, patch
 
 from doozerlib.lockfile_prototype.container_utils import ContainerImageHelper
 
@@ -114,270 +111,26 @@ class TestContainerImageHelper(unittest.TestCase):
     @patch("doozerlib.lockfile_prototype.container_utils.cmd_gather_async")
     def test_get_installed_packages(self, mock_gather):
         """
-        Should parse package names from an extracted RPM database.
+        Should parse rpm -qa output into sorted unique package names.
         """
 
-        async def mock_commands(cmd, **kwargs):
-            if cmd[0] == "cosign":
-                return (1, "", "found no attestations")
-            if cmd[0] == "oras":
-                return (1, "", "no SPDX attachment")
-            if cmd[0] == "oc":
-                path_arg = cmd[cmd.index("--path") + 1]
-                _, destination = path_arg.rsplit(":", 1)
-                Path(destination, "rpmdb.sqlite").touch()
-                return (0, "", "")
-            if cmd[0] == "rpm":
-                return (0, "bash\ncoreutils\nbash\ngpg-pubkey\nglibc\n", "")
-            return (1, "", "unexpected command")
+        async def mock_podman(cmd, **kwargs):
+            return (0, "bash\ncoreutils\nbash\ngpg-pubkey\nglibc\n", "")
 
-        mock_gather.side_effect = mock_commands
-        pullspec = "quay.io/test/img@sha256:abc"
-        logger = MagicMock()
-        helper = ContainerImageHelper(logger=logger)
-        result = asyncio.run(helper.get_installed_packages(pullspec, "x86_64"))
+        mock_gather.side_effect = mock_podman
+        helper = ContainerImageHelper()
+        result = asyncio.run(helper.get_installed_packages("quay.io/test/img@sha256:abc"))
         self.assertEqual(result, ["bash", "coreutils", "glibc"])
-        logger.info.assert_any_call(
-            "Discovering installed packages for %s [arch=%s, platform=%s]",
-            pullspec,
-            "x86_64",
-            "linux/amd64",
-        )
-        logger.info.assert_any_call(
-            "No usable SBOM for %s [platform=%s]; extracting RPMDB",
-            pullspec,
-            "linux/amd64",
-        )
-        logger.info.assert_any_call("Found %d packages in RPMDB for %s [platform=%s]", 3, pullspec, "linux/amd64")
-        commands = [call.args[0] for call in mock_gather.call_args_list]
-        self.assertEqual([command[0] for command in commands], ["cosign", "oras", "oc", "rpm"])
-        self.assertTrue(all(command[0] != "podman" for command in commands))
-
-    @patch("doozerlib.lockfile_prototype.container_utils.cmd_gather_async")
-    def test_get_installed_packages_uses_spdx_attestation(self, mock_gather):
-        """
-        Should parse RPM package names from an SPDX attestation without running the image.
-        """
-        sbom = {
-            "packages": [
-                {
-                    "externalRefs": [
-                        {
-                            "referenceType": "purl",
-                            "referenceLocator": "pkg:rpm/redhat/bash@5.1.8-9.el9?arch=x86_64",
-                        }
-                    ]
-                },
-                {
-                    "externalRefs": [
-                        {
-                            "referenceType": "purl",
-                            "referenceLocator": "pkg:rpm/redhat/gpg-pubkey@1-1.el9?arch=noarch",
-                        }
-                    ]
-                },
-                {
-                    "externalRefs": [
-                        {
-                            "referenceType": "purl",
-                            "referenceLocator": "pkg:rpm/redhat/bash-src@5.1.8-9.el9?arch=nosrc",
-                        }
-                    ]
-                },
-            ]
-        }
-        statement = {
-            "_type": "https://in-toto.io/Statement/v0.1",
-            "predicateType": "https://spdx.dev/Document",
-            "predicate": sbom,
-        }
-        attestation = {
-            "payloadType": "application/vnd.in-toto+json",
-            "payload": base64.b64encode(json.dumps(statement).encode()).decode(),
-        }
-
-        async def mock_attestation(cmd, **kwargs):
-            return (0, json.dumps(attestation), "")
-
-        mock_gather.side_effect = mock_attestation
-        pullspec = "quay.io/test/img@sha256:abc"
-        logger = MagicMock()
-        helper = ContainerImageHelper(logger=logger)
-        result = asyncio.run(helper.get_installed_packages(pullspec, "x86_64"))
-
-        self.assertEqual(result, ["bash"])
-        logger.info.assert_any_call(
-            "Found %d packages in SPDX attestation for %s [platform=%s]", 1, pullspec, "linux/amd64"
-        )
-        command = mock_gather.call_args.args[0]
-        self.assertEqual(command[:3], ["cosign", "download", "attestation"])
-        self.assertIn("--platform", command)
-        self.assertEqual(command[command.index("--platform") + 1], "linux/amd64")
-        self.assertEqual(command[command.index("--predicate-type") + 1], "https://spdx.dev/Document")
-
-    @patch("doozerlib.lockfile_prototype.container_utils.cmd_gather_async")
-    def test_get_installed_packages_uses_spdx_attachment(self, mock_gather):
-        """
-        Should parse a legacy SPDX attachment when no attestation exists.
-        """
-        sbom = {
-            "packages": [
-                {
-                    "externalRefs": [
-                        {
-                            "referenceType": "purl",
-                            "referenceLocator": "pkg:rpm/redhat/bash@5.1.8-9.el9?arch=x86_64",
-                        }
-                    ]
-                }
-            ]
-        }
-
-        async def mock_commands(cmd, **kwargs):
-            if cmd[0] == "cosign":
-                return (1, "", "found no attestations")
-            if cmd[0] == "oras" and "--descriptor" in cmd:
-                return (0, json.dumps({"digest": "sha256:platformdigest"}), "")
-            if cmd[0] == "oras" and cmd[1:3] == ["manifest", "fetch"]:
-                manifest = {"layers": [{"mediaType": "text/spdx+json", "digest": "sha256:sbomdigest"}]}
-                return (0, json.dumps(manifest), "")
-            if cmd[0] == "oras" and cmd[1:3] == ["blob", "fetch"]:
-                return (0, json.dumps(sbom), "")
-            return (1, "", "unexpected command")
-
-        mock_gather.side_effect = mock_commands
-        pullspec = "quay.io/test/img@sha256:abc"
-        logger = MagicMock()
-        helper = ContainerImageHelper(logger=logger)
-        with patch.object(helper.logger, "warning") as mock_warning:
-            result = asyncio.run(helper.get_installed_packages(pullspec, "x86_64"))
-
-        self.assertEqual(result, ["bash"])
-        mock_warning.assert_not_called()
-        logger.info.assert_any_call(
-            "No usable SPDX attestation for %s [platform=%s]; checking legacy SPDX attachment",
-            pullspec,
-            "linux/amd64",
-        )
-        logger.info.assert_any_call(
-            "Found %d packages in SPDX attachment for %s [platform=%s]", 1, pullspec, "linux/amd64"
-        )
-        commands = [call.args[0] for call in mock_gather.call_args_list]
-        self.assertEqual([command[0] for command in commands], ["cosign", "oras", "oras", "oras"])
-        self.assertIn("--platform", commands[1])
-        self.assertTrue(any(command.endswith(":sha256-platformdigest.sbom") for command in commands[2]))
-        self.assertTrue(any(command.endswith("@sha256:sbomdigest") for command in commands[3]))
-
-    @patch("doozerlib.lockfile_prototype.container_utils.cmd_gather_async")
-    def test_get_installed_packages_falls_back_to_extracted_rpmdb_when_sbom_unavailable(self, mock_gather):
-        """
-        Should query an extracted RPM database when the image has no usable SBOM.
-        """
-
-        async def mock_commands(cmd, **kwargs):
-            if cmd[0] == "cosign":
-                return (1, "", "found no attestations")
-            if cmd[0] == "oras":
-                return (1, "", "no SPDX attachment")
-            if cmd[0] == "oc":
-                path_arg = cmd[cmd.index("--path") + 1]
-                _, destination = path_arg.rsplit(":", 1)
-                Path(destination, "rpmdb.sqlite").touch()
-                return (0, "", "")
-            if cmd[0] == "rpm":
-                return (0, "bash\nglibc\n", "")
-            return (1, "", "unexpected command")
-
-        mock_gather.side_effect = mock_commands
-        pullspec = "quay.io/test/img@sha256:abc"
-        logger = MagicMock()
-        helper = ContainerImageHelper(logger=logger)
-        with patch.object(helper.logger, "warning") as mock_warning:
-            result = asyncio.run(helper.get_installed_packages(pullspec, "x86_64"))
-
-        self.assertEqual(result, ["bash", "glibc"])
-        mock_warning.assert_not_called()
-        logger.info.assert_any_call(
-            "No usable SBOM for %s [platform=%s]; extracting RPMDB",
-            pullspec,
-            "linux/amd64",
-        )
-        logger.info.assert_any_call("Found %d packages in RPMDB for %s [platform=%s]", 2, pullspec, "linux/amd64")
-        commands = [call.args[0] for call in mock_gather.call_args_list]
-        self.assertEqual([command[0] for command in commands], ["cosign", "oras", "oc", "rpm"])
-        self.assertIn("--dbpath", commands[-1])
-        self.assertTrue(all(command[0] != "podman" for command in commands))
-
-    @patch("doozerlib.lockfile_prototype.container_utils.cmd_gather_async")
-    def test_get_installed_packages_uses_legacy_rpmdb_path(self, mock_gather):
-        """
-        Should try the legacy RPM database path when the modern path is unavailable.
-        """
-
-        async def mock_commands(cmd, **kwargs):
-            if cmd[0] == "cosign":
-                return (1, "", "found no attestations")
-            if cmd[0] == "oras":
-                return (1, "", "no SPDX attachment")
-            if cmd[0] == "oc":
-                path_arg = cmd[cmd.index("--path") + 1]
-                source, destination = path_arg.rsplit(":", 1)
-                if source == "/usr/lib/sysimage/rpm/":
-                    return (1, "", "path not found")
-                Path(destination, "Packages").touch()
-                return (0, "", "")
-            if cmd[0] == "rpm":
-                return (0, "bash\n", "")
-            return (1, "", "unexpected command")
-
-        mock_gather.side_effect = mock_commands
-        helper = ContainerImageHelper()
-        result = asyncio.run(helper.get_installed_packages("quay.io/test/img@sha256:abc", "x86_64"))
-
-        self.assertEqual(result, ["bash"])
-        oc_commands = [call.args[0] for call in mock_gather.call_args_list if call.args[0][0] == "oc"]
-        self.assertEqual(len(oc_commands), 2)
-        self.assertIn("/var/lib/rpm/:", oc_commands[1][oc_commands[1].index("--path") + 1])
-
-    @patch("doozerlib.lockfile_prototype.container_utils.cmd_gather_async")
-    def test_get_installed_packages_uses_requested_architecture(self, mock_gather):
-        """
-        Should query the image using the platform matching the requested RPM architecture.
-        """
-
-        async def mock_commands(cmd, **kwargs):
-            if cmd[0] == "cosign":
-                return (1, "", "found no attestations")
-            if cmd[0] == "oras":
-                return (1, "", "no SPDX attachment")
-            if cmd[0] == "oc":
-                path_arg = cmd[cmd.index("--path") + 1]
-                _, destination = path_arg.rsplit(":", 1)
-                Path(destination, "rpmdb.sqlite").touch()
-                return (0, "", "")
-            if cmd[0] == "rpm":
-                return (0, "bash\n", "")
-            return (1, "", "unexpected command")
-
-        mock_gather.side_effect = mock_commands
-        helper = ContainerImageHelper()
-        asyncio.run(helper.get_installed_packages("quay.io/test/img@sha256:abc", "aarch64"))
-
-        commands = [call.args[0] for call in mock_gather.call_args_list]
-        oc_command = next(command for command in commands if command[0] == "oc")
-        platform_index = oc_command.index("--filter-by-os")
-        self.assertEqual(oc_command[platform_index + 1], "linux/arm64")
-        self.assertTrue(all(command[0] != "podman" for command in commands))
 
     @patch("doozerlib.lockfile_prototype.container_utils.cmd_gather_async")
     def test_get_installed_packages_fails(self, mock_gather):
         """
-        Should return no packages when both SBOM and RPM database queries fail.
+        Should raise ChildProcessError on podman failure.
         """
         mock_gather.side_effect = ChildProcessError("Process failed")
         helper = ContainerImageHelper()
-        result = asyncio.run(helper.get_installed_packages("quay.io/test/img@sha256:abc", "x86_64"))
-        self.assertEqual(result, [])
+        with self.assertRaises(ChildProcessError):
+            asyncio.run(helper.get_installed_packages("quay.io/test/img@sha256:abc"))
 
     @patch("doozerlib.lockfile_prototype.container_utils.cmd_gather_async")
     def test_read_file_from_image(self, mock_gather):
