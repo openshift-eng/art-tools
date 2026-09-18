@@ -141,9 +141,11 @@ class LayeredProductsScanPipeline:
                 },
             )
             if created_name:
-                tekton.annotate_current_pipelinerun({
-                    "art.openshift.io/triggered-build-layered-products": created_name,
-                })
+                tekton.annotate_current_pipelinerun(
+                    {
+                        "art.openshift.io/triggered-build-layered-products": created_name,
+                    }
+                )
         else:
             jenkins.update_title(' [SOURCE CHANGES]')
             jenkins.update_description(f'Changed {len(image_list)} layered product images<br/>')
