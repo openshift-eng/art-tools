@@ -12,6 +12,7 @@ from artcommonlib.model import Model
 from artcommonlib.variants import BuildVariant
 from doozerlib.cli.images_konflux import (
     BundleStageReleaseRelatedImagesCli,
+    KonfluxBuildCli,
     KonfluxBundleCli,
     KonfluxRebaseCli,
     _filter_okd_excluded_metas,
@@ -636,3 +637,269 @@ class TestBundleStageReleaseRelatedImagesCli(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(
             [(r["operator_nvr"], r["status"]) for r in records], [("operator-a-1-1", 1), ("operator-b-1-1", 0)]
         )
+
+
+class TestKonfluxBuildCliStandaloneStageRelease(unittest.IsolatedAsyncioTestCase):
+    """Tests for standalone image stage release triggered after a successful build.
+
+    After refactoring, ``_stage_release_standalone_image`` delegates Snapshot/Release/wait
+    to :class:`~doozerlib.backend.base_image_handler.BaseImageHandler` instead of duplicating
+    that logic inline.  Tests mock the handler rather than a raw KonfluxClient.
+    """
+
+    def _make_image_meta(self, name, stage_release=False):
+        meta = mock.Mock()
+        meta.distgit_key = name
+        meta.config = Model({"konflux": {"stage_release": stage_release}} if stage_release else {})
+        return meta
+
+    def _make_build_record(self, name):
+        record = mock.Mock(spec=KonfluxBuildRecord)
+        record.name = name
+        record.nvr = f"{name}-1.0.0-1"
+        record.rebase_repo_url = "https://github.com/example/repo"
+        record.rebase_commitish = "abc123"
+        record.image_pullspec = f"quay.io/example/{name}@sha256:deadbeef"
+        record.get_konflux_component_name.return_value = f"group-{name}"
+        return record
+
+    def _make_build_cli(self, runtime):
+        return KonfluxBuildCli(
+            runtime=runtime,
+            konflux_kubeconfig="/path/to/kubeconfig",
+            konflux_context="test-context",
+            konflux_namespace="test-namespace",
+            image_repo="test-repo",
+            registry_auth_file="/path/to/auth",
+            skip_checks=False,
+            dry_run=False,
+            plr_template="test-template",
+            build_priority="auto",
+        )
+
+    def _make_runtime(self, *, product="openshift-logging", version_str="", major=6, minor=6):
+        runtime = mock.Mock(spec=Runtime)
+        runtime.assembly = "stream"
+        runtime.product = product
+        runtime.group = "logging-6.6"
+        runtime.konflux_db = mock.Mock()
+        runtime.konflux_db.bind = mock.Mock()
+        runtime.record_logger = mock.Mock()
+        gc_data = {"vars": {"MAJOR": major, "MINOR": minor}}
+        if version_str:
+            gc_data["version"] = version_str
+        runtime.group_config = Model(gc_data)
+        return runtime
+
+    @mock.patch("doozerlib.cli.images_konflux.resolve_konflux_fbc_stage_release_plan")
+    async def test_trigger_standalone_stage_releases_skips_when_no_release_plan(self, mock_resolve):
+        """If no release plan is configured for the product, skip silently."""
+        mock_resolve.return_value = None
+        runtime = self._make_runtime()
+        cli = self._make_build_cli(runtime)
+        meta = self._make_image_meta("eventrouter", stage_release=True)
+
+        await cli._trigger_standalone_stage_releases([meta], {"eventrouter": "eventrouter-1.0.0-1"})
+
+        mock_resolve.assert_called_once_with("openshift-logging", 6, 6)
+
+    @mock.patch("doozerlib.cli.images_konflux.BaseImageHandler")
+    async def test_stage_release_standalone_image_delegates_to_handler(self, mock_handler_cls):
+        """Verify that BaseImageHandler methods are called for snapshot/release/wait."""
+        runtime = self._make_runtime()
+        build_record = self._make_build_record("eventrouter")
+        runtime.konflux_db.get_latest_build = mock.AsyncMock(return_value=build_record)
+
+        # Mock the handler instance
+        mock_handler = mock.Mock()
+        mock_handler._build_component_from_snapshot_input = mock.Mock(
+            return_value={"name": "group-eventrouter", "containerImage": build_record.image_pullspec}
+        )
+        mock_handler._snapshot_from_component = mock.AsyncMock(return_value="snapshot-xyz")
+        mock_handler._create_release_from_snapshot = mock.AsyncMock(return_value=("release-xyz", "https://konflux/url"))
+        mock_handler._wait_for_release_completion = mock.AsyncMock(return_value=True)
+        mock_handler_cls.return_value = mock_handler
+
+        cli = self._make_build_cli(runtime)
+        meta = self._make_image_meta("eventrouter", stage_release=True)
+
+        release_url = await cli._stage_release_standalone_image(
+            meta, "logging-advisory-stage-auto-6-6", "eventrouter-1.0.0-1"
+        )
+
+        self.assertEqual(release_url, "https://konflux/url")
+
+        # Build record was looked up by exact NVR (not by name/group/assembly)
+        runtime.konflux_db.get_latest_build.assert_awaited_once_with(
+            nvr="eventrouter-1.0.0-1",
+            outcome=KonfluxBuildOutcome.SUCCESS,
+            exclude_large_columns=True,
+        )
+
+        # Handler was created with overrides
+        mock_handler_cls.assert_called_once_with(
+            runtime,
+            dry_run=False,
+            release_plan_name="logging-advisory-stage-auto-6-6",
+            application_name=mock.ANY,
+            namespace="test-namespace",
+            kubeconfig="/path/to/kubeconfig",
+            context="test-context",
+        )
+
+        # Snapshot was created with auto-release=false label
+        mock_handler._snapshot_from_component.assert_awaited_once()
+        snapshot_call_kwargs = mock_handler._snapshot_from_component.call_args.kwargs
+        self.assertEqual(
+            snapshot_call_kwargs["extra_labels"],
+            {"release.appstudio.openshift.io/auto-release": "false"},
+        )
+
+        # Release was created with standalone-image-stage-release kind annotation
+        mock_handler._create_release_from_snapshot.assert_awaited_once()
+        release_call_kwargs = mock_handler._create_release_from_snapshot.call_args.kwargs
+        self.assertEqual(
+            release_call_kwargs["extra_annotations"],
+            {"art.redhat.com/kind": "standalone-image-stage-release"},
+        )
+
+        # Wait was called
+        mock_handler._wait_for_release_completion.assert_awaited_once_with("release-xyz")
+
+    @mock.patch("doozerlib.cli.images_konflux.BaseImageHandler")
+    async def test_stage_release_standalone_image_returns_none_on_failure(self, mock_handler_cls):
+        """A stage release failure logs but returns None instead of raising."""
+        runtime = self._make_runtime()
+        build_record = self._make_build_record("eventrouter")
+        runtime.konflux_db.get_latest_build = mock.AsyncMock(return_value=build_record)
+
+        mock_handler = mock.Mock()
+        mock_handler._build_component_from_snapshot_input = mock.Mock(
+            return_value={"name": "group-eventrouter", "containerImage": build_record.image_pullspec}
+        )
+        mock_handler._snapshot_from_component = mock.AsyncMock(return_value="snapshot-xyz")
+        mock_handler._create_release_from_snapshot = mock.AsyncMock(return_value=("release-xyz", "https://konflux/url"))
+        # Release did not complete successfully
+        mock_handler._wait_for_release_completion = mock.AsyncMock(return_value=False)
+        mock_handler_cls.return_value = mock_handler
+
+        cli = self._make_build_cli(runtime)
+        meta = self._make_image_meta("eventrouter", stage_release=True)
+
+        result = await cli._stage_release_standalone_image(
+            meta, "logging-advisory-stage-auto-6-6", "eventrouter-1.0.0-1"
+        )
+
+        # Failure is swallowed — not raised
+        self.assertIsNone(result)
+
+    @mock.patch("doozerlib.cli.images_konflux.resolve_konflux_fbc_stage_release_plan")
+    async def test_stage_release_standalone_image_returns_none_when_no_build_record(self, mock_resolve):
+        """If no successful build record exists, skip gracefully."""
+        runtime = self._make_runtime()
+        runtime.konflux_db.get_latest_build = mock.AsyncMock(return_value=None)
+
+        cli = self._make_build_cli(runtime)
+        meta = self._make_image_meta("eventrouter", stage_release=True)
+
+        result = await cli._stage_release_standalone_image(
+            meta, "logging-advisory-stage-auto-6-6", "eventrouter-1.0.0-1"
+        )
+
+        self.assertIsNone(result)
+        # Verify lookup was by exact NVR
+        runtime.konflux_db.get_latest_build.assert_awaited_once_with(
+            nvr="eventrouter-1.0.0-1",
+            outcome=KonfluxBuildOutcome.SUCCESS,
+            exclude_large_columns=True,
+        )
+
+    @mock.patch("doozerlib.cli.images_konflux.resolve_konflux_fbc_stage_release_plan")
+    async def test_trigger_standalone_stage_releases_uses_product_version(self, mock_resolve):
+        """Product version is resolved from group_config.version (layered) or vars.MAJOR/MINOR (OCP)."""
+        mock_resolve.return_value = None
+
+        # Layered product: version string takes precedence
+        runtime_layered = self._make_runtime(product="openshift-logging", version_str="6.6.0", major=4, minor=21)
+        cli = self._make_build_cli(runtime_layered)
+        await cli._trigger_standalone_stage_releases([self._make_image_meta("img")], {"img": "img-1.0.0-1"})
+        mock_resolve.assert_called_with("openshift-logging", 6, 6)
+
+        mock_resolve.reset_mock()
+
+        # OCP group: fallback to MAJOR/MINOR
+        runtime_ocp = self._make_runtime(product="ocp", major=5, minor=0)
+        cli = self._make_build_cli(runtime_ocp)
+        await cli._trigger_standalone_stage_releases([self._make_image_meta("img")], {"img": "img-1.0.0-1"})
+        mock_resolve.assert_called_with("ocp", 5, 0)
+
+    async def test_stage_release_config_flag_defaults_to_false(self):
+        """Missing konflux.stage_release config must be falsy (default is no stage release)."""
+        meta_with_flag = self._make_image_meta("eventrouter", stage_release=True)
+        meta_without_flag = self._make_image_meta("some-image", stage_release=False)
+
+        self.assertTrue(meta_with_flag.config.konflux.stage_release)
+        self.assertFalse(meta_without_flag.config.konflux.stage_release)
+
+    @mock.patch("doozerlib.cli.images_konflux.BaseImageHandler")
+    async def test_stage_release_standalone_image_dry_run(self, mock_handler_cls):
+        """In dry-run mode, handler methods handle dry-run internally; result is returned."""
+        runtime = self._make_runtime()
+        build_record = self._make_build_record("eventrouter")
+        runtime.konflux_db.get_latest_build = mock.AsyncMock(return_value=build_record)
+
+        mock_handler = mock.Mock()
+        mock_handler._build_component_from_snapshot_input = mock.Mock(
+            return_value={"name": "group-eventrouter", "containerImage": build_record.image_pullspec}
+        )
+        # In dry-run, handler methods return synthetic results
+        mock_handler._snapshot_from_component = mock.AsyncMock(return_value="dry-run-snapshot")
+        mock_handler._create_release_from_snapshot = mock.AsyncMock(
+            return_value=("dry-run-release", "https://dry-run.invalid")
+        )
+        mock_handler._wait_for_release_completion = mock.AsyncMock(return_value=True)
+        mock_handler_cls.return_value = mock_handler
+
+        cli = self._make_build_cli(runtime)
+        cli.dry_run = True
+        meta = self._make_image_meta("eventrouter", stage_release=True)
+
+        result = await cli._stage_release_standalone_image(
+            meta, "logging-advisory-stage-auto-6-6", "eventrouter-1.0.0-1"
+        )
+
+        self.assertEqual(result, "https://dry-run.invalid")
+        # Handler was created with dry_run=True
+        mock_handler_cls.assert_called_once_with(
+            runtime,
+            dry_run=True,
+            release_plan_name="logging-advisory-stage-auto-6-6",
+            application_name=mock.ANY,
+            namespace="test-namespace",
+            kubeconfig="/path/to/kubeconfig",
+            context="test-context",
+        )
+
+    @mock.patch("doozerlib.cli.images_konflux.BaseImageHandler")
+    async def test_stage_release_standalone_image_returns_none_on_snapshot_failure(self, mock_handler_cls):
+        """If snapshot creation fails, return None without attempting release."""
+        runtime = self._make_runtime()
+        build_record = self._make_build_record("eventrouter")
+        runtime.konflux_db.get_latest_build = mock.AsyncMock(return_value=build_record)
+
+        mock_handler = mock.Mock()
+        mock_handler._build_component_from_snapshot_input = mock.Mock(
+            return_value={"name": "group-eventrouter", "containerImage": build_record.image_pullspec}
+        )
+        mock_handler._snapshot_from_component = mock.AsyncMock(return_value=None)
+        mock_handler_cls.return_value = mock_handler
+
+        cli = self._make_build_cli(runtime)
+        meta = self._make_image_meta("eventrouter", stage_release=True)
+
+        result = await cli._stage_release_standalone_image(
+            meta, "logging-advisory-stage-auto-6-6", "eventrouter-1.0.0-1"
+        )
+
+        self.assertIsNone(result)
+        mock_handler._create_release_from_snapshot.assert_not_called()

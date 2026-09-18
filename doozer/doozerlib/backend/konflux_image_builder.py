@@ -514,7 +514,7 @@ class KonfluxImageBuilder:
                     key = 'image_build_konflux'
                 self._record_logger.add_record(key, **record)
             metadata.build_event.set()
-        return pipelinerun_name, pipelinerun_info.to_dict()
+        return nvr, pipelinerun_name, pipelinerun_info.to_dict()
 
     @staticmethod
     async def _get_successful_image_build_by_nvr(metadata: ImageMetadata, nvr: str) -> Optional[KonfluxBuildRecord]:
