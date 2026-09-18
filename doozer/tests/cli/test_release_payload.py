@@ -284,9 +284,12 @@ class TestRebase(unittest.IsolatedAsyncioTestCase):
         self.assertNotIn("COPY --from=cvo", dockerfile_content)
         self.assertIn('io.openshift.release="4.21.1"', dockerfile_content)
         self.assertIn('io.openshift.release.base-image-digest="sha256:abc123def456"', dockerfile_content)
-        self.assertIn("ARG TARGETARCH", dockerfile_content)
-        self.assertIn("COPY release-manifests/${TARGETARCH}/ /release-manifests/", dockerfile_content)
-        self.assertNotIn("COPY release-manifests/ /release-manifests/", dockerfile_content)
+        self.assertNotIn("ARG TARGETARCH", dockerfile_content)
+        self.assertIn("COPY release-manifests/ /tmp/release-manifests/", dockerfile_content)
+        self.assertIn("uname -m", dockerfile_content)
+        self.assertIn("x86_64) goarch=amd64", dockerfile_content)
+        self.assertIn("aarch64) goarch=arm64", dockerfile_content)
+        self.assertIn("cp -r", dockerfile_content)
 
         commit_message = mock_build_repo.commit.call_args.args[0]
         self.assertIn("openshift-4.21", commit_message)

@@ -317,10 +317,15 @@ class ReleasePayloadRebaseAndBuildCli:
         # this is how node-image-pull.sh discovers component pullspecs during bootstrap.
         dockerfile_content = (
             f"FROM {from_pullspec}\n"
-            "ARG TARGETARCH\n"
             f'LABEL io.openshift.release="{self._get_release_label()}" \\\n'
             f'      io.openshift.release.base-image-digest="{cvo_image_digest}"\n'
-            f"COPY {RELEASE_MANIFESTS_SUBDIR}/${{TARGETARCH}}/ /{RELEASE_MANIFESTS_SUBDIR}/\n"
+            f"COPY {RELEASE_MANIFESTS_SUBDIR}/ /tmp/{RELEASE_MANIFESTS_SUBDIR}/\n"
+            # uname -m returns kernel-style names (x86_64, aarch64) but manifest dirs use Go-style
+            # (amd64, arm64). TARGETARCH would be cleaner but buildah-remote-oci-ta may not set it.
+            'RUN set -euo pipefail && arch=$(uname -m) && '
+            'case "$arch" in x86_64) goarch=amd64;; aarch64) goarch=arm64;; *) goarch="$arch";; esac && '
+            f'cp -r "/tmp/{RELEASE_MANIFESTS_SUBDIR}/${{goarch}}/." /{RELEASE_MANIFESTS_SUBDIR}/ && '
+            f"rm -rf /tmp/{RELEASE_MANIFESTS_SUBDIR}\n"
         )
         dockerfile_path = repo_dir / "Dockerfile"
         await exectools.to_thread(dockerfile_path.write_text, dockerfile_content)
