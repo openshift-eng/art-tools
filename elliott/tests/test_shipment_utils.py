@@ -935,5 +935,28 @@ class TestStripEtAdvisoryRpmReference(unittest.TestCase):
         advisory.commit.assert_called_once()
 
 
+class TestIsReleasePlanSkipped(unittest.TestCase):
+    """Tests for the skip-stage releasePlan sentinel helpers."""
+
+    def test_canonical_and_case_variants(self):
+        self.assertTrue(shipment_utils.is_release_plan_skipped("Skipped"))
+        self.assertTrue(shipment_utils.is_release_plan_skipped("skipped"))
+        self.assertTrue(shipment_utils.is_release_plan_skipped("SKIPPED"))
+        self.assertTrue(shipment_utils.is_release_plan_skipped("  Skipped  "))
+
+    def test_non_skipped_values(self):
+        self.assertFalse(shipment_utils.is_release_plan_skipped("art-agent-installer-iso-release-4-22-stage"))
+        self.assertFalse(shipment_utils.is_release_plan_skipped("n/a"))
+        self.assertFalse(shipment_utils.is_release_plan_skipped(None))
+        self.assertFalse(shipment_utils.is_release_plan_skipped(""))
+        self.assertFalse(shipment_utils.is_release_plan_skipped("   "))
+
+    def test_constants(self):
+        self.assertEqual(shipment_utils.SKIPPED_RELEASE_PLAN, "Skipped")
+        self.assertEqual(shipment_utils.STAGE_RELEASE_SKIPPED_LABEL, "stage-release-skipped")
+        self.assertEqual(shipment_utils.STAGE_RELEASE_SKIPPED_LABEL_COLOR, "#ED9121")
+        self.assertTrue(shipment_utils.is_release_plan_skipped(shipment_utils.SKIPPED_RELEASE_PLAN))
+
+
 if __name__ == '__main__':
     unittest.main()

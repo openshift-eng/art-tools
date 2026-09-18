@@ -23,6 +23,30 @@ yaml = new_roundtrip_yaml_handler()
 # verify_docs_approval.py defines the same constant; import from here once that module lands.
 PUBLIC_ERRATA_URL = "https://access.redhat.com/errata"
 
+# ---------------------------------------------------------------------------
+# Skip-stage sentinel (EXTRAORDINARY USE ONLY)
+# ---------------------------------------------------------------------------
+# ``releasePlan: Skipped`` (any ASCII case) on a *stage* environment bypasses
+# Konflux stage release and stage CDN publish. Use only with explicit team
+# approval. When setting this in ocp-shipment-data config.yaml, leave a caution
+# comment at the call site. Prod must never use this sentinel.
+SKIPPED_RELEASE_PLAN = "Skipped"
+STAGE_RELEASE_SKIPPED_LABEL = "stage-release-skipped"
+# Orange / apricot — distinct from the blue *-release-success project labels.
+STAGE_RELEASE_SKIPPED_LABEL_COLOR = "#ED9121"
+
+
+def is_release_plan_skipped(release_plan: str | None) -> bool:
+    """Return True if releasePlan is the skip-stage sentinel (case-insensitive 'skipped').
+
+    EXTRAORDINARY USE ONLY. Skipping stage bypasses Konflux stage validation and CDN
+    stage publish. Use only with explicit team approval. When setting this in
+    ocp-shipment-data config.yaml, leave a caution comment at the call site.
+
+    Prod releasePlan must never be this sentinel; callers must reject that case.
+    """
+    return bool(release_plan) and release_plan.strip().casefold() == "skipped"
+
 
 def strip_advisory_cross_reference(text: str, rpm_name: str) -> str:
     """
