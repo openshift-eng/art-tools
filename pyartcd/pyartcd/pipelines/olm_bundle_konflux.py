@@ -364,9 +364,11 @@ async def olm_bundle_konflux(
                             },
                         )
                         if created_name:
-                            tekton.annotate_current_pipelinerun({
-                                f"art.openshift.io/triggered-build-fbc-{target_version}": created_name,
-                            })
+                            tekton.annotate_current_pipelinerun(
+                                {
+                                    f"art.openshift.io/triggered-build-fbc-{target_version}": created_name,
+                                }
+                            )
                     else:
                         jenkins.start_build_fbc(
                             version=version,
@@ -393,9 +395,11 @@ async def olm_bundle_konflux(
                         },
                     )
                     if created_name:
-                        tekton.annotate_current_pipelinerun({
-                            "art.openshift.io/triggered-build-fbc": created_name,
-                        })
+                        tekton.annotate_current_pipelinerun(
+                            {
+                                "art.openshift.io/triggered-build-fbc": created_name,
+                            }
+                        )
                 else:
                     jenkins.start_build_fbc(
                         version=version,
@@ -419,9 +423,11 @@ async def olm_bundle_konflux(
                     },
                 )
                 if created_name:
-                    tekton.annotate_current_pipelinerun({
-                        "art.openshift.io/triggered-build-fbc": created_name,
-                    })
+                    tekton.annotate_current_pipelinerun(
+                        {
+                            "art.openshift.io/triggered-build-fbc": created_name,
+                        }
+                    )
             else:
                 jenkins.start_build_fbc(
                     version=version,

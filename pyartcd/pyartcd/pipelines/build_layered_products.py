@@ -150,9 +150,11 @@ class BuildLayeredProductsPipeline:
                         },
                     )
                     if created_name:
-                        tekton.annotate_current_pipelinerun({
-                            "art.openshift.io/triggered-olm-bundle-konflux": created_name,
-                        })
+                        tekton.annotate_current_pipelinerun(
+                            {
+                                "art.openshift.io/triggered-olm-bundle-konflux": created_name,
+                            }
+                        )
                 else:
                     propagate_params = jenkins.get_propagatable_params()
                     jenkins.start_olm_bundle_konflux(
