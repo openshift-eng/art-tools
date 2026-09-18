@@ -1330,6 +1330,7 @@ class TestResolveKonfluxFbcStageReleasePlan(unittest.TestCase):
             ("external-secrets-operator", 1, 1): "eso-advisory-stage-auto-1-1",
             ("multicluster-engine", 2, 11): "mce-advisory-stage-2-11",
             ("multicluster-engine", 5, 0): "mce-advisory-stage-5-0",
+            ("ocp", 5, 1): "ocp-art-advisory-stage-5-1",
             ("rhacm2", 2, 16): "acm-advisory-stage-2-16",
             ("rhacm2", 5, 0): "acm-advisory-stage-5-0",
             ("zero-trust-workload-identity-manager", 1, 0): "zt-advisory-stage-auto-1-0",
@@ -1345,5 +1346,11 @@ class TestResolveKonfluxFbcStageReleasePlan(unittest.TestCase):
         self.assertIsNone(resolve_konflux_fbc_stage_release_plan("rhacm2", 4, 18))
 
     def test_unknown_product_returns_none(self):
-        self.assertIsNone(resolve_konflux_fbc_stage_release_plan("quay", 4, 18))
+        self.assertIsNone(resolve_konflux_fbc_stage_release_plan("unknown-product", 4, 18))
         self.assertIsNone(resolve_konflux_fbc_stage_release_plan("", 4, 18))
+
+    def test_known_product_unconfigured_version_returns_none(self):
+        # "quay" is configured but version (4, 18) has no plan
+        self.assertIsNone(resolve_konflux_fbc_stage_release_plan("quay", 4, 18))
+        # "ocp" is configured but version (5, 0) has no plan
+        self.assertIsNone(resolve_konflux_fbc_stage_release_plan("ocp", 5, 0))
