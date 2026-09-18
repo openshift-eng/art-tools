@@ -21,6 +21,7 @@ class BuildVariant(Enum):
     OADP = "oadp"
     OC_MIRROR = "oc-mirror"
     MIRROR_GUI = "mirror-gui"
+    RHOSDT = "openshift-opentelemetry-operator"
     ZERO_TRUST = "zero-trust-workload-identity-manager"
 
 

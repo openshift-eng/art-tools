@@ -27,6 +27,7 @@ class TestBuildVariant(unittest.TestCase):
             "quay": BuildVariant.QUAY,
             "oc-mirror": BuildVariant.OC_MIRROR,
             "mirror-gui": BuildVariant.MIRROR_GUI,
+            "openshift-opentelemetry-operator": BuildVariant.RHOSDT,
             "zero-trust-workload-identity-manager": BuildVariant.ZERO_TRUST,
         }
 
