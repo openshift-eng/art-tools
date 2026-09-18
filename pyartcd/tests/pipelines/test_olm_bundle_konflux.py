@@ -244,7 +244,7 @@ class TestOlmBundleKonfluxStageReleaseGating(unittest.IsolatedAsyncioTestCase):
             nvrs='',
             force_release=True,
             product='ocp',
-            group_config_extra={'vars': {'MAJOR': '5', 'MINOR': '1'}},
+            group_config_extra={'vars': {'MAJOR': '5', 'MINOR': '99'}},
         )
 
         mock_stage_release.assert_not_called()
