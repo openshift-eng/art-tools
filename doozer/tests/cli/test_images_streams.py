@@ -85,6 +85,73 @@ def test_connect_issue_with_pr_bug_in_title(mocker):
 # Tests for resolve_upstream_from
 
 
+@pytest.mark.parametrize(
+    ('pullspec', 'expected'),
+    [
+        (
+            'registry.ci.openshift.org/ocp/4.20:cli',
+            'quay-proxy.ci.openshift.org/openshift/ci:ocp_4.20_cli',
+        ),
+        (
+            'registry.ci.openshift.org/openshift/release:rhel-9-release-golang-1.26-openshift-4.20',
+            'quay-proxy.ci.openshift.org/openshift/ci:openshift_release_rhel-9-release-golang-1.26-openshift-4.20',
+        ),
+        (
+            'quay-proxy.ci.openshift.org/openshift/ci:ocp_4.20_cli',
+            'quay-proxy.ci.openshift.org/openshift/ci:ocp_4.20_cli',
+        ),
+        ('quay.io/example/image:latest', 'quay.io/example/image:latest'),
+    ],
+)
+def test_to_qci_pullspec(pullspec, expected):
+    """Test conversion of app.ci image references to QCI pullspecs."""
+    assert images_streams._to_qci_pullspec(pullspec) == expected
+
+
+@pytest.mark.parametrize(
+    ('pullspec', 'expected'),
+    [
+        (
+            'quay-proxy.ci.openshift.org/openshift/ci:ocp_4.20_cli',
+            'registry.ci.openshift.org/ocp/4.20:cli',
+        ),
+        (
+            'quay.io/openshift/ci:openshift_release_tag_with_underscores',
+            'registry.ci.openshift.org/openshift/release:tag_with_underscores',
+        ),
+        ('registry.ci.openshift.org/ocp/4.20:cli', 'registry.ci.openshift.org/ocp/4.20:cli'),
+        ('quay.io/example/image:latest', 'quay.io/example/image:latest'),
+    ],
+)
+def test_to_upstream_pullspec(pullspec, expected):
+    """Test that upstream Dockerfiles use public CI pullspecs."""
+    assert images_streams._to_upstream_pullspec(pullspec) == expected
+
+
+def test_check_upstream_image_exists_uses_runtime_registry_config(mocker, mock_runtime):
+    """Test upstream image checks use the runtime registry auth file."""
+    mock_runtime.registry_config = '/tmp/quay-auth.json'
+    image_info = mocker.patch.object(images_streams.util, 'oc_image_info_for_arch')
+
+    images_streams._check_upstream_image_exists(mock_runtime, 'registry.ci.openshift.org/ocp/4.20:cli')
+
+    image_info.assert_called_once_with(
+        'quay-proxy.ci.openshift.org/openshift/ci:ocp_4.20_cli',
+        registry_config='/tmp/quay-auth.json',
+    )
+
+
+def test_get_image_stream_coordinate_from_qci_pullspec():
+    """Test recovering an ImageStream coordinate from a QCI pullspec."""
+    pullspec = 'quay-proxy.ci.openshift.org/openshift/ci:openshift_release_tag_with_underscores'
+
+    assert images_streams._get_image_stream_coordinate(pullspec) == {
+        'namespace': 'openshift',
+        'name': 'release',
+        'tag': 'tag_with_underscores',
+    }
+
+
 def test_resolve_upstream_from_with_member_and_explicit_upstream_image(mocker, mock_runtime):
     """Test resolving upstream from a member entry with explicit upstream_image"""
     # Create a mock image metadata with explicit upstream_image

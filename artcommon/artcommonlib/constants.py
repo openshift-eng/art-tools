@@ -72,6 +72,7 @@ OTEL_EXPORTER_OTLP_ENDPOINT = "http://otel-collector-psi-rhv.hosts.prod.psi.rdu2
 REGISTRY_QUAY_OCP_RELEASE_DEV = "quay.io/openshift-release-dev"
 REGISTRY_QUAY_OPENSHIFT = "quay.io/openshift"
 REGISTRY_QUAY_CI = "quay.io/openshift/ci"
+REGISTRY_QUAY_PROXY_CI = "quay-proxy.ci.openshift.org/openshift/ci"
 REGISTRY_CI_OPENSHIFT = "registry.ci.openshift.org"
 REGISTRY_REDHAT_IO = "registry.redhat.io"
 REGISTRY_BREW = "brew.registry.redhat.io"
