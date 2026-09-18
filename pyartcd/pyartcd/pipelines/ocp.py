@@ -8,13 +8,19 @@ import click
 import yaml
 from artcommonlib import exectools, redis
 from artcommonlib.util import uses_konflux_imagestream_override
+from artcommonlib.variants import BuildVariant
 
 from pyartcd import constants, jenkins, locks, oc, util
 from pyartcd import record as record_util
 from pyartcd.cli import cli, click_coroutine, pass_runtime
 from pyartcd.locks import Lock
 from pyartcd.runtime import Runtime
-from pyartcd.util import get_group_images, increment_fail_counter, mass_rebuild_score, reset_fail_counter
+from pyartcd.util import (
+    get_group_images,
+    increment_fail_counter,
+    mass_rebuild_score,
+    reset_fail_counter,
+)
 
 
 class BuildPlan:
@@ -502,7 +508,13 @@ class OcpPipeline:
 
         # Increment fail counters for failing images.
         await asyncio.gather(
-            *[increment_fail_counter(f'count:rebase-failure:brew:{group}:{image}') for image in failed_images]
+            *[
+                increment_fail_counter(
+                    f'count:rebase-failure:brew:{group}:{image}',
+                    build_variant=BuildVariant.OCP.value,
+                )
+                for image in failed_images
+            ]
         )
 
     def _handle_image_build_failures(self):

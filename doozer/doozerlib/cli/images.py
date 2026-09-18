@@ -1552,7 +1552,7 @@ async def release_to_base_repo(runtime, nvr):
     )
     followup = copy.deepcopy(source_row)
     if followup.build_variant is None:
-        followup.build_variant = get_build_variant_for_product(runtime.product) or runtime.variant
+        followup.build_variant = get_build_variant_for_product(runtime.product)
     followup.release_pipeline = result.release_pipeline
     followup.released_pullspec = result.released_pullspec
     followup.record_id = KonfluxBuildRecord.generate_record_id()

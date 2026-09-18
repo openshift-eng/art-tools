@@ -32,10 +32,13 @@ from artcommonlib.util import (
     uses_konflux_imagestream_override,
     validate_build_priority,
 )
+from artcommonlib.variants import BuildVariant
 
 from pyartcd import constants, jenkins, locks, util
 from pyartcd import record as record_util
+from pyartcd.build_strategy import BuildStrategy
 from pyartcd.cli import cli, click_coroutine, pass_runtime
+from pyartcd.counter_models import BuildFailCounterContext, RebaseCounterContext
 from pyartcd.locks import Lock
 from pyartcd.runtime import Runtime
 from pyartcd.util import (
@@ -46,6 +49,8 @@ from pyartcd.util import (
     load_group_config,
     mass_rebuild_score,
     reset_fail_counter,
+    update_build_fail_counters,
+    update_rebase_fail_counters,
 )
 
 LOGGER = logging.getLogger(__name__)
@@ -60,16 +65,6 @@ RHCOS_ART_IMAGE_KEYS = frozenset(
         'rhcos-node-extensions-rhel10',
     }
 )
-
-
-class BuildStrategy(Enum):
-    ALL = 'all'
-    ONLY = 'only'
-    EXCEPT = 'except'
-    NONE = 'none'
-
-    def __str__(self):
-        return self.value
 
 
 class BuildPlan:
@@ -197,194 +192,6 @@ class KonfluxOcpPipeline:
         elif build_strategy == BuildStrategy.EXCEPT:
             return [f'--{kind}=', f'--exclude={",".join(excludes)}']
 
-    async def update_rebase_fail_counters(
-        self,
-        failed_images: list[str],
-        skipped_due_to_parent: Optional[list[str]] = None,
-    ):
-        """
-        Adjust Redis rebase-fail counters after a Konflux rebase run.
-
-        - Images that rebased successfully: reset counter.
-        - Images that failed rebase directly: increment counter.
-        - Images skipped because a parent failed first: no change (rebase was not meaningfully attempted).
-        """
-        if self.assembly != 'stream':
-            # Only update fail counters for stream assembly
-            return
-
-        failed_set = set(failed_images)
-        skipped_set = set(skipped_due_to_parent or [])
-
-        # Reset fail counters only for images that actually rebased successfully
-        match self.build_plan.image_build_strategy:
-            case BuildStrategy.ALL:
-                successful_images = [
-                    image for image in self.group_images if image not in failed_set and image not in skipped_set
-                ]
-            case BuildStrategy.EXCEPT:
-                successful_images = [
-                    image
-                    for image in self.group_images
-                    if image not in self.build_plan.images_excluded
-                    and image not in failed_set
-                    and image not in skipped_set
-                ]
-            case BuildStrategy.ONLY:
-                # Derive successful images from doozer's state.yaml per-image
-                # status (which records all images actually processed, including
-                # parents/dependents loaded by --latest-parent-version) rather
-                # than from the artcd-side IMAGE_LIST.
-                with open(f'{self.runtime.doozer_working}/state.yaml') as f:
-                    state = yaml.safe_load(f) or {}
-                rebase_state = state.get('images:konflux:rebase', {}).get('images', {})
-                successful_images = [
-                    image for image, image_state in rebase_state.items() if image_state.get('status') == 'success'
-                ]
-            case _:
-                raise ValueError(
-                    f"Unknown build strategy: {self.build_plan.image_build_strategy}. Valid strategies: {[s.value for s in BuildStrategy]}"
-                )
-        group = f'openshift-{self.version}'
-        await asyncio.gather(
-            *[reset_fail_counter(f'count:rebase-failure:konflux:{group}:{image}') for image in successful_images]
-        )
-
-        # Increment fail counters only for images that failed rebase directly
-        job_url = os.getenv('BUILD_URL')
-        await asyncio.gather(
-            *[
-                increment_fail_counter(f'count:rebase-failure:konflux:{group}:{image}', jenkins_url=job_url)
-                for image in failed_images
-            ]
-        )
-
-    async def update_build_fail_counters(self, built_images, failed_images, record_log):
-        """
-        Update Redis failure counters after Konflux build run.
-
-        Categorizes failures into three types with separate Redis key patterns:
-        - Build failures:              count:build-failure:konflux:{group}:{image}
-        - EC (ITS) failures:           count:ec-failure:konflux:{group}:{image}
-        - Base image release failures: count:release-failure:konflux:{group}:{image}
-
-        Successfully built images reset all three counter types.
-
-        Infrastructure failures (where builds never started due to API/cluster issues)
-        are detected and skip individual image counter updates to avoid false inflation.
-        """
-        if self.assembly != 'stream':
-            return
-
-        group = f'openshift-{self.version}'
-        job_url = os.getenv('BUILD_URL')
-
-        # Build a lookup of failed entries for metadata
-        failed_entries = {
-            entry['name']: entry for entry in record_log.get('image_build_konflux', []) if int(entry['status'])
-        }
-
-        # Always reset counters for successfully built images first, before any early returns.
-        # Without this, an all-infra-failure batch skips the reset and leaves stale counters.
-        counter_types = ['build-failure', 'ec-failure', 'release-failure']
-        if built_images:
-            await asyncio.gather(
-                *[
-                    reset_fail_counter(f'count:{counter_type}:konflux:{group}:{image}')
-                    for image in built_images
-                    for counter_type in counter_types
-                ]
-            )
-
-        # A build failure only counts if a build was actually triggered.
-        # If task_id=n/a and task_url=n/a, no PipelineRun was created = not a build failure.
-        # Exclude "parent images failed to build" - those never attempted a build either.
-        if failed_images:
-            # Filter out images that never had a build attempt:
-            # 1. Parent dependency failures (never attempted)
-            # 2. Infrastructure failures (task_id=n/a, no PipelineRun created)
-            attempted_builds = [
-                image
-                for image in failed_images
-                if 'parent images failed to build' not in failed_entries.get(image, {}).get('message', '')
-                and failed_entries.get(image, {}).get('task_id') != 'n/a'
-            ]
-
-            # If NO builds were actually attempted, skip failure counter increments.
-            # built_images counters were already reset above.
-            if not attempted_builds:
-                LOGGER.warning(
-                    f'No builds were actually attempted for {group}: all {len(failed_images)} failures '
-                    f'have task_id=n/a (infrastructure failure) or are parent-dependency failures. '
-                    f'Skipping individual image counter updates. Jenkins job: {job_url}'
-                )
-                return
-
-        # Exclude images that failed only because their parent images failed to build.
-        # These children were never actually attempted, so incrementing their counters
-        # would be misleading.
-        real_failed_images = []
-        for image in failed_images:
-            entry = failed_entries.get(image, {})
-            message = entry.get('message', '')
-            if 'parent images failed to build' in message:
-                LOGGER.info(f'Excluding {image} from counter updates (parent build failure, not a real build issue)')
-            else:
-                real_failed_images.append(image)
-
-        # Categorize failures by type (prefer granular outcome; fall back to legacy record flags)
-        ec_failed_images = []
-        release_failed_images = []
-        build_failed_images = []
-        for image in real_failed_images:
-            entry = failed_entries.get(image, {})
-            outcome = entry.get('outcome', '')
-            if outcome == str(KonfluxBuildOutcome.ITS_ERROR):
-                ec_failed_images.append(image)
-            elif outcome == str(KonfluxBuildOutcome.RELEASE_ERROR):
-                release_failed_images.append(image)
-            elif outcome in (
-                str(KonfluxBuildOutcome.BUILD_ERROR),
-                str(KonfluxBuildOutcome.FAILURE),
-                str(KonfluxBuildOutcome.TIMEOUT),
-                str(KonfluxBuildOutcome.CANCELLED),
-            ):
-                build_failed_images.append(image)
-            else:
-                # Fallback: unknown outcome, treat as build failure
-                build_failed_images.append(image)
-
-        # Increment counters for each failure type
-        await asyncio.gather(
-            *[
-                increment_fail_counter(
-                    f'count:build-failure:konflux:{group}:{image}',
-                    jenkins_url=job_url,
-                    nvr=failed_entries.get(image, {}).get('nvrs'),
-                    pipeline_url=failed_entries.get(image, {}).get('build_pipeline_url'),
-                )
-                for image in build_failed_images
-            ],
-            *[
-                increment_fail_counter(
-                    f'count:ec-failure:konflux:{group}:{image}',
-                    jenkins_url=job_url,
-                    nvr=failed_entries.get(image, {}).get('nvrs'),
-                    pipeline_url=failed_entries.get(image, {}).get('ec_pipeline_url'),
-                )
-                for image in ec_failed_images
-            ],
-            *[
-                increment_fail_counter(
-                    f'count:release-failure:konflux:{group}:{image}',
-                    jenkins_url=job_url,
-                    nvr=failed_entries.get(image, {}).get('nvrs'),
-                    pipeline_url=failed_entries.get(image, {}).get('release_pipeline'),
-                )
-                for image in release_failed_images
-            ],
-        )
-
     def building_images(self):
         """
         Returns True if images are being built, False otherwise.
@@ -435,9 +242,25 @@ class KonfluxOcpPipeline:
         if not self.runtime.dry_run:
             cmd.append('--push')
 
+        rebase_counter_context = RebaseCounterContext(
+            group=f'openshift-{self.version}',
+            assembly=self.assembly,
+            build_variant=BuildVariant.OCP,
+            jenkins_url=os.getenv('BUILD_URL'),
+            image_build_strategy=self.build_plan.image_build_strategy,
+            group_images=self.group_images,
+            requested_images=[],
+            images_excluded=self.build_plan.images_excluded,
+            state_path=Path(self.runtime.doozer_working, "state.yaml"),
+            reset_counter=reset_fail_counter,
+            increment_counter=increment_fail_counter,
+        )
+
         try:
             await exectools.cmd_assert_async(cmd)
-            await self.update_rebase_fail_counters([])
+            await update_rebase_fail_counters(
+                context=rebase_counter_context,
+            )
 
         except ChildProcessError:
             with open(f'{self.runtime.doozer_working}/state.yaml') as state_yaml:
@@ -458,7 +281,10 @@ class KonfluxOcpPipeline:
                     'Following images were skipped because a parent failed to rebase and won\'t be built: %s',
                     ','.join(skipped_due_to_parent),
                 )
-            await self.update_rebase_fail_counters(failed_images, skipped_due_to_parent)
+
+            rebase_counter_context.failed_images = failed_images
+            rebase_counter_context.skipped_due_to_parent = skipped_due_to_parent
+            await update_rebase_fail_counters(context=rebase_counter_context)
 
             # Exclude images that failed or were skipped due to parent from the build step
             if self.build_plan.image_build_strategy == BuildStrategy.ALL:
@@ -580,7 +406,22 @@ class KonfluxOcpPipeline:
         if description_parts:
             jenkins.update_description('<br/>'.join(description_parts) + '<br/>')
 
-        await self.update_build_fail_counters(built_images, failed_images, record_log)
+        failed_entries = {
+            entry['name']: entry for entry in record_log.get('image_build_konflux', []) if int(entry['status'])
+        }
+        await update_build_fail_counters(
+            context=BuildFailCounterContext(
+                group=f'openshift-{self.version}',
+                assembly=self.assembly,
+                build_variant=BuildVariant.OCP,
+                jenkins_url=os.getenv('BUILD_URL'),
+                built_images=built_images,
+                failed_images=failed_images,
+                failed_entries=failed_entries,
+                reset_counter=reset_fail_counter,
+                increment_counter=increment_fail_counter,
+            )
+        )
 
         if not built_images:
             # Nothing to do, skipping build-sync

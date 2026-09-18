@@ -5,8 +5,12 @@ from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import yaml
+from artcommonlib.variants import BuildVariant
+from pyartcd.build_strategy import BuildStrategy
+from pyartcd.counter_models import BuildFailCounterContext
 from pyartcd.jenkins import Jobs
 from pyartcd.pipelines import ocp
+from pyartcd.util import update_build_fail_counters
 
 from pyartcd import constants
 
@@ -942,68 +946,29 @@ class TestKonfluxOcpPipelineRebaseFailures(unittest.IsolatedAsyncioTestCase):
         with state_path.open('w') as f:
             yaml.safe_dump(state, f)
 
+    @patch('pyartcd.pipelines.ocp4_konflux.update_rebase_fail_counters', new_callable=AsyncMock)
     @patch('pyartcd.pipelines.ocp4_konflux.exectools.cmd_assert_async')
-    async def test_rebase_failure_increments_counters_only_for_direct_failures(self, mock_cmd):
+    async def test_rebase_failure_increments_counters_only_for_direct_failures(self, mock_cmd, mock_counters):
         """rebase_images passes direct failures and skipped children so counters can treat skips as no-ops."""
         self._write_rebase_state(['parent-img'], ['child-a', 'child-b'])
         mock_cmd.side_effect = ChildProcessError('rebase failed')
 
         pipeline = self._make_pipeline()
-        with patch.object(pipeline, 'update_rebase_fail_counters', new_callable=AsyncMock) as mock_counters:
-            await pipeline.rebase_images('4.14.0', '1')
+        await pipeline.rebase_images('4.14.0', '1')
 
-        mock_counters.assert_called_once_with(['parent-img'], ['child-a', 'child-b'])
-
-    @patch('pyartcd.pipelines.ocp4_konflux.increment_fail_counter', new_callable=AsyncMock)
-    @patch('pyartcd.pipelines.ocp4_konflux.reset_fail_counter', new_callable=AsyncMock)
-    async def test_update_rebase_fail_counters_skipped_children_unchanged_in_redis(self, mock_reset, mock_incr):
-        """Children skipped because a parent failed are not reset nor incremented (no-op)."""
-        from pyartcd.pipelines.ocp4_konflux import BuildStrategy
-
-        pipeline = self._make_pipeline()
-        pipeline.group_images = ['parent-img', 'child-a', 'healthy']
-        pipeline.build_plan.image_build_strategy = BuildStrategy.ALL
-
-        await pipeline.update_rebase_fail_counters(['parent-img'], ['child-a'])
-
-        # Extract image names from the redis branch strings
-        reset_names = {c.args[0].split(':')[-1] for c in mock_reset.call_args_list}
-        incr_names = {c.args[0].split(':')[-1] for c in mock_incr.call_args_list}
-        self.assertEqual(reset_names, {'healthy'})
-        self.assertEqual(incr_names, {'parent-img'})
-        self.assertNotIn('child-a', reset_names)
-        self.assertNotIn('child-a', incr_names)
-
-    @patch('pyartcd.pipelines.ocp4_konflux.increment_fail_counter', new_callable=AsyncMock)
-    @patch('pyartcd.pipelines.ocp4_konflux.reset_fail_counter', new_callable=AsyncMock)
-    async def test_update_rebase_fail_counters_only_reads_state_yaml(self, mock_reset, mock_incr):
-        """ONLY strategy derives successful images from state.yaml per-image status."""
-        from pyartcd.pipelines.ocp4_konflux import BuildStrategy
-
-        # Write state with per-image status including a parent image not in image_list
-        self._write_rebase_state(['parent-img'], [], successful=['img-a', 'extra-parent'])
-
-        pipeline = self._make_pipeline(image_build_strategy='only', image_list='img-a')
-        pipeline.build_plan.image_build_strategy = BuildStrategy.ONLY
-
-        await pipeline.update_rebase_fail_counters(['parent-img'])
-
-        reset_names = {c.args[0].split(':')[-1] for c in mock_reset.call_args_list}
-        incr_names = {c.args[0].split(':')[-1] for c in mock_incr.call_args_list}
-        # Both img-a and extra-parent should be reset (read from state.yaml, not image_list)
-        self.assertEqual(reset_names, {'img-a', 'extra-parent'})
-        self.assertEqual(incr_names, {'parent-img'})
+        mock_counters.assert_awaited_once()
+        context = mock_counters.await_args.kwargs['context']
+        self.assertEqual(context.failed_images, ['parent-img'])
+        self.assertEqual(context.skipped_due_to_parent, ['child-a', 'child-b'])
 
     @patch('pyartcd.pipelines.ocp4_konflux.exectools.cmd_assert_async')
     async def test_build_after_rebase_uses_exclude_for_failed_and_skipped(self, mock_cmd):
         """Build phase runs beta:images:konflux:build with --exclude covering every unrebased image."""
-        from pyartcd.pipelines.ocp4_konflux import BuildStrategy
-
         self._write_rebase_state(['parent-img'], ['child-a', 'child-b'])
         mock_cmd.side_effect = [ChildProcessError('rebase failed'), None]
 
         pipeline = self._make_pipeline()
-        with patch.object(pipeline, 'update_rebase_fail_counters', new_callable=AsyncMock):
+        with patch('pyartcd.pipelines.ocp4_konflux.update_rebase_fail_counters', new_callable=AsyncMock):
             await pipeline.rebase_images('4.14.0', '1')
         await pipeline.build_images()
 
@@ -1018,8 +983,6 @@ class TestKonfluxOcpPipelineRebaseFailures(unittest.IsolatedAsyncioTestCase):
     @patch('pyartcd.pipelines.ocp4_konflux.exectools.cmd_assert_async')
     async def test_build_after_rebase_only_strategy_keeps_surviving_images(self, mock_cmd):
         """ONLY strategy: build runs --images= for images that neither failed nor were skipped due to parent."""
-        from pyartcd.pipelines.ocp4_konflux import BuildStrategy
-
         self._write_rebase_state(['parent-img'], ['child-a'])
         mock_cmd.side_effect = [ChildProcessError('rebase failed'), None]
 
@@ -1027,7 +990,7 @@ class TestKonfluxOcpPipelineRebaseFailures(unittest.IsolatedAsyncioTestCase):
         pipeline.build_plan.image_build_strategy = BuildStrategy.ONLY
         pipeline.build_plan.images_included = ['parent-img', 'child-a', 'survivor']
 
-        with patch.object(pipeline, 'update_rebase_fail_counters', new_callable=AsyncMock):
+        with patch('pyartcd.pipelines.ocp4_konflux.update_rebase_fail_counters', new_callable=AsyncMock):
             await pipeline.rebase_images('4.14.0', '1')
         await pipeline.build_images()
 
@@ -1073,6 +1036,32 @@ class TestKonfluxOcpPipelineBuildFailCounters(unittest.IsolatedAsyncioTestCase):
         defaults.update(kwargs)
         return KonfluxOcpPipeline(**defaults)
 
+    async def _update_build_fail_counters(
+        self,
+        pipeline,
+        built_images,
+        failed_images,
+        record_log,
+        reset_counter,
+        increment_counter,
+    ):
+        failed_entries = {
+            entry['name']: entry for entry in record_log.get('image_build_konflux', []) if int(entry['status'])
+        }
+        await update_build_fail_counters(
+            context=BuildFailCounterContext(
+                group=f'openshift-{pipeline.version}',
+                assembly=pipeline.assembly,
+                build_variant=BuildVariant.OCP,
+                jenkins_url=os.getenv('BUILD_URL'),
+                built_images=built_images,
+                failed_images=failed_images,
+                failed_entries=failed_entries,
+                reset_counter=reset_counter,
+                increment_counter=increment_counter,
+            )
+        )
+
     @patch('pyartcd.pipelines.ocp4_konflux.increment_fail_counter', new_callable=AsyncMock)
     @patch('pyartcd.pipelines.ocp4_konflux.reset_fail_counter', new_callable=AsyncMock)
     async def test_build_fail_counters_categorize_ec_failures(self, mock_reset, mock_incr):
@@ -1092,7 +1081,7 @@ class TestKonfluxOcpPipelineBuildFailCounters(unittest.IsolatedAsyncioTestCase):
                 },
             ]
         }
-        await pipeline.update_build_fail_counters([], ['ironic'], record_log)
+        await self._update_build_fail_counters(pipeline, [], ['ironic'], record_log, mock_reset, mock_incr)
 
         incr_branches = [c.args[0] for c in mock_incr.call_args_list]
         self.assertEqual(len(incr_branches), 1)
@@ -1121,7 +1110,7 @@ class TestKonfluxOcpPipelineBuildFailCounters(unittest.IsolatedAsyncioTestCase):
                 },
             ]
         }
-        await pipeline.update_build_fail_counters([], ['ose-base'], record_log)
+        await self._update_build_fail_counters(pipeline, [], ['ose-base'], record_log, mock_reset, mock_incr)
 
         incr_branches = [c.args[0] for c in mock_incr.call_args_list]
         self.assertEqual(len(incr_branches), 1)
@@ -1145,11 +1134,63 @@ class TestKonfluxOcpPipelineBuildFailCounters(unittest.IsolatedAsyncioTestCase):
                 },
             ]
         }
-        await pipeline.update_build_fail_counters([], ['cluster-etcd-operator'], record_log)
+        await self._update_build_fail_counters(
+            pipeline, [], ['cluster-etcd-operator'], record_log, mock_reset, mock_incr
+        )
 
         incr_branches = [c.args[0] for c in mock_incr.call_args_list]
         self.assertEqual(len(incr_branches), 1)
         self.assertIn('count:build-failure:konflux:openshift-4.18:cluster-etcd-operator', incr_branches[0])
+
+    @patch('pyartcd.util.logger')
+    @patch('pyartcd.pipelines.ocp4_konflux.increment_fail_counter', new_callable=AsyncMock)
+    @patch('pyartcd.pipelines.ocp4_konflux.reset_fail_counter', new_callable=AsyncMock)
+    async def test_build_fail_counters_preserve_mixed_failure_behavior(self, mock_reset, mock_incr, mock_logger):
+        """Mixed infrastructure failures preserve the existing counter behavior."""
+        pipeline = self._make_pipeline()
+        record_log = {
+            'image_build_konflux': [
+                {
+                    'name': 'real-failure',
+                    'status': '-1',
+                    'task_id': 'plr-1',
+                    'outcome': 'build_error',
+                },
+                {
+                    'name': 'infrastructure-failure',
+                    'status': '-1',
+                    'task_id': 'n/a',
+                    'outcome': 'build_error',
+                },
+                {
+                    'name': 'parent-failure',
+                    'status': '-1',
+                    'task_id': 'n/a',
+                    'message': 'parent images failed to build',
+                    'outcome': 'build_error',
+                },
+            ]
+        }
+
+        await self._update_build_fail_counters(
+            pipeline,
+            [],
+            ['real-failure', 'infrastructure-failure', 'parent-failure'],
+            record_log,
+            mock_reset,
+            mock_incr,
+        )
+
+        self.assertEqual(
+            [call.args[0] for call in mock_incr.call_args_list],
+            [
+                'count:build-failure:konflux:openshift-4.18:real-failure',
+                'count:build-failure:konflux:openshift-4.18:infrastructure-failure',
+            ],
+        )
+        mock_logger.info.assert_called_once_with(
+            'Excluding parent-failure from counter updates (parent build failure, not a real build issue)'
+        )
 
     @patch('pyartcd.pipelines.ocp4_konflux.increment_fail_counter', new_callable=AsyncMock)
     @patch('pyartcd.pipelines.ocp4_konflux.reset_fail_counter', new_callable=AsyncMock)
@@ -1190,7 +1231,9 @@ class TestKonfluxOcpPipelineBuildFailCounters(unittest.IsolatedAsyncioTestCase):
                 },
             ]
         }
-        await pipeline.update_build_fail_counters([], ['ironic', 'ose-base', 'ceo'], record_log)
+        await self._update_build_fail_counters(
+            pipeline, [], ['ironic', 'ose-base', 'ceo'], record_log, mock_reset, mock_incr
+        )
 
         incr_branches = {c.args[0] for c in mock_incr.call_args_list}
         self.assertEqual(len(incr_branches), 3)
@@ -1216,7 +1259,7 @@ class TestKonfluxOcpPipelineBuildFailCounters(unittest.IsolatedAsyncioTestCase):
                 },
             ]
         }
-        await pipeline.update_build_fail_counters(['ironic'], [], record_log)
+        await self._update_build_fail_counters(pipeline, ['ironic'], [], record_log, mock_reset, mock_incr)
 
         reset_branches = {c.args[0] for c in mock_reset.call_args_list}
         self.assertEqual(len(reset_branches), 3)
@@ -1254,7 +1297,9 @@ class TestKonfluxOcpPipelineBuildFailCounters(unittest.IsolatedAsyncioTestCase):
                 },
             ]
         }
-        await pipeline.update_build_fail_counters([], ['ironic', 'ose-base', 'ceo'], record_log)
+        await self._update_build_fail_counters(
+            pipeline, [], ['ironic', 'ose-base', 'ceo'], record_log, mock_reset, mock_incr
+        )
 
         incr_branches = {c.args[0] for c in mock_incr.call_args_list}
         self.assertEqual(len(incr_branches), 3)
@@ -1281,7 +1326,7 @@ class TestKonfluxOcpPipelineBuildFailCounters(unittest.IsolatedAsyncioTestCase):
                 },
             ]
         }
-        await pipeline.update_build_fail_counters([], ['ironic'], record_log)
+        await self._update_build_fail_counters(pipeline, [], ['ironic'], record_log, mock_reset, mock_incr)
         mock_reset.assert_not_called()
         mock_incr.assert_not_called()
 
@@ -1306,7 +1351,9 @@ class TestKonfluxOcpPipelineBuildFailCounters(unittest.IsolatedAsyncioTestCase):
                 },
             ]
         }
-        await pipeline.update_build_fail_counters([], ['ose-baremetal-installer'], record_log)
+        await self._update_build_fail_counters(
+            pipeline, [], ['ose-baremetal-installer'], record_log, mock_reset, mock_incr
+        )
         mock_incr.assert_not_called()
 
     @patch('pyartcd.pipelines.ocp4_konflux.increment_fail_counter', new_callable=AsyncMock)
@@ -1353,10 +1400,13 @@ class TestKonfluxOcpPipelineBuildFailCounters(unittest.IsolatedAsyncioTestCase):
                 },
             ]
         }
-        await pipeline.update_build_fail_counters(
+        await self._update_build_fail_counters(
+            pipeline,
             [],
             ['openshift-enterprise-base-rhel9', 'ose-baremetal-installer', 'ose-network-tools'],
             record_log,
+            mock_reset,
+            mock_incr,
         )
         # Only the real failure (base-rhel9) should increment
         incr_keys = [c.args[0] for c in mock_incr.call_args_list]
@@ -1395,11 +1445,11 @@ class TestKonfluxOcpPipelineBuildFailCounters(unittest.IsolatedAsyncioTestCase):
                 },
             ]
         }
-        await pipeline.update_build_fail_counters([], ['child-a', 'child-b'], record_log)
+        await self._update_build_fail_counters(pipeline, [], ['child-a', 'child-b'], record_log, mock_reset, mock_incr)
         mock_incr.assert_not_called()
 
     @patch('pyartcd.pipelines.ocp4_konflux.jenkins')
-    @patch('pyartcd.pipelines.ocp4_konflux.KonfluxOcpPipeline.update_build_fail_counters', new_callable=AsyncMock)
+    @patch('pyartcd.pipelines.ocp4_konflux.update_build_fail_counters', new_callable=AsyncMock)
     @patch('pyartcd.pipelines.ocp4_konflux.KonfluxOcpPipeline.parse_record_log')
     async def test_sync_images_excludes_parent_failures_from_description(self, mock_parse, mock_counters, mock_jenkins):
         """Parent-failure children should be logged as skipped, not shown in the description."""
@@ -1441,7 +1491,7 @@ class TestKonfluxOcpPipelineBuildFailCounters(unittest.IsolatedAsyncioTestCase):
         mock_jenkins.update_description.assert_called_once_with(expected_description)
 
     @patch('pyartcd.pipelines.ocp4_konflux.jenkins')
-    @patch('pyartcd.pipelines.ocp4_konflux.KonfluxOcpPipeline.update_build_fail_counters', new_callable=AsyncMock)
+    @patch('pyartcd.pipelines.ocp4_konflux.update_build_fail_counters', new_callable=AsyncMock)
     @patch('pyartcd.pipelines.ocp4_konflux.KonfluxOcpPipeline.parse_record_log')
     async def test_sync_images_all_parent_failures_no_description(self, mock_parse, mock_counters, mock_jenkins):
         """When all failures are parent-caused, description should not show any failures."""
@@ -1481,7 +1531,7 @@ class TestKonfluxOcpPipelineBuildFailCounters(unittest.IsolatedAsyncioTestCase):
         mock_jenkins.update_description.assert_called_once_with(expected_description)
 
     @patch('pyartcd.pipelines.ocp4_konflux.jenkins')
-    @patch('pyartcd.pipelines.ocp4_konflux.KonfluxOcpPipeline.update_build_fail_counters', new_callable=AsyncMock)
+    @patch('pyartcd.pipelines.ocp4_konflux.update_build_fail_counters', new_callable=AsyncMock)
     @patch('pyartcd.pipelines.ocp4_konflux.KonfluxOcpPipeline.parse_record_log')
     async def test_sync_images_many_skipped_uses_count(self, mock_parse, mock_counters, mock_jenkins):
         """When there are >10 skipped images, show count instead of listing them."""

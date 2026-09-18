@@ -3,6 +3,7 @@ Tests for build variant definitions.
 """
 
 import unittest
+from unittest.mock import patch
 
 from artcommonlib.variants import BuildVariant, get_build_variant_for_product
 
@@ -37,6 +38,18 @@ class TestBuildVariant(unittest.TestCase):
         """Resolve and normalize a build-data product name."""
         self.assertIs(get_build_variant_for_product(" Openshift-Logging "), BuildVariant.LOGGING)
 
-    def test_returns_none_for_unsupported_product(self):
-        """Leave products without a defined variant unmapped."""
-        self.assertIsNone(get_build_variant_for_product("unknown"))
+    @patch("artcommonlib.variants.logger")
+    def test_raises_and_logs_for_unsupported_product(self, mock_logger):
+        """Reject products without a defined build variant."""
+        message = "No build variant found for product unknown; add it to the BuildVariant enum"
+        with self.assertRaisesRegex(ValueError, message):
+            get_build_variant_for_product("unknown")
+        mock_logger.error.assert_called_once_with(message)
+
+    def test_raises_for_openshift_agent_installer(self):
+        """Require an explicit build variant for the OpenShift agent installer."""
+        with self.assertRaisesRegex(
+            ValueError,
+            "No build variant found for product openshift_agent_installer; add it to the BuildVariant enum",
+        ):
+            get_build_variant_for_product("openshift_agent_installer")

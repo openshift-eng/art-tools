@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import asyncio
 import json
 import logging
@@ -20,6 +22,7 @@ from artcommonlib.assembly import assembly_type
 from artcommonlib.constants import ACTIVE_OCP_VERSIONS
 from artcommonlib.exectools import limit_concurrency
 from artcommonlib.github_auth import get_github_client_for_org
+from artcommonlib.konflux.konflux_build_record import KonfluxBuildOutcome
 from artcommonlib.model import Missing, Model
 from artcommonlib.release_util import (
     SoftwareLifecyclePhase,
@@ -34,6 +37,13 @@ from doozerlib.constants import ART_BUILD_HISTORY_URL
 from errata_tool import ErrataConnector
 
 from pyartcd import constants, record
+from pyartcd.build_strategy import BuildStrategy
+from pyartcd.counter_models import (
+    BuildFailCounterContext,
+    FailedImageCategories,
+    FailedImageCounterContext,
+    RebaseCounterContext,
+)
 from pyartcd.git import GitRepository
 from pyartcd.jenkins import start_build_sync
 from pyartcd.mail import MailService
@@ -1109,41 +1119,268 @@ async def get_group_rpms(
     return out.splitlines()
 
 
-async def increment_fail_counter(branch: str, **kwargs):
+@limit_concurrency(50)
+async def increment_fail_counter(branch: str, **kwargs: object) -> None:
     """
-    Generic Redis failure counter increment with optional metadata fields.
-
-    Always increments a 'failure' field at {branch}:failure.
-    Additional kwargs are stored as {branch}:{key} if value is not None.
+    Increment a failure counter and store optional metadata.
 
     Arg(s):
-        branch (str): Full Redis key prefix (e.g., 'count:build-failure:konflux:openshift-4.17:ironic')
-        **kwargs: Optional metadata fields (url, nvr, etc.)
-
-    Example:
-        await increment_fail_counter('count:build:4.17:ironic', url='http://...', nvr='ironic-1.0')
+        branch (str): Full Redis key prefix for the failure counter.
+        **kwargs (object): Optional metadata fields stored under the counter.
     """
-    failure_key = f'{branch}:failure'
-    await redis.call('incr', failure_key)
+    failure_key = f"{branch}:failure"
+    await redis.call("incr", failure_key)
 
     for key, value in kwargs.items():
         if value is not None:
-            await redis.set_value(key=f'{branch}:{key}', value=value)
+            await redis.set_value(key=f"{branch}:{key}", value=value)
 
 
 @limit_concurrency(50)
-async def reset_fail_counter(branch: str):
+async def reset_fail_counter(branch: str) -> None:
     """
-    Remove all keys under a Redis branch pattern.
-    Limit concurrency as we might reset many counters in parallel.
+    Remove all keys under a failure-counter branch.
 
     Arg(s):
-        branch (str): Full Redis key prefix
+        branch (str): Full Redis key prefix for the failure counter.
     """
-    await redis.delete_keys_by_pattern(f'{branch}:*')
+    await redis.delete_keys_by_pattern(f"{branch}:*")
 
 
-async def get_failures(pattern: str, entity_index: int = -2, logger=None, **context):
+async def update_rebase_fail_counters(
+    context: RebaseCounterContext,
+) -> None:
+    """
+    Update Redis rebase-failure counters after a Konflux rebase run.
+
+    Successful images reset their counters. Direct rebase failures increment
+    theirs, while images skipped because a parent failed remain unchanged.
+    Counter updates only apply to stream assemblies.
+
+    Arg(s):
+        context (RebaseCounterContext): Validated rebase counter configuration.
+    """
+    if context.assembly != "stream":
+        return
+
+    rebase_state = {}
+    if context.state_path is not None and context.state_path.exists():
+        with context.state_path.open("r") as f:
+            state = yaml.safe_load(f) or {}
+        rebase_state = state.get(context.rebase_state_key, {})
+
+    group_images = context.group_images or list(rebase_state.get("images", {})) or context.requested_images
+    match context.image_build_strategy:
+        case BuildStrategy.ALL:
+            successful_images = group_images
+        case BuildStrategy.EXCEPT:
+            successful_images = [image for image in group_images if image not in context.images_excluded]
+        case BuildStrategy.ONLY:
+            successful_images = [
+                image
+                for image, image_state in rebase_state.get("images", {}).items()
+                if image_state.get("status") == "success"
+            ]
+            if not successful_images:
+                successful_images = group_images
+        case _:
+            raise ValueError(
+                f"Unknown image build strategy: {context.image_build_strategy}. Valid strategies: all, except, only"
+            )
+
+    failed_set = set(context.failed_images)
+    skipped_set = set(context.skipped_due_to_parent or [])
+    successful_images = [image for image in successful_images if image not in failed_set and image not in skipped_set]
+
+    await asyncio.gather(
+        *[context.reset_counter(f"count:rebase-failure:konflux:{context.group}:{image}") for image in successful_images]
+    )
+    await asyncio.gather(
+        *[
+            context.increment_counter(
+                f"count:rebase-failure:konflux:{context.group}:{image}",
+                build_variant=context.build_variant.value,
+                jenkins_url=context.jenkins_url,
+            )
+            for image in context.failed_images
+        ]
+    )
+
+
+def get_failed_images_for_counter_updates(failed_images: list[str], failed_entries: dict[str, dict]) -> list[str]:
+    """
+    Return failed images that should update failure counters.
+
+    Parent-dependent failures are always excluded. Infrastructure failures are
+    excluded only when no image had an attempted build. An empty return value
+    for a non-empty failure list indicates that no build was attempted.
+
+    Arg(s):
+        failed_images (list[str]): Names of images with failed build records.
+        failed_entries (dict[str, dict]): Failed build records keyed by image name.
+    Return Value(s):
+        list[str]: Failed images that should update counters.
+    """
+    has_attempted_build = any(
+        "parent images failed to build" not in failed_entries.get(image, {}).get("message", "")
+        and failed_entries.get(image, {}).get("task_id") != "n/a"
+        for image in failed_images
+    )
+    if failed_images and not has_attempted_build:
+        return []
+
+    return [
+        image
+        for image in failed_images
+        if "parent images failed to build" not in failed_entries.get(image, {}).get("message", "")
+    ]
+
+
+def get_no_attempted_builds_warning(group: str, failed_count: int, job_url: str | None) -> str:
+    """
+    Return the warning for a build run where no failed image had a build attempt.
+
+    Arg(s):
+        group (str): Build group associated with the failed images.
+        failed_count (int): Number of failed images in the build run.
+        job_url (str | None): Jenkins URL for the build run.
+    Return Value(s):
+        str: Formatted warning message.
+    """
+    return (
+        f"No builds were actually attempted for {group}: all {failed_count} failures "
+        "have task_id=n/a (infrastructure failure) or are parent-dependency failures. "
+        f"Skipping individual image counter updates. Jenkins job: {job_url}"
+    )
+
+
+def categorize_failed_images(failed_images: list[str], failed_entries: dict[str, dict]) -> FailedImageCategories:
+    """
+    Categorize failed images by their Konflux outcome.
+
+    ITS and release outcomes use their dedicated categories. Unknown and build
+    outcomes fall back to the build-failure category.
+
+    Arg(s):
+        failed_images (list[str]): Names of images with failed build records.
+        failed_entries (dict[str, dict]): Failed build records keyed by image name.
+    Return Value(s):
+        FailedImageCategories: Failed images grouped by counter category.
+    """
+    build_failures = []
+    its_failures = []
+    release_failures = []
+
+    for image in failed_images:
+        outcome = failed_entries.get(image, {}).get("outcome", "")
+        if outcome == str(KonfluxBuildOutcome.ITS_ERROR):
+            its_failures.append(image)
+        elif outcome == str(KonfluxBuildOutcome.RELEASE_ERROR):
+            release_failures.append(image)
+        else:
+            build_failures.append(image)
+
+    return FailedImageCategories(
+        build=build_failures,
+        its=its_failures,
+        release=release_failures,
+    )
+
+
+async def increment_failed_image_counters(
+    context: FailedImageCounterContext,
+) -> list[None | BaseException]:
+    """
+    Increment counters for failed images grouped by failure category.
+
+    Each category uses its corresponding Redis counter and pipeline metadata.
+    The increment function is injected so callers can preserve their local
+    implementation and error-handling behavior.
+
+    Arg(s):
+        context (FailedImageCounterContext): Validated counter inputs.
+    Return Value(s):
+        list[None | BaseException]: Results from each counter increment.
+    """
+    counter_specs = (
+        ("build-failure", context.failure_categories.build, "build_pipeline_url"),
+        ("ec-failure", context.failure_categories.its, "ec_pipeline_url"),
+        ("release-failure", context.failure_categories.release, "release_pipeline"),
+    )
+    increment_tasks = [
+        context.increment_counter(
+            f"count:{counter_type}:konflux:{context.group}:{image}",
+            build_variant=context.build_variant.value,
+            jenkins_url=context.jenkins_url,
+            nvr=context.failed_entries.get(image, {}).get("nvrs"),
+            pipeline_url=context.failed_entries.get(image, {}).get(pipeline_field),
+        )
+        for counter_type, images, pipeline_field in counter_specs
+        for image in images
+    ]
+    return await asyncio.gather(*increment_tasks, return_exceptions=context.return_exceptions)
+
+
+async def update_build_fail_counters(context: BuildFailCounterContext) -> None:
+    """
+    Update Redis build-failure counters after a Konflux build run.
+
+    Successfully built images reset all build, ITS, and release counters.
+    Direct failures increment their categorized counter, while parent-dependent
+    failures are logged and excluded. Infrastructure failures are excluded only
+    when no image had an attempted build.
+
+    Arg(s):
+        context (BuildFailCounterContext): Validated counter inputs.
+    """
+    if context.assembly != "stream":
+        return
+
+    counter_types = ("build-failure",) if context.build_only else ("build-failure", "ec-failure", "release-failure")
+    await asyncio.gather(
+        *[
+            context.reset_counter(f"count:{counter_type}:konflux:{context.group}:{image}")
+            for image in context.built_images
+            for counter_type in counter_types
+        ]
+    )
+
+    counter_failed_images = get_failed_images_for_counter_updates(context.failed_images, context.failed_entries)
+    for image in context.failed_images:
+        if "parent images failed to build" in context.failed_entries.get(image, {}).get("message", ""):
+            logger.info(f"Excluding {image} from counter updates (parent build failure, not a real build issue)")
+
+    if context.failed_images and not counter_failed_images:
+        logger.warning(get_no_attempted_builds_warning(context.group, len(context.failed_images), context.jenkins_url))
+        return
+
+    if context.build_only:
+        failure_categories = FailedImageCategories(
+            build=counter_failed_images,
+            its=[],
+            release=[],
+        )
+    else:
+        failure_categories = categorize_failed_images(counter_failed_images, context.failed_entries)
+    await increment_failed_image_counters(
+        context=FailedImageCounterContext(
+            group=context.group,
+            build_variant=context.build_variant,
+            jenkins_url=context.jenkins_url,
+            failure_categories=failure_categories,
+            failed_entries=context.failed_entries,
+            increment_counter=context.increment_counter,
+        )
+    )
+
+
+async def get_failures(
+    pattern: str,
+    entity_index: int = -2,
+    logger=None,
+    build_variant: str | None = None,
+    **context,
+):
     """
     Generic function to fetch failure data from Redis.
     Dynamically discovers all metadata fields stored with each failure.
@@ -1153,6 +1390,7 @@ async def get_failures(pattern: str, entity_index: int = -2, logger=None, **cont
                       (e.g., 'count:build-failure:konflux:openshift-4.18:*:failure')
         entity_index (int): Index in the split key where entity name is located (default: -2, second from end)
         logger (Logger): Optional logger for debugging
+        build_variant (str | None): Optional build variant filter to apply before entity deduplication.
         **context: Additional context to include in each failure record (e.g., build_system='konflux')
 
     Return Value(s):
@@ -1218,6 +1456,10 @@ async def get_failures(pattern: str, entity_index: int = -2, logger=None, **cont
             # Add any context passed in (e.g., build_system, branch)
             failure_data.update(context)
 
+            # Filter by build variant before deduplicating entities from wildcard patterns.
+            if build_variant is not None and failure_data.get('build_variant') != build_variant:
+                continue
+
             # If entity already exists (from previous pattern match), keep the one with higher count
             if entity_name in failures:
                 existing_count = failures[entity_name]['failure_count']
@@ -1239,7 +1481,13 @@ async def get_failures(pattern: str, entity_index: int = -2, logger=None, **cont
     return failures
 
 
-async def get_rebase_failures(group: str, branches: list[str], build_systems: list[str], logger=None):
+async def get_rebase_failures(
+    group: str,
+    branches: list[str],
+    build_systems: list[str],
+    logger=None,
+    build_variant: str | None = None,
+):
     """
     Fetch rebase failure data from Redis for a specific group.
     Checks multiple branch patterns and build systems.
@@ -1249,6 +1497,7 @@ async def get_rebase_failures(group: str, branches: list[str], build_systems: li
         branches (list[str]): Branch identifiers (e.g., ['rebase-failure'])
         build_systems (list[str]): Build systems to check (e.g., ['brew', 'konflux'])
         logger (Logger): Optional logger for debugging
+        build_variant (str | None): Optional build variant filter.
     Return Value(s):
         dict: {image_name: {failure_count, <all_metadata>, build_system, branch}}
     """
@@ -1258,7 +1507,12 @@ async def get_rebase_failures(group: str, branches: list[str], build_systems: li
         for build_system in build_systems:
             pattern = f'count:{branch}:{build_system}:{group}:*:failure'
             failures = await get_failures(
-                pattern, entity_index=-2, logger=logger, build_system=build_system, branch=branch
+                pattern,
+                entity_index=-2,
+                logger=logger,
+                build_variant=build_variant,
+                build_system=build_system,
+                branch=branch,
             )
 
             # Merge results, keeping highest failure count for each image
@@ -1277,6 +1531,7 @@ async def get_counter_failures(
     group: str,
     build_system: str = 'konflux',
     logger=None,
+    build_variant: str | None = None,
 ):
     """
     Fetch failure data from Redis for a specific counter type and group.
@@ -1286,11 +1541,12 @@ async def get_counter_failures(
         group (str): Group name (e.g., 'openshift-4.18', 'okd-4.21')
         build_system (str): Build system (default: 'konflux')
         logger (Logger): Optional logger for debugging
+        build_variant (str | None): Optional build variant filter.
     Return Value(s):
         dict: {image_name: {failure_count, <all_metadata>}}
     """
     pattern = f'count:{counter_type}:{build_system}:{group}:*:failure'
-    return await get_failures(pattern, entity_index=-2, logger=logger)
+    return await get_failures(pattern, entity_index=-2, logger=logger, build_variant=build_variant)
 
 
 async def create_or_update_assembly_pr(

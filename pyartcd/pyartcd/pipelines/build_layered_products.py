@@ -16,11 +16,19 @@ from doozerlib.constants import KONFLUX_DEFAULT_IMAGE_REPO
 
 from pyartcd import constants, jenkins, locks
 from pyartcd import record as record_util
+from pyartcd.build_strategy import BuildStrategy
 from pyartcd.cli import cli, click_coroutine, pass_runtime
+from pyartcd.counter_models import BuildFailCounterContext, RebaseCounterContext
 from pyartcd.locks import Lock
-from pyartcd.pipelines.ocp4_konflux import BuildStrategy
 from pyartcd.runtime import Runtime
-from pyartcd.util import default_release_suffix, load_group_config
+from pyartcd.util import (
+    default_release_suffix,
+    increment_fail_counter,
+    load_group_config,
+    reset_fail_counter,
+    update_build_fail_counters,
+    update_rebase_fail_counters,
+)
 
 
 class BuildLayeredProductsPipeline:
@@ -170,7 +178,7 @@ class BuildLayeredProductsPipeline:
             self._logger.info(f"Using version {self.version} from group config")
 
         # Extract product from group config
-        product = group_config.get('product') or 'ocp'
+        product = group_config['product']
         image_repo = group_config.get('konflux', {}).get('image_repo') or KONFLUX_DEFAULT_IMAGE_REPO
         await self._rebase_and_build(product, image_repo)
         self.trigger_bundle_build()
@@ -190,7 +198,7 @@ class BuildLayeredProductsPipeline:
             return f"--group={self.group}@{self.data_gitref}"
         return f"--group={self.group}"
 
-    def _doozer_base_command(self, build_variant: BuildVariant | None = None) -> List[str]:
+    def _doozer_base_command(self, build_variant: BuildVariant) -> List[str]:
         command = [
             "doozer",
             f"--assembly={self.assembly}",
@@ -200,8 +208,7 @@ class BuildLayeredProductsPipeline:
             self._group_param(),
             "--latest-parent-version",
         ]
-        if build_variant is not None:
-            command.append(f"--variant={build_variant.value}")
+        command.append(f"--variant={build_variant.value}")
         return command
 
     async def _rebase_and_build(self, product: str, image_repo: str):
@@ -229,9 +236,44 @@ class BuildLayeredProductsPipeline:
         try:
             await self._build(strategy, build_image_list, excluded, product, image_repo, build_variant)
         finally:
+            await self.update_build_fail_counters(build_variant)
             self._update_build_description()
 
-    async def _rebase(self, image_list: Optional[str], build_variant: BuildVariant | None = None) -> List[str]:
+    async def update_build_fail_counters(self, build_variant: BuildVariant):
+        """Update Redis build, ITS, and release failure counters for layered-product builds."""
+        if self.runtime.dry_run:
+            return
+
+        record_log = self.parse_record_log() or {}
+        records_by_image = {
+            entry["name"]: entry for entry in record_log.get("image_build_konflux", []) if entry.get("name")
+        }
+        if not records_by_image:
+            return
+
+        job_url = os.getenv("BUILD_URL")
+        group = self.group
+        built_images = [image for image, entry in records_by_image.items() if int(entry.get("status", -1)) == 0]
+        failed_images = [image for image, entry in records_by_image.items() if int(entry.get("status", -1)) != 0]
+        await update_build_fail_counters(
+            context=BuildFailCounterContext(
+                group=group,
+                assembly=self.assembly,
+                build_variant=build_variant,
+                jenkins_url=job_url,
+                built_images=built_images,
+                failed_images=failed_images,
+                failed_entries=records_by_image,
+                reset_counter=reset_fail_counter,
+                increment_counter=increment_fail_counter,
+            )
+        )
+
+    async def _rebase(
+        self,
+        image_list: Optional[str],
+        build_variant: BuildVariant,
+    ) -> List[str]:
         """Rebase layered product images.
 
         Returns the list of images excluded due to rebase failure.
@@ -258,16 +300,32 @@ class BuildLayeredProductsPipeline:
         if not self.runtime.dry_run:
             rebase_cmd.append("--push")
 
+        requested_images = [image.strip() for image in (image_list or '').split(',') if image.strip()]
+        state_path = Path(self.runtime.doozer_working, "state.yaml")
+        failed_images: list[str] = []
+        skipped_due_to_parent: list[str] = []
+        excluded: list[str] = []
+        rebase_counter_context = RebaseCounterContext(
+            group=self.group,
+            assembly=self.assembly,
+            build_variant=build_variant,
+            jenkins_url=os.getenv("BUILD_URL"),
+            image_build_strategy=self.image_build_strategy,
+            group_images=[],
+            requested_images=requested_images,
+            images_excluded=[],
+            state_path=state_path,
+            reset_counter=reset_fail_counter,
+            increment_counter=increment_fail_counter,
+        )
         try:
             await exectools.cmd_assert_async(rebase_cmd, env=self._doozer_env_vars)
             if image_list:
                 self._logger.info(f"Successfully rebased {image_list}")
             else:
                 self._logger.info("Successfully rebased all images")
-            return []
 
         except ChildProcessError:
-            state_path = Path(self.runtime.doozer_working, 'state.yaml')
             if not state_path.exists():
                 raise
 
@@ -291,7 +349,10 @@ class BuildLayeredProductsPipeline:
                     ','.join(skipped_due_to_parent),
                 )
 
-            return excluded
+        rebase_counter_context.failed_images = failed_images
+        rebase_counter_context.skipped_due_to_parent = skipped_due_to_parent
+        await update_rebase_fail_counters(context=rebase_counter_context)
+        return excluded
 
     def _update_build_description(self):
         """Update Jenkins description with build results (succeeded/failed counts and failed image names)."""
@@ -320,7 +381,7 @@ class BuildLayeredProductsPipeline:
         excluded: List[str],
         product: str,
         image_repo: str,
-        build_variant: BuildVariant | None = None,
+        build_variant: BuildVariant,
     ):
         """Build layered product images."""
         if image_list:

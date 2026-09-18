@@ -1,4 +1,3 @@
-import asyncio
 import json
 import logging
 import os
@@ -14,15 +13,18 @@ import yaml
 from artcommonlib import exectools
 from artcommonlib.arch_util import go_arch_for_brew_arch, go_suffix_for_arch
 from artcommonlib.util import oc_image_info_for_arch_async
+from artcommonlib.variants import BuildVariant
 from doozerlib.cli.images_okd import OKD_DEFAULT_IMAGE_REPO
 from doozerlib.state import STATE_PASS
 
 from pyartcd import jenkins, locks
 from pyartcd import record as record_util
+from pyartcd.build_strategy import BuildStrategy
 from pyartcd.cli import cli, click_coroutine, pass_runtime
 from pyartcd.constants import KONFLUX_IMAGE_BUILD_PLR_TEMPLATE_URL_FORMAT, OCP_BUILD_DATA_URL
+from pyartcd.counter_models import BuildFailCounterContext, RebaseCounterContext
 from pyartcd.locks import Lock
-from pyartcd.pipelines.ocp4_konflux import BuildStrategy, EnumEncoder
+from pyartcd.pipelines.ocp4_konflux import EnumEncoder
 from pyartcd.runtime import Runtime
 from pyartcd.util import (
     build_history_link_url,
@@ -30,6 +32,8 @@ from pyartcd.util import (
     get_group_images,
     increment_fail_counter,
     reset_fail_counter,
+    update_build_fail_counters,
+    update_rebase_fail_counters,
 )
 
 OKD_ARCHES = ('x86_64', 'aarch64')
@@ -269,7 +273,24 @@ class KonfluxOkdPipeline:
                 jenkins.update_description(f'Skipped {len(skipped_images)} images.<br>')
 
         # Update rebase fail counters in Redis
-        await self.update_rebase_fail_counters(self.rebase_failures)
+        rebase_counter_context = RebaseCounterContext(
+            group=f"okd-{self.version}",
+            assembly=self.assembly,
+            build_variant=BuildVariant.OKD,
+            jenkins_url=os.getenv("BUILD_URL"),
+            image_build_strategy=self.build_plan.image_build_strategy,
+            group_images=self.group_images,
+            requested_images=[],
+            images_excluded=self.build_plan.images_excluded,
+            state_path=Path(self.runtime.doozer_working, "state.yaml"),
+            rebase_state_key="images:okd:rebase",
+            reset_counter=reset_fail_counter,
+            increment_counter=increment_fail_counter,
+            failed_images=self.rebase_failures,
+        )
+        await update_rebase_fail_counters(
+            context=rebase_counter_context,
+        )
 
         # Exclude images that were skipped or failed during rebase from the build step
         if self.build_plan.image_build_strategy == BuildStrategy.ALL:
@@ -286,54 +307,6 @@ class KonfluxOkdPipeline:
         else:  # strategy = EXCLUDE
             # Append failed images to excluded ones
             self.build_plan.images_excluded.extend(self.rebase_failures + skipped_images)
-
-    async def update_rebase_fail_counters(self, failed_images):
-        """
-        Update rebase fail counters for images that failed to rebase.
-        """
-
-        if self.assembly != 'stream':
-            # Only update fail counters for stream assembly
-            return
-
-        # Reset fail counters for images that were rebased successfully
-        match self.build_plan.image_build_strategy:
-            case BuildStrategy.ALL:
-                successful_images = [image for image in self.group_images if image not in failed_images]
-            case BuildStrategy.EXCEPT:
-                successful_images = [
-                    image
-                    for image in self.group_images
-                    if image not in self.build_plan.images_excluded and image not in failed_images
-                ]
-            case BuildStrategy.ONLY:
-                # Derive successful images from doozer's state.yaml per-image
-                # status (which records all images actually processed, including
-                # parents/dependents loaded by --latest-parent-version) rather
-                # than from the artcd-side IMAGE_LIST.
-                state = self.load_state_yaml()
-                rebase_state = state.get('images:okd:rebase', {}).get('images', {})
-                successful_images = [
-                    image for image, image_state in rebase_state.items() if image_state.get('status') == 'success'
-                ]
-            case _:
-                raise ValueError(
-                    f"Unknown build strategy: {self.build_plan.image_build_strategy}. Valid strategies: {[s.value for s in BuildStrategy]}"
-                )
-
-        group = f'okd-{self.version}'
-        await asyncio.gather(
-            *[reset_fail_counter(f'count:rebase-failure:konflux:{group}:{image}') for image in successful_images]
-        )
-
-        # Increment fail counters for failing images
-        job_url = os.getenv('BUILD_URL')
-        await asyncio.gather(
-            *[
-                increment_fail_counter(f'count:rebase-failure:konflux:{group}:{image}', jenkins_url=job_url)
-                for image in failed_images
-            ]
-        )
 
     async def build_images(self):
         if not self.building_images():
@@ -453,42 +426,22 @@ class KonfluxOkdPipeline:
             else:
                 jenkins.update_description(f'Build failures: {len(failed_images)} images<br>')
 
-        await self.update_build_fail_counters(
-            [img['name'] for img in self.built_images],
-            failed_images,
-            record_log,
-        )
-
-    async def update_build_fail_counters(self, built_images, failed_images, record_log):
-        """
-        Update Redis build-failure counters after OKD build run.
-
-        - Successfully built images: reset counter
-        - Failed builds: increment counter and store metadata
-        """
-        if self.assembly != 'stream':
-            return
-
-        group = f'okd-{self.version}'
-        job_url = os.getenv('BUILD_URL')
-
         failed_entries = {
             entry['name']: entry for entry in record_log.get('image_build_okd', []) if int(entry['status'])
         }
-
-        await asyncio.gather(
-            *[reset_fail_counter(f'count:build-failure:konflux:{group}:{image}') for image in built_images]
-        )
-        await asyncio.gather(
-            *[
-                increment_fail_counter(
-                    f'count:build-failure:konflux:{group}:{image}',
-                    jenkins_url=job_url,
-                    nvr=failed_entries.get(image, {}).get('nvrs'),
-                    pipeline_url=failed_entries.get(image, {}).get('build_pipeline_url'),
-                )
-                for image in failed_images
-            ]
+        await update_build_fail_counters(
+            context=BuildFailCounterContext(
+                group=f"okd-{self.version}",
+                assembly=self.assembly,
+                build_variant=BuildVariant.OKD,
+                jenkins_url=os.getenv("BUILD_URL"),
+                built_images=[image['name'] for image in self.built_images],
+                failed_images=failed_images,
+                failed_entries=failed_entries,
+                reset_counter=reset_fail_counter,
+                increment_counter=increment_fail_counter,
+                build_only=True,
+            )
         )
 
     async def detect_embargoed_builds(self):

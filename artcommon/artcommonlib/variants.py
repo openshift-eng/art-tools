@@ -1,3 +1,4 @@
+import logging
 from enum import Enum
 
 
@@ -23,7 +24,10 @@ class BuildVariant(Enum):
     ZERO_TRUST = "zero-trust-workload-identity-manager"
 
 
-def get_build_variant_for_product(product: str) -> BuildVariant | None:
+logger = logging.getLogger(__name__)
+
+
+def get_build_variant_for_product(product: str) -> BuildVariant:
     """
     Resolve a build-data product name to its build variant.
 
@@ -31,11 +35,15 @@ def get_build_variant_for_product(product: str) -> BuildVariant | None:
         product: Product name from the build-data group configuration.
 
     Returns:
-        The build variant associated with the product, or None when the product
-        does not have a supported build variant yet.
+        The build variant associated with the product.
+
+    Raises:
+        ValueError: If the product does not have a defined build variant.
     """
     normalized_product = product.strip().lower()
     try:
         return BuildVariant(normalized_product)
     except ValueError:
-        return None
+        message = f"No build variant found for product {product}; add it to the BuildVariant enum"
+        logger.error(message)
+        raise ValueError(message) from None

@@ -331,7 +331,7 @@ class ImagesHealthPipeline:
             'art:image-ec-failure',
             ec_failures,
             scanned_groups,
-            summary_prefix='Image EC verification failure',
+            summary_prefix='Image ITS verification failure',
             description_builder=self._build_redis_description,
             label_builder=self._redis_failure_labels,
         )
@@ -581,7 +581,7 @@ class ImagesHealthPipeline:
             summary_parts.append(f'{n} image{"s" if n > 1 else ""} failed to build')
         if ec_failures:
             n = len(ec_failures)
-            summary_parts.append(f'{n} image{"s" if n > 1 else ""} failed EC verification')
+            summary_parts.append(f'{n} image{"s" if n > 1 else ""} failed ITS verification')
         if release_failures:
             n = len(release_failures)
             summary_parts.append(f'{n} image{"s" if n > 1 else ""} failed to be released to authz')
@@ -603,7 +603,7 @@ class ImagesHealthPipeline:
             report += '\n'
 
         if ec_failures:
-            report += f'*EC Verification Failures ({len(ec_failures)}):*\n'
+            report += f'*ITS Verification Failures ({len(ec_failures)}):*\n'
             for image_name, failure_info in sorted(ec_failures.items()):
                 report += self._format_redis_failure_line(image_name, failure_info)
                 pipeline_url = failure_info.get('pipeline_url', '')
@@ -710,7 +710,7 @@ class ImagesHealthPipeline:
             ec_fails = self.ec_failures.get(version, {})
             if ec_fails:
                 n = len(ec_fails)
-                group_summary.append(f'{n} image{"s" if n > 1 else ""} with EC verification failures')
+                group_summary.append(f'{n} image{"s" if n > 1 else ""} with ITS verification failures')
 
             # Release failures for this group
             release_fails = self.release_failures.get(version, {})

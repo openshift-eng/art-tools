@@ -10,13 +10,19 @@ from urllib.parse import quote
 import click
 from artcommonlib import exectools
 from artcommonlib.konflux.konflux_build_record import KonfluxBuildOutcome
+from artcommonlib.variants import BuildVariant
 from doozerlib.constants import ART_BUILD_HISTORY_URL
 
 from pyartcd import constants, jenkins
 from pyartcd import record as record_util
 from pyartcd.cli import cli, click_coroutine, pass_runtime
 from pyartcd.runtime import Runtime
-from pyartcd.util import build_history_link_url, default_release_suffix, increment_fail_counter, reset_fail_counter
+from pyartcd.util import (
+    build_history_link_url,
+    default_release_suffix,
+    increment_fail_counter,
+    reset_fail_counter,
+)
 
 LOGGER = logging.getLogger(__name__)
 
@@ -276,7 +282,6 @@ class SeedLockfilePipeline:
         if not stream_failed:
             return
 
-        # Categorize failures by outcome (same logic as ocp4_konflux)
         ec_failed = []
         release_failed = []
         build_failed = []
@@ -288,10 +293,8 @@ class SeedLockfilePipeline:
             elif outcome == str(KonfluxBuildOutcome.RELEASE_ERROR):
                 release_failed.append(image)
             else:
-                # BUILD_ERROR, FAILURE, TIMEOUT, CANCELLED, or unknown
                 build_failed.append(image)
 
-        # Increment counters for each failure type
         LOGGER.info(
             'Incrementing fail counters: build=%s, ec=%s, release=%s',
             build_failed,
@@ -304,6 +307,7 @@ class SeedLockfilePipeline:
             increment_tasks.append(
                 increment_fail_counter(
                     f'count:build-failure:konflux:{group}:{image}',
+                    build_variant=BuildVariant.OCP.value,
                     jenkins_url=job_url,
                     nvr=entry.get('nvrs'),
                     pipeline_url=entry.get('build_pipeline_url'),
@@ -314,6 +318,7 @@ class SeedLockfilePipeline:
             increment_tasks.append(
                 increment_fail_counter(
                     f'count:ec-failure:konflux:{group}:{image}',
+                    build_variant=BuildVariant.OCP.value,
                     jenkins_url=job_url,
                     nvr=entry.get('nvrs'),
                     pipeline_url=entry.get('ec_pipeline_url'),
@@ -324,6 +329,7 @@ class SeedLockfilePipeline:
             increment_tasks.append(
                 increment_fail_counter(
                     f'count:release-failure:konflux:{group}:{image}',
+                    build_variant=BuildVariant.OCP.value,
                     jenkins_url=job_url,
                     nvr=entry.get('nvrs'),
                     pipeline_url=entry.get('release_pipeline'),

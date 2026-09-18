@@ -141,7 +141,7 @@ class TestNotifyPublicChannel(IsolatedAsyncioTestCase):
         thread_message = calls[1][0][0]
         self.assertIn("openshift-4.22", thread_message)
         self.assertIn("build failures", thread_message)
-        self.assertIn("EC verification failures", thread_message)
+        self.assertIn("ITS verification failures", thread_message)
         self.assertIn("release to authz failures", thread_message)
         self.assertIn("rebase failures", thread_message)
         self.assertEqual(calls[1][1]['thread_ts'], "thread-456")
@@ -192,7 +192,7 @@ class TestNotifyPublicChannel(IsolatedAsyncioTestCase):
             ":white_check_mark: All images are healthy for all monitored releases"
         )
 
-    async def test_only_ec_failures(self):
+    async def test_only_its_failures(self):
         mock_slack_client = self.mock_runtime.new_slack_client.return_value
         pipeline = _make_pipeline(self.mock_runtime, public_channel="#forum-ocp-art")
         pipeline.report = []
@@ -217,7 +217,7 @@ class TestNotifyPublicChannel(IsolatedAsyncioTestCase):
         # Check thread response
         thread_message = calls[1][0][0]
         self.assertIn("openshift-4.22", thread_message)
-        self.assertIn("EC verification failures", thread_message)
+        self.assertIn("ITS verification failures", thread_message)
         self.assertNotIn("build failures", thread_message)
         self.assertEqual(calls[1][1]['thread_ts'], "thread-789")
 
@@ -259,12 +259,12 @@ class TestNotifyReleaseChannel(IsolatedAsyncioTestCase):
         calls = mock_slack_client.say.call_args_list
         summary = calls[0][0][0]
         self.assertIn("2 images failed to build", summary)
-        self.assertIn("1 image failed EC verification", summary)
+        self.assertIn("1 image failed ITS verification", summary)
         self.assertIn("1 image failed to be released to authz", summary)
 
         thread_detail = calls[1][0][0]
         self.assertIn("Build Failures (2)", thread_detail)
-        self.assertIn("EC Verification Failures (1)", thread_detail)
+        self.assertIn("ITS Verification Failures (1)", thread_detail)
         self.assertIn("Release to Authz Failures (1)", thread_detail)
 
 
@@ -552,7 +552,7 @@ class TestSyncJira(TestCase):
 
         mock_jira.close_task.assert_not_called()
 
-    def test_creates_ticket_for_ec_failure(self):
+    def test_creates_ticket_for_its_failure(self):
         pipeline = self._make_pipeline()
         pipeline.report = []
         pipeline.ec_failures = {
@@ -573,11 +573,13 @@ class TestSyncJira(TestCase):
 
         pipeline.sync_jira()
 
-        ec_call = next(c for c in mock_jira.create_issue.call_args_list if "EC verification failure" in c[1]["summary"])
-        self.assertIn("art:image-ec-failure", ec_call[1]["labels"])
-        self.assertIn("art:package:ec-image", ec_call[1]["labels"])
-        self.assertIn("art:fail-count:4", ec_call[1]["labels"])
-        self.assertIn("Pipeline:", ec_call[1]["description"])
+        its_call = next(
+            c for c in mock_jira.create_issue.call_args_list if "ITS verification failure" in c[1]["summary"]
+        )
+        self.assertIn("art:image-ec-failure", its_call[1]["labels"])
+        self.assertIn("art:package:ec-image", its_call[1]["labels"])
+        self.assertIn("art:fail-count:4", its_call[1]["labels"])
+        self.assertIn("Pipeline:", its_call[1]["description"])
 
     def test_creates_ticket_for_release_failure(self):
         pipeline = self._make_pipeline()
