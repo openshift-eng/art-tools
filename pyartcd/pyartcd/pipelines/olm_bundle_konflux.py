@@ -95,7 +95,7 @@ def _parse_failed_stage_releases(runtime: Runtime) -> list:
     "--group",
     metavar='NAME',
     required=False,
-    help="The group of components on which to operate. e.g. openshift-4.9 / oadp-1.5",
+    help="The group of components on which to operate. e.g. openshift-4.9 / acm-5.0",
 )
 @click.option('--data-gitref', required=False, help='(Optional) Doozer data path git [branch / tag / sha] to use')
 @click.option(
