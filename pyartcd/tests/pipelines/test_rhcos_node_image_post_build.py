@@ -80,7 +80,7 @@ class TestRhcosNodeImagePostBuildPipeline(unittest.IsolatedAsyncioTestCase):
                 'EXTENSIONS_IMAGE': f'{RHCOS_IMAGE_REPO}@sha256:{"b" * 64}',
             },
         )
-        mock_client.wait_for_build.assert_called_once_with('build-node-image', 46173)
+        mock_client.wait_for_build.assert_called_once_with('build-node-image', 46173, timeout=90 * 60)
         mock_sync.assert_any_await(
             f'{RHCOS_IMAGE_REPO}@sha256:{"a" * 64}',
             KONFLUX_DEFAULT_IMAGE_REPO,
