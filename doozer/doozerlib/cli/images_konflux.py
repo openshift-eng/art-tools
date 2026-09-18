@@ -965,10 +965,11 @@ class BundleStageReleaseRelatedImagesCli:
 
         # One Snapshot/Release per operator: an operator whose stage release fails must not prevent the
         # other operators in this job from being released and moving on to their FBC builds.
-        # Operators of the same product routinely share operands, so a shared operand ends up in more than
-        # one Snapshot. That duplication is deliberate — it is what keeps operators independent — and it is
-        # also why these run serially: two Releases pushing the same image concurrently is asking for trouble.
-        for nvr, record in resolved:
+        # All operators are stage-released in parallel via asyncio.gather — each operator's
+        # Snapshot and Release are independent resources, so concurrent creation is safe.
+
+        async def _release_one(nvr: str, record: KonfluxBuildRecord) -> None:
+            """Stage-release a single operator, logging failures without propagating."""
             try:
                 release_url = await self._stage_release_operator(
                     konflux_client=konflux_client,
@@ -988,6 +989,8 @@ class BundleStageReleaseRelatedImagesCli:
                 failed_nvrs.append(nvr)
             else:
                 self._add_record(nvr, operator=record.name, release_url=release_url)
+
+        await asyncio.gather(*[_release_one(nvr, record) for nvr, record in resolved])
 
         if failed_nvrs:
             raise DoozerFatalError(f"Stage release of related images failed for: {', '.join(failed_nvrs)}")
