@@ -33,10 +33,13 @@ async def run_for(group: str, runtime: Runtime, lock_manager: LockManager):
     runtime.logger.info('[%s] Scheduling layered-products-scan', group)
 
     if tekton.is_tekton_context():
-        tekton.start_pipeline_run(
-            pipeline_name="layered-products-scan",
-            params={"group": group, "assembly": "stream"},
-        )
+        try:
+            tekton.start_pipeline_run(
+                pipeline_name="layered-products-scan",
+                params={"group": group, "assembly": "stream"},
+            )
+        except Exception:
+            runtime.logger.exception('[%s] Failed to trigger layered-products-scan pipeline run', group)
     else:
         jenkins.start_layered_products_scan_konflux(group=group, block_until_building=False)
 
