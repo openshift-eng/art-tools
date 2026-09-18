@@ -223,5 +223,5 @@ async def layered_products_scan(
             skip_if_locked=True,
         )
 
-    if pipeline.skipped:
+    if pipeline.skipped and not tekton.is_tekton_context():
         jenkins.update_title(' [SKIPPED][LOCKED]')

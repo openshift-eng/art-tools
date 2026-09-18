@@ -46,6 +46,9 @@ def _get_propagatable_params() -> dict:
     art_tools_commit = os.environ.get("ART_TOOLS_COMMIT", "").strip()
     if art_tools_commit:
         propagatable["art-tools-commit"] = art_tools_commit
+    plr_template_commit = os.environ.get("PLR_TEMPLATE_COMMIT", "").strip()
+    if plr_template_commit:
+        propagatable["plr-template-commit"] = plr_template_commit
     return propagatable
 
 
@@ -67,12 +70,15 @@ def annotate_current_pipelinerun(annotations: dict) -> None:
     ns = _get_namespace()
     for key, value in annotations.items():
         try:
-            subprocess.run(
+            result = subprocess.run(
                 ["oc", "annotate", "pipelinerun", pr_name, f"{key}={value}", "-n", ns, "--overwrite"],
                 check=False,
                 capture_output=True,
                 text=True,
+                timeout=30,
             )
+            if result.returncode != 0:
+                logger.debug("Failed to annotate pipelinerun %s with %s=%s: %s", pr_name, key, value, result.stderr)
         except Exception:
             logger.debug("Failed to annotate pipelinerun %s with %s=%s", pr_name, key, value, exc_info=True)
 
@@ -132,13 +138,18 @@ def start_pipeline_run(
     logger.info("Creating PipelineRun for pipeline %s in namespace %s", pipeline_name, namespace)
     logger.debug("PipelineRun spec: %s", pr_json)
 
-    result = subprocess.run(
-        ["oc", "create", "-f", "-"],
-        input=pr_json,
-        capture_output=True,
-        text=True,
-        check=True,
-    )
+    try:
+        result = subprocess.run(
+            ["oc", "create", "-f", "-"],
+            input=pr_json,
+            capture_output=True,
+            text=True,
+            check=True,
+            timeout=60,
+        )
+    except subprocess.CalledProcessError as e:
+        logger.error("Failed to create PipelineRun for %s: %s", pipeline_name, e.stderr)
+        raise
     stdout = result.stdout.strip()
     logger.info("PipelineRun created: %s", stdout)
 
