@@ -191,6 +191,21 @@ class TestGenerateManifests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("--registry-config=/path/to/auth.json", cmd)
 
     @mock.patch("doozerlib.cli.release_payload.exectools.cmd_assert_async")
+    async def test_generate_manifests_falls_back_to_quay_auth_file_env(self, mock_cmd_assert_async):
+        async def _write_manifests(cmd, **kwargs):
+            (self.manifests_dir / "image-references").write_text(IMAGE_REFERENCES_YAML)
+            return 0
+
+        mock_cmd_assert_async.side_effect = _write_manifests
+
+        with mock.patch.dict("os.environ", {"QUAY_AUTH_FILE": "/path/to/quay-auth.json"}):
+            cli = _make_cli(self.runtime)  # __init__ picks up QUAY_AUTH_FILE
+            await cli._generate_manifests(self.manifests_dir)
+
+        cmd = mock_cmd_assert_async.call_args.args[0]
+        self.assertIn("--registry-config=/path/to/quay-auth.json", cmd)
+
+    @mock.patch("doozerlib.cli.release_payload.exectools.cmd_assert_async")
     async def test_generate_manifests_uses_requested_architecture(self, mock_cmd_assert_async):
         manifests_dir = self.manifests_dir / "arm64"
 
@@ -702,12 +717,13 @@ class TestSync(unittest.IsolatedAsyncioTestCase):
     async def test_sync_falls_back_to_quay_auth_file_env(
         self, mock_find_sha, mock_oc_image_info_async, mock_sync_to_quay
     ):
+        # QUAY_AUTH_FILE fallback is resolved in __init__; construct the cli with the env var set.
         mock_find_sha.return_value = "sha256:deadbeef"
         mock_oc_image_info_async.return_value = self.arch_infos
-        self.cli.registry_config = None
 
         with mock.patch.dict("os.environ", {"QUAY_AUTH_FILE": "/path/to/quay-auth.json"}):
-            await self.cli._sync(self.output_image, arches=["x86_64", "s390x"])
+            cli = _make_cli(self.runtime)
+            await cli._sync(self.output_image, arches=["x86_64", "s390x"])
 
         mock_find_sha.assert_awaited_once_with(self.output_image, registry_config="/path/to/quay-auth.json")
         mock_oc_image_info_async.assert_awaited_once_with(

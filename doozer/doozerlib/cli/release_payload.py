@@ -101,7 +101,7 @@ class ReleasePayloadRebaseAndBuildCli:
         self.konflux_namespace = konflux_namespace
         self.from_release = from_release
         self.commit_message = commit_message
-        self.registry_config = registry_config
+        self.registry_config = registry_config or os.environ.get("QUAY_AUTH_FILE")
         self.skip_checks = skip_checks
         self.skip_tasks = tuple(skip_tasks)
         self.plr_template = plr_template
@@ -519,9 +519,7 @@ class ReleasePayloadRebaseAndBuildCli:
         """
         source_repo = source_pullspec.split("@", 1)[0] if "@" in source_pullspec else source_pullspec.rsplit(":", 1)[0]
 
-        # Fall back to QUAY_AUTH_FILE env var (set by Jenkins) when --registry-config
-        # wasn't passed, matching the pattern used by sync_to_quay().
-        registry_config = self.registry_config or os.environ.get("QUAY_AUTH_FILE")
+        registry_config = self.registry_config
 
         self._logger.info("Resolving manifest-list digest for %s...", source_pullspec)
         list_digest = await find_manifest_list_sha(source_pullspec, registry_config=registry_config)
