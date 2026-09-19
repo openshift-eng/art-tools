@@ -5,6 +5,13 @@ import sys
 import click
 import yaml
 from artcommonlib import exectools
+from artcommonlib.constants import (
+    KONFLUX_DEFAULT_IMAGE_REPO,
+    REGISTRY_CI_OPENSHIFT,
+    REGISTRY_QUAY_OCP_RELEASE_DEV,
+    RHCOS_IMAGE_REPO,
+)
+from artcommonlib.registry_config import RegistryConfig
 
 from pyartcd import constants, jenkins, locks, util
 from pyartcd.cli import cli, click_coroutine, pass_runtime
@@ -52,6 +59,39 @@ class Ocp4ScanPipeline:
         ]
 
     async def run(self):
+        if 'XDG_RUNTIME_DIR' in os.environ:
+            self.logger.info('Unsetting XDG_RUNTIME_DIR to prevent use of default registry auth')
+            del os.environ['XDG_RUNTIME_DIR']
+
+        quay_auth_file = os.getenv('QUAY_AUTH_FILE')
+        rhcos_quay_auth_file = os.getenv('RHCOS_QUAY_AUTH_FILE')
+        if not quay_auth_file or not rhcos_quay_auth_file:
+            raise ValueError(
+                'QUAY_AUTH_FILE and RHCOS_QUAY_AUTH_FILE environment variables are required. '
+                'Ensure Jenkins credentials are properly bound.'
+            )
+
+        with RegistryConfig(
+            kubeconfig=os.environ.get('KUBECONFIG'),
+            source_files=[quay_auth_file, rhcos_quay_auth_file],
+            registries=[
+                REGISTRY_QUAY_OCP_RELEASE_DEV,
+                KONFLUX_DEFAULT_IMAGE_REPO,
+                RHCOS_IMAGE_REPO,
+                REGISTRY_CI_OPENSHIFT,
+            ],
+        ) as global_auth_file:
+            previous_auth_file = os.environ.get('QUAY_AUTH_FILE')
+            os.environ['QUAY_AUTH_FILE'] = global_auth_file
+            try:
+                await self._run_pipeline()
+            finally:
+                if previous_auth_file:
+                    os.environ['QUAY_AUTH_FILE'] = previous_auth_file
+                else:
+                    os.environ.pop('QUAY_AUTH_FILE', None)
+
+    async def _run_pipeline(self):
         # If we get here, lock could be acquired
         self.skipped = False
         scan_info = f'Scanning version {self.version}, assembly {self.assembly}, data path {self.data_path}'
