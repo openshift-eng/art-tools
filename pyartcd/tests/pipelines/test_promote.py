@@ -2336,6 +2336,74 @@ class TestPromotePipeline(IsolatedAsyncioTestCase):
             self.assertNotIn("--exclude-bugs", call_args)
 
 
+class TestPromoteSigningTransport(IsolatedAsyncioTestCase):
+    def _make_pipeline(self, signing_transport="umb", **kwargs):
+        runtime = MagicMock(
+            config={
+                "build_config": {"ocp_build_data_url": "https://example.com/ocp-build-data.git"},
+                "jira": {"url": JIRA_SERVER_URL},
+            },
+            dry_run=False,
+            logger=MagicMock(),
+            new_slack_client=MagicMock(return_value=AsyncMock()),
+            new_mail_client=MagicMock(return_value=AsyncMock()),
+            working_dir=Path(tempfile.mkdtemp()),
+        )
+        return PromotePipeline(
+            runtime,
+            group="openshift-4.10",
+            assembly="4.10.99",
+            signing_env="prod",
+            signing_transport=signing_transport,
+            **kwargs,
+        )
+
+    @patch("pyartcd.jira_client.JIRAClient.from_url", return_value=None)
+    def test_direct_transport_is_stored(self, _):
+        pipeline = self._make_pipeline(signing_transport="direct")
+
+        self.assertEqual(pipeline.signing_transport, "direct")
+
+    @patch("pyartcd.jira_client.JIRAClient.from_url", return_value=None)
+    def test_direct_transport_requires_direct_credentials_not_umb_credentials(self, _):
+        pipeline = self._make_pipeline(
+            signing_transport="direct",
+            skip_sigstore=True,
+            skip_build_microshift=True,
+            skip_mirror_binaries=True,
+        )
+
+        with patch.dict(
+            os.environ,
+            {
+                "JIRA_TOKEN": "jira-token",
+                "QUAY_PASSWORD": "quay-password",
+                "REDIS_SERVER_PASSWORD": "redis-password",
+                "DIRECT_SIGNING_PROD_KEYTAB": "/path/to/prod-keytab",
+                "DIRECT_SIGNING_PROD_PRINCIPAL": "art-signing-prod@IPA.REDHAT.COM",
+            },
+            clear=True,
+        ):
+            pipeline.check_environment_variables()
+
+    @patch("pyartcd.jira_client.JIRAClient.from_url", return_value=None)
+    @patch("pyartcd.pipelines.promote.create_signatory")
+    async def test_sign_artifacts_uses_direct_transport(self, create_signatory, _):
+        pipeline = self._make_pipeline(signing_transport="direct")
+        signatory = AsyncMock()
+        create_signatory.return_value = signatory
+
+        await pipeline.sign_artifacts("4.10.99", "ocp", {}, [])
+
+        create_signatory.assert_called_once_with(
+            "direct",
+            signing_env="prod",
+            sig_keyname="redhatrelease2",
+            cert_file=None,
+            key_file=None,
+        )
+
+
 class TestDropAdvisory(IsolatedAsyncioTestCase):
     """Tests for the reusable drop_advisory function."""
 
