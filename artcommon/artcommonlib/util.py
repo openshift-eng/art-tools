@@ -756,6 +756,7 @@ def detect_package_managers(metadata, dest_dir: Path):
     return pkg_managers
 
 
+@limit_concurrency(16)
 @retry(
     reraise=True,
     retry=retry_if_exception_type(ChildProcessError),
