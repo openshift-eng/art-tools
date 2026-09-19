@@ -16,6 +16,7 @@ import pycares
 import yaml
 from artcommonlib import exectools
 from artcommonlib.arch_util import brew_arch_for_go_arch, go_arch_for_brew_arch
+from artcommonlib.constants import SCAN_SOURCES_CONCURRENCY_LIMIT
 from artcommonlib.exectools import cmd_gather_async
 from artcommonlib.github_auth import get_github_client_for_org, get_github_git_auth_env, get_github_git_pat_env
 from artcommonlib.konflux.konflux_build_record import Engine, KonfluxBuildOutcome, KonfluxBuildRecord
@@ -577,7 +578,7 @@ class ConfigScanSources:
 
         # Scan images for changes, limiting concurrency to avoid OOM on buildvm
         scanning_image_metas = [self.runtime.image_map[image_name] for image_name in image_names]
-        semaphore = asyncio.Semaphore(16)
+        semaphore = asyncio.Semaphore(SCAN_SOURCES_CONCURRENCY_LIMIT)
 
         async def _bounded_scan(meta):
             async with semaphore:

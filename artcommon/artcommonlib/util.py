@@ -27,6 +27,7 @@ from artcommonlib.constants import (
     PRODUCT_KUBECONFIG_MAP,
     PRODUCT_NAMESPACE_MAP,
     RELEASE_SCHEDULES,
+    SCAN_SOURCES_CONCURRENCY_LIMIT,
 )
 from artcommonlib.exectools import cmd_gather_async, limit_concurrency
 from artcommonlib.model import ListModel, Missing
@@ -756,7 +757,7 @@ def detect_package_managers(metadata, dest_dir: Path):
     return pkg_managers
 
 
-@limit_concurrency(16)
+@limit_concurrency(SCAN_SOURCES_CONCURRENCY_LIMIT)
 @retry(
     reraise=True,
     retry=retry_if_exception_type(ChildProcessError),
