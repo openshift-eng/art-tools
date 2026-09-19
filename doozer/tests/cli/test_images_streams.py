@@ -116,7 +116,7 @@ def test_resolve_upstream_from_with_member_using_heuristic(mocker, mock_runtime)
     result = images_streams.resolve_upstream_from(mock_runtime, image_entry)
 
     # Should strip 'ose-' prefix from image name
-    assert result == 'registry.ci.openshift.org/ocp/4.17:ansible'
+    assert result == 'quay-proxy.ci.registry.openshift.org/ocp/4.17:ansible'
 
 
 def test_resolve_upstream_from_with_member_using_payload_name(mocker, mock_runtime):
@@ -135,7 +135,7 @@ def test_resolve_upstream_from_with_member_using_payload_name(mocker, mock_runti
     result = images_streams.resolve_upstream_from(mock_runtime, image_entry)
 
     # Should use payload_name and strip path
-    assert result == 'registry.ci.openshift.org/ocp/4.18:custom-payload-name'
+    assert result == 'quay-proxy.ci.registry.openshift.org/ocp/4.18:custom-payload-name'
 
 
 def test_resolve_upstream_from_with_image_entry(mock_runtime):
