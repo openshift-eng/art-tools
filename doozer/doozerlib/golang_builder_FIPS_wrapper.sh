@@ -16,10 +16,30 @@ stricterror() {
   fi
 }
 
+# Neutralise the no_openssl build tag, which would otherwise disable the openssl
+# crypto backend that FORCE_OPENSSL exists to mandate. Operates in place on the
+# caller's "arg" variable rather than returning the new value, because the strict
+# mode check has to be able to terminate the script -- which it could not do from
+# the subshell of a command substitution.
+scrub_no_openssl() {
+  pre_arg="${arg}"
+  arg=$(echo "${arg}" | sed 's/no_openssl/shim_prevented_no_openssl/g')
+  if [[ "${pre_arg}" != "${arg}" ]]; then
+    echoerr "non-compliant: eliminated no_openssl"
+    if [[ "${STRICT_MODE_BASIC}" == "1" ]]; then
+      stricterror
+      exit 1
+    fi
+  fi
+}
+
 run_go() {
   if [[ "${SHIM_TEST}" == "1" ]]; then
     echoerr "running with SHIM_TEST=${SHIM_TEST}"
     echo -n "GOEXPERIMENT=${GOEXPERIMENT} CGO_ENABLED=${CGO_ENABLED} "
+    if [[ -n "${GOFIPS140}" ]]; then
+      echo -n "GOFIPS140=${GOFIPS140} "
+    fi
     for arg in "${ARGS[@]}"; do
       echo -n "[${arg}]"
     done
@@ -46,6 +66,7 @@ GO_COMPLIANCE_FOD_MODE_INCLUDE=${GO_COMPLIANCE_FOD_MODE_INCLUDE:-'.*'}
 GO_COMPLIANCE_CGO_ENABLED_INCLUDE=${GO_COMPLIANCE_CGO_ENABLED_INCLUDE:-'.*'}
 GO_COMPLIANCE_DYNAMIC_LINKING_INCLUDE=${GO_COMPLIANCE_DYNAMIC_LINKING_INCLUDE:-'.*'}
 GO_COMPLIANCE_OPENSSL_ENABLED_INCLUDE=${GO_COMPLIANCE_OPENSSL_ENABLED_INCLUDE:-'.*'}
+GO_COMPLIANCE_BUILTIN_FIPS_INCLUDE=${GO_COMPLIANCE_BUILTIN_FIPS_INCLUDE:-'.*'}
 GO_COMPLIANCE_COVER=${GO_COMPLIANCE_COVER:-'0'}
 
 if [[ -n "${OPENSHIFT_CI}" || "${__doozer_group}" == "openshift-"* ]]; then
@@ -57,7 +78,7 @@ else
 fi
 
 if [[ "${GO_COMPLIANCE_DEBUG}" == "1" ]]; then
-  echoerr "config GO_COMPLIANCE_POLICY=\"${GO_COMPLIANCE_POLICY}\" GO_COMPLIANCE_CGO_ENABLED_INCLUDE=\"${GO_COMPLIANCE_CGO_ENABLED_INCLUDE}\" GO_COMPLIANCE_CGO_ENABLED_EXCLUDE=\"${GO_COMPLIANCE_CGO_ENABLED_EXCLUDE}\" GO_COMPLIANCE_DYNAMIC_LINKING_INCLUDE=\"${GO_COMPLIANCE_DYNAMIC_LINKING_INCLUDE}\" GO_COMPLIANCE_DYNAMIC_LINKING_EXCLUDE=\"${GO_COMPLIANCE_DYNAMIC_LINKING_EXCLUDE}\" GO_COMPLIANCE_OPENSSL_ENABLED_INCLUDE=\"${GO_COMPLIANCE_OPENSSL_ENABLED_INCLUDE}\" GO_COMPLIANCE_OPENSSL_ENABLED_EXCLUDE=\"${GO_COMPLIANCE_OPENSSL_ENABLED_EXCLUDE}\" GO_COMPLIANCE_FOD_MODE_INCLUDE=\"${GO_COMPLIANCE_FOD_MODE_INCLUDE}\" GO_COMPLIANCE_FOD_MODE_EXCLUDE=\"${GO_COMPLIANCE_FOD_MODE_EXCLUDE}\""
+  echoerr "config GO_COMPLIANCE_POLICY=\"${GO_COMPLIANCE_POLICY}\" GO_COMPLIANCE_CGO_ENABLED_INCLUDE=\"${GO_COMPLIANCE_CGO_ENABLED_INCLUDE}\" GO_COMPLIANCE_CGO_ENABLED_EXCLUDE=\"${GO_COMPLIANCE_CGO_ENABLED_EXCLUDE}\" GO_COMPLIANCE_DYNAMIC_LINKING_INCLUDE=\"${GO_COMPLIANCE_DYNAMIC_LINKING_INCLUDE}\" GO_COMPLIANCE_DYNAMIC_LINKING_EXCLUDE=\"${GO_COMPLIANCE_DYNAMIC_LINKING_EXCLUDE}\" GO_COMPLIANCE_OPENSSL_ENABLED_INCLUDE=\"${GO_COMPLIANCE_OPENSSL_ENABLED_INCLUDE}\" GO_COMPLIANCE_OPENSSL_ENABLED_EXCLUDE=\"${GO_COMPLIANCE_OPENSSL_ENABLED_EXCLUDE}\" GO_COMPLIANCE_FOD_MODE_INCLUDE=\"${GO_COMPLIANCE_FOD_MODE_INCLUDE}\" GO_COMPLIANCE_FOD_MODE_EXCLUDE=\"${GO_COMPLIANCE_FOD_MODE_EXCLUDE}\" GO_COMPLIANCE_BUILTIN_FIPS_INCLUDE=\"${GO_COMPLIANCE_BUILTIN_FIPS_INCLUDE}\" GO_COMPLIANCE_BUILTIN_FIPS_EXCLUDE=\"${GO_COMPLIANCE_BUILTIN_FIPS_EXCLUDE}\""
 
   echo 1>&2
   echo 1>&2
@@ -117,9 +138,49 @@ fi
 
 if [[ "${SHIM_TEST}" == "1" ]]; then
   FOUND_HOST_ARCH="amd64"
+  FOUND_GO_VERSION="${SHIM_TEST_GO_VERSION:-go1.24.0}"
 else
   FOUND_HOST_ARCH="$(go.real env GOHOSTARCH)"
+  FOUND_GO_VERSION="$(go.real env GOVERSION)"
 fi
+
+# Go 1.26 ships a built-in, FIPS 140-3 validated cryptographic module, selected
+# with GOFIPS140. It is pure Go, so none of the workarounds needed to steer
+# earlier toolchains onto the openssl backend apply.
+GO_BUILTIN_FIPS="0"
+GO_VER="${FOUND_GO_VERSION#go}"   # "go1.26.0" -> "1.26.0"
+GO_MAJOR="${GO_VER%%.*}"          #            -> "1"
+GO_REST="${GO_VER#*.}"            #            -> "26.0"
+GO_MINOR="${GO_REST%%.*}"         #            -> "26"
+# GOVERSION can carry a suffix (e.g. "go1.24.6 X:strictfipsruntime") which the
+# parsing above tolerates, or be a devel string with no version at all. Only
+# trust the result when both fields came out as numbers; anything else falls
+# back to the openssl behaviour, which is the safe default.
+if [[ "${GO_MAJOR}" =~ ^[0-9]+$ && "${GO_MINOR}" =~ ^[0-9]+$ ]]; then
+  if [[ "${GO_MAJOR}" -gt 1 ]] || [[ "${GO_MAJOR}" -eq 1 && "${GO_MINOR}" -ge 26 ]]; then
+    GO_BUILTIN_FIPS="1"
+  fi
+fi
+
+# Escape hatch for components that cannot use the built-in module yet: opting out
+# falls back to the libopenssl mechanism. Note these can only ever turn the
+# built-in module off -- there is no way to conjure one out of an older toolchain.
+# To fall back everywhere, set GO_COMPLIANCE_BUILTIN_FIPS_EXCLUDE='.*'.
+if [[ "${GO_BUILTIN_FIPS}" == "1" && -n "${GO_COMPLIANCE_BUILTIN_FIPS_INCLUDE}" ]]; then
+  if ! cat <<< "$@" | grep -E "${GO_COMPLIANCE_BUILTIN_FIPS_INCLUDE}" > /dev/null; then
+    echoerr "command did not match GO_COMPLIANCE_BUILTIN_FIPS_INCLUDE -- falling back to openssl"
+    GO_BUILTIN_FIPS="0"
+  fi
+fi
+
+if [[ "${GO_BUILTIN_FIPS}" == "1" && -n "${GO_COMPLIANCE_BUILTIN_FIPS_EXCLUDE}" ]]; then
+  if cat <<< "$@" | grep -E "${GO_COMPLIANCE_BUILTIN_FIPS_EXCLUDE}" > /dev/null; then
+    echoerr "command matched GO_COMPLIANCE_BUILTIN_FIPS_EXCLUDE -- falling back to openssl"
+    GO_BUILTIN_FIPS="0"
+  fi
+fi
+
+echoerr "assessment: GOVERSION=${FOUND_GO_VERSION} GO_BUILTIN_FIPS=${GO_BUILTIN_FIPS}"
 
 if [[ "${GO_COMPLIANCE_POLICY}" == *"exempt_cross_compile"* ]]; then
   if [[ -n "${GOARCH}" && "${FOUND_HOST_ARCH}" != *"${GOARCH}"* ]]; then
@@ -168,6 +229,14 @@ if [[ -n "${GO_COMPLIANCE_DYNAMIC_LINKING_EXCLUDE}" ]]; then
   fi
 fi
 
+if [[ "${GO_BUILTIN_FIPS}" == "1" ]]; then
+  # The built-in module is pure Go, so cgo is not needed to reach a compliant
+  # backend. Since cgo is also what makes static linking fail, there is nothing
+  # left to justify rewriting the caller's -extldflags either.
+  FORCE_CGO_ENABLED="0"
+  FORCE_DYNAMIC="0"
+fi
+
 FORCE_OPENSSL=1
 if [[ -n "${GO_COMPLIANCE_OPENSSL_ENABLED_INCLUDE}" ]]; then
   if cat <<< "$@" | grep -E "${GO_COMPLIANCE_OPENSSL_ENABLED_INCLUDE}" > /dev/null; then
@@ -198,6 +267,18 @@ if [[ -n "${GO_COMPLIANCE_FOD_MODE_EXCLUDE}" ]]; then
   fi
 fi
 
+# Build tags the shim injects. These are orthogonal concerns: strictfipsruntime
+# makes a binary die at startup on a FIPS host if it was not built against a
+# compliant backend, whatever that backend is; no_openssl selects which backend.
+SHIM_TAGS=""
+if [[ "${FORCE_FOD_MODE}" == "1" ]]; then
+  SHIM_TAGS="strictfipsruntime"
+fi
+if [[ "${GO_BUILTIN_FIPS}" == "1" ]]; then
+  # Companion of GOFIPS140 below; together they select the built-in module.
+  SHIM_TAGS="${SHIM_TAGS:+${SHIM_TAGS},}no_openssl"
+fi
+
 if [[ -n "${GO_COMPLIANCE_EXCLUDE}" ]]; then
   if cat <<< "$@" | grep -E "${GO_COMPLIANCE_EXCLUDE}" > /dev/null; then
     echoerr "command matched GO_COMPLIANCE_EXCLUDE -- setting EXEMPT=\"1\""
@@ -213,7 +294,7 @@ fi
 echoerr "EXEMPT: ${EXEMPT}"
 if [[ "${EXEMPT}" != "1" ]]; then
 
-  echoerr "not exempt: FORCE_CGO_ENABLED=\"${FORCE_CGO_ENABLED}\" FORCE_DYNAMIC=\"${FORCE_DYNAMIC}\" FORCE_OPENSSL=\"${FORCE_OPENSSL}\" FORCE_FOD_MODE=\"${FORCE_FOD_MODE}\""
+  echoerr "not exempt: FORCE_CGO_ENABLED=\"${FORCE_CGO_ENABLED}\" FORCE_DYNAMIC=\"${FORCE_DYNAMIC}\" FORCE_OPENSSL=\"${FORCE_OPENSSL}\" FORCE_FOD_MODE=\"${FORCE_FOD_MODE}\" GO_BUILTIN_FIPS=\"${GO_BUILTIN_FIPS}\""
 
   IN_BUILD=0
   IN_RUN=0
@@ -248,45 +329,47 @@ if [[ "${EXEMPT}" != "1" ]]; then
         ARGS+=("-covermode=atomic")
       fi
 
-      if [[ "${FORCE_FOD_MODE}" == "1" && "${HAS_TAGS}" == "0" ]]; then
+      if [[ -n "${SHIM_TAGS}" && "${HAS_TAGS}" == "0" ]]; then
         ARGS+=("-tags")
-        ARGS+=("strictfipsruntime")
+        ARGS+=("${SHIM_TAGS}")
       fi
       continue  # We've already added 'build' or 'install', so don't reach the bottom of the loop where it would be added again.
     fi
 
-    if [[ ( "${arg}" == "-tags="* || "${arg}" == "--tags="* ) && "${FORCE_FOD_MODE}" == "1" ]]; then
-      echoerr "adding strictfipsruntime tag to \"${arg}\""
+    if [[ ( "${arg}" == "-tags="* || "${arg}" == "--tags="* ) && -n "${SHIM_TAGS}" ]]; then
+      echoerr "adding ${SHIM_TAGS} tags to \"${arg}\""
       arg=$(echo "${arg}" | tr -d "'" | tr -d "\"")  # Delete any quotes which get passed in literally. grafana managed this.
       if [[ "${arg}" == *" "* ]]; then  # If the tags parameter is space delimited
-        arg="${arg} strictfipsruntime"
+        arg="${arg} ${SHIM_TAGS//,/ }"
       else
         # Assume comma delimited
-        arg="${arg},strictfipsruntime"
+        arg="${arg},${SHIM_TAGS}"
       fi
     fi
 
+    # A tag list reaches us in one of two spellings: attached to the flag as
+    # "-tags=<list>" (handled here), or as the argument following a bare "-tags"
+    # (handled by the IN_TAGS block below). Both have to be scrubbed, and the
+    # scrub is independent of whether we are also adding tags of our own.
+    # It is only relevant to the libopenssl backend though: from Go 1.26 the
+    # built-in module supersedes it and no_openssl is asserted, not stripped.
+    if [[ ( "${arg}" == "-tags="* || "${arg}" == "--tags="* ) && "${FORCE_OPENSSL}" == "1" && "${GO_BUILTIN_FIPS}" == "0" ]]; then
+      scrub_no_openssl
+    fi
+
     if [[ "${IN_TAGS}" == "1" ]]; then
-      if [[ "${FORCE_FOD_MODE}" == "1" ]]; then
-        echoerr "adding strictfipsruntime tag to ${arg} (IN_TAGS=${IN_TAGS})"
+      if [[ -n "${SHIM_TAGS}" ]]; then
+        echoerr "adding ${SHIM_TAGS} tags to ${arg} (IN_TAGS=${IN_TAGS})"
         arg=$(echo "${arg}" | tr -d "'" | tr -d "\"")  # Delete any quotes which get passed in literally. prom-label-proxy managed this.
         if [[ "${arg}" == *" "* ]]; then  # If the tags parameter is space delimited
-          arg="${arg} strictfipsruntime"
+          arg="${arg} ${SHIM_TAGS//,/ }"
         else
           # Assume comma delimited
-          arg="${arg},strictfipsruntime"
+          arg="${arg},${SHIM_TAGS}"
         fi
       fi
-      if [[ "${FORCE_OPENSSL}" == "1" ]]; then
-        pre_arg="${arg}"
-        arg=$(echo "${arg}" | sed 's/no_openssl/shim_prevented_no_openssl/g')
-        if [[ "${pre_arg}" != "${arg}" ]]; then
-          echoerr "non-compliant: eliminated no_openssl"
-          if [[ "${STRICT_MODE_BASIC}" == "1" ]]; then
-            stricterror
-            exit 1
-          fi
-        fi
+      if [[ "${FORCE_OPENSSL}" == "1" && "${GO_BUILTIN_FIPS}" == "0" ]]; then
+        scrub_no_openssl
       fi
       IN_TAGS=0
     fi
@@ -359,8 +442,14 @@ if [[ "${EXEMPT}" != "1" ]]; then
       export GOEXPERIMENT="strictfipsruntime,${GOEXPERIMENT}"
     else
       export GOEXPERIMENT="strictfipsruntime"
-  fi
+    fi
     echoerr "setting GOEXPERIMENT=${GOEXPERIMENT}"
+  fi
+
+  # Companion of the no_openssl tag: together they select the built-in module.
+  if [[ "${GO_BUILTIN_FIPS}" == "1" ]]; then
+    export GOFIPS140="v1.26.0"
+    echoerr "setting GOFIPS140=${GOFIPS140}"
   fi
 
 fi
