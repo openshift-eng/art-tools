@@ -212,6 +212,39 @@ class TestBridgeBugMirroring(unittest.IsolatedAsyncioTestCase):
         slack_client.bind_channel.assert_called_once_with("openshift-4.23")
         slack_client.say.assert_awaited_once_with("Bridge bug mirroring failed for 4.23. Please investigate")
 
+    @patch("pyartcd.pipelines.ocp4_scan_konflux.util.load_group_config")
+    async def test_handle_bridge_bug_mirroring_does_not_fail_on_config_error(self, mock_load_group_config):
+        mock_load_group_config.side_effect = RuntimeError("config load failed")
+        slack_client = AsyncMock()
+        slack_client.bind_channel = MagicMock()
+        self.runtime.new_slack_client.return_value = slack_client
+
+        await self.pipeline.handle_bridge_bug_mirroring()
+
+        mock_load_group_config.assert_awaited_once()
+        slack_client.bind_channel.assert_called_once_with("openshift-4.23")
+        slack_client.say.assert_awaited_once()
+
+    @patch("pyartcd.pipelines.ocp4_scan_konflux.util.load_group_config")
+    @patch("pyartcd.pipelines.ocp4_scan_konflux.exectools.cmd_assert_async")
+    async def test_handle_bridge_bug_mirroring_does_not_fail_on_slack_error(
+        self, mock_cmd_assert, mock_load_group_config
+    ):
+        mock_load_group_config.return_value = {
+            "bridge_release": {
+                "basis_group": "openshift-5.0",
+                "bug_mirroring": {"enabled": True},
+            }
+        }
+        mock_cmd_assert.side_effect = ChildProcessError("boom")
+        self.runtime.new_slack_client.side_effect = RuntimeError("slack broke")
+
+        await self.pipeline.handle_bridge_bug_mirroring()
+
+        mock_load_group_config.assert_awaited_once()
+        mock_cmd_assert.assert_awaited_once()
+        self.runtime.new_slack_client.assert_called_once()
+
 
 if __name__ == '__main__':
     unittest.main()
