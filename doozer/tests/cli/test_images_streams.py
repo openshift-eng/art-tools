@@ -163,6 +163,45 @@ def test_resolve_upstream_from_with_stream_entry(mocker, mock_runtime):
     mock_runtime.resolve_stream.assert_called_once_with('golang')
 
 
+@pytest.mark.parametrize(
+    'entry,preserve_non_base_members,expected',
+    [
+        ({'member': 'mta-static-report'}, True, True),
+        ({'member': 'base-rhel9'}, True, False),
+        ({'stream': 'rhel-9-golang'}, True, False),
+        ({'member': 'mta-static-report'}, False, False),
+    ],
+)
+def test_should_preserve_member(entry, preserve_non_base_members, expected):
+    assert images_streams._should_preserve_member(Model(entry), preserve_non_base_members) is expected
+
+
+def test_materialize_preserved_parents():
+    desired_parents, cardinality_mismatch = images_streams._materialize_preserved_parents(
+        ['registry.redhat.io/openshift/golang-builder:1.25', None, 'registry.redhat.io/ubi9/ubi:9.8'],
+        {1},
+        ['registry.redhat.io/ubi9/go-toolset:1.23', 'internal/member:current', 'registry.redhat.io/ubi9/ubi:latest'],
+    )
+
+    assert cardinality_mismatch is False
+    assert desired_parents == [
+        'registry.redhat.io/openshift/golang-builder:1.25',
+        'internal/member:current',
+        'registry.redhat.io/ubi9/ubi:9.8',
+    ]
+
+
+def test_materialize_preserved_parents_with_cardinality_mismatch():
+    desired_parents = ['registry.redhat.io/openshift/golang-builder:1.25', None]
+
+    result, cardinality_mismatch = images_streams._materialize_preserved_parents(
+        desired_parents, {1}, ['registry.redhat.io/ubi9/go-toolset:1.23']
+    )
+
+    assert cardinality_mismatch is True
+    assert result == desired_parents
+
+
 # Tests for _get_upstreaming_entries
 
 

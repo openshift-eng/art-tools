@@ -1444,6 +1444,22 @@ def compute_dockerfile_digest(dockerfile_path):
         return m.hexdigest()
 
 
+def _should_preserve_member(image_entry, preserve_non_base_members):
+    member = image_entry.member
+    return preserve_non_base_members and member is not Missing and member and member != 'base-rhel9'
+
+
+def _materialize_preserved_parents(desired_parents, preserved_parent_indexes, source_parents):
+    cardinality_mismatch = len(desired_parents) != len(source_parents)
+    if cardinality_mismatch:
+        return desired_parents, cardinality_mismatch
+
+    desired_parents = desired_parents.copy()
+    for index in preserved_parent_indexes:
+        desired_parents[index] = source_parents[index]
+    return desired_parents, cardinality_mismatch
+
+
 def resolve_upstream_from(runtime, image_entry):
     """
     :param runtime: The runtime object
@@ -1849,6 +1865,12 @@ This ticket was created by ART pipline run [sync-ci-images|{jenkins_build_url}]
 @click.option(
     '--ignore-missing-images', default=False, is_flag=True, help='Do not exit if an image is missing upstream.'
 )
+@click.option(
+    '--preserve-non-base-members',
+    default=False,
+    is_flag=True,
+    help='Preserve Dockerfile FROMs for member images other than base-rhel9.',
+)
 @click.option('--draft-prs', default=False, is_flag=True, help='Open PRs as draft PRs')
 @click.option('--dry-run', default=False, is_flag=True, help='Do everything except any remote writes/pushes')
 @click.option('--moist-run', default=False, is_flag=True, help='Do everything except opening the final PRs')
@@ -1873,6 +1895,7 @@ def images_streams_prs(
     ignore_ci_master,
     force_merge,
     ignore_missing_images,
+    preserve_non_base_members,
     draft_prs,
     dry_run,
     moist_run,
@@ -1951,6 +1974,7 @@ def images_streams_prs(
                 )  # Don't check this image again since it is a little slow to do so.
 
         desired_parents = []
+        preserved_parent_indexes = set()
 
         # There are two methods to find the desired parents for upstream Dockerfiles.
         # 1. We can analyze the image_metadata "from:" stanza and determine the upstream
@@ -1966,6 +1990,10 @@ def images_streams_prs(
         else:
             builders = from_config.builder or []
             for builder in builders:
+                if _should_preserve_member(builder, preserve_non_base_members):
+                    preserved_parent_indexes.add(len(desired_parents))
+                    desired_parents.append(None)
+                    continue
                 try:
                     upstream_image = resolve_upstream_from(runtime, builder)
                 except Exception as e:
@@ -1978,20 +2006,26 @@ def images_streams_prs(
                 check_if_upstream_image_exists(upstream_image)
                 desired_parents.append(upstream_image)
 
-            try:
-                parent_upstream_image = resolve_upstream_from(runtime, from_config)
-            except Exception as e:
-                message = f'Error while resolving upstream image for {from_config} in {dgk} for {major}.{minor}: {e}'
-                logger.error(message)
-                raise IOError(message)
-            if len(desired_parents) != len(builders) or not parent_upstream_image:
+            if len(desired_parents) != len(builders):
                 logger.warning('Unable to find all ART equivalent upstream images for this image')
                 continue
 
-            desired_parents.append(parent_upstream_image)
-
-        desired_parent_digest = calc_parent_digest(desired_parents)
-        logger.info(f'Found desired FROM state of: {desired_parents} with digest: {desired_parent_digest}')
+            if _should_preserve_member(from_config, preserve_non_base_members):
+                preserved_parent_indexes.add(len(desired_parents))
+                desired_parents.append(None)
+            else:
+                try:
+                    parent_upstream_image = resolve_upstream_from(runtime, from_config)
+                except Exception as e:
+                    message = (
+                        f'Error while resolving upstream image for {from_config} in {dgk} for {major}.{minor}: {e}'
+                    )
+                    logger.error(message)
+                    raise IOError(message)
+                if not parent_upstream_image:
+                    logger.warning('Unable to find all ART equivalent upstream images for this image')
+                    continue
+                desired_parents.append(parent_upstream_image)
 
         desired_ci_build_root_coordinate = None
         desired_ci_build_root_image = ''
@@ -2176,6 +2210,14 @@ def images_streams_prs(
                 errors_raised = True
                 continue
 
+            desired_parents, cardinality_mismatch = _materialize_preserved_parents(
+                desired_parents, preserved_parent_indexes, source_branch_parents
+            )
+            desired_parent_digest = (
+                'n/a (cardinality mismatch)' if cardinality_mismatch else calc_parent_digest(desired_parents)
+            )
+            logger.info(f'Found desired FROM state of: {desired_parents} with digest: {desired_parent_digest}')
+
             source_branch_ci_build_root_coordinate = None
             if ci_operator_config_path.exists():
                 source_branch_ci_operator_config = yaml.safe_load(
@@ -2194,9 +2236,13 @@ Source build_root (in .ci-operator.yaml): {source_branch_ci_build_root_coordinat
 
 Fork build_root (in .ci-operator.yaml): {fork_ci_build_root_coordinate}
 ''')
-            if desired_parent_digest == source_branch_parent_digest and (
-                desired_ci_build_root_coordinate is None
-                or desired_ci_build_root_coordinate == source_branch_ci_build_root_coordinate
+            if (
+                not cardinality_mismatch
+                and desired_parent_digest == source_branch_parent_digest
+                and (
+                    desired_ci_build_root_coordinate is None
+                    or desired_ci_build_root_coordinate == source_branch_ci_build_root_coordinate
+                )
             ):
                 green_print(
                     'Desired digest and source digest match; desired build_root unset OR coordinates match; Upstream is in a good state'
@@ -2209,12 +2255,6 @@ Fork build_root (in .ci-operator.yaml): {fork_ci_build_root_coordinate}
                             yellow_print(f'Closing unnecessary PR: {pr.html_url}')
                             pr.edit(state='closed')
                 continue
-
-            cardinality_mismatch = False
-            if len(desired_parents) != len(source_branch_parents):
-                # The number of FROM statements in the ART metadata does not match the number
-                # of FROM statements in the upstream Dockerfile.
-                cardinality_mismatch = True
 
             yellow_print(
                 f'Upstream dockerfile does not match desired state in {public_repo_url}/blob/{public_branch}/{dockerfile_name}'
