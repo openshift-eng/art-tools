@@ -259,6 +259,9 @@ PRODUCT_KUBECONFIG_MAP = {
 # Default namespace for Konflux operations
 KONFLUX_DEFAULT_NAMESPACE = "ocp-art-tenant"
 
+# Max concurrent scan-sources operations to prevent OOM on buildvm
+SCAN_SOURCES_CONCURRENCY_LIMIT = 16
+
 # Base URL for fetching ReleasePlanAdmission YAMLs from konflux-release-data (GitLab raw)
 OCP_RPA_BASE_URL = (
     "https://gitlab.cee.redhat.com/releng/konflux-release-data/-/raw/main/"
