@@ -12,6 +12,7 @@ import click
 import yaml
 from artcommonlib import exectools
 from artcommonlib.arch_util import go_arch_for_brew_arch, go_suffix_for_arch
+from artcommonlib.constants import REGISTRY_QUAY_PROXY_CI
 from artcommonlib.util import oc_image_info_for_arch_async
 from artcommonlib.variants import BuildVariant
 from doozerlib.cli.images_okd import OKD_DEFAULT_IMAGE_REPO
@@ -731,8 +732,8 @@ class KonfluxOkdPipeline:
         This is a temporary solution until the RHCOS team starts mirroring to ART's imagestreams directly.
 
         Mirrors:
-        - quay-proxy.ci.openshift.org/openshift/ci:<namespace>_scos-{version}_stream-coreos -> origin/scos-{version}-art:stream-coreos
-        - quay-proxy.ci.openshift.org/openshift/ci:<namespace>_scos-{version}_stream-coreos-extensions -> origin/scos-{version}-art:stream-coreos-extensions
+        - QCI proxy:<namespace>_scos-{version}_stream-coreos -> origin/scos-{version}-art:stream-coreos
+        - QCI proxy:<namespace>_scos-{version}_stream-coreos-extensions -> origin/scos-{version}-art:stream-coreos-extensions
 
         Special case:
         - 4.23 has no dedicated scos-4.23 CoreOS stream (master builds 5.0), so it
@@ -760,7 +761,7 @@ class KonfluxOkdPipeline:
             self.logger.info('[DRY RUN] Would mirror CoreOS imagestream tags')
             for tag in tags_to_mirror:
                 self.logger.info(
-                    f'[DRY RUN] From: quay-proxy.ci.openshift.org/openshift/ci:{self.imagestream_namespace}_scos-{source_version}_{tag}'
+                    f'[DRY RUN] From: {REGISTRY_QUAY_PROXY_CI}:{self.imagestream_namespace}_scos-{source_version}_{tag}'
                 )
                 self.logger.info(f'[DRY RUN] To: {self.imagestream_namespace}/scos-{self.version}-art:{tag}')
             return
@@ -768,9 +769,7 @@ class KonfluxOkdPipeline:
         env = os.environ.copy()
 
         for tag in tags_to_mirror:
-            source_pullspec = (
-                f'quay-proxy.ci.openshift.org/openshift/ci:{self.imagestream_namespace}_scos-{source_version}_{tag}'
-            )
+            source_pullspec = f'{REGISTRY_QUAY_PROXY_CI}:{self.imagestream_namespace}_scos-{source_version}_{tag}'
             target_tag = f'{self.imagestream_namespace}/scos-{self.version}-art:{tag}'
 
             self.logger.info('Mirroring CoreOS imagestream from %s to %s', source_pullspec, target_tag)

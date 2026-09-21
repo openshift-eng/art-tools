@@ -10,6 +10,7 @@ from typing import Dict, Optional, Set, Tuple
 import click
 import yaml
 from artcommonlib import exectools
+from artcommonlib.constants import REGISTRY_CI_OPENSHIFT, REGISTRY_QUAY_CI, REGISTRY_QUAY_PROXY_CI
 from artcommonlib.format_util import green_print, yellow_print
 from artcommonlib.git_helper import git_clone
 from artcommonlib.github_auth import build_git_auth_env, get_github_client_for_org, get_github_git_auth_env
@@ -53,6 +54,11 @@ transform_rhel_7_ci_build_root = 'rhel-7/ci-build-root'
 transform_rhel_8_ci_build_root = 'rhel-8/ci-build-root'
 transform_rhel_9_ci_build_root = 'rhel-9/ci-build-root'
 
+QCI_PULLSPEC_PREFIXES = (
+    f'{REGISTRY_QUAY_PROXY_CI}:',
+    f'{REGISTRY_QUAY_CI}:',
+)
+
 # The set of valid transforms
 transforms = set(
     [
@@ -88,6 +94,56 @@ def get_image_digest(pullspec: str, registry_config: Optional[str] = None) -> Op
         if line.startswith('Digest:'):
             return line.split(':', 1)[1].strip()
     return None
+
+
+def _check_upstream_image_exists(runtime, upstream_image: str) -> None:
+    """Check that an upstream image exists through the authenticated QCI registry."""
+    util.oc_image_info_for_arch(
+        _to_qci_pullspec(upstream_image),
+        registry_config=runtime.registry_config,
+    )
+
+
+def _to_qci_pullspec(pullspec: str) -> str:
+    """Convert an app.ci ImageStreamTag pullspec to its QCI pullspec."""
+    if not isinstance(pullspec, str):
+        return pullspec
+
+    try:
+        registry, namespace, image_tag = pullspec.split('/', 2)
+        image_name, tag = image_tag.rsplit(':', 1)
+    except ValueError:
+        return pullspec
+
+    if registry != REGISTRY_CI_OPENSHIFT or '@' in image_tag:
+        return pullspec
+
+    return f'{REGISTRY_QUAY_PROXY_CI}:{namespace}_{image_name}_{tag}'
+
+
+def _get_image_stream_coordinate(pullspec: str) -> dict[str, str]:
+    """Extract the CI ImageStream coordinate from a CI or QCI pullspec."""
+    for prefix in QCI_PULLSPEC_PREFIXES:
+        if pullspec.startswith(prefix):
+            qci_tag = pullspec.removeprefix(prefix)
+            try:
+                namespace, image_name, tag = qci_tag.split('_', 2)
+            except ValueError as e:
+                raise ValueError(f'Invalid QCI pullspec: {pullspec}') from e
+            return {'namespace': namespace, 'name': image_name, 'tag': tag}
+
+    pre_tag, tag = pullspec.rsplit(':', 1)
+    _, namespace, image_name = pre_tag.rsplit('/', 2)
+    return {'namespace': namespace, 'name': image_name, 'tag': tag}
+
+
+def _to_upstream_pullspec(pullspec: str) -> str:
+    """Convert a QCI pullspec to the public CI pullspec used by upstream Dockerfiles."""
+    if not isinstance(pullspec, str) or not pullspec.startswith(QCI_PULLSPEC_PREFIXES):
+        return pullspec
+
+    coordinate = _get_image_stream_coordinate(pullspec)
+    return f"{REGISTRY_CI_OPENSHIFT}/{coordinate['namespace']}/{coordinate['name']}:{coordinate['tag']}"
 
 
 @cli.group("images:streams", short_help="Manage ART equivalent images in upstream CI.")
@@ -173,10 +229,10 @@ def images_streams_mirror(
         registry_config_file = get_docker_config_json(runtime.registry_config_dir)
 
     def mirror_image(cmd_start: str, upstream_dest: str):
-        if upstream_dest.startswith('registry.ci.openshift.org/'):
-            # Images targeting CI imagestreams must be mirrored to quay.io/openshift/ci (QCI) first,
+        if upstream_dest.startswith(f'{REGISTRY_CI_OPENSHIFT}/'):
+            # Images targeting CI imagestreams must be mirrored to QCI first,
             # then imagestreams updated to reference the QCI image by digest.
-            # upstream_dest looks like: registry.ci.openshift.org/ocp/{MAJOR}.{MINOR}:base-rhel9
+            # upstream_dest looks like: <CI registry>/ocp/{MAJOR}.{MINOR}:base-rhel9
             # Extract namespace and imagestreamtag
             _, dest_ns, dest_istag = upstream_dest.rsplit('/', maxsplit=2)
             dest_imagestream, dest_tag = dest_istag.split(':')
@@ -184,7 +240,7 @@ def images_streams_mirror(
             # Build QCI floating tag: art__ocp_{MAJOR}.{MINOR}_base-rhel9
             org_repo_tag = re.sub(r"[:/]", "_", f"{dest_ns}/{dest_istag}")
             floating_qci_tag = f"art__{org_repo_tag}"
-            floating_qci_dest = f"quay.io/openshift/ci:{floating_qci_tag}"
+            floating_qci_dest = f'{REGISTRY_QUAY_CI}:{floating_qci_tag}'
 
             # Mirror to QCI floating tag
             full_cmd_floating = f'{cmd_start} {floating_qci_dest}'
@@ -222,7 +278,7 @@ def images_streams_mirror(
                     # Mirror to GC-prevention tag: art__<digest>
                     # Preserve --keep-manifest-list flag if it was in the original command
                     gc_prevention_tag = f"art__{qci_digest[7:23]}"
-                    gc_prevention_dest = f"quay.io/openshift/ci:{gc_prevention_tag}"
+                    gc_prevention_dest = f'{REGISTRY_QUAY_CI}:{gc_prevention_tag}'
                     keep_manifest_list = '--keep-manifest-list' if '--keep-manifest-list' in cmd_start else ''
                     gc_mirror_cmd = (
                         f'oc image mirror {keep_manifest_list} {floating_qci_dest}@{qci_digest} {gc_prevention_dest}'
@@ -240,7 +296,7 @@ def images_streams_mirror(
                             'name': dest_tag,
                             'from': {
                                 'kind': 'DockerImage',
-                                'name': f'quay-proxy.ci.openshift.org/openshift/ci@{qci_digest}',
+                                'name': f'{REGISTRY_QUAY_PROXY_CI}@{qci_digest}',
                             },
                             'referencePolicy': {'type': 'Source'},
                             'importPolicy': {'importMode': 'PreserveOriginal'},
@@ -439,7 +495,7 @@ def images_streams_check_upstream(runtime, streams, images, live_test_mode, dry_
     for upstream_entry_name, config in upstreaming_entries.items():
         upstream_dest = config.upstream_image
         openshift_imagestream_prefixes = (
-            'registry.ci.openshift.org/',
+            f'{REGISTRY_CI_OPENSHIFT}/',
             'registry.svc.ci.openshift.org/',
         )
         if not upstream_dest.startswith(openshift_imagestream_prefixes):
@@ -466,7 +522,7 @@ def images_streams_check_upstream(runtime, streams, images, live_test_mode, dry_
                 image_ref = istag_data.get('tag', {}).get('from', {}).get('name', '')
                 ref_policy = istag_data.get('tag', {}).get('referencePolicy', {}).get('type', '')
 
-                if image_ref.startswith('quay.io/openshift/ci@sha256:'):
+                if image_ref.startswith(f'{REGISTRY_QUAY_CI}@sha256:'):
                     if ref_policy == 'Source':
                         istags_status.append(
                             f'OK: {upstream_entry_name}\n  Imagestream: {dest_ns}/{dest_istag}\n  Reference: {image_ref}\n  Policy: {ref_policy}'
@@ -477,7 +533,7 @@ def images_streams_check_upstream(runtime, streams, images, live_test_mode, dry_
                         )
                 else:
                     istags_status.append(
-                        f'WARNING: {upstream_entry_name}\n  Imagestream: {dest_ns}/{dest_istag}\n  Reference: {image_ref} (expected quay.io/openshift/ci@sha256:...)\n  Policy: {ref_policy}'
+                        f'WARNING: {upstream_entry_name}\n  Imagestream: {dest_ns}/{dest_istag}\n  Reference: {image_ref} (expected {REGISTRY_QUAY_CI}@sha256:...)\n  Policy: {ref_policy}'
                     )
             except Exception as e:
                 istags_status.append(f'ERROR: {upstream_entry_name}\n  Failed to parse imagestream tag: {e}')
@@ -486,7 +542,7 @@ def images_streams_check_upstream(runtime, streams, images, live_test_mode, dry_
         transform = config.transform
         if transform is not Missing and transform in transforms:
             qci_tag = f'art-builder-{major}.{minor}-{dest_tag}'
-            qci_pullspec = f'quay.io/openshift/ci:{qci_tag}'
+            qci_pullspec = f'{REGISTRY_QUAY_CI}:{qci_tag}'
 
             # Get digest (handles manifest lists)
             current_digest = get_image_digest(qci_pullspec, registry_config_file)
@@ -504,7 +560,7 @@ def images_streams_check_upstream(runtime, streams, images, live_test_mode, dry_
                         try:
                             istag_data = json.loads(istag_stdout)
                             istag_ref = istag_data.get('tag', {}).get('from', {}).get('name', '')
-                            # Extract digest from imagestream reference (quay-proxy.ci.openshift.org/openshift/ci@sha256:...)
+                            # Extract digest from the QCI proxy imagestream reference.
                             if '@' in istag_ref:
                                 istag_digest = istag_ref.split('@')[1]
                                 if istag_digest != current_digest:
@@ -523,7 +579,7 @@ def images_streams_check_upstream(runtime, streams, images, live_test_mode, dry_
 
                         # Mirror to GC-prevention tag
                         gc_prevention_tag = f'art-builder-{current_digest[7:23]}'  # sha256:abc... -> first 16 chars
-                        gc_prevention_pullspec = f'quay.io/openshift/ci:{gc_prevention_tag}'
+                        gc_prevention_pullspec = f'{REGISTRY_QUAY_CI}:{gc_prevention_tag}'
 
                         if dry_run:
                             qci_status.append(
@@ -545,7 +601,7 @@ def images_streams_check_upstream(runtime, streams, images, live_test_mode, dry_
                                         'name': dest_tag,
                                         'from': {
                                             'kind': 'DockerImage',
-                                            'name': f'quay-proxy.ci.openshift.org/openshift/ci@{current_digest}',
+                                            'name': f'{REGISTRY_QUAY_PROXY_CI}@{current_digest}',
                                         },
                                         'referencePolicy': {'type': 'Source'},
                                         'importPolicy': {'importMode': 'PreserveOriginal'},
@@ -708,12 +764,12 @@ def images_streams_start_buildconfigs(
         if not qci_tag:
             runtime.logger.warning(f'BuildConfig {bc_name} missing art-builder-qci-tag label; skipping pre-build steps')
         else:
-            qci_pullspec = f'quay.io/openshift/ci:{qci_tag}'
+            qci_pullspec = f'{REGISTRY_QUAY_CI}:{qci_tag}'
 
-            # Step 0: FIRST, preserve the current registry.ci.openshift.org imagestream content
+            # Step 0: FIRST, preserve the current CI imagestream content
             # This ensures we don't lose the old image if something goes wrong during migration
             if dest_ns and dest_imagestream and dest_tag:
-                old_istag_pullspec = f'registry.ci.openshift.org/{dest_ns}/{dest_imagestream}:{dest_tag}'
+                old_istag_pullspec = f'{REGISTRY_CI_OPENSHIFT}/{dest_ns}/{dest_imagestream}:{dest_tag}'
                 print(f'Preserving current imagestream content from {old_istag_pullspec}')
 
                 if dry_run:
@@ -726,7 +782,7 @@ def images_streams_start_buildconfigs(
 
                         # Mirror to a preservation tag to prevent garbage collection
                         old_gc_prevention_tag = f'art-builder-{old_digest.replace("sha256:", "")[:16]}'
-                        old_gc_prevention_pullspec = f'quay.io/openshift/ci:{old_gc_prevention_tag}'
+                        old_gc_prevention_pullspec = f'{REGISTRY_QUAY_CI}:{old_gc_prevention_tag}'
 
                         print(f'  Mirroring old content to GC-prevention tag: {old_gc_prevention_pullspec}')
                         old_mirror_cmd = (
@@ -761,7 +817,7 @@ def images_streams_start_buildconfigs(
                 # Step 2: Mirror current image to GC-prevention tag
                 # CRITICAL: If image exists, this step MUST succeed before proceeding
                 gc_prevention_tag = f'art-builder-{current_digest.replace("sha256:", "")[:16]}'
-                gc_prevention_pullspec = f'quay.io/openshift/ci:{gc_prevention_tag}'
+                gc_prevention_pullspec = f'{REGISTRY_QUAY_CI}:{gc_prevention_tag}'
 
                 print(f'Mirroring to GC-prevention tag: {gc_prevention_pullspec}')
                 mirror_cmd = f'oc image mirror {qci_pullspec}@{current_digest} {gc_prevention_pullspec}'
@@ -780,7 +836,7 @@ def images_streams_start_buildconfigs(
                 if dest_ns and dest_imagestream and dest_tag:
                     istag_name = f'{dest_imagestream}:{dest_tag}'
                     print(
-                        f'Updating imagestream tag {dest_ns}/{istag_name} to reference quay-proxy.ci.openshift.org/openshift/ci@{current_digest}'
+                        f'Updating imagestream tag {dest_ns}/{istag_name} to reference {REGISTRY_QUAY_PROXY_CI}@{current_digest}'
                     )
 
                     # Build imagestream tag patch
@@ -790,7 +846,7 @@ def images_streams_start_buildconfigs(
                             'name': dest_tag,
                             'from': {
                                 'kind': 'DockerImage',
-                                'name': f'quay-proxy.ci.openshift.org/openshift/ci@{current_digest}',
+                                'name': f'{REGISTRY_QUAY_PROXY_CI}@{current_digest}',
                             },
                             'referencePolicy': {'type': 'Source'},
                             'importPolicy': {'importMode': 'PreserveOriginal'},
@@ -828,7 +884,7 @@ def images_streams_start_buildconfigs(
                 print('  QCI floating tag does not exist yet (initial migration)')
 
                 if dest_ns and dest_imagestream and dest_tag:
-                    old_istag_pullspec = f'registry.ci.openshift.org/{dest_ns}/{dest_imagestream}:{dest_tag}'
+                    old_istag_pullspec = f'{REGISTRY_CI_OPENSHIFT}/{dest_ns}/{dest_imagestream}:{dest_tag}'
                     print(f'  Attempting to bootstrap QCI tag from old imagestream: {old_istag_pullspec}')
 
                     if dry_run:
@@ -861,7 +917,7 @@ def images_streams_start_buildconfigs(
 
                                     # Also create GC-prevention tag for the bootstrapped image
                                     bootstrap_gc_tag = f'art-builder-{bootstrap_digest.replace("sha256:", "")[:16]}'
-                                    bootstrap_gc_pullspec = f'quay.io/openshift/ci:{bootstrap_gc_tag}'
+                                    bootstrap_gc_pullspec = f'{REGISTRY_QUAY_CI}:{bootstrap_gc_tag}'
                                     print(f'  Creating GC-prevention tag: {bootstrap_gc_pullspec}')
                                     gc_mirror_cmd = (
                                         f'oc image mirror {qci_pullspec}@{bootstrap_digest} {bootstrap_gc_pullspec}'
@@ -874,7 +930,7 @@ def images_streams_start_buildconfigs(
                                     # Update imagestream to reference the bootstrapped QCI image
                                     istag_name = f'{dest_imagestream}:{dest_tag}'
                                     print(
-                                        f'  Updating imagestream tag {dest_ns}/{istag_name} to reference quay-proxy.ci.openshift.org/openshift/ci@{bootstrap_digest}'
+                                        f'  Updating imagestream tag {dest_ns}/{istag_name} to reference {REGISTRY_QUAY_PROXY_CI}@{bootstrap_digest}'
                                     )
 
                                     istag_patch = {
@@ -882,7 +938,7 @@ def images_streams_start_buildconfigs(
                                             'name': dest_tag,
                                             'from': {
                                                 'kind': 'DockerImage',
-                                                'name': f'quay-proxy.ci.openshift.org/openshift/ci@{bootstrap_digest}',
+                                                'name': f'{REGISTRY_QUAY_PROXY_CI}@{bootstrap_digest}',
                                             },
                                             'referencePolicy': {'type': 'Source'},
                                             'importPolicy': {'importMode': 'PreserveOriginal'},
@@ -1021,7 +1077,7 @@ def images_streams_start_buildconfigs(
                 if new_digest:
                     # Mirror to GC-prevention tag
                     gc_prevention_tag = f'art-builder-{new_digest[7:23]}'  # sha256:abc... -> abc (first 16 chars)
-                    gc_prevention_pullspec = f'quay.io/openshift/ci:{gc_prevention_tag}'
+                    gc_prevention_pullspec = f'{REGISTRY_QUAY_CI}:{gc_prevention_tag}'
 
                     print(f'  Mirroring to GC-prevention tag: {gc_prevention_pullspec}')
                     mirror_cmd = f'oc image mirror {qci_pullspec}@{new_digest} {gc_prevention_pullspec}'
@@ -1041,7 +1097,7 @@ def images_streams_start_buildconfigs(
                                 'name': dest_tag,
                                 'from': {
                                     'kind': 'DockerImage',
-                                    'name': f'quay-proxy.ci.openshift.org/openshift/ci@{new_digest}',
+                                    'name': f'{REGISTRY_QUAY_PROXY_CI}@{new_digest}',
                                 },
                                 'referencePolicy': {'type': 'Source'},
                                 'importPolicy': {'importMode': 'PreserveOriginal'},
@@ -1351,10 +1407,10 @@ def images_streams_gen_buildconfigs(runtime, streams, images, output, as_user, a
         # We've arrived at a Dockerfile.
         dockerfile_content = dfp.content
 
-        # Construct QCI destination tag: quay.io/openshift/ci:art-builder-{MAJOR}.{MINOR}-{tag}
-        # Example: quay.io/openshift/ci:art-builder-4.19-base-rhel9
+        # Construct QCI destination tag: art-builder-{MAJOR}.{MINOR}-{tag}
+        # Example: art-builder-4.19-base-rhel9
         qci_tag = f'art-builder-{major}.{minor}-{dest_tag}'
-        qci_destination = f'quay.io/openshift/ci:{qci_tag}'
+        qci_destination = f'{REGISTRY_QUAY_CI}:{qci_tag}'
 
         # Now to create a buildconfig for it.
         buildconfig = {
@@ -1459,7 +1515,7 @@ def resolve_upstream_from(runtime, image_entry):
         if target_meta.config.content.source.ci_alignment.upstream_image is not Missing:
             # If the upstream is specified in the metadata, use this information
             # directly instead of a heuristic.
-            return target_meta.config.content.source.ci_alignment.upstream_image
+            return _to_upstream_pullspec(target_meta.config.content.source.ci_alignment.upstream_image)
         else:
             # If payload_name is specified, this is what we need
             # Otherwise, fallback to the legacy "name" field
@@ -1468,14 +1524,14 @@ def resolve_upstream_from(runtime, image_entry):
             # In release payloads, images are promoted into an imagestream
             # tag name without the ose- prefix.
             image_name = remove_prefix(image_name, 'ose-')
-            # e.g. registry.ci.openshift.org/ocp/4.6:base
-            return f'registry.ci.openshift.org/ocp/{major}.{minor}:{image_name}'
+            # e.g. <CI registry>/ocp/4.6:base
+            return f'{REGISTRY_CI_OPENSHIFT}/ocp/{major}.{minor}:{image_name}'
 
     if image_entry.image:
         # CI is on its own. We can't give them an image that isn't available outside the firewall.
         return None
     elif image_entry.stream:
-        return runtime.resolve_stream(image_entry.stream).upstream_image
+        return _to_upstream_pullspec(runtime.resolve_stream(image_entry.stream).upstream_image)
 
 
 def _get_upstream_source(runtime, image_meta, skip_branch_check=False):
@@ -1939,7 +1995,7 @@ def images_streams_prs(
                 # We don't know yet whether this image exists; perhaps a buildconfig is
                 # failing. Don't open PRs for images that don't yet exist.
                 try:
-                    util.oc_image_info_for_arch(upstream_image)
+                    _check_upstream_image_exists(runtime, upstream_image)
                 except:
                     yellow_print(
                         f'Unable to access upstream image {upstream_image} for {dgk}-- check whether buildconfigs are running successfully.'
@@ -1962,7 +2018,9 @@ def images_streams_prs(
         #      source.ci_alignment.streams_prs.from: [ list of full pullspecs ]
         # We check for option 2 first
         if streams_pr_config['from'] is not Missing:
-            desired_parents = streams_pr_config['from'].primitive()  # This should be list; so we're done.
+            desired_parents = [
+                _to_upstream_pullspec(pullspec) for pullspec in streams_pr_config['from'].primitive()
+            ]  # This should be a list; so we're done.
         else:
             builders = from_config.builder or []
             for builder in builders:
@@ -2005,15 +2063,10 @@ def images_streams_prs(
             check_if_upstream_image_exists(desired_ci_build_root_image)
 
             # Split the pullspec into an openshift namespace, imagestream, and tag.
-            # e.g. registry.openshift.org:999/ocp/release:golang-1.16 => tag=golang-1.16, namespace=ocp, imagestream=release
-            pre_tag, tag = desired_ci_build_root_image.rsplit(':', 1)
-            _, namespace, imagestream = pre_tag.rsplit('/', 2)
+            # QCI pullspecs encode the same coordinate with underscores, e.g.
+            # QCI proxy:ocp_release_golang-1.16.
             # https://docs.ci.openshift.org/docs/architecture/ci-operator/#build-root-image
-            desired_ci_build_root_coordinate = {
-                'namespace': namespace,
-                'name': imagestream,
-                'tag': tag,
-            }
+            desired_ci_build_root_coordinate = _get_image_stream_coordinate(desired_ci_build_root_image)
             logger.info(f'Found desired build_root state of: {desired_ci_build_root_coordinate}')
 
         source_repo_url, source_repo_branch = _get_upstream_source(runtime, image_meta)
@@ -2252,7 +2305,7 @@ Fork build_root (in .ci-operator.yaml): {fork_ci_build_root_coordinate}
                     )
                 handle.write(dfp.content)
 
-            exectools.cmd_assert(f'git add {str(df_path)}')
+            exectools.cmd_assert(f'git add -f {str(df_path)}')
 
             if desired_ci_build_root_coordinate:
                 if ci_operator_config_path.exists():
