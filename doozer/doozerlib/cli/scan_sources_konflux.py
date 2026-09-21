@@ -706,18 +706,7 @@ class ConfigScanSources:
         self.logger.debug(f"Network mode of {image_meta.name} in config is {network_mode}")
         build_record = self.latest_image_build_records_map[image_meta.distgit_key]
 
-        # Fetch the SLSA attestation for the latest build
-        attestation = await fetch_slsa_attestation(
-            build_record.image_pullspec, build_record.name, self.runtime.registry_config
-        )
-        if not attestation:
-            self.logger.warning('Skipping network mode check for %s', image_meta.distgit_key)
-            return
-
-        # Inspect the SLSA attestation to see if the build is hermetic
-        is_hermetic = attestation["predicate"]["invocation"]["parameters"]["hermetic"]
-        is_hermetic = True if is_hermetic.lower() == "true" else False
-
+        is_hermetic = build_record.hermetic
         self.logger.debug(f"Hermetic mode for {build_record.image_pullspec} is set to: {is_hermetic}")
         # Rebuild if there is a mismatch
         if (network_mode == "hermetic") != is_hermetic:
