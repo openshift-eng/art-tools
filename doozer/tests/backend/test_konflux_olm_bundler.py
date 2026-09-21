@@ -401,6 +401,18 @@ class TestKonfluxOlmBundleRebaser(IsolatedAsyncioTestCase):
                 },
             )
 
+            self.rebaser.group = 'openshift-4.13'
+            metadata.get_olm_bundle_delivery_repo_name.return_value = 'openshift4/test-image-bundle'
+            mock_operator_df_413 = MagicMock()
+            mock_operator_df_413.labels = mock_operator_df.labels
+            mock_bundle_df_413 = MagicMock()
+            mock_dockerfile_parser.side_effect = [mock_operator_df_413, mock_bundle_df_413]
+
+            self.rebaser._create_dockerfile(metadata, operator_dir, bundle_dir, operator_framework_tags, input_release)
+
+            self.assertEqual(mock_bundle_df_413.labels['name'], 'openshift4/test-image-bundle')
+            metadata.get_olm_bundle_delivery_repo_name.assert_called_once_with()
+
     @patch("pathlib.Path.iterdir")
     @patch("aiofiles.open")
     @patch("pathlib.Path.mkdir")
