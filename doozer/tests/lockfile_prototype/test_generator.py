@@ -520,6 +520,40 @@ class TestRpmLockfilePrototypeGenerator(unittest.TestCase):
         # --image mode: pullspec is preserved (not forced to None)
         self.assertIsNotNone(captured_pullspecs[0])
 
+    def test_retries_missing_containerfile_install_as_normal_package(self):
+        """
+        A package explicitly installed by the Containerfile may also appear
+        in the base image package list. If it is missing from the base image
+        RPMDB, retry it as a normal install instead of excluding it.
+        """
+        meta = self._make_mock_image_meta()
+        generator = self._make_generator()
+        generator.downstream_parents = ["quay.io/test/base@sha256:abc123"]
+        generator._container.get_installed_packages = AsyncMock(return_value=["python3-dateutil"])
+
+        captured_configs: list[RpmsInConfig] = []
+
+        async def capture_resolve(config, image_pullspec=None, **kwargs):
+            captured_configs.append(config)
+            if len(captured_configs) == 1:
+                raise RuntimeError("No match for argument: python3-dateutil")
+            return FAKE_LOCKFILE_DATA.model_copy(deep=True)
+
+        generator._resolver.resolve = AsyncMock(side_effect=capture_resolve)
+
+        with TemporaryDirectory() as tmpdir:
+            dest_dir = Path(tmpdir)
+            (dest_dir / "Dockerfile").write_text("FROM base\nRUN dnf install -y python3-dateutil\n")
+            asyncio.run(generator.generate_lockfile(meta, dest_dir))
+
+        self.assertGreaterEqual(len(captured_configs), 2)
+        for config in captured_configs[1:]:
+            upgrade_names = [
+                package if isinstance(package, str) else package.name for package in config.upgradePackages
+            ]
+            self.assertNotIn("python3-dateutil", upgrade_names)
+            self.assertNotIn("python3-dateutil", config.excludePackages)
+
     def test_installroot_only_stage_uses_bare_context(self):
         """
         An image-backed stage that only installs into an alternate root
