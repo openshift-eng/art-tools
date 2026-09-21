@@ -231,6 +231,15 @@ class CreateReleaseCli:
             )
             return None
 
+        # Reject skip-stage sentinel before creating a Snapshot (new_release also checks).
+        if is_release_plan_skipped(env_config.releasePlan):
+            raise RuntimeError(
+                f"Cannot create a Konflux release: releasePlan is set to the skip-stage sentinel "
+                f"({env_config.releasePlan!r}). Stage was configured as {SKIPPED_RELEASE_PLAN}; no Konflux "
+                f"stage release should be created. If this is unexpected, fix config.yaml / the "
+                f"shipment file and regenerate CI."
+            )
+
         # Validate snapshot components against RPA before creating anything
         if self.runtime.group.startswith("openshift-") and config.shipment.snapshot:
             LOGGER.info("Validating snapshot components against RPA...")
