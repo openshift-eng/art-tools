@@ -76,7 +76,6 @@ class TestMinimalCrashIsolation(TestScanSourcesKonflux):
             patch.object(self.scanner, 'scan_builders_changes', AsyncMock()),
             patch.object(self.scanner, 'scan_external_image_changes', AsyncMock()),
             patch.object(self.scanner, 'scan_arch_changes', AsyncMock()),
-            patch.object(self.scanner, 'scan_network_mode_changes', AsyncMock()),
             patch.object(self.scanner, 'scan_for_config_changes', AsyncMock()),
             patch.object(self.scanner, 'scan_rpm_changes', AsyncMock()),
             patch.object(self.scanner, 'scan_extra_packages', AsyncMock()),

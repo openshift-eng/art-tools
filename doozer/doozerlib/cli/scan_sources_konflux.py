@@ -646,9 +646,6 @@ class ConfigScanSources:
 
             # For OCP variant, perform additional checks that don't apply to OKD
             if self.variant != BuildVariant.OKD:
-                # Check for changes in the network mode (skip for OKD - it always uses open network)
-                stage = 'network mode checks'
-                await self.scan_network_mode_changes(image_meta)
                 # Check if there has been a config change since last build
                 stage = 'config digest checks'
                 await self.scan_for_config_changes(image_meta)
@@ -691,41 +688,6 @@ class ConfigScanSources:
                 RebuildHint(
                     RebuildHintCode.ARCHES_CHANGE,
                     f'Arches of {build_record.nvr}: ({build_arches}) does not match target arches {target_arches}',
-                ),
-            )
-
-    @skip_check_if_changing
-    async def scan_network_mode_changes(self, image_meta: ImageMetadata):
-        """
-        Check if image conforms to the network mode derived from config
-
-        Note that Konflux only cares about hermetic. We have an additional network mode 'internal-only' which
-        will be deprecated in the future once we completely more to hermetic.
-        """
-        network_mode = image_meta.get_konflux_network_mode()
-        self.logger.debug(f"Network mode of {image_meta.name} in config is {network_mode}")
-        build_record = self.latest_image_build_records_map[image_meta.distgit_key]
-
-        # Fetch the SLSA attestation for the latest build
-        attestation = await fetch_slsa_attestation(
-            build_record.image_pullspec, build_record.name, self.runtime.registry_config
-        )
-        if not attestation:
-            self.logger.warning('Skipping network mode check for %s', image_meta.distgit_key)
-            return
-
-        # Inspect the SLSA attestation to see if the build is hermetic
-        is_hermetic = attestation["predicate"]["invocation"]["parameters"]["hermetic"]
-        is_hermetic = True if is_hermetic.lower() == "true" else False
-
-        self.logger.debug(f"Hermetic mode for {build_record.image_pullspec} is set to: {is_hermetic}")
-        # Rebuild if there is a mismatch
-        if (network_mode == "hermetic") != is_hermetic:
-            self.add_image_meta_change(
-                image_meta,
-                RebuildHint(
-                    code=RebuildHintCode.NETWORK_MODE_CHANGE,
-                    reason=f"Latest build {build_record.image_pullspec} network mode was {'hermetic' if is_hermetic else 'open'} but {network_mode} is required",
                 ),
             )
 

@@ -104,7 +104,7 @@ class TestOkdScanPipeline(unittest.IsolatedAsyncioTestCase):
         self.runtime.dry_run = False
 
         # Mock scan-sources output with changed images
-        # With --variant=okd, doozer won't report ARCHES_CHANGE or NETWORK_MODE_CHANGE
+        # With --variant=okd, doozer won't report ARCHES_CHANGE
         scan_output = yaml.dump({'images': [{'name': 'test-image-1', 'changed': True}]})
         mock_cmd_gather.return_value = (0, scan_output, '')
 
