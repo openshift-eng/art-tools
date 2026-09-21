@@ -18,6 +18,7 @@ from pyartcd.pipelines.update_golang import (
     _parse_pullspec_tuple,
     _pullspecs_match,
     extract_and_validate_golang_nvrs,
+    get_active_versions_for_golang_major_minor,
     get_latest_nvr_in_tag,
     is_available,
     is_latest,
@@ -224,20 +225,201 @@ class TestIsLatestAndAvailable(IsolatedAsyncioTestCase):
         self.assertFalse(result)
 
 
+def _make_group_yml_content(go_latest=None, go_extra=None, go_previous=None) -> bytes:
+    """Return bytes of a minimal group.yml with the given var values."""
+    vars_section = {}
+    if go_latest:
+        vars_section['GO_LATEST'] = go_latest
+    if go_extra:
+        vars_section['GO_EXTRA'] = go_extra
+    if go_previous:
+        vars_section['GO_PREVIOUS'] = go_previous
+    content = {'vars': vars_section} if vars_section else {}
+    import io as _io
+
+    import ruamel.yaml as _ry
+
+    _yaml = _ry.YAML()
+    _buf = _io.BytesIO()
+    _yaml.dump(content, _buf)
+    return _buf.getvalue()
+
+
+class TestGetActiveVersionsForGolangMajorMinor(unittest.TestCase):
+    """Test get_active_versions_for_golang_major_minor()"""
+
+    def _mock_repo(self, branch_map: dict):
+        """branch_map: {openshift-X.Y: bytes_of_group_yml or Exception}"""
+        repo = Mock()
+
+        def _get_contents(path, ref):
+            if path != "group.yml":
+                raise ValueError(f"unexpected path: {path}")
+            if ref not in branch_map:
+                raise Exception(f"group.yml not found for {ref}")
+            payload = branch_map[ref]
+            if isinstance(payload, Exception):
+                raise payload
+            c = Mock()
+            c.decoded_content = payload
+            return c
+
+        repo.get_contents.side_effect = _get_contents
+        return repo
+
+    @patch("pyartcd.pipelines.update_golang.ACTIVE_OCP_VERSIONS", ["4.16", "4.17"])
+    @patch("pyartcd.pipelines.update_golang.get_github_client_for_org")
+    def test_match_on_go_latest(self, mock_gh):
+        """Versions whose GO_LATEST matches are included."""
+        repo = self._mock_repo(
+            {
+                "openshift-4.16": _make_group_yml_content(go_latest="1.22.12"),
+                "openshift-4.17": _make_group_yml_content(go_latest="1.21.0"),
+            }
+        )
+        mock_gh.return_value.get_repo.return_value = repo
+        result = get_active_versions_for_golang_major_minor("1.22")
+        self.assertEqual(result, ["4.16"])
+
+    @patch("pyartcd.pipelines.update_golang.ACTIVE_OCP_VERSIONS", ["4.18"])
+    @patch("pyartcd.pipelines.update_golang.get_github_client_for_org")
+    def test_match_on_go_extra(self, mock_gh):
+        """Versions whose GO_EXTRA matches are included."""
+        repo = self._mock_repo(
+            {
+                "openshift-4.18": _make_group_yml_content(go_latest="1.23.0", go_extra="1.22.12"),
+            }
+        )
+        mock_gh.return_value.get_repo.return_value = repo
+        result = get_active_versions_for_golang_major_minor("1.22")
+        self.assertEqual(result, ["4.18"])
+
+    @patch("pyartcd.pipelines.update_golang.ACTIVE_OCP_VERSIONS", ["4.19"])
+    @patch("pyartcd.pipelines.update_golang.get_github_client_for_org")
+    def test_match_on_go_previous(self, mock_gh):
+        """Versions whose GO_PREVIOUS matches are included."""
+        repo = self._mock_repo(
+            {
+                "openshift-4.19": _make_group_yml_content(go_latest="1.23.0", go_previous="1.22.5"),
+            }
+        )
+        mock_gh.return_value.get_repo.return_value = repo
+        result = get_active_versions_for_golang_major_minor("1.22")
+        self.assertEqual(result, ["4.19"])
+
+    @patch("pyartcd.pipelines.update_golang.ACTIVE_OCP_VERSIONS", ["4.16"])
+    @patch("pyartcd.pipelines.update_golang.get_github_client_for_org")
+    def test_no_match_excluded(self, mock_gh):
+        """Versions with none of the vars matching return empty list."""
+        repo = self._mock_repo(
+            {
+                "openshift-4.16": _make_group_yml_content(go_latest="1.21.0"),
+            }
+        )
+        mock_gh.return_value.get_repo.return_value = repo
+        result = get_active_versions_for_golang_major_minor("1.22")
+        self.assertEqual(result, [])
+
+    @patch("pyartcd.pipelines.update_golang.ACTIVE_OCP_VERSIONS", ["4.16"])
+    @patch("pyartcd.pipelines.update_golang.get_github_client_for_org")
+    def test_only_active_ocp_versions_enumerated(self, mock_gh):
+        """Discovery uses ACTIVE_OCP_VERSIONS, not arbitrary ocp-build-data branch names."""
+        repo = self._mock_repo(
+            {
+                "openshift-4.16": _make_group_yml_content(go_latest="1.22.12"),
+            }
+        )
+        mock_gh.return_value.get_repo.return_value = repo
+        result = get_active_versions_for_golang_major_minor("1.22")
+        self.assertEqual(result, ["4.16"])
+        repo.get_contents.assert_called_once_with("group.yml", ref="openshift-4.16")
+
+    @patch("pyartcd.pipelines.update_golang.ACTIVE_OCP_VERSIONS", ["4.16", "4.17"])
+    @patch("pyartcd.pipelines.update_golang.get_github_client_for_org")
+    def test_skips_branches_with_fetch_error(self, mock_gh):
+        """Branches whose group.yml cannot be fetched are skipped; others still included."""
+        repo = self._mock_repo(
+            {
+                "openshift-4.16": Exception("network error"),
+                "openshift-4.17": _make_group_yml_content(go_latest="1.22.12"),
+            }
+        )
+        mock_gh.return_value.get_repo.return_value = repo
+        result = get_active_versions_for_golang_major_minor("1.22")
+        self.assertEqual(result, ["4.17"])
+
+    @patch("pyartcd.pipelines.update_golang.ACTIVE_OCP_VERSIONS", ["4.16", "4.17", "4.18"])
+    @patch("pyartcd.pipelines.update_golang.get_github_client_for_org")
+    def test_multi_version_sorted(self, mock_gh):
+        """Multiple matching versions are returned sorted."""
+        repo = self._mock_repo(
+            {
+                "openshift-4.18": _make_group_yml_content(go_latest="1.22.5"),
+                "openshift-4.16": _make_group_yml_content(go_latest="1.22.12"),
+                "openshift-4.17": _make_group_yml_content(go_extra="1.22.0"),
+            }
+        )
+        mock_gh.return_value.get_repo.return_value = repo
+        result = get_active_versions_for_golang_major_minor("1.22")
+        self.assertEqual(result, ["4.16", "4.17", "4.18"])
+
+    @patch("pyartcd.pipelines.update_golang.ACTIVE_OCP_VERSIONS", ["4.18"])
+    @patch("pyartcd.pipelines.update_golang.get_github_client_for_org")
+    def test_honors_data_path_fork_repo(self, mock_gh):
+        """data_path selects the fork GitHub repo."""
+        repo = self._mock_repo(
+            {
+                "openshift-4.18": _make_group_yml_content(go_latest="1.22.12"),
+            }
+        )
+        mock_gh.return_value.get_repo.return_value = repo
+        result = get_active_versions_for_golang_major_minor(
+            "1.22",
+            data_path="https://github.com/myuser/ocp-build-data",
+        )
+        self.assertEqual(result, ["4.18"])
+        mock_gh.assert_called_with("myuser")
+        mock_gh.return_value.get_repo.assert_called_with("myuser/ocp-build-data")
+        repo.get_contents.assert_called_with("group.yml", ref="openshift-4.18")
+
+    @patch("pyartcd.pipelines.update_golang.ACTIVE_OCP_VERSIONS", ["4.16"])
+    @patch("pyartcd.pipelines.update_golang.get_github_client_for_org")
+    def test_unquoted_trailing_zero_version_matches(self, mock_gh):
+        """Unquoted YAML float like 'GO_LATEST: 1.20' must not be truncated to '1.2'."""
+        raw_yaml = b'vars:\n  GO_LATEST: 1.20\n'
+        repo = self._mock_repo({"openshift-4.16": raw_yaml})
+        mock_gh.return_value.get_repo.return_value = repo
+
+        result = get_active_versions_for_golang_major_minor("1.20")
+        self.assertEqual(
+            result,
+            ["4.16"],
+            "Unquoted trailing-zero version 1.20 was incorrectly truncated to 1.2",
+        )
+
+
 class TestMoveGolangBugs(IsolatedAsyncioTestCase):
     """Test the move_golang_bugs async function"""
 
+    def _patch_discovery(self, versions: list):
+        """Return a context-manager patch that makes version discovery return *versions*."""
+        return patch(
+            "pyartcd.pipelines.update_golang.get_active_versions_for_golang_major_minor",
+            return_value=versions,
+        )
+
     @patch("artcommonlib.exectools.cmd_assert_async")
     async def test_move_golang_bugs_with_cves(self, mock_cmd_assert):
-        """Test moving golang bugs with CVEs"""
-        await move_golang_bugs(
-            ocp_version="4.16",
-            cves=["CVE-2024-1234", "CVE-2024-5678"],
-            nvrs=["golang-1.20.12-2.el8"],
-            components=["openshift-golang-builder-container"],
-            force_update_tracker=False,
-            dry_run=False,
-        )
+        """Elliott is called once per discovered version; no --ocp-version flag appears."""
+        with self._patch_discovery(["4.16"]):
+            await move_golang_bugs(
+                golang_major_minor="1.20",
+                cves=["CVE-2024-1234", "CVE-2024-5678"],
+                nvrs=["golang-1.20.12-2.el8"],
+                components=["openshift-golang-builder-container"],
+                force_update_tracker=False,
+                dry_run=False,
+            )
 
         expected_cmd = [
             "elliott",
@@ -258,16 +440,32 @@ class TestMoveGolangBugs(IsolatedAsyncioTestCase):
             "openshift-golang-builder-container",
         ]
         mock_cmd_assert.assert_called_once_with(expected_cmd, log_stdout=True)
+        # No --ocp-version flag should appear in the actual command passed to the mock
+        self.assertNotIn("--ocp-version", mock_cmd_assert.call_args[0][0])
+
+    @patch("artcommonlib.exectools.cmd_assert_async")
+    async def test_move_golang_bugs_multi_version_loop(self, mock_cmd_assert):
+        """Elliott is called once per discovered version."""
+        with self._patch_discovery(["4.16", "4.17", "4.18"]):
+            await move_golang_bugs(golang_major_minor="1.22", dry_run=False)
+
+        self.assertEqual(mock_cmd_assert.call_count, 3)
+        groups = [call[0][0][2] for call in mock_cmd_assert.call_args_list]
+        self.assertEqual(groups, ["openshift-4.16", "openshift-4.17", "openshift-4.18"])
+        # No --ocp-version in any call
+        for call in mock_cmd_assert.call_args_list:
+            self.assertNotIn("--ocp-version", call[0][0])
 
     @patch("artcommonlib.exectools.cmd_assert_async")
     async def test_move_golang_bugs_with_force_update(self, mock_cmd_assert):
         """Test moving golang bugs with force update tracker"""
-        await move_golang_bugs(
-            ocp_version="4.16",
-            cves=["CVE-2024-1234"],
-            force_update_tracker=True,
-            dry_run=False,
-        )
+        with self._patch_discovery(["4.16"]):
+            await move_golang_bugs(
+                golang_major_minor="1.20",
+                cves=["CVE-2024-1234"],
+                force_update_tracker=True,
+                dry_run=False,
+            )
 
         mock_cmd_assert.assert_called_once()
         call_args = mock_cmd_assert.call_args[0][0]
@@ -276,15 +474,62 @@ class TestMoveGolangBugs(IsolatedAsyncioTestCase):
     @patch("artcommonlib.exectools.cmd_assert_async")
     async def test_move_golang_bugs_dry_run(self, mock_cmd_assert):
         """Test moving golang bugs in dry-run mode"""
-        await move_golang_bugs(
-            ocp_version="4.16",
-            cves=["CVE-2024-1234"],
-            dry_run=True,
-        )
+        with self._patch_discovery(["4.16"]):
+            await move_golang_bugs(
+                golang_major_minor="1.20",
+                cves=["CVE-2024-1234"],
+                dry_run=True,
+            )
 
         mock_cmd_assert.assert_called_once()
         call_args = mock_cmd_assert.call_args[0][0]
         self.assertIn("--dry-run", call_args)
+
+    @patch("artcommonlib.exectools.cmd_assert_async")
+    async def test_move_golang_bugs_no_active_versions(self, mock_cmd_assert):
+        """When discovery returns empty list, elliott is never called and no exception is raised."""
+        with self._patch_discovery([]):
+            await move_golang_bugs(golang_major_minor="1.22", dry_run=False)
+        mock_cmd_assert.assert_not_called()
+
+    @patch("artcommonlib.exectools.cmd_assert_async")
+    async def test_move_golang_bugs_forwards_data_path(self, mock_cmd_assert):
+        """data_path is forwarded to the version discovery helper."""
+        with patch(
+            "pyartcd.pipelines.update_golang.get_active_versions_for_golang_major_minor",
+            return_value=["4.18"],
+        ) as mock_discovery:
+            await move_golang_bugs(
+                golang_major_minor="1.22",
+                data_path="https://github.com/myuser/ocp-build-data",
+                dry_run=False,
+            )
+        mock_discovery.assert_called_once_with(
+            "1.22",
+            "https://github.com/myuser/ocp-build-data",
+        )
+
+    @patch("artcommonlib.exectools.cmd_assert_async")
+    async def test_move_golang_bugs_partial_failure(self, mock_cmd_assert):
+        """One version failing does not prevent other versions from being swept; exception aggregates failures."""
+
+        async def _side_effect(cmd, **kwargs):
+            group = cmd[2]  # e.g. "openshift-4.17"
+            if group == "openshift-4.17":
+                raise ChildProcessError("elliott failed for 4.17")
+
+        mock_cmd_assert.side_effect = _side_effect
+
+        with self._patch_discovery(["4.16", "4.17", "4.18"]):
+            with self.assertRaises(ChildProcessError) as ctx:
+                await move_golang_bugs(golang_major_minor="1.22", dry_run=False)
+
+        # All three versions were attempted
+        self.assertEqual(mock_cmd_assert.call_count, 3)
+        # Exception message names only the failed version
+        self.assertIn("4.17", str(ctx.exception))
+        self.assertNotIn("4.16", str(ctx.exception))
+        self.assertNotIn("4.18", str(ctx.exception))
 
 
 class TestUpdateGolangPipeline(IsolatedAsyncioTestCase):

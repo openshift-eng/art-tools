@@ -22,6 +22,7 @@ from artcommonlib.constants import (
     REGISTRY_REDHAT_IO,
     RHCOS_IMAGE_REPO,
 )
+from artcommonlib.github_auth import get_github_client_for_org
 from artcommonlib.konflux.konflux_build_record import KonfluxBuildOutcome, KonfluxBuildRecord
 from artcommonlib.konflux.konflux_db import KonfluxDb
 from artcommonlib.registry_config import RegistryConfig, RegistryCredential
@@ -33,6 +34,7 @@ from artcommonlib.util import (
     validate_build_priority,
 )
 from artcommonlib.variants import BuildVariant
+from elliottlib.cli.get_golang_report_cli import go_version_from_floating_tag, is_floating_golang_builder_tag
 
 from pyartcd import constants, jenkins, locks, util
 from pyartcd import record as record_util
@@ -40,6 +42,7 @@ from pyartcd.build_strategy import BuildStrategy
 from pyartcd.cli import cli, click_coroutine, pass_runtime
 from pyartcd.counter_models import BuildFailCounterContext, RebaseCounterContext
 from pyartcd.locks import Lock
+from pyartcd.pipelines.update_golang import get_active_versions_for_golang_major_minor
 from pyartcd.runtime import Runtime
 from pyartcd.util import (
     build_history_link_url,
@@ -515,28 +518,60 @@ class KonfluxOcpPipeline:
             self.runtime.logger.info('Not setting golang bugs to ON_QA since assembly is not stream')
             return
 
-        cmd = [
-            'elliott',
+        # Derive golang major.minor from the golang-builder floating tag in streams.yml (elliottlib).
+        repo = get_github_client_for_org("openshift-eng").get_repo("openshift-eng/ocp-build-data")
+        branch = f'openshift-{self.version}'
+        try:
+            streams_raw = repo.get_contents("streams.yml", ref=branch).decoded_content
+            streams_content = yaml.safe_load(streams_raw)
+        except Exception as exc:
+            self.runtime.logger.error("Could not load streams.yml for %s: %s", branch, exc)
+            self.slack_client.bind_channel(f'openshift-{self.version}')
+            await self.slack_client.say(
+                f'Golang bug sweep failed: could not load streams.yml for {branch}. Please investigate'
+            )
+            return
+
+        golang_major_minor: str | None = None
+        for _stream_name, info in (streams_content or {}).items():
+            image = info.get('image', '') if isinstance(info, dict) else ''
+            tag = image.split(':')[-1] if ':' in image else ''
+            if is_floating_golang_builder_tag(tag):
+                golang_major_minor = go_version_from_floating_tag(tag, ignore_rhel=True)
+                break
+
+        if not golang_major_minor:
+            self.runtime.logger.warning(
+                "No golang-builder floating tag found in streams.yml for %s; skipping golang bug sweep", branch
+            )
+            return
+
+        active_versions = get_active_versions_for_golang_major_minor(golang_major_minor, self.data_path)
+
+        # Build version-independent tail (mirrors move_golang_bugs pattern).
+        tail = [
             '--assembly',
             'stream',
-            f'--group=openshift-{self.version}',
             f'--registry-config={self._registry_auth_file}',
             "find-bugs:golang",
             "--analyze",
             "--update-tracker",
         ]
-
         if self.runtime.dry_run:
-            cmd.append('--dry-run')
+            tail.append('--dry-run')
 
-        try:
-            await exectools.cmd_assert_async(cmd)
-
-        except ChildProcessError:
-            if self.runtime.dry_run:
-                return
-            self.slack_client.bind_channel(f'openshift-{self.version}')
-            await self.slack_client.say(f'Golang bug sweep failed for {self.version}. Please investigate')
+        for ocp_version in active_versions:
+            cmd = ['elliott', f'--group=openshift-{ocp_version}'] + tail
+            try:
+                await exectools.cmd_assert_async(cmd)
+            except ChildProcessError:
+                if self.runtime.dry_run:
+                    continue
+                self.slack_client.bind_channel(f'openshift-{self.version}')
+                await self.slack_client.say(
+                    f'Golang bug sweep failed for {ocp_version} (golang {golang_major_minor}). Please investigate'
+                )
+                continue  # still attempt remaining versions
 
     async def sweep_second_fix_bugs(self):
         # find-bugs:second-fix closes CVE trackers that are not first-fix in pre-release branches
