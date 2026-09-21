@@ -196,6 +196,161 @@ class TestKonfluxBuildSelection(unittest.TestCase):
         self.assertEqual(result, [public_meta, excluded_meta])
 
 
+class TestBaseImageReleasePrioritisation(unittest.IsolatedAsyncioTestCase):
+    """Verify that base_image_release images are submitted in a separate phase
+    before leaf images, with an ``asyncio.sleep(0)`` yield in between.
+    """
+
+    @mock.patch("doozerlib.cli.images_konflux.asyncio.sleep", new_callable=mock.AsyncMock)
+    @mock.patch("doozerlib.cli.images_konflux.KonfluxImageBuilder")
+    @mock.patch("doozerlib.cli.images_konflux.trace.get_current_span")
+    async def test_base_image_release_tasks_created_before_yield(self, mock_get_span, mock_builder_cls, mock_sleep):
+        """base_image_release tasks must be created before ``asyncio.sleep(0)``
+        and leaf-image tasks after it, giving the base images a head start.
+        """
+        mock_get_span.return_value = mock.Mock()
+
+        # Build three mock metas: leaf-a, base-b (base_image_release), leaf-c
+        leaf_a = mock.Mock()
+        leaf_a.distgit_key = "leaf-a"
+        leaf_a.should_trigger_base_image_release.return_value = False
+
+        base_b = mock.Mock()
+        base_b.distgit_key = "base-b"
+        base_b.should_trigger_base_image_release.return_value = True
+
+        leaf_c = mock.Mock()
+        leaf_c.distgit_key = "leaf-c"
+        leaf_c.should_trigger_base_image_release.return_value = False
+
+        runtime = mock.Mock(spec=Runtime)
+        runtime.working_dir = "/tmp"
+        runtime.group = "test-group"
+        # Use a non-stream assembly to avoid triggering the stage_release path
+        runtime.assembly = "test"
+        runtime.variant = BuildVariant.OCP
+        runtime.source_resolver = mock.Mock(spec=SourceResolver)
+        runtime.konflux_db = mock.Mock()
+        runtime.konflux_db.bind = mock.Mock()
+        runtime.ordered_image_metas.return_value = [leaf_a, base_b, leaf_c]
+        runtime.exclude = ()
+        runtime.group_config = Model({})
+        runtime.record_logger = mock.Mock()
+        runtime.logger = mock.Mock()
+
+        # Track the order of build() calls relative to the sleep(0) yield.
+        call_log = []
+
+        async def build_side_effect(meta, **kwargs):
+            call_log.append(("build", meta.distgit_key))
+            return ("nvr", "plr-name", {})
+
+        async def sleep_side_effect(seconds):
+            call_log.append(("sleep", seconds))
+
+        mock_builder = mock.Mock()
+        mock_builder.build = mock.AsyncMock(side_effect=build_side_effect)
+        mock_builder._konflux_client.ensure_git_auth_secret = mock.AsyncMock(return_value="test-secret")
+        mock_builder._konflux_client.token_refresh_loop = mock.AsyncMock()
+        mock_builder._konflux_client.delete_git_auth_secret = mock.AsyncMock()
+        mock_builder._konflux_client.cleanup_stale_git_auth_secrets = mock.AsyncMock()
+        mock_builder_cls.return_value = mock_builder
+        mock_sleep.side_effect = sleep_side_effect
+
+        cli = KonfluxBuildCli(
+            runtime=runtime,
+            konflux_kubeconfig="/path/to/kubeconfig",
+            konflux_context="test-context",
+            konflux_namespace="test-namespace",
+            image_repo="test-repo",
+            registry_auth_file="/path/to/auth",
+            skip_checks=False,
+            dry_run=False,
+            plr_template="test-template",
+            build_priority="auto",
+        )
+
+        await cli.run()
+
+        # asyncio.create_task schedules the coroutine but the actual build
+        # call happens asynchronously; what we *can* verify is that sleep(0)
+        # was called (proving the yield happened) and the overall submission
+        # order is base-b first.
+        mock_sleep.assert_awaited_once_with(0)
+
+        build_calls = mock_builder.build.call_args_list
+        submitted_order = [call.args[0].distgit_key for call in build_calls]
+        self.assertEqual(submitted_order, ["base-b", "leaf-a", "leaf-c"])
+
+        # Verify the prioritisation was logged
+        runtime.logger.info.assert_any_call(
+            "Prioritised %d base_image_release image(s) for early PLR submission: %s",
+            1,
+            ["base-b"],
+        )
+
+    @mock.patch("doozerlib.cli.images_konflux.asyncio.sleep", new_callable=mock.AsyncMock)
+    @mock.patch("doozerlib.cli.images_konflux.KonfluxImageBuilder")
+    @mock.patch("doozerlib.cli.images_konflux.trace.get_current_span")
+    async def test_no_reordering_when_no_base_image_release(self, mock_get_span, mock_builder_cls, mock_sleep):
+        """When no image triggers base_image_release the original order is
+        preserved and no ``asyncio.sleep(0)`` yield occurs.
+        """
+        mock_get_span.return_value = mock.Mock()
+
+        leaf_a = mock.Mock()
+        leaf_a.distgit_key = "leaf-a"
+        leaf_a.should_trigger_base_image_release.return_value = False
+
+        leaf_b = mock.Mock()
+        leaf_b.distgit_key = "leaf-b"
+        leaf_b.should_trigger_base_image_release.return_value = False
+
+        runtime = mock.Mock(spec=Runtime)
+        runtime.working_dir = "/tmp"
+        runtime.group = "test-group"
+        runtime.assembly = "test"
+        runtime.variant = BuildVariant.OCP
+        runtime.source_resolver = mock.Mock(spec=SourceResolver)
+        runtime.konflux_db = mock.Mock()
+        runtime.konflux_db.bind = mock.Mock()
+        runtime.ordered_image_metas.return_value = [leaf_a, leaf_b]
+        runtime.exclude = ()
+        runtime.group_config = Model({})
+        runtime.record_logger = mock.Mock()
+        runtime.logger = mock.Mock()
+
+        mock_builder = mock.Mock()
+        mock_builder.build = mock.AsyncMock(return_value=("nvr", "plr-name", {}))
+        mock_builder._konflux_client.ensure_git_auth_secret = mock.AsyncMock(return_value="test-secret")
+        mock_builder._konflux_client.token_refresh_loop = mock.AsyncMock()
+        mock_builder._konflux_client.delete_git_auth_secret = mock.AsyncMock()
+        mock_builder._konflux_client.cleanup_stale_git_auth_secrets = mock.AsyncMock()
+        mock_builder_cls.return_value = mock_builder
+
+        cli = KonfluxBuildCli(
+            runtime=runtime,
+            konflux_kubeconfig="/path/to/kubeconfig",
+            konflux_context="test-context",
+            konflux_namespace="test-namespace",
+            image_repo="test-repo",
+            registry_auth_file="/path/to/auth",
+            skip_checks=False,
+            dry_run=False,
+            plr_template="test-template",
+            build_priority="auto",
+        )
+
+        await cli.run()
+
+        build_calls = mock_builder.build.call_args_list
+        submitted_order = [call.args[0].distgit_key for call in build_calls]
+        self.assertEqual(submitted_order, ["leaf-a", "leaf-b"])
+
+        # No sleep(0) yield should happen when there are no base_image_release images
+        mock_sleep.assert_not_awaited()
+
+
 class TestKonfluxRebaseCli(unittest.IsolatedAsyncioTestCase):
     """Tests for beta:images:konflux:rebase state recording."""
 
