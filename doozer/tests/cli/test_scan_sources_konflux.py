@@ -1658,3 +1658,134 @@ class TestOkdBaseChainUpstreamChanges(TestScanSourcesKonflux):
 
         # Child's get_latest_build should NOT have been called — skipped
         child.get_latest_build.assert_not_called()
+
+
+class TestCheckChangingRpmsBuildRoot(TestScanSourcesKonflux):
+    """Test BUILD_ROOT_CHANGING detection in check_changing_rpms."""
+
+    def setUp(self):
+        super().setUp()
+        self.rpm_meta = MagicMock()
+        self.rpm_meta.name = 'test-rpm'
+        self.rpm_meta.distgit_key = 'test-rpm'
+        self.rpm_meta.qualified_key = 'rpm:test-rpm'
+        self.rpm_meta.config.targets = ['el9']
+        self.rpm_meta.determine_rhel_targets.return_value = [9]
+        self.rpm_meta.get_package_name.return_value = 'test-rpm-package'
+        self.rpm_meta.branch.return_value = 'rhaos-4.20-rhel-9'
+        self.rpm_meta.build_root_tag.return_value = 'rhaos-4.20-rhel-9-build'
+
+        # Set up the scanner with our RPM meta
+        self.scanner.all_rpm_metas = {self.rpm_meta}
+
+        # Build record where upstream commit matches (no prior rebuild needed)
+        self.rpm_build_record = MagicMock(spec=KonfluxBuildRecord)
+        self.rpm_build_record.nvr = 'test-rpm-1.0-1.el9'
+        self.rpm_build_record.commitish = 'abc123'
+        self.rpm_build_record.start_time = None
+
+        self.scanner.latest_rpm_build_records_map = {
+            'test-rpm': {'el9': self.rpm_build_record},
+        }
+
+        # group_config needs attribute access (not dict access) for scan_freshness etc.
+        self.runtime.group_config = MagicMock()
+        self.runtime.group_config.scan_freshness.threshold_hours = 6
+
+    async def test_build_root_changed_triggers_rebuild(self):
+        """When the buildroot tag has changed since the eldest RPM build, emit BUILD_ROOT_CHANGING."""
+        # The upstream commit matches the latest build, so earlier checks pass
+        self.rpm_meta.get_latest_build = AsyncMock(
+            side_effect=[
+                None,  # No failed build
+                self.rpm_build_record,  # upstream commit build found
+            ]
+        )
+
+        # Mock the koji session returned by pooled_koji_client_session
+        mock_koji_api = MagicMock()
+        self.runtime.pooled_koji_client_session.return_value.__enter__ = MagicMock(return_value=mock_koji_api)
+        self.runtime.pooled_koji_client_session.return_value.__exit__ = MagicMock(return_value=False)
+
+        # getLatestRPMS returns (rpms, builds) — we need [1] which is the builds list
+        mock_koji_api.getLatestRPMS.return_value = (
+            [],  # rpms (unused)
+            [
+                {'nvr': 'test-rpm-1.0-1.el9', 'creation_event_id': 100},
+                {'nvr': 'test-rpm-1.0-1.el9', 'creation_event_id': 50},  # eldest
+            ],
+        )
+
+        # Simulate a buildroot change detected
+        with (
+            patch('doozerlib.cli.scan_sources_konflux.brew') as mock_brew,
+            patch('doozerlib.cli.scan_sources_konflux.cmd_gather_async', new_callable=AsyncMock) as mock_cmd,
+        ):
+            mock_cmd.return_value = (0, 'abc123\n', '')
+            mock_brew.has_tag_changed_since_build.return_value = {'tag_change': True}
+
+            await self.scanner.check_changing_rpms()
+
+        self.assertIn('test-rpm', self.scanner.changing_rpm_names)
+        self.assertEqual(
+            self.scanner.assessment_code['rpm:test-rpm+True'],
+            RebuildHintCode.BUILD_ROOT_CHANGING,
+        )
+
+    async def test_build_root_unchanged_no_rebuild(self):
+        """When the buildroot tag has NOT changed, no rebuild is triggered."""
+        # The upstream commit matches the latest build
+        self.rpm_meta.get_latest_build = AsyncMock(
+            side_effect=[
+                None,  # No failed build
+                self.rpm_build_record,  # upstream commit build found
+            ]
+        )
+
+        mock_koji_api = MagicMock()
+        self.runtime.pooled_koji_client_session.return_value.__enter__ = MagicMock(return_value=mock_koji_api)
+        self.runtime.pooled_koji_client_session.return_value.__exit__ = MagicMock(return_value=False)
+
+        mock_koji_api.getLatestRPMS.return_value = (
+            [],
+            [{'nvr': 'test-rpm-1.0-1.el9', 'creation_event_id': 100}],
+        )
+
+        # No buildroot change detected
+        with (
+            patch('doozerlib.cli.scan_sources_konflux.brew') as mock_brew,
+            patch('doozerlib.cli.scan_sources_konflux.cmd_gather_async', new_callable=AsyncMock) as mock_cmd,
+        ):
+            mock_cmd.return_value = (0, 'abc123\n', '')
+            mock_brew.has_tag_changed_since_build.return_value = None
+
+            await self.scanner.check_changing_rpms()
+
+        self.assertNotIn('test-rpm', self.scanner.changing_rpm_names)
+
+    async def test_build_root_no_eldest_rpm_no_rebuild(self):
+        """When getLatestRPMS returns no builds, skip buildroot check without error."""
+        # The upstream commit matches the latest build
+        self.rpm_meta.get_latest_build = AsyncMock(
+            side_effect=[
+                None,  # No failed build
+                self.rpm_build_record,  # upstream commit build found
+            ]
+        )
+
+        mock_koji_api = MagicMock()
+        self.runtime.pooled_koji_client_session.return_value.__enter__ = MagicMock(return_value=mock_koji_api)
+        self.runtime.pooled_koji_client_session.return_value.__exit__ = MagicMock(return_value=False)
+
+        # No RPM builds found
+        mock_koji_api.getLatestRPMS.return_value = ([], [])
+
+        with (
+            patch('doozerlib.cli.scan_sources_konflux.brew'),
+            patch('doozerlib.cli.scan_sources_konflux.cmd_gather_async', new_callable=AsyncMock) as mock_cmd,
+        ):
+            mock_cmd.return_value = (0, 'abc123\n', '')
+
+            await self.scanner.check_changing_rpms()
+
+        self.assertNotIn('test-rpm', self.scanner.changing_rpm_names)

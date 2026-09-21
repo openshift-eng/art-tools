@@ -31,7 +31,7 @@ from artcommonlib.variants import BuildVariant
 from async_lru import alru_cache
 from tenacity import retry, retry_if_not_exception_type, stop_after_attempt, wait_fixed
 
-from doozerlib import rhcos, util
+from doozerlib import brew, rhcos, util
 from doozerlib.build_info import KonfluxBuildRecordInspector
 from doozerlib.cli import cli, click_coroutine, pass_runtime
 from doozerlib.cli import release_gen_payload as rgp
@@ -1749,6 +1749,40 @@ class ConfigScanSources:
                     ),
                 )
                 return
+
+            # Check if the buildroot tag has changed since the last RPM build
+            with self.runtime.pooled_koji_client_session() as koji_api:
+                package_name = rpm_meta.get_package_name()
+                tag = rpm_meta.branch() + '-candidate'
+                latest_rpms = koji_api.getLatestRPMS(tag=tag, package=package_name)[1]
+
+                eldest_rpm_build = None
+                for latest_rpm_build in latest_rpms:
+                    if (
+                        not eldest_rpm_build
+                        or latest_rpm_build['creation_event_id'] < eldest_rpm_build['creation_event_id']
+                    ):
+                        eldest_rpm_build = latest_rpm_build
+
+                if eldest_rpm_build:
+                    self.logger.info(
+                        'Determining build root changes for package %s in tag %s and its eldest rpm %s',
+                        package_name,
+                        tag,
+                        eldest_rpm_build,
+                    )
+                    build_root_change = brew.has_tag_changed_since_build(
+                        self.runtime, koji_api, eldest_rpm_build, rpm_meta.build_root_tag(), inherit=True
+                    )
+                    if build_root_change:
+                        self.add_rpm_meta_change(
+                            rpm_meta,
+                            RebuildHint(
+                                code=RebuildHintCode.BUILD_ROOT_CHANGING,
+                                reason='Oldest package rpm build was before buildroot change',
+                            ),
+                        )
+                        return
 
         tasks = []
         for rpm_meta in self.all_rpm_metas:
