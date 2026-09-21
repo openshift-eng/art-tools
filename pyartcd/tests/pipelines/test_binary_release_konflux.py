@@ -187,9 +187,7 @@ class TestBinaryReleaseKonfluxPipeline(unittest.TestCase):
             config = pipeline.create_shipment_config(snapshot)
 
         self.assertEqual(config.shipment.environments.stage.releasePlan, "Skipped")
-        self.assertEqual(
-            config.shipment.environments.prod.releasePlan, "art-agent-installer-iso-release-4-22"
-        )
+        self.assertEqual(config.shipment.environments.prod.releasePlan, "art-agent-installer-iso-release-4-22")
         self.assertTrue(pipeline.stage_release_skipped)
 
     def test_create_shipment_config_rejects_skipped_stage_for_non_whitelisted_product(self):
