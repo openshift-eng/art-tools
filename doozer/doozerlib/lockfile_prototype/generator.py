@@ -553,6 +553,7 @@ class RpmLockfilePrototypeGenerator:
                 )
 
             extra_packages: list[str] = list(cat_packages.get(stage_num, []))
+            dockerfile_install_pkgs = _extract_install_packages(entries, stage_num)
 
             reinstall_pkgs: list[str] | None = None
             upgrade_pkgs: list[str | ArchSpecificPackage] | None = None
@@ -611,6 +612,7 @@ class RpmLockfilePrototypeGenerator:
                 reinstall_packages=reinstall_pkgs,
                 containerfile_path=str(dockerfile_path),
                 upgrade_packages=upgrade_pkgs,
+                containerfile_install_packages=dockerfile_install_pkgs,
                 bare_context=bare_context,
             )
 
@@ -619,7 +621,6 @@ class RpmLockfilePrototypeGenerator:
             # upgrade captures them, but cachi2 needs them in the lockfile.
             # Runs for every image-backed stage, not just final/bare-update.
             if image_pullspec and not bare_context:
-                dockerfile_install_pkgs = _extract_install_packages(entries, stage_num)
                 if dockerfile_install_pkgs:
                     if upgrade_pkgs:
                         base_pkg_set = {_package_name(package) for package in upgrade_pkgs}
@@ -803,6 +804,7 @@ class RpmLockfilePrototypeGenerator:
         reinstall_packages: list[str] | None = None,
         containerfile_path: str | None = None,
         upgrade_packages: list[str | ArchSpecificPackage] | None = None,
+        containerfile_install_packages: set[str] | None = None,
         bare_context: bool = False,
     ) -> LockfileData | None:
         """
@@ -825,6 +827,8 @@ class RpmLockfilePrototypeGenerator:
                 package extraction.
             upgrade_packages (list[str | ArchSpecificPackage] | None): Base image packages to
                 upgrade (from bare dnf/yum update commands).
+            containerfile_install_packages (set[str] | None): Packages explicitly
+                installed by the Containerfile.
             bare_context (bool): Whether to emit a bare resolution context.
         Return Value(s):
             LockfileData | None: Lockfile data, or None if all packages filtered out.
@@ -843,6 +847,7 @@ class RpmLockfilePrototypeGenerator:
         # error when the package is also in upgradePackages.
         remaining_reinstall = list(reinstall_packages) if reinstall_packages else []
         remaining_upgrade = list(upgrade_packages) if upgrade_packages else []
+        containerfile_install_packages = containerfile_install_packages or set()
         real_retries = 0
         reinstall_strip_count = 0
         excluded_packages: set[str] = set()
@@ -881,10 +886,28 @@ class RpmLockfilePrototypeGenerator:
                 missing = RpmResolver.parse_missing_packages(str(e))
                 if not missing:
                     raise
+                upgrade_names = {_package_name(package) for package in remaining_upgrade}
+                upgrade_hit = missing & upgrade_names if remaining_upgrade else set()
+                containerfile_upgrade_hit = upgrade_hit & containerfile_install_packages
+                if containerfile_upgrade_hit:
+                    remaining_upgrade = [
+                        package
+                        for package in remaining_upgrade
+                        if _package_name(package) not in containerfile_upgrade_hit
+                    ]
+                    missing -= containerfile_upgrade_hit
+                    self.logger.info(
+                        f"{distgit_key}: stage {stage_num}: retrying Containerfile packages "
+                        f"as installs instead of upgrades: {sorted(containerfile_upgrade_hit)}"
+                    )
+                    if not missing:
+                        continue
+                    upgrade_names = {_package_name(package) for package in remaining_upgrade}
+                    upgrade_hit = missing & upgrade_names if remaining_upgrade else set()
                 # When using packagesFromContainerfile, the unavailable packages
                 # come from the upstream extraction — we can't strip them from
                 # our side. Add them to excludePackages so the tool skips them.
-                if containerfile_path:
+                if containerfile_path and not upgrade_hit:
                     new_excludes = missing - excluded_packages
                     if new_excludes:
                         excluded_packages |= new_excludes
@@ -895,7 +918,6 @@ class RpmLockfilePrototypeGenerator:
                         continue
                 # Drop all bare-update upgrade packages on any miss
                 # (all-or-nothing: partial upgrades cause EVR conflicts).
-                upgrade_names = {_package_name(package) for package in remaining_upgrade}
                 upgrade_hit = missing & upgrade_names if remaining_upgrade else set()
                 if upgrade_hit:
                     self.logger.info(
@@ -1058,6 +1080,7 @@ class RpmLockfilePrototypeGenerator:
         reinstall_packages: list[str] | None = None,
         containerfile_path: str | None = None,
         upgrade_packages: list[str | ArchSpecificPackage] | None = None,
+        containerfile_install_packages: set[str] | None = None,
         bare_context: bool = False,
     ) -> LockfileData | None:
         """
@@ -1080,6 +1103,8 @@ class RpmLockfilePrototypeGenerator:
                 package extraction.
             upgrade_packages (list[str | ArchSpecificPackage] | None): Base image packages to
                 upgrade (from bare dnf/yum update commands).
+            containerfile_install_packages (set[str] | None): Packages explicitly
+                installed by the Containerfile.
             bare_context (bool): Whether to emit a bare resolution context.
         Return Value(s):
             LockfileData | None: Resolved lockfile with consistent
@@ -1095,6 +1120,7 @@ class RpmLockfilePrototypeGenerator:
             reinstall_packages=reinstall_packages,
             containerfile_path=containerfile_path,
             upgrade_packages=upgrade_packages,
+            containerfile_install_packages=containerfile_install_packages,
             bare_context=bare_context,
         )
         if not first_pass:
@@ -1136,6 +1162,7 @@ class RpmLockfilePrototypeGenerator:
                 reinstall_packages=pinned_reinstall,
                 containerfile_path=containerfile_path,
                 upgrade_packages=pinned_upgrade,
+                containerfile_install_packages=containerfile_install_packages,
                 bare_context=bare_context,
             )
         except RuntimeError as e:
