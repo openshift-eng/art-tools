@@ -30,10 +30,22 @@ PUBLIC_ERRATA_URL = "https://access.redhat.com/errata"
 # Konflux stage release and stage CDN publish. Use only with explicit team
 # approval. When setting this in ocp-shipment-data config.yaml, leave a caution
 # comment at the call site. Prod must never use this sentinel.
+#
+# The product (shipment.metadata.product / ocp-build-data group ``product``)
+# must also appear in SKIP_STAGE_ALLOWED_PRODUCTS — config comments alone are
+# not sufficient.
 SKIPPED_RELEASE_PLAN = "Skipped"
 STAGE_RELEASE_SKIPPED_LABEL = "stage-release-skipped"
 # Orange / apricot — distinct from the blue *-release-success project labels.
 STAGE_RELEASE_SKIPPED_LABEL_COLOR = "#ED9121"
+
+# Products allowed to use stage releasePlan: Skipped. Keep in sync with the
+# duplicate list in shipment-ci pipelines/generate_ci_files.py.
+SKIP_STAGE_ALLOWED_PRODUCTS = frozenset(
+    {
+        "openshift_agent_installer",  # OVE ISO (installer-ove-ui)
+    }
+)
 
 
 def is_release_plan_skipped(release_plan: str | None) -> bool:
@@ -44,8 +56,27 @@ def is_release_plan_skipped(release_plan: str | None) -> bool:
     ocp-shipment-data config.yaml, leave a caution comment at the call site.
 
     Prod releasePlan must never be this sentinel; callers must reject that case.
+    The product must also be listed in SKIP_STAGE_ALLOWED_PRODUCTS — see
+    ``assert_product_may_skip_stage``.
     """
     return bool(release_plan) and release_plan.strip().casefold() == "skipped"
+
+
+def assert_product_may_skip_stage(product: str | None) -> None:
+    """Raise ValueError unless product is whitelisted for skip-stage.
+
+    EXTRAORDINARY USE ONLY. Call this whenever stage releasePlan is the skip
+    sentinel so non-approved products cannot opt out of stage via config alone.
+    """
+    if product in SKIP_STAGE_ALLOWED_PRODUCTS:
+        return
+    allowed = ", ".join(sorted(SKIP_STAGE_ALLOWED_PRODUCTS)) or "(none)"
+    raise ValueError(
+        f"Product {product!r} is not allowed to use stage releasePlan: {SKIPPED_RELEASE_PLAN}. "
+        f"Only whitelisted products may skip stage: {allowed}. "
+        f"Add the product to SKIP_STAGE_ALLOWED_PRODUCTS in elliottlib.shipment_utils "
+        f"(and the duplicate list in shipment-ci) after team approval."
+    )
 
 
 def strip_advisory_cross_reference(text: str, rpm_name: str) -> str:

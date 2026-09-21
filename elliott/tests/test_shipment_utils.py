@@ -956,6 +956,15 @@ class TestIsReleasePlanSkipped(unittest.TestCase):
         self.assertEqual(shipment_utils.STAGE_RELEASE_SKIPPED_LABEL, "stage-release-skipped")
         self.assertEqual(shipment_utils.STAGE_RELEASE_SKIPPED_LABEL_COLOR, "#ED9121")
         self.assertTrue(shipment_utils.is_release_plan_skipped(shipment_utils.SKIPPED_RELEASE_PLAN))
+        self.assertIn("openshift_agent_installer", shipment_utils.SKIP_STAGE_ALLOWED_PRODUCTS)
+
+    def test_assert_product_may_skip_stage(self):
+        shipment_utils.assert_product_may_skip_stage("openshift_agent_installer")
+        with self.assertRaises(ValueError) as ctx:
+            shipment_utils.assert_product_may_skip_stage("oc-mirror")
+        self.assertIn("not allowed to use stage releasePlan", str(ctx.exception))
+        with self.assertRaises(ValueError):
+            shipment_utils.assert_product_may_skip_stage(None)
 
 
 if __name__ == '__main__':

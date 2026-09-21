@@ -165,9 +165,38 @@ class TestBinaryReleaseKonfluxPipeline(unittest.TestCase):
                 pipeline.create_shipment_config(snapshot)
 
     def test_create_shipment_config_accepts_skipped_stage(self):
-        """stage releasePlan: Skipped is allowed; prod remains a real ReleasePlan."""
+        """stage releasePlan: Skipped is allowed for whitelisted products."""
         pipeline = self._make_pipeline()
         pipeline.create_mr = True
+        pipeline.product = "openshift_agent_installer"
+        snapshot = _make_snapshot(app="installer-ove-ui-4-22")
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            pipeline.shipment_data_repo._directory = Path(tmpdir)
+            config_path = Path(tmpdir) / "config.yaml"
+            config_path.write_text(
+                "applications:\n"
+                "  installer-ove-ui-4-22:\n"
+                "    environments:\n"
+                "      stage:\n"
+                "        releasePlan: Skipped\n"
+                "      prod:\n"
+                "        releasePlan: art-agent-installer-iso-release-4-22\n"
+            )
+
+            config = pipeline.create_shipment_config(snapshot)
+
+        self.assertEqual(config.shipment.environments.stage.releasePlan, "Skipped")
+        self.assertEqual(
+            config.shipment.environments.prod.releasePlan, "art-agent-installer-iso-release-4-22"
+        )
+        self.assertTrue(pipeline.stage_release_skipped)
+
+    def test_create_shipment_config_rejects_skipped_stage_for_non_whitelisted_product(self):
+        """Non-whitelisted products cannot use stage releasePlan: Skipped."""
+        pipeline = self._make_pipeline()
+        pipeline.create_mr = True
+        # product remains "oc-mirror" from _make_pipeline — not on the whitelist
         snapshot = _make_snapshot()
 
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -183,11 +212,11 @@ class TestBinaryReleaseKonfluxPipeline(unittest.TestCase):
                 "        releasePlan: oc-mirror-cdn-prod\n"
             )
 
-            config = pipeline.create_shipment_config(snapshot)
+            with self.assertRaises(ValueError) as ctx:
+                pipeline.create_shipment_config(snapshot)
 
-        self.assertEqual(config.shipment.environments.stage.releasePlan, "Skipped")
-        self.assertEqual(config.shipment.environments.prod.releasePlan, "oc-mirror-cdn-prod")
-        self.assertTrue(pipeline.stage_release_skipped)
+        self.assertIn("not allowed to use stage releasePlan", str(ctx.exception))
+        self.assertFalse(pipeline.stage_release_skipped)
 
     def test_create_shipment_config_rejects_skipped_prod(self):
         """prod releasePlan: Skipped is forbidden."""

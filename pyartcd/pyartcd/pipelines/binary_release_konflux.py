@@ -27,7 +27,11 @@ from elliottlib.shipment_model import (
     Snapshot,
     SnapshotSpec,
 )
-from elliottlib.shipment_utils import SKIPPED_RELEASE_PLAN, is_release_plan_skipped
+from elliottlib.shipment_utils import (
+    SKIPPED_RELEASE_PLAN,
+    assert_product_may_skip_stage,
+    is_release_plan_skipped,
+)
 
 from pyartcd.cli import cli, click_coroutine, pass_runtime
 from pyartcd.click_validators import validate_release_date
@@ -347,13 +351,16 @@ class BinaryReleaseKonfluxPipeline:
 
         # EXTRAORDINARY: stage releasePlan: Skipped bypasses Konflux stage release.
         # Use only with explicit team approval; leave a caution comment in config.yaml.
+        # Product must also be listed in SKIP_STAGE_ALLOWED_PRODUCTS.
         if is_release_plan_skipped(stage_rpa):
+            assert_product_may_skip_stage(self.product)
             stage_rpa = SKIPPED_RELEASE_PLAN
             self.stage_release_skipped = True
             self.logger.warning(
-                "EXTRAORDINARY: stage releasePlan for '%s' is %r — Konflux stage release "
-                "and stage CDN publish will be skipped. Team approval required.",
+                "EXTRAORDINARY: stage releasePlan for '%s' (product %r) is %r — Konflux stage "
+                "release and stage CDN publish will be skipped. Team approval required.",
                 effective_key,
+                self.product,
                 SKIPPED_RELEASE_PLAN,
             )
 
