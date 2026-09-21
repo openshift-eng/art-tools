@@ -23,6 +23,7 @@ from artcommonlib.build_visibility import BuildVisibility, get_visibility_suffix
 from artcommonlib.constants import GOLANG_NVR_ENV, GOLANG_NVR_LABEL
 from artcommonlib.konflux.konflux_build_record import Engine, KonfluxBuildRecord
 from artcommonlib.model import ListModel, Missing, Model
+from artcommonlib.product_catalog import find_product_config
 from artcommonlib.telemetry import start_as_current_span_async
 from artcommonlib.util import deep_merge, detect_package_managers, is_cachito_enabled, oc_image_info_for_arch_async
 from artcommonlib.variants import BuildVariant
@@ -41,22 +42,21 @@ from doozerlib.source_resolver import SourceResolution, SourceResolver
 from opentelemetry import trace
 from tenacity import retry, stop_after_attempt, wait_fixed
 
-# Product name mapping for CPE labels
-CPE_PRODUCT_NAME_MAPPING = {
-    'rhacm2': 'acm',
-    'multicluster-engine': 'multicluster_engine',
-    'rhmtc': 'rhmt',
-    'oadp': 'openshift_api_data_protection',
-    'mta': 'migration_toolkit_applications',
-    'logging': 'logging',
-    'openshift-logging': 'logging',
-    'cert-manager': 'cert_manager',
-    'external-secrets-operator': 'external_secrets_operator',
-    'zero-trust-workload-identity-manager': 'zero_trust_workload_identity_manager',
-}
-
 LOGGER = logging.getLogger(__name__)
 TRACER = trace.get_tracer(__name__)
+
+
+def _get_cpe_product_name(product: str) -> str:
+    """
+    Resolve the product name used in generated CPE labels.
+
+    Arg(s):
+        product: Product name from the group configuration.
+    Return Value(s):
+        str: CPE product name, or the raw product name when unmapped.
+    """
+    config = find_product_config(product)
+    return config.cpe_name if config else product
 
 
 class KonfluxRebaser:
@@ -1263,8 +1263,7 @@ class KonfluxRebaser:
         # "202509030239.p2.gfe588cb.assembly.stream.el9" -> "el9"
         rhel_version = release.split(".")[-1]
         product = self._runtime.group_config.product if self._runtime.group_config.product else "openshift"
-        # Apply product name mapping for CPE labels
-        cpe_product_name = CPE_PRODUCT_NAME_MAPPING.get(product, product)
+        cpe_product_name = _get_cpe_product_name(product)
         dfp.labels["cpe"] = f"cpe:/a:redhat:{cpe_product_name}:{cleaned_version}::{rhel_version}"
 
         # Set the distgit repo name

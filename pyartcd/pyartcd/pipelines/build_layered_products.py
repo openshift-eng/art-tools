@@ -9,7 +9,7 @@ import click
 import yaml
 from artcommonlib import exectools
 from artcommonlib.build_visibility import is_nvr_embargoed
-from artcommonlib.constants import PRODUCT_KUBECONFIG_MAP
+from artcommonlib.product_catalog import get_kubeconfig_env_vars
 from artcommonlib.util import resolve_konflux_kubeconfig_by_product, resolve_konflux_namespace_by_product
 from artcommonlib.variants import BuildVariant, get_build_variant_for_product
 from doozerlib.constants import KONFLUX_DEFAULT_IMAGE_REPO
@@ -407,7 +407,7 @@ class BuildLayeredProductsPipeline:
 
         kubeconfig = resolve_konflux_kubeconfig_by_product(product, self.kubeconfig)
         if not kubeconfig:
-            available_env_vars = list(PRODUCT_KUBECONFIG_MAP.values())
+            available_env_vars = get_kubeconfig_env_vars()
             raise ValueError(
                 f"Kubeconfig required for Konflux builds. Provide --kubeconfig parameter "
                 f"or set one of: {', '.join(available_env_vars)}"

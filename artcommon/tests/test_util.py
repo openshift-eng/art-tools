@@ -349,6 +349,14 @@ alternative_upstream:
             ("logging-images-base-silent", "logging-images-base"),
         )
 
+    def test_product_resolvers_normalize_logging_alias(self):
+        """Resolve product aliases consistently across Konflux resolvers."""
+        self.assertEqual(util.resolve_konflux_namespace_by_product(" logging "), "art-logging-tenant")
+        self.assertEqual(
+            util.resolve_konflux_base_image_release_targets("logging"),
+            util.resolve_konflux_base_image_release_targets("openshift-logging"),
+        )
+
     def test_resolve_konflux_base_image_release_targets_unknown_defaults_to_ocp(self):
         self.assertEqual(
             util.resolve_konflux_base_image_release_targets("unknown-product"),

@@ -81,6 +81,13 @@ class TestRunFor(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(start_build.call_args.kwargs["ec_policy"], "rhtap-releng-tenant/registry-art-logging-stage")
         self.assertEqual(start_build.call_args.kwargs["fbc_ec_policy"], "rhtap-releng-tenant/fbc-stage")
 
+    async def test_logging_alias_uses_stage_fbc_policy(self):
+        """Resolve the legacy logging product key through the registry."""
+        _, _, start_build = await self._run("logging-6.2", {"product": " logging "})
+
+        self.assertEqual(start_build.call_args.kwargs["ec_policy"], "rhtap-releng-tenant/registry-art-logging-stage")
+        self.assertEqual(start_build.call_args.kwargs["fbc_ec_policy"], "rhtap-releng-tenant/fbc-stage")
+
     async def test_oc_mirror_uses_registry_standard_and_no_fbc_policy(self):
         _, _, start_build = await self._run("oc-mirror-2.0", {"product": "oc-mirror"})
 

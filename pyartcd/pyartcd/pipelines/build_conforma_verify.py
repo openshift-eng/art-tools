@@ -8,7 +8,7 @@ from typing import List, Optional
 
 import click
 from artcommonlib import exectools, logutil
-from artcommonlib.constants import KONFLUX_DEFAULT_NAMESPACE, PRODUCT_KUBECONFIG_MAP, PRODUCT_NAMESPACE_MAP
+from artcommonlib.constants import KONFLUX_DEFAULT_NAMESPACE
 from artcommonlib.konflux.konflux_build_record import (
     Engine,
     KonfluxBuildOutcome,
@@ -18,6 +18,7 @@ from artcommonlib.konflux.konflux_build_record import (
     KonfluxRecord,
 )
 from artcommonlib.konflux.konflux_db import KonfluxDb
+from artcommonlib.product_catalog import find_product_config
 from artcommonlib.util import oc_image_info_async
 from doozerlib.backend.konflux_client import KonfluxClient, get_common_runtime_watcher_labels
 from doozerlib.backend.pipelinerun_utils import PipelineRunInfo
@@ -118,11 +119,12 @@ class BuildConformaVerifyPipeline:
         product = group_config.get('product')
         if not product:
             raise ValueError(f"No product configured for layered-product group '{self.group}'")
-        if product not in PRODUCT_NAMESPACE_MAP or product not in PRODUCT_KUBECONFIG_MAP:
+        config = find_product_config(product)
+        if config is None or config.namespace is None or config.kubeconfig_env is None:
             raise ValueError(f"Unsupported layered-product group '{self.group}' product '{product}'")
 
-        self.namespace = PRODUCT_NAMESPACE_MAP[product]
-        self.kubeconfig_env_var = PRODUCT_KUBECONFIG_MAP[product]
+        self.namespace = config.namespace
+        self.kubeconfig_env_var = config.kubeconfig_env
 
     async def run(self):
         if not self.group.startswith('openshift-'):
