@@ -3,6 +3,7 @@ Tests for the unified product mapping catalog.
 """
 
 import unittest
+from dataclasses import FrozenInstanceError, is_dataclass
 
 from artcommonlib.product_catalog import (
     PRODUCT_CATALOG,
@@ -12,21 +13,29 @@ from artcommonlib.product_catalog import (
 )
 from artcommonlib.product_models import ConformaPolicies, ProductConfig, ReleaseTarget
 from artcommonlib.variants import ProductId
-from pydantic import BaseModel
 
 
 class TestProductCatalog(unittest.TestCase):
-    def test_product_config_is_a_pydantic_model(self):
-        """Validate product configuration through a Pydantic model."""
+    def test_product_config_is_a_frozen_dataclass(self):
+        """Represent product configuration as an immutable dataclass."""
         config = get_product_config("ocp")
 
         self.assertIsInstance(config, ProductConfig)
-        self.assertIsInstance(config, BaseModel)
+        self.assertTrue(is_dataclass(config))
+        with self.assertRaises(FrozenInstanceError):
+            config.namespace = "mutated"
 
-    def test_product_catalog_contains_only_pydantic_models(self):
-        """Keep the product catalog as an explicit collection of models."""
+    def test_product_catalog_contains_only_dataclasses(self):
+        """Keep the product catalog as an explicit collection of dataclasses."""
         self.assertIsInstance(PRODUCT_CATALOG, tuple)
-        self.assertTrue(all(isinstance(config, ProductConfig) for config in PRODUCT_CATALOG))
+        self.assertTrue(all(is_dataclass(config) for config in PRODUCT_CATALOG))
+
+    def test_product_config_release_plans_are_immutable(self):
+        """Prevent callers from mutating a product's release-plan mapping."""
+        config = get_product_config("ocp")
+
+        with self.assertRaises(TypeError):
+            config.fbc_stage_release_plans[(5, 2)] = "unexpected-plan"
 
     def test_product_names_and_aliases_are_unique(self):
         """Keep canonical product names and aliases unambiguous."""

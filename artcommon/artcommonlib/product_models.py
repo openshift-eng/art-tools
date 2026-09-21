@@ -1,15 +1,16 @@
 """
-Pydantic models for product configuration.
+Immutable dataclasses for product configuration.
 """
 
 from collections.abc import Mapping
+from dataclasses import dataclass, field
 from types import MappingProxyType
 
 from artcommonlib.product_ids import ProductId
-from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 
-class ReleaseTarget(BaseModel):
+@dataclass(frozen=True, slots=True)
+class ReleaseTarget:
     """
     Konflux ReleasePlan and Application pair.
 
@@ -18,13 +19,12 @@ class ReleaseTarget(BaseModel):
         application: Konflux Application name.
     """
 
-    model_config = ConfigDict(extra="forbid", frozen=True)
-
     release_plan: str
     application: str
 
 
-class ConformaPolicies(BaseModel):
+@dataclass(frozen=True, slots=True)
+class ConformaPolicies:
     """
     Conforma stage policies for image and optional FBC verification.
 
@@ -33,13 +33,12 @@ class ConformaPolicies(BaseModel):
         fbc_policy: FBC policy resource, if configured.
     """
 
-    model_config = ConfigDict(extra="forbid", frozen=True)
-
     image_policy: str
     fbc_policy: str | None = None
 
 
-class ProductConfig(BaseModel):
+@dataclass(frozen=True, slots=True)
+class ProductConfig:
     """
     Configuration associated with one canonical product name.
 
@@ -55,8 +54,6 @@ class ProductConfig(BaseModel):
         cpe_product_name: Product name used in generated CPE labels.
     """
 
-    model_config = ConfigDict(extra="forbid", frozen=True)
-
     product_id: ProductId
     aliases: tuple[str, ...] = ()
     namespace: str | None = None
@@ -64,14 +61,14 @@ class ProductConfig(BaseModel):
     base_image_release: ReleaseTarget | None = None
     ec_base_image_release: ReleaseTarget | None = None
     conforma_stage_policies: ConformaPolicies | None = None
-    fbc_stage_release_plans: Mapping[tuple[int, int], str] = Field(default_factory=dict)
+    fbc_stage_release_plans: Mapping[tuple[int, int], str] = field(default_factory=dict)
     cpe_product_name: str | None = None
 
-    @field_validator("fbc_stage_release_plans", mode="after")
-    @classmethod
-    def _freeze_fbc_stage_release_plans(cls, plans: Mapping[tuple[int, int], str]) -> Mapping[tuple[int, int], str]:
-        """Prevent callers from mutating a validated product's release plans."""
-        return MappingProxyType(dict(plans))
+    def __post_init__(self) -> None:
+        """
+        Prevent callers from mutating a product's release plans.
+        """
+        object.__setattr__(self, "fbc_stage_release_plans", MappingProxyType(dict(self.fbc_stage_release_plans)))
 
     @property
     def cpe_name(self) -> str:
