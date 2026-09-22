@@ -316,6 +316,8 @@ class Ocp4ScanPipeline:
 
         Failures are logged and reported to Slack but do not fail the pipeline.
         """
+        span = trace.get_current_span()
+        span.set_attribute("version", self.version)
         group = f"openshift-{self.version}"
         group_config = await util.load_group_config(
             group=group,

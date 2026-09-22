@@ -4,6 +4,7 @@ import click
 from artcommonlib import redis
 from artcommonlib.telemetry import start_as_current_span_async
 from opentelemetry import trace
+from opentelemetry.trace import StatusCode
 
 from pyartcd import jenkins, util
 from pyartcd.cli import cli, click_coroutine, pass_runtime
@@ -51,9 +52,10 @@ async def run_for(version: str, runtime: Runtime, lock_manager: LockManager, ser
             )
             runtime.logger.info('[%s] Scan completed with result: %s', version, result)
             span.set_attribute("scan_result", str(result))
-        except Exception:
+        except Exception as e:
             runtime.logger.warning('[%s] Scan failed, continuing with remaining versions', version, exc_info=True)
             span.set_attribute("scan_failed", True)
+            span.set_status(StatusCode.ERROR, str(e))
     else:
         runtime.logger.info('[%s] Scheduling ocp4-scan-konflux', version)
         jenkins.start_ocp4_scan_konflux(version=version, block_until_building=False)

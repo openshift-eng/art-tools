@@ -512,12 +512,17 @@ class ConfigScanSources:
                         metadata, priv_repo_name, public_branch_name, priv_branch_name, priv_url=priv_url
                     )
 
+            failed = []
             for metadata, public_upstream in upstream_mappings:
                 try:
                     _rebase_into_priv(metadata, public_upstream)
                 except Exception as e:
                     self.logger.exception('Failed rebasing %s into openshift-priv', metadata.distgit_key)
                     self.issues.append({'name': metadata.distgit_key, 'issue': f'Failed rebasing into -priv: {e}'})
+                    failed.append(metadata.distgit_key)
+            if failed:
+                span.set_status(StatusCode.ERROR, f"Failed rebasing {len(failed)} component(s) into -priv")
+                span.set_attribute("failed_components", ", ".join(failed))
 
     def generate_dependency_tree(self, tree, level=1, levels_dict=None):
         if not levels_dict:
@@ -768,6 +773,7 @@ class ConfigScanSources:
         Determine if the current upstream source commit hash
         has a downstream build associated with it.
         """
+        trace.get_current_span().set_attribute("distgit_key", image_meta.distgit_key)
 
         # We have no more "alias" source anywhere in ocp-build-data, and there's no such a thing as a distgit-only
         # component in Konflux; hence, assume that git is the only possible source for a component
@@ -922,6 +928,7 @@ class ConfigScanSources:
     @skip_check_if_changing
     @start_as_current_span_async(TRACER, "scan-sources-konflux.scan-dependency-changes")
     async def scan_dependency_changes(self, image_meta: ImageMetadata):
+        trace.get_current_span().set_attribute("distgit_key", image_meta.distgit_key)
         # Get rebase time from image latest build record
         build_record = self.latest_image_build_records_map[image_meta.distgit_key]
         rebase_time = isolate_timestamp_in_release(build_record.release)
@@ -1064,6 +1071,7 @@ class ConfigScanSources:
         """
         Check whether non-member builder images have changed
         """
+        trace.get_current_span().set_attribute("distgit_key", image_meta.distgit_key)
 
         build_record = self.latest_image_build_records_map[image_meta.distgit_key]
         builders = list(image_meta.config['from'].builder) or []
@@ -1311,6 +1319,7 @@ class ConfigScanSources:
     @skip_check_if_changing
     @start_as_current_span_async(TRACER, "scan-sources-konflux.scan-rpm-changes")
     async def scan_rpm_changes(self, image_meta: ImageMetadata):
+        trace.get_current_span().set_attribute("distgit_key", image_meta.distgit_key)
         # Check if the build used any of the ART built rpms that are changing
         build_record = self.latest_image_build_records_map[image_meta.distgit_key]
         for rpm in self.changing_rpm_names:
@@ -1538,6 +1547,7 @@ class ConfigScanSources:
         Check if task bundles used in the build are outdated compared to current versions.
         If any task bundle SHA doesn't match, trigger a rebuild.
         """
+        trace.get_current_span().set_attribute("distgit_key", image_meta.distgit_key)
         # Skip if image is not being released
         for_release = image_meta.config.for_release
         if for_release is False:

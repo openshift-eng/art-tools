@@ -10,7 +10,7 @@ from opentelemetry.util.types import Attributes
 
 
 def _sample_proc(proc: psutil.Process) -> dict:
-    """Sample RSS and CPU for a process. Returns -1 on NoSuchProcess."""
+    """Sample RSS and CPU for a process. Returns a sentinel dict with -1 values on NoSuchProcess."""
     try:
         mem = proc.memory_info().rss // 1024 // 1024
         cpu = proc.cpu_times()
@@ -31,10 +31,14 @@ class ResourceMetricsSpanProcessor(SpanProcessor):
         self._proc = psutil.Process(os.getpid())
 
     def on_start(self, span, parent_context=None):
+        if not span.is_recording():
+            return
         r = _sample_proc(self._proc)
-        span.set_attribute("process.rss_mb", r["rss_mb"])
-        span.set_attribute("process.cpu_user_s", r["cpu_user_s"])
-        span.set_attribute("process.cpu_sys_s", r["cpu_sys_s"])
+        # Use _start suffix so attribute names align with record_resources=True spans.
+        # For spans without record_resources, only _start attributes are written.
+        span.set_attribute("process.rss_mb_start", r["rss_mb"])
+        span.set_attribute("process.cpu_user_s_start", r["cpu_user_s"])
+        span.set_attribute("process.cpu_sys_s_start", r["cpu_sys_s"])
 
     def on_end(self, span):
         pass  # ReadableSpan is immutable; deltas are handled by the decorator
