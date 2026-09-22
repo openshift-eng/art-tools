@@ -1,0 +1,7 @@
+apiVersion: user.openshift.io/v1
+kind: Group
+metadata:
+  name: art-rhosdt-team-members
+users:
+  # TODO: Team members to be set in review by product owner
+  - placeholder
