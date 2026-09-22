@@ -67,7 +67,7 @@ REDIS_PORT = '6379'
 
 # Telemetry
 OTEL_EXPORTER_OTLP_ENDPOINT = (
-    "http://internal-a34de5d9970db4014a31eaab2a6ecdf5-1590680375.us-east-1.elb.amazonaws.com:4317"
+    "http://internal-a344ed20604f143d7955b3c06c517eb8-1688607883.us-east-1.elb.amazonaws.com:4317"
 )
 
 # Registry paths for authentication and image operations
