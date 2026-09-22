@@ -12,6 +12,7 @@ import aiohttp
 import artcommonlib.util
 import click
 import dateutil.parser
+import psutil
 import pycares
 import yaml
 from artcommonlib import exectools
@@ -26,9 +27,11 @@ from artcommonlib.pushd import Dir
 from artcommonlib.release_util import isolate_timestamp_in_release
 from artcommonlib.rhcos import get_latest_layered_rhcos_build, get_primary_container_name
 from artcommonlib.rpm_utils import parse_nvr, to_nevra
+from artcommonlib.telemetry import start_as_current_span_async
 from artcommonlib.util import deep_merge, fetch_slsa_attestation, uses_konflux_imagestream_override
 from artcommonlib.variants import BuildVariant
 from async_lru import alru_cache
+from opentelemetry import trace
 from tenacity import retry, retry_if_not_exception_type, stop_after_attempt, wait_fixed
 
 from doozerlib import rhcos, util
@@ -45,6 +48,8 @@ from doozerlib.source_resolver import SourceResolver
 from doozerlib.util import oc_image_info_for_arch_async
 
 DEFAULT_THRESHOLD_HOURS = 6
+
+TRACER = trace.get_tracer(__name__)
 
 
 class ConfigScanSources:
@@ -220,48 +225,65 @@ class ConfigScanSources:
             )
             return None
 
+    @start_as_current_span_async(TRACER, "scan-sources-konflux.run")
     async def run(self):
-        # Try to rebase into openshift-priv to reduce upstream merge -> downstream build time
-        if self.rebase_priv:
-            if self.runtime.group.startswith("openshift-"):
-                # For OCP groups, only rebase when the version uses the Konflux imagestream override
-                # (i.e. versions that have fully migrated to Konflux, >= 4.12). Older OCP versions
-                # should not be rebased here.
-                major, minor = self.runtime.get_major_minor_fields()
-                version = f'{major}.{minor}'
-                if not uses_konflux_imagestream_override(version):
-                    self.logger.warning(
-                        'Konflux scan-sources is not allowed to rebase into openshift-priv for version %s', version
-                    )
+        span = trace.get_current_span()
+        span.set_attribute("group", self.runtime.group)
+        span.set_attribute("assembly", self.runtime.assembly)
+        span.set_attribute("skip_rpms", self.skip_rpms)
+        span.set_attribute("rebase_priv", self.rebase_priv)
+        span.set_attribute("variant", str(self.variant))
+
+        _proc = psutil.Process(os.getpid())
+        span.set_attribute("process.memory_rss_mb_start", _proc.memory_info().rss // 1024 // 1024)
+
+        try:
+            # Try to rebase into openshift-priv to reduce upstream merge -> downstream build time
+            if self.rebase_priv:
+                if self.runtime.group.startswith("openshift-"):
+                    # For OCP groups, only rebase when the version uses the Konflux imagestream override
+                    # (i.e. versions that have fully migrated to Konflux, >= 4.12). Older OCP versions
+                    # should not be rebased here.
+                    major, minor = self.runtime.get_major_minor_fields()
+                    version = f'{major}.{minor}'
+                    if not uses_konflux_imagestream_override(version):
+                        self.logger.warning(
+                            'Konflux scan-sources is not allowed to rebase into openshift-priv for version %s', version
+                        )
+                    else:
+                        self.rebase_into_priv()
                 else:
+                    # Non-OCP groups (layered products like oc-mirror-2.0, logging-6.6, etc.) always
+                    # build via Konflux, so the imagestream override version check does not apply.
                     self.rebase_into_priv()
-            else:
-                # Non-OCP groups (layered products like oc-mirror-2.0, logging-6.6, etc.) always
-                # build via Konflux, so the imagestream override version check does not apply.
-                self.rebase_into_priv()
 
-        # Skip RPM-related operations for OKD variant or when --skip-rpms is set
-        if self.variant != BuildVariant.OKD and not self.skip_rpms:
-            # Gather latest builds for ART-managed RPMs
-            await self.find_latest_rpms_builds()
-            # Find RPMs built by ART that need to be rebuilt
-            await self.check_changing_rpms()
+            # Skip RPM-related operations for OKD variant or when --skip-rpms is set
+            if self.variant != BuildVariant.OKD and not self.skip_rpms:
+                # Gather latest builds for ART-managed RPMs
+                await self.find_latest_rpms_builds()
+                # Find RPMs built by ART that need to be rebuilt
+                await self.check_changing_rpms()
 
-        # Get current task bundle SHAs from GitHub (needed for image task bundle checks)
-        self.current_task_bundles = await self.get_current_task_bundle_shas()
+            # Get current task bundle SHAs from GitHub (needed for image task bundle checks)
+            self.current_task_bundles = await self.get_current_task_bundle_shas()
 
-        # Build an image dependency tree to scan across levels of inheritance. This should save us some time,
-        # as when an image is found in need for a rebuild, we can also mark its children or operators without checking
-        self.image_tree = self.generate_dependency_tree(self.runtime.image_tree)
-        for level in sorted(self.image_tree.keys()):
-            await self.scan_images(self.image_tree[level])
+            # Build an image dependency tree to scan across levels of inheritance. This should save us some time,
+            # as when an image is found in need for a rebuild, we can also mark its children or operators without checking
+            self.image_tree = self.generate_dependency_tree(self.runtime.image_tree)
+            image_count = sum(len(v) for v in self.image_tree.values())
+            span.set_attribute("image_count", image_count)
+            span.set_attribute("tree_depth", len(self.image_tree))
+            for level in sorted(self.image_tree.keys()):
+                await self.scan_images(self.image_tree[level])
 
-        # Check RHCOS status if the kubeconfig is provided and group is openshift-*
-        if self.ci_kubeconfig and self.runtime.group.startswith("openshift-") and self.variant != BuildVariant.OKD:
-            await self.detect_rhcos_status()
+            # Check RHCOS status if the kubeconfig is provided and group is openshift-*
+            if self.ci_kubeconfig and self.runtime.group.startswith("openshift-") and self.variant != BuildVariant.OKD:
+                await self.detect_rhcos_status()
 
-        # Print the output report
-        self.generate_report()
+            # Print the output report
+            self.generate_report()
+        finally:
+            span.set_attribute("process.memory_rss_mb_end", _proc.memory_info().rss // 1024 // 1024)
 
     def _try_reconciliation(
         self, metadata: Metadata, repo_name: str, pub_branch_name: str, priv_branch_name: str, priv_url: str = ""
@@ -396,106 +418,112 @@ class ConfigScanSources:
         raise IOError(f'Could not determine ancestry between public and private upstreams for {repo_name}')
 
     def rebase_into_priv(self):
-        if self.dry_run:
-            self.logger.info('Would have rebased into openshift-priv')
-            return
+        with TRACER.start_as_current_span("scan-sources-konflux.rebase-into-priv") as span:
+            span.set_attribute("group", self.runtime.group)
+            span.set_attribute("dry_run", self.dry_run)
 
-        self.logger.info('Rebasing public upstream contents into openshift-priv')
-        upstream_mappings = exectools.parallel_exec(
-            lambda meta, _: (
-                meta,
-                SourceResolver.get_public_upstream(
-                    meta.config.content.source.git.url, self.runtime.group_config.public_upstreams
+            if self.dry_run:
+                self.logger.info('Would have rebased into openshift-priv')
+                return
+
+            self.logger.info('Rebasing public upstream contents into openshift-priv')
+            upstream_mappings = exectools.parallel_exec(
+                lambda meta, _: (
+                    meta,
+                    SourceResolver.get_public_upstream(
+                        meta.config.content.source.git.url, self.runtime.group_config.public_upstreams
+                    ),
                 ),
-            ),
-            self.all_metas,
-            n_threads=20,
-        ).get()
+                self.all_metas,
+                n_threads=20,
+            ).get()
 
-        def _rebase_into_priv(metadata, public_upstream):
-            # Skip rebase for disabled components
-            if metadata.meta_type == 'image':
-                # For images: use OKD-aware enabled check
-                if not self._is_image_enabled(metadata):
+            span.set_attribute("component_count", len(upstream_mappings))
+
+            def _rebase_into_priv(metadata, public_upstream):
+                # Skip rebase for disabled components
+                if metadata.meta_type == 'image':
+                    # For images: use OKD-aware enabled check
+                    if not self._is_image_enabled(metadata):
+                        self.logger.warning('%s is disabled: skipping rebase', metadata.name)
+                        return
+                elif not metadata.enabled:
+                    # For RPMs, use standard enabled check
                     self.logger.warning('%s is disabled: skipping rebase', metadata.name)
                     return
-            elif not metadata.enabled:
-                # For RPMs, use standard enabled check
-                self.logger.warning('%s is disabled: skipping rebase', metadata.name)
-                return
 
-            if metadata.config.content is Missing:
-                self.logger.warning(
-                    '%s %s is a distgit-only component: skipping openshift-priv rebase',
-                    metadata.meta_type,
-                    metadata.name,
-                )
-                return
+                if metadata.config.content is Missing:
+                    self.logger.warning(
+                        '%s %s is a distgit-only component: skipping openshift-priv rebase',
+                        metadata.meta_type,
+                        metadata.name,
+                    )
+                    return
 
-            public_url, public_branch_name, has_public_upstream = public_upstream
+                public_url, public_branch_name, has_public_upstream = public_upstream
 
-            # If no public upstream exists, skip the rebase
-            if not has_public_upstream:
-                self.logger.warning(
-                    '%s %s does not have a public upstream: skipping openshift-priv rebase',
-                    metadata.meta_type,
-                    metadata.name,
-                )
-                return
+                # If no public upstream exists, skip the rebase
+                if not has_public_upstream:
+                    self.logger.warning(
+                        '%s %s does not have a public upstream: skipping openshift-priv rebase',
+                        metadata.meta_type,
+                        metadata.name,
+                    )
+                    return
 
-            priv_url = artcommonlib.util.ensure_github_https_url(metadata.config.content.source.git.url)
-            priv_branch_name = metadata.config.content.source.git.branch.target
+                priv_url = artcommonlib.util.ensure_github_https_url(metadata.config.content.source.git.url)
+                priv_branch_name = metadata.config.content.source.git.branch.target
 
-            # If a git commit hash was declared as the upstream source, skip the rebase
-            try:
-                _ = int(priv_branch_name, 16)
-                # target branch is a sha: skip rebase for this component
-                self.logger.warning('Target branch for %s is a SHA: skipping rebase', metadata.name)
-                return
+                # If a git commit hash was declared as the upstream source, skip the rebase
+                try:
+                    _ = int(priv_branch_name, 16)
+                    # target branch is a sha: skip rebase for this component
+                    self.logger.warning('Target branch for %s is a SHA: skipping rebase', metadata.name)
+                    return
 
-            except ValueError:
-                # target branch is a normal branch name
-                pass
+                except ValueError:
+                    # target branch is a normal branch name
+                    pass
 
-            # If no public_upstreams field exists, public_branch_name will be None
-            public_branch_name = public_branch_name or priv_branch_name
+                # If no public_upstreams field exists, public_branch_name will be None
+                public_branch_name = public_branch_name or priv_branch_name
 
-            if priv_url == public_url:
-                # Upstream repo does not have a public counterpart: no need to rebase
-                self.logger.warning(
-                    '%s %s does not have a public upstream: skipping openshift-priv rebase',
-                    metadata.meta_type,
-                    metadata.name,
-                )
-                return
+                if priv_url == public_url:
+                    # Upstream repo does not have a public counterpart: no need to rebase
+                    self.logger.warning(
+                        '%s %s does not have a public upstream: skipping openshift-priv rebase',
+                        metadata.meta_type,
+                        metadata.name,
+                    )
+                    return
 
-            # First, quick check: if SHAs match across remotes, repo is synced and we can avoid cloning it
-            _, public_org, public_repo_name = artcommonlib.util.split_git_url(public_url)
-            _, priv_org, priv_repo_name = artcommonlib.util.split_git_url(priv_url)
+                # First, quick check: if SHAs match across remotes, repo is synced and we can avoid cloning it
+                _, public_org, public_repo_name = artcommonlib.util.split_git_url(public_url)
+                _, priv_org, priv_repo_name = artcommonlib.util.split_git_url(priv_url)
 
-            if self._do_shas_match(public_url, public_branch_name, priv_url, priv_branch_name):
-                # If they match, do nothing
-                return
+                if self._do_shas_match(public_url, public_branch_name, priv_url, priv_branch_name):
+                    # If they match, do nothing
+                    return
 
-            # If they don't, clone source repo
-            path = self.runtime.source_resolver.resolve_source(metadata).source_path
+                # If they don't, clone source repo
+                path = self.runtime.source_resolver.resolve_source(metadata).source_path
 
-            # SHAs might differ because of previous rebase; let's check the actual content across upstreams
-            if self._is_pub_ancestor_of_priv(path, public_branch_name, priv_branch_name, priv_repo_name):
-                # Private upstream is ahead of public: no need to rebase
-                return
+                # SHAs might differ because of previous rebase; let's check the actual content across upstreams
+                if self._is_pub_ancestor_of_priv(path, public_branch_name, priv_branch_name, priv_repo_name):
+                    # Private upstream is ahead of public: no need to rebase
+                    return
 
-            with Dir(path):
-                self._try_reconciliation(
-                    metadata, priv_repo_name, public_branch_name, priv_branch_name, priv_url=priv_url
-                )
+                with Dir(path):
+                    self._try_reconciliation(
+                        metadata, priv_repo_name, public_branch_name, priv_branch_name, priv_url=priv_url
+                    )
 
-        for metadata, public_upstream in upstream_mappings:
-            try:
-                _rebase_into_priv(metadata, public_upstream)
-            except Exception as e:
-                self.logger.exception('Failed rebasing %s into openshift-priv', metadata.distgit_key)
-                self.issues.append({'name': metadata.distgit_key, 'issue': f'Failed rebasing into -priv: {e}'})
+            for metadata, public_upstream in upstream_mappings:
+                try:
+                    _rebase_into_priv(metadata, public_upstream)
+                except Exception as e:
+                    self.logger.exception('Failed rebasing %s into openshift-priv', metadata.distgit_key)
+                    self.issues.append({'name': metadata.distgit_key, 'issue': f'Failed rebasing into -priv: {e}'})
 
     def generate_dependency_tree(self, tree, level=1, levels_dict=None):
         if not levels_dict:
@@ -510,6 +538,7 @@ class ConfigScanSources:
 
         return levels_dict
 
+    @start_as_current_span_async(TRACER, "scan-sources-konflux.find-latest-rpms-builds")
     async def find_latest_rpms_builds(self):
         """
         The RPM build map stores latest builds for all RPM targets:
@@ -523,6 +552,8 @@ class ConfigScanSources:
             }
         }
         """
+        span = trace.get_current_span()
+        span.set_attribute("group", self.runtime.group)
 
         self.logger.info('Gathering latest RPM build records information...')
 
@@ -538,6 +569,7 @@ class ConfigScanSources:
         tasks = []
         for rpm in self.all_rpm_metas:
             tasks.extend([_find_target_build(rpm, f'el{target}') for target in rpm.determine_rhel_targets()])
+        span.set_attribute("rpm_task_count", len(tasks))
         await asyncio.gather(*tasks)
 
     async def find_latest_image_builds(self, image_names: List[str]):
@@ -564,14 +596,25 @@ class ConfigScanSources:
         latest_image_builds = await asyncio.gather(*tasks)
         self.latest_image_build_records_map.update((zip(image_names, latest_image_builds)))
 
+    @start_as_current_span_async(TRACER, "scan-sources-konflux.scan-images")
     async def scan_images(self, image_names: List[str]):
+        span = trace.get_current_span()
+
         # Filter to only enabled images (variant-aware filtering is handled by _is_image_enabled)
         image_names = filter(lambda name: self._is_image_enabled(self.runtime.image_map[name]), image_names)
 
         # Do not scan images that have already been requested for rebuild
         image_names = list(filter(lambda name: name not in self.changing_image_names, image_names))
         if not image_names:
+            span.set_attribute("image_count", 0)
+            span.set_attribute("skipped", True)
             return
+
+        span.set_attribute("image_count", len(image_names))
+        span.set_attribute("concurrency_limit", SCAN_SOURCES_CONCURRENCY_LIMIT)
+
+        _proc = psutil.Process(os.getpid())
+        span.set_attribute("process.memory_rss_mb_start", _proc.memory_info().rss // 1024 // 1024)
 
         # Store latest build records in a map, to reduce DB queries and execution time
         await self.find_latest_image_builds(image_names)
@@ -584,7 +627,10 @@ class ConfigScanSources:
             async with semaphore:
                 return await self.scan_image(meta)
 
-        await asyncio.gather(*[_bounded_scan(image_meta) for image_meta in scanning_image_metas])
+        try:
+            await asyncio.gather(*[_bounded_scan(image_meta) for image_meta in scanning_image_metas])
+        finally:
+            span.set_attribute("process.memory_rss_mb_end", _proc.memory_info().rss // 1024 // 1024)
 
     @staticmethod
     def skip_check_if_changing(coro):
@@ -602,7 +648,11 @@ class ConfigScanSources:
         return inner
 
     @skip_check_if_changing
+    @start_as_current_span_async(TRACER, "scan-sources-konflux.scan-image")
     async def scan_image(self, image_meta: ImageMetadata):
+        span = trace.get_current_span()
+        span.set_attribute("distgit_key", image_meta.distgit_key)
+        span.set_attribute("image_name", image_meta.name)
         stage = 'initialization'
         try:
             self.logger.info(f'Scanning {image_meta.distgit_key} for changes')
@@ -665,6 +715,10 @@ class ConfigScanSources:
         except Exception as e:
             self.logger.exception('Failed scanning image %s during %s', image_meta.distgit_key, stage)
             self.issues.append({'name': image_meta.distgit_key, 'issue': f'Failed scanning image during {stage}: {e}'})
+            span.set_attribute("failed_stage", stage)
+        finally:
+            changed = image_meta.distgit_key in self.changing_image_names
+            span.set_attribute("changed", changed)
 
     def find_upstream_commit_hash(self, meta: Metadata):
         """
@@ -1630,12 +1684,16 @@ class ConfigScanSources:
             for item in obj:
                 self._extract_task_refs(item, task_bundles)
 
+    @start_as_current_span_async(TRACER, "scan-sources-konflux.check-changing-rpms")
     async def check_changing_rpms(self):
         """
         For each RPM built by ART, determine if the current upstream source commit hash
         has a successful build associated with it. As of 12/2024, RPMs are still being built in Brew
         but ART is tracking the build records in the Konflux DB
         """
+        span = trace.get_current_span()
+        span.set_attribute("group", self.runtime.group)
+        span.set_attribute("rpm_count", len(self.all_rpm_metas))
 
         async def find_rpm_commit_hash(rpm: RPMMetadata):
             with Dir(rpm.distgit_repo().source_path()):
@@ -1753,6 +1811,7 @@ class ConfigScanSources:
                     ]
                 )
         await asyncio.gather(*tasks)
+        span.set_attribute("changed_rpm_count", len(self.changing_rpm_names))
 
     def add_assessment_reason(self, meta, rebuild_hint: RebuildHint):
         # qualify by whether this is a True or False for change so that we can store both in the map.
@@ -1825,6 +1884,7 @@ class ConfigScanSources:
 
         return images_with_disabled_deps
 
+    @start_as_current_span_async(TRACER, "scan-sources-konflux.detect-rhcos-status")
     async def detect_rhcos_status(self):
         """
         gather the existing RHCOS tags and compare them to latest rhcos builds. Also check outdated rpms in builds
@@ -1835,6 +1895,9 @@ class ConfigScanSources:
                 'reason': "could not find an RHCOS build to sync",
             }
         """
+        span = trace.get_current_span()
+        span.set_attribute("group", self.runtime.group)
+        span.set_attribute("arch_count", len(self.runtime.arches))
         statuses = []
 
         version = self.runtime.get_minor_version()
@@ -1889,6 +1952,7 @@ class ConfigScanSources:
                     statuses.append(status)
 
         self.rhcos_status = statuses
+        span.set_attribute("rhcos_changed_count", sum(1 for s in statuses if s.get("changed")))
 
     def tagged_rhcos_node_digest(self, container_name, version, arch, private) -> Optional[str]:
         """get latest coreos image diget from tagged RHCOS in given imagestream"""
