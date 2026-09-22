@@ -55,7 +55,7 @@ async def run_for(version: str, runtime: Runtime, lock_manager: LockManager, ser
         except Exception as e:
             runtime.logger.warning('[%s] Scan failed, continuing with remaining versions', version, exc_info=True)
             span.set_attribute("scan_failed", True)
-            span.set_status(StatusCode.ERROR, str(e))
+            span.set_status(StatusCode.ERROR, str(e)[:500])
     else:
         runtime.logger.info('[%s] Scheduling ocp4-scan-konflux', version)
         jenkins.start_ocp4_scan_konflux(version=version, block_until_building=False)

@@ -212,7 +212,7 @@ class Ocp4ScanPipeline:
             self.rhcos_inconsistent = True
             self.inconsistent_rhcos_rpms = e
             span.set_attribute("rhcos_inconsistent", True)
-            span.set_status(StatusCode.ERROR, str(e))
+            span.set_status(StatusCode.ERROR, str(e)[:500])
 
     def handle_source_changes(self):
         if not self.changes:
@@ -349,8 +349,7 @@ class Ocp4ScanPipeline:
             await exectools.cmd_assert_async(cmd)
         except ChildProcessError as e:
             self.logger.error("Bridge bug mirroring failed for %s: %s", self.version, e)
-            span = trace.get_current_span()
-            span.set_status(StatusCode.ERROR, str(e))
+            span.set_status(StatusCode.ERROR, str(e)[:500])
             if not self.runtime.dry_run:
                 slack_client = self.runtime.new_slack_client()
                 slack_client.bind_channel(f"openshift-{self.version}")

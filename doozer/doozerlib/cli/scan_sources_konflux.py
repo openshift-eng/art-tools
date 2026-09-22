@@ -710,7 +710,7 @@ class ConfigScanSources:
             self.logger.exception('Failed scanning image %s during %s', image_meta.distgit_key, stage)
             self.issues.append({'name': image_meta.distgit_key, 'issue': f'Failed scanning image during {stage}: {e}'})
             span.set_attribute("failed_stage", stage)
-            span.set_status(StatusCode.ERROR, f"Failed during {stage}: {e}")
+            span.set_status(StatusCode.ERROR, f"Failed during {stage}: {str(e)[:500]}")
         finally:
             changed = image_meta.distgit_key in self.changing_image_names
             span.set_attribute("changed", changed)
