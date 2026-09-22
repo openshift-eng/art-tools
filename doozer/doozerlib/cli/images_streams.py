@@ -1998,7 +1998,7 @@ def images_streams_prs(
                     _check_upstream_image_exists(runtime, upstream_image)
                 except:
                     yellow_print(
-                        f'Unable to access upstream image {upstream_image} for {dgk}-- check whether buildconfigs are running successfully.'
+                        f'Unable to access upstream image {_to_qci_pullspec(upstream_image)} for {dgk}-- check whether buildconfigs are running successfully.'
                     )
                     if not ignore_missing_images:
                         raise
