@@ -7,6 +7,7 @@ import yaml
 from artcommonlib import exectools
 from artcommonlib.telemetry import start_as_current_span_async
 from opentelemetry import trace
+from opentelemetry.trace import StatusCode
 
 from pyartcd import constants, jenkins, locks, util
 from pyartcd.cli import cli, click_coroutine, pass_runtime
@@ -136,6 +137,7 @@ class Ocp4ScanPipeline:
             self.logger.error(self.command_failure_message)
             span.set_attribute("command_failed", True)
             span.set_attribute("exit_code", rc)
+            span.set_status(StatusCode.ERROR, self.command_failure_message)
 
         self.report = yaml.safe_load(out) or {}
         if not isinstance(self.report, dict):
@@ -210,6 +212,7 @@ class Ocp4ScanPipeline:
             self.rhcos_inconsistent = True
             self.inconsistent_rhcos_rpms = e
             span.set_attribute("rhcos_inconsistent", True)
+            span.set_status(StatusCode.ERROR, str(e))
 
     def handle_source_changes(self):
         if not self.changes:
@@ -344,6 +347,8 @@ class Ocp4ScanPipeline:
             await exectools.cmd_assert_async(cmd)
         except ChildProcessError as e:
             self.logger.error("Bridge bug mirroring failed for %s: %s", self.version, e)
+            span = trace.get_current_span()
+            span.set_status(StatusCode.ERROR, str(e))
             if not self.runtime.dry_run:
                 slack_client = self.runtime.new_slack_client()
                 slack_client.bind_channel(f"openshift-{self.version}")
