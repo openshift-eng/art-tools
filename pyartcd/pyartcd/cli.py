@@ -73,9 +73,9 @@ def cli(
     if enable_telemetry or os.environ.get("TELEMETRY_ENABLED") == "1":
         initialize_telemetry()
         tracer = trace.get_tracer("pyartcd")
-        cmd_name = ctx.invoked_subcommand or "artcd"
+        cmd_name = ctx.invoked_subcommand or "root"
         span = tracer.start_span(f"artcd.{cmd_name}")
-        token = context.attach(trace.use_span(span, end_on_exit=False))
+        token = context.attach(trace.set_span_in_context(span))
         ctx.call_on_close(span.end)
         ctx.call_on_close(lambda: context.detach(token))
     config_filename = Path(config) if config else Path("~/.config/artcd.toml").expanduser()
