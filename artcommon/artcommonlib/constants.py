@@ -66,7 +66,9 @@ REDIS_HOST = 'master.redis.gwprhd.use1.cache.amazonaws.com'
 REDIS_PORT = '6379'
 
 # Telemetry
-OTEL_EXPORTER_OTLP_ENDPOINT = "http://otel-collector-psi-rhv.hosts.prod.psi.rdu2.redhat.com:4317"
+OTEL_EXPORTER_OTLP_ENDPOINT = (
+    "http://internal-a34de5d9970db4014a31eaab2a6ecdf5-1590680375.us-east-1.elb.amazonaws.com:4317"
+)
 
 # Registry paths for authentication and image operations
 REGISTRY_QUAY_OCP_RELEASE_DEV = "quay.io/openshift-release-dev"
