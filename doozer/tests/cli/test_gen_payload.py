@@ -811,6 +811,53 @@ class TestGenPayloadCli(IsolatedAsyncioTestCase):
             ["good_src=good_pullspec"],  # mismatched_image notably absent
         )
 
+    @patch("aiofiles.open")
+    @patch("artcommonlib.exectools.cmd_assert_async")
+    async def test_mirror_payload_content_rhcos_digest_reference(self, exec_mock, open_mock):
+        """Test that RHCOS images use digest references for IS spec entries,
+        while the mirror destination uses the pseudo-tag format for GC prevention."""
+        runtime = MagicMock(build_system='brew')
+        runtime.group_config = Model(dict(rhcos=dict(mirror_to_release_dev=True)))
+        gpcli = rgp_cli.GenPayloadCli(output_dir="/tmp", apply=True, runtime=runtime)
+
+        rhcos_src = "quay.io/redhat-user-workloads/some-tenant@sha256:faebd703abcd1234567890abcdef1234567890abcdef1234567890abcdef1234"
+        payload_entries = dict(
+            rhel_coreos=rgp_cli.PayloadEntry(
+                issues=[],
+                dest_pullspec=rhcos_src,
+                rhcos_build=Mock(),  # non-None to trigger the RHCOS path
+            ),
+            spam=rgp_cli.PayloadEntry(
+                issues=[],
+                dest_pullspec="spam_pullspec",
+                image_inspector=Mock(get_pullspec=lambda: "spam_src"),
+            ),
+        )
+
+        buffer = io.StringIO()
+        open_mock.return_value.__aenter__.return_value.write = AsyncMock(side_effect=lambda s: buffer.write(s))
+        exec_mock.return_value = None
+
+        dest_repo = "quay.io/openshift-release-dev/ocp-v5.0-art-dev"
+        await gpcli.mirror_payload_content("x86_64", payload_entries, dest_repo)
+
+        # The mirror file should use the pseudo-tag format for the mirror destination (GC prevention)
+        mirror_lines = sorted(buffer.getvalue().splitlines())
+        expected_mirror_dest = f"{dest_repo}:sha256-faebd703abcd1234567890abcdef1234567890abcdef1234567890abcdef1234"
+        self.assertTrue(
+            any(expected_mirror_dest in line for line in mirror_lines),
+            f"Expected pseudo-tag mirror destination in mirror lines, got: {mirror_lines}",
+        )
+
+        # The IS spec entry (payload_entries dest_pullspec) should use digest reference format
+        rhcos_entry = payload_entries["rhel_coreos"]
+        expected_is_dest = f"{dest_repo}@sha256:faebd703abcd1234567890abcdef1234567890abcdef1234567890abcdef1234"
+        self.assertEqual(
+            rhcos_entry.dest_pullspec,
+            expected_is_dest,
+            "RHCOS IS spec entry should use digest reference (@sha256:...) not pseudo-tag (:sha256-...)",
+        )
+
     @patch("doozerlib.cli.release_gen_payload.PayloadGenerator.build_payload_istag")
     async def test_generate_specific_payload_imagestreams(self, build_mock):
         build_mock.side_effect = lambda name, _: name  # just to make the test simpler

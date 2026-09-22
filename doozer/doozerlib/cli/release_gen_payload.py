@@ -1546,9 +1546,12 @@ class GenPayloadCli:
                     # Mirror RHCOS images from the Konflux tenant registry to openshift-release-dev
                     src = payload_entry.dest_pullspec
                     sha256 = src.split('@')[-1]
-                    dest = PayloadGenerator.get_mirroring_destination(sha256, dest_repo)
-                    mirror_src_for_dest[dest] = src
-                    payload_entries[tag_name] = payload_entry._replace(dest_pullspec=dest)
+                    mirror_dest = PayloadGenerator.get_mirroring_destination(sha256, dest_repo)
+                    mirror_src_for_dest[mirror_dest] = src
+                    # Use digest reference for IS spec entry so it survives status stripping
+                    # in the .ci reference release path (oc adm release new --from-image-stream-file)
+                    is_dest = f"{dest_repo}@{sha256}"
+                    payload_entries[tag_name] = payload_entry._replace(dest_pullspec=is_dest)
                 continue
 
             mirror_src_for_dest[payload_entry.dest_pullspec] = payload_entry.image_inspector.get_pullspec()
