@@ -8,7 +8,6 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import httpx
 from artcommonlib.ocp_version_ancestry import (
     BuildSuggestions,
-    SuggestionsSpec,
     calc_upgrade_sources_async,
     get_build_suggestions_async,
     get_cincinnati_channels,
@@ -17,127 +16,11 @@ from artcommonlib.ocp_version_ancestry import (
 from pydantic import ValidationError
 
 
-class TestSuggestionsSpec(unittest.TestCase):
-    """Test the SuggestionsSpec Pydantic model"""
-
-    def test_valid_suggestions_spec(self):
-        """Test that a valid SuggestionsSpec can be created"""
-        spec = SuggestionsSpec(
-            minor_min="4.22.0-rc.0",
-            minor_max="4.22.9999",
-            minor_block_list=[],
-            z_min="5.0.0-ec.0",
-            z_max="5.0.9999",
-            z_block_list=[],
-        )
-
-        self.assertEqual(spec.minor_min, "4.22.0-rc.0")
-        self.assertEqual(spec.minor_max, "4.22.9999")
-        self.assertEqual(spec.minor_block_list, [])
-        self.assertEqual(spec.z_min, "5.0.0-ec.0")
-        self.assertEqual(spec.z_max, "5.0.9999")
-        self.assertEqual(spec.z_block_list, [])
-
-    def test_valid_suggestions_spec_with_block_lists(self):
-        """Test SuggestionsSpec with populated block lists"""
-        spec = SuggestionsSpec(
-            minor_min="4.22.0",
-            minor_max="4.22.9999",
-            minor_block_list=["4.22.5", "4.22.6-rc.1"],
-            z_min="5.0.0",
-            z_max="5.0.9999",
-            z_block_list=["5.0.1", "5.0.2-rc.0"],
-        )
-
-        self.assertEqual(len(spec.minor_block_list), 2)
-        self.assertEqual(len(spec.z_block_list), 2)
-        self.assertIn("4.22.5", spec.minor_block_list)
-        self.assertIn("5.0.2-rc.0", spec.z_block_list)
-
-    def test_invalid_semver_in_minor_min(self):
-        """Test that invalid semver in minor_min raises ValidationError"""
-        with self.assertRaises(ValidationError) as context:
-            SuggestionsSpec(
-                minor_min="not-a-version",  # Invalid semver
-                minor_max="4.22.9999",
-                minor_block_list=[],
-                z_min="5.0.0",
-                z_max="5.0.9999",
-                z_block_list=[],
-            )
-
-        self.assertIn("Invalid semver format", str(context.exception))
-
-    def test_invalid_semver_in_minor_max(self):
-        """Test that invalid semver in minor_max raises ValidationError"""
-        with self.assertRaises(ValidationError) as context:
-            SuggestionsSpec(
-                minor_min="4.22.0",
-                minor_max="4.22.xyz",  # Invalid semver
-                minor_block_list=[],
-                z_min="5.0.0",
-                z_max="5.0.9999",
-                z_block_list=[],
-            )
-
-        self.assertIn("Invalid semver format", str(context.exception))
-
-    def test_invalid_semver_in_block_list(self):
-        """Test that invalid semver in block lists raises ValidationError"""
-        with self.assertRaises(ValidationError) as context:
-            SuggestionsSpec(
-                minor_min="4.22.0",
-                minor_max="4.22.9999",
-                minor_block_list=["4.22.5", "invalid-version"],  # One invalid
-                z_min="5.0.0",
-                z_max="5.0.9999",
-                z_block_list=[],
-            )
-
-        self.assertIn("Invalid semver format in block list", str(context.exception))
-
-    def test_optional_max_fields(self):
-        """Test that minor_max and z_max can be omitted"""
-        spec = SuggestionsSpec(
-            minor_min="4.22.0-rc.0",
-            minor_block_list=[],
-            z_min="5.0.0-ec.0",
-            z_block_list=[],
-        )
-
-        self.assertEqual(spec.minor_min, "4.22.0-rc.0")
-        self.assertIsNone(spec.minor_max)
-        self.assertEqual(spec.z_min, "5.0.0-ec.0")
-        self.assertIsNone(spec.z_max)
-
-    def test_block_lists_default_to_empty(self):
-        """Test that omitted block lists default to empty lists"""
-        spec = SuggestionsSpec(
-            minor_min="4.22.0-rc.0",
-            z_min="5.0.0-ec.0",
-        )
-
-        self.assertEqual(spec.minor_block_list, [])
-        self.assertEqual(spec.z_block_list, [])
-
-    def test_missing_required_fields(self):
-        """Test that missing required fields raise ValidationError"""
-        with self.assertRaises(ValidationError) as context:
-            SuggestionsSpec(
-                minor_max="4.22.9999",
-                z_min="5.0.0",
-                z_max="5.0.9999",
-                z_block_list=[],
-            )
-
-        self.assertIn("Field required", str(context.exception))
-
-
 class TestBuildSuggestions(unittest.TestCase):
     """Test the BuildSuggestions Pydantic model"""
 
     def test_valid_min_versions_schemas(self):
-        """Test new-schema suggestions for 5.0 and multi-stream 5.1 releases"""
+        """Test suggestions for 5.0 and multi-stream 5.1 releases"""
         cases = [
             ["4.22.0-rc.0", "5.0.0-ec.0"],
             ["4.23.0-rc.0", "5.0.0-rc.0", "5.1.0-ec.0"],
@@ -148,19 +31,20 @@ class TestBuildSuggestions(unittest.TestCase):
                 suggestions = BuildSuggestions.model_validate({"min_versions": min_versions})
 
                 self.assertEqual(suggestions.min_versions, min_versions)
-                self.assertIsNone(suggestions.default)
-                constraints = suggestions.get_source_constraints("s390x")
+                constraints = suggestions.get_source_constraints()
                 self.assertEqual([constraint.min_version for constraint in constraints], min_versions)
-                self.assertTrue(all(constraint.max_version is None for constraint in constraints))
-                self.assertTrue(all(constraint.block_list == [] for constraint in constraints))
+                self.assertEqual(
+                    [constraint.major_minor for constraint in constraints],
+                    [(int(version.split('.')[0]), int(version.split('.')[1])) for version in min_versions],
+                )
 
     def test_empty_min_versions_rejected(self):
-        """Test that the new schema requires at least one source release line"""
+        """Test that the schema requires at least one source release line"""
         with self.assertRaises(ValidationError):
             BuildSuggestions.model_validate({"min_versions": []})
 
     def test_invalid_semver_in_min_versions_rejected(self):
-        """Test that every new-schema minimum is valid semver"""
+        """Test that every minimum is valid semver"""
         with self.assertRaises(ValidationError) as context:
             BuildSuggestions.model_validate({"min_versions": ["4.23.0-rc.0", "not-a-version"]})
 
@@ -173,10 +57,9 @@ class TestBuildSuggestions(unittest.TestCase):
 
         self.assertIn("duplicate release line 5.0", str(context.exception))
 
-    def test_mixed_schemas_rejected(self):
-        """Test that a document cannot combine new and legacy schema fields"""
+    def test_legacy_schema_rejected(self):
+        """Test that the retired default schema is rejected"""
         data = {
-            "min_versions": ["5.0.0-ec.0"],
             "default": {
                 "minor_min": "4.22.0-rc.0",
                 "z_min": "5.0.0-ec.0",
@@ -186,179 +69,23 @@ class TestBuildSuggestions(unittest.TestCase):
         with self.assertRaises(ValidationError) as context:
             BuildSuggestions.model_validate(data)
 
-        self.assertIn("cannot mix", str(context.exception))
+        self.assertIn("min_versions", str(context.exception))
+        self.assertIn("Extra inputs are not permitted", str(context.exception))
 
-    def test_valid_build_suggestions_default_only(self):
-        """Test BuildSuggestions with only default section"""
+    def test_architecture_override_rejected(self):
+        """Test that architecture-specific fields are rejected"""
         data = {
-            "default": {
-                "minor_min": "4.22.0-rc.0",
-                "minor_max": "4.22.9999",
-                "minor_block_list": [],
-                "z_min": "5.0.0-ec.0",
-                "z_max": "5.0.9999",
-                "z_block_list": [],
-            }
-        }
-
-        suggestions = BuildSuggestions.model_validate(data)
-
-        self.assertEqual(suggestions.default.minor_min, "4.22.0-rc.0")
-        self.assertEqual(suggestions.default.z_min, "5.0.0-ec.0")
-
-    def test_valid_build_suggestions_with_arch_override(self):
-        """Test BuildSuggestions with architecture-specific overrides"""
-        data = {
-            "default": {
-                "minor_min": "4.22.0-rc.0",
-                "minor_max": "4.22.9999",
-                "minor_block_list": [],
-                "z_min": "5.0.0-ec.0",
-                "z_max": "5.0.9999",
-                "z_block_list": [],
-            },
+            "min_versions": ["4.22.0-rc.0", "5.0.0-ec.0"],
             "s390x": {
-                "minor_min": "4.22.1",  # Different min for s390x
-                "minor_max": "4.22.9999",
-                "minor_block_list": ["4.22.5"],
-                "z_min": "5.0.0-ec.0",
-                "z_max": "5.0.9999",
-                "z_block_list": [],
+                "min_versions": ["4.22.1", "5.0.0-ec.0"],
             },
-        }
-
-        suggestions = BuildSuggestions.model_validate(data)
-
-        # Check default
-        self.assertEqual(suggestions.default.minor_min, "4.22.0-rc.0")
-
-        # Check s390x override exists
-        s390x_spec = suggestions.s390x
-        self.assertIsNotNone(s390x_spec)
-        self.assertEqual(s390x_spec.minor_min, "4.22.1")
-        self.assertEqual(s390x_spec.minor_block_list, ["4.22.5"])
-
-    def test_get_for_arch_default(self):
-        """Test get_for_arch returns default when no override exists"""
-        data = {
-            "default": {
-                "minor_min": "4.22.0",
-                "minor_max": "4.22.9999",
-                "minor_block_list": [],
-                "z_min": "5.0.0",
-                "z_max": "5.0.9999",
-                "z_block_list": [],
-            }
-        }
-
-        suggestions = BuildSuggestions.model_validate(data)
-
-        # Request non-existent arch, should get default
-        spec = suggestions.get_for_arch("aarch64")
-        self.assertEqual(spec.minor_min, "4.22.0")
-
-    def test_get_for_arch_with_override(self):
-        """Test get_for_arch returns architecture-specific override"""
-        data = {
-            "default": {
-                "minor_min": "4.22.0",
-                "minor_max": "4.22.9999",
-                "minor_block_list": [],
-                "z_min": "5.0.0",
-                "z_max": "5.0.9999",
-                "z_block_list": [],
-            },
-            "s390x": {
-                "minor_min": "4.22.1",
-                "minor_max": "4.22.9999",
-                "minor_block_list": [],
-                "z_min": "5.0.0",
-                "z_max": "5.0.9999",
-                "z_block_list": [],
-            },
-        }
-
-        suggestions = BuildSuggestions.model_validate(data)
-
-        # Request s390x, should get override
-        spec = suggestions.get_for_arch("s390x")
-        self.assertEqual(spec.minor_min, "4.22.1")
-
-        # Request default explicitly
-        spec_default = suggestions.get_for_arch("default")
-        self.assertEqual(spec_default.minor_min, "4.22.0")
-
-    def test_legacy_range_must_stay_within_one_release_line(self):
-        """Test that legacy min/max validation remains in normalized constraints"""
-        suggestions = BuildSuggestions.model_validate(
-            {
-                "default": {
-                    "minor_min": "4.22.0",
-                    "minor_max": "4.23.9999",
-                    "z_min": "5.0.0",
-                    "z_max": "5.0.9999",
-                }
-            }
-        )
-
-        with self.assertRaises(ValidationError) as context:
-            suggestions.get_source_constraints()
-
-        self.assertIn("minimum and maximum versions must have the same major.minor", str(context.exception))
-        self.assertIn("build-suggestions/OWNERS", str(context.exception))
-
-    def test_legacy_constraints_reject_duplicate_release_lines(self):
-        """Test that normalized legacy constraints cannot describe the same release line twice"""
-        suggestions = BuildSuggestions.model_validate(
-            {
-                "default": {
-                    "minor_min": "5.0.0-ec.0",
-                    "minor_max": "5.0.9999",
-                    "z_min": "5.0.0-rc.0",
-                    "z_max": "5.0.9999",
-                }
-            }
-        )
-
-        with self.assertRaisesRegex(ValueError, "duplicate source release line 5.0") as context:
-            suggestions.get_source_constraints()
-
-        self.assertIn("build-suggestions/OWNERS", str(context.exception))
-
-    def test_malformed_arch_override_rejected(self):
-        """Test that non-mapping architecture overrides are rejected"""
-        data = {
-            "default": {
-                "minor_min": "4.22.0",
-                "minor_max": "4.22.9999",
-                "minor_block_list": [],
-                "z_min": "5.0.0",
-                "z_max": "5.0.9999",
-                "z_block_list": [],
-            },
-            "s390x": "oops",
-        }
-
-        with self.assertRaises(ValidationError):
-            BuildSuggestions.model_validate(data)
-
-    def test_missing_default_section(self):
-        """Test that missing default section raises ValidationError"""
-        data = {
-            "s390x": {
-                "minor_min": "4.22.1",
-                "minor_max": "4.22.9999",
-                "minor_block_list": [],
-                "z_min": "5.0.0",
-                "z_max": "5.0.9999",
-                "z_block_list": [],
-            }
         }
 
         with self.assertRaises(ValidationError) as context:
             BuildSuggestions.model_validate(data)
 
-        self.assertIn("must define either 'min_versions'", str(context.exception))
+        self.assertIn("s390x", str(context.exception))
+        self.assertIn("Extra inputs are not permitted", str(context.exception))
 
 
 class TestGetBuildSuggestionsAsync(unittest.IsolatedAsyncioTestCase):
@@ -366,31 +93,6 @@ class TestGetBuildSuggestionsAsync(unittest.IsolatedAsyncioTestCase):
 
     async def test_successful_fetch_and_parse(self):
         """Test successfully fetching and parsing build-suggestions"""
-        yaml_content = """
-default:
-  minor_min: "4.22.0-rc.0"
-  minor_max: "4.22.9999"
-  minor_block_list: []
-  z_min: "5.0.0-ec.0"
-  z_max: "5.0.9999"
-  z_block_list: []
-"""
-
-        mock_response = MagicMock()
-        mock_response.text = yaml_content
-        mock_response.raise_for_status = MagicMock()
-
-        with patch("httpx.AsyncClient") as mock_client:
-            mock_client.return_value.__aenter__.return_value.get = AsyncMock(return_value=mock_response)
-
-            result = await get_build_suggestions_async(5, 0)
-
-            self.assertIsInstance(result, BuildSuggestions)
-            self.assertEqual(result.default.minor_min, "4.22.0-rc.0")
-            self.assertEqual(result.default.z_min, "5.0.0-ec.0")
-
-    async def test_successful_fetch_and_parse_min_versions(self):
-        """Test fetching and parsing the new multi-stream schema"""
         yaml_content = """
 min_versions:
 - 4.23.0-rc.0
@@ -411,9 +113,9 @@ min_versions:
     async def test_invalid_yaml_syntax(self):
         """Test that invalid YAML syntax directs users to the build-suggestions owners"""
         invalid_yaml = """
-default:
-  minor_min: "4.22.0"
-  - invalid yaml syntax here
+min_versions:
+- 4.22.0
+- [invalid
 """
 
         mock_response = MagicMock()
@@ -434,13 +136,9 @@ default:
     async def test_invalid_semver_in_yaml(self):
         """Test that invalid semver directs users to the build-suggestions owners"""
         yaml_content = """
-default:
-  minor_min: "not-a-version"
-  minor_max: "4.22.9999"
-  minor_block_list: []
-  z_min: "5.0.0"
-  z_max: "5.0.9999"
-  z_block_list: []
+min_versions:
+- 4.23.0-rc.0
+- not-a-version
 """
 
         mock_response = MagicMock()
@@ -460,12 +158,7 @@ default:
 
     async def test_missing_required_fields(self):
         """Test that missing required fields direct users to the build-suggestions owners"""
-        yaml_content = """
-default:
-  minor_min: "4.22.0"
-  minor_max: "4.22.9999"
-  # Missing minor_block_list and other fields
-"""
+        yaml_content = "{}"
 
         mock_response = MagicMock()
         mock_response.text = yaml_content
@@ -499,13 +192,9 @@ default:
     async def test_custom_url_and_timeout(self):
         """Test that custom URL and timeout parameters are used"""
         yaml_content = """
-default:
-  minor_min: "4.22.0"
-  minor_max: "4.22.9999"
-  minor_block_list: []
-  z_min: "5.0.0"
-  z_max: "5.0.9999"
-  z_block_list: []
+min_versions:
+- 4.22.0
+- 5.0.0
 """
 
         mock_response = MagicMock()
@@ -762,16 +451,7 @@ class TestCalcUpgradeSourcesAsync(unittest.IsolatedAsyncioTestCase):
 
     def _make_suggestions(self, data=None):
         if data is None:
-            data = {
-                "default": {
-                    "minor_min": "4.22.0-rc.0",
-                    "minor_max": "4.22.9999",
-                    "minor_block_list": [],
-                    "z_min": "5.0.0-ec.0",
-                    "z_max": "5.0.9999",
-                    "z_block_list": [],
-                },
-            }
+            data = {"min_versions": ["4.22.0-rc.0", "5.0.0-ec.0"]}
         return BuildSuggestions.model_validate(data)
 
     @patch("artcommonlib.ocp_version_ancestry.get_release_controller_versions_async", new_callable=AsyncMock)
@@ -879,12 +559,12 @@ class TestCalcUpgradeSourcesAsync(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(calls[0][0][0], 'candidate-4.22')
         self.assertEqual(calls[1][0][0], 'candidate-5.0')
 
-        # All 4.22 versions >= minor_min should be included
+        # All 4.22 versions at or above the configured minimum should be included.
         self.assertIn('4.22.0', result)
         self.assertIn('4.22.1', result)
         self.assertIn('4.22.2', result)
 
-        # z-stream versions >= z_min should be included
+        # Current-line versions at or above the configured minimum should be included.
         self.assertIn('5.0.0-ec.0', result)
         self.assertIn('5.0.0-ec.1', result)
 
@@ -893,18 +573,7 @@ class TestCalcUpgradeSourcesAsync(unittest.IsolatedAsyncioTestCase):
     @patch("artcommonlib.ocp_version_ancestry.get_build_suggestions_async")
     async def test_standard_minor_bump_4_18(self, mock_suggestions, mock_channel, mock_rc):
         """Standard 4.18 should query candidate-4.17"""
-        mock_suggestions.return_value = self._make_suggestions(
-            {
-                "default": {
-                    "minor_min": "4.17.11",
-                    "minor_max": "4.17.9999",
-                    "minor_block_list": [],
-                    "z_min": "4.18.0",
-                    "z_max": "4.18.9999",
-                    "z_block_list": [],
-                },
-            }
-        )
+        mock_suggestions.return_value = self._make_suggestions({"min_versions": ["4.17.11", "4.18.0"]})
         mock_channel.side_effect = [
             (['4.17.12', '4.17.11', '4.17.10'], {}),
             (['4.18.1', '4.18.0'], {}),
@@ -917,39 +586,8 @@ class TestCalcUpgradeSourcesAsync(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(calls[0][0][0], 'candidate-4.17')
         self.assertIn('4.17.11', result)
         self.assertIn('4.17.12', result)
-        # 4.17.10 < minor_min (4.17.11), should be excluded
+        # 4.17.10 is below the configured minimum and should be excluded.
         self.assertNotIn('4.17.10', result)
-
-    @patch("artcommonlib.ocp_version_ancestry.get_release_controller_versions_async", new_callable=AsyncMock)
-    @patch("artcommonlib.ocp_version_ancestry.get_channel_versions_async")
-    @patch("artcommonlib.ocp_version_ancestry.get_build_suggestions_async")
-    async def test_block_list_excludes_versions(self, mock_suggestions, mock_channel, mock_rc):
-        """Versions in block lists should be excluded"""
-        mock_suggestions.return_value = self._make_suggestions(
-            {
-                "default": {
-                    "minor_min": "4.22.0",
-                    "minor_max": "4.22.9999",
-                    "minor_block_list": ["4.22.1"],
-                    "z_min": "5.0.0-ec.0",
-                    "z_max": "5.0.9999",
-                    "z_block_list": ["5.0.0-ec.1"],
-                },
-            }
-        )
-        mock_channel.side_effect = [
-            (['4.22.2', '4.22.1', '4.22.0'], {}),
-            (['5.0.0-ec.1', '5.0.0-ec.0'], {}),
-        ]
-        mock_rc.return_value = []
-
-        result = await calc_upgrade_sources_async("5.0.0-rc.0", "x86_64")
-
-        self.assertIn('4.22.0', result)
-        self.assertNotIn('4.22.1', result)  # blocked
-        self.assertIn('4.22.2', result)
-        self.assertIn('5.0.0-ec.0', result)
-        self.assertNotIn('5.0.0-ec.1', result)  # blocked
 
     @patch("artcommonlib.ocp_version_ancestry.get_release_controller_versions_async", new_callable=AsyncMock)
     @patch("artcommonlib.ocp_version_ancestry.get_channel_versions_async")
@@ -989,36 +627,6 @@ class TestCalcUpgradeSourcesAsync(unittest.IsolatedAsyncioTestCase):
         mock_rc.return_value = []
 
         result = await calc_upgrade_sources_async("5.0.2", "x86_64")
-
-        self.assertNotIn('5.0.0-0.hotfix-2024-09-30-133631', result)
-
-    @patch("artcommonlib.ocp_version_ancestry.get_release_controller_versions_async", new_callable=AsyncMock)
-    @patch("artcommonlib.ocp_version_ancestry.get_channel_versions_async")
-    @patch("artcommonlib.ocp_version_ancestry.get_build_suggestions_async")
-    async def test_hotfix_in_block_list_not_readded(self, mock_suggestions, mock_channel, mock_rc):
-        """Step 7 must not re-add hotfixes excluded by z_block_list"""
-        mock_suggestions.return_value = self._make_suggestions(
-            {
-                "default": {
-                    "minor_min": "4.22.0",
-                    "minor_max": "4.22.9999",
-                    "minor_block_list": [],
-                    "z_min": "5.0.0-ec.0",
-                    "z_max": "5.0.9999",
-                    "z_block_list": ["5.0.0-0.hotfix-2024-09-30-133631"],
-                },
-            }
-        )
-        mock_channel.side_effect = [
-            (['4.22.0'], {}),
-            (
-                ['5.0.0-ec.0', '5.0.0-0.hotfix-2024-09-30-133631'],
-                {'5.0.0-0.hotfix-2024-09-30-133631': ['5.0.0-ec.0']},
-            ),
-        ]
-        mock_rc.return_value = []
-
-        result = await calc_upgrade_sources_async("5.0.1", "x86_64")
 
         self.assertNotIn('5.0.0-0.hotfix-2024-09-30-133631', result)
 
@@ -1090,20 +698,9 @@ class TestCalcUpgradeSourcesAsync(unittest.IsolatedAsyncioTestCase):
     @patch("artcommonlib.ocp_version_ancestry.get_release_controller_versions_async", new_callable=AsyncMock)
     @patch("artcommonlib.ocp_version_ancestry.get_channel_versions_async")
     @patch("artcommonlib.ocp_version_ancestry.get_build_suggestions_async")
-    async def test_no_max_includes_same_minor(self, mock_suggestions, mock_channel, mock_rc):
-        """When minor_max/z_max are omitted, include all versions >= min with same major.minor"""
-        mock_suggestions.return_value = self._make_suggestions(
-            {
-                "default": {
-                    "minor_min": "4.22.0-rc.0",
-                    # minor_max omitted
-                    "minor_block_list": [],
-                    "z_min": "5.0.0-ec.0",
-                    # z_max omitted
-                    "z_block_list": [],
-                },
-            }
-        )
+    async def test_min_versions_have_no_upper_bound(self, mock_suggestions, mock_channel, mock_rc):
+        """Include every version in a configured release line at or above its minimum"""
+        mock_suggestions.return_value = self._make_suggestions()
         mock_channel.side_effect = [
             # candidate-4.22: includes a mix of versions
             (['4.22.0', '4.22.1', '4.22.9999'], {}),
@@ -1114,12 +711,12 @@ class TestCalcUpgradeSourcesAsync(unittest.IsolatedAsyncioTestCase):
 
         result = await calc_upgrade_sources_async("5.0.0-rc.0", "x86_64")
 
-        # All 4.22 versions >= minor_min should be included (no upper bound)
+        # All 4.22 versions at or above the minimum should be included.
         self.assertIn('4.22.0', result)
         self.assertIn('4.22.1', result)
         self.assertIn('4.22.9999', result)
 
-        # All 5.0 versions >= z_min should be included (no upper bound)
+        # All 5.0 versions at or above the minimum should be included.
         self.assertIn('5.0.0-ec.0', result)
         self.assertIn('5.0.9999', result)
 
@@ -1128,18 +725,7 @@ class TestCalcUpgradeSourcesAsync(unittest.IsolatedAsyncioTestCase):
     @patch("artcommonlib.ocp_version_ancestry.get_build_suggestions_async")
     async def test_release_controller_supplements_cincinnati(self, mock_suggestions, mock_channel, mock_rc):
         """Versions on release controller but NOT in Cincinnati should be included"""
-        mock_suggestions.return_value = self._make_suggestions(
-            {
-                "default": {
-                    "minor_min": "4.17.0",
-                    "minor_max": "4.17.9999",
-                    "minor_block_list": [],
-                    "z_min": "4.18.0",
-                    "z_max": "4.18.9999",
-                    "z_block_list": [],
-                },
-            }
-        )
+        mock_suggestions.return_value = self._make_suggestions({"min_versions": ["4.17.0", "4.18.0"]})
         # Cincinnati only knows about 4.17.1 and 4.18.0
         mock_channel.side_effect = [
             (['4.17.1', '4.17.0'], {}),
@@ -1165,25 +751,14 @@ class TestCalcUpgradeSourcesAsync(unittest.IsolatedAsyncioTestCase):
     @patch("artcommonlib.ocp_version_ancestry.get_release_controller_versions_async", new_callable=AsyncMock)
     @patch("artcommonlib.ocp_version_ancestry.get_channel_versions_async")
     @patch("artcommonlib.ocp_version_ancestry.get_build_suggestions_async")
-    async def test_release_controller_versions_still_filtered(self, mock_suggestions, mock_channel, mock_rc):
-        """Versions from release controller should still be filtered by build-suggestions constraints"""
-        mock_suggestions.return_value = self._make_suggestions(
-            {
-                "default": {
-                    "minor_min": "4.17.2",
-                    "minor_max": "4.17.9999",
-                    "minor_block_list": ["4.17.3"],
-                    "z_min": "4.18.0",
-                    "z_max": "4.18.9999",
-                    "z_block_list": [],
-                },
-            }
-        )
+    async def test_release_controller_versions_respect_minimum(self, mock_suggestions, mock_channel, mock_rc):
+        """Release-controller versions below a configured minimum should be excluded"""
+        mock_suggestions.return_value = self._make_suggestions({"min_versions": ["4.17.2", "4.18.0"]})
         mock_channel.side_effect = [
             (['4.17.2'], {}),
             (['4.18.0'], {}),
         ]
-        # Release controller has versions outside build-suggestions range and blocked versions
+        # Release controller has versions above and below the configured minimum.
         mock_rc.side_effect = [
             ['4.17.4', '4.17.3', '4.17.2', '4.17.1', '4.17.0'],
             ['4.18.1', '4.18.0'],
@@ -1191,13 +766,11 @@ class TestCalcUpgradeSourcesAsync(unittest.IsolatedAsyncioTestCase):
 
         result = await calc_upgrade_sources_async("4.18.2", "x86_64")
 
-        # 4.17.4 is >= minor_min and not blocked -> included
+        # Versions at or above the configured minimum are included.
         self.assertIn('4.17.4', result)
-        # 4.17.2 is >= minor_min and not blocked -> included
+        self.assertIn('4.17.3', result)
         self.assertIn('4.17.2', result)
-        # 4.17.3 is in block list -> excluded
-        self.assertNotIn('4.17.3', result)
-        # 4.17.1 and 4.17.0 are < minor_min -> excluded
+        # Versions below the configured minimum are excluded.
         self.assertNotIn('4.17.1', result)
         self.assertNotIn('4.17.0', result)
 
