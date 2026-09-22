@@ -228,8 +228,8 @@ class ConfigScanSources:
     @start_as_current_span_async(TRACER, "scan-sources-konflux.run")
     async def run(self):
         span = trace.get_current_span()
-        span.set_attribute("group", self.runtime.group)
-        span.set_attribute("assembly", self.runtime.assembly)
+        span.set_attribute("group", getattr(self.runtime, 'group', ''))
+        span.set_attribute("assembly", getattr(self.runtime, 'assembly', ''))
         span.set_attribute("skip_rpms", self.skip_rpms)
         span.set_attribute("rebase_priv", self.rebase_priv)
         span.set_attribute("variant", str(self.variant))
@@ -419,7 +419,7 @@ class ConfigScanSources:
 
     def rebase_into_priv(self):
         with TRACER.start_as_current_span("scan-sources-konflux.rebase-into-priv") as span:
-            span.set_attribute("group", self.runtime.group)
+            span.set_attribute("group", getattr(self.runtime, 'group', ''))
             span.set_attribute("dry_run", self.dry_run)
 
             if self.dry_run:
@@ -553,7 +553,7 @@ class ConfigScanSources:
         }
         """
         span = trace.get_current_span()
-        span.set_attribute("group", self.runtime.group)
+        span.set_attribute("group", getattr(self.runtime, "group", ""))
 
         self.logger.info('Gathering latest RPM build records information...')
 
@@ -652,7 +652,7 @@ class ConfigScanSources:
     async def scan_image(self, image_meta: ImageMetadata):
         span = trace.get_current_span()
         span.set_attribute("distgit_key", image_meta.distgit_key)
-        span.set_attribute("image_name", image_meta.name)
+        span.set_attribute("image_name", getattr(image_meta, 'name', image_meta.distgit_key))
         stage = 'initialization'
         try:
             self.logger.info(f'Scanning {image_meta.distgit_key} for changes')
@@ -1692,7 +1692,7 @@ class ConfigScanSources:
         but ART is tracking the build records in the Konflux DB
         """
         span = trace.get_current_span()
-        span.set_attribute("group", self.runtime.group)
+        span.set_attribute("group", getattr(self.runtime, "group", ""))
         span.set_attribute("rpm_count", len(self.all_rpm_metas))
 
         async def find_rpm_commit_hash(rpm: RPMMetadata):
@@ -1896,8 +1896,8 @@ class ConfigScanSources:
             }
         """
         span = trace.get_current_span()
-        span.set_attribute("group", self.runtime.group)
-        span.set_attribute("arch_count", len(self.runtime.arches))
+        span.set_attribute("group", getattr(self.runtime, "group", ""))
+        span.set_attribute("arch_count", len(getattr(self.runtime, "arches", [])))
         statuses = []
 
         version = self.runtime.get_minor_version()
