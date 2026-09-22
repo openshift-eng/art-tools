@@ -2,6 +2,7 @@ import os
 import sys
 
 from artcommonlib import constants
+from artcommonlib.telemetry import ResourceMetricsSpanProcessor
 from opentelemetry import context, trace
 from opentelemetry.exporter.otlp.proto.grpc.trace_exporter import OTLPSpanExporter
 from opentelemetry.sdk.resources import Resource
@@ -20,6 +21,7 @@ def new_tracker_provider(resource: Resource, exporter: SpanExporter):
     processor = BatchSpanProcessor(exporter)
     provider = TracerProvider(resource=resource)
     provider.add_span_processor(processor)
+    provider.add_span_processor(ResourceMetricsSpanProcessor())
     return provider
 
 
