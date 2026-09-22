@@ -8,6 +8,7 @@ from typing import Optional
 
 import click
 from artcommonlib import logutil
+from opentelemetry import context, trace
 
 from pyartcd import __version__
 from pyartcd.runtime import Runtime
@@ -71,6 +72,12 @@ def cli(
     # Initialize telemetry if needed
     if enable_telemetry or os.environ.get("TELEMETRY_ENABLED") == "1":
         initialize_telemetry()
+        tracer = trace.get_tracer("pyartcd")
+        cmd_name = ctx.invoked_subcommand or "artcd"
+        span = tracer.start_span(f"artcd.{cmd_name}")
+        token = context.attach(trace.use_span(span, end_on_exit=False))
+        ctx.call_on_close(span.end)
+        ctx.call_on_close(lambda: context.detach(token))
     config_filename = Path(config) if config else Path("~/.config/artcd.toml").expanduser()
     working_dir_path = Path(working_dir) if working_dir else Path.cwd()
     # configure logging
