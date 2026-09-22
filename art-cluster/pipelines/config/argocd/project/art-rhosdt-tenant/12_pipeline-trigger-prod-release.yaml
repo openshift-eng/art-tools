@@ -31,7 +31,7 @@ spec:
         import requests
         import yaml
 
-        EXPECTED_PRODUCT = "rhosdt"
+        EXPECTED_PRODUCT = "openshift-opentelemetry-operator"
         PROD_JOB_NAME = "prod-job"
         PROD_STAGE_NAME = "prod-release-triggers"
 
