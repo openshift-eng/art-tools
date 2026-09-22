@@ -75,6 +75,14 @@ def cli(
         tracer = trace.get_tracer("pyartcd")
         cmd_name = ctx.invoked_subcommand or "root"
         span = tracer.start_span(f"artcd.{cmd_name}")
+        span.set_attributes({
+            "artcd.command": cmd_name,
+            "artcd.dry_run": dry_run,
+            "artcd.version": __version__,
+            "jenkins.build_url": os.environ.get("BUILD_URL", ""),
+            "jenkins.job_name": os.environ.get("JOB_NAME", ""),
+            "jenkins.build_user_email": os.environ.get("BUILD_USER_EMAIL", ""),
+        })
         token = context.attach(trace.set_span_in_context(span))
         ctx.call_on_close(span.end)
         ctx.call_on_close(lambda: context.detach(token))
