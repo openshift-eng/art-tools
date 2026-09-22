@@ -1,0 +1,9 @@
+apiVersion: user.openshift.io/v1
+kind: Group
+metadata:
+  name: art-rhosdt-team-members
+users:
+  - ploffay
+  - bbongart
+  - ozwalsh
+  - ikanse
