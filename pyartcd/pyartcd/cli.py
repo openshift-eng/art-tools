@@ -88,6 +88,12 @@ def cli(
         token = context.attach(trace.set_span_in_context(span))
         ctx.call_on_close(span.end)
         ctx.call_on_close(lambda: context.detach(token))
+        # Update TRACEPARENT so child subprocesses (e.g. doozer) use the artcd span
+        # as their parent rather than the Jenkins-generated fake span ID that was in
+        # the original TRACEPARENT.  Without this, all doozer spans land as siblings
+        # of the artcd root span instead of children.
+        span_ctx = span.get_span_context()
+        os.environ["TRACEPARENT"] = f"00-{span_ctx.trace_id:032x}-{span_ctx.span_id:016x}-{span_ctx.trace_flags:02x}"
     config_filename = Path(config) if config else Path("~/.config/artcd.toml").expanduser()
     working_dir_path = Path(working_dir) if working_dir else Path.cwd()
     # configure logging
