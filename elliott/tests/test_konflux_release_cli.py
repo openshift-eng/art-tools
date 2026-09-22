@@ -858,3 +858,63 @@ class TestCreateReleaseCli(IsolatedAsyncioTestCase):
 
         self.assertIn("unauthorized-component", str(ctx.exception))
         self.assertEqual(self.konflux_client._create.call_count, 0)
+
+    @patch("elliottlib.cli.konflux_release_cli.get_utc_now_formatted_str", return_value="timestamp")
+    @patch("doozerlib.backend.konflux_client.KonfluxClient.from_kubeconfig")
+    @patch("elliottlib.runtime.Runtime")
+    async def test_run_rejects_skipped_release_plan_before_snapshot(self, mock_runtime, mock_konflux_client_init, _):
+        """Skip-stage sentinel must fail before any Konflux Snapshot is created."""
+        mock_runtime.return_value = self.runtime
+        mock_konflux_client_init.return_value = self.konflux_client
+
+        shipment_config = ShipmentConfig(
+            shipment=Shipment(
+                metadata=Metadata(
+                    product="ocp",
+                    application="openshift-4-18",
+                    group="openshift-4.18",
+                    assembly="4.18.2",
+                ),
+                environments=Environments(
+                    stage=ShipmentEnv(releasePlan="Skipped"),
+                    prod=ShipmentEnv(releasePlan="test-prod-rp"),
+                ),
+                snapshot=Snapshot(
+                    nvrs=["nvr1"],
+                    spec=SnapshotSpec(
+                        application="openshift-4-18",
+                        components=[
+                            SnapshotComponent(
+                                name="test-rpm",
+                                source=ComponentSource(
+                                    git=GitSource(url="https://github.com/test.git", revision="abc")
+                                ),
+                                containerImage="img1",
+                            ),
+                        ],
+                    ),
+                ),
+                data=Data(
+                    releaseNotes=ReleaseNotes(type="RHBA", synopsis="s", topic="t", description="d", solution="s")
+                ),
+            ),
+        )
+        self.runtime.shipment_gitdata.load_yaml_file.return_value = shipment_config.model_dump(exclude_none=True)
+        self.konflux_client._get_api.return_value = MagicMock()
+        self.konflux_client._get.return_value = MagicMock()
+
+        cli = CreateReleaseCli(
+            runtime=self.runtime,
+            config_path=self.config_path,
+            release_env="stage",
+            konflux_config=self.konflux_config,
+            image_repo_pull_secret={},
+            dry_run=self.dry_run,
+            kind="image",
+        )
+
+        with self.assertRaises(RuntimeError) as ctx:
+            await cli.run()
+
+        self.assertIn("skip-stage sentinel", str(ctx.exception))
+        self.assertEqual(self.konflux_client._create.call_count, 0)
