@@ -209,10 +209,8 @@ class TestKonfluxRebaseCli(unittest.IsolatedAsyncioTestCase):
 
         parent = mock.Mock()
         parent.distgit_key = "parent-img"
-        parent.get_lockfile_backend.return_value = "art-internal"
         child = mock.Mock()
         child.distgit_key = "child-img"
-        child.get_lockfile_backend.return_value = "art-internal"
 
         runtime = mock.Mock(spec=Runtime)
         runtime.working_dir = "/tmp"
@@ -223,7 +221,6 @@ class TestKonfluxRebaseCli(unittest.IsolatedAsyncioTestCase):
         runtime.state = {}
 
         mock_rebaser = mock_rebaser_cls.return_value
-        mock_rebaser.rpm_lockfile_generator.ensure_repositories_loaded = mock.AsyncMock()
 
         async def rebase_to_side_effect(meta, *_args, **_kwargs):
             if meta.distgit_key == "parent-img":
@@ -259,72 +256,14 @@ class TestKonfluxRebaseCli(unittest.IsolatedAsyncioTestCase):
 
     @mock.patch("doozerlib.cli.images_konflux.trace.get_current_span")
     @mock.patch("doozerlib.cli.images_konflux.KonfluxRebaser")
-    async def test_ensure_repositories_loaded_skips_prototype_backend(self, mock_rebaser_cls, mock_get_span):
-        """ensure_repositories_loaded should only receive art-internal images, not rpm-lockfile-prototype ones."""
-        mock_get_span.return_value = mock.Mock()
-
-        art_internal_img = mock.Mock()
-        art_internal_img.distgit_key = "art-internal-img"
-        art_internal_img.get_lockfile_backend.return_value = "art-internal"
-
-        prototype_img = mock.Mock()
-        prototype_img.distgit_key = "prototype-img"
-        prototype_img.get_lockfile_backend.return_value = "rpm-lockfile-prototype"
-
-        runtime = mock.Mock(spec=Runtime)
-        runtime.working_dir = "/tmp"
-        runtime.upcycle = False
-        runtime.initialize = mock.Mock()
-        runtime.source_resolver = mock.Mock(spec=SourceResolver)
-        runtime.ordered_image_metas = mock.Mock(return_value=[art_internal_img, prototype_img])
-        runtime.state = {}
-
-        mock_rebaser = mock_rebaser_cls.return_value
-        mock_rebaser.rpm_lockfile_generator.ensure_repositories_loaded = mock.AsyncMock()
-        mock_rebaser.rebase_to = mock.AsyncMock(return_value=("4.14.0", "1"))
-
-        cli = KonfluxRebaseCli(
-            runtime=runtime,
-            version="4.14.0",
-            release="1",
-            embargoed=False,
-            force_yum_updates=False,
-            repo_type="unsigned",
-            image_repo="test-repo",
-            message="test",
-            push=False,
-        )
-
-        await cli.run()
-
-        mock_rebaser.rpm_lockfile_generator.ensure_repositories_loaded.assert_called_once()
-        loaded_metas = mock_rebaser.rpm_lockfile_generator.ensure_repositories_loaded.call_args[0][0]
-        self.assertEqual([m.distgit_key for m in loaded_metas], ["art-internal-img"])
-
-        self.assertEqual(mock_rebaser.rebase_to.call_count, 2)
-        rebased_keys = [call.args[0].distgit_key for call in mock_rebaser.rebase_to.call_args_list]
-        self.assertIn("art-internal-img", rebased_keys)
-        self.assertIn("prototype-img", rebased_keys)
-
-        # Success path must also write per-image state
-        rebase_state = runtime.state["images:konflux:rebase"]
-        self.assertEqual(rebase_state["images"]["art-internal-img"], {"status": "success"})
-        self.assertEqual(rebase_state["images"]["prototype-img"], {"status": "success"})
-        self.assertNotIn("failed-images", rebase_state)
-        self.assertNotIn("skipped-due-to-parent-rebase-failure", rebase_state)
-
-    @mock.patch("doozerlib.cli.images_konflux.trace.get_current_span")
-    @mock.patch("doozerlib.cli.images_konflux.KonfluxRebaser")
     async def test_run_success_writes_all_images_state(self, mock_rebaser_cls, mock_get_span):
         """On full success, state.yaml records every image with status='success'."""
         mock_get_span.return_value = mock.Mock()
 
         img_a = mock.Mock()
         img_a.distgit_key = "img-a"
-        img_a.get_lockfile_backend.return_value = "art-internal"
         img_b = mock.Mock()
         img_b.distgit_key = "img-b"
-        img_b.get_lockfile_backend.return_value = "art-internal"
 
         runtime = mock.Mock(spec=Runtime)
         runtime.working_dir = "/tmp"
@@ -335,7 +274,6 @@ class TestKonfluxRebaseCli(unittest.IsolatedAsyncioTestCase):
         runtime.state = {}
 
         mock_rebaser = mock_rebaser_cls.return_value
-        mock_rebaser.rpm_lockfile_generator.ensure_repositories_loaded = mock.AsyncMock()
         mock_rebaser.rebase_to = mock.AsyncMock(return_value=("4.14.0", "1"))
 
         rebase_cli = KonfluxRebaseCli(

@@ -419,31 +419,28 @@ COPY . /skills/
         metadata = MagicMock()
         metadata.distgit_key = "foo"
         metadata.is_lockfile_generation_enabled.return_value = True
-        metadata.get_lockfile_backend.return_value = "art-internal"
 
-        mock_generator = AsyncMock()
         rebaser = KonfluxRebaser(MagicMock(), MagicMock(), MagicMock(), "unsigned", "test-repo")
-        rebaser.rpm_lockfile_generator = mock_generator
         rebaser._logger = MagicMock()
+        rebaser._write_rpms_lock_file_prototype = AsyncMock()
 
         asyncio.run(rebaser._write_rpms_lock_file(metadata, Path(".")))
 
-        mock_generator.generate_lockfile.assert_awaited_once_with(metadata, Path("."))
-        rebaser._logger.info.assert_called_with("Generating RPM lockfile for foo (backend=art-internal)")
+        rebaser._write_rpms_lock_file_prototype.assert_awaited_once_with(metadata, Path("."), None, None)
+        rebaser._logger.info.assert_called_with("Generating RPM lockfile for foo")
 
     def test_write_rpms_lock_file_disabled(self):
         metadata = MagicMock()
         metadata.distgit_key = "foo"
         metadata.is_lockfile_generation_enabled.return_value = False
 
-        mock_generator = AsyncMock()
         rebaser = KonfluxRebaser(MagicMock(), MagicMock(), MagicMock(), "unsigned", "test-repo")
-        rebaser.rpm_lockfile_generator = mock_generator
         rebaser._logger = MagicMock()
+        rebaser._write_rpms_lock_file_prototype = AsyncMock()
 
         asyncio.run(rebaser._write_rpms_lock_file(metadata, Path(".")))
 
-        mock_generator.generate_lockfile.assert_not_called()
+        rebaser._write_rpms_lock_file_prototype.assert_not_called()
         rebaser._logger.debug.assert_called_with('RPM lockfile generation is disabled for foo')
 
     def test_go_version_regex_pattern(self):
@@ -619,178 +616,6 @@ COPY . /skills/
                 except ValueError:
                     # If version parsing fails, it should be handled gracefully
                     pass
-
-    def test_get_module_enablement_commands_disabled_by_config(self):
-        """Test _get_module_enablement_commands returns empty list when dnf_modules_enable is disabled"""
-        rebaser = KonfluxRebaser(
-            runtime=MagicMock(), base_dir=Path("/tmp"), source_resolver=MagicMock(), repo_type="test"
-        )
-        rebaser._logger = MagicMock()
-
-        # Create mock metadata with dnf_modules_enable disabled
-        mock_metadata = MagicMock()
-        mock_metadata.distgit_key = "test-image"
-        mock_metadata.is_lockfile_generation_enabled.return_value = True
-        mock_metadata.is_dnf_modules_enable_enabled.return_value = False
-
-        result = rebaser._get_module_enablement_commands(mock_metadata)
-
-        # Should return empty list
-        self.assertEqual(result, [])
-
-        # Should log that module enablement is disabled
-        rebaser._logger.info.assert_called_once_with("DNF module enablement disabled for test-image")
-
-        # Should not call other metadata methods since we returned early
-        mock_metadata.branch_el_target.assert_not_called()
-        mock_metadata.get_lockfile_modules_to_install.assert_not_called()
-
-    def test_get_module_enablement_commands_enabled_by_config(self):
-        """Test _get_module_enablement_commands generates commands when dnf_modules_enable is enabled"""
-        rebaser = KonfluxRebaser(
-            runtime=MagicMock(), base_dir=Path("/tmp"), source_resolver=MagicMock(), repo_type="test"
-        )
-        rebaser._logger = MagicMock()
-
-        # Create mock metadata with dnf_modules_enable enabled
-        mock_metadata = MagicMock()
-        mock_metadata.distgit_key = "test-image"
-        mock_metadata.is_lockfile_generation_enabled.return_value = True
-        mock_metadata.is_dnf_modules_enable_enabled.return_value = True
-        mock_metadata.branch_el_target.return_value = 9  # RHEL 9
-        mock_metadata.get_lockfile_modules_to_install.return_value = {"postgresql:15", "maven:3.8"}
-
-        result = rebaser._get_module_enablement_commands(mock_metadata)
-
-        # Should return command list with USER 0 + RUN command
-        self.assertEqual(len(result), 2)
-        self.assertEqual(result[0], "USER 0")
-        self.assertIn("RUN dnf module enable -y", result[1])
-        self.assertIn("maven:3.8", result[1])
-        self.assertIn("postgresql:15", result[1])
-
-        # Should log the modules being enabled
-        rebaser._logger.info.assert_called_once()
-        log_message = rebaser._logger.info.call_args[0][0]
-        self.assertIn("Enabling modules for test-image", log_message)
-
-        # Should have called all metadata methods
-        mock_metadata.is_dnf_modules_enable_enabled.assert_called_once()
-        mock_metadata.branch_el_target.assert_called_once()
-        mock_metadata.get_lockfile_modules_to_install.assert_called_once()
-
-    def test_get_module_enablement_commands_with_existing_user_zero(self):
-        """Test _get_module_enablement_commands skips USER 0 when already present in previous lines"""
-        rebaser = KonfluxRebaser(
-            runtime=MagicMock(), base_dir=Path("/tmp"), source_resolver=MagicMock(), repo_type="test"
-        )
-        rebaser._logger = MagicMock()
-
-        mock_metadata = MagicMock()
-        mock_metadata.distgit_key = "test-image"
-        mock_metadata.is_lockfile_generation_enabled.return_value = True
-        mock_metadata.is_dnf_modules_enable_enabled.return_value = True
-        mock_metadata.branch_el_target.return_value = 9
-        mock_metadata.get_lockfile_modules_to_install.return_value = {"postgresql:15"}
-
-        # Previous lines contain USER 0
-        previous_lines = ["ENV TEST=1", "USER 0", "RUN something"]
-        result = rebaser._get_module_enablement_commands(mock_metadata, previous_lines)
-
-        # Should NOT include USER 0 again
-        self.assertEqual(len(result), 1)
-        self.assertIn("RUN dnf module enable -y", result[0])
-        self.assertIn("postgresql:15", result[0])
-
-    def test_get_module_enablement_commands_with_different_user(self):
-        """Test _get_module_enablement_commands adds USER 0 when previous USER is different"""
-        rebaser = KonfluxRebaser(
-            runtime=MagicMock(), base_dir=Path("/tmp"), source_resolver=MagicMock(), repo_type="test"
-        )
-        rebaser._logger = MagicMock()
-
-        mock_metadata = MagicMock()
-        mock_metadata.distgit_key = "test-image"
-        mock_metadata.is_lockfile_generation_enabled.return_value = True
-        mock_metadata.is_dnf_modules_enable_enabled.return_value = True
-        mock_metadata.branch_el_target.return_value = 9
-        mock_metadata.get_lockfile_modules_to_install.return_value = {"postgresql:15"}
-
-        # Previous lines contain different USER
-        previous_lines = ["ENV TEST=1", "USER 1001", "RUN something"]
-        result = rebaser._get_module_enablement_commands(mock_metadata, previous_lines)
-
-        # Should include USER 0 since current user is not root
-        self.assertEqual(len(result), 2)
-        self.assertEqual(result[0], "USER 0")
-        self.assertIn("RUN dnf module enable -y", result[1])
-
-    def test_get_module_enablement_commands_user_zero_then_other_user(self):
-        """Test _get_module_enablement_commands adds USER 0 when USER 0 is followed by another USER"""
-        rebaser = KonfluxRebaser(
-            runtime=MagicMock(), base_dir=Path("/tmp"), source_resolver=MagicMock(), repo_type="test"
-        )
-        rebaser._logger = MagicMock()
-
-        mock_metadata = MagicMock()
-        mock_metadata.distgit_key = "test-image"
-        mock_metadata.is_lockfile_generation_enabled.return_value = True
-        mock_metadata.is_dnf_modules_enable_enabled.return_value = True
-        mock_metadata.branch_el_target.return_value = 9
-        mock_metadata.get_lockfile_modules_to_install.return_value = {"postgresql:15"}
-
-        # Previous lines contain USER 0 then USER 1001 (most recent)
-        previous_lines = ["ENV TEST=1", "USER 0", "RUN something", "USER 1001"]
-        result = rebaser._get_module_enablement_commands(mock_metadata, previous_lines)
-
-        # Should include USER 0 since current user is 1001 (not root)
-        self.assertEqual(len(result), 2)
-        self.assertEqual(result[0], "USER 0")
-        self.assertIn("RUN dnf module enable -y", result[1])
-
-    def test_get_module_enablement_commands_no_previous_lines(self):
-        """Test _get_module_enablement_commands adds USER 0 when no previous lines provided"""
-        rebaser = KonfluxRebaser(
-            runtime=MagicMock(), base_dir=Path("/tmp"), source_resolver=MagicMock(), repo_type="test"
-        )
-        rebaser._logger = MagicMock()
-
-        mock_metadata = MagicMock()
-        mock_metadata.distgit_key = "test-image"
-        mock_metadata.is_lockfile_generation_enabled.return_value = True
-        mock_metadata.is_dnf_modules_enable_enabled.return_value = True
-        mock_metadata.branch_el_target.return_value = 9
-        mock_metadata.get_lockfile_modules_to_install.return_value = {"postgresql:15"}
-
-        # No previous lines provided (None)
-        result = rebaser._get_module_enablement_commands(mock_metadata, None)
-
-        # Should include USER 0 by default
-        self.assertEqual(len(result), 2)
-        self.assertEqual(result[0], "USER 0")
-        self.assertIn("RUN dnf module enable -y", result[1])
-
-    def test_get_module_enablement_commands_empty_previous_lines(self):
-        """Test _get_module_enablement_commands adds USER 0 when previous lines is empty list"""
-        rebaser = KonfluxRebaser(
-            runtime=MagicMock(), base_dir=Path("/tmp"), source_resolver=MagicMock(), repo_type="test"
-        )
-        rebaser._logger = MagicMock()
-
-        mock_metadata = MagicMock()
-        mock_metadata.distgit_key = "test-image"
-        mock_metadata.is_lockfile_generation_enabled.return_value = True
-        mock_metadata.is_dnf_modules_enable_enabled.return_value = True
-        mock_metadata.branch_el_target.return_value = 9
-        mock_metadata.get_lockfile_modules_to_install.return_value = {"postgresql:15"}
-
-        # Empty previous lines list
-        result = rebaser._get_module_enablement_commands(mock_metadata, [])
-
-        # Should include USER 0 by default
-        self.assertEqual(len(result), 2)
-        self.assertEqual(result[0], "USER 0")
-        self.assertIn("RUN dnf module enable -y", result[1])
 
     def test_make_actual_release_string_ocp_with_el_suffix(self):
         """Test _make_actual_release_string uses el# suffix for OCP builds"""

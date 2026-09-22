@@ -31,8 +31,7 @@ from doozerlib import constants, util
 from doozerlib.backend.build_repo import BuildRepo
 from doozerlib.exceptions import ParentRebaseFailedError
 from doozerlib.image import ImageMetadata, extract_builder_info_from_pullspec
-from doozerlib.lockfile import ArtifactLockfileGenerator, RPMLockfileGenerator
-from doozerlib.lockfile_prototype.constants import LockfileBackend
+from doozerlib.lockfile import ArtifactLockfileGenerator
 from doozerlib.record_logger import RecordLogger
 from doozerlib.repos import Repos
 from doozerlib.runtime import Runtime
@@ -92,9 +91,6 @@ class KonfluxRebaser:
         self._record_logger = record_logger
         self._source_modifier_factory = source_modifier_factory
         self._logger = logger or LOGGER
-        self.rpm_lockfile_generator = RPMLockfileGenerator(
-            runtime.repos, runtime=runtime, lockfile_seed_nvrs=lockfile_seed_nvrs
-        )
         self.artifact_lockfile_generator = ArtifactLockfileGenerator(runtime=runtime)
         self._shared_dnf_cache: TemporaryDirectory | None = None
         self.image_repo = image_repo
@@ -1038,10 +1034,7 @@ class KonfluxRebaser:
             # sees the rebased FROM lines with resolved ART pullspecs
             await self._write_rpms_lock_file(metadata, dest_dir, downstream_parents, parent_members)
 
-            if (
-                metadata.is_lockfile_generation_enabled()
-                and metadata.get_lockfile_backend() == LockfileBackend.RPM_LOCKFILE_PROTOTYPE.value
-            ):
+            if metadata.is_lockfile_generation_enabled():
                 from doozerlib.lockfile_prototype.rebaser_hooks import apply_dockerfile_transforms
 
                 lockfile_has_packages = bool(getattr(metadata, "lockfile_packages", None))
@@ -1067,13 +1060,8 @@ class KonfluxRebaser:
             self._logger.debug(f"RPM lockfile generation is disabled for {metadata.distgit_key}")
             return
 
-        backend_str = metadata.get_lockfile_backend()
-        self._logger.info(f"Generating RPM lockfile for {metadata.distgit_key} (backend={backend_str})")
-
-        if backend_str == LockfileBackend.RPM_LOCKFILE_PROTOTYPE.value:
-            await self._write_rpms_lock_file_prototype(metadata, dest_dir, downstream_parents, parent_members)
-        else:
-            await self.rpm_lockfile_generator.generate_lockfile(metadata, dest_dir)
+        self._logger.info(f"Generating RPM lockfile for {metadata.distgit_key}")
+        await self._write_rpms_lock_file_prototype(metadata, dest_dir, downstream_parents, parent_members)
 
     async def _write_rpms_lock_file_prototype(
         self,
@@ -1392,11 +1380,10 @@ class KonfluxRebaser:
             shutil.copyfileobj(df_fileobj, df)
             df_fileobj.close()
 
-        if metadata.get_lockfile_backend() == LockfileBackend.RPM_LOCKFILE_PROTOTYPE.value:
-            from doozerlib.lockfile_prototype.dockerfile_transforms import fix_rpm_verify_commands
+        from doozerlib.lockfile_prototype.dockerfile_transforms import fix_rpm_verify_commands
 
-            df_path_obj = Path(dfp.dockerfile_path)
-            df_path_obj.write_text(fix_rpm_verify_commands(df_path_obj.read_text()))
+        df_path_obj = Path(dfp.dockerfile_path)
+        df_path_obj.write_text(fix_rpm_verify_commands(df_path_obj.read_text()))
 
         await self._update_environment_variables(
             metadata, source, df_path, build_update_envs=build_update_env_vars, metadata_envs=metadata_envs
@@ -1452,60 +1439,6 @@ class KonfluxRebaser:
 
         self._logger.info(f"Found required {artifact_type} artifact: {matching_artifact}")
         return matching_artifact
-
-    def _get_module_enablement_commands(self, metadata: ImageMetadata, previous_lines: List[str] = None) -> List[str]:
-        """
-        Generate DNF module enable commands for RHEL 9+ images with lockfile modules.
-
-        Args:
-            metadata: ImageMetadata for the image being processed
-            previous_lines: List of previous Dockerfile lines to check for existing USER 0
-
-        Returns:
-            List[str]: List of RUN commands to enable modules, or empty list if no modules needed
-        """
-        if not metadata.is_lockfile_generation_enabled():
-            return []
-
-        if metadata.get_lockfile_backend() == LockfileBackend.RPM_LOCKFILE_PROTOTYPE.value:
-            return []
-
-        # Check if DNF module enablement is disabled
-        if not metadata.is_dnf_modules_enable_enabled():
-            self._logger.info(f"DNF module enablement disabled for {metadata.distgit_key}")
-            return []
-
-        try:
-            el_ver = metadata.branch_el_target()
-            if el_ver < 9:
-                return []
-        except ValueError:
-            return []
-
-        modules_to_install = metadata.get_lockfile_modules_to_install()
-        if not modules_to_install:
-            return []
-
-        modules_list = ' '.join(sorted(modules_to_install))
-        self._logger.info(f"Enabling modules for {metadata.distgit_key}: {modules_list}")
-
-        # Check if USER 0 was already added in recent lines
-        user_zero_needed = True
-        if previous_lines:
-            # Look for the most recent USER command
-            for line in reversed(previous_lines):
-                if line.strip().startswith("USER "):
-                    if line.strip() == "USER 0":
-                        user_zero_needed = False
-                    # Found a USER command, stop looking (whether it's USER 0 or not)
-                    break
-
-        commands = []
-        if user_zero_needed:
-            commands.append("USER 0")
-        commands.append(f"RUN dnf module enable -y {modules_list}")
-
-        return commands
 
     def _add_build_repos(self, dfp: DockerfileParser, metadata: ImageMetadata, dest_dir: Path):
         # Populating the repo file needs to happen after every FROM before the original Dockerfile can invoke yum/dnf.
@@ -1702,10 +1635,6 @@ class KonfluxRebaser:
                 "ENV HTTP_PROXY='http://127.0.0.1:9999'",
                 "ENV HTTPS_PROXY='http://127.0.0.1:9999'",
             ]
-
-        module_enable_commands = self._get_module_enablement_commands(metadata, konflux_lines)
-        if module_enable_commands:
-            konflux_lines.extend(module_enable_commands)
 
         konflux_lines += ["# End Konflux-specific steps\n\n"]
 

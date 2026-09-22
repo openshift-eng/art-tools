@@ -3,7 +3,6 @@ Constants and enums for the lockfile prototype package.
 """
 
 import re
-from enum import Enum
 from pathlib import Path
 
 DEFAULT_RPM_LOCKFILE_NAME = "rpms.lock.yaml"
@@ -45,8 +44,3 @@ RPMDB_CACHE_ERROR_PATTERNS = [
     "failed loading RPMDB",
     "No such file or directory",
 ]
-
-
-class LockfileBackend(str, Enum):
-    ART_INTERNAL = "art-internal"
-    RPM_LOCKFILE_PROTOTYPE = "rpm-lockfile-prototype"
