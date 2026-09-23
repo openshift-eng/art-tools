@@ -637,7 +637,7 @@ class OLMBundle(object):
     def operator_framework_tags(self):
         override_channel = self.channel
         override_default = self.channel
-        stable_channel = 'stable'
+        stable_channel = self.runtime.group_config.get('operator_stable_channel_name', 'stable')
 
         # see: issues.redhat.com/browse/ART-3107
         if self.runtime.group_config.operator_channel_stable in ['default', 'extra']:

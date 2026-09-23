@@ -956,7 +956,7 @@ class KonfluxOlmBundleRebaser:
     def _get_operator_framework_tags(self, channel_name: str, package_name: str):
         override_channel = channel_name
         override_default = channel_name
-        stable_channel = "stable"
+        stable_channel = self._group_config.get('operator_stable_channel_name', 'stable')
         # see: issues.redhat.com/browse/ART-3107
         if self._group_config.operator_channel_stable in ['default', 'extra']:
             override_channel = ','.join((channel_name, stable_channel))
