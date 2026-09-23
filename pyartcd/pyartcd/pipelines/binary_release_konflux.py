@@ -455,9 +455,13 @@ class BinaryReleaseKonfluxPipeline:
         """
         Mark the shipment MR as ready by removing the Draft prefix from the title.
         """
+        if self.dry_run:
+            self.logger.info("[DRY-RUN] Would set shipment MR ready: %s", self.shipment_mr_url)
+            return
+
         mr = await self._gitlab.set_mr_ready(self.shipment_mr_url)
 
-        if mr and not self.dry_run:
+        if mr:
             self.logger.info("Waiting for 30 seconds to ensure MR is updated...")
             await asyncio.sleep(30)
 
