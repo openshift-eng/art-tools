@@ -11,6 +11,7 @@ import koji
 from artcommonlib import exectools
 from artcommonlib.brew import BuildStates
 from artcommonlib.constants import (
+    ACTIVE_OCP_VERSIONS,
     BREW_HUB,
     GOLANG_BUILDER_IMAGE_NAME,
     GOLANG_NVR_LABEL,
@@ -21,7 +22,7 @@ from artcommonlib.konflux.konflux_build_record import ArtifactType, Engine, Konf
 from artcommonlib.konflux.konflux_db import KonfluxDb
 from artcommonlib.release_util import isolate_assembly_in_release, isolate_el_version_in_release
 from artcommonlib.rpm_utils import parse_nvr
-from artcommonlib.util import new_roundtrip_yaml_handler
+from artcommonlib.util import new_roundtrip_yaml_handler, split_git_url
 from doozerlib.cli.config_plashet import KNOWN_SIGNING_KEYS
 from doozerlib.util import konflux_golang_builder_component_name, rh_art_images_base_pullspec
 from elliottlib import util as elliottutil
@@ -206,8 +207,65 @@ def extract_major_minor(version: str, label: str = "version") -> str:
     return f"{match[1]}.{match[2]}"
 
 
+_GOLANG_GROUP_VAR_NAMES = ("GO_LATEST", "GO_EXTRA", "GO_PREVIOUS")
+
+
+def _get_github_ocp_build_data_repo(data_path: str | None = None):
+    """Resolve the GitHub repo for ocp-build-data (fork from data_path, else upstream)."""
+    if data_path and re.search(r'github\.com[:/](.+?)(?:\.git)?$', data_path):
+        _, org, repo_name = split_git_url(data_path)
+        return get_github_client_for_org(org).get_repo(f"{org}/{repo_name}")
+    _, org, repo_name = split_git_url(constants.OCP_BUILD_DATA_URL)
+    return get_github_client_for_org(org).get_repo(f"{org}/{repo_name}")
+
+
+def _go_major_minors_from_group_vars(
+    vars_content: dict,
+    *,
+    label_prefix: str = "group.yml",
+    skip_invalid: bool = True,
+) -> dict[str, str]:
+    """Map GO_LATEST / GO_EXTRA / GO_PREVIOUS group.yml vars to golang major.minor strings."""
+    result: dict[str, str] = {}
+    for var_name in _GOLANG_GROUP_VAR_NAMES:
+        var_value = vars_content.get(var_name)
+        if not var_value:
+            continue
+        try:
+            result[var_name] = extract_major_minor(var_value, f"{label_prefix} {var_name}")
+        except ValueError:
+            if not skip_invalid:
+                raise
+    return result
+
+
+def get_active_versions_for_golang_major_minor(
+    golang_major_minor: str,
+    data_path: str | None = None,
+) -> List[str]:
+    """Return active OCP versions whose group.yml references golang_major_minor.
+
+    Always reads from canonical openshift-X.Y branches for consistency.
+    """
+    repo = _get_github_ocp_build_data_repo(data_path)
+    matching_versions: List[str] = []
+    for version in ACTIVE_OCP_VERSIONS:
+        branch_name = f"openshift-{version}"
+        try:
+            content = yaml.load(repo.get_contents("group.yml", ref=branch_name).decoded_content)
+        except Exception as exc:
+            _LOGGER.warning("Could not load group.yml for branch %s; skipping: %s", branch_name, exc)
+            continue
+        vars_content = (content or {}).get("vars", {})
+        major_minors = _go_major_minors_from_group_vars(vars_content, label_prefix=f"{branch_name} group.yml")
+        if golang_major_minor in major_minors.values():
+            matching_versions.append(version)
+    return sorted(matching_versions)
+
+
 async def move_golang_bugs(
-    ocp_version: str,
+    golang_major_minor: str,
+    data_path: str | None = None,
     cves: list[str] | None = None,
     nvrs: list[str] | None = None,
     components: list[str] | None = None,
@@ -215,10 +273,10 @@ async def move_golang_bugs(
     rpms_only: bool = False,
     dry_run: bool = False,
 ):
-    cmd = [
-        'elliott',
-        '--group',
-        f'openshift-{ocp_version}',
+    """Run elliott find-bugs:golang for every active OCP version referencing golang_major_minor."""
+    active_versions = get_active_versions_for_golang_major_minor(golang_major_minor, data_path)
+    # Build the version-independent tail of the command once.
+    tail: list[str] = [
         '--assembly',
         DEFAULT_GOLANG_ASSEMBLY,
         'find-bugs:golang',
@@ -227,20 +285,31 @@ async def move_golang_bugs(
     ]
     if cves:
         for cve in cves:
-            cmd.extend(['--cve-id', cve])
+            tail.extend(['--cve-id', cve])
     if nvrs:
         for nvr in nvrs:
-            cmd.extend(['--fixed-in-nvr', nvr])
+            tail.extend(['--fixed-in-nvr', nvr])
     if components:
         for component in components:
-            cmd.extend(['--component', component])
+            tail.extend(['--component', component])
     if force_update_tracker:
-        cmd.append('--force-update-tracker')
+        tail.append('--force-update-tracker')
     if rpms_only:
-        cmd.append('--rpms-only')
+        tail.append('--rpms-only')
     if dry_run:
-        cmd.append('--dry-run')
-    await exectools.cmd_assert_async(cmd, log_stdout=True)
+        tail.append('--dry-run')
+    failures: list[str] = []
+    for ocp_version in active_versions:
+        cmd = ['elliott', '--group', f'openshift-{ocp_version}'] + tail
+        try:
+            await exectools.cmd_assert_async(cmd, log_stdout=True)
+        except ChildProcessError as exc:
+            _LOGGER.error("elliott find-bugs:golang failed for openshift-%s: %s", ocp_version, exc)
+            failures.append(ocp_version)
+    if failures:
+        raise ChildProcessError(
+            f"elliott find-bugs:golang failed for {len(failures)} version(s): {', '.join(failures)}"
+        )
 
 
 class UpdateGolangPipeline:
@@ -329,19 +398,15 @@ class UpdateGolangPipeline:
         return yaml.load(repo.get_contents(path, ref=ref).decoded_content)
 
     def _get_upstream_ocp_build_data_repo(self):
-        return get_github_client_for_org("openshift-eng").get_repo("openshift-eng/ocp-build-data")
+        return _get_github_ocp_build_data_repo(None)
 
     def _get_ocp_build_data_repo_and_branch(self, default_branch):
         """Get the ocp-build-data repo and branch, respecting data_path/data_gitref overrides."""
-        if self.data_path:
-            match = re.search(r'github\.com[:/](.+?)(?:\.git)?$', self.data_path)
-            if match:
-                repo_name = match.group(1)
-                org = repo_name.split('/')[0]
-                repo = get_github_client_for_org(org).get_repo(repo_name)
-                branch = self.data_gitref or default_branch
-                return repo, branch
-        return self._get_upstream_ocp_build_data_repo(), default_branch
+        repo = _get_github_ocp_build_data_repo(self.data_path)
+        if self.data_path and re.search(r'github\.com[:/](.+?)(?:\.git)?$', self.data_path):
+            branch = self.data_gitref or default_branch
+            return repo, branch
+        return repo, default_branch
 
     def _get_branch_content(self):
         if self._branch_content is None:
@@ -368,12 +433,9 @@ class UpdateGolangPipeline:
                 f"{go_latest_var} variable not found in group.yml, please make sure it is defined before running the pipeline"
             )
 
-        allowed_major_minors = {
-            var_name: extract_major_minor(var_value, f"group.yml {var_name}")
-            for var_name in ("GO_LATEST", "GO_EXTRA", "GO_PREVIOUS")
-            for var_value in [vars_content.get(var_name)]
-            if var_value
-        }
+        allowed_major_minors = _go_major_minors_from_group_vars(
+            vars_content, label_prefix="group.yml", skip_invalid=False
+        )
         return branch, allowed_major_minors
 
     def validate_go_version_matches_group_vars(self, go_version: str):
@@ -628,8 +690,10 @@ class UpdateGolangPipeline:
                 _LOGGER.info("No Konflux golang builder images found; streams.yml will not be updated.")
 
         if self.is_production_assembly:
+            golang_major_minor = extract_major_minor(go_version, "golang version")
             await move_golang_bugs(
-                ocp_version=self.ocp_version,
+                golang_major_minor=golang_major_minor,
+                data_path=self.data_path,
                 cves=self.cves,
                 nvrs=self.go_nvrs if self.cves else None,
                 components=[GOLANG_BUILDER_CVE_COMPONENT],
@@ -938,7 +1002,7 @@ class UpdateGolangPipeline:
         streams_content = branch_content["streams"]
         group_content = branch_content["group"]
 
-        go_latest_var, go_extra_var, go_previous_var = "GO_LATEST", "GO_EXTRA", "GO_PREVIOUS"
+        go_latest_var, go_extra_var, go_previous_var = _GOLANG_GROUP_VAR_NAMES
         go_latest = group_content['vars'].get(go_latest_var)
         if not go_latest:
             raise ValueError(
@@ -1353,7 +1417,6 @@ class UpdateGolangPipeline:
 
 
 @cli.command('update-golang')
-@click.option('--ocp-version', required=True, help='OCP version to update golang for, e.g. 4.16')
 @click.option('--scratch', is_flag=True, default=False, help='Build images in scratch mode')
 @click.option('--art-jira', required=True, help='Related ART Jira ticket e.g. ART-1234')
 @click.option(
@@ -1389,7 +1452,11 @@ class UpdateGolangPipeline:
     default=constants.OCP_BUILD_DATA_URL,
     help='ocp-build-data fork to use (e.g. assembly definition in your own fork)',
 )
-@click.option('--data-gitref', required=False, default='', help='Doozer data path git [branch / tag / sha] to use')
+@click.option(
+    '--data-gitref',
+    required=True,
+    help='ocp-build-data branch to use. Must match openshift-X.Y (e.g. openshift-4.18); the OCP version is derived from this value.',
+)
 @click.option(
     '--skip-pr',
     is_flag=True,
@@ -1426,7 +1493,6 @@ class UpdateGolangPipeline:
 @click_coroutine
 async def update_golang(
     runtime: Runtime,
-    ocp_version: str,
     scratch: bool,
     art_jira: str,
     cves: str,
@@ -1445,6 +1511,15 @@ async def update_golang(
     assembly: str,
     major_bump: bool,
 ):
+    # Derive OCP version from the data_gitref branch name (e.g. openshift-4.18 → 4.18).
+    _m = re.fullmatch(r'openshift-(\d+\.\d+)$', data_gitref or '')
+    if not _m:
+        raise click.BadParameter(
+            f'Cannot derive OCP version from --data-gitref={data_gitref!r}. '
+            'Provide a gitref in the format openshift-X.Y (e.g. openshift-4.18).',
+            param_hint='--data-gitref',
+        )
+    ocp_version = _m.group(1)
     if not runtime.dry_run and not confirm:
         _LOGGER.info('--confirm is not set, running in dry-run mode')
         runtime.dry_run = True

@@ -291,5 +291,68 @@ class TestRunForceGolangVersionCheck(IsolatedAsyncioTestCase):
         mock_bump_rebuild.assert_called_once_with('foo-rpm', '9', unittest.mock.ANY, unittest.mock.ANY)
 
 
+class TestMoveGolangBugsCallSite(IsolatedAsyncioTestCase):
+    """Verify rebuild_golang_rpms calls move_golang_bugs with golang_major_minor, not ocp_version."""
+
+    def setUp(self):
+        if "specfile" not in sys.modules:
+            self.skipTest("specfile is only available on Linux")
+        self.runtime = MagicMock()
+        self.runtime.dry_run = False
+
+    def _make_pipeline(self):
+        p = RebuildGolangRPMsPipeline(
+            self.runtime,
+            ocp_version="4.18",
+            go_nvrs=["golang-1.22.5-1.el9"],
+            art_jira="ART-9999",
+            cves=["CVE-2025-1234"],
+            force=True,
+            rpms=['foo-rpm'],
+            all=False,
+        )
+        p.koji_session = MagicMock()
+        return p
+
+    @patch(f'{MODULE}.exectools.cmd_gather_async', new_callable=AsyncMock)
+    @patch(f'{MODULE}.move_golang_bugs', new_callable=AsyncMock)
+    @patch(f'{MODULE}.RebuildGolangRPMsPipeline.bump_and_rebuild_rpm', new_callable=AsyncMock)
+    @patch(f'{MODULE}.RebuildGolangRPMsPipeline.get_rpms')
+    @patch(f'{MODULE}.RebuildGolangRPMsPipeline.get_art_built_rpms')
+    @patch(f'{MODULE}.is_latest_and_available', new_callable=AsyncMock, return_value=True)
+    @patch(f'{MODULE}.extract_and_validate_golang_nvrs')
+    @patch(f'{MODULE}.elliottutil.get_golang_rpm_nvrs')
+    async def test_move_golang_bugs_called_with_major_minor(
+        self,
+        mock_go_nvr_map,
+        mock_extract,
+        mock_available,
+        mock_art_rpms,
+        mock_get_rpms,
+        mock_bump_rebuild,
+        mock_move_bugs,
+        mock_cmd_gather,
+    ):
+        """move_golang_bugs must receive golang_major_minor, not ocp_version."""
+        mock_extract.return_value = ('1.22.5', {9: 'golang-1.22.5-1.el9'})
+        mock_art_rpms.return_value = []
+        mock_get_rpms.return_value = ['foo-rpm-1.0-1.el9']
+        mock_go_nvr_map.return_value = {'1.21.0': [('foo-rpm', '1.0', '1.el9')]}
+        mock_bump_rebuild.return_value = True
+        mock_cmd_gather.side_effect = [
+            (0, 'ART Bot', ''),
+            (0, 'aos-team-art@redhat.com', ''),
+        ]
+
+        pipeline = self._make_pipeline()
+        await pipeline.run()
+
+        mock_move_bugs.assert_awaited_once()
+        kwargs = mock_move_bugs.await_args.kwargs
+        # Must use golang_major_minor, not ocp_version
+        self.assertEqual(kwargs.get('golang_major_minor'), '1.22')
+        self.assertNotIn('ocp_version', kwargs)
+
+
 if __name__ == '__main__':
     unittest.main()
