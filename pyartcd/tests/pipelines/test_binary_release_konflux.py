@@ -506,9 +506,7 @@ class TestSetShipmentMrReady(unittest.TestCase):
     def test_set_shipment_mr_ready_dry_run(self, mock_sleep):
         """Dry-run must not call GitLab (placeholder MR URLs would 404)."""
         pipeline = self._make_pipeline(dry_run=True)
-        pipeline.shipment_mr_url = (
-            "https://gitlab.cee.redhat.com/placeholder/placeholder/-/merge_requests/placeholder"
-        )
+        pipeline.shipment_mr_url = "https://gitlab.cee.redhat.com/placeholder/placeholder/-/merge_requests/placeholder"
 
         mock_gitlab = MagicMock()
         mock_gitlab.set_mr_ready = AsyncMock()
