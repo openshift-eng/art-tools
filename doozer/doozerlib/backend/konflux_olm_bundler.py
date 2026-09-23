@@ -987,11 +987,7 @@ class KonfluxOlmBundleRebaser:
 
         component_name = metadata.get_olm_bundle_brew_component_name()
         bundle_version = f'{operator_df.labels["version"]}.{operator_df.labels["release"]}'
-        # ART-23782: use the delivery repository name for OCP 4.13 bundles.
-        if self.group == 'openshift-4.13':
-            bundle_name = metadata.get_olm_bundle_delivery_repo_name()
-        else:
-            bundle_name = metadata.get_olm_bundle_image_name()
+        bundle_name = metadata.get_olm_bundle_delivery_repo_name()
 
         # Copy the operator's Dockerfile labels to the bundle's Dockerfile
         # and add additional labels required by the bundle

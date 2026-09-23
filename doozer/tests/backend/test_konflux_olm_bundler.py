@@ -344,7 +344,7 @@ class TestKonfluxOlmBundleRebaser(IsolatedAsyncioTestCase):
     def test_create_dockerfile(self):
         metadata = MagicMock()
         metadata.get_olm_bundle_brew_component_name.return_value = "test-component"
-        metadata.get_olm_bundle_image_name.return_value = "test-image"
+        metadata.get_olm_bundle_delivery_repo_name.return_value = "openshift4/test-image-bundle"
 
         operator_dir = Path("/path/to/operator/dir")
         bundle_dir = Path("/path/to/bundle/dir")
@@ -385,7 +385,7 @@ class TestKonfluxOlmBundleRebaser(IsolatedAsyncioTestCase):
                 {
                     'com.redhat.component': 'test-component',
                     'com.redhat.delivery.appregistry': '',
-                    'name': 'test-image',
+                    'name': 'openshift4/test-image-bundle',
                     'version': '1.0.1',
                     'release': '1.0-1',
                     'com.redhat.delivery.operator.bundle': 'true',
@@ -400,9 +400,9 @@ class TestKonfluxOlmBundleRebaser(IsolatedAsyncioTestCase):
                     'url': 'https://example.com',
                 },
             )
+            metadata.get_olm_bundle_delivery_repo_name.assert_called_once_with()
 
             self.rebaser.group = 'openshift-4.13'
-            metadata.get_olm_bundle_delivery_repo_name.return_value = 'openshift4/test-image-bundle'
             mock_operator_df_413 = MagicMock()
             mock_operator_df_413.labels = mock_operator_df.labels
             mock_bundle_df_413 = MagicMock()
@@ -411,7 +411,6 @@ class TestKonfluxOlmBundleRebaser(IsolatedAsyncioTestCase):
             self.rebaser._create_dockerfile(metadata, operator_dir, bundle_dir, operator_framework_tags, input_release)
 
             self.assertEqual(mock_bundle_df_413.labels['name'], 'openshift4/test-image-bundle')
-            metadata.get_olm_bundle_delivery_repo_name.assert_called_once_with()
 
     @patch("pathlib.Path.iterdir")
     @patch("aiofiles.open")
