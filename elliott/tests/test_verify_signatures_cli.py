@@ -123,36 +123,38 @@ class TestCheckSignatureOnMirror(IsolatedAsyncioTestCase):
 class TestGetReleaseImageDigest(IsolatedAsyncioTestCase):
     async def test_success(self):
         mock_output = json.dumps({"digest": "sha256:abc123"})
+        pullspec = "quay.io/openshift-release-dev/ocp-release:4.18.36-x86_64"
         with patch(
-            "elliottlib.cli.verify_signatures_cli.exectools.cmd_gather_async", new_callable=AsyncMock
-        ) as mock_cmd:
-            mock_cmd.return_value = (0, mock_output, "")
-            result = await get_release_image_digest("quay.io/openshift-release-dev/ocp-release:4.18.36-x86_64")
+            "elliottlib.cli.verify_signatures_cli.oc_image_info__cached_async", new_callable=AsyncMock
+        ) as mock_oc_image_info:
+            mock_oc_image_info.return_value = mock_output
+            result = await get_release_image_digest(pullspec, registry_config="/tmp/merged-auth.json")
         self.assertEqual(result, "sha256:abc123")
+        mock_oc_image_info.assert_awaited_once_with(pullspec, registry_config="/tmp/merged-auth.json")
 
     async def test_list_response(self):
         mock_output = json.dumps([{"digest": "sha256:def456"}])
         with patch(
-            "elliottlib.cli.verify_signatures_cli.exectools.cmd_gather_async", new_callable=AsyncMock
-        ) as mock_cmd:
-            mock_cmd.return_value = (0, mock_output, "")
+            "elliottlib.cli.verify_signatures_cli.oc_image_info__cached_async", new_callable=AsyncMock
+        ) as mock_oc_image_info:
+            mock_oc_image_info.return_value = mock_output
             result = await get_release_image_digest("pullspec")
         self.assertEqual(result, "sha256:def456")
 
     async def test_command_failure(self):
         with patch(
-            "elliottlib.cli.verify_signatures_cli.exectools.cmd_gather_async", new_callable=AsyncMock
-        ) as mock_cmd:
-            mock_cmd.return_value = (1, "", "error msg")
+            "elliottlib.cli.verify_signatures_cli.oc_image_info__cached_async", new_callable=AsyncMock
+        ) as mock_oc_image_info:
+            mock_oc_image_info.side_effect = ChildProcessError("error msg")
             with self.assertRaises(RuntimeError):
                 await get_release_image_digest("pullspec")
 
     async def test_missing_digest(self):
         mock_output = json.dumps({"config": {}})
         with patch(
-            "elliottlib.cli.verify_signatures_cli.exectools.cmd_gather_async", new_callable=AsyncMock
-        ) as mock_cmd:
-            mock_cmd.return_value = (0, mock_output, "")
+            "elliottlib.cli.verify_signatures_cli.oc_image_info__cached_async", new_callable=AsyncMock
+        ) as mock_oc_image_info:
+            mock_oc_image_info.return_value = mock_output
             with self.assertRaises(RuntimeError):
                 await get_release_image_digest("pullspec")
 

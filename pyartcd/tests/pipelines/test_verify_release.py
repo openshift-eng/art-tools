@@ -1,3 +1,4 @@
+import os
 import unittest
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -58,6 +59,21 @@ class TestVerifyReleasePipeline(unittest.IsolatedAsyncioTestCase):
         self.runtime.working_dir = MagicMock()
         self.runtime.working_dir.__truediv__ = MagicMock(return_value=MagicMock(mkdir=MagicMock()))
 
+        env_patcher = patch.dict(
+            os.environ,
+            {
+                "QUAY_AUTH_FILE": "/tmp/quay-auth.json",
+                "XDG_RUNTIME_DIR": "/tmp/runtime",
+            },
+        )
+        env_patcher.start()
+        self.addCleanup(env_patcher.stop)
+
+        registry_config_patcher = patch("pyartcd.pipelines.verify_release.RegistryConfig")
+        self.mock_registry_config = registry_config_patcher.start()
+        self.addCleanup(registry_config_patcher.stop)
+        self.mock_registry_config.return_value.__enter__.return_value = "/tmp/merged-auth.json"
+
     @patch("pyartcd.pipelines.verify_release.exectools.cmd_assert_async", new_callable=AsyncMock)
     async def test_run_all_steps_pass(self, mock_assert):
         mock_assert.return_value = 0
@@ -84,6 +100,24 @@ class TestVerifyReleasePipeline(unittest.IsolatedAsyncioTestCase):
         self.assertEqual({s.name for s in result.steps}, expected_steps)
         for step in result.steps:
             self.assertEqual(step.status, StepStatus.PASS)
+
+    @patch("pyartcd.pipelines.verify_release.exectools.cmd_assert_async", new_callable=AsyncMock)
+    async def test_run_passes_registry_auth_to_elliott_commands(self, mock_assert):
+        pipeline = VerifyReleasePipeline(
+            runtime=self.runtime,
+            version="4.19",
+            assembly="4.19.42",
+        )
+
+        await pipeline.run()
+
+        for call in mock_assert.call_args_list:
+            command = call.args[0]
+            child_env = call.kwargs["env"]
+            self.assertIn("--registry-config=/tmp/merged-auth.json", command)
+            self.assertEqual(child_env["QUAY_AUTH_FILE"], "/tmp/merged-auth.json")
+            self.assertNotIn("REGISTRY_AUTH_FILE", child_env)
+            self.assertNotIn("XDG_RUNTIME_DIR", child_env)
 
     @patch("pyartcd.pipelines.verify_release.exectools.cmd_assert_async", new_callable=AsyncMock)
     async def test_run_with_skip_steps(self, mock_assert):

@@ -8,6 +8,8 @@ from typing import Optional
 
 import click
 from artcommonlib import exectools
+from artcommonlib.constants import REGISTRY_QUAY_OCP_RELEASE_DEV, REGISTRY_REDHAT_IO
+from artcommonlib.registry_config import RegistryConfig
 
 from pyartcd import constants
 from pyartcd.cli import cli, click_coroutine, pass_runtime
@@ -96,19 +98,76 @@ class VerifyReleasePipeline:
         self.working_dir = self.runtime.working_dir / "verify_release"
         self.working_dir.mkdir(parents=True, exist_ok=True)
 
-        self._elliott_env = os.environ.copy()
+        self._elliott_env: dict[str, str] = {}
+        self._registry_auth_file: str | None = None
 
     @property
     def _elliott_base(self) -> list[str]:
-        return [
+        command = [
             "elliott",
             f"--group={self.group}",
             f"--assembly={self.assembly}",
             f"--data-path={self.data_path}",
             f"--working-dir={self.working_dir / 'elliott-working'}",
         ]
+        if self._registry_auth_file:
+            command.append(f"--registry-config={self._registry_auth_file}")
+        return command
 
     async def run(self) -> VerifyReleaseResult:
+        # Unset XDG_RUNTIME_DIR to ensure we don't use default auth.json
+        # All registry auth must come from explicit Jenkins credentials or oc login to temp files
+        if 'XDG_RUNTIME_DIR' in os.environ:
+            LOGGER.info('Unsetting XDG_RUNTIME_DIR to prevent use of default registry auth')
+            del os.environ['XDG_RUNTIME_DIR']
+
+        # Get Jenkins credentials
+        quay_auth_file = os.getenv("QUAY_AUTH_FILE")
+        if not quay_auth_file:
+            raise ValueError(
+                "QUAY_AUTH_FILE environment variable is required but not set. "
+                "Ensure Jenkins credentials are properly bound."
+            )
+
+        # Build source files list
+        source_files = [quay_auth_file]
+        elliott_env = os.environ.copy()
+        elliott_env.pop("REGISTRY_AUTH_FILE", None)
+
+        with RegistryConfig(
+            kubeconfig=os.environ.get("KUBECONFIG"),
+            source_files=source_files,
+            registries=[
+                REGISTRY_QUAY_OCP_RELEASE_DEV,  # For: ART release images
+                REGISTRY_REDHAT_IO,  # For: RHEL base images
+            ],
+        ) as global_auth_file:
+            original_registry_auth_file = self._registry_auth_file
+
+            try:
+                elliott_env["QUAY_AUTH_FILE"] = global_auth_file
+                self._elliott_env = elliott_env
+                self._registry_auth_file = global_auth_file
+
+                LOGGER.info(
+                    f'Set registry auth file={global_auth_file} for pipeline operations '
+                    f'(cherry-picked from {len(source_files)} source file(s))'
+                )
+
+                return await self._run_checks()
+            finally:
+                # RegistryConfig removes the merged file after this block.
+                elliott_env["QUAY_AUTH_FILE"] = quay_auth_file
+                self._elliott_env = elliott_env
+                self._registry_auth_file = original_registry_auth_file
+
+    async def _run_checks(self) -> VerifyReleaseResult:
+        """
+        Runs each configured release verification check and collects its result.
+
+        Return Value(s):
+            VerifyReleaseResult: Results from the release verification checks.
+        """
         result = VerifyReleaseResult()
 
         # All steps can run in parallel
