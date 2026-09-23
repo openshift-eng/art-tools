@@ -14,7 +14,7 @@ def _sample_proc(proc: psutil.Process) -> dict:
         mem = proc.memory_info().rss // 1024 // 1024
         cpu = proc.cpu_times()
         return {"rss_mb": mem, "cpu_user_s": round(cpu.user, 3), "cpu_sys_s": round(cpu.system, 3)}
-    except psutil.NoSuchProcess:
+    except psutil.Error:
         return {"rss_mb": -1, "cpu_user_s": -1.0, "cpu_sys_s": -1.0}
 
 
