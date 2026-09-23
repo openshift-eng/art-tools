@@ -8,6 +8,7 @@ from typing import Optional
 
 import click
 from artcommonlib import logutil
+from opentelemetry import context, trace
 
 from pyartcd import __version__
 from pyartcd.runtime import Runtime
@@ -71,6 +72,28 @@ def cli(
     # Initialize telemetry if needed
     if enable_telemetry or os.environ.get("TELEMETRY_ENABLED") == "1":
         initialize_telemetry()
+        tracer = trace.get_tracer("pyartcd")
+        cmd_name = ctx.invoked_subcommand or "root"
+        span = tracer.start_span(f"artcd.{cmd_name}")
+        span.set_attributes(
+            {
+                "artcd.command": cmd_name,
+                "artcd.dry_run": dry_run,
+                "artcd.version": __version__,
+                "jenkins.build_url": os.environ.get("BUILD_URL", ""),
+                "jenkins.job_name": os.environ.get("JOB_NAME", ""),
+                "jenkins.build_user_email": os.environ.get("BUILD_USER_EMAIL", ""),
+            }
+        )
+        token = context.attach(trace.set_span_in_context(span))
+        ctx.call_on_close(span.end)
+        ctx.call_on_close(lambda: context.detach(token))
+        # Update TRACEPARENT so child subprocesses (e.g. doozer) use the artcd span
+        # as their parent rather than the Jenkins-generated fake span ID that was in
+        # the original TRACEPARENT.  Without this, all doozer spans land as siblings
+        # of the artcd root span instead of children.
+        span_ctx = span.get_span_context()
+        os.environ["TRACEPARENT"] = f"00-{span_ctx.trace_id:032x}-{span_ctx.span_id:016x}-{span_ctx.trace_flags:02x}"
     config_filename = Path(config) if config else Path("~/.config/artcd.toml").expanduser()
     working_dir_path = Path(working_dir) if working_dir else Path.cwd()
     # configure logging
