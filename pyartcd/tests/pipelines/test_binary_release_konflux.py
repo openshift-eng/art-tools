@@ -504,17 +504,18 @@ class TestSetShipmentMrReady(unittest.TestCase):
 
     @patch("asyncio.sleep", new_callable=AsyncMock)
     def test_set_shipment_mr_ready_dry_run(self, mock_sleep):
+        """Dry-run must not call GitLab (placeholder MR URLs would 404)."""
         pipeline = self._make_pipeline(dry_run=True)
+        pipeline.shipment_mr_url = "https://gitlab.cee.redhat.com/placeholder/placeholder/-/merge_requests/placeholder"
 
-        mock_mr = MagicMock()
         mock_gitlab = MagicMock()
-        mock_gitlab.set_mr_ready = AsyncMock(return_value=mock_mr)
+        mock_gitlab.set_mr_ready = AsyncMock()
         mock_gitlab.trigger_ci_pipeline = AsyncMock()
         pipeline.__dict__["_gitlab"] = mock_gitlab
 
         asyncio.run(pipeline.set_shipment_mr_ready())
 
-        mock_gitlab.set_mr_ready.assert_awaited_once_with(pipeline.shipment_mr_url)
+        mock_gitlab.set_mr_ready.assert_not_awaited()
         mock_sleep.assert_not_awaited()
         mock_gitlab.trigger_ci_pipeline.assert_not_awaited()
 
