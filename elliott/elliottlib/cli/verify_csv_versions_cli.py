@@ -107,11 +107,14 @@ class VerifyCsvVersionsResult(VerifyResultBase):
         lines.append("")
         lines.append(f"Results: {matches} match, {mismatches} mismatch (total: {len(self.operators)})")
 
-        if mismatches:
+        if not self.passed:
             lines.append("")
-            lines.append(
-                f"FAILED: {mismatches} operator(s) have CSV versions that do not match OCP {self.expected_version}"
-            )
+            if not self.operators:
+                lines.append("FAILED: No operators found in catalog")
+            else:
+                lines.append(
+                    f"FAILED: {mismatches} operator(s) have CSV versions that do not match OCP {self.expected_version}"
+                )
         else:
             lines.append("")
             lines.append(f"PASSED: All operator CSV versions match OCP {self.expected_version}")
@@ -120,7 +123,11 @@ class VerifyCsvVersionsResult(VerifyResultBase):
 
 
 def _find_head_bundle(channel_entries: list[dict]) -> Optional[str]:
-    """Find the head (latest) bundle in a channel — the entry not replaced by any other."""
+    """Find the head (latest) bundle in a channel — the entry not replaced by any other.
+
+    Only considers replaces/skips edges; skipRange is intentionally excluded
+    because it does not define discrete replacement relationships.
+    """
     all_names = {e["name"] for e in channel_entries}
     replaced = set()
     for entry in channel_entries:
@@ -131,8 +138,8 @@ def _find_head_bundle(channel_entries: list[dict]) -> Optional[str]:
     heads = all_names - replaced
     if len(heads) == 1:
         return heads.pop()
-    if channel_entries:
-        return channel_entries[-1]["name"]
+    if len(heads) > 1:
+        LOGGER.warning("Multiple head bundles found: %s — channel graph is ambiguous", sorted(heads))
     return None
 
 
@@ -183,11 +190,27 @@ async def render_and_check_csv_versions(catalog_image: str, expected_version: st
 
         if not entries:
             LOGGER.warning("Package %s: no entries in default channel %s", pkg_name, default_channel)
+            result.operators.append(
+                OperatorCsvResult(
+                    package=pkg_name,
+                    channel=default_channel,
+                    csv_version="UNRESOLVED (no entries)",
+                    match=False,
+                )
+            )
             continue
 
         head_bundle = _find_head_bundle(entries)
         if not head_bundle:
             LOGGER.warning("Package %s: could not determine head bundle", pkg_name)
+            result.operators.append(
+                OperatorCsvResult(
+                    package=pkg_name,
+                    channel=default_channel,
+                    csv_version="UNRESOLVED (ambiguous head)",
+                    match=False,
+                )
+            )
             continue
 
         csv_version = bundle_versions.get(head_bundle, "unknown")

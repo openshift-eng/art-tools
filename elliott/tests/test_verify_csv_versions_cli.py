@@ -99,6 +99,12 @@ class TestVerifyCsvVersionsResult(IsolatedAsyncioTestCase):
         self.assertIn("FAILED", text)
         self.assertIn("MISMATCH", text)
 
+    def test_render_text_no_operators(self):
+        r = VerifyCsvVersionsResult(expected_version="4.22", catalog_image="test:v4.22")
+        text = r.render_text()
+        self.assertIn("FAILED", text)
+        self.assertIn("No operators found", text)
+
     def test_render_text_error(self):
         r = VerifyCsvVersionsResult(
             expected_version="4.22",
@@ -144,6 +150,13 @@ class TestFindHeadBundle(IsolatedAsyncioTestCase):
 
     def test_empty_entries(self):
         self.assertIsNone(_find_head_bundle([]))
+
+    def test_multiple_heads_returns_none(self):
+        entries = [
+            {"name": "op.v4.22.0-1"},
+            {"name": "op.v4.22.0-2"},
+        ]
+        self.assertIsNone(_find_head_bundle(entries))
 
 
 FBC_YAML_ALL_MATCH = """---
@@ -268,6 +281,44 @@ properties:
 """
 
 
+FBC_YAML_NO_ENTRIES = """---
+schema: olm.package
+name: broken-operator
+defaultChannel: stable
+"""
+
+FBC_YAML_AMBIGUOUS_HEAD = """---
+schema: olm.package
+name: ambiguous-operator
+defaultChannel: stable
+---
+schema: olm.channel
+package: ambiguous-operator
+name: stable
+entries:
+  - name: ambiguous-operator.v4.22.0-1
+  - name: ambiguous-operator.v4.22.0-2
+---
+schema: olm.bundle
+name: ambiguous-operator.v4.22.0-1
+package: ambiguous-operator
+properties:
+  - type: olm.package
+    value:
+      packageName: ambiguous-operator
+      version: "4.22.0-1"
+---
+schema: olm.bundle
+name: ambiguous-operator.v4.22.0-2
+package: ambiguous-operator
+properties:
+  - type: olm.package
+    value:
+      packageName: ambiguous-operator
+      version: "4.22.0-2"
+"""
+
+
 class TestCsvVersionOverrides(IsolatedAsyncioTestCase):
     def test_override_match_with_override_field(self):
         r = OperatorCsvResult(
@@ -366,6 +417,24 @@ class TestRenderAndCheckCsvVersions(IsolatedAsyncioTestCase):
         self.assertTrue(lso.match)
         self.assertEqual(lso.override, "4.18")
         self.assertEqual(lso.csv_version, "4.18.0-202407221")
+
+    @patch("elliottlib.cli.verify_csv_versions_cli.cmd_gather_async")
+    async def test_no_entries_reports_failure(self, mock_cmd):
+        mock_cmd.return_value = (0, FBC_YAML_NO_ENTRIES, "")
+        result = await render_and_check_csv_versions("test:v4.22", "4.22")
+        self.assertFalse(result.passed)
+        self.assertEqual(len(result.operators), 1)
+        self.assertFalse(result.operators[0].match)
+        self.assertIn("UNRESOLVED", result.operators[0].csv_version)
+
+    @patch("elliottlib.cli.verify_csv_versions_cli.cmd_gather_async")
+    async def test_ambiguous_head_reports_failure(self, mock_cmd):
+        mock_cmd.return_value = (0, FBC_YAML_AMBIGUOUS_HEAD, "")
+        result = await render_and_check_csv_versions("test:v4.22", "4.22")
+        self.assertFalse(result.passed)
+        self.assertEqual(len(result.operators), 1)
+        self.assertFalse(result.operators[0].match)
+        self.assertIn("UNRESOLVED", result.operators[0].csv_version)
 
     @patch("elliottlib.cli.verify_csv_versions_cli.cmd_gather_async")
     async def test_opm_failure(self, mock_cmd):
