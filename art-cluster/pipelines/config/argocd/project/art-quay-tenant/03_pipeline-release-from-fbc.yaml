@@ -13,6 +13,9 @@ spec:
     description: 'ocp-build-data group branch for this product'
     enum:
     - quay-3.16
+    - quay-3.17
+    - quay-3.18
+    - quay-3.19
     name: group
     type: string
   - default: ''
@@ -132,7 +135,7 @@ spec:
         if not fbc_pullspecs and not extra_image_nvrs:
             raise ValueError("At least one of fbc-pullspecs or extra-image-nvrs must be provided")
 
-        ALLOWED_GROUPS = {"quay-3.16"}
+        ALLOWED_GROUPS = {"quay-3.16", "quay-3.17", "quay-3.18", "quay-3.19"}
         ocp_optional = "$(params.ocp-optional)" == "true"
         group = "$(params.group)"
 
