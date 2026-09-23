@@ -2,6 +2,7 @@
 
 Provides:
 - get_assembly_advisory_ids(): unified advisory ID lookup from assembly config
+- get_assembly_shipment_url(): shipment MR URL lookup from assembly config
 - VerifyResultBase: abstract base for verify result dataclasses
 - render_verify_result(): generic JSON/text rendering
 - verify_output_option: shared --output click option
@@ -11,6 +12,7 @@ Provides:
 import json
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
+from typing import Optional
 
 import click
 from artcommonlib.assembly import assembly_config_struct
@@ -47,6 +49,28 @@ def get_assembly_advisory_ids(
             continue
         result[impetus] = int(ad_id)
     return result
+
+
+def get_assembly_shipment_url(runtime, required: bool = False) -> Optional[str]:
+    """Get shipment MR URL from assembly config.
+
+    Args:
+        runtime: Elliott runtime (must be initialized).
+        required: If True, raise RuntimeError when URL is not set.
+
+    Returns:
+        Shipment MR URL or None if not configured.
+    """
+    releases_config = runtime.get_releases_config()
+    group_config = assembly_config_struct(releases_config, runtime.assembly, "group", {})
+    shipment = group_config.get("shipment", {})
+    url = shipment.get("url")
+    if not url and required:
+        raise RuntimeError(
+            f"No shipment URL found in assembly '{runtime.assembly}' group config. "
+            f"Ensure releases.yml has releases.{runtime.assembly}.assembly.group.shipment.url set."
+        )
+    return url
 
 
 @dataclass

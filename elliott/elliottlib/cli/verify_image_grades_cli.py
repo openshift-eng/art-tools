@@ -10,10 +10,10 @@ import aiohttp
 import click
 import requests
 import yaml
-from artcommonlib.assembly import assembly_config_struct
 from artcommonlib.gitlab import GitLabClient
 
 from elliottlib.cli.common import cli, click_coroutine
+from elliottlib.verify_common import get_assembly_shipment_url
 
 LOGGER = logging.getLogger(__name__)
 
@@ -108,19 +108,6 @@ def get_current_grade(grades: list[dict]) -> str:
 
     valid.sort(key=lambda g: _parse_timestamp(g["start_date"]), reverse=True)
     return valid[0].get("grade", "Unknown")
-
-
-def resolve_shipment_mr_url(runtime) -> str:
-    releases_config = runtime.get_releases_config()
-    assembly_group_config = assembly_config_struct(releases_config, runtime.assembly, "group", {})
-    shipment = assembly_group_config.get("shipment", {})
-    url = shipment.get("url")
-    if not url:
-        raise RuntimeError(
-            f"No shipment URL found in assembly '{runtime.assembly}' group config. "
-            f"Ensure releases.yml has releases.{runtime.assembly}.assembly.group.shipment.url set."
-        )
-    return url
 
 
 def fetch_shipment_components(mr_url: str) -> tuple[list[tuple[str, str]], str]:
@@ -334,7 +321,7 @@ async def verify_image_grades_cli(runtime, output):
         elliott --group openshift-4.18 --assembly 4.18.51 verify-image-grades
     """
     runtime.initialize()
-    shipment_mr_url = resolve_shipment_mr_url(runtime)
+    shipment_mr_url = get_assembly_shipment_url(runtime, required=True)
     LOGGER.info("Resolved shipment MR URL: %s", shipment_mr_url)
     result = await verify_image_grades(shipment_mr_url=shipment_mr_url)
     click.echo(render_result(result, output))

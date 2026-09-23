@@ -14,9 +14,9 @@ from elliottlib.cli.verify_image_grades_cli import (
     get_current_grade,
     query_freshness_grades,
     render_result,
-    resolve_shipment_mr_url,
     verify_image_grades,
 )
+from elliottlib.verify_common import get_assembly_shipment_url
 
 
 class TestExtractDigest(unittest.TestCase):
@@ -132,9 +132,9 @@ class TestResolveShipmentMrUrl(unittest.TestCase):
         mock_runtime.assembly = "4.18.51"
         mock_runtime.get_releases_config.return_value = MagicMock()
 
-        with patch("elliottlib.cli.verify_image_grades_cli.assembly_config_struct") as mock_acs:
+        with patch("elliottlib.verify_common.assembly_config_struct") as mock_acs:
             mock_acs.return_value = {"shipment": {"url": "https://gitlab.example.com/mr/1"}}
-            url = resolve_shipment_mr_url(mock_runtime)
+            url = get_assembly_shipment_url(mock_runtime, required=True)
 
         self.assertEqual(url, "https://gitlab.example.com/mr/1")
         mock_acs.assert_called_once_with(
@@ -149,21 +149,21 @@ class TestResolveShipmentMrUrl(unittest.TestCase):
         mock_runtime.assembly = "4.18.51"
         mock_runtime.get_releases_config.return_value = MagicMock()
 
-        with patch("elliottlib.cli.verify_image_grades_cli.assembly_config_struct") as mock_acs:
+        with patch("elliottlib.verify_common.assembly_config_struct") as mock_acs:
             mock_acs.return_value = {}
             with self.assertRaises(RuntimeError) as ctx:
-                resolve_shipment_mr_url(mock_runtime)
+                get_assembly_shipment_url(mock_runtime, required=True)
             self.assertIn("4.18.51", str(ctx.exception))
 
-    def test_raises_when_shipment_without_url(self):
+    def test_returns_none_when_not_required(self):
         mock_runtime = MagicMock()
         mock_runtime.assembly = "4.18.51"
         mock_runtime.get_releases_config.return_value = MagicMock()
 
-        with patch("elliottlib.cli.verify_image_grades_cli.assembly_config_struct") as mock_acs:
+        with patch("elliottlib.verify_common.assembly_config_struct") as mock_acs:
             mock_acs.return_value = {"shipment": {}}
-            with self.assertRaises(RuntimeError):
-                resolve_shipment_mr_url(mock_runtime)
+            url = get_assembly_shipment_url(mock_runtime)
+        self.assertIsNone(url)
 
 
 class TestQueryFreshnessGrades(unittest.IsolatedAsyncioTestCase):
