@@ -7,6 +7,7 @@ import click
 from artcommonlib import dotconfig
 from artcommonlib.format_util import yellow_print
 from artcommonlib.variants import BuildVariant
+from opentelemetry import context, trace
 
 from doozerlib import __version__
 from doozerlib.cli import cli_opts
@@ -243,6 +244,21 @@ def cli(ctx, **kwargs):
     # Initialize telemetry if needed
     if kwargs['enable_telemetry'] or os.environ.get("TELEMETRY_ENABLED") == "1":
         initialize_telemetry()
+        tracer = trace.get_tracer("doozer")
+        cmd_name = ctx.invoked_subcommand or "doozer"
+        span = tracer.start_span(f"doozer.{cmd_name}")
+        span.set_attributes(
+            {
+                "doozer.entry": True,
+                "doozer.command": cmd_name,
+                "doozer.version": __version__,
+                "jenkins.build_url": os.environ.get("BUILD_URL", ""),
+                "jenkins.job_name": os.environ.get("JOB_NAME", ""),
+            }
+        )
+        token = context.attach(trace.set_span_in_context(span))
+        ctx.call_on_close(span.end)
+        ctx.call_on_close(lambda: context.detach(token))
 
     # This section mostly for containerizing doozer
     # It allows the user to simply place settings.yaml into their working dir
