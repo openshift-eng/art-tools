@@ -327,7 +327,7 @@ class KonfluxBuildCli:
 
         validate_build_priority(self.build_priority)
 
-    @start_as_current_span_async(TRACER, "images:konflux:build")
+    @start_as_current_span_async(TRACER, "images:konflux:build", record_resources=True)
     async def run(self):
         runtime = self.runtime
 

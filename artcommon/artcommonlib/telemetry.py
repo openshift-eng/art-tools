@@ -5,7 +5,6 @@ from typing import Any, Awaitable, Callable, Optional, Sequence
 import psutil
 from opentelemetry import trace
 from opentelemetry.context import Context
-from opentelemetry.sdk.trace import SpanProcessor
 from opentelemetry.util.types import Attributes
 
 
@@ -15,39 +14,8 @@ def _sample_proc(proc: psutil.Process) -> dict:
         mem = proc.memory_info().rss // 1024 // 1024
         cpu = proc.cpu_times()
         return {"rss_mb": mem, "cpu_user_s": round(cpu.user, 3), "cpu_sys_s": round(cpu.system, 3)}
-    except psutil.NoSuchProcess:
+    except psutil.Error:
         return {"rss_mb": -1, "cpu_user_s": -1.0, "cpu_sys_s": -1.0}
-
-
-class ResourceMetricsSpanProcessor(SpanProcessor):
-    """Attaches process RSS and CPU snapshot to every span at start time.
-
-    Register once in new_tracker_provider() and every span in the service
-    automatically carries process.rss_mb, process.cpu_user_s, process.cpu_sys_s
-    without any per-method instrumentation.
-    """
-
-    def __init__(self):
-        self._proc = psutil.Process(os.getpid())
-
-    def on_start(self, span, parent_context=None):
-        if not span.is_recording():
-            return
-        r = _sample_proc(self._proc)
-        # Use _start suffix so attribute names align with record_resources=True spans.
-        # For spans without record_resources, only _start attributes are written.
-        span.set_attribute("process.rss_mb_start", r["rss_mb"])
-        span.set_attribute("process.cpu_user_s_start", r["cpu_user_s"])
-        span.set_attribute("process.cpu_sys_s_start", r["cpu_sys_s"])
-
-    def on_end(self, span):
-        pass  # ReadableSpan is immutable; deltas are handled by the decorator
-
-    def shutdown(self):
-        pass
-
-    def force_flush(self, timeout_millis: int = 30_000) -> bool:
-        return True
 
 
 def start_as_current_span_async(

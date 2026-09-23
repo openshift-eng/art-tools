@@ -127,7 +127,7 @@ class BuildSyncMultiPipeline:
         except Exception as e:
             self.logger.warning(f"Failed commenting to PR: {e}")
 
-    @start_as_current_span_async(TRACER, "build-sync-multi.run")
+    @start_as_current_span_async(TRACER, "build-sync-multi.run", record_resources=True)
     async def run(self):
         current_span = trace.get_current_span()
         current_span.set_attribute("build-sync-multi.version", self.version)

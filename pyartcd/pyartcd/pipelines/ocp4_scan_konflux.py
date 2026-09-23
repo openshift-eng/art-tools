@@ -56,7 +56,7 @@ class Ocp4ScanPipeline:
             '--build-system=konflux',
         ]
 
-    @start_as_current_span_async(TRACER, "ocp4-scan-konflux.run")
+    @start_as_current_span_async(TRACER, "ocp4-scan-konflux.run", record_resources=True)
     async def run(self):
         # If we get here, lock could be acquired
         self.skipped = False
