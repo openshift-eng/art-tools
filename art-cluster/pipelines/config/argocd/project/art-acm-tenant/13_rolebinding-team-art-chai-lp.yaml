@@ -1,0 +1,13 @@
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: team-art-chai-lp-lp-pipeline-viewer
+  namespace: art-acm-tenant
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: lp-pipeline-viewer
+subjects:
+  - kind: ServiceAccount
+    name: team-art-chai-lp
+    namespace: art-cd
