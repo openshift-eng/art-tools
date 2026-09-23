@@ -2,10 +2,8 @@ import asyncio
 import json
 import logging
 from dataclasses import dataclass, field
-from typing import Optional
 
 import click
-from artcommonlib.assembly import assembly_config_struct
 from artcommonlib.jira_config import JIRA_DOMAIN_NAME
 
 from elliottlib import errata
@@ -17,6 +15,7 @@ from elliottlib.cli.find_bugs_sweep_cli import (
     get_builds_by_advisory_kind,
 )
 from elliottlib.shipment_utils import get_shipment_configs_from_mr
+from elliottlib.verify_common import get_assembly_advisory_ids, get_assembly_shipment_url
 
 LOGGER = logging.getLogger(__name__)
 
@@ -113,26 +112,6 @@ async def find_cve_tracker_bugs(runtime, permissive: bool = True) -> dict[str, l
     return {kind: [b.id for b in kind_bugs] for kind, kind_bugs in bugs_by_type.items()}
 
 
-def get_advisory_ids(runtime) -> dict[str, int]:
-    """Get advisory IDs from assembly config, similar to verify_security_alerts_cli."""
-    releases_config = runtime.get_releases_config()
-    group_config = assembly_config_struct(releases_config, runtime.assembly, "group", {})
-    advisories = group_config.get("advisories", {})
-    result = {}
-    for impetus, ad_id in advisories.items():
-        if ad_id:
-            result[impetus] = int(ad_id)
-    return result
-
-
-def get_shipment_mr_url(runtime) -> Optional[str]:
-    """Get shipment MR URL from assembly config."""
-    releases_config = runtime.get_releases_config()
-    group_config = assembly_config_struct(releases_config, runtime.assembly, "group", {})
-    shipment = group_config.get("shipment", {})
-    return shipment.get("url")
-
-
 async def verify_cve_trackers(runtime, permissive: bool = True) -> VerifyCVETrackersResult:
     result = VerifyCVETrackersResult()
 
@@ -149,7 +128,7 @@ async def verify_cve_trackers(runtime, permissive: bool = True) -> VerifyCVETrac
         LOGGER.info("  %s: %s", kind, bugs)
 
     # Get advisory IDs and determine which are RHSA
-    advisories = get_advisory_ids(runtime)
+    advisories = get_assembly_advisory_ids(runtime)
     if not advisories:
         LOGGER.warning("No advisory IDs found in assembly config")
 
@@ -174,7 +153,7 @@ async def verify_cve_trackers(runtime, permissive: bool = True) -> VerifyCVETrac
                 result.missed_trackers.append(MissedTracker(bug_id=tracker_id, kind=kind, source="RHSA advisories"))
 
     # Check shipment MR (Konflux flow) if available
-    mr_url = get_shipment_mr_url(runtime)
+    mr_url = get_assembly_shipment_url(runtime)
     if mr_url:
         LOGGER.info("Checking shipment MR for CVE tracker coverage")
         shipment_jira_issues = await asyncio.to_thread(get_shipment_jira_issues, mr_url, runtime.group)
