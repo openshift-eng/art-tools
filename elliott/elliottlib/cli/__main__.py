@@ -74,6 +74,7 @@ from elliottlib.cli.validate_rhsa import validate_rhsa_cli
 from elliottlib.cli.verify_attached_bugs_cli import verify_attached_bugs_cli
 from elliottlib.cli.verify_attached_operators_cli import verify_attached_operators_cli
 from elliottlib.cli.verify_cdn_push_cli import verify_cdn_push_cli
+from elliottlib.cli.verify_csv_versions_cli import verify_csv_versions_cli
 from elliottlib.cli.verify_cve_trackers_cli import verify_cve_trackers_cli
 from elliottlib.cli.verify_cvp_cli import verify_cvp_cli
 from elliottlib.cli.verify_docs_approval import verify_docs_approval
