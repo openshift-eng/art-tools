@@ -26,9 +26,12 @@ from artcommonlib.pushd import Dir
 from artcommonlib.release_util import isolate_timestamp_in_release
 from artcommonlib.rhcos import get_latest_layered_rhcos_build, get_primary_container_name
 from artcommonlib.rpm_utils import parse_nvr, to_nevra
+from artcommonlib.telemetry import start_as_current_span_async
 from artcommonlib.util import deep_merge, fetch_slsa_attestation, uses_konflux_imagestream_override
 from artcommonlib.variants import BuildVariant
 from async_lru import alru_cache
+from opentelemetry import trace
+from opentelemetry.trace import StatusCode
 from tenacity import retry, retry_if_not_exception_type, stop_after_attempt, wait_fixed
 
 from doozerlib import rhcos, util
@@ -45,6 +48,8 @@ from doozerlib.source_resolver import SourceResolver
 from doozerlib.util import oc_image_info_for_arch_async
 
 DEFAULT_THRESHOLD_HOURS = 6
+
+TRACER = trace.get_tracer(__name__)
 
 
 class ConfigScanSources:
@@ -220,7 +225,15 @@ class ConfigScanSources:
             )
             return None
 
+    @start_as_current_span_async(TRACER, "scan-sources-konflux.run", record_resources=True)
     async def run(self):
+        span = trace.get_current_span()
+        span.set_attribute("group", getattr(self.runtime, 'group', ''))
+        span.set_attribute("assembly", getattr(self.runtime, 'assembly', ''))
+        span.set_attribute("skip_rpms", self.skip_rpms)
+        span.set_attribute("rebase_priv", self.rebase_priv)
+        span.set_attribute("variant", str(self.variant))
+
         # Try to rebase into openshift-priv to reduce upstream merge -> downstream build time
         if self.rebase_priv:
             if self.runtime.group.startswith("openshift-"):
@@ -253,6 +266,9 @@ class ConfigScanSources:
         # Build an image dependency tree to scan across levels of inheritance. This should save us some time,
         # as when an image is found in need for a rebuild, we can also mark its children or operators without checking
         self.image_tree = self.generate_dependency_tree(self.runtime.image_tree)
+        image_count = sum(len(v) for v in self.image_tree.values())
+        span.set_attribute("image_count", image_count)
+        span.set_attribute("tree_depth", len(self.image_tree))
         for level in sorted(self.image_tree.keys()):
             await self.scan_images(self.image_tree[level])
 
@@ -395,7 +411,12 @@ class ConfigScanSources:
             return True
         raise IOError(f'Could not determine ancestry between public and private upstreams for {repo_name}')
 
+    @TRACER.start_as_current_span("scan-sources-konflux.rebase-into-priv")
     def rebase_into_priv(self):
+        span = trace.get_current_span()
+        span.set_attribute("group", getattr(self.runtime, 'group', ''))
+        span.set_attribute("dry_run", self.dry_run)
+
         if self.dry_run:
             self.logger.info('Would have rebased into openshift-priv')
             return
@@ -411,6 +432,8 @@ class ConfigScanSources:
             self.all_metas,
             n_threads=20,
         ).get()
+
+        span.set_attribute("component_count", len(upstream_mappings))
 
         def _rebase_into_priv(metadata, public_upstream):
             # Skip rebase for disabled components
@@ -490,12 +513,17 @@ class ConfigScanSources:
                     metadata, priv_repo_name, public_branch_name, priv_branch_name, priv_url=priv_url
                 )
 
+        failed = []
         for metadata, public_upstream in upstream_mappings:
             try:
                 _rebase_into_priv(metadata, public_upstream)
             except Exception as e:
                 self.logger.exception('Failed rebasing %s into openshift-priv', metadata.distgit_key)
                 self.issues.append({'name': metadata.distgit_key, 'issue': f'Failed rebasing into -priv: {e}'})
+                failed.append(metadata.distgit_key)
+        if failed:
+            span.set_status(StatusCode.ERROR, f"Failed rebasing {len(failed)} component(s) into -priv")
+            span.set_attribute("failed_components", ", ".join(failed))
 
     def generate_dependency_tree(self, tree, level=1, levels_dict=None):
         if not levels_dict:
@@ -510,6 +538,7 @@ class ConfigScanSources:
 
         return levels_dict
 
+    @start_as_current_span_async(TRACER, "scan-sources-konflux.find-latest-rpms-builds")
     async def find_latest_rpms_builds(self):
         """
         The RPM build map stores latest builds for all RPM targets:
@@ -523,6 +552,8 @@ class ConfigScanSources:
             }
         }
         """
+        span = trace.get_current_span()
+        span.set_attribute("group", getattr(self.runtime, "group", ""))
 
         self.logger.info('Gathering latest RPM build records information...')
 
@@ -538,6 +569,7 @@ class ConfigScanSources:
         tasks = []
         for rpm in self.all_rpm_metas:
             tasks.extend([_find_target_build(rpm, f'el{target}') for target in rpm.determine_rhel_targets()])
+        span.set_attribute("rpm_task_count", len(tasks))
         await asyncio.gather(*tasks)
 
     async def find_latest_image_builds(self, image_names: List[str]):
@@ -564,14 +596,22 @@ class ConfigScanSources:
         latest_image_builds = await asyncio.gather(*tasks)
         self.latest_image_build_records_map.update((zip(image_names, latest_image_builds)))
 
+    @start_as_current_span_async(TRACER, "scan-sources-konflux.scan-images", record_resources=True)
     async def scan_images(self, image_names: List[str]):
+        span = trace.get_current_span()
+
         # Filter to only enabled images (variant-aware filtering is handled by _is_image_enabled)
         image_names = filter(lambda name: self._is_image_enabled(self.runtime.image_map[name]), image_names)
 
         # Do not scan images that have already been requested for rebuild
         image_names = list(filter(lambda name: name not in self.changing_image_names, image_names))
         if not image_names:
+            span.set_attribute("image_count", 0)
+            span.set_attribute("skipped", True)
             return
+
+        span.set_attribute("image_count", len(image_names))
+        span.set_attribute("concurrency_limit", SCAN_SOURCES_CONCURRENCY_LIMIT)
 
         # Store latest build records in a map, to reduce DB queries and execution time
         await self.find_latest_image_builds(image_names)
@@ -602,7 +642,11 @@ class ConfigScanSources:
         return inner
 
     @skip_check_if_changing
+    @start_as_current_span_async(TRACER, "scan-sources-konflux.scan-image")
     async def scan_image(self, image_meta: ImageMetadata):
+        span = trace.get_current_span()
+        span.set_attribute("distgit_key", image_meta.distgit_key)
+        span.set_attribute("image_name", getattr(image_meta, 'name', image_meta.distgit_key))
         stage = 'initialization'
         try:
             self.logger.info(f'Scanning {image_meta.distgit_key} for changes')
@@ -665,6 +709,11 @@ class ConfigScanSources:
         except Exception as e:
             self.logger.exception('Failed scanning image %s during %s', image_meta.distgit_key, stage)
             self.issues.append({'name': image_meta.distgit_key, 'issue': f'Failed scanning image during {stage}: {e}'})
+            span.set_attribute("failed_stage", stage)
+            span.set_status(StatusCode.ERROR, f"Failed during {stage}: {str(e)[:500]}")
+        finally:
+            changed = image_meta.distgit_key in self.changing_image_names
+            span.set_attribute("changed", changed)
 
     def find_upstream_commit_hash(self, meta: Metadata):
         """
@@ -719,11 +768,13 @@ class ConfigScanSources:
             )
 
     @skip_check_if_changing
+    @start_as_current_span_async(TRACER, "scan-sources-konflux.scan-upstream-changes")
     async def scan_for_upstream_changes(self, image_meta: ImageMetadata):
         """
         Determine if the current upstream source commit hash
         has a downstream build associated with it.
         """
+        trace.get_current_span().set_attribute("distgit_key", image_meta.distgit_key)
 
         # We have no more "alias" source anywhere in ocp-build-data, and there's no such a thing as a distgit-only
         # component in Konflux; hence, assume that git is the only possible source for a component
@@ -876,7 +927,9 @@ class ConfigScanSources:
             )
 
     @skip_check_if_changing
+    @start_as_current_span_async(TRACER, "scan-sources-konflux.scan-dependency-changes")
     async def scan_dependency_changes(self, image_meta: ImageMetadata):
+        trace.get_current_span().set_attribute("distgit_key", image_meta.distgit_key)
         # Get rebase time from image latest build record
         build_record = self.latest_image_build_records_map[image_meta.distgit_key]
         rebase_time = isolate_timestamp_in_release(build_record.release)
@@ -1014,10 +1067,12 @@ class ConfigScanSources:
             self.logger.warning('Could not fetch build info for %s', builder_build_nvr)
 
     @skip_check_if_changing
+    @start_as_current_span_async(TRACER, "scan-sources-konflux.scan-builders-changes")
     async def scan_builders_changes(self, image_meta: ImageMetadata):
         """
         Check whether non-member builder images have changed
         """
+        trace.get_current_span().set_attribute("distgit_key", image_meta.distgit_key)
 
         build_record = self.latest_image_build_records_map[image_meta.distgit_key]
         builders = list(image_meta.config['from'].builder) or []
@@ -1263,7 +1318,9 @@ class ConfigScanSources:
                 return
 
     @skip_check_if_changing
+    @start_as_current_span_async(TRACER, "scan-sources-konflux.scan-rpm-changes")
     async def scan_rpm_changes(self, image_meta: ImageMetadata):
+        trace.get_current_span().set_attribute("distgit_key", image_meta.distgit_key)
         # Check if the build used any of the ART built rpms that are changing
         build_record = self.latest_image_build_records_map[image_meta.distgit_key]
         for rpm in self.changing_rpm_names:
@@ -1485,11 +1542,13 @@ class ConfigScanSources:
         return task_bundles
 
     @skip_check_if_changing
+    @start_as_current_span_async(TRACER, "scan-sources-konflux.scan-task-bundle-changes")
     async def scan_task_bundle_changes(self, image_meta: ImageMetadata):
         """
         Check if task bundles used in the build are outdated compared to current versions.
         If any task bundle SHA doesn't match, trigger a rebuild.
         """
+        trace.get_current_span().set_attribute("distgit_key", image_meta.distgit_key)
         # Skip if image is not being released
         for_release = image_meta.config.for_release
         if for_release is False:
@@ -1630,12 +1689,16 @@ class ConfigScanSources:
             for item in obj:
                 self._extract_task_refs(item, task_bundles)
 
+    @start_as_current_span_async(TRACER, "scan-sources-konflux.check-changing-rpms")
     async def check_changing_rpms(self):
         """
         For each RPM built by ART, determine if the current upstream source commit hash
         has a successful build associated with it. As of 12/2024, RPMs are still being built in Brew
         but ART is tracking the build records in the Konflux DB
         """
+        span = trace.get_current_span()
+        span.set_attribute("group", getattr(self.runtime, "group", ""))
+        span.set_attribute("rpm_count", len(self.all_rpm_metas))
 
         async def find_rpm_commit_hash(rpm: RPMMetadata):
             with Dir(rpm.distgit_repo().source_path()):
@@ -1753,6 +1816,7 @@ class ConfigScanSources:
                     ]
                 )
         await asyncio.gather(*tasks)
+        span.set_attribute("changed_rpm_count", len(self.changing_rpm_names))
 
     def add_assessment_reason(self, meta, rebuild_hint: RebuildHint):
         # qualify by whether this is a True or False for change so that we can store both in the map.
@@ -1825,6 +1889,7 @@ class ConfigScanSources:
 
         return images_with_disabled_deps
 
+    @start_as_current_span_async(TRACER, "scan-sources-konflux.detect-rhcos-status")
     async def detect_rhcos_status(self):
         """
         gather the existing RHCOS tags and compare them to latest rhcos builds. Also check outdated rpms in builds
@@ -1835,6 +1900,9 @@ class ConfigScanSources:
                 'reason': "could not find an RHCOS build to sync",
             }
         """
+        span = trace.get_current_span()
+        span.set_attribute("group", getattr(self.runtime, "group", ""))
+        span.set_attribute("arch_count", len(getattr(self.runtime, "arches", [])))
         statuses = []
 
         version = self.runtime.get_minor_version()
@@ -1889,6 +1957,7 @@ class ConfigScanSources:
                     statuses.append(status)
 
         self.rhcos_status = statuses
+        span.set_attribute("rhcos_changed_count", sum(1 for s in statuses if s.get("changed")))
 
     def tagged_rhcos_node_digest(self, container_name, version, arch, private) -> Optional[str]:
         """get latest coreos image diget from tagged RHCOS in given imagestream"""

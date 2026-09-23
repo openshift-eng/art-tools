@@ -5,12 +5,17 @@ import sys
 import click
 import yaml
 from artcommonlib import exectools
+from artcommonlib.telemetry import start_as_current_span_async
+from opentelemetry import trace
+from opentelemetry.trace import StatusCode
 
 from pyartcd import constants, jenkins, locks, util
 from pyartcd.cli import cli, click_coroutine, pass_runtime
 from pyartcd.locks import Lock
 from pyartcd.runtime import Runtime
 from pyartcd.util import has_layered_rhcos
+
+TRACER = trace.get_tracer(__name__)
 
 
 class Ocp4ScanPipeline:
@@ -51,10 +56,16 @@ class Ocp4ScanPipeline:
             '--build-system=konflux',
         ]
 
+    @start_as_current_span_async(TRACER, "ocp4-scan-konflux.run")
     async def run(self):
         # If we get here, lock could be acquired
         self.skipped = False
         scan_info = f'Scanning version {self.version}, assembly {self.assembly}, data path {self.data_path}'
+
+        span = trace.get_current_span()
+        span.set_attribute("version", self.version)
+        span.set_attribute("assembly", self.assembly)
+        span.set_attribute("skip_rpms", self.skip_rpms)
 
         if self.data_gitref:
             scan_info += f'@{self.data_gitref}'
@@ -87,6 +98,7 @@ class Ocp4ScanPipeline:
             if self.data_path != constants.OCP_BUILD_DATA_URL or self.data_gitref:
                 raise ValueError('Custom data paths can only be used in dry-run mode')
 
+    @start_as_current_span_async(TRACER, "ocp4-scan-konflux.get-changes")
     async def get_changes(self):
         """
         Check for changes by calling doozer config:scan-sources
@@ -110,6 +122,12 @@ class Ocp4ScanPipeline:
         if self.runtime.dry_run:
             cmd.append('--dry-run')
 
+        span = trace.get_current_span()
+        span.set_attribute("version", self.version)
+        span.set_attribute("skip_rpms", self.skip_rpms)
+        if self.image_list:
+            span.set_attribute("image_list", self.image_list)
+
         rc, out, _ = await exectools.cmd_gather_async(cmd, stderr=None, check=False)
         self.logger.info('scan-sources output for openshift-%s:\n%s', self.version, out)
 
@@ -117,6 +135,9 @@ class Ocp4ScanPipeline:
         if self.command_failed:
             self.command_failure_message = f'scan-sources command failed with exit code {rc}'
             self.logger.error(self.command_failure_message)
+            span.set_attribute("command_failed", True)
+            span.set_attribute("exit_code", rc)
+            span.set_status(StatusCode.ERROR, self.command_failure_message)
 
         self.report = yaml.safe_load(out) or {}
         if not isinstance(self.report, dict):
@@ -126,8 +147,12 @@ class Ocp4ScanPipeline:
         self.changes = util.get_changes(self.report)
         if self.changes:
             self.logger.info('Detected source changes:\n%s', yaml.safe_dump(self.changes))
+            span.set_attribute("changes_found", True)
+            span.set_attribute("changed_rpms", len(self.changes.get("rpms", [])))
+            span.set_attribute("changed_images", len(self.changes.get("images", [])))
         else:
             self.logger.info('No changes detected in RPMs, images or RHCOS')
+            span.set_attribute("changes_found", False)
 
         # Check for RHCOS changes
         if self.changes.get('rhcos', None):
@@ -163,6 +188,7 @@ class Ocp4ScanPipeline:
 
         raise RuntimeError('scan-sources reported issues but found no valid changes')
 
+    @start_as_current_span_async(TRACER, "ocp4-scan-konflux.get-rhcos-inconsistencies")
     async def get_rhcos_inconsistencies(self):
         """
         Check for RHCOS inconsistencies by calling doozer inspect:stream INCONSISTENT_RHCOS_RPMS
@@ -174,14 +200,19 @@ class Ocp4ScanPipeline:
             '--strict',
         ]
 
+        span = trace.get_current_span()
+        span.set_attribute("version", self.version)
         try:
             _, out, _ = await exectools.cmd_gather_async(cmd, stderr=None)
             self.logger.info(out)
             self.rhcos_inconsistent = False
+            span.set_attribute("rhcos_inconsistent", False)
 
         except ChildProcessError as e:
             self.rhcos_inconsistent = True
             self.inconsistent_rhcos_rpms = e
+            span.set_attribute("rhcos_inconsistent", True)
+            span.set_status(StatusCode.ERROR, str(e)[:500])
 
     def handle_source_changes(self):
         if not self.changes:
@@ -235,7 +266,14 @@ class Ocp4ScanPipeline:
             rpm_list=changed_rpm,
         )
 
+    @start_as_current_span_async(TRACER, "ocp4-scan-konflux.handle-rhcos-changes")
     async def handle_rhcos_changes(self):
+        span = trace.get_current_span()
+        span.set_attribute("version", self.version)
+        span.set_attribute("rhcos_updated", self.rhcos_updated)
+        span.set_attribute("rhcos_outdated", self.rhcos_outdated)
+        span.set_attribute("rhcos_inconsistent", self.rhcos_inconsistent)
+
         if self.rhcos_inconsistent or self.rhcos_outdated:
             # Update Jenkins title and description
             jenkins.update_title(' [RHCOS CHANGES]')
@@ -272,11 +310,14 @@ class Ocp4ScanPipeline:
                 build_system="konflux",
             )
 
+    @start_as_current_span_async(TRACER, "ocp4-scan-konflux.handle-bridge-bug-mirroring")
     async def handle_bridge_bug_mirroring(self):
         """Run bridge bug mirroring for groups that enable it.
 
         Failures are logged and reported to Slack but do not fail the pipeline.
         """
+        span = trace.get_current_span()
+        span.set_attribute("version", self.version)
         group = f"openshift-{self.version}"
         group_config = await util.load_group_config(
             group=group,
@@ -308,6 +349,7 @@ class Ocp4ScanPipeline:
             await exectools.cmd_assert_async(cmd)
         except ChildProcessError as e:
             self.logger.error("Bridge bug mirroring failed for %s: %s", self.version, e)
+            span.set_status(StatusCode.ERROR, str(e)[:500])
             if not self.runtime.dry_run:
                 slack_client = self.runtime.new_slack_client()
                 slack_client.bind_channel(f"openshift-{self.version}")
