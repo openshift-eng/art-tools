@@ -21,11 +21,6 @@ from artcommonlib.constants import (
     KONFLUX_DEFAULT_IMAGE_REPO,
     KONFLUX_DEFAULT_NAMESPACE,
     OCP5_BRIDGE_MINOR_BASE,
-    PRODUCT_BASE_IMAGE_KONFLUX_EC_RELEASE_MAP,
-    PRODUCT_BASE_IMAGE_KONFLUX_RELEASE_MAP,
-    PRODUCT_FBC_STAGE_RELEASE_PLAN_MAP,
-    PRODUCT_KUBECONFIG_MAP,
-    PRODUCT_NAMESPACE_MAP,
     RELEASE_SCHEDULES,
     SCAN_SOURCES_CONCURRENCY_LIMIT,
 )
@@ -36,6 +31,12 @@ from artcommonlib.oc_image_info import (
     oc_image_info__cached_async__lru,
 )
 from artcommonlib.ocp_version_lineage import resolve_inflight_schedule_group
+from artcommonlib.product_catalog import (
+    find_product_config,
+    get_kubeconfig_env_vars,
+    get_product_config,
+    get_product_names,
+)
 from artcommonlib.release_util import SoftwareLifecyclePhase, isolate_el_version_in_release
 from ruamel.yaml import YAML
 from semver import VersionInfo
@@ -1311,7 +1312,8 @@ def resolve_konflux_kubeconfig_by_product(product: str, provided_kubeconfig: Opt
     if provided_kubeconfig:
         return provided_kubeconfig
 
-    env_var = PRODUCT_KUBECONFIG_MAP.get(product)
+    config = find_product_config(product)
+    env_var = config.kubeconfig_env if config else None
     if env_var:
         kubeconfig = os.environ.get(env_var)
         if kubeconfig:
@@ -1320,10 +1322,10 @@ def resolve_konflux_kubeconfig_by_product(product: str, provided_kubeconfig: Opt
         KONFLUX_LOGGER.warning(f"Environment variable {env_var} is not set for product '{product}'")
     else:
         KONFLUX_LOGGER.warning(
-            f"No kubeconfig mapping found for product '{product}'. Available products: {list(PRODUCT_KUBECONFIG_MAP.keys())}"
+            f"No kubeconfig mapping found for product '{product}'. Available products: {list(get_product_names())}"
         )
 
-    available_env_vars = list(PRODUCT_KUBECONFIG_MAP.values())
+    available_env_vars = get_kubeconfig_env_vars()
     KONFLUX_LOGGER.info(
         f"No kubeconfig specified for product '{product}'. "
         f"Available env vars: {', '.join(available_env_vars)}. Will rely on oc being logged in to the cluster."
@@ -1345,13 +1347,14 @@ def resolve_konflux_namespace_by_product(product: str, provided_namespace: Optio
     if provided_namespace:
         return provided_namespace
 
-    namespace = PRODUCT_NAMESPACE_MAP.get(product)
+    config = find_product_config(product)
+    namespace = config.namespace if config else None
     if namespace:
         KONFLUX_LOGGER.info(f"Using namespace '{namespace}' for product '{product}'")
         return namespace
 
     KONFLUX_LOGGER.warning(
-        f"No namespace mapping found for product '{product}'. Available products: {list(PRODUCT_NAMESPACE_MAP.keys())}. Using default: '{KONFLUX_DEFAULT_NAMESPACE}'"
+        f"No namespace mapping found for product '{product}'. Available products: {list(get_product_names())}. Using default: '{KONFLUX_DEFAULT_NAMESPACE}'"
     )
     return KONFLUX_DEFAULT_NAMESPACE
 
@@ -1383,32 +1386,39 @@ def resolve_konflux_base_image_release_targets(
     if lifecycle_phase not in (None, '', Missing):
         try:
             if SoftwareLifecyclePhase.from_name(lifecycle_phase) == SoftwareLifecyclePhase.PRE_RELEASE:
-                ec_targets = PRODUCT_BASE_IMAGE_KONFLUX_EC_RELEASE_MAP.get(product)
+                config = find_product_config(product)
+                ec_targets = config.ec_base_image_release if config else None
                 if ec_targets:
-                    plan, app = ec_targets
+                    plan = ec_targets.release_plan
+                    app = ec_targets.application
                     KONFLUX_LOGGER.info(
                         f"Using pre-release base-image Konflux releasePlan '{plan}' "
                         f"and application '{app}' for product '{product}'"
                     )
-                    return ec_targets
+                    return plan, app
         except ValueError:
             KONFLUX_LOGGER.warning(
                 f"Unknown software_lifecycle.phase '{lifecycle_phase}' for product '{product}'; "
                 "using default base-image release plan"
             )
 
-    targets = PRODUCT_BASE_IMAGE_KONFLUX_RELEASE_MAP.get(product)
+    config = find_product_config(product)
+    targets = config.base_image_release if config else None
     if targets:
-        plan, app = targets
+        plan = targets.release_plan
+        app = targets.application
         KONFLUX_LOGGER.info(
             f"Using base-image Konflux releasePlan '{plan}' and application '{app}' for product '{product}'"
         )
-        return targets
+        return plan, app
 
-    default_plan, default_app = PRODUCT_BASE_IMAGE_KONFLUX_RELEASE_MAP["ocp"]
+    default_targets = get_product_config("ocp").base_image_release
+    assert default_targets is not None
+    default_plan = default_targets.release_plan
+    default_app = default_targets.application
     KONFLUX_LOGGER.warning(
         f"No base-image Konflux mapping for product '{product}'. "
-        f"Known keys: {list(PRODUCT_BASE_IMAGE_KONFLUX_RELEASE_MAP.keys())}. "
+        f"Known keys: {list(get_product_names())}. "
         f"Using OCP defaults: releasePlan={default_plan!r}, application={default_app!r}"
     )
     return default_plan, default_app
@@ -1430,10 +1440,10 @@ def resolve_konflux_fbc_stage_release_plan(product: str, major: int, minor: int)
     Returns:
         ReleasePlan resource metadata.name, or None if the product/version has no configured plan.
     """
-    version_map = PRODUCT_FBC_STAGE_RELEASE_PLAN_MAP.get(product)
-    if not version_map:
+    config = find_product_config(product)
+    if config is None:
         return None
-    return version_map.get((major, minor))
+    return config.fbc_stage_release_plans.get((major, minor))
 
 
 async def run_safe(func: Callable[[], Any], failures_list: Optional[List[Tuple[str, Exception]]] = None) -> Any:

@@ -6,7 +6,7 @@ from typing import List, Optional
 
 import click
 from artcommonlib import exectools
-from artcommonlib.constants import PRODUCT_KUBECONFIG_MAP
+from artcommonlib.product_catalog import get_kubeconfig_env_vars
 from artcommonlib.util import resolve_konflux_kubeconfig_by_product, resolve_konflux_namespace_by_product
 from artcommonlib.variants import BuildVariant, get_build_variant_for_product
 
@@ -213,7 +213,7 @@ class BuildFbcPipeline:
         # Use kubeconfig from CLI parameter or product-specific environment variable
         final_kubeconfig = resolve_konflux_kubeconfig_by_product(product, self.kubeconfig)
         if not final_kubeconfig:
-            available_env_vars = list(PRODUCT_KUBECONFIG_MAP.values())
+            available_env_vars = get_kubeconfig_env_vars()
             raise ValueError(
                 f"Kubeconfig required for Konflux builds. Provide --kubeconfig parameter or set one of: {', '.join(available_env_vars)}"
             )

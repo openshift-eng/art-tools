@@ -13,7 +13,7 @@ from artcommonlib.model import Missing, Model
 from artcommonlib.variants import BuildVariant
 from dockerfile_parse import DockerfileParser
 from doozerlib import util
-from doozerlib.backend.rebaser import KonfluxRebaser
+from doozerlib.backend.rebaser import KonfluxRebaser, _get_cpe_product_name
 from doozerlib.source_resolver import SourceResolution, SourceResolver
 
 
@@ -21,6 +21,14 @@ class TestRebaser(TestCase):
     def setUp(self):
         self.directory = TemporaryDirectory()
         self.addCleanup(self.directory.cleanup)
+
+    def test_cpe_product_name_uses_registry_mapping(self):
+        """Resolve known CPE product names through the shared registry."""
+        self.assertEqual(_get_cpe_product_name("rhacm2"), "acm")
+
+    def test_cpe_product_name_preserves_unknown_product(self):
+        """Preserve the raw product name when no CPE mapping exists."""
+        self.assertEqual(_get_cpe_product_name("unknown-product"), "unknown-product")
 
     def test_split_dockerfile_into_stages_1(self):
         dfp = DockerfileParser(path=self.directory.name)
@@ -794,8 +802,6 @@ COPY . /skills/
 
     def test_make_actual_release_string_ocp_with_el_suffix(self):
         """Test _make_actual_release_string uses el# suffix for OCP builds"""
-        from artcommonlib.variants import BuildVariant
-
         runtime = MagicMock()
         runtime.assembly = "stream"
         runtime.group_config.public_upstreams = []
@@ -830,8 +836,6 @@ COPY . /skills/
 
     def test_make_actual_release_string_okd_with_scos_suffix(self):
         """Test _make_actual_release_string uses scos# suffix for OKD builds"""
-        from artcommonlib.variants import BuildVariant
-
         runtime = MagicMock()
         runtime.assembly = "stream"
         runtime.group_config.public_upstreams = []
@@ -869,8 +873,6 @@ COPY . /skills/
 
     def test_make_actual_release_string_okd_different_versions(self):
         """Test _make_actual_release_string uses correct scos# for different RHEL versions"""
-        from artcommonlib.variants import BuildVariant
-
         runtime = MagicMock()
         runtime.assembly = "stream"
         runtime.group_config.public_upstreams = []
@@ -909,8 +911,6 @@ COPY . /skills/
 
     def test_get_el_target_string_ocp(self):
         """Test _get_el_target_string returns el# for OCP builds"""
-        from artcommonlib.variants import BuildVariant
-
         runtime = MagicMock()
         runtime.repos = MagicMock()
         runtime.konflux_db = None
@@ -929,8 +929,6 @@ COPY . /skills/
 
     def test_get_el_target_string_okd(self):
         """Test _get_el_target_string returns scos# for OKD builds"""
-        from artcommonlib.variants import BuildVariant
-
         runtime = MagicMock()
         runtime.get_major_minor_fields.return_value = (4, 17)
         runtime.repos = MagicMock()
@@ -950,8 +948,6 @@ COPY . /skills/
 
     def test_make_actual_release_string_okd_with_image_override(self):
         """Test OKD build with image-specific okd.distgit.branch override"""
-        from artcommonlib.variants import BuildVariant
-
         runtime = MagicMock()
         runtime.assembly = "stream"
         runtime.group_config.public_upstreams = []
@@ -990,9 +986,6 @@ COPY . /skills/
 
     def test_make_actual_release_string_okd_with_runtime_branch(self):
         """Test OKD build without image override, using runtime.branch from group okd.branch"""
-        from artcommonlib.model import Missing
-        from artcommonlib.variants import BuildVariant
-
         runtime = MagicMock()
         runtime.assembly = "stream"
         runtime.group_config.public_upstreams = []
@@ -1031,9 +1024,6 @@ COPY . /skills/
 
     def test_make_actual_release_string_okd_fallback_to_branch_el_target(self):
         """Test OKD build falls back to metadata.branch_el_target when no override or runtime.branch"""
-        from artcommonlib.model import Missing
-        from artcommonlib.variants import BuildVariant
-
         runtime = MagicMock()
         runtime.assembly = "stream"
         runtime.group_config.public_upstreams = []

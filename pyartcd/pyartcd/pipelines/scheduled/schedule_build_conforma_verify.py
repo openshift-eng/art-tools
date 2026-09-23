@@ -2,7 +2,7 @@ import asyncio
 from datetime import datetime, timedelta, timezone
 
 import click
-from artcommonlib.constants import LAYERED_PRODUCT_CONFORMA_STAGE_POLICY_MAP
+from artcommonlib.product_catalog import find_product_config
 from artcommonlib.release_util import SoftwareLifecyclePhase
 from doozerlib.constants import (
     KONFLUX_RELEASE_EC_POLICY_CONFIGURATION,
@@ -42,9 +42,11 @@ async def run_for(group: str, runtime: Runtime, serial: bool = False):
         fbc_ec_policy = KONFLUX_RELEASE_FBC_EC_POLICY_CONFIGURATION
     else:
         product = group_config.get('product')
-        if product not in LAYERED_PRODUCT_CONFORMA_STAGE_POLICY_MAP:
+        config = find_product_config(product) if product else None
+        if config is None or config.conforma_stage_policies is None:
             raise ValueError(f"Unsupported layered-product group '{group}' product '{product}'")
-        ec_policy, fbc_ec_policy = LAYERED_PRODUCT_CONFORMA_STAGE_POLICY_MAP[product]
+        ec_policy = config.conforma_stage_policies.image_policy
+        fbc_ec_policy = config.conforma_stage_policies.fbc_policy
         phase_name = 'n/a'
 
     effective_time = (datetime.now(timezone.utc) + timedelta(days=EFFECTIVE_TIME_OFFSET_DAYS)).strftime(

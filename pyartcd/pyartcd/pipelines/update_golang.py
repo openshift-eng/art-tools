@@ -14,14 +14,13 @@ from artcommonlib.constants import (
     BREW_HUB,
     GOLANG_BUILDER_IMAGE_NAME,
     GOLANG_NVR_LABEL,
-    PRODUCT_NAMESPACE_MAP,
 )
 from artcommonlib.github_auth import get_github_client_for_org
 from artcommonlib.konflux.konflux_build_record import ArtifactType, Engine, KonfluxBuildOutcome, KonfluxBuildRecord
 from artcommonlib.konflux.konflux_db import KonfluxDb
 from artcommonlib.release_util import isolate_assembly_in_release, isolate_el_version_in_release
 from artcommonlib.rpm_utils import parse_nvr
-from artcommonlib.util import new_roundtrip_yaml_handler
+from artcommonlib.util import new_roundtrip_yaml_handler, resolve_konflux_namespace_by_product
 from doozerlib.cli.config_plashet import KNOWN_SIGNING_KEYS
 from doozerlib.util import konflux_golang_builder_component_name, rh_art_images_base_pullspec
 from elliottlib import util as elliottutil
@@ -1251,7 +1250,7 @@ class UpdateGolangPipeline:
         """Build golang-builder image on Konflux"""
         _LOGGER.info("Building on Konflux...")
         group, image_key = self._get_doozer_group_and_image(el_v, go_version)
-        konflux_namespace = PRODUCT_NAMESPACE_MAP["ocp"]
+        konflux_namespace = resolve_konflux_namespace_by_product("ocp")
         cmd = [
             "doozer",
             f"--working-dir={self._doozer_working_dir}-konflux-{el_v}",

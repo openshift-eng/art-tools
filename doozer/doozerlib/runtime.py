@@ -306,7 +306,6 @@ class Runtime(GroupRuntime):
 
         # For OKD variant, automatically merge the optional okd: field
         from artcommonlib.util import deep_merge
-        from artcommonlib.variants import BuildVariant
 
         if self.variant == BuildVariant.OKD and 'okd' in group_config:
             self._logger.info('Merging OKD group configuration')
