@@ -645,7 +645,7 @@
         },
         "vendor-": {}
       },
-      "additionalProperties": false
+      "additionalProperties": true
     },
     "labels!": {
       "$ref": "#/properties/labels"
