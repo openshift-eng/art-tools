@@ -21,6 +21,7 @@ class ProductId(Enum):
     CERT_MANAGER = "cert-manager"
     COO = "cluster-observability-operator"
     EXTERNAL_SECRETS = "external-secrets-operator"
+    KUEUE = "kueue-operator"  # TODO: confirm canonical product identifier with ART
     MCE = "multicluster-engine"
     LOGGING = "openshift-logging"
     MTA = "mta"

@@ -78,6 +78,17 @@ PRODUCT_CATALOG: tuple[ProductConfig, ...] = (
             application="coo-images-base",
         ),
     ),
+    # NOTE: kueue-images-base-silent / kueue-images-base may not exist yet in
+    # konflux-release-data. Reviewers must confirm these exist or create them.
+    ProductConfig(
+        product_id=ProductId.KUEUE,
+        namespace="art-kueue-tenant",
+        kubeconfig_env="KUEUE_KONFLUX_SA_KUBECONFIG",
+        base_image_release=ReleaseTarget(
+            release_plan="kueue-images-base-silent",
+            application="kueue-images-base",
+        ),
+    ),
     ProductConfig(
         product_id=ProductId.EXTERNAL_SECRETS,
         namespace="art-oap-tenant",
