@@ -2,7 +2,6 @@ import asyncio
 import json
 import logging
 import os
-import sys
 from dataclasses import dataclass, field
 from enum import Enum
 from typing import Optional
@@ -258,4 +257,4 @@ async def verify_release_cli(
     result = await pipeline.run()
     click.echo(render_result(result, output, version, assembly))
     if not result.passed:
-        sys.exit(1)
+        raise SystemExit(1)
