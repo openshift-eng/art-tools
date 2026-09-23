@@ -802,6 +802,7 @@
     "new_payload_versioning_scheme": {"type": "boolean"},
     "operator_image_ref_mode": {"type": "string"},
     "operator_channel_stable": {"type": "string"},
+    "operator_stable_channel_name": {"type": "string", "description": "Channel name used when operator_channel_stable is default or extra. Defaults to stable when omitted."},
     "signing_advisory": {"type": "integer"},
     "assemblies": {"type": "object"},
     "check_external_packages": {"type": "array"},
