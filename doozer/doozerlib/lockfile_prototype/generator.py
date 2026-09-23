@@ -981,14 +981,18 @@ class RpmLockfilePrototypeGenerator:
                     remaining_packages = [p for p in remaining_packages if p not in fully_missing]
                     remaining_reinstall = [p for p in remaining_reinstall if p not in fully_missing]
                     actually_removed = before - len(remaining_packages) - len(remaining_reinstall)
-                    removed += actually_removed
-                    if actually_removed:
-                        real_retries += 1
-                        reinstall_strip_count = 0
+                    arch_specific_before = sum(len(pkgs) for pkgs in remaining_arch_specific.values())
                     remaining_arch_specific = {
                         arch: [package for package in arch_packages if package not in fully_missing]
                         for arch, arch_packages in remaining_arch_specific.items()
                     }
+                    actually_removed += arch_specific_before - sum(
+                        len(pkgs) for pkgs in remaining_arch_specific.values()
+                    )
+                    removed += actually_removed
+                    if actually_removed:
+                        real_retries += 1
+                        reinstall_strip_count = 0
                 if not removed and not upgrade_hit:
                     raise
                 self.logger.warning(

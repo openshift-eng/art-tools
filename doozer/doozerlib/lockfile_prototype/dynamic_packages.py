@@ -170,10 +170,10 @@ class DynamicPackageResolver:
 
         wildcard_template = manifest_template.replace("${ID}", "*").replace("${VERSION_ID}", "*")
         wildcard_template = wildcard_template.replace("$ID", "*").replace("$VERSION_ID", "*")
+        resolved_source_dir = source_dir.resolve()
         wildcard_path = self._resolve_source_path(source_dir, wildcard_template)
-        candidates = sorted(
-            path for path in source_dir.glob(str(wildcard_path.relative_to(source_dir))) if path.is_file()
-        )
+        wildcard_pattern = str(wildcard_path.relative_to(resolved_source_dir))
+        candidates = sorted(path for path in resolved_source_dir.glob(wildcard_pattern) if path.is_file())
 
         major_version = self._extract_rhel_version_from_repos(repo_list)
         if major_version is not None:
@@ -196,13 +196,13 @@ class DynamicPackageResolver:
                 candidates = hinted_candidates
 
         if len(candidates) != 1:
-            candidate_names = ", ".join(str(path.relative_to(source_dir)) for path in candidates) or "none"
+            candidate_names = ", ".join(str(path.relative_to(resolved_source_dir)) for path in candidates) or "none"
             raise RuntimeError(
                 f"Cannot resolve dynamic package manifest for {script_path} without /etc/os-release; "
                 f"candidates: {candidate_names}"
             )
         self._logger.warning(
-            f"Using source manifest {candidates[0].relative_to(source_dir)} for dynamic package script "
+            f"Using source manifest {candidates[0].relative_to(resolved_source_dir)} for dynamic package script "
             f"{script_path} because /etc/os-release was unavailable"
         )
         return candidates[0]
