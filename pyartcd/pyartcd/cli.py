@@ -77,6 +77,7 @@ def cli(
         span = tracer.start_span(f"artcd.{cmd_name}")
         span.set_attributes(
             {
+                "artcd.entry": True,
                 "artcd.command": cmd_name,
                 "artcd.dry_run": dry_run,
                 "artcd.version": __version__,
