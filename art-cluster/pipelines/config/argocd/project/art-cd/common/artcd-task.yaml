@@ -99,7 +99,7 @@ spec:
     - name: QUAY_KONFLUX_SA_KUBECONFIG
       value: /tmp/konflux-kubeconfigs/quay
     - name: ASSISTED_INSTALLER_SA_KUBECONFIG
-      value: /tmp/konflux-kubeconfigs/assisted-installer
+      value: /tmp/konflux-kubeconfigs/installer
     - name: COO_KONFLUX_SA_KUBECONFIG
       value: /tmp/konflux-kubeconfigs/coo
     - name: RHOSDT_KONFLUX_SA_KUBECONFIG
