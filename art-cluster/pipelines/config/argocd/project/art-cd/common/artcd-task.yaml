@@ -92,8 +92,18 @@ spec:
       value: /tmp/konflux-kubeconfigs/mtc
     - name: LOGGING_KONFLUX_SA_KUBECONFIG
       value: /tmp/konflux-kubeconfigs/logging
+    - name: ACM_KONFLUX_SA_KUBECONFIG
+      value: /tmp/konflux-kubeconfigs/acm
+    - name: OAP_KONFLUX_SA_KUBECONFIG
+      value: /tmp/konflux-kubeconfigs/oap
+    - name: QUAY_KONFLUX_SA_KUBECONFIG
+      value: /tmp/konflux-kubeconfigs/quay
     - name: ASSISTED_INSTALLER_SA_KUBECONFIG
-      value: /tmp/konflux-kubeconfigs/assisted-installer
+      value: /tmp/konflux-kubeconfigs/installer
+    - name: COO_KONFLUX_SA_KUBECONFIG
+      value: /tmp/konflux-kubeconfigs/coo
+    - name: RHOSDT_KONFLUX_SA_KUBECONFIG
+      value: /tmp/konflux-kubeconfigs/rhosdt
     - name: QUAY_AUTH_FILE
       value: /tmp/konflux-art-images-auth/config.json
     - name: DOCKER_CONFIG
