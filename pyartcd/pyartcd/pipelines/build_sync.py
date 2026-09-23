@@ -148,7 +148,7 @@ class BuildSyncPipeline:
         except Exception as e:
             self.logger.warning(f"Failed commenting to PR: {e}")
 
-    @start_as_current_span_async(TRACER, "build-sync.run")
+    @start_as_current_span_async(TRACER, "build-sync.run", record_resources=True)
     async def run(self):
         if 'XDG_RUNTIME_DIR' in os.environ:
             self.logger.info('Unsetting XDG_RUNTIME_DIR to prevent use of default registry auth')

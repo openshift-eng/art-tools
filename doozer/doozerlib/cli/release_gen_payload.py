@@ -496,7 +496,7 @@ class GenPayloadCli:
         # This will be used to prevent syncing out mismatched siblings for development releases per ART-13996
         self.mismatched_siblings = []
 
-    @start_as_current_span_async(TRACER, "releases:gen-payload")
+    @start_as_current_span_async(TRACER, "releases:gen-payload", record_resources=True)
     async def run(self):
         """
         Main entry point once instantiated with CLI inputs.

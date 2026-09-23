@@ -7,7 +7,9 @@ from pathlib import Path
 from typing import Optional
 
 import click
+import psutil
 from artcommonlib import logutil
+from artcommonlib.telemetry import _sample_proc
 from opentelemetry import context, trace
 
 from pyartcd import __version__
@@ -85,8 +87,21 @@ def cli(
                 "jenkins.build_user_email": os.environ.get("BUILD_USER_EMAIL", ""),
             }
         )
+        proc = psutil.Process(os.getpid())
+        r0 = _sample_proc(proc)
+        span.set_attribute("process.rss_mb_start", r0["rss_mb"])
+        span.set_attribute("process.cpu_user_s_start", r0["cpu_user_s"])
+        span.set_attribute("process.cpu_sys_s_start", r0["cpu_sys_s"])
+
+        def _end_span_with_resources():
+            r1 = _sample_proc(proc)
+            span.set_attribute("process.rss_mb_end", r1["rss_mb"])
+            span.set_attribute("process.cpu_user_s_end", r1["cpu_user_s"])
+            span.set_attribute("process.cpu_sys_s_end", r1["cpu_sys_s"])
+            span.end()
+
         token = context.attach(trace.set_span_in_context(span))
-        ctx.call_on_close(span.end)
+        ctx.call_on_close(_end_span_with_resources)
         ctx.call_on_close(lambda: context.detach(token))
         # Update TRACEPARENT so child subprocesses (e.g. doozer) use the artcd span
         # as their parent rather than the Jenkins-generated fake span ID that was in
