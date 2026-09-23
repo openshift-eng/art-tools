@@ -28,6 +28,11 @@ from doozerlib.lockfile_prototype.constants import (
     MAX_RESOLUTION_RETRIES,
 )
 from doozerlib.lockfile_prototype.container_utils import ContainerImageHelper
+from doozerlib.lockfile_prototype.dynamic_packages import (
+    DynamicPackageResolver,
+    DynamicPackageSet,
+    discover_dynamic_package_script,
+)
 from doozerlib.lockfile_prototype.fallback import extract_generated_file_content
 from doozerlib.lockfile_prototype.lockfile_merger import merge_lockfiles
 from doozerlib.lockfile_prototype.models import (
@@ -377,6 +382,21 @@ class RpmLockfilePrototypeGenerator:
 
         entries = DockerfileParser(str(dockerfile_path)).structure
         cat_packages = await self._resolve_cat_packages(entries, self.downstream_parents)
+        dynamic_packages: dict[int, DynamicPackageSet] = {}
+        detected_script = discover_dynamic_package_script(dest_dir, entries)
+        if detected_script:
+            dynamic_packages = await DynamicPackageResolver(
+                container=self._container,
+                downstream_parents=self.downstream_parents,
+                parent_source_dirs=self.parent_source_dirs,
+                logger=self.logger,
+            ).resolve(
+                detected_script,
+                dest_dir,
+                arches,
+                entries,
+                repo_list,
+            )
 
         # Count stages and track which ones have RUN commands.
         # Stages without RUN (and no $(cat ...) extra packages) can't
@@ -402,6 +422,7 @@ class RpmLockfilePrototypeGenerator:
         stage_lockfiles = await self._resolve_all_stages(
             total_stages,
             cat_packages,
+            dynamic_packages,
             stages_with_runs,
             stages_with_bare_updates,
             repo_list,
@@ -484,30 +505,29 @@ class RpmLockfilePrototypeGenerator:
 
     def _read_file_from_parent_source(self, parent_dir: Path, container_path: str) -> str:
         """
-        Try to read a container file from the parent's build directory.
-        Checks if the file exists directly in the source tree first.
-        Falls back to parsing parent Dockerfiles for redirect commands.
+        Try to read a container file from a parent's build directory.
 
         Arg(s):
             parent_dir (Path): Parent image's build directory.
             container_path (str): Absolute path inside the container.
         Return Value(s):
-            str: File content, or empty string if not found.
+            str: File content, or an empty string if not found.
         """
         local_file = parent_dir / container_path.lstrip("/")
         if local_file.is_file():
-            self.logger.info(f"Resolved $(cat {container_path}) from parent source dir: {local_file}")
+            self.logger.info(f"Resolved {container_path} from parent source dir: {local_file}")
             return local_file.read_text()
 
         content = extract_generated_file_content(parent_dir, container_path)
         if content:
-            self.logger.info(f"Resolved $(cat {container_path}) from parent Dockerfile RUN command")
+            self.logger.info(f"Resolved {container_path} from parent Dockerfile RUN command")
         return content
 
     async def _resolve_all_stages(
         self,
         total_stages: int,
         cat_packages: dict[int, list[str]],
+        dynamic_packages: dict[int, DynamicPackageSet],
         stages_with_runs: set[int],
         stages_with_bare_updates: set[int],
         repo_list: list[RepoEntry],
@@ -536,7 +556,11 @@ class RpmLockfilePrototypeGenerator:
 
         for stage_num in range(total_stages):
             if stage_num != final_stage_num:
-                if stage_num not in stages_with_runs and stage_num not in cat_packages:
+                if (
+                    stage_num not in stages_with_runs
+                    and stage_num not in cat_packages
+                    and stage_num not in dynamic_packages
+                ):
                     self.logger.debug(f"{distgit_key}: stage {stage_num}: no RUN commands, skipping")
                     continue
 
@@ -554,6 +578,10 @@ class RpmLockfilePrototypeGenerator:
 
             extra_packages: list[str] = list(cat_packages.get(stage_num, []))
             dockerfile_install_pkgs = _extract_install_packages(entries, stage_num)
+            dynamic_package_set = dynamic_packages.get(stage_num)
+            dynamic_arch_specific_packages = dynamic_package_set.arch_specific if dynamic_package_set else None
+            if dynamic_package_set:
+                extra_packages.extend(dynamic_package_set.common)
 
             reinstall_pkgs: list[str] | None = None
             upgrade_pkgs: list[str | ArchSpecificPackage] | None = None
@@ -614,6 +642,7 @@ class RpmLockfilePrototypeGenerator:
                 upgrade_packages=upgrade_pkgs,
                 containerfile_install_packages=dockerfile_install_pkgs,
                 bare_context=bare_context,
+                arch_specific_packages=dynamic_arch_specific_packages,
             )
 
             # Pass 2: pin Dockerfile packages that overlap with the base
@@ -806,6 +835,7 @@ class RpmLockfilePrototypeGenerator:
         upgrade_packages: list[str | ArchSpecificPackage] | None = None,
         containerfile_install_packages: set[str] | None = None,
         bare_context: bool = False,
+        arch_specific_packages: dict[str, list[str]] | None = None,
     ) -> LockfileData | None:
         """
         Resolve a single stage, retrying after removing unavailable packages.
@@ -830,10 +860,15 @@ class RpmLockfilePrototypeGenerator:
             containerfile_install_packages (set[str] | None): Packages explicitly
                 installed by the Containerfile.
             bare_context (bool): Whether to emit a bare resolution context.
+            arch_specific_packages (dict[str, list[str]] | None): Packages restricted
+                to specific architectures.
         Return Value(s):
             LockfileData | None: Lockfile data, or None if all packages filtered out.
         """
         remaining_packages = list(packages)
+        remaining_arch_specific = {
+            arch: list(arch_packages) for arch, arch_packages in (arch_specific_packages or {}).items()
+        }
 
         # rpm-lockfile-prototype uses skopeo to pull the base image rpmdb.
         # brew.registry.redhat.io requires auth that skopeo may not have;
@@ -866,6 +901,7 @@ class RpmLockfilePrototypeGenerator:
                 repo_list,
                 arches,
                 remaining_packages,
+                arch_specific_packages=remaining_arch_specific,
                 reinstall_packages=remaining_reinstall if image_pullspec else None,
                 upgrade_packages=effective_upgrade,
                 exclude_packages=sorted(excluded_packages) if excluded_packages else None,
@@ -945,6 +981,14 @@ class RpmLockfilePrototypeGenerator:
                     remaining_packages = [p for p in remaining_packages if p not in fully_missing]
                     remaining_reinstall = [p for p in remaining_reinstall if p not in fully_missing]
                     actually_removed = before - len(remaining_packages) - len(remaining_reinstall)
+                    arch_specific_before = sum(len(pkgs) for pkgs in remaining_arch_specific.values())
+                    remaining_arch_specific = {
+                        arch: [package for package in arch_packages if package not in fully_missing]
+                        for arch, arch_packages in remaining_arch_specific.items()
+                    }
+                    actually_removed += arch_specific_before - sum(
+                        len(pkgs) for pkgs in remaining_arch_specific.values()
+                    )
                     removed += actually_removed
                     if actually_removed:
                         real_retries += 1
@@ -1082,6 +1126,7 @@ class RpmLockfilePrototypeGenerator:
         upgrade_packages: list[str | ArchSpecificPackage] | None = None,
         containerfile_install_packages: set[str] | None = None,
         bare_context: bool = False,
+        arch_specific_packages: dict[str, list[str]] | None = None,
     ) -> LockfileData | None:
         """
         Resolve a stage with cross-arch version reconciliation.
@@ -1106,6 +1151,8 @@ class RpmLockfilePrototypeGenerator:
             containerfile_install_packages (set[str] | None): Packages explicitly
                 installed by the Containerfile.
             bare_context (bool): Whether to emit a bare resolution context.
+            arch_specific_packages (dict[str, list[str]] | None): Packages restricted
+                to specific architectures.
         Return Value(s):
             LockfileData | None: Resolved lockfile with consistent
                 versions, or None if no packages remain.
@@ -1122,6 +1169,7 @@ class RpmLockfilePrototypeGenerator:
             upgrade_packages=upgrade_packages,
             containerfile_install_packages=containerfile_install_packages,
             bare_context=bare_context,
+            arch_specific_packages=arch_specific_packages,
         )
         if not first_pass:
             return None
@@ -1142,6 +1190,13 @@ class RpmLockfilePrototypeGenerator:
 
         mismatched_names = set(mismatches.keys())
         pinned_packages = [p for p in packages if p not in mismatched_names] + version_pins
+        pinned_arch_specific_packages = {
+            arch: [package for package in arch_packages if package not in mismatched_names]
+            for arch, arch_packages in (arch_specific_packages or {}).items()
+        }
+        pinned_arch_specific_packages = {
+            arch: arch_packages for arch, arch_packages in pinned_arch_specific_packages.items() if arch_packages
+        }
         pinned_reinstall = (
             [p for p in reinstall_packages if p not in mismatched_names] if reinstall_packages else reinstall_packages
         )
@@ -1164,6 +1219,7 @@ class RpmLockfilePrototypeGenerator:
                 upgrade_packages=pinned_upgrade,
                 containerfile_install_packages=containerfile_install_packages,
                 bare_context=bare_context,
+                arch_specific_packages=pinned_arch_specific_packages,
             )
         except RuntimeError as e:
             raise RuntimeError(

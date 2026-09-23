@@ -10,6 +10,7 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 
 import yaml
+from dockerfile_parse import DockerfileParser
 
 from doozerlib.lockfile_prototype.constants import DEFAULT_RPM_LOCKFILE_NAME
 from doozerlib.lockfile_prototype.dockerfile_transforms import (
@@ -17,6 +18,10 @@ from doozerlib.lockfile_prototype.dockerfile_transforms import (
     strip_bare_updates,
     strip_bare_updates_from_scripts,
     transform_reinstall_commands,
+)
+from doozerlib.lockfile_prototype.dynamic_packages import (
+    discover_dynamic_package_script,
+    transform_dynamic_package_script,
 )
 from doozerlib.lockfile_prototype.generator import RpmLockfilePrototypeGenerator
 from doozerlib.lockfile_prototype.resolver import RpmResolver
@@ -124,6 +129,7 @@ def apply_dockerfile_transforms(
     _logger = logger or logging.getLogger(__name__)
 
     df_path = dest_dir / "Dockerfile"
+    entries = DockerfileParser(str(df_path)).structure
     df_content = df_path.read_text()
     if strip_updates:
         df_content = strip_bare_updates(df_content)
@@ -131,3 +137,12 @@ def apply_dockerfile_transforms(
     df_content = add_installroot_gpg_key_import(df_content)
     df_content = transform_reinstall_commands(df_content)
     df_path.write_text(df_content)
+
+    detected_script = discover_dynamic_package_script(dest_dir, entries)
+    if detected_script:
+        script_path = (dest_dir / detected_script).resolve()
+        script_content = script_path.read_text()
+        transformed_script = transform_dynamic_package_script(script_content)
+        if transformed_script != script_content:
+            script_path.write_text(transformed_script)
+            _logger.debug("Made dynamic package reinstall pass non-fatal in %s", detected_script)

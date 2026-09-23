@@ -237,7 +237,6 @@ class TestRpmLockfilePrototypeGenerator(unittest.TestCase):
         meta.get_arches.return_value = ["x86_64", "ppc64le"]
         meta.get_enabled_repos.return_value = {"rhel-9-baseos-rpms", "rhel-9-appstream-rpms"}
         meta.is_lockfile_generation_enabled.return_value = True
-
         lockfile_config = MagicMock()
         lockfile_config.get.return_value = ["keyutils"]
         meta.config.konflux.cachi2.lockfile = lockfile_config
@@ -425,7 +424,6 @@ class TestRpmLockfilePrototypeGenerator(unittest.TestCase):
             return ""
 
         generator._container.read_file_from_image = AsyncMock(side_effect=mock_read_file)
-
         captured_configs: list[RpmsInConfig] = []
 
         async def capture_resolve(config, image_pullspec=None, **kwargs):
@@ -448,6 +446,50 @@ class TestRpmLockfilePrototypeGenerator(unittest.TestCase):
         self.assertIn("openvswitch3.5-devel", pkg_names)
         self.assertIn("openvswitch3.5-ipsec", pkg_names)
         self.assertIn("ovn25.09-vtep", pkg_names)
+
+    def test_dynamic_packages_are_passed_to_resolver(self):
+        """Configured dynamic packages are included in the stage input config."""
+        meta = self._make_mock_image_meta()
+        generator = self._make_generator()
+        generator.downstream_parents = ["quay.io/test/base@sha256:abc123"]
+
+        async def mock_read_file(pullspec, filepath):
+            if filepath == "/etc/os-release":
+                return 'ID="rhel"\nVERSION_ID="9"\n'
+            return ""
+
+        generator._container.read_file_from_image = AsyncMock(side_effect=mock_read_file)
+        captured_configs: list[RpmsInConfig] = []
+
+        async def capture_resolve(config, image_pullspec=None, **kwargs):
+            captured_configs.append(config)
+            return FAKE_LOCKFILE_DATA.model_copy(deep=True)
+
+        generator._resolver.resolve = AsyncMock(side_effect=capture_resolve)
+
+        with TemporaryDirectory() as tmpdir:
+            dest_dir = Path(tmpdir)
+            (dest_dir / "Dockerfile").write_text("FROM base\nRUN --mount=type=secret extensions/build.sh\n")
+            script_path = dest_dir / "extensions" / "build.sh"
+            script_path.parent.mkdir()
+            script_path.write_text('extensions_yaml="extensions/${ID}-${VERSION_ID}.yaml"\n')
+            (dest_dir / "extensions" / "rhel-9.yaml").write_text(
+                "extensions:\n"
+                "  common:\n"
+                "    packages: [common-package]\n"
+                "  ppc-only:\n"
+                "    architectures: [ppc64le]\n"
+                "    packages: [ppc-package]\n"
+            )
+
+            asyncio.run(generator.generate_lockfile(meta, dest_dir))
+
+        self.assertEqual(len(captured_configs), 1)
+        self.assertIn("common-package", captured_configs[0].packages)
+        arch_packages = [package for package in captured_configs[0].packages if not isinstance(package, str)]
+        self.assertEqual(
+            [(package.name, package.arches) for package in arch_packages], [("ppc-package", {"only": "ppc64le"})]
+        )
 
     def test_resolve_cat_packages_preserves_stage_indices(self):
         """
