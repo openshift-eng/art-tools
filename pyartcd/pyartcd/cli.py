@@ -74,7 +74,11 @@ def cli(
         initialize_telemetry()
         tracer = trace.get_tracer("pyartcd")
         cmd_name = ctx.invoked_subcommand or "root"
-        span = tracer.start_span(f"artcd.{cmd_name}")
+        # Use a blank context so the artcd root span is a true root in SigNoz.
+        # Without this, any inherited TRACEPARENT (e.g. from Jenkins) would make
+        # the artcd span a child of a phantom span that has no entry in the trace
+        # backend, causing a "Missing Span" at the top of every trace.
+        span = tracer.start_span(f"artcd.{cmd_name}", context=context.Context())
         span.set_attributes(
             {
                 "artcd.command": cmd_name,
