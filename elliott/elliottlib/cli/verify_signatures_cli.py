@@ -6,7 +6,7 @@ from typing import Optional
 
 import aiohttp
 import click
-from artcommonlib import exectools
+from artcommonlib.oc_image_info import oc_image_info__cached_async
 
 from elliottlib.cli.common import cli, click_coroutine
 
@@ -50,11 +50,12 @@ class VerifySignaturesResult:
         return bool(self.arch_results) and all(r.passed for r in self.arch_results)
 
 
-async def get_release_image_digest(pullspec: str) -> str:
-    cmd = ["oc", "image", "info", "-o", "json", pullspec]
-    rc, out, err = await exectools.cmd_gather_async(cmd)
-    if rc:
-        raise RuntimeError(f"oc image info failed for {pullspec}: {err.strip()}")
+async def get_release_image_digest(pullspec: str, registry_config: str | None = None) -> str:
+    try:
+        out = await oc_image_info__cached_async(pullspec, registry_config=registry_config)
+    except ChildProcessError as e:
+        raise RuntimeError(f"oc image info failed for {pullspec}: {e}") from e
+
     data = json.loads(out)
     if isinstance(data, list):
         data = data[0] if data else {}
@@ -85,13 +86,15 @@ async def check_signature_on_mirror(sha: str, mirror_path: str) -> bool:
     return False
 
 
-async def _check_arch(arch, release_name, check_dev, check_prod) -> tuple[SignatureCheckResult | None, list[str]]:
+async def _check_arch(
+    arch, release_name, check_dev, check_prod, registry_config: str | None = None
+) -> tuple[SignatureCheckResult | None, list[str]]:
     errors = []
     pullspec = f"{RELEASE_IMAGE_REPO}:{release_name}-{arch}"
     LOGGER.info("Checking signatures for %s", pullspec)
 
     try:
-        digest = await get_release_image_digest(pullspec)
+        digest = await get_release_image_digest(pullspec, registry_config=registry_config)
     except Exception as e:
         errors.append(f"{arch}: failed to get digest for {pullspec}: {e}")
         return None, errors
@@ -120,10 +123,12 @@ async def _check_arch(arch, release_name, check_dev, check_prod) -> tuple[Signat
     return check, errors
 
 
-async def verify_release_signatures(release_name, arches, check_dev, check_prod) -> VerifySignaturesResult:
+async def verify_release_signatures(
+    release_name, arches, check_dev, check_prod, registry_config: str | None = None
+) -> VerifySignaturesResult:
     result = VerifySignaturesResult(release_name=release_name)
 
-    tasks = [_check_arch(arch, release_name, check_dev, check_prod) for arch in arches]
+    tasks = [_check_arch(arch, release_name, check_dev, check_prod, registry_config=registry_config) for arch in arches]
     arch_results = await asyncio.gather(*tasks)
 
     for check, errors in arch_results:
@@ -223,6 +228,7 @@ async def verify_signatures_cli(runtime, arches, check_dev_mirror, check_prod_mi
         arches=arches,
         check_dev=check_dev_mirror,
         check_prod=check_prod_mirror,
+        registry_config=runtime.registry_config,
     )
     click.echo(render_result(result, output))
     if not result.passed:
