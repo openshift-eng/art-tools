@@ -3134,6 +3134,8 @@ class TestKonfluxFbcBuilder(unittest.IsolatedAsyncioTestCase):
         )
         kube_client = self.kube_client
         kube_client.resource_url.return_value = "https://example.com/pipelinerun/test-pipeline-run-name"
+        # Simulate component not existing yet so ensure_component is called
+        kube_client.get_component.return_value = None
         pplr = kube_client.start_pipeline_run_for_image_build.return_value = MagicMock(
             **{"metadata.name": "test-pipeline-run-name"},
         )
@@ -3146,6 +3148,7 @@ class TestKonfluxFbcBuilder(unittest.IsolatedAsyncioTestCase):
             logger=self.logger,
         )
         kube_client.ensure_application.assert_awaited_once_with(name="fbc-test-group", display_name="fbc-test-group")
+        kube_client.get_component.assert_awaited_once_with("fbc-test-group-foo", strict=False)
         kube_client.ensure_component.assert_awaited_once_with(
             name="fbc-test-group-foo",
             application="fbc-test-group",
@@ -3189,6 +3192,8 @@ class TestKonfluxFbcBuilder(unittest.IsolatedAsyncioTestCase):
         )
         kube_client = self.kube_client
         kube_client.resource_url.return_value = "https://example.com/pipelinerun/test-pipeline-run-name"
+        # Simulate component not existing yet so ensure_component is called
+        kube_client.get_component.return_value = None
         pplr = kube_client.start_pipeline_run_for_image_build.return_value = MagicMock(
             **{"metadata.name": "test-pipeline-run-name"},
         )
@@ -3201,6 +3206,7 @@ class TestKonfluxFbcBuilder(unittest.IsolatedAsyncioTestCase):
             logger=self.logger,
         )
         kube_client.ensure_application.assert_awaited_once_with(name="fbc-test-group", display_name="fbc-test-group")
+        kube_client.get_component.assert_awaited_once_with("fbc-test-group-foo", strict=False)
         kube_client.ensure_component.assert_awaited_once_with(
             name="fbc-test-group-foo",
             application="fbc-test-group",
