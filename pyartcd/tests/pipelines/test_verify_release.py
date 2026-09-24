@@ -89,6 +89,7 @@ class TestVerifyReleasePipeline(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(result.passed)
         expected_steps = {
             "cdn-push",
+            "csv-versions",
             "signatures",
             "image-grades",
             "payload",
@@ -141,7 +142,7 @@ class TestVerifyReleasePipeline(unittest.IsolatedAsyncioTestCase):
     @patch("pyartcd.pipelines.verify_release.exectools.cmd_assert_async", new_callable=AsyncMock)
     async def test_run_step_failure(self, mock_assert):
         def mock_side_effect(cmd, **kwargs):
-            if "verify-signatures" in cmd:
+            if "verify-signatures" in cmd or "verify-csv-versions" in cmd:
                 raise ChildProcessError(f"Process {cmd!r} exited with code 1.")
             return 0
 
@@ -159,6 +160,9 @@ class TestVerifyReleasePipeline(unittest.IsolatedAsyncioTestCase):
         sig_step = [s for s in result.steps if s.name == "signatures"][0]
         self.assertEqual(sig_step.status, StepStatus.FAIL)
         self.assertIn("exited with code 1", sig_step.message)
+        csv_step = [s for s in result.steps if s.name == "csv-versions"][0]
+        self.assertEqual(csv_step.status, StepStatus.FAIL)
+        self.assertIn("exited with code 1", csv_step.message)
 
     @patch("pyartcd.pipelines.verify_release.exectools.cmd_assert_async", new_callable=AsyncMock)
     async def test_cdn_push_read_only(self, mock_assert):

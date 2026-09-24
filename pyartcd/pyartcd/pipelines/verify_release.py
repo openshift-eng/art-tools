@@ -173,6 +173,7 @@ class VerifyReleasePipeline:
         # All steps can run in parallel
         steps = [
             ("cdn-push", self._verify_cdn_push),
+            ("csv-versions", self._verify_csv_versions),
             ("signatures", self._verify_signatures),
             ("image-grades", self._verify_image_grades),
             ("payload", self._verify_payload),
@@ -264,6 +265,10 @@ class VerifyReleasePipeline:
         cmd = self._elliott_base + ["verify-kernel-tag"]
         return await self._run_elliott_cmd("kernel-tag", cmd)
 
+    async def _verify_csv_versions(self) -> StepResult:
+        cmd = self._elliott_base + ["verify-csv-versions"]
+        return await self._run_elliott_cmd("csv-versions", cmd)
+
     async def _verify_cve_trackers(self) -> StepResult:
         cmd = self._elliott_base + ["verify-cve-trackers"]
         return await self._run_elliott_cmd("cve-trackers", cmd)
@@ -279,6 +284,7 @@ class VerifyReleasePipeline:
     type=click.Choice(
         [
             "cdn-push",
+            "csv-versions",
             "signatures",
             "image-grades",
             "payload",

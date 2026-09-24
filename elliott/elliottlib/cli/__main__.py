@@ -74,6 +74,7 @@ from elliottlib.cli.validate_rhsa import validate_rhsa_cli
 from elliottlib.cli.verify_attached_bugs_cli import verify_attached_bugs_cli
 from elliottlib.cli.verify_attached_operators_cli import verify_attached_operators_cli
 from elliottlib.cli.verify_cdn_push_cli import verify_cdn_push_cli
+from elliottlib.cli.verify_csv_versions_cli import verify_csv_versions_cli
 from elliottlib.cli.verify_cve_trackers_cli import verify_cve_trackers_cli
 from elliottlib.cli.verify_cvp_cli import verify_cvp_cli
 from elliottlib.cli.verify_docs_approval import verify_docs_approval
@@ -334,6 +335,7 @@ cli.add_command(watch_release_cli)
 cli.add_command(find_bugs_second_fix_cli)
 cli.add_command(process_release_from_fbc_bugs_cli)
 cli.add_command(verify_cdn_push_cli)
+cli.add_command(verify_csv_versions_cli)
 cli.add_command(verify_cve_trackers_cli)
 cli.add_command(verify_security_alerts_cli)
 cli.add_command(verify_signatures_cli)
