@@ -649,15 +649,25 @@ class KonfluxFbcFragmentMerger:
             raise ValueError(f"Invalid output_image format: {output_image}. Expected format is 'repo:tag'.")
         output_image_repo = target_index_split[0]
         output_image_tag = target_index_split[1]
-        await konflux_client.ensure_component(
-            application=app_name,
-            name=comp_name,
-            component_name=comp_name,
-            source_url=build_repo.https_url,
-            revision=build_repo.branch,
-            image_repo=output_image_repo,
-        )
-        logger.info(f"Created component {comp_name} in application {app_name}")
+        # For FBC builds, multiple OCP target versions share the same Component
+        # name but use different revisions (branches). Using ensure_component
+        # would try to replace the Component when the revision doesn't match,
+        # triggering a 403 RBAC error ("cannot set an ownerRef on a resource
+        # you can't delete"). Instead, reuse the existing Component as-is and
+        # only create it when it doesn't exist yet.
+        existing_component = await konflux_client.get_component(comp_name, strict=False)
+        if existing_component:
+            logger.info(f"Component {comp_name} already exists in application {app_name}; reusing")
+        else:
+            await konflux_client.ensure_component(
+                application=app_name,
+                name=comp_name,
+                component_name=comp_name,
+                source_url=build_repo.https_url,
+                revision=build_repo.branch,
+                image_repo=output_image_repo,
+            )
+            logger.info(f"Created component {comp_name} in application {app_name}")
 
         arches = self.group_config.get("arches", list(KonfluxClient.SUPPORTED_ARCHES.keys()))
 
@@ -2009,15 +2019,25 @@ class KonfluxFbcBuilder:
         component_name = self.get_component_name(self.group, metadata.distgit_key)
         logger.info(f"Creating Konflux component: {component_name}")
         dest_image_repo = output_image.split(":")[0]
-        await konflux_client.ensure_component(
-            name=component_name,
-            application=app_name,
-            component_name=component_name,
-            image_repo=dest_image_repo,
-            source_url=build_repo.https_url,
-            revision=build_repo.branch,
-        )
-        logger.info(f"Konflux component {component_name} created")
+        # For FBC builds, multiple OCP target versions share the same Component
+        # name but use different revisions (branches). Using ensure_component
+        # would try to replace the Component when the revision doesn't match,
+        # triggering a 403 RBAC error ("cannot set an ownerRef on a resource
+        # you can't delete"). Instead, reuse the existing Component as-is and
+        # only create it when it doesn't exist yet.
+        existing_component = await konflux_client.get_component(component_name, strict=False)
+        if existing_component:
+            logger.info(f"Konflux component {component_name} already exists; reusing")
+        else:
+            await konflux_client.ensure_component(
+                name=component_name,
+                application=app_name,
+                component_name=component_name,
+                image_repo=dest_image_repo,
+                source_url=build_repo.https_url,
+                revision=build_repo.branch,
+            )
+            logger.info(f"Konflux component {component_name} created")
         # Create a new pipeline run
         logger.info("Starting Konflux pipeline run...")
 
