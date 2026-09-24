@@ -11,7 +11,7 @@ from typing import Dict, List, Optional, Sequence, Tuple
 import click
 import yaml
 from artcommonlib import exectools
-from artcommonlib.arch_util import go_arch_for_brew_arch, brew_arch_for_go_arch
+from artcommonlib.arch_util import brew_arch_for_go_arch, go_arch_for_brew_arch
 from artcommonlib.constants import KONFLUX_DEFAULT_NAMESPACE
 from artcommonlib.konflux.konflux_build_record import ArtifactType, Engine, KonfluxBuildOutcome, KonfluxBuildRecord
 from artcommonlib.util import oc_image_info_async, sync_to_quay
