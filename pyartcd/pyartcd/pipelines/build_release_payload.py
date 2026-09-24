@@ -48,6 +48,7 @@ class BuildReleasePayloadPipeline:
         skip_cosign: bool,
         skip_checks: bool,
         dry_run: bool,
+        multi: bool = False,
     ):
         self.runtime = runtime
         self.group = group
@@ -65,6 +66,7 @@ class BuildReleasePayloadPipeline:
         self.skip_cosign = skip_cosign
         self.skip_checks = skip_checks
         self.dry_run = dry_run
+        self.multi = multi
         self._logger = runtime.logger
 
     def _check_environment_variables(self):
@@ -107,6 +109,8 @@ class BuildReleasePayloadPipeline:
                 cmd.append("--push")
                 if self.sync:
                     cmd.append("--sync")
+            if self.multi:
+                cmd.append("--multi")
 
         if self.konflux_kubeconfig:
             cmd.append(f"--konflux-kubeconfig={self.konflux_kubeconfig}")
@@ -122,7 +126,8 @@ class BuildReleasePayloadPipeline:
         self._logger.info("Running doozer command: %s", " ".join(cmd))
         await exectools.cmd_assert_async(cmd)
 
-        result_path = Path(self.runtime.doozer_working, 'release-payload-result.json')
+        result_filename = 'release-payload-multi-result.json' if self.multi else 'release-payload-result.json'
+        result_path = Path(self.runtime.doozer_working, result_filename)
         if not result_path.exists():
             raise RuntimeError(f"doozer did not produce result file at {result_path}")
         try:
@@ -248,6 +253,14 @@ class BuildReleasePayloadPipeline:
     help="Deprecated reference Brew arch. All configured architectures are built from their own build-sync ImageStreams.",
 )
 @click.option(
+    "--multi",
+    is_flag=True,
+    default=False,
+    help="Build a heterogeneous (multi-arch) release payload. Sources from the ocp-multi "
+    "ImageStream built by build-sync. Pushed to a separate branch and built as a separate "
+    "Konflux Component from the homogeneous payload.",
+)
+@click.option(
     "--sync",
     is_flag=True,
     default=False,
@@ -315,6 +328,7 @@ async def build_release_payload(
     release: Optional[str],
     version: Optional[str],
     arch: str,
+    multi: bool,
     sync: bool,
     konflux_kubeconfig: Optional[str],
     konflux_namespace: str,
@@ -358,5 +372,6 @@ async def build_release_payload(
         skip_cosign=skip_cosign,
         skip_checks=skip_checks,
         dry_run=dry_run,
+        multi=multi,
     )
     await pipeline.run()
