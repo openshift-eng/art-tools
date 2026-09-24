@@ -109,8 +109,9 @@ class BuildReleasePayloadPipeline:
                 cmd.append("--push")
                 if self.sync:
                     cmd.append("--sync")
-            if self.multi:
-                cmd.append("--multi")
+
+        if self.multi:
+            cmd.append("--multi")
 
         if self.konflux_kubeconfig:
             cmd.append(f"--konflux-kubeconfig={self.konflux_kubeconfig}")
