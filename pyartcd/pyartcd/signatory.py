@@ -526,6 +526,17 @@ class DirectSignatory:
             if not os.path.isfile(output_path):
                 raise SignatoryServerError("Direct signing did not produce a signature file")
 
+            verification_rc, _, verification_stderr = await self._command_runner(
+                ["gpg2", "-d", output_path],
+                check=False,
+                env=self._environment,
+                timeout=self.timeout,
+            )
+            if verification_rc != 0:
+                raise SignatoryServerError(
+                    f"Direct signing signature verification failed: {verification_stderr.strip()}"
+                )
+
             with open(output_path, "rb") as generated_signature:
                 signature = generated_signature.read()
             if not signature:
