@@ -7,6 +7,7 @@ import yaml
 from aiohttp import ClientSession
 from elliottlib.cli.verify_image_grades_cli import (
     ImageGradeResult,
+    PyxisServerError,
     VerifyImageGradesResult,
     _parse_timestamp,
     extract_digest,
@@ -17,6 +18,7 @@ from elliottlib.cli.verify_image_grades_cli import (
     verify_image_grades,
 )
 from elliottlib.verify_common import get_assembly_shipment_url
+from tenacity import stop_after_attempt, wait_none
 
 
 class TestExtractDigest(unittest.TestCase):
@@ -205,9 +207,34 @@ class TestQueryFreshnessGrades(unittest.IsolatedAsyncioTestCase):
         mock_session = AsyncMock(spec=ClientSession)
         mock_session.get = MagicMock(return_value=mock_resp)
 
-        result, available = await query_freshness_grades(mock_session, "a" * 64)
+        with patch("elliottlib.cli.verify_image_grades_cli.wait_exponential", return_value=wait_none()):
+            result, available = await query_freshness_grades(mock_session, "a" * 64)
         self.assertEqual(result, [])
         self.assertFalse(available)
+        self.assertEqual(mock_session.get.call_count, 5)
+
+    async def test_api_error_retries_on_503(self):
+        resp_503 = AsyncMock()
+        resp_503.status = 503
+        resp_503.__aenter__ = AsyncMock(return_value=resp_503)
+        resp_503.__aexit__ = AsyncMock(return_value=False)
+
+        grades = [{"start_date": "2026-01-01T00:00:00+00:00", "grade": "A"}]
+        resp_200 = AsyncMock()
+        resp_200.status = 200
+        resp_200.json = AsyncMock(return_value={"data": [{"freshness_grades": grades}]})
+        resp_200.__aenter__ = AsyncMock(return_value=resp_200)
+        resp_200.__aexit__ = AsyncMock(return_value=False)
+
+        mock_session = AsyncMock(spec=ClientSession)
+        mock_session.get = MagicMock(side_effect=[resp_503, resp_503, resp_200])
+
+        with patch("elliottlib.cli.verify_image_grades_cli.wait_exponential", return_value=wait_none()):
+            result, available = await query_freshness_grades(mock_session, "a" * 64)
+
+        self.assertEqual(result, grades)
+        self.assertTrue(available)
+        self.assertEqual(mock_session.get.call_count, 3)
 
     async def test_malformed_digest_rejected(self):
         mock_session = AsyncMock(spec=ClientSession)

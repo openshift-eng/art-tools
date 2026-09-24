@@ -11,6 +11,7 @@ import click
 import requests
 import yaml
 from artcommonlib.gitlab import GitLabClient
+from tenacity import before_sleep_log, retry, retry_if_exception_type, stop_after_attempt, wait_exponential
 
 from elliottlib.cli.common import cli, click_coroutine
 from elliottlib.verify_common import get_assembly_shipment_url
@@ -181,6 +182,15 @@ def fetch_shipment_components(mr_url: str) -> tuple[list[tuple[str, str]], str]:
     return components, version
 
 
+class PyxisServerError(Exception):
+    """Raised when Pyxis API returns a 5xx status code (retryable)."""
+
+    def __init__(self, status: int, digest: str):
+        self.status = status
+        self.digest = digest
+        super().__init__(f"Pyxis API returned status {status} for digest {digest}")
+
+
 async def query_freshness_grades(session: aiohttp.ClientSession, digest: str) -> tuple[list[dict], bool]:
     """Returns (grades, available). available=False means the lookup itself failed."""
     if not DIGEST_RE.match(digest):
@@ -192,8 +202,18 @@ async def query_freshness_grades(session: aiohttp.ClientSession, digest: str) ->
         "page": "0",
         "include": "data.freshness_grades",
     }
-    try:
+
+    @retry(
+        reraise=True,
+        stop=stop_after_attempt(5),
+        wait=wait_exponential(multiplier=2, min=2, max=30),
+        retry=retry_if_exception_type(PyxisServerError),
+        before_sleep=before_sleep_log(LOGGER, logging.WARNING),
+    )
+    async def _fetch() -> tuple[list[dict], bool]:
         async with session.get(PYXIS_API_URL, params=params, proxy=PYXIS_PROXY) as resp:
+            if 500 <= resp.status < 600:
+                raise PyxisServerError(resp.status, digest)
             if resp.status != 200:
                 LOGGER.warning("Pyxis API returned status %s for digest %s", resp.status, digest)
                 return [], False
@@ -201,6 +221,12 @@ async def query_freshness_grades(session: aiohttp.ClientSession, digest: str) ->
             if not data.get("data"):
                 return [], True
             return data["data"][0].get("freshness_grades", []), True
+
+    try:
+        return await _fetch()
+    except PyxisServerError:
+        LOGGER.warning("Pyxis API returned server errors for digest %s after retries", digest)
+        return [], False
     except Exception:
         LOGGER.warning("Failed to query Pyxis API for digest %s", digest, exc_info=True)
         return [], False
