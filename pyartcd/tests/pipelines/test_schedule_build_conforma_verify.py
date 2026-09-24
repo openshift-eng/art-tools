@@ -38,6 +38,10 @@ class TestRunFor(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(start_build.call_args.kwargs["group"], "openshift-4.23")
         self.assertEqual(start_build.call_args.kwargs["ec_policy"], KONFLUX_RELEASE_PREGA_EC_POLICY_CONFIGURATION)
         self.assertEqual(start_build.call_args.kwargs["fbc_ec_policy"], KONFLUX_RELEASE_FBC_EC_POLICY_CONFIGURATION)
+        self.assertTrue(start_build.call_args.kwargs["include_bundles"])
+        self.assertTrue(start_build.call_args.kwargs["include_fbcs"])
+        self.assertTrue(start_build.call_args.kwargs["include_corresponding_bundles"])
+        self.assertTrue(start_build.call_args.kwargs["include_corresponding_fbcs"])
 
     async def test_ocp_non_pre_release_uses_ga_policies(self):
         _, _, start_build = await self._run(
@@ -61,6 +65,8 @@ class TestRunFor(unittest.IsolatedAsyncioTestCase):
                 "ec_policy": "rhtap-releng-tenant/registry-art-oadp-stage",
                 "fbc_ec_policy": "rhtap-releng-tenant/fbc-art-oadp-stage",
                 "effective_time": "2026-09-21T00:00:00Z",
+                "include_bundles": True,
+                "include_fbcs": True,
                 "include_corresponding_bundles": True,
                 "include_corresponding_fbcs": True,
                 "report_to_slack": True,
@@ -93,6 +99,7 @@ class TestRunFor(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(start_build.call_args.kwargs["ec_policy"], "rhtap-releng-tenant/registry-standard")
         self.assertIsNone(start_build.call_args.kwargs["fbc_ec_policy"])
+        self.assertFalse(start_build.call_args.kwargs["include_fbcs"])
         self.assertFalse(start_build.call_args.kwargs["include_corresponding_fbcs"])
 
     async def test_unknown_lp_product_raises(self):
