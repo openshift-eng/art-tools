@@ -68,7 +68,7 @@ async def get_referenced_images(
 LOGGER = logging.getLogger(__name__)
 yaml = opm.yaml
 
-PRODUCTION_INDEX_PULLSPEC_FORMAT = constants.PRODUCTION_INDEX_PULLSPEC_FORMAT
+PRODUCTION_INDEX_PULLSPEC_FORMAT = "registry.redhat.io/redhat/redhat-operator-index:v{major}.{minor}"
 BASE_IMAGE_RHEL9_PULLSPEC_FORMAT = "registry.redhat.io/openshift{major}/ose-operator-registry-rhel9:v{major}.{minor}"
 BASE_IMAGE_RHEL8_PULLSPEC_FORMAT = "registry.redhat.io/openshift{major}/ose-operator-registry:v{major}.{minor}"
 FBC_BUILD_PRIORITY = "2"

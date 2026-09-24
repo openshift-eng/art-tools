@@ -391,6 +391,12 @@ def test_validate_shipment_mr_ci_state_reports_active_stage_with_created_prod_br
         prod_status='created',
     )
 
+    state = inspect_shipment_mr_ci_state(client, 'https://gitlab.example/project/-/merge_requests/42', mr)
+
+    assert state.active_stage
+    assert state.prod_attempts == ()
+    assert state.active_prod == ()
+
     with pytest.raises(ShipmentMRActiveStageError, match='active stage work'):
         validate_shipment_mr_ci_state(
             client,

@@ -104,8 +104,9 @@ def inspect_shipment_mr_ci_state(gitlab_client, mr_url: str, mr) -> ShipmentMRCI
 
     Parent pipeline state, stage and production trigger bridges, and their
     downstream jobs are inspected with pagination enabled. A production bridge
-    is considered attempted once it leaves the untouched ``manual`` or
-    ``skipped`` states, or as soon as GitLab associates a downstream pipeline.
+    is considered attempted once it leaves the untouched ``created``,
+    ``manual``, or ``skipped`` states, or as soon as GitLab associates a
+    downstream pipeline.
 
     Args:
         gitlab_client: Authenticated ART GitLab client.
@@ -147,7 +148,9 @@ def inspect_shipment_mr_ci_state(gitlab_client, mr_url: str, mr) -> ShipmentMRCI
             if is_prod:
                 if bridge_status not in _UNTOUCHED_PROD_STATUSES or downstream:
                     prod_attempts.append(f"{pipeline_url} prod-job is {bridge_status}")
-                if bridge_status in _ACTIVE_CI_STATUSES:
+                if bridge_status in _ACTIVE_CI_STATUSES and (
+                    bridge_status not in _UNTOUCHED_PROD_STATUSES or downstream
+                ):
                     active_prod.append(f"{pipeline_url} prod-job is {bridge_status}")
             else:
                 stage_bridge_found = True

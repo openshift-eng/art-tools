@@ -20,8 +20,8 @@ from artcommonlib.util import (
     resolve_konflux_kubeconfig_by_product,
     resolve_konflux_namespace_by_product,
 )
-from doozerlib import constants
 from doozerlib.backend.konflux_client import KonfluxClient
+from doozerlib.backend.konflux_fbc import PRODUCTION_INDEX_PULLSPEC_FORMAT
 from doozerlib.opm import OpmRegistryAuth, render
 
 from elliottlib.cli.common import click_coroutine
@@ -294,7 +294,7 @@ class ValidateLpProdCli:
             if not ocp_version:
                 raise ValueError(f"Cannot determine target OCP version from FBC NVR in {config_path}")
             major, minor = ocp_version.split('.', 1)
-            production_index = constants.PRODUCTION_INDEX_PULLSPEC_FORMAT.format(major=major, minor=minor)
+            production_index = PRODUCTION_INDEX_PULLSPEC_FORMAT.format(major=major, minor=minor)
             if production_index not in production_cache:
                 production_cache[production_index] = await render(production_index, auth=auth)
             production_blobs = production_cache[production_index]
