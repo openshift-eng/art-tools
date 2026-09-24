@@ -334,3 +334,47 @@ class TestBuildReleasePayloadPipelineRun(unittest.IsolatedAsyncioTestCase):
 
         mock_doozer.assert_awaited_once()
         mock_cosign.assert_awaited_once_with(SAMPLE_DOOZER_RESULT)
+
+    @patch("pyartcd.pipelines.build_release_payload.Path")
+    @patch("pyartcd.pipelines.build_release_payload.exectools.cmd_assert_async", new_callable=AsyncMock)
+    async def test_run_doozer_includes_multi_flag_when_multi(self, mock_cmd, mock_path_cls):
+        self._mock_doozer_result_file(mock_path_cls)
+        pipeline = _make_pipeline(multi=True, skip_cosign=True)
+
+        await pipeline._run_doozer()
+
+        cmd = mock_cmd.call_args[0][0]
+        self.assertIn("--multi", cmd)
+
+    @patch("pyartcd.pipelines.build_release_payload.Path")
+    @patch("pyartcd.pipelines.build_release_payload.exectools.cmd_assert_async", new_callable=AsyncMock)
+    async def test_run_doozer_excludes_multi_flag_when_not_multi(self, mock_cmd, mock_path_cls):
+        self._mock_doozer_result_file(mock_path_cls)
+        pipeline = _make_pipeline(multi=False, skip_cosign=True)
+
+        await pipeline._run_doozer()
+
+        cmd = mock_cmd.call_args[0][0]
+        self.assertNotIn("--multi", cmd)
+
+    @patch("pyartcd.pipelines.build_release_payload.Path")
+    @patch("pyartcd.pipelines.build_release_payload.exectools.cmd_assert_async", new_callable=AsyncMock)
+    async def test_run_doozer_uses_multi_result_filename(self, mock_cmd, mock_path_cls):
+        self._mock_doozer_result_file(mock_path_cls)
+        pipeline = _make_pipeline(multi=True, skip_cosign=True)
+
+        await pipeline._run_doozer()
+
+        result_path_call = mock_path_cls.call_args[0]
+        self.assertIn("release-payload-multi-result.json", result_path_call)
+
+    @patch("pyartcd.pipelines.build_release_payload.Path")
+    @patch("pyartcd.pipelines.build_release_payload.exectools.cmd_assert_async", new_callable=AsyncMock)
+    async def test_run_doozer_uses_standard_result_filename_when_not_multi(self, mock_cmd, mock_path_cls):
+        self._mock_doozer_result_file(mock_path_cls)
+        pipeline = _make_pipeline(multi=False, skip_cosign=True)
+
+        await pipeline._run_doozer()
+
+        result_path_call = mock_path_cls.call_args[0]
+        self.assertIn("release-payload-result.json", result_path_call)
