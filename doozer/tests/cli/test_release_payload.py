@@ -450,7 +450,7 @@ class TestResolveArtImagesPullspec(unittest.IsolatedAsyncioTestCase):
         )
 
         mock_extract_nvr.assert_awaited_once_with(
-            "quay.io/openshift-release-dev/ocp-v5.0-art-dev@sha256:abc", registry_config=None
+            "quay.io/openshift-release-dev/ocp-v5.0-art-dev@sha256:abc", arch=None, registry_config=None
         )
         self.runtime.konflux_db.get_build_record_by_nvr.assert_awaited_once_with(
             nvr="cluster-version-operator-container-4.21.1-202608011200.p2",
@@ -641,14 +641,14 @@ class TestSync(unittest.IsolatedAsyncioTestCase):
             f"{self.cli.image_repo}@sha256:x8664digest",
             f"{self.cli.image_repo}@sha256:s390xdigest",
         ]
+        # Homogeneous payload: only per-arch images are synced (not the manifest list).
         mock_sync_to_quay.assert_has_awaits(
             [
-                mock.call(expected_list_pullspec, self.cli.release_image_repo),
                 mock.call(expected_arch_pullspecs[0], self.cli.release_image_repo),
                 mock.call(expected_arch_pullspecs[1], self.cli.release_image_repo),
             ]
         )
-        self.assertEqual(mock_sync_to_quay.await_count, 3)
+        self.assertEqual(mock_sync_to_quay.await_count, 2)
         self.assertTrue(result["synced"])
         self.assertEqual(result["release_repo"], self.cli.release_image_repo)
         self.assertEqual(result["release_pullspec"], expected_list_pullspec)
@@ -686,7 +686,8 @@ class TestSync(unittest.IsolatedAsyncioTestCase):
 
         for call_args in mock_sync_to_quay.await_args_list:
             self.assertEqual(call_args.args[1], "quay.io/example/staging-release")
-        self.assertEqual(mock_sync_to_quay.await_count, 3)
+        # Homogeneous payload: only per-arch images are synced.
+        self.assertEqual(mock_sync_to_quay.await_count, 2)
 
     @mock.patch("doozerlib.cli.release_payload.sync_to_quay", new_callable=mock.AsyncMock)
     @mock.patch("doozerlib.cli.release_payload.oc_image_info_async", new_callable=mock.AsyncMock)

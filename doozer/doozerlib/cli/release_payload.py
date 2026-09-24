@@ -11,7 +11,7 @@ from typing import Dict, List, Optional, Sequence, Tuple
 import click
 import yaml
 from artcommonlib import exectools
-from artcommonlib.arch_util import go_arch_for_brew_arch
+from artcommonlib.arch_util import go_arch_for_brew_arch, brew_arch_for_go_arch
 from artcommonlib.constants import KONFLUX_DEFAULT_NAMESPACE
 from artcommonlib.konflux.konflux_build_record import ArtifactType, Engine, KonfluxBuildOutcome, KonfluxBuildRecord
 from artcommonlib.util import oc_image_info_async, sync_to_quay
@@ -52,6 +52,7 @@ RELEASE_PAYLOAD_BUILD_PRIORITY = "1"
 # with group/version/release this gives an NVR of `release-payload-<version>-<release>`,
 # which --nvr looks up later to sync an already-built payload without rebuilding it.
 RELEASE_PAYLOAD_BUILD_RECORD_NAME = "release-payload"
+RELEASE_PAYLOAD_MULTI_BUILD_RECORD_NAME = "release-payload-multi"
 
 
 class ReleasePayloadRebaseAndBuildCli:
@@ -89,6 +90,7 @@ class ReleasePayloadRebaseAndBuildCli:
         release_image_repo: str = constants.RELEASE_PAYLOAD_DEST_REPO,
         dry_run: bool = False,
         nvr: Optional[str] = None,
+        multi: bool = False,
     ):
         self.runtime = runtime
         self.version = version
@@ -110,6 +112,7 @@ class ReleasePayloadRebaseAndBuildCli:
         self.release_image_repo = release_image_repo or constants.RELEASE_PAYLOAD_DEST_REPO
         self.dry_run = dry_run
         self.nvr = nvr
+        self.multi = multi
         self._logger = LOGGER
 
     @staticmethod
@@ -121,14 +124,16 @@ class ReleasePayloadRebaseAndBuildCli:
         return KONFLUX_RELEASE_PAYLOAD_APPLICATION_NAME
 
     @staticmethod
-    def get_component_name(group: str) -> str:
+    def get_component_name(group: str, multi: bool = False) -> str:
         """Konflux Component name for a group's release payload builds.
 
         There is a single Component per group underneath the shared `release-payloads`
         Application (Konflux builds all architectures as one multi-arch manifest list from
         a single PipelineRun per group/assembly), e.g. `release-payload-openshift-4-21`.
+        Multi payloads get a distinct component: `release-payload-multi-openshift-4-21`.
         """
-        return f"release-payload-{group}".replace(".", "-").replace("_", "-")
+        prefix = "release-payload-multi" if multi else "release-payload"
+        return f"{prefix}-{group}".replace(".", "-").replace("_", "-")
 
     def _resolve_imagestream(self, arch: Optional[str] = None) -> Tuple[str, str]:
         """Derive the (namespace, name) of the build-sync imagestream to source manifests from.
@@ -150,12 +155,19 @@ class ReleasePayloadRebaseAndBuildCli:
         )
         return namespace, name
 
-    async def _generate_manifests(self, manifests_dir: Path, arch: Optional[str] = None) -> str:
+    async def _generate_manifests(
+        self, manifests_dir: Path, arch: Optional[str] = None,
+        *, from_release_override: Optional[str] = None,
+        keep_manifest_list: bool = False,
+    ) -> str:
         """Run `oc adm release new --to-dir` and return the cluster-version-operator pullspec.
 
         :param manifests_dir: Directory to write the release manifests into.
         :param arch: Brew architecture whose build-sync ImageStream should be used. When omitted,
             the deprecated `--arch` value is used for compatibility.
+        :param from_release_override: If set, use this pullspec as --from-release (takes precedence
+            over self.from_release and the imagestream path).
+        :param keep_manifest_list: If True, pass --keep-manifest-list to oc adm release new.
         :return: The pullspec for the cluster-version-operator image referenced by the manifests.
         """
         await exectools.to_thread(manifests_dir.mkdir, parents=True, exist_ok=True)
@@ -169,19 +181,16 @@ class ReleasePayloadRebaseAndBuildCli:
             f"--name={release_name}",
             f"--to-dir={manifests_dir}",
         ]
-        if self.from_release:
+        if from_release_override:
+            cmd.append(f"--from-release={from_release_override}")
+        elif self.from_release:
             cmd.append(f"--from-release={self.from_release}")
         else:
             namespace, imagestream_name = self._resolve_imagestream(arch)
-            cmd.extend(
-                [
-                    "-n",
-                    namespace,
-                    f"--from-image-stream={imagestream_name}",
-                    "--reference-mode=source",
-                    "--allow-missing-images",
-                ]
-            )
+            cmd.extend(["-n", namespace, f"--from-image-stream={imagestream_name}",
+                        "--reference-mode=source", "--allow-missing-images"])
+        if keep_manifest_list:
+            cmd.append("--keep-manifest-list")
         if self.registry_config:
             cmd.append(f"--registry-config={self.registry_config}")
 
@@ -232,7 +241,7 @@ class ReleasePayloadRebaseAndBuildCli:
             )
         return arches
 
-    async def _resolve_art_images_pullspec(self, imagestream_pullspec: str) -> str:
+    async def _resolve_art_images_pullspec(self, imagestream_pullspec: str, arch: Optional[str] = None) -> str:
         """Resolve a quay art-dev pullspec from the imagestream to the original Konflux build output.
 
         The imagestream contains single-arch pullspecs mirrored by build-sync. The Konflux build
@@ -240,6 +249,8 @@ class ReleasePayloadRebaseAndBuildCli:
         labels, query the Konflux DB by NVR, and return the build record's image_pullspec.
 
         :param imagestream_pullspec: The pullspec from the imagestream (e.g., quay.io/openshift-release-dev/...)
+        :param arch: Optional Go arch to pass through to extract_nvr_from_pullspec (needed when the
+            pullspec is a manifest list rather than a single-arch image).
         :return: The art-images pullspec for the Konflux build output.
         """
         if not self.runtime.konflux_db:
@@ -248,7 +259,7 @@ class ReleasePayloadRebaseAndBuildCli:
         self.runtime.konflux_db.bind(KonfluxBuildRecord)
 
         name, version, release_str = await release_inspector.extract_nvr_from_pullspec(
-            imagestream_pullspec, registry_config=self.registry_config
+            imagestream_pullspec, arch=arch, registry_config=self.registry_config
         )
         cvo_nvr = f"{name}-{version}-{release_str}"
         self._logger.info("CVO NVR resolved from imagestream pullspec: %s", cvo_nvr)
@@ -265,6 +276,70 @@ class ReleasePayloadRebaseAndBuildCli:
 
         self._logger.info("Resolved CVO to art-images pullspec: %s", build_record.image_pullspec)
         return build_record.image_pullspec
+
+    async def _resolve_multi_release_source(self) -> Tuple[str, Dict[str, str]]:
+        """Resolve the multi nightly manifest list and per-arch payload pullspecs from ocp-multi ImageStream.
+
+        Follows the same source as promote.py _promote_heterogeneous_payload(): reads the
+        ocp-multi imagestream for this assembly, resolves the manifest list to per-arch payloads.
+
+        :return: Tuple of (source_repo, {brew_arch: arch_payload_pullspec})
+        :raises DoozerFatalError: if the imagestream is not found or invalid.
+        """
+        runtime = self.runtime
+        major, minor = runtime.get_minor_version().split(".")
+        multi_is_name = f"{major}.{minor}-art-assembly-{runtime.assembly}-multi"
+        namespace = "ocp-multi"
+
+        self._logger.info("Resolving multi nightly from %s/%s...", namespace, multi_is_name)
+        rc, stdout, stderr = await exectools.cmd_gather_async(
+            ["oc", "get", "imagestream", "-n", namespace, multi_is_name, "-o", "json", "--ignore-not-found"]
+        )
+        if rc != 0:
+            raise DoozerFatalError(f"Failed to get multi imagestream {namespace}/{multi_is_name}: {stderr}")
+
+        is_json = stdout.strip()
+        if not is_json:
+            raise DoozerFatalError(
+                f"Multi-arch imagestream {namespace}/{multi_is_name} not found. "
+                "Did build-sync run with --apply-multi-arch?"
+            )
+
+        imagestream = json.loads(is_json)
+        tags = imagestream.get("spec", {}).get("tags", [])
+        if len(tags) != 1:
+            raise DoozerFatalError(
+                f"Multi-arch imagestream {namespace}/{multi_is_name} should have exactly 1 tag; "
+                f"found {len(tags)}"
+            )
+
+        manifest_list_pullspec = tags[0]["from"]["name"]
+        self._logger.info("Multi nightly manifest list: %s", manifest_list_pullspec)
+
+        arch_infos = await oc_image_info_async(
+            manifest_list_pullspec, "--show-multiarch", registry_config=self.registry_config
+        )
+        if not arch_infos:
+            raise DoozerFatalError(f"No per-arch entries found in manifest list {manifest_list_pullspec}")
+
+        source_repo = (
+            manifest_list_pullspec.split("@")[0] if "@" in manifest_list_pullspec
+            else manifest_list_pullspec.rsplit(":", 1)[0]
+        )
+
+        arch_payloads: Dict[str, str] = {}
+        for info in arch_infos:
+            go_arch = info.get("config", {}).get("architecture") or info.get("architecture")
+            digest = info.get("digest")
+            if go_arch and digest:
+                brew_arch = brew_arch_for_go_arch(go_arch)
+                arch_payloads[brew_arch] = f"{source_repo}@{digest}"
+
+        if not arch_payloads:
+            raise DoozerFatalError(f"Could not resolve per-arch payloads from {manifest_list_pullspec}")
+
+        self._logger.info("Resolved per-arch multi payloads: %s", arch_payloads)
+        return source_repo, arch_payloads
 
     async def _rebase(self) -> Tuple[BuildRepo, str, str]:
         """Generate manifests, write the Dockerfile, and commit the result to a local clone.
@@ -337,6 +412,78 @@ class ReleasePayloadRebaseAndBuildCli:
         await build_repo.commit(message, allow_empty=True, force=True)
         return build_repo, cvo_pullspec, branch
 
+    async def _rebase_multi(self) -> Tuple[BuildRepo, str, str]:
+        """Generate multi-arch manifests, write the Dockerfile, commit to the multi branch.
+
+        Sources from the multi nightly in ocp-multi ImageStream (same source as promote.py).
+        Extracts manifests using --keep-manifest-list so all component references are manifest lists.
+        Copies the extracted manifests into all configured arch subdirectories (identical content
+        across arches, since manifest list refs are arch-independent).
+
+        :return: A tuple of (build_repo, cvo_pullspec, branch).
+        """
+        runtime = self.runtime
+        repo_dir = Path(runtime.working_dir, constants.WORKING_SUBDIR_RELEASE_PAYLOAD_SOURCES, runtime.group + "-multi")
+        branch = KonfluxRebaser.construct_dest_branch(runtime.group, runtime.assembly, "release-payload-multi")
+
+        self._logger.info("Preparing multi release payload source repository at %s on branch %s...", repo_dir, branch)
+        build_repo = BuildRepo(url=self.payload_repo, branch=branch, local_dir=repo_dir, logger=self._logger)
+        await build_repo.ensure_source(upcycle=runtime.upcycle, strict=False)
+        await build_repo.delete_all_files()
+
+        manifests_dir = repo_dir / RELEASE_MANIFESTS_SUBDIR
+        if manifests_dir.exists():
+            await exectools.to_thread(shutil.rmtree, manifests_dir)
+
+        _source_repo, arch_payloads = await self._resolve_multi_release_source()
+
+        arches = self._get_build_arches()
+        reference_arch = self.arch if self.arch in arch_payloads else next(iter(arch_payloads))
+        reference_payload = arch_payloads[reference_arch]
+        self._logger.info("Extracting multi manifests from %s arch payload: %s", reference_arch, reference_payload)
+
+        tmp_manifests_dir = repo_dir / "_tmp_multi_manifests"
+        await exectools.to_thread(tmp_manifests_dir.mkdir, parents=True, exist_ok=True)
+        cvo_pullspec = await self._generate_manifests(
+            tmp_manifests_dir,
+            from_release_override=reference_payload,
+            keep_manifest_list=True,
+        )
+
+        for arch in arches:
+            docker_arch = go_arch_for_brew_arch(arch)
+            arch_dir = manifests_dir / docker_arch
+            await exectools.to_thread(shutil.copytree, tmp_manifests_dir, arch_dir)
+        await exectools.to_thread(shutil.rmtree, tmp_manifests_dir)
+
+        from_pullspecs = {reference_arch: await self._resolve_art_images_pullspec(cvo_pullspec, arch='amd64')}
+        from_pullspec = from_pullspecs[reference_arch]
+
+        if "@" not in from_pullspec:
+            raise DoozerFatalError(f"Expected digest-based art-images pullspec but got: {from_pullspec}")
+        cvo_image_digest = from_pullspec.split("@", 1)[1]
+
+        dockerfile_content = (
+            f"FROM {from_pullspec}\n"
+            f'LABEL io.openshift.release="{self._get_release_label()}" \\\n'
+            f'      io.openshift.release.base-image-digest="{cvo_image_digest}" \\\n'
+            f'      release.openshift.io/architecture="multi"\n'
+            f"COPY {RELEASE_MANIFESTS_SUBDIR}/ /tmp/{RELEASE_MANIFESTS_SUBDIR}/\n"
+            'RUN set -euo pipefail && arch=$(uname -m) && '
+            'case "$arch" in x86_64) goarch=amd64;; aarch64) goarch=arm64;; *) goarch="$arch";; esac && '
+            f'cp -r "/tmp/{RELEASE_MANIFESTS_SUBDIR}/${{goarch}}/." /{RELEASE_MANIFESTS_SUBDIR}/ && '
+            f"rm -rf /tmp/{RELEASE_MANIFESTS_SUBDIR}\n"
+        )
+        dockerfile_path = repo_dir / "Dockerfile"
+        await exectools.to_thread(dockerfile_path.write_text, dockerfile_content)
+
+        message = self.commit_message or (
+            f"Rebase multi release payload manifests for {runtime.group} assembly {runtime.assembly}\n\n"
+            f"version: {self.version}\nrelease: {self.release}"
+        )
+        await build_repo.commit(message, allow_empty=True, force=True)
+        return build_repo, cvo_pullspec, branch
+
     async def _build(self, build_repo: BuildRepo, arches: Sequence[str]) -> Dict:
         """Ensure the Konflux Application/Component exist and start (and wait for) the build.
 
@@ -356,7 +503,7 @@ class ReleasePayloadRebaseAndBuildCli:
             dry_run=self.dry_run,
         )
         app_name = self.get_application_name()
-        component_name = self.get_component_name(runtime.group)
+        component_name = self.get_component_name(runtime.group, multi=self.multi)
         self._logger.info("Using Konflux application %s, component %s", app_name, component_name)
         await konflux_client.ensure_application(name=app_name, display_name=app_name)
         await konflux_client.ensure_component(
@@ -380,7 +527,7 @@ class ReleasePayloadRebaseAndBuildCli:
         assembly_slug = str(runtime.assembly).replace(".", "-").replace("_", "-").lower()
         try:
             pipelinerun_info = await konflux_client.start_pipeline_run_for_image_build(
-                generate_name=f"release-payload-{assembly_slug}-",
+                generate_name=f"release-payload-multi-{assembly_slug}-" if self.multi else f"release-payload-{assembly_slug}-",
                 namespace=self.konflux_namespace,
                 application_name=app_name,
                 component_name=component_name,
@@ -471,7 +618,7 @@ class ReleasePayloadRebaseAndBuildCli:
         try:
             runtime.konflux_db.bind(KonfluxBuildRecord)
             record = KonfluxBuildRecord(
-                name=RELEASE_PAYLOAD_BUILD_RECORD_NAME,
+                name=RELEASE_PAYLOAD_MULTI_BUILD_RECORD_NAME if self.multi else RELEASE_PAYLOAD_BUILD_RECORD_NAME,
                 group=runtime.group,
                 version=self.version.lstrip("v"),
                 release=self.release,
@@ -531,12 +678,16 @@ class ReleasePayloadRebaseAndBuildCli:
         arch_pullspecs = [f"{source_repo}@{digest}" for digest in arch_digests]
 
         if self.dry_run:
-            self._logger.warning(
-                "[DRY RUN] Would have synced %s (list) and %s (arches) to %s",
-                list_pullspec,
-                arch_pullspecs,
-                self.release_image_repo,
-            )
+            if self.multi:
+                self._logger.warning(
+                    "[DRY RUN] Would have synced multi manifest list %s to %s",
+                    list_pullspec, self.release_image_repo,
+                )
+            else:
+                self._logger.warning(
+                    "[DRY RUN] Would have synced %s (per-arch images) to %s",
+                    arch_pullspecs, self.release_image_repo,
+                )
             return {
                 "synced": False,
                 "release_repo": self.release_image_repo,
@@ -544,11 +695,13 @@ class ReleasePayloadRebaseAndBuildCli:
                 "arch_pullspecs": arch_pullspecs,
             }
 
-        self._logger.info("Syncing release payload manifest list %s to %s...", list_pullspec, self.release_image_repo)
-        await sync_to_quay(list_pullspec, self.release_image_repo)
-        for arch_pullspec in arch_pullspecs:
-            self._logger.info("Syncing release payload arch image %s to %s...", arch_pullspec, self.release_image_repo)
-            await sync_to_quay(arch_pullspec, self.release_image_repo)
+        if self.multi:
+            self._logger.info("Syncing multi release payload manifest list %s to %s...", list_pullspec, self.release_image_repo)
+            await sync_to_quay(list_pullspec, self.release_image_repo)
+        else:
+            for arch_pullspec in arch_pullspecs:
+                self._logger.info("Syncing release payload arch image %s to %s...", arch_pullspec, self.release_image_repo)
+                await sync_to_quay(arch_pullspec, self.release_image_repo)
 
         # TODO(2026-08-14): The real "promote" pyartcd pipeline (pyartcd/pipelines/promote.py)
         # is the system of record for publishing release payloads to
@@ -576,7 +729,7 @@ class ReleasePayloadRebaseAndBuildCli:
         #         f"tagging {list_pullspec} as {arch_dest}",
         #     )
 
-        self._logger.info("Synced release payload %s to %s", list_pullspec, self.release_image_repo)
+        self._logger.info("Synced release payload to %s", self.release_image_repo)
         return {
             "synced": True,
             "release_repo": self.release_image_repo,
@@ -698,7 +851,10 @@ class ReleasePayloadRebaseAndBuildCli:
         self._logger.info(
             "Rebasing release payload for %s assembly %s (arches: %s)...", runtime.group, runtime.assembly, arches
         )
-        build_repo, cvo_pullspec, branch = await self._rebase()
+        if self.multi:
+            build_repo, cvo_pullspec, branch = await self._rebase_multi()
+        else:
+            build_repo, cvo_pullspec, branch = await self._rebase()
 
         result: Dict = {
             "group": runtime.group,
@@ -706,6 +862,7 @@ class ReleasePayloadRebaseAndBuildCli:
             "version": self.version,
             "release": self.release,
             "arch": self.arch,
+            "multi": self.multi,
             "building_arches": arches,
             "payload_repo": build_repo.https_url,
             "branch": branch,
@@ -850,6 +1007,15 @@ def _validate_optional_version(ctx, param, version):
     ' Overrides the default template from openshift-priv/art-konflux-template',
 )
 @click.option(
+    '--multi',
+    is_flag=True,
+    default=False,
+    help='Build a heterogeneous (multi-arch) release payload where each component reference '
+    'is a manifest list. Sources from the ocp-multi ImageStream built by build-sync '
+    '(--apply-multi-arch). Pushed to a separate branch and built as a separate Konflux '
+    'Component from the homogeneous payload.',
+)
+@click.option(
     '--push',
     is_flag=True,
     default=False,
@@ -903,6 +1069,7 @@ async def release_payload_rebase_and_build(
     skip_checks: bool,
     skip_tasks: Tuple[str, ...],
     plr_template: str,
+    multi: bool,
     push: bool,
     sync: bool,
     release_image_repo: str,
@@ -959,8 +1126,10 @@ async def release_payload_rebase_and_build(
         sync=sync,
         release_image_repo=release_image_repo,
         dry_run=dry_run,
+        multi=multi,
     )
-    result_path = Path(runtime.working_dir, 'release-payload-result.json') if output == 'json' else None
+    result_filename = 'release-payload-multi-result.json' if multi else 'release-payload-result.json'
+    result_path = Path(runtime.working_dir, result_filename) if output == 'json' else None
 
     try:
         result = await cli_obj.run()
