@@ -46,7 +46,9 @@ def _catalog_package(blob: dict) -> str | None:
     schema = blob.get('schema')
     if schema == 'olm.package':
         return blob.get('name')
-    return blob.get('package')
+    if schema in {'olm.channel', 'olm.bundle', 'olm.deprecations'}:
+        return blob.get('package')
+    return blob.get('package') or blob.get('name')
 
 
 def _catalog_channels(blobs: Iterable[dict]) -> tuple[set[str], dict[tuple[str, str], set[str]]]:

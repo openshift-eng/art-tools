@@ -79,6 +79,22 @@ def test_find_pruned_entries_ignores_other_products():
     assert find_pruned_entries(production, fragment) == {}
 
 
+def test_find_pruned_entries_uses_unknown_schema_name_as_package():
+    production = [_channel('oadp-operator', 'v1.4', 'oadp-operator.v1.4.10')]
+    fragment = [{'schema': 'example.future.schema', 'name': 'oadp-operator'}]
+
+    assert find_pruned_entries(production, fragment) == {
+        ('oadp-operator', 'v1.4'): {'oadp-operator.v1.4.10'},
+    }
+
+
+def test_find_pruned_entries_rejects_known_channel_without_package():
+    fragment = [{'schema': 'olm.channel', 'name': 'v1.4', 'entries': []}]
+
+    with pytest.raises(ValueError, match='without package/name'):
+        find_pruned_entries([], fragment)
+
+
 def test_ocp_is_noop_before_external_checks(tmp_path):
     config_path = tmp_path / 'ocp.fbc.yaml'
     config_path.write_text(yaml.safe_dump(_shipment_config(product='ocp', nvr='ocp-fbc-4.20.1-1.ocp4.20')))
