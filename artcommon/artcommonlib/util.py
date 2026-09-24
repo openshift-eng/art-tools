@@ -486,6 +486,29 @@ def get_ocp_version_from_group(group):
     return int(match[1]), int(match[2])
 
 
+def product_version_from_group_name(group_name: str) -> Optional[Tuple[int, int]]:
+    """Extract trailing MAJOR.MINOR from a group name.
+
+    This is the primary way to determine the **product** version for Konflux
+    release-plan lookups. Products like RHOSDT set ``version`` in group.yml to
+    the *upstream operator* version (e.g. ``0.158.1``), which does NOT match
+    the product version (``3.11`` from group name ``rhosdt-3.11``).
+
+    Examples::
+
+        'rhosdt-3.11'      → (3, 11)
+        'logging-6.7'      → (6, 7)
+        'openshift-4.22'   → (4, 22)
+        'openshift-5.0'    → (5, 0)
+        'some-group-no-version' → None
+        ''                 → None
+    """
+    match = re.fullmatch(r'.*-([0-9]+)\.([0-9]+)', group_name)
+    if match:
+        return int(match.group(1)), int(match.group(2))
+    return None
+
+
 def deep_merge(dict1, dict2):
     """
     Recursively merge two dictionaries.

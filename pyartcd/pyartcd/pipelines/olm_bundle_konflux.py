@@ -6,6 +6,7 @@ import click
 from artcommonlib import exectools
 from artcommonlib.product_catalog import get_kubeconfig_env_vars
 from artcommonlib.util import (
+    product_version_from_group_name,
     resolve_konflux_fbc_stage_release_plan,
     resolve_konflux_kubeconfig_by_product,
     resolve_konflux_namespace_by_product,
@@ -180,8 +181,13 @@ async def olm_bundle_konflux(
     if force:
         cmd.append('--force')
 
+    # Prefer group name for product version (handles products like RHOSDT
+    # where group.yml version is the upstream version, not the product version).
     version_str = group_config.get('version')
-    if version_str:
+    group_version = product_version_from_group_name(group)
+    if group_version:
+        product_major, product_minor = group_version
+    elif version_str:
         parts = str(version_str).split(".")
         product_major, product_minor = int(parts[0]), int(parts[1])
     else:

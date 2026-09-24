@@ -104,6 +104,7 @@ class TestOlmBundleKonfluxStageReleaseGating(unittest.IsolatedAsyncioTestCase):
         force_release=False,
         product='rhacm2',
         group_config_extra=None,
+        group='rhacm2-2.16',
     ):
         async def run_with_lock(*, coro, **_kwargs):
             return await coro
@@ -129,7 +130,7 @@ class TestOlmBundleKonfluxStageReleaseGating(unittest.IsolatedAsyncioTestCase):
             force_release=force_release,
             kubeconfig='/fake/kubeconfig',
             plr_template='',
-            group='openshift-4.18',
+            group=group,
         )
 
     @mock.patch("pyartcd.pipelines.olm_bundle_konflux.jenkins")
@@ -173,6 +174,7 @@ class TestOlmBundleKonfluxStageReleaseGating(unittest.IsolatedAsyncioTestCase):
             mock_jenkins,
             product="ocp",
             group_config_extra={"vars": {"MAJOR": "5", "MINOR": "1"}},
+            group="openshift-5.1",
         )
 
         self.assertIn('--variant=ocp', mock_cmd_assert.await_args.args[0])
@@ -245,6 +247,7 @@ class TestOlmBundleKonfluxStageReleaseGating(unittest.IsolatedAsyncioTestCase):
             force_release=True,
             product='ocp',
             group_config_extra={'vars': {'MAJOR': '5', 'MINOR': '99'}},
+            group='openshift-5.99',
         )
 
         mock_stage_release.assert_not_called()
