@@ -268,6 +268,8 @@ def _shipment_ci_graph(
     stage_job_status='success',
     prod_status='manual',
     prod_downstream=None,
+    downstream_prod_status='success',
+    prod_job_status='success',
 ):
     """Build a minimal python-gitlab object graph for Shipment CI tests."""
     client = MagicMock()
@@ -293,8 +295,18 @@ def _shipment_ci_graph(
     )
     stage_pipeline.jobs.list.return_value = [SimpleNamespace(name='shipment-watch-stage', status=stage_job_status)]
 
+    prod_pipeline = SimpleNamespace(
+        id=300,
+        status=downstream_prod_status,
+        web_url='https://gitlab.example/pipelines/300',
+        jobs=MagicMock(),
+    )
+    prod_pipeline.jobs.list.return_value = [SimpleNamespace(name='shipment-watch-prod', status=prod_job_status)]
+
     def get_pipeline(pipeline_id):
-        return parent_pipeline if pipeline_id == 100 else stage_pipeline
+        if pipeline_id == 100:
+            return parent_pipeline
+        return stage_pipeline if pipeline_id == 200 else prod_pipeline
 
     project.pipelines.get.side_effect = get_pipeline
     client.get_project.return_value = project
@@ -311,9 +323,26 @@ def test_inspect_shipment_mr_ci_state_accepts_terminal_stage_and_manual_prod():
 
     assert state.active_stage == ()
     assert state.prod_attempts == ()
+    assert state.active_prod == ()
     mr.pipelines.list.assert_called_once_with(get_all=True)
     parent.bridges.list.assert_called_once_with(get_all=True)
     stage.jobs.list.assert_called_once_with(get_all=True, include_retried=True)
+
+
+def test_inspect_shipment_mr_ci_state_reports_active_prod_downstream():
+    """Report active production work without changing MR-reuse decisions."""
+    client, mr, _, _ = _shipment_ci_graph(
+        prod_status='running',
+        prod_downstream={'id': 300, 'project_id': 10},
+        downstream_prod_status='running',
+        prod_job_status='running',
+    )
+
+    state = inspect_shipment_mr_ci_state(client, 'https://gitlab.example/project/-/merge_requests/42', mr)
+
+    assert state.prod_attempts
+    assert state.active_prod
+    assert any('shipment-watch-prod' in description for description in state.active_prod)
 
 
 @pytest.mark.parametrize(

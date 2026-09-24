@@ -56,6 +56,7 @@ from elliottlib.cli.get_golang_report_cli import get_golang_report_cli
 from elliottlib.cli.get_golang_versions_cli import get_golang_versions_cli
 from elliottlib.cli.get_network_mode_cli import get_network_mode_cli
 from elliottlib.cli.konflux_release_cli import konflux_release_cli
+from elliottlib.cli.konflux_release_validate_lp_prod_cli import validate_lp_prod_cli
 from elliottlib.cli.konflux_release_watch_cli import watch_release_cli
 from elliottlib.cli.move_builds_cli import move_builds_cli
 from elliottlib.cli.pin_builds_cli import assembly_pin_builds_cli

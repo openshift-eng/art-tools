@@ -637,6 +637,23 @@ class KonfluxClient:
                 raise
         return resource
 
+    async def list_releases(self, namespace: Optional[str] = None) -> list[resource.ResourceInstance]:
+        """List Konflux Release resources in a namespace.
+
+        Args:
+            namespace: Namespace to inspect. Defaults to the client's namespace.
+
+        Returns:
+            Release resources returned by the Kubernetes API.
+        """
+        api = await self._get_api(API_VERSION, KIND_RELEASE)
+        resources = await exectools.to_thread(
+            api.get,
+            namespace=namespace or self.default_namespace,
+            _request_timeout=self.request_timeout,
+        )
+        return list(resources.items)
+
     @alru_cache
     async def _get__caching(
         self, api_version: str, kind: str, name: str, namespace: Optional[str] = None, strict: bool = True
