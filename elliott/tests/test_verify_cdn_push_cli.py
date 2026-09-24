@@ -141,6 +141,18 @@ class TestParsePushJobs(TestCase):
         self.assertEqual(len(jobs), 1)
         self.assertEqual(jobs[0].status, "RUNNING")
 
+    def test_filters_non_stage_targets(self):
+        raw = [
+            {"id": 1, "status": "COMPLETE", "target": {"name": "cdn_stage"}},
+            {"id": 2, "status": "WAITING_ON_PUB", "target": {"name": "cdn"}},
+            {"id": 3, "status": "COMPLETE", "target": {"name": "ftp"}},
+            {"id": 4, "status": "COMPLETE", "target": {"name": "cdn_docker_stage"}},
+        ]
+        jobs = parse_push_jobs(raw)
+        targets = {j.target for j in jobs}
+        self.assertEqual(targets, {"cdn_stage", "cdn_docker_stage"})
+        self.assertEqual(len(jobs), 2)
+
 
 class TestCheckAdvisoryPush(IsolatedAsyncioTestCase):
     async def test_all_complete(self):

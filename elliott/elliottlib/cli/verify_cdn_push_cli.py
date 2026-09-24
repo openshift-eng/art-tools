@@ -19,6 +19,7 @@ PUSH_STATUS_COMPLETE = "COMPLETE"
 PUSH_STATUS_FAILED = "FAILED"
 
 CDN_PUSH_ADVISORY_TYPES = ("rpm", "rhcos")
+CDN_STAGE_TARGETS = ("cdn_stage", "cdn_docker_stage")
 
 
 @dataclass
@@ -110,6 +111,8 @@ def parse_push_jobs(raw_jobs: list) -> list[PushJobInfo]:
         job_id = job["id"]
         status = job["status"]
         target = job["target"]["name"]
+        if target not in CDN_STAGE_TARGETS:
+            continue
         if target not in latest_by_target or job_id > latest_by_target[target].job_id:
             latest_by_target[target] = PushJobInfo(target=target, job_id=job_id, status=status)
     return list(latest_by_target.values())
