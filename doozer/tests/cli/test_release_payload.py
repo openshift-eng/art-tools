@@ -1132,22 +1132,20 @@ class TestRun(unittest.IsolatedAsyncioTestCase):
                 await self.cli.run()
 
 
-_MULTI_IS_ONE_TAG = json.dumps({
-    "spec": {
-        "tags": [
-            {"from": {"name": "quay.io/openshift-release-dev/ocp-release@sha256:abc123"}}
-        ]
-    }
-})
+_MULTI_IS_ONE_TAG = json.dumps(
+    {"spec": {"tags": [{"from": {"name": "quay.io/openshift-release-dev/ocp-release@sha256:abc123"}}]}}
+)
 
-_MULTI_IS_TWO_TAGS = json.dumps({
-    "spec": {
-        "tags": [
-            {"from": {"name": "quay.io/openshift-release-dev/ocp-release@sha256:abc123"}},
-            {"from": {"name": "quay.io/openshift-release-dev/ocp-release@sha256:def456"}},
-        ]
+_MULTI_IS_TWO_TAGS = json.dumps(
+    {
+        "spec": {
+            "tags": [
+                {"from": {"name": "quay.io/openshift-release-dev/ocp-release@sha256:abc123"}},
+                {"from": {"name": "quay.io/openshift-release-dev/ocp-release@sha256:def456"}},
+            ]
+        }
     }
-})
+)
 
 
 class TestGenerateManifestsMultiParams(unittest.IsolatedAsyncioTestCase):
@@ -1248,9 +1246,7 @@ class TestResolveArtImagesPullspecArch(unittest.IsolatedAsyncioTestCase):
 
         await self.cli._resolve_art_images_pullspec("quay.io/example/release@sha256:abc")
 
-        mock_extract_nvr.assert_awaited_once_with(
-            "quay.io/example/release@sha256:abc", arch=None, registry_config=None
-        )
+        mock_extract_nvr.assert_awaited_once_with("quay.io/example/release@sha256:abc", arch=None, registry_config=None)
 
 
 class TestResolveMultiReleaseSource(unittest.IsolatedAsyncioTestCase):
@@ -1573,9 +1569,7 @@ class TestRunMulti(unittest.IsolatedAsyncioTestCase):
             mock.patch.object(
                 self.cli,
                 "_rebase_multi",
-                mock.AsyncMock(
-                    return_value=(self.build_repo, "registry.example.com/cvo", self.build_repo.branch)
-                ),
+                mock.AsyncMock(return_value=(self.build_repo, "registry.example.com/cvo", self.build_repo.branch)),
             ) as mock_rebase_multi,
             mock.patch.object(self.cli, "_rebase", mock.AsyncMock()) as mock_rebase,
             mock.patch.object(self.cli, "_build", mock.AsyncMock()),
@@ -1590,9 +1584,7 @@ class TestRunMulti(unittest.IsolatedAsyncioTestCase):
             mock.patch.object(
                 self.cli,
                 "_rebase_multi",
-                mock.AsyncMock(
-                    return_value=(self.build_repo, "registry.example.com/cvo", self.build_repo.branch)
-                ),
+                mock.AsyncMock(return_value=(self.build_repo, "registry.example.com/cvo", self.build_repo.branch)),
             ),
             mock.patch.object(self.cli, "_build", mock.AsyncMock()),
         ):
