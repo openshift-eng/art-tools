@@ -156,8 +156,11 @@ class ReleasePayloadRebaseAndBuildCli:
         return namespace, name
 
     async def _generate_manifests(
-        self, manifests_dir: Path, arch: Optional[str] = None,
-        *, from_release_override: Optional[str] = None,
+        self,
+        manifests_dir: Path,
+        arch: Optional[str] = None,
+        *,
+        from_release_override: Optional[str] = None,
         keep_manifest_list: bool = False,
     ) -> str:
         """Run `oc adm release new --to-dir` and return the cluster-version-operator pullspec.
@@ -187,8 +190,15 @@ class ReleasePayloadRebaseAndBuildCli:
             cmd.append(f"--from-release={self.from_release}")
         else:
             namespace, imagestream_name = self._resolve_imagestream(arch)
-            cmd.extend(["-n", namespace, f"--from-image-stream={imagestream_name}",
-                        "--reference-mode=source", "--allow-missing-images"])
+            cmd.extend(
+                [
+                    "-n",
+                    namespace,
+                    f"--from-image-stream={imagestream_name}",
+                    "--reference-mode=source",
+                    "--allow-missing-images",
+                ]
+            )
         if keep_manifest_list:
             cmd.append("--keep-manifest-list")
         if self.registry_config:
@@ -309,8 +319,7 @@ class ReleasePayloadRebaseAndBuildCli:
         tags = imagestream.get("spec", {}).get("tags", [])
         if len(tags) != 1:
             raise DoozerFatalError(
-                f"Multi-arch imagestream {namespace}/{multi_is_name} should have exactly 1 tag; "
-                f"found {len(tags)}"
+                f"Multi-arch imagestream {namespace}/{multi_is_name} should have exactly 1 tag; found {len(tags)}"
             )
 
         manifest_list_pullspec = tags[0]["from"]["name"]
@@ -323,7 +332,8 @@ class ReleasePayloadRebaseAndBuildCli:
             raise DoozerFatalError(f"No per-arch entries found in manifest list {manifest_list_pullspec}")
 
         source_repo = (
-            manifest_list_pullspec.split("@")[0] if "@" in manifest_list_pullspec
+            manifest_list_pullspec.split("@")[0]
+            if "@" in manifest_list_pullspec
             else manifest_list_pullspec.rsplit(":", 1)[0]
         )
 
@@ -527,7 +537,9 @@ class ReleasePayloadRebaseAndBuildCli:
         assembly_slug = str(runtime.assembly).replace(".", "-").replace("_", "-").lower()
         try:
             pipelinerun_info = await konflux_client.start_pipeline_run_for_image_build(
-                generate_name=f"release-payload-multi-{assembly_slug}-" if self.multi else f"release-payload-{assembly_slug}-",
+                generate_name=f"release-payload-multi-{assembly_slug}-"
+                if self.multi
+                else f"release-payload-{assembly_slug}-",
                 namespace=self.konflux_namespace,
                 application_name=app_name,
                 component_name=component_name,
@@ -681,12 +693,14 @@ class ReleasePayloadRebaseAndBuildCli:
             if self.multi:
                 self._logger.warning(
                     "[DRY RUN] Would have synced multi manifest list %s to %s",
-                    list_pullspec, self.release_image_repo,
+                    list_pullspec,
+                    self.release_image_repo,
                 )
             else:
                 self._logger.warning(
                     "[DRY RUN] Would have synced %s (per-arch images) to %s",
-                    arch_pullspecs, self.release_image_repo,
+                    arch_pullspecs,
+                    self.release_image_repo,
                 )
             return {
                 "synced": False,
@@ -696,11 +710,15 @@ class ReleasePayloadRebaseAndBuildCli:
             }
 
         if self.multi:
-            self._logger.info("Syncing multi release payload manifest list %s to %s...", list_pullspec, self.release_image_repo)
+            self._logger.info(
+                "Syncing multi release payload manifest list %s to %s...", list_pullspec, self.release_image_repo
+            )
             await sync_to_quay(list_pullspec, self.release_image_repo)
         else:
             for arch_pullspec in arch_pullspecs:
-                self._logger.info("Syncing release payload arch image %s to %s...", arch_pullspec, self.release_image_repo)
+                self._logger.info(
+                    "Syncing release payload arch image %s to %s...", arch_pullspec, self.release_image_repo
+                )
                 await sync_to_quay(arch_pullspec, self.release_image_repo)
 
         # TODO(2026-08-14): The real "promote" pyartcd pipeline (pyartcd/pipelines/promote.py)

@@ -198,8 +198,8 @@ class TestBuildReleasePayloadPipelineRun(unittest.IsolatedAsyncioTestCase):
         """Helper: configure the Path mock so result_path.exists() and .read_text() behave as needed."""
         mock_path_inst = MagicMock(spec=Path)
         mock_path_inst.exists.return_value = exists
-        mock_path_inst.read_text.return_value = content if content is not None else json.dumps(
-            result if result is not None else SAMPLE_DOOZER_RESULT
+        mock_path_inst.read_text.return_value = (
+            content if content is not None else json.dumps(result if result is not None else SAMPLE_DOOZER_RESULT)
         )
         mock_path_cls.return_value = mock_path_inst
         return mock_path_inst
