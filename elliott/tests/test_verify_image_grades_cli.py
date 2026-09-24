@@ -1,3 +1,4 @@
+import asyncio
 import json
 import unittest
 from datetime import datetime, timedelta, timezone
@@ -235,6 +236,58 @@ class TestQueryFreshnessGrades(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(result, grades)
         self.assertTrue(available)
         self.assertEqual(mock_session.get.call_count, 3)
+
+    async def test_semaphore_released_during_retry_backoff(self):
+        semaphore = asyncio.Semaphore(1)
+        call_order = []
+
+        resp_503 = AsyncMock()
+        resp_503.status = 503
+        resp_503.__aenter__ = AsyncMock(return_value=resp_503)
+        resp_503.__aexit__ = AsyncMock(return_value=False)
+
+        grades_a = [{"start_date": "2026-01-01T00:00:00+00:00", "grade": "A"}]
+        grades_b = [{"start_date": "2026-01-01T00:00:00+00:00", "grade": "B"}]
+
+        def make_ok_resp(grades):
+            resp = AsyncMock()
+            resp.status = 200
+            resp.json = AsyncMock(return_value={"data": [{"freshness_grades": grades}]})
+            resp.__aenter__ = AsyncMock(return_value=resp)
+            resp.__aexit__ = AsyncMock(return_value=False)
+            return resp
+
+        digest_a = "a" * 64
+        digest_b = "b" * 64
+
+        def side_effect(*args, **kwargs):
+            filter_param = kwargs.get("params", {}).get("filter", "")
+            if digest_a in filter_param:
+                call_order.append("a")
+                if len([c for c in call_order if c == "a"]) == 1:
+                    return resp_503
+                return make_ok_resp(grades_a)
+            else:
+                call_order.append("b")
+                return make_ok_resp(grades_b)
+
+        mock_session = AsyncMock(spec=ClientSession)
+        mock_session.get = MagicMock(side_effect=side_effect)
+
+        with patch("elliottlib.cli.verify_image_grades_cli.wait_exponential", return_value=wait_none()):
+            result_a, result_b = await asyncio.gather(
+                query_freshness_grades(mock_session, digest_a, semaphore),
+                query_freshness_grades(mock_session, digest_b, semaphore),
+            )
+
+        self.assertEqual(result_a, (grades_a, True))
+        self.assertEqual(result_b, (grades_b, True))
+        b_index = call_order.index("b")
+        a_retry_indices = [i for i, c in enumerate(call_order) if c == "a"]
+        self.assertTrue(
+            b_index < a_retry_indices[-1],
+            f"Query B should run between A's attempts, but call_order was {call_order}",
+        )
 
     async def test_malformed_digest_rejected(self):
         mock_session = AsyncMock(spec=ClientSession)
