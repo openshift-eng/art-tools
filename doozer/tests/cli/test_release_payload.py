@@ -1488,7 +1488,7 @@ class TestRebaseMulti(unittest.IsolatedAsyncioTestCase):
 
     @mock.patch("doozerlib.cli.release_payload.get_release_name_for_assembly", return_value="4.21.1")
     @mock.patch("doozerlib.cli.release_payload.BuildRepo")
-    async def test_rebase_multi_uses_source_cvo_manifest_list(self, mock_build_repo_class, mock_get_release_name):
+    async def test_rebase_multi_uses_source_cvo_digest_from_art_images(self, mock_build_repo_class, mock_get_release_name):
         self._setup_mock_build_repo(mock_build_repo_class)
 
         with (
@@ -1512,7 +1512,7 @@ class TestRebaseMulti(unittest.IsolatedAsyncioTestCase):
 
         mock_resolve.assert_not_awaited()
         dockerfile_content = (self.repo_dir / "Dockerfile").read_text()
-        self.assertIn("FROM registry.example.com/cvo@sha256:cvodigest\n", dockerfile_content)
+        self.assertIn(f"FROM {constants.KONFLUX_DEFAULT_IMAGE_REPO}@sha256:cvodigest\n", dockerfile_content)
 
 
 class TestSyncMulti(unittest.IsolatedAsyncioTestCase):

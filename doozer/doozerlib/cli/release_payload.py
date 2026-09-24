@@ -472,9 +472,12 @@ class ReleasePayloadRebaseAndBuildCli:
         if "@sha256:" not in cvo_pullspec:
             raise DoozerFatalError(f"Expected digest-based multi CVO pullspec but got: {cvo_pullspec}")
         cvo_image_digest = cvo_pullspec.split("@", 1)[1]
+        # Konflux build pods cannot pull from the mirrored art-dev repository. The same
+        # digest in art-images preserves the source manifest list and all arch CVO selections.
+        from_pullspec = f"{constants.KONFLUX_DEFAULT_IMAGE_REPO}@{cvo_image_digest}"
 
         dockerfile_content = (
-            f"FROM {cvo_pullspec}\n"
+            f"FROM {from_pullspec}\n"
             f'LABEL io.openshift.release="{self._get_release_label()}" \\\n'
             f'      io.openshift.release.base-image-digest="{cvo_image_digest}" \\\n'
             f'      release.openshift.io/architecture="multi"\n'
