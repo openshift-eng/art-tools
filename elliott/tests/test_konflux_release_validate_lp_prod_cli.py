@@ -2,7 +2,7 @@
 
 import asyncio
 from types import SimpleNamespace
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, call, patch
 
 import pytest
 import yaml
@@ -113,34 +113,79 @@ def test_ocp_is_noop_before_external_checks(tmp_path):
 def test_gitlab_concurrency_blocks_same_product_active_prod():
     validator = ValidateLpProdCli(('unused',), 'https://gitlab.example/project/-/merge_requests/1', None)
     client = MagicMock()
-    client._parse_mr_url.side_effect = [
-        ('project', '1'),
-        ('project', '2'),
-    ]
+    client._parse_mr_url.return_value = ('project', '1')
+    project = MagicMock(id=10)
+    mr = MagicMock(source_project_id=10)
+    project.mergerequests.get.return_value = mr
+    client.get_project.return_value = project
     client.list_merge_requests.return_value = [
-        SimpleNamespace(web_url='https://gitlab.example/project/-/merge_requests/2')
+        SimpleNamespace(iid=2, web_url='https://gitlab.example/project/-/merge_requests/2')
     ]
-    client.get_mr_from_url.return_value = MagicMock()
 
     with (
         patch('elliottlib.cli.konflux_release_validate_lp_prod_cli.GitLabClient.from_url', return_value=client),
         patch(
-            'elliottlib.cli.konflux_release_validate_lp_prod_cli.get_shipment_config_records_from_mr',
+            'elliottlib.cli.konflux_release_validate_lp_prod_cli.get_shipment_config_records',
             return_value=[MagicMock()],
         ) as get_records,
         patch(
             'elliottlib.cli.konflux_release_validate_lp_prod_cli.inspect_shipment_mr_ci_state',
             return_value=ShipmentMRCIState((), ('attempted',), ('https://gitlab.example/pipelines/10 is running',)),
-        ),
+        ) as inspect_state,
     ):
         with pytest.raises(RuntimeError, match='same-product|layered product'):
             validator._validate_gitlab_concurrency('openshift-logging')
         get_records.assert_called_once_with(
-            'https://gitlab.example/project/-/merge_requests/2',
+            mr,
+            project,
             kinds=None,
             product='openshift-logging',
             environment='prod',
         )
+        client.list_merge_requests.assert_called_once_with(
+            'project', state='opened', project=project, target_branch='main'
+        )
+        client.get_project.assert_called_once_with('project')
+        project.mergerequests.get.assert_called_once_with(2)
+        inspect_state.assert_called_once_with(
+            client,
+            'https://gitlab.example/project/-/merge_requests/2',
+            mr,
+            project=project,
+        )
+
+
+def test_gitlab_concurrency_reuses_source_project():
+    validator = ValidateLpProdCli(('unused',), 'https://gitlab.example/project/-/merge_requests/1', None)
+    client = MagicMock()
+    client._parse_mr_url.return_value = ('project', '1')
+    project = MagicMock(id=10)
+    source_project = MagicMock(id=20)
+    project.mergerequests.get.side_effect = [
+        MagicMock(source_project_id=20),
+        MagicMock(source_project_id=20),
+    ]
+    client.get_project.side_effect = [project, source_project]
+    client.list_merge_requests.return_value = [
+        SimpleNamespace(iid=2, web_url='https://gitlab.example/project/-/merge_requests/2'),
+        SimpleNamespace(iid=3, web_url='https://gitlab.example/project/-/merge_requests/3'),
+    ]
+
+    with (
+        patch('elliottlib.cli.konflux_release_validate_lp_prod_cli.GitLabClient.from_url', return_value=client),
+        patch(
+            'elliottlib.cli.konflux_release_validate_lp_prod_cli.get_shipment_config_records',
+            return_value=[],
+        ) as get_records,
+        patch('elliottlib.cli.konflux_release_validate_lp_prod_cli.inspect_shipment_mr_ci_state') as inspect_state,
+    ):
+        validator._validate_gitlab_concurrency('openshift-logging')
+
+    assert get_records.call_count == 2
+    assert all(record_call.args[1] is source_project for record_call in get_records.call_args_list)
+    client.get_project.assert_has_calls([call('project'), call(20)])
+    assert client.get_project.call_count == 2
+    inspect_state.assert_not_called()
 
 
 def test_konflux_concurrency_ignores_other_product_and_terminal_release():

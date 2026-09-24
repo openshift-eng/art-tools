@@ -99,7 +99,7 @@ def _checked_ci_status(item, context: str) -> str:
     return status
 
 
-def inspect_shipment_mr_ci_state(gitlab_client, mr_url: str, mr) -> ShipmentMRCIState:
+def inspect_shipment_mr_ci_state(gitlab_client, mr_url: str, mr, project=None) -> ShipmentMRCIState:
     """Inspect all Shipment CI pipelines belonging to a merge request.
 
     Parent pipeline state, stage and production trigger bridges, and their
@@ -112,6 +112,7 @@ def inspect_shipment_mr_ci_state(gitlab_client, mr_url: str, mr) -> ShipmentMRCI
         gitlab_client: Authenticated ART GitLab client.
         mr_url: URL of the shipment merge request.
         mr: Python-gitlab merge request object.
+        project: Optional pre-fetched target project object.
 
     Returns:
         Active stage work, production attempts, and active production work.
@@ -121,7 +122,7 @@ def inspect_shipment_mr_ci_state(gitlab_client, mr_url: str, mr) -> ShipmentMRCI
             state. Callers must fail closed.
     """
     project_path, _ = gitlab_client._parse_mr_url(mr_url)
-    project = gitlab_client.get_project(project_path)
+    project = project if project is not None else gitlab_client.get_project(project_path)
     active_stage = []
     prod_attempts = []
     active_prod = []
@@ -406,21 +407,23 @@ def patch_et_advisory_text(
     return unresolved
 
 
-def get_shipment_config_records_from_mr(
-    mr_url: str,
+def get_shipment_config_records(
+    mr,
+    source_project,
     kinds: Tuple[str, ...] | None = SHIPMENT_CONFIG_KINDS,
     group: str | None = None,
     product: str | None = None,
     environment: str | None = None,
 ) -> list[ShipmentConfigRecord]:
-    """Fetch validated shipment configuration records from a merge request.
+    """Fetch validated shipment configuration records from loaded GitLab objects.
 
     Path filters are applied before file contents are fetched. When ``product``
     is supplied, the path and parsed metadata must agree so callers cannot
     mistake another product's shipment for the requested one.
 
     Args:
-        mr_url: URL of the merge request.
+        mr: Loaded python-gitlab merge request object.
+        source_project: Loaded source project containing the MR branch.
         kinds: Shipment kinds to include. ``None`` includes every shipment
             YAML path, including binary and product-specific kinds.
         group: Optional exact group path segment.
@@ -434,10 +437,6 @@ def get_shipment_config_records_from_mr(
         ValueError: If a matching path disagrees with parsed shipment metadata.
     """
     records: list[ShipmentConfigRecord] = []
-    gl = GitLabClient.from_url(mr_url)
-    mr = gl.get_mr_from_url(mr_url)
-    source_project = gl.get_project(mr.source_project_id)
-
     diff_versions = mr.diffs.list(all=True)
     if not diff_versions:
         return records
@@ -474,6 +473,42 @@ def get_shipment_config_records_from_mr(
             )
         records.append(ShipmentConfigRecord(path=file_path, config=shipment_config))
     return records
+
+
+def get_shipment_config_records_from_mr(
+    mr_url: str,
+    kinds: Tuple[str, ...] | None = SHIPMENT_CONFIG_KINDS,
+    group: str | None = None,
+    product: str | None = None,
+    environment: str | None = None,
+) -> list[ShipmentConfigRecord]:
+    """Fetch validated shipment configuration records from a merge request URL.
+
+    Args:
+        mr_url: URL of the merge request.
+        kinds: Shipment kinds to include. ``None`` includes every shipment
+            YAML path, including binary and product-specific kinds.
+        group: Optional exact group path segment.
+        product: Optional exact product path segment and metadata value.
+        environment: Optional environment path segment, such as ``prod``.
+
+    Returns:
+        Matching path-aware shipment configuration records.
+
+    Raises:
+        ValueError: If a matching path disagrees with parsed shipment metadata.
+    """
+    gl = GitLabClient.from_url(mr_url)
+    mr = gl.get_mr_from_url(mr_url)
+    source_project = gl.get_project(mr.source_project_id)
+    return get_shipment_config_records(
+        mr,
+        source_project,
+        kinds=kinds,
+        group=group,
+        product=product,
+        environment=environment,
+    )
 
 
 def get_shipment_configs_from_mr(

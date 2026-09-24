@@ -27,7 +27,7 @@ from doozerlib.opm import OpmRegistryAuth, render
 from elliottlib.cli.common import click_coroutine
 from elliottlib.cli.konflux_release_cli import konflux_release_cli
 from elliottlib.shipment_model import ShipmentConfig
-from elliottlib.shipment_utils import get_shipment_config_records_from_mr, inspect_shipment_mr_ci_state
+from elliottlib.shipment_utils import get_shipment_config_records, inspect_shipment_mr_ci_state
 
 LOGGER = logging.getLogger(__name__)
 YAML = new_roundtrip_yaml_handler()
@@ -197,16 +197,29 @@ class ValidateLpProdCli:
         """
         gitlab_client = GitLabClient.from_url(self.mr_url)
         project_path, current_iid = gitlab_client._parse_mr_url(self.mr_url)
-        for mr_summary in gitlab_client.list_merge_requests(project_path, state='opened', target_branch='main'):
+        project = gitlab_client.get_project(project_path)
+        source_projects = {project.id: project}
+        for mr_summary in gitlab_client.list_merge_requests(
+            project_path, state='opened', project=project, target_branch='main'
+        ):
             mr_url = mr_summary.web_url
-            _, mr_iid = gitlab_client._parse_mr_url(mr_url)
-            if mr_iid == current_iid:
+            mr_iid = mr_summary.iid
+            if str(mr_iid) == current_iid:
                 continue
-            records = get_shipment_config_records_from_mr(mr_url, kinds=None, product=product, environment='prod')
+            mr = project.mergerequests.get(mr_iid)
+            source_project_id = mr.source_project_id
+            if source_project_id not in source_projects:
+                source_projects[source_project_id] = gitlab_client.get_project(source_project_id)
+            records = get_shipment_config_records(
+                mr,
+                source_projects[source_project_id],
+                kinds=None,
+                product=product,
+                environment='prod',
+            )
             if not records:
                 continue
-            mr = gitlab_client.get_mr_from_url(mr_url)
-            state = inspect_shipment_mr_ci_state(gitlab_client, mr_url, mr)
+            state = inspect_shipment_mr_ci_state(gitlab_client, mr_url, mr, project=project)
             if state.active_prod:
                 raise RuntimeError(
                     f"Another production release for layered product {product!r} is active in {mr_url}: "

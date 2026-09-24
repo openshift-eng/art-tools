@@ -318,8 +318,11 @@ def _shipment_ci_graph(
 def test_inspect_shipment_mr_ci_state_accepts_terminal_stage_and_manual_prod():
     """Allow the normal reuse window after stage and before manual prod starts."""
     client, mr, parent, stage = _shipment_ci_graph()
+    project = client.get_project.return_value
 
-    state = inspect_shipment_mr_ci_state(client, 'https://gitlab.example/project/-/merge_requests/42', mr)
+    state = inspect_shipment_mr_ci_state(
+        client, 'https://gitlab.example/project/-/merge_requests/42', mr, project=project
+    )
 
     assert state.active_stage == ()
     assert state.prod_attempts == ()
@@ -327,6 +330,7 @@ def test_inspect_shipment_mr_ci_state_accepts_terminal_stage_and_manual_prod():
     mr.pipelines.list.assert_called_once_with(get_all=True)
     parent.bridges.list.assert_called_once_with(get_all=True)
     stage.jobs.list.assert_called_once_with(get_all=True, include_retried=True)
+    client.get_project.assert_not_called()
 
 
 def test_inspect_shipment_mr_ci_state_reports_active_prod_downstream():
