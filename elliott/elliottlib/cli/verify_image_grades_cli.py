@@ -1,4 +1,5 @@
 import asyncio
+import contextlib
 import json
 import logging
 import re
@@ -191,7 +192,11 @@ class PyxisServerError(Exception):
         super().__init__(f"Pyxis API returned status {status} for digest {digest}")
 
 
-async def query_freshness_grades(session: aiohttp.ClientSession, digest: str) -> tuple[list[dict], bool]:
+async def query_freshness_grades(
+    session: aiohttp.ClientSession,
+    digest: str,
+    semaphore: asyncio.Semaphore | None = None,
+) -> tuple[list[dict], bool]:
     """Returns (grades, available). available=False means the lookup itself failed."""
     if not DIGEST_RE.match(digest):
         LOGGER.warning("Rejecting malformed image digest: %s", digest)
@@ -211,16 +216,17 @@ async def query_freshness_grades(session: aiohttp.ClientSession, digest: str) ->
         before_sleep=before_sleep_log(LOGGER, logging.WARNING),
     )
     async def _fetch() -> tuple[list[dict], bool]:
-        async with session.get(PYXIS_API_URL, params=params, proxy=PYXIS_PROXY) as resp:
-            if 500 <= resp.status < 600:
-                raise PyxisServerError(resp.status, digest)
-            if resp.status != 200:
-                LOGGER.warning("Pyxis API returned status %s for digest %s", resp.status, digest)
-                return [], False
-            data = await resp.json()
-            if not data.get("data"):
-                return [], True
-            return data["data"][0].get("freshness_grades", []), True
+        async with semaphore if semaphore else contextlib.nullcontext():
+            async with session.get(PYXIS_API_URL, params=params, proxy=PYXIS_PROXY) as resp:
+                if 500 <= resp.status < 600:
+                    raise PyxisServerError(resp.status, digest)
+                if resp.status != 200:
+                    LOGGER.warning("Pyxis API returned status %s for digest %s", resp.status, digest)
+                    return [], False
+                data = await resp.json()
+                if not data.get("data"):
+                    return [], True
+                return data["data"][0].get("freshness_grades", []), True
 
     try:
         return await _fetch()
@@ -253,8 +259,7 @@ async def verify_image_grades(shipment_mr_url: str) -> VerifyImageGradesResult:
                 LOGGER.warning("No digest found in pullspec %s", pullspec)
                 return ImageGradeResult(name=name, pullspec=pullspec, digest="", available=False)
 
-            async with semaphore:
-                grades, available = await query_freshness_grades(session, digest)
+            grades, available = await query_freshness_grades(session, digest, semaphore)
 
             grade = get_current_grade(grades)
             LOGGER.debug("Grade for %s: %s (available=%s)", name, grade, available)
