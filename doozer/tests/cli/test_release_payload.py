@@ -1,3 +1,4 @@
+import json
 import tempfile
 import unittest
 from pathlib import Path
@@ -7,7 +8,11 @@ from artcommonlib.assembly import AssemblyTypes
 from artcommonlib.konflux.konflux_build_record import KonfluxBuildOutcome, KonfluxBuildRecord
 from artcommonlib.model import Model
 from doozerlib import constants
-from doozerlib.cli.release_payload import RELEASE_PAYLOAD_BUILD_PRIORITY, ReleasePayloadRebaseAndBuildCli
+from doozerlib.cli.release_payload import (
+    RELEASE_PAYLOAD_BUILD_PRIORITY,
+    RELEASE_PAYLOAD_MULTI_BUILD_RECORD_NAME,
+    ReleasePayloadRebaseAndBuildCli,
+)
 from doozerlib.exceptions import DoozerFatalError
 from doozerlib.runtime import Runtime
 
@@ -67,6 +72,18 @@ class TestReleasePayloadRebaseAndBuildCliNaming(unittest.TestCase):
         self.assertEqual(
             ReleasePayloadRebaseAndBuildCli.get_component_name("openshift-5.0"),
             "release-payload-openshift-5-0",
+        )
+
+    def test_component_name_multi(self):
+        self.assertEqual(
+            ReleasePayloadRebaseAndBuildCli.get_component_name("openshift-4.21", multi=True),
+            "release-payload-multi-openshift-4-21",
+        )
+
+    def test_component_name_multi_dots_replaced(self):
+        self.assertEqual(
+            ReleasePayloadRebaseAndBuildCli.get_component_name("openshift-5.0", multi=True),
+            "release-payload-multi-openshift-5-0",
         )
 
 
@@ -1113,6 +1130,595 @@ class TestRun(unittest.IsolatedAsyncioTestCase):
         ):
             with self.assertRaises(DoozerFatalError):
                 await self.cli.run()
+
+
+_MULTI_IS_ONE_TAG = json.dumps({
+    "spec": {
+        "tags": [
+            {"from": {"name": "quay.io/openshift-release-dev/ocp-release@sha256:abc123"}}
+        ]
+    }
+})
+
+_MULTI_IS_TWO_TAGS = json.dumps({
+    "spec": {
+        "tags": [
+            {"from": {"name": "quay.io/openshift-release-dev/ocp-release@sha256:abc123"}},
+            {"from": {"name": "quay.io/openshift-release-dev/ocp-release@sha256:def456"}},
+        ]
+    }
+})
+
+
+class TestGenerateManifestsMultiParams(unittest.IsolatedAsyncioTestCase):
+    """Test the new from_release_override and keep_manifest_list params on _generate_manifests."""
+
+    def setUp(self):
+        self.runtime = mock.Mock(spec=Runtime)
+        self.runtime.group = "openshift-4.21"
+        self.runtime.assembly = "stream"
+        self.runtime.assembly_type = AssemblyTypes.STREAM
+        self.runtime.group_config = Model({"vars": {"MAJOR": 4, "MINOR": 21}})
+        self.runtime.get_minor_version = mock.Mock(return_value="4.21")
+        self.cli = _make_cli(self.runtime)
+        self.tmpdir = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmpdir.cleanup)
+        self.manifests_dir = Path(self.tmpdir.name) / "release-manifests"
+
+    @mock.patch("doozerlib.cli.release_payload.exectools.cmd_assert_async")
+    async def test_from_release_override_uses_from_release_flag(self, mock_cmd_assert_async):
+        async def _write_manifests(cmd, **kwargs):
+            (self.manifests_dir / "image-references").write_text(IMAGE_REFERENCES_YAML)
+            return 0
+
+        mock_cmd_assert_async.side_effect = _write_manifests
+
+        override = "quay.io/example/nightly@sha256:multiarch"
+        await self.cli._generate_manifests(self.manifests_dir, from_release_override=override)
+
+        cmd = mock_cmd_assert_async.call_args.args[0]
+        self.assertIn(f"--from-release={override}", cmd)
+        self.assertFalse(any(arg.startswith("--from-image-stream") for arg in cmd))
+        self.assertNotIn("--reference-mode=source", cmd)
+        self.assertNotIn("--allow-missing-images", cmd)
+
+    @mock.patch("doozerlib.cli.release_payload.exectools.cmd_assert_async")
+    async def test_keep_manifest_list_adds_flag(self, mock_cmd_assert_async):
+        async def _write_manifests(cmd, **kwargs):
+            (self.manifests_dir / "image-references").write_text(IMAGE_REFERENCES_YAML)
+            return 0
+
+        mock_cmd_assert_async.side_effect = _write_manifests
+
+        await self.cli._generate_manifests(self.manifests_dir, keep_manifest_list=True)
+
+        cmd = mock_cmd_assert_async.call_args.args[0]
+        self.assertIn("--keep-manifest-list", cmd)
+
+    @mock.patch("doozerlib.cli.release_payload.exectools.cmd_assert_async")
+    async def test_both_params_together(self, mock_cmd_assert_async):
+        async def _write_manifests(cmd, **kwargs):
+            (self.manifests_dir / "image-references").write_text(IMAGE_REFERENCES_YAML)
+            return 0
+
+        mock_cmd_assert_async.side_effect = _write_manifests
+
+        override = "quay.io/example/nightly@sha256:multiarch"
+        await self.cli._generate_manifests(self.manifests_dir, from_release_override=override, keep_manifest_list=True)
+
+        cmd = mock_cmd_assert_async.call_args.args[0]
+        self.assertIn(f"--from-release={override}", cmd)
+        self.assertIn("--keep-manifest-list", cmd)
+        self.assertNotIn("--allow-missing-images", cmd)
+
+
+class TestResolveArtImagesPullspecArch(unittest.IsolatedAsyncioTestCase):
+    """Test the new arch param on _resolve_art_images_pullspec."""
+
+    def setUp(self):
+        self.runtime = mock.Mock(spec=Runtime)
+        self.runtime.group = "openshift-4.21"
+        self.runtime.assembly = "4.21.1"
+        self.runtime.konflux_db = mock.AsyncMock()
+        self.runtime.konflux_db.bind = mock.Mock()
+        self.cli = _make_cli(self.runtime)
+
+    @mock.patch("doozerlib.cli.release_payload.release_inspector.extract_nvr_from_pullspec")
+    async def test_arch_param_passed_to_extract_nvr(self, mock_extract_nvr):
+        mock_extract_nvr.return_value = ("cluster-version-operator-container", "4.21.1", "202608011200.p2")
+        build_record = mock.Mock(spec=KonfluxBuildRecord)
+        build_record.image_pullspec = "quay.io/art/images@sha256:cvo"
+        self.runtime.konflux_db.get_build_record_by_nvr = mock.AsyncMock(return_value=build_record)
+
+        await self.cli._resolve_art_images_pullspec(
+            "quay.io/example/release@sha256:manifest-list",
+            arch='amd64',
+        )
+
+        mock_extract_nvr.assert_awaited_once_with(
+            "quay.io/example/release@sha256:manifest-list", arch='amd64', registry_config=None
+        )
+
+    @mock.patch("doozerlib.cli.release_payload.release_inspector.extract_nvr_from_pullspec")
+    async def test_no_arch_param_passes_none(self, mock_extract_nvr):
+        mock_extract_nvr.return_value = ("cluster-version-operator-container", "4.21.1", "202608011200.p2")
+        build_record = mock.Mock(spec=KonfluxBuildRecord)
+        build_record.image_pullspec = "quay.io/art/images@sha256:cvo"
+        self.runtime.konflux_db.get_build_record_by_nvr = mock.AsyncMock(return_value=build_record)
+
+        await self.cli._resolve_art_images_pullspec("quay.io/example/release@sha256:abc")
+
+        mock_extract_nvr.assert_awaited_once_with(
+            "quay.io/example/release@sha256:abc", arch=None, registry_config=None
+        )
+
+
+class TestResolveMultiReleaseSource(unittest.IsolatedAsyncioTestCase):
+    """Tests for _resolve_multi_release_source."""
+
+    def setUp(self):
+        self.runtime = mock.Mock(spec=Runtime)
+        self.runtime.group = "openshift-4.21"
+        self.runtime.assembly = "4.21.1"
+        self.runtime.get_minor_version = mock.Mock(return_value="4.21")
+        self.cli = _make_cli(self.runtime)
+
+    @mock.patch("doozerlib.cli.release_payload.oc_image_info_async", new_callable=mock.AsyncMock)
+    @mock.patch("doozerlib.cli.release_payload.exectools.cmd_gather_async", new_callable=mock.AsyncMock)
+    async def test_success_returns_source_repo_and_arch_payloads(self, mock_cmd_gather, mock_oc_image_info):
+        mock_cmd_gather.return_value = (0, _MULTI_IS_ONE_TAG, "")
+        mock_oc_image_info.return_value = [
+            {"config": {"architecture": "amd64"}, "digest": "sha256:amd64digest"},
+        ]
+
+        source_repo, arch_payloads = await self.cli._resolve_multi_release_source()
+
+        self.assertEqual(source_repo, "quay.io/openshift-release-dev/ocp-release")
+        self.assertIn("x86_64", arch_payloads)
+        self.assertEqual(
+            arch_payloads["x86_64"],
+            "quay.io/openshift-release-dev/ocp-release@sha256:amd64digest",
+        )
+
+    @mock.patch("doozerlib.cli.release_payload.oc_image_info_async", new_callable=mock.AsyncMock)
+    @mock.patch("doozerlib.cli.release_payload.exectools.cmd_gather_async", new_callable=mock.AsyncMock)
+    async def test_raises_when_imagestream_not_found(self, mock_cmd_gather, mock_oc_image_info):
+        mock_cmd_gather.return_value = (0, "", "")
+
+        with self.assertRaises(DoozerFatalError) as cm:
+            await self.cli._resolve_multi_release_source()
+
+        self.assertIn("not found", str(cm.exception))
+        mock_oc_image_info.assert_not_awaited()
+
+    @mock.patch("doozerlib.cli.release_payload.oc_image_info_async", new_callable=mock.AsyncMock)
+    @mock.patch("doozerlib.cli.release_payload.exectools.cmd_gather_async", new_callable=mock.AsyncMock)
+    async def test_raises_when_wrong_tag_count(self, mock_cmd_gather, mock_oc_image_info):
+        mock_cmd_gather.return_value = (0, _MULTI_IS_TWO_TAGS, "")
+
+        with self.assertRaises(DoozerFatalError) as cm:
+            await self.cli._resolve_multi_release_source()
+
+        self.assertIn("exactly 1 tag", str(cm.exception))
+
+    @mock.patch("doozerlib.cli.release_payload.oc_image_info_async", new_callable=mock.AsyncMock)
+    @mock.patch("doozerlib.cli.release_payload.exectools.cmd_gather_async", new_callable=mock.AsyncMock)
+    async def test_raises_when_cmd_fails(self, mock_cmd_gather, mock_oc_image_info):
+        mock_cmd_gather.return_value = (1, "", "connection refused")
+
+        with self.assertRaises(DoozerFatalError) as cm:
+            await self.cli._resolve_multi_release_source()
+
+        self.assertIn("Failed to get multi imagestream", str(cm.exception))
+        mock_oc_image_info.assert_not_awaited()
+
+
+class TestRebaseMulti(unittest.IsolatedAsyncioTestCase):
+    """Tests for _rebase_multi."""
+
+    def setUp(self):
+        self.tmpdir = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmpdir.cleanup)
+
+        self.runtime = mock.Mock(spec=Runtime)
+        self.runtime.group = "openshift-4.21"
+        self.runtime.assembly = "4.21.1"
+        self.runtime.assembly_type = AssemblyTypes.STANDARD
+        self.runtime.upcycle = False
+        self.runtime.working_dir = self.tmpdir.name
+        self.runtime.group_config = Model({"vars": {"MAJOR": 4, "MINOR": 21}})
+        self.runtime.get_global_konflux_arches = mock.Mock(return_value=["x86_64", "aarch64"])
+
+        self.cli = _make_cli(self.runtime, multi=True)
+
+        self.repo_dir = Path(
+            self.tmpdir.name, constants.WORKING_SUBDIR_RELEASE_PAYLOAD_SOURCES, self.runtime.group + "-multi"
+        )
+        self.repo_dir.mkdir(parents=True, exist_ok=True)
+
+    def _setup_mock_build_repo(self, mock_build_repo_class):
+        mock_build_repo = mock.AsyncMock()
+        mock_build_repo.local_dir = self.repo_dir
+        mock_build_repo.https_url = "https://github.com/openshift-priv/ocp-release-payloads.git"
+        mock_build_repo.branch = "art-openshift-4.21-assembly-4.21.1-dgk-release-payload-multi"
+        mock_build_repo.commit_hash = "abc1234"
+        mock_build_repo_class.return_value = mock_build_repo
+        return mock_build_repo
+
+    @mock.patch("doozerlib.cli.release_payload.get_release_name_for_assembly", return_value="4.21.1")
+    @mock.patch("doozerlib.cli.release_payload.BuildRepo")
+    async def test_rebase_multi_uses_multi_branch(self, mock_build_repo_class, mock_get_release_name):
+        mock_build_repo = self._setup_mock_build_repo(mock_build_repo_class)
+
+        with (
+            mock.patch.object(
+                self.cli,
+                "_resolve_multi_release_source",
+                mock.AsyncMock(return_value=("quay.io/example/src", {"x86_64": "quay.io/example/src@sha256:amd64p"})),
+            ),
+            mock.patch.object(
+                self.cli, "_generate_manifests", mock.AsyncMock(return_value="registry.example.com/cvo@sha256:cvod")
+            ),
+            mock.patch.object(
+                self.cli,
+                "_resolve_art_images_pullspec",
+                mock.AsyncMock(return_value="quay.io/art/images@sha256:cvoresolved"),
+            ),
+        ):
+            build_repo, cvo_pullspec, branch = await self.cli._rebase_multi()
+
+        _, kwargs = mock_build_repo_class.call_args
+        self.assertIn("release-payload-multi", kwargs["branch"])
+        self.assertEqual(branch, mock_build_repo.branch)
+        self.assertIs(build_repo, mock_build_repo)
+
+    @mock.patch("doozerlib.cli.release_payload.get_release_name_for_assembly", return_value="4.21.1")
+    @mock.patch("doozerlib.cli.release_payload.BuildRepo")
+    async def test_rebase_multi_generates_manifests_once(self, mock_build_repo_class, mock_get_release_name):
+        self._setup_mock_build_repo(mock_build_repo_class)
+        reference_payload = "quay.io/example/src@sha256:amd64payload"
+
+        with (
+            mock.patch.object(
+                self.cli,
+                "_resolve_multi_release_source",
+                mock.AsyncMock(return_value=("quay.io/example/src", {"x86_64": reference_payload})),
+            ),
+            mock.patch.object(
+                self.cli, "_generate_manifests", mock.AsyncMock(return_value="registry.example.com/cvo@sha256:cvod")
+            ) as mock_generate_manifests,
+            mock.patch.object(
+                self.cli,
+                "_resolve_art_images_pullspec",
+                mock.AsyncMock(return_value="quay.io/art/images@sha256:cvoresolved"),
+            ),
+        ):
+            await self.cli._rebase_multi()
+
+        self.assertEqual(mock_generate_manifests.await_count, 1)
+        _, kwargs = mock_generate_manifests.call_args
+        self.assertEqual(kwargs["from_release_override"], reference_payload)
+        self.assertTrue(kwargs["keep_manifest_list"])
+
+    @mock.patch("doozerlib.cli.release_payload.get_release_name_for_assembly", return_value="4.21.1")
+    @mock.patch("doozerlib.cli.release_payload.BuildRepo")
+    async def test_rebase_multi_copies_manifests_to_all_arch_dirs(self, mock_build_repo_class, mock_get_release_name):
+        self._setup_mock_build_repo(mock_build_repo_class)
+
+        with (
+            mock.patch.object(
+                self.cli,
+                "_resolve_multi_release_source",
+                mock.AsyncMock(return_value=("quay.io/example/src", {"x86_64": "quay.io/example/src@sha256:amd64p"})),
+            ),
+            mock.patch.object(
+                self.cli, "_generate_manifests", mock.AsyncMock(return_value="registry.example.com/cvo@sha256:cvod")
+            ),
+            mock.patch.object(
+                self.cli,
+                "_resolve_art_images_pullspec",
+                mock.AsyncMock(return_value="quay.io/art/images@sha256:cvoresolved"),
+            ),
+        ):
+            await self.cli._rebase_multi()
+
+        manifests_dir = self.repo_dir / "release-manifests"
+        self.assertTrue((manifests_dir / "amd64").exists())
+        self.assertTrue((manifests_dir / "arm64").exists())
+        self.assertFalse((self.repo_dir / "_tmp_multi_manifests").exists())
+
+    @mock.patch("doozerlib.cli.release_payload.get_release_name_for_assembly", return_value="4.21.1")
+    @mock.patch("doozerlib.cli.release_payload.BuildRepo")
+    async def test_rebase_multi_dockerfile_has_architecture_label(self, mock_build_repo_class, mock_get_release_name):
+        self._setup_mock_build_repo(mock_build_repo_class)
+
+        with (
+            mock.patch.object(
+                self.cli,
+                "_resolve_multi_release_source",
+                mock.AsyncMock(return_value=("quay.io/example/src", {"x86_64": "quay.io/example/src@sha256:amd64p"})),
+            ),
+            mock.patch.object(
+                self.cli, "_generate_manifests", mock.AsyncMock(return_value="registry.example.com/cvo@sha256:cvod")
+            ),
+            mock.patch.object(
+                self.cli,
+                "_resolve_art_images_pullspec",
+                mock.AsyncMock(return_value="quay.io/art/images@sha256:cvoresolved"),
+            ),
+        ):
+            await self.cli._rebase_multi()
+
+        dockerfile_content = (self.repo_dir / "Dockerfile").read_text()
+        self.assertIn('release.openshift.io/architecture="multi"', dockerfile_content)
+
+    @mock.patch("doozerlib.cli.release_payload.get_release_name_for_assembly", return_value="4.21.1")
+    @mock.patch("doozerlib.cli.release_payload.BuildRepo")
+    async def test_rebase_multi_dockerfile_has_uname_m_selection(self, mock_build_repo_class, mock_get_release_name):
+        self._setup_mock_build_repo(mock_build_repo_class)
+
+        with (
+            mock.patch.object(
+                self.cli,
+                "_resolve_multi_release_source",
+                mock.AsyncMock(return_value=("quay.io/example/src", {"x86_64": "quay.io/example/src@sha256:amd64p"})),
+            ),
+            mock.patch.object(
+                self.cli, "_generate_manifests", mock.AsyncMock(return_value="registry.example.com/cvo@sha256:cvod")
+            ),
+            mock.patch.object(
+                self.cli,
+                "_resolve_art_images_pullspec",
+                mock.AsyncMock(return_value="quay.io/art/images@sha256:cvoresolved"),
+            ),
+        ):
+            await self.cli._rebase_multi()
+
+        dockerfile_content = (self.repo_dir / "Dockerfile").read_text()
+        self.assertIn("uname -m", dockerfile_content)
+        self.assertIn("x86_64) goarch=amd64", dockerfile_content)
+        self.assertIn("aarch64) goarch=arm64", dockerfile_content)
+
+    @mock.patch("doozerlib.cli.release_payload.get_release_name_for_assembly", return_value="4.21.1")
+    @mock.patch("doozerlib.cli.release_payload.BuildRepo")
+    async def test_rebase_multi_resolves_art_images_with_amd64_arch(self, mock_build_repo_class, mock_get_release_name):
+        self._setup_mock_build_repo(mock_build_repo_class)
+
+        with (
+            mock.patch.object(
+                self.cli,
+                "_resolve_multi_release_source",
+                mock.AsyncMock(return_value=("quay.io/example/src", {"x86_64": "quay.io/example/src@sha256:amd64p"})),
+            ),
+            mock.patch.object(
+                self.cli,
+                "_generate_manifests",
+                mock.AsyncMock(return_value="registry.example.com/cvo@sha256:cvodigest"),
+            ),
+            mock.patch.object(
+                self.cli,
+                "_resolve_art_images_pullspec",
+                mock.AsyncMock(return_value="quay.io/art/images@sha256:cvoresolved"),
+            ) as mock_resolve,
+        ):
+            await self.cli._rebase_multi()
+
+        mock_resolve.assert_awaited_once_with("registry.example.com/cvo@sha256:cvodigest", arch='amd64')
+
+
+class TestSyncMulti(unittest.IsolatedAsyncioTestCase):
+    """Tests for _sync multi-payload behavior."""
+
+    def setUp(self):
+        self.runtime = mock.Mock(spec=Runtime)
+        self.runtime.group = "openshift-4.21"
+        self.runtime.assembly = "4.21.1"
+        self.cli = _make_cli(self.runtime, multi=True)
+        self.output_image = f"{self.cli.image_repo}:4.21.1-202608011200.p2"
+        self.arch_infos = [
+            {"digest": "sha256:x8664digest", "architecture": "amd64"},
+            {"digest": "sha256:s390xdigest", "architecture": "s390x"},
+        ]
+
+    @mock.patch("doozerlib.cli.release_payload.sync_to_quay", new_callable=mock.AsyncMock)
+    @mock.patch("doozerlib.cli.release_payload.oc_image_info_async", new_callable=mock.AsyncMock)
+    @mock.patch("doozerlib.cli.release_payload.find_manifest_list_sha", new_callable=mock.AsyncMock)
+    async def test_sync_multi_syncs_only_manifest_list(self, mock_find_sha, mock_oc_image_info, mock_sync_to_quay):
+        mock_find_sha.return_value = "sha256:deadbeef"
+        mock_oc_image_info.return_value = self.arch_infos
+
+        result = await self.cli._sync(self.output_image, arches=["x86_64", "s390x"])
+
+        expected_list_pullspec = f"{self.cli.image_repo}@sha256:deadbeef"
+        mock_sync_to_quay.assert_awaited_once_with(expected_list_pullspec, self.cli.release_image_repo)
+        self.assertTrue(result["synced"])
+        self.assertEqual(result["release_pullspec"], expected_list_pullspec)
+
+    @mock.patch("doozerlib.cli.release_payload.sync_to_quay", new_callable=mock.AsyncMock)
+    @mock.patch("doozerlib.cli.release_payload.oc_image_info_async", new_callable=mock.AsyncMock)
+    @mock.patch("doozerlib.cli.release_payload.find_manifest_list_sha", new_callable=mock.AsyncMock)
+    async def test_sync_multi_dry_run(self, mock_find_sha, mock_oc_image_info, mock_sync_to_quay):
+        mock_find_sha.return_value = "sha256:deadbeef"
+        mock_oc_image_info.return_value = self.arch_infos
+        self.cli.dry_run = True
+
+        result = await self.cli._sync(self.output_image, arches=["x86_64", "s390x"])
+
+        mock_sync_to_quay.assert_not_awaited()
+        self.assertFalse(result["synced"])
+
+
+class TestRunMulti(unittest.IsolatedAsyncioTestCase):
+    """Tests for run() multi-payload dispatch."""
+
+    def setUp(self):
+        self.runtime = mock.Mock(spec=Runtime)
+        self.runtime.group = "openshift-4.21"
+        self.runtime.assembly = "4.21.1"
+        self.runtime.initialize = mock.Mock()
+        self.runtime.group_config = Model({"vars": {"MAJOR": 4, "MINOR": 21}})
+        self.runtime.get_global_konflux_arches = mock.Mock(return_value=["x86_64", "s390x"])
+
+        self.cli = _make_cli(self.runtime, push=False, dry_run=False, multi=True)
+
+        self.build_repo = mock.Mock()
+        self.build_repo.https_url = "https://github.com/openshift-priv/ocp-release-payloads.git"
+        self.build_repo.branch = "art-openshift-4.21-assembly-4.21.1-dgk-release-payload-multi"
+        self.build_repo.commit_hash = "abc1234"
+        self.build_repo.local_dir = "/tmp/release-payload-multi"
+        self.build_repo.push = mock.AsyncMock()
+
+    async def test_run_multi_dispatches_to_rebase_multi(self):
+        with (
+            mock.patch.object(
+                self.cli,
+                "_rebase_multi",
+                mock.AsyncMock(
+                    return_value=(self.build_repo, "registry.example.com/cvo", self.build_repo.branch)
+                ),
+            ) as mock_rebase_multi,
+            mock.patch.object(self.cli, "_rebase", mock.AsyncMock()) as mock_rebase,
+            mock.patch.object(self.cli, "_build", mock.AsyncMock()),
+        ):
+            await self.cli.run()
+
+        mock_rebase_multi.assert_awaited_once()
+        mock_rebase.assert_not_awaited()
+
+    async def test_run_multi_includes_multi_in_result(self):
+        with (
+            mock.patch.object(
+                self.cli,
+                "_rebase_multi",
+                mock.AsyncMock(
+                    return_value=(self.build_repo, "registry.example.com/cvo", self.build_repo.branch)
+                ),
+            ),
+            mock.patch.object(self.cli, "_build", mock.AsyncMock()),
+        ):
+            result = await self.cli.run()
+
+        self.assertTrue(result["multi"])
+
+    async def test_run_non_multi_includes_multi_false_in_result(self):
+        cli = _make_cli(self.runtime, push=False, dry_run=False, multi=False)
+        build_repo = mock.Mock()
+        build_repo.https_url = "https://github.com/openshift-priv/ocp-release-payloads.git"
+        build_repo.branch = "art-openshift-4.21-assembly-4.21.1-dgk-release-payload"
+        build_repo.commit_hash = "abc1234"
+        build_repo.local_dir = "/tmp/release-payload"
+
+        with (
+            mock.patch.object(
+                cli,
+                "_rebase",
+                mock.AsyncMock(return_value=(build_repo, "registry.example.com/cvo", build_repo.branch)),
+            ),
+            mock.patch.object(cli, "_build", mock.AsyncMock()),
+        ):
+            result = await cli.run()
+
+        self.assertFalse(result["multi"])
+
+
+class TestBuildMulti(unittest.IsolatedAsyncioTestCase):
+    """Tests for _build multi-payload component naming and generate_name."""
+
+    def setUp(self):
+        self.runtime = mock.Mock(spec=Runtime)
+        self.runtime.group = "openshift-4.21"
+        self.runtime.assembly = "4.21.1"
+        self.runtime.konflux_db = mock.Mock()
+        self.runtime.konflux_db.bind = mock.Mock()
+        self.runtime.konflux_db.add_build = mock.Mock()
+        self.cli = _make_cli(self.runtime, multi=True)
+
+        self.build_repo = mock.Mock()
+        self.build_repo.commit_hash = "abc1234"
+        self.build_repo.branch = "art-openshift-4.21-dgk-release-payload-multi"
+        self.build_repo.https_url = "https://github.com/openshift-priv/ocp-release-payloads.git"
+
+    def _mock_konflux_client(self, succeeded: bool = True):
+        konflux_client = mock.AsyncMock()
+        pipelinerun_info = mock.Mock()
+        pipelinerun_info.name = "release-payload-multi-openshift-4-21-abc123"
+        pipelinerun_info.to_dict.return_value = {"metadata": {"name": pipelinerun_info.name}}
+        konflux_client.start_pipeline_run_for_image_build = mock.AsyncMock(return_value=pipelinerun_info)
+        konflux_client.resource_url = mock.Mock(return_value="https://konflux.example.com/pipelinerun/1")
+        completed_info = mock.Mock()
+        completed_info.name = pipelinerun_info.name
+        condition = mock.Mock()
+        condition.type = "Succeeded"
+        condition.status = "True" if succeeded else "False"
+        condition.reason = "Succeeded" if succeeded else "Error"
+        condition.is_status_true.return_value = succeeded
+        completed_info.find_condition.return_value = condition
+        konflux_client.wait_for_pipelinerun = mock.AsyncMock(return_value=completed_info)
+        return konflux_client
+
+    @mock.patch("doozerlib.cli.release_payload.KonfluxClient")
+    async def test_build_uses_multi_component_name(self, mock_konflux_client_class):
+        konflux_client = self._mock_konflux_client()
+        mock_konflux_client_class.from_kubeconfig.return_value = konflux_client
+
+        await self.cli._build(self.build_repo, arches=["x86_64", "s390x"])
+
+        _, kwargs = konflux_client.ensure_component.call_args
+        self.assertEqual(kwargs["name"], "release-payload-multi-openshift-4-21")
+        self.assertEqual(kwargs["component_name"], "release-payload-multi-openshift-4-21")
+
+    @mock.patch("doozerlib.cli.release_payload.KonfluxClient")
+    async def test_build_uses_multi_generate_name_prefix(self, mock_konflux_client_class):
+        konflux_client = self._mock_konflux_client()
+        mock_konflux_client_class.from_kubeconfig.return_value = konflux_client
+
+        await self.cli._build(self.build_repo, arches=["x86_64", "s390x"])
+
+        _, kwargs = konflux_client.start_pipeline_run_for_image_build.call_args
+        self.assertEqual(kwargs["generate_name"], "release-payload-multi-4-21-1-")
+
+
+class TestRecordBuildMulti(unittest.IsolatedAsyncioTestCase):
+    """Tests for _record_build multi-payload record name."""
+
+    def setUp(self):
+        self.runtime = mock.Mock(spec=Runtime)
+        self.runtime.group = "openshift-4.21"
+        self.runtime.assembly = "4.21.1"
+        self.runtime.konflux_db = mock.Mock()
+        self.runtime.konflux_db.bind = mock.Mock()
+        self.runtime.konflux_db.add_build = mock.Mock()
+        self.cli = _make_cli(self.runtime, multi=True)
+
+        self.build_repo = mock.Mock()
+        self.build_repo.commit_hash = "abc1234"
+        self.build_repo.https_url = "https://github.com/openshift-priv/ocp-release-payloads.git"
+        self.build_repo.branch = "art-openshift-4.21-dgk-release-payload-multi"
+
+    @mock.patch("doozerlib.cli.release_payload.KonfluxClient")
+    async def test_record_build_uses_multi_record_name(self, mock_konflux_client_class):
+        konflux_client = mock.AsyncMock()
+        pipelinerun_info = mock.Mock()
+        pipelinerun_info.name = "release-payload-multi-abc123"
+        pipelinerun_info.to_dict.return_value = {"metadata": {"name": pipelinerun_info.name}}
+        konflux_client.start_pipeline_run_for_image_build = mock.AsyncMock(return_value=pipelinerun_info)
+        konflux_client.resource_url = mock.Mock(return_value="https://konflux.example.com/pr/1")
+        completed_info = mock.Mock()
+        completed_info.name = pipelinerun_info.name
+        condition = mock.Mock()
+        condition.type = "Succeeded"
+        condition.status = "True"
+        condition.reason = "Succeeded"
+        condition.is_status_true.return_value = True
+        completed_info.find_condition.return_value = condition
+        konflux_client.wait_for_pipelinerun = mock.AsyncMock(return_value=completed_info)
+        mock_konflux_client_class.from_kubeconfig.return_value = konflux_client
+
+        await self.cli._build(self.build_repo, arches=["x86_64"])
+
+        self.runtime.konflux_db.add_build.assert_called_once()
+        record = self.runtime.konflux_db.add_build.call_args.args[0]
+        self.assertEqual(record.name, RELEASE_PAYLOAD_MULTI_BUILD_RECORD_NAME)
 
 
 if __name__ == "__main__":
