@@ -62,6 +62,8 @@ async def run_for(group: str, runtime: Runtime, serial: bool = False):
         effective_time,
     )
 
+    # Include both latest and corresponding so the latest build is a fallback when the corresponding build does not exist.
+    # Duplicate entries are removed in build/build-conforma-verify.
     if serial:
         result = jenkins.start_build_conforma_verify(
             group=group,
@@ -69,6 +71,8 @@ async def run_for(group: str, runtime: Runtime, serial: bool = False):
             ec_policy=ec_policy,
             fbc_ec_policy=fbc_ec_policy,
             effective_time=effective_time,
+            include_bundles=True,
+            include_fbcs=fbc_ec_policy is not None,
             include_corresponding_bundles=True,
             include_corresponding_fbcs=fbc_ec_policy is not None,
             report_to_slack=True,
@@ -83,6 +87,8 @@ async def run_for(group: str, runtime: Runtime, serial: bool = False):
             ec_policy=ec_policy,
             fbc_ec_policy=fbc_ec_policy,
             effective_time=effective_time,
+            include_bundles=True,
+            include_fbcs=fbc_ec_policy is not None,
             include_corresponding_bundles=True,
             include_corresponding_fbcs=fbc_ec_policy is not None,
             report_to_slack=True,
