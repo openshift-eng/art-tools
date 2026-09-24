@@ -89,6 +89,7 @@ class TestVerifyReleasePipeline(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(result.passed)
         expected_steps = {
             "cdn-push",
+            "csv-versions",
             "signatures",
             "image-grades",
             "payload",
