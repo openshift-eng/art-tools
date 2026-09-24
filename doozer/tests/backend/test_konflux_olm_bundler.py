@@ -300,10 +300,13 @@ class TestKonfluxOlmBundleRebaser(IsolatedAsyncioTestCase):
         self.assertEqual(self.rebaser._redhat_delivery_tags, expected_tags)
 
     def test_get_operator_framework_tags(self):
-        # Test when operator_channel_stable is 'default'
-        self.rebaser._group_config.operator_channel_stable = 'default'
+        # Configure get() to return default for operator_stable_channel_name (not set)
+        self.rebaser._group_config.get = lambda key, default=None: default
         channel_name = "test-channel"
         package_name = "test-package"
+
+        # Test when operator_channel_stable is 'default'
+        self.rebaser._group_config.operator_channel_stable = 'default'
         expected_tags = {
             'operators.operatorframework.io.bundle.channel.default.v1': 'stable',
             'operators.operatorframework.io.bundle.channels.v1': 'test-channel,stable',
@@ -340,6 +343,35 @@ class TestKonfluxOlmBundleRebaser(IsolatedAsyncioTestCase):
         }
         actual_tags = self.rebaser._get_operator_framework_tags(channel_name, package_name)
         self.assertEqual(actual_tags, expected_tags)
+
+    def test_get_operator_framework_tags_custom_stable_channel(self):
+        """Test that operator_stable_channel_name in group config overrides the default 'stable' channel name."""
+        channel_name = "test-channel"
+        package_name = "test-package"
+        custom_stable = "stable-5.0"
+
+        # Configure get() to return custom stable channel name
+        self.rebaser._group_config.get = lambda key, default=None: {
+            'operator_stable_channel_name': custom_stable,
+        }.get(key, default)
+
+        # Test with operator_channel_stable='default': custom stable channel becomes the default
+        self.rebaser._group_config.operator_channel_stable = 'default'
+        tags = self.rebaser._get_operator_framework_tags(channel_name, package_name)
+        self.assertEqual(tags['operators.operatorframework.io.bundle.channel.default.v1'], custom_stable)
+        self.assertEqual(tags['operators.operatorframework.io.bundle.channels.v1'], f'test-channel,{custom_stable}')
+
+        # Test with operator_channel_stable='extra': custom stable channel is added but not default
+        self.rebaser._group_config.operator_channel_stable = 'extra'
+        tags = self.rebaser._get_operator_framework_tags(channel_name, package_name)
+        self.assertEqual(tags['operators.operatorframework.io.bundle.channel.default.v1'], 'test-channel')
+        self.assertEqual(tags['operators.operatorframework.io.bundle.channels.v1'], f'test-channel,{custom_stable}')
+
+        # Test with operator_channel_stable=None: custom stable channel is NOT used at all
+        self.rebaser._group_config.operator_channel_stable = None
+        tags = self.rebaser._get_operator_framework_tags(channel_name, package_name)
+        self.assertEqual(tags['operators.operatorframework.io.bundle.channel.default.v1'], 'test-channel')
+        self.assertEqual(tags['operators.operatorframework.io.bundle.channels.v1'], 'test-channel')
 
     def test_create_dockerfile(self):
         metadata = MagicMock()
