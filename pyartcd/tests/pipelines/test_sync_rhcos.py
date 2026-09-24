@@ -288,8 +288,8 @@ class TestSyncRhcosPipeline(IsolatedAsyncioTestCase):
         with patch.dict(
             os.environ,
             {
-                "DIRECT_SIGNING_PROD_KEYTAB": "/fake/prod-keytab",
-                "DIRECT_SIGNING_PROD_PRINCIPAL": "art-signing-prod@IPA.REDHAT.COM",
+                "DIRECT_SIGNING_KEYTAB": "/fake/signing-keytab",
+                "DIRECT_SIGNING_PRINCIPAL": "ocp-art-signing-prod@IPA.REDHAT.COM",
             },
         ):
             await pipeline._sign_sha256sum()

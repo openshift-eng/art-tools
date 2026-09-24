@@ -28,6 +28,9 @@ from pyartcd.umb_client import AsyncUMBClient
 
 _LOGGER = logging.getLogger(__name__)
 
+PROD_SIGNING_KEY_NAME = "redhatrelease2"
+STAGE_SIGNING_KEY_NAME = "beta2"
+
 
 class AsyncSignatory:
     """
@@ -238,21 +241,34 @@ class Signatory(Protocol):
     ) -> dict[str, str]: ...
 
 
-def get_direct_signing_credential_env_names(signing_env: str) -> tuple[str, str]:
+def get_direct_signing_credentials(dry_run: bool = False) -> tuple[str, str] | None:
     """
-    Returns the keytab and principal environment variables for a signing environment.
+    Loads direct signing credentials and applies the missing-credential policy.
 
     Args:
-        signing_env: Signing environment. Supported values are ``stage`` and ``prod``.
+        dry_run: If True, log and return None when credentials are missing.
     Return Value(s):
-        A tuple containing the keytab variable name and principal variable name.
+        A tuple containing the keytab file and Kerberos principal, or None when
+        credentials are missing during a dry run.
     """
-    normalized_env = signing_env.lower()
-    if normalized_env not in ("stage", "prod"):
-        raise ValueError(f"Unsupported direct signing environment: {signing_env}")
+    keytab_file = os.environ.get("DIRECT_SIGNING_KEYTAB")
+    principal = os.environ.get("DIRECT_SIGNING_PRINCIPAL")
+    if not keytab_file or not principal:
+        missing = [
+            name
+            for name, value in (
+                ("DIRECT_SIGNING_KEYTAB", keytab_file),
+                ("DIRECT_SIGNING_PRINCIPAL", principal),
+            )
+            if not value
+        ]
+        message = f"Direct signing requires: {', '.join(missing)}"
+        if dry_run:
+            _LOGGER.warning(message)
+            return None
+        raise ValueError(message)
 
-    prefix = f"DIRECT_SIGNING_{normalized_env.upper()}"
-    return f"{prefix}_KEYTAB", f"{prefix}_PRINCIPAL"
+    return keytab_file, principal
 
 
 class DirectSignatory:
@@ -272,7 +288,6 @@ class DirectSignatory:
         self,
         client_command: Sequence[str],
         sig_keyname: str = "test",
-        signing_env: str | None = None,
         keytab_file: str | None = None,
         principal: str | None = None,
         ccache_path: str | None = None,
@@ -299,7 +314,6 @@ class DirectSignatory:
 
         self.client_command = tuple(client_command)
         self.sig_keyname = sig_keyname
-        self.signing_env = signing_env
         self.keytab_file = keytab_file
         self.principal = principal
         self.ccache_path = ccache_path
@@ -310,7 +324,7 @@ class DirectSignatory:
         self._owns_ccache = ccache_path is None
 
     @classmethod
-    def from_environment(cls, signing_env: str, sig_keyname: str) -> "DirectSignatory":
+    def from_environment(cls, sig_keyname: str) -> "DirectSignatory":
         """
         Creates a direct signatory from Jenkins-provided environment variables.
 
@@ -319,15 +333,14 @@ class DirectSignatory:
         confirm the final client command and credential names without changing the
         pipeline call sites. The keytab is managed by Jenkins and is not removed by
         this signatory.
+
+        Args:
+            sig_keyname: Signing key name passed to the direct client.
         """
-        keytab_env_name, principal_env_name = get_direct_signing_credential_env_names(signing_env)
-        keytab_file = os.environ.get(keytab_env_name)
-        principal = os.environ.get(principal_env_name)
-        missing = [
-            name for name, value in ((keytab_env_name, keytab_file), (principal_env_name, principal)) if not value
-        ]
-        if missing:
-            raise ValueError(f"Direct signing requires: {', '.join(missing)}")
+        credentials = get_direct_signing_credentials()
+        if credentials is None:
+            raise ValueError("Direct signing credentials are unavailable")
+        keytab_file, principal = credentials
 
         command = os.environ.get("DIRECT_SIGNING_CLIENT_COMMAND")
         client_command = shlex.split(command) if command else list(cls.DEFAULT_CLIENT_COMMAND)
@@ -335,7 +348,6 @@ class DirectSignatory:
         return cls(
             client_command=client_command,
             sig_keyname=sig_keyname,
-            signing_env=signing_env,
             keytab_file=keytab_file,
             principal=principal,
             timeout=timeout,
@@ -490,6 +502,17 @@ class DirectSignatory:
             if not os.path.isfile(output_path):
                 raise SignatoryServerError("Direct signing did not produce a signature file")
 
+            verification_rc, _, verification_stderr = await self._command_runner(
+                ["gpg2", "-d", output_path],
+                check=False,
+                env=self._environment,
+                timeout=self.timeout,
+            )
+            if verification_rc != 0:
+                raise SignatoryServerError(
+                    f"Direct signing signature verification failed: {verification_stderr.strip()}"
+                )
+
             with open(output_path, "rb") as generated_signature:
                 signature = generated_signature.read()
             if not signature:
@@ -521,9 +544,16 @@ def create_signatory(
 ) -> Signatory:
     """
     Creates the configured UMB or direct signatory for a pipeline signing session.
+
+    Args:
+        transport: Signing transport to use, either ``umb`` or ``direct``.
+        signing_env: Signing infrastructure environment, such as ``stage`` or ``prod``.
+        sig_keyname: Signing key name passed to the signing client.
+        cert_file: Client certificate used by the UMB transport.
+        key_file: Client key used by the UMB transport.
     """
     if transport == "direct":
-        return DirectSignatory.from_environment(signing_env=signing_env, sig_keyname=sig_keyname)
+        return DirectSignatory.from_environment(sig_keyname=sig_keyname)
     if transport == "umb":
         if not cert_file or not key_file:
             raise ValueError("UMB signing requires SIGNING_CERT and SIGNING_KEY")

@@ -2482,8 +2482,8 @@ class TestPromoteSigningTransport(IsolatedAsyncioTestCase):
                 "JIRA_TOKEN": "jira-token",
                 "QUAY_PASSWORD": "quay-password",
                 "REDIS_SERVER_PASSWORD": "redis-password",
-                "DIRECT_SIGNING_PROD_KEYTAB": "/path/to/prod-keytab",
-                "DIRECT_SIGNING_PROD_PRINCIPAL": "art-signing-prod@IPA.REDHAT.COM",
+                "DIRECT_SIGNING_KEYTAB": "/path/to/signing-keytab",
+                "DIRECT_SIGNING_PRINCIPAL": "ocp-art-signing-prod@IPA.REDHAT.COM",
             },
             clear=True,
         ):
