@@ -466,15 +466,15 @@ class ReleasePayloadRebaseAndBuildCli:
             await exectools.to_thread(shutil.copytree, tmp_manifests_dir, arch_dir)
         await exectools.to_thread(shutil.rmtree, tmp_manifests_dir)
 
-        from_pullspecs = {reference_arch: await self._resolve_art_images_pullspec(cvo_pullspec, arch='amd64')}
-        from_pullspec = from_pullspecs[reference_arch]
-
-        if "@" not in from_pullspec:
-            raise DoozerFatalError(f"Expected digest-based art-images pullspec but got: {from_pullspec}")
-        cvo_image_digest = from_pullspec.split("@", 1)[1]
+        # The source CVO manifest list already contains the image selected for each arch.
+        # Resolving only the amd64 NVR to a Konflux build can replace other arches with
+        # images from a different build when the source payload combines CVO builds.
+        if "@sha256:" not in cvo_pullspec:
+            raise DoozerFatalError(f"Expected digest-based multi CVO pullspec but got: {cvo_pullspec}")
+        cvo_image_digest = cvo_pullspec.split("@", 1)[1]
 
         dockerfile_content = (
-            f"FROM {from_pullspec}\n"
+            f"FROM {cvo_pullspec}\n"
             f'LABEL io.openshift.release="{self._get_release_label()}" \\\n'
             f'      io.openshift.release.base-image-digest="{cvo_image_digest}" \\\n'
             f'      release.openshift.io/architecture="multi"\n'
@@ -528,7 +528,7 @@ class ReleasePayloadRebaseAndBuildCli:
         git_auth_secret = await konflux_client.ensure_git_auth_secret(namespace=self.konflux_namespace)
         refresh_task = asyncio.create_task(konflux_client.token_refresh_loop(namespace=self.konflux_namespace))
 
-        output_image = f"{self.image_repo}:{self.version}-{self.release}"
+        output_image = f"{self.image_repo}:{self.version}-{self.release}{'-multi' if self.multi else ''}"
         # The Component (and its branch) is shared by every assembly of the group, so fold the
         # assembly into the generateName prefix -- otherwise builds for different assemblies are
         # indistinguishable in the Konflux UI's PipelineRun list. The group is omitted here: it's
@@ -569,11 +569,26 @@ class ReleasePayloadRebaseAndBuildCli:
             outcome = KonfluxBuildOutcome.extract_from_pipelinerun_succeeded_condition(succeeded_condition)
             self._logger.info("PipelineRun %s completed with outcome %s", pipelinerun_info.name, outcome)
 
+            image_pullspec = output_image
+            if outcome is KonfluxBuildOutcome.SUCCESS:
+                results = pipelinerun_info.to_dict().get('status', {}).get('results', [])
+                image_url = next((r['value'] for r in results if r['name'] == 'IMAGE_URL'), None)
+                image_digest = next((r['value'] for r in results if r['name'] == 'IMAGE_DIGEST'), None)
+                if image_url and image_digest:
+                    if image_url != output_image or not image_digest.startswith("sha256:"):
+                        raise IOError(
+                            f"PipelineRun returned unexpected image result: IMAGE_URL={image_url}, "
+                            f"IMAGE_DIGEST={image_digest}"
+                        )
+                    image_pullspec = f"{self.image_repo}@{image_digest}"
+                elif not self.dry_run:
+                    raise IOError("PipelineRun succeeded but IMAGE_URL or IMAGE_DIGEST missing from results")
+
             await self._record_build(
                 build_repo=build_repo,
                 component_name=component_name,
                 arches=arches,
-                output_image=output_image,
+                image_pullspec=image_pullspec,
                 pipelinerun_url=url,
                 outcome=outcome,
                 start_time=start_time,
@@ -592,6 +607,7 @@ class ReleasePayloadRebaseAndBuildCli:
 
         return {
             "output_image": output_image,
+            "image_pullspec": image_pullspec,
             "pipelinerun_name": pipelinerun_info.name,
             "pipelinerun_url": url,
             "outcome": str(outcome),
@@ -602,7 +618,7 @@ class ReleasePayloadRebaseAndBuildCli:
         build_repo: BuildRepo,
         component_name: str,
         arches: Sequence[str],
-        output_image: str,
+        image_pullspec: str,
         pipelinerun_url: str,
         outcome: KonfluxBuildOutcome,
         start_time: datetime,
@@ -617,6 +633,9 @@ class ReleasePayloadRebaseAndBuildCli:
 
         Failures to record are logged and swallowed: a missing DB row shouldn't fail an
         otherwise-successful (or already-failed) build.
+
+        Successful builds store a digest-pinned pullspec so --nvr can replay the exact image
+        even after a later build moves the output tag.
         """
         if self.dry_run:
             self._logger.info("[DRY RUN] Would have recorded release payload build in Konflux DB")
@@ -647,7 +666,7 @@ class ReleasePayloadRebaseAndBuildCli:
                 end_time=datetime.now(tz=timezone.utc),
                 artifact_type=ArtifactType.IMAGE,
                 engine=Engine.KONFLUX,
-                image_pullspec=output_image,
+                image_pullspec=image_pullspec,
                 outcome=outcome,
                 art_job_url=os.getenv("BUILD_URL", "n/a"),
                 build_pipeline_url=pipelinerun_url,
@@ -663,15 +682,15 @@ class ReleasePayloadRebaseAndBuildCli:
         """Mirror the built release payload -- the manifest list and every per-arch member --
         to the release registry.
 
-        Konflux publishes the payload as a manifest list tagged in art-images
-        (``source_pullspec``). This resolves that tag to its manifest-list digest as well as
+        Konflux publishes the payload as a manifest list in art-images. This resolves
+        ``source_pullspec`` to its manifest-list digest as well as
         the digest of each per-arch member, and mirrors each of them individually into
         ``self.release_image_repo``. ``sync_to_quay`` tags each with its own ``sha256-<digest>``
         tag so quay does not garbage-collect it.
 
         :param source_pullspec: The pullspec to sync, tagged or digest-based (e.g.
-            ``repo:1.2.3-1`` from a fresh ``_build``, or a build record's ``image_pullspec``
-            when syncing an already-built payload by NVR).
+            a fresh ``_build`` result or a build record's ``image_pullspec`` when syncing
+            an already-built payload by NVR).
         :param arches: The arches Konflux built for this payload. Only used by the
             (currently disabled) promote-style tagging below.
         :return: A dict describing what was synced.
@@ -820,6 +839,11 @@ class ReleasePayloadRebaseAndBuildCli:
             raise DoozerFatalError(f"No successful Konflux build record found for release payload NVR {self.nvr}")
         if not build_record.image_pullspec:
             raise DoozerFatalError(f"Konflux build record for release payload NVR {self.nvr} has no image_pullspec")
+        if "@sha256:" not in build_record.image_pullspec:
+            raise DoozerFatalError(
+                f"Konflux build record for release payload NVR {self.nvr} has a mutable image tag "
+                f"({build_record.image_pullspec}); rebuild to record a digest-pinned pullspec"
+            )
 
         self._logger.info(
             "Resolved release payload NVR %s to pullspec %s; syncing to %s",
@@ -888,6 +912,7 @@ class ReleasePayloadRebaseAndBuildCli:
             "cvo_pullspec": cvo_pullspec,
             "pushed": False,
             "output_image": None,
+            "image_pullspec": None,
             "pipelinerun_name": None,
             "pipelinerun_url": None,
             "outcome": None,
@@ -918,7 +943,7 @@ class ReleasePayloadRebaseAndBuildCli:
             )
 
         if self.sync:
-            sync_result = await self._sync(result["output_image"], arches)
+            sync_result = await self._sync(result["image_pullspec"], arches)
             result.update(sync_result)
 
         return result

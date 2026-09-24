@@ -535,6 +535,14 @@ class TestBuild(unittest.IsolatedAsyncioTestCase):
         condition.status = "True" if succeeded else "False"
         condition.reason = reason
         completed_pipelinerun_info.find_condition.return_value = condition
+        completed_pipelinerun_info.to_dict.return_value = {
+            "status": {
+                "results": [
+                    {"name": "IMAGE_URL", "value": f"{self.cli.image_repo}:{self.cli.version}-{self.cli.release}"},
+                    {"name": "IMAGE_DIGEST", "value": "sha256:payload-digest"},
+                ]
+            }
+        }
         konflux_client.wait_for_pipelinerun = mock.AsyncMock(return_value=completed_pipelinerun_info)
         return konflux_client
 
@@ -558,6 +566,7 @@ class TestBuild(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(result["outcome"], str(KonfluxBuildOutcome.SUCCESS))
         self.assertEqual(result["output_image"], f"{self.cli.image_repo}:{self.cli.version}-{self.cli.release}")
+        self.assertEqual(result["image_pullspec"], f"{self.cli.image_repo}@sha256:payload-digest")
         self.assertEqual(result["pipelinerun_url"], "https://konflux.example.com/pipelinerun/1")
 
         self.runtime.konflux_db.bind.assert_called_once_with(KonfluxBuildRecord)
@@ -571,7 +580,7 @@ class TestBuild(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(record.arches, ["x86_64", "s390x"])
         self.assertFalse(record.embargoed)
         self.assertEqual(record.outcome, KonfluxBuildOutcome.SUCCESS)
-        self.assertEqual(record.image_pullspec, result["output_image"])
+        self.assertEqual(record.image_pullspec, result["image_pullspec"])
         self.assertEqual(record.build_pipeline_url, result["pipelinerun_url"])
         self.assertEqual(record.build_priority, int(RELEASE_PAYLOAD_BUILD_PRIORITY))
         self.assertEqual(record.nvr, f"release-payload-{self.cli.version}-{self.cli.release}")
@@ -1008,6 +1017,7 @@ class TestRun(unittest.IsolatedAsyncioTestCase):
 
         build_result = {
             "output_image": "quay.io/example/repo:4.21.1-1",
+            "image_pullspec": "quay.io/example/repo@sha256:payload-digest",
             "pipelinerun_name": "release-payload-abc123",
             "pipelinerun_url": "https://konflux.example.com/pipelinerun/1",
             "outcome": str(KonfluxBuildOutcome.SUCCESS),
@@ -1036,6 +1046,7 @@ class TestRun(unittest.IsolatedAsyncioTestCase):
 
         build_result = {
             "output_image": "quay.io/example/repo:4.21.1-1",
+            "image_pullspec": "quay.io/example/repo@sha256:payload-digest",
             "pipelinerun_name": "release-payload-abc123",
             "pipelinerun_url": "https://konflux.example.com/pipelinerun/1",
             "outcome": str(KonfluxBuildOutcome.SUCCESS),
@@ -1056,7 +1067,7 @@ class TestRun(unittest.IsolatedAsyncioTestCase):
         ):
             result = await self.cli.run()
 
-        mock_sync.assert_awaited_once_with(build_result["output_image"], ["x86_64", "s390x"])
+        mock_sync.assert_awaited_once_with(build_result["image_pullspec"], ["x86_64", "s390x"])
         self.assertTrue(result["synced"])
         self.assertEqual(result["release_pullspec"], sync_result["release_pullspec"])
 
@@ -1477,7 +1488,7 @@ class TestRebaseMulti(unittest.IsolatedAsyncioTestCase):
 
     @mock.patch("doozerlib.cli.release_payload.get_release_name_for_assembly", return_value="4.21.1")
     @mock.patch("doozerlib.cli.release_payload.BuildRepo")
-    async def test_rebase_multi_resolves_art_images_with_amd64_arch(self, mock_build_repo_class, mock_get_release_name):
+    async def test_rebase_multi_uses_source_cvo_manifest_list(self, mock_build_repo_class, mock_get_release_name):
         self._setup_mock_build_repo(mock_build_repo_class)
 
         with (
@@ -1499,7 +1510,9 @@ class TestRebaseMulti(unittest.IsolatedAsyncioTestCase):
         ):
             await self.cli._rebase_multi()
 
-        mock_resolve.assert_awaited_once_with("registry.example.com/cvo@sha256:cvodigest", arch='amd64')
+        mock_resolve.assert_not_awaited()
+        dockerfile_content = (self.repo_dir / "Dockerfile").read_text()
+        self.assertIn("FROM registry.example.com/cvo@sha256:cvodigest\n", dockerfile_content)
 
 
 class TestSyncMulti(unittest.IsolatedAsyncioTestCase):
@@ -1645,6 +1658,17 @@ class TestBuildMulti(unittest.IsolatedAsyncioTestCase):
         condition.reason = "Succeeded" if succeeded else "Error"
         condition.is_status_true.return_value = succeeded
         completed_info.find_condition.return_value = condition
+        completed_info.to_dict.return_value = {
+            "status": {
+                "results": [
+                    {
+                        "name": "IMAGE_URL",
+                        "value": f"{self.cli.image_repo}:{self.cli.version}-{self.cli.release}-multi",
+                    },
+                    {"name": "IMAGE_DIGEST", "value": "sha256:multi-payload-digest"},
+                ]
+            }
+        }
         konflux_client.wait_for_pipelinerun = mock.AsyncMock(return_value=completed_info)
         return konflux_client
 
@@ -1668,6 +1692,7 @@ class TestBuildMulti(unittest.IsolatedAsyncioTestCase):
 
         _, kwargs = konflux_client.start_pipeline_run_for_image_build.call_args
         self.assertEqual(kwargs["generate_name"], "release-payload-multi-4-21-1-")
+        self.assertEqual(kwargs["output_image"], f"{self.cli.image_repo}:{self.cli.version}-{self.cli.release}-multi")
 
 
 class TestRecordBuildMulti(unittest.IsolatedAsyncioTestCase):
@@ -1703,6 +1728,17 @@ class TestRecordBuildMulti(unittest.IsolatedAsyncioTestCase):
         condition.reason = "Succeeded"
         condition.is_status_true.return_value = True
         completed_info.find_condition.return_value = condition
+        completed_info.to_dict.return_value = {
+            "status": {
+                "results": [
+                    {
+                        "name": "IMAGE_URL",
+                        "value": f"{self.cli.image_repo}:{self.cli.version}-{self.cli.release}-multi",
+                    },
+                    {"name": "IMAGE_DIGEST", "value": "sha256:multi-payload-digest"},
+                ]
+            }
+        }
         konflux_client.wait_for_pipelinerun = mock.AsyncMock(return_value=completed_info)
         mock_konflux_client_class.from_kubeconfig.return_value = konflux_client
 
@@ -1711,6 +1747,7 @@ class TestRecordBuildMulti(unittest.IsolatedAsyncioTestCase):
         self.runtime.konflux_db.add_build.assert_called_once()
         record = self.runtime.konflux_db.add_build.call_args.args[0]
         self.assertEqual(record.name, RELEASE_PAYLOAD_MULTI_BUILD_RECORD_NAME)
+        self.assertEqual(record.image_pullspec, f"{self.cli.image_repo}@sha256:multi-payload-digest")
 
 
 if __name__ == "__main__":
