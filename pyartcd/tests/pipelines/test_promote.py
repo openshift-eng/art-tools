@@ -2381,6 +2381,8 @@ class TestPromoteSigningTransport(IsolatedAsyncioTestCase):
                 "REDIS_SERVER_PASSWORD": "redis-password",
                 "DIRECT_SIGNING_PROD_KEYTAB": "/path/to/prod-keytab",
                 "DIRECT_SIGNING_PROD_PRINCIPAL": "art-signing-prod@IPA.REDHAT.COM",
+                "DIRECT_SIGNING_STAGE_KEYTAB": "/path/to/stage-keytab",
+                "DIRECT_SIGNING_STAGE_PRINCIPAL": "art-signing-stage@IPA.REDHAT.COM",
             },
             clear=True,
         ):
@@ -2399,6 +2401,7 @@ class TestPromoteSigningTransport(IsolatedAsyncioTestCase):
             "direct",
             signing_env="prod",
             sig_keyname="redhatrelease2",
+            credential_env="prod",
             cert_file=None,
             key_file=None,
         )

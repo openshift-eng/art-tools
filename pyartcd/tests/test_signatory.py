@@ -440,7 +440,7 @@ class TestCreateSignatory(IsolatedAsyncioTestCase):
     async def test_create_signatory_uses_direct_transport(self, direct_signatory):
         create_signatory("direct", signing_env="prod", sig_keyname="redhatrelease2")
 
-        direct_signatory.assert_called_once_with(signing_env="prod", sig_keyname="redhatrelease2")
+        direct_signatory.assert_called_once_with(signing_env="prod", sig_keyname="redhatrelease2", credential_env=None)
 
 
 class TestSigstoreSignatory(IsolatedAsyncioTestCase):

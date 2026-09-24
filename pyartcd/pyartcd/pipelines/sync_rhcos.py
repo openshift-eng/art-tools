@@ -27,7 +27,12 @@ from artcommonlib.exectools import limit_concurrency
 from pyartcd import util
 from pyartcd.cli import cli, click_coroutine, pass_runtime
 from pyartcd.runtime import Runtime
-from pyartcd.signatory import create_signatory
+from pyartcd.signatory import (
+    PROD_SIGNING_KEY_NAME,
+    STAGE_SIGNING_KEY_NAME,
+    create_signatory,
+    get_direct_signing_credentials,
+)
 
 S3_BUCKET = "s3://art-srv-enterprise"
 
@@ -67,6 +72,9 @@ class SyncRhcosPipeline:
         self.staging_dir = Path(runtime.working_dir) / f"staging-{version}"
 
     async def run(self):
+        if self.signing_transport == "direct" and self.signing_env:
+            get_direct_signing_credentials(self.signing_env)
+
         self.logger.info(
             "Starting RHCOS sync: version=%s, build_id=%s, arch=%s, prefix=%s",
             self.version,
@@ -232,7 +240,7 @@ class SyncRhcosPipeline:
             self.logger.warning("SIGNING_CERT/SIGNING_KEY not set; skipping sha256sum.txt signing")
             return
 
-        sig_keyname = "redhatrelease2" if self.signing_env == "prod" else "beta2"
+        sig_keyname = PROD_SIGNING_KEY_NAME if self.signing_env == "prod" else STAGE_SIGNING_KEY_NAME
         sha256sum_path = self.staging_dir / "sha256sum.txt"
         gpg_path = self.staging_dir / "sha256sum.txt.gpg"
 

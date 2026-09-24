@@ -83,10 +83,12 @@ from pyartcd.oc import (
 from pyartcd.pipelines.advisory_drop import drop_advisory
 from pyartcd.runtime import GroupRuntime, Runtime
 from pyartcd.signatory import (
+    PROD_SIGNING_KEY_NAME,
+    STAGE_SIGNING_KEY_NAME,
     Signatory,
     SigstoreSignatory,
     create_signatory,
-    get_direct_signing_credential_env_names,
+    get_direct_signing_credentials,
 )
 
 yaml = YAML(typ="safe")
@@ -95,6 +97,21 @@ yaml.default_flow_style = False
 # Advisory impetuses that are legitimately empty and therefore droppable.
 # _fix_docs_after_advisory_drop dispatch must stay in sync with this set.
 _DROPPABLE_IMPETUSES: tuple[str, ...] = ("rpm", "rhcos")
+
+
+def _get_signing_profile_for_client(client_type: str) -> tuple[str, str]:
+    """
+    Returns the credential environment and signing key name for a client type.
+
+    Args:
+        client_type: Release client type, such as ``ocp`` or ``ocp-dev-preview``.
+    Return Value(s):
+        A tuple containing the credential environment and signing key name.
+    """
+    if client_type == "ocp":
+        return "prod", PROD_SIGNING_KEY_NAME
+    return "stage", STAGE_SIGNING_KEY_NAME
+
 
 # YAML handler for shipment config dumping
 shipment_yaml = YAML()
@@ -201,8 +218,6 @@ class PromotePipeline:
             required_vars += ["REDIS_SERVER_PASSWORD"]
             if self.signing_transport == "umb":
                 required_vars += ["SIGNING_CERT", "SIGNING_KEY"]
-            else:
-                required_vars += list(get_direct_signing_credential_env_names(self.signing_env))
         if not self.skip_sigstore:
             required_vars += ["KMS_CRED_FILE", "KMS_KEY_ID"]
         if not self.skip_build_microshift:
@@ -271,6 +286,17 @@ class PromotePipeline:
 
         # Get release name
         assembly_type = util.get_assembly_type(releases_config, self.assembly)
+        client_type = "ocp"
+        if (assembly_type == AssemblyTypes.CANDIDATE and not self.assembly.startswith("rc.")) or assembly_type in [
+            AssemblyTypes.CUSTOM,
+            AssemblyTypes.PREVIEW,
+        ]:
+            client_type = "ocp-dev-preview"
+
+        if not self.skip_signing and self.signing_transport == "direct":
+            credential_env, _ = _get_signing_profile_for_client(client_type)
+            get_direct_signing_credentials(credential_env, dry_run=self.runtime.dry_run)
+
         release_name = util.get_release_name_for_assembly(self.group, releases_config, self.assembly)
         # Ensure release name is valid
         if not VersionInfo.is_valid(release_name):
@@ -612,11 +638,6 @@ class PromotePipeline:
                     self._logger.info("Advisory image list sent.")
 
                 # extract client binaries
-                client_type = "ocp"
-                if (
-                    assembly_type == AssemblyTypes.CANDIDATE and not self.assembly.startswith('rc.')
-                ) or assembly_type in [AssemblyTypes.CUSTOM, AssemblyTypes.PREVIEW]:
-                    client_type = "ocp-dev-preview"
                 message_digests = []
                 if not self.skip_mirror_binaries:
                     message_digests = await self.extract_and_publish_clients(client_type, release_infos)
@@ -830,7 +851,7 @@ class PromotePipeline:
             raise ValueError("--signing-env is missing")
         cert_file = os.environ.get("SIGNING_CERT")
         key_file = os.environ.get("SIGNING_KEY")
-        sig_keyname = "redhatrelease2" if client_type == 'ocp' else "beta2"
+        credential_env, sig_keyname = _get_signing_profile_for_client(client_type)
         self._logger.info("About to sign artifacts with key %s", sig_keyname)
         json_digest_sig_dir = self._working_dir / "json_digests"
         message_digest_sig_dir = self._working_dir / "message_digests"
@@ -840,6 +861,7 @@ class PromotePipeline:
             self.signing_transport,
             signing_env=self.signing_env,
             sig_keyname=sig_keyname,
+            credential_env=credential_env,
             cert_file=cert_file,
             key_file=key_file,
         ) as signatory:
