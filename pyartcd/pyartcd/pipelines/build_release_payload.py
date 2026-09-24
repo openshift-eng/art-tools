@@ -1,3 +1,4 @@
+import asyncio
 import json
 import os
 from datetime import datetime, timezone
@@ -67,6 +68,7 @@ class BuildReleasePayloadPipeline:
         self.skip_checks = skip_checks
         self.dry_run = dry_run
         self.multi = multi
+        self.doozer_working = f"{runtime.doozer_working}_multi" if multi else runtime.doozer_working
         self._logger = runtime.logger
 
     def _check_environment_variables(self):
@@ -84,7 +86,7 @@ class BuildReleasePayloadPipeline:
             "doozer",
             f"--group={self.group}",
             f"--assembly={self.assembly}",
-            f"--working-dir={self.runtime.doozer_working}",
+            f"--working-dir={self.doozer_working}",
         ]
         if self.data_path:
             cmd.append(f"--data-path={self.data_path}")
@@ -125,10 +127,15 @@ class BuildReleasePayloadPipeline:
             cmd.append("--dry-run")
 
         self._logger.info("Running doozer command: %s", " ".join(cmd))
-        await exectools.cmd_assert_async(cmd)
+        # Each build has its own template cache as well as its own Doozer working directory.
+        # The template repository cache uses a process-local lock, so concurrent Doozer
+        # processes must not clone into the same cache path.
+        doozer_env = os.environ.copy()
+        doozer_env["DOOZER_CACHE_DIR"] = os.path.join(self.doozer_working, "cache")
+        await exectools.cmd_assert_async(cmd, env=doozer_env)
 
         result_filename = 'release-payload-multi-result.json' if self.multi else 'release-payload-result.json'
-        result_path = Path(self.runtime.doozer_working, result_filename)
+        result_path = Path(self.doozer_working, result_filename)
         if not result_path.exists():
             raise RuntimeError(f"doozer did not produce result file at {result_path}")
         try:
@@ -257,9 +264,9 @@ class BuildReleasePayloadPipeline:
     "--multi",
     is_flag=True,
     default=False,
-    help="Build a heterogeneous (multi-arch) release payload. Sources from the ocp-multi "
-    "ImageStream built by build-sync. Pushed to a separate branch and built as a separate "
-    "Konflux Component from the homogeneous payload.",
+    help="Build only the heterogeneous (multi-arch) release payload. By default a new build "
+    "rebases and builds both homogeneous and heterogeneous payloads in parallel. With --nvr, "
+    "selects the multi payload for sync.",
 )
 @click.option(
     "--sync",
@@ -340,11 +347,11 @@ async def build_release_payload(
     skip_checks: bool,
     dry_run: bool,
 ):
-    """Build and cosign a release payload image for a given assembly.
+    """Build and cosign release payload images for a given assembly.
 
-    In the normal path, calls `doozer beta:release-payload:rebase-and-build --push [--sync]`
-    to rebase, build, and optionally mirror the release payload, then cosigns each synced
-    digest using sigstore/cosign.
+    By default, rebases and builds the homogeneous and heterogeneous payloads in parallel
+    using one release value. --multi selects only the heterogeneous payload. Each build can
+    optionally mirror and cosign its own digests.
 
     With --nvr, skips rebase and build entirely: looks up the already-built payload by NVR,
     syncs it to --release-image-repo, and cosigns it. This is safe to re-run — existing
@@ -356,23 +363,42 @@ async def build_release_payload(
       REKOR_URL      -- Rekor transparency log URL (optional)
       QUAY_AUTH_FILE -- registry auth file for quay.io
     """
-    pipeline = BuildReleasePayloadPipeline(
-        runtime=runtime,
-        group=group,
-        assembly=assembly,
-        nvr=nvr,
-        release=release,
-        version=version,
-        arch=arch,
-        sync=sync,
-        konflux_kubeconfig=konflux_kubeconfig,
-        konflux_namespace=konflux_namespace,
-        release_image_repo=release_image_repo,
-        data_path=data_path,
-        registry_config=registry_config,
-        skip_cosign=skip_cosign,
-        skip_checks=skip_checks,
-        dry_run=dry_run,
-        multi=multi,
-    )
-    await pipeline.run()
+    if not nvr and not release:
+        release = _default_release()
+
+    modes = (multi,) if nvr or multi else (False, True)
+    pipelines = [
+        BuildReleasePayloadPipeline(
+            runtime=runtime,
+            group=group,
+            assembly=assembly,
+            nvr=nvr,
+            release=release,
+            version=version,
+            arch=arch,
+            sync=sync,
+            konflux_kubeconfig=konflux_kubeconfig,
+            konflux_namespace=konflux_namespace,
+            release_image_repo=release_image_repo,
+            data_path=data_path,
+            registry_config=registry_config,
+            skip_cosign=skip_cosign,
+            skip_checks=skip_checks,
+            dry_run=dry_run,
+            multi=mode,
+        )
+        for mode in modes
+    ]
+    if len(pipelines) == 1:
+        await pipelines[0].run()
+        return
+
+    results = await asyncio.gather(*(pipeline.run() for pipeline in pipelines), return_exceptions=True)
+    failures = [
+        ("multi" if pipeline.multi else "homogeneous", result)
+        for pipeline, result in zip(pipelines, results)
+        if isinstance(result, Exception)
+    ]
+    if failures:
+        details = "; ".join(f"{mode}: {error}" for mode, error in failures)
+        raise RuntimeError(f"Release payload build failed: {details}") from failures[0][1]

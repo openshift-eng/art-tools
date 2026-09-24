@@ -651,6 +651,7 @@ class ReleasePayloadRebaseAndBuildCli:
             record = KonfluxBuildRecord(
                 name=RELEASE_PAYLOAD_MULTI_BUILD_RECORD_NAME if self.multi else RELEASE_PAYLOAD_BUILD_RECORD_NAME,
                 group=runtime.group,
+                build_variant=runtime.variant,
                 version=self.version.lstrip("v"),
                 release=self.release,
                 assembly=str(runtime.assembly),
