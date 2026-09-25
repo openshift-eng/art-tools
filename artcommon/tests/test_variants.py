@@ -18,6 +18,7 @@ class TestProductId(unittest.TestCase):
             "cert-manager": ProductId.CERT_MANAGER,
             "cluster-observability-operator": ProductId.COO,
             "external-secrets-operator": ProductId.EXTERNAL_SECRETS,
+            "kueue-operator": ProductId.KUEUE,
             "multicluster-engine": ProductId.MCE,
             "openshift-logging": ProductId.LOGGING,
             "mta": ProductId.MTA,
