@@ -28,7 +28,7 @@ class ProductId(Enum):
     MTC = "rhmtc"
     OADP = "oadp"
     OC_MIRROR = "oc-mirror"
-    MIRROR_GUI = "mirror-gui"
+    MIRROR_GUI = "mirror_gui"
     RHOSDT = "openshift-opentelemetry-operator"
     ZERO_TRUST = "zero-trust-workload-identity-manager"
     SUPPLEMENTAL_TOOLS = "supplemental-tools"
