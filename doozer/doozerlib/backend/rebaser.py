@@ -1272,9 +1272,7 @@ class KonfluxRebaser:
         else:
             # "v4.20.0" -> "4.20", "v4.20" -> "4.20"
             version_parts = version.lstrip('v').split('.')
-            cleaned_version = (
-                f"{version_parts[0]}.{version_parts[1]}" if len(version_parts) >= 2 else version_parts[0]
-            )
+            cleaned_version = f"{version_parts[0]}.{version_parts[1]}" if len(version_parts) >= 2 else version_parts[0]
         # "202509030239.p2.gfe588cb.assembly.stream.el9" -> "el9"
         rhel_version = release.split(".")[-1]
         product = self._runtime.group_config.product if self._runtime.group_config.product else "openshift"
