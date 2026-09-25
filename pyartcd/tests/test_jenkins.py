@@ -123,3 +123,53 @@ class TestJenkinsStartBuild(unittest.TestCase):
         self.assertEqual(start_build_mock.call_args.kwargs["job"], Jobs.BUILD_CONFORMA_VERIFY)
         self.assertEqual(params["GROUP"], "oadp-1.5")
         self.assertNotIn("BUILD_VERSION", params)
+
+    @mock.patch("pyartcd.jenkins.start_build")
+    def test_start_olm_bundle_konflux_without_force_release(self, start_build_mock):
+        jenkins.start_olm_bundle_konflux(
+            build_version='4.18',
+            assembly='stream',
+            operator_nvrs=['op-1-1', 'op-2-1'],
+            group='openshift-4.18',
+        )
+
+        params = start_build_mock.call_args.kwargs["params"]
+        self.assertEqual(start_build_mock.call_args.kwargs["job"], Jobs.OLM_BUNDLE_KONFLUX)
+        self.assertNotIn('FORCE_RELEASE', params)
+        self.assertEqual(params['OPERATOR_NVRS'], 'op-1-1,op-2-1')
+        self.assertEqual(params['GROUP'], 'openshift-4.18')
+
+    @mock.patch("pyartcd.jenkins.start_build")
+    def test_start_olm_bundle_konflux_with_force_release(self, start_build_mock):
+        jenkins.start_olm_bundle_konflux(
+            build_version='4.18',
+            assembly='stream',
+            operator_nvrs=['op-1-1'],
+            group='openshift-4.18',
+            force_release=True,
+        )
+
+        params = start_build_mock.call_args.kwargs["params"]
+        self.assertEqual(start_build_mock.call_args.kwargs["job"], Jobs.OLM_BUNDLE_KONFLUX)
+        self.assertEqual(params['FORCE_RELEASE'], 'true')
+        self.assertEqual(params['OPERATOR_NVRS'], 'op-1-1')
+
+    @mock.patch("pyartcd.jenkins.start_build")
+    def test_start_olm_bundle_konflux_force_release_false_no_param(self, start_build_mock):
+        jenkins.start_olm_bundle_konflux(
+            build_version='4.18',
+            assembly='stream',
+            operator_nvrs=['op-1-1'],
+            force_release=False,
+        )
+
+        params = start_build_mock.call_args.kwargs["params"]
+        self.assertNotIn('FORCE_RELEASE', params)
+
+    def test_start_olm_bundle_konflux_empty_nvrs_returns_none(self):
+        result = jenkins.start_olm_bundle_konflux(
+            build_version='4.18',
+            assembly='stream',
+            operator_nvrs=[],
+        )
+        self.assertIsNone(result)
