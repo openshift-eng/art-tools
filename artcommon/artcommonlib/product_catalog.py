@@ -209,6 +209,7 @@ PRODUCT_CATALOG: tuple[ProductConfig, ...] = (
     ),
     ProductConfig(
         product_id=ProductId.MIRROR_GUI,
+        aliases=("mirror-gui",),
         namespace="ocp-art-tenant",
         kubeconfig_env="KONFLUX_SA_KUBECONFIG",
         conforma_stage_policies=ConformaPolicies(

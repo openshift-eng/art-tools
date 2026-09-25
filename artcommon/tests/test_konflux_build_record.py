@@ -101,6 +101,11 @@ class TestKonfluxBuild(TestCase):
             record = KonfluxBuildRecord(build_variant=value)
             self.assertIs(record.build_variant, expected, f'{value!r} was not preserved')
 
+    def test_build_variant_unknown_raises_value_error(self):
+        """An unknown value not in the enum or catalog must raise ValueError."""
+        with self.assertRaises(ValueError):
+            KonfluxBuildRecord(build_variant='totally-unknown-product')
+
     def test_build_id_omits_none_variant_but_includes_present_variant(self):
         default_record = KonfluxBuildRecord()
         variant_record = KonfluxBuildRecord(build_variant=BuildVariant.OADP)
