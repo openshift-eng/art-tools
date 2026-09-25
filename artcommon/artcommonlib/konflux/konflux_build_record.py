@@ -159,10 +159,13 @@ class KonfluxRecord:
         self.schema_level = schema_level
         self.build_component = build_component
         self.build_priority = build_priority
+        # Temporary: BQ has "mirror-gui" but ProductId uses "mirror_gui"
         self.build_variant = (
             build_variant
             if build_variant is None or isinstance(build_variant, BuildVariant)
-            else BuildVariant(build_variant.replace('-', '_'))
+            else BuildVariant(
+                "mirror_gui" if build_variant == "mirror-gui" else build_variant
+            )
         )
         # A build will correspond to multiple records, as Doozer will first create a build record with PENDING state.
         # Once the pipeline completed, a new record will be created for the same build, with the final build outcome.
