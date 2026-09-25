@@ -163,9 +163,7 @@ class KonfluxRecord:
         self.build_variant = (
             build_variant
             if build_variant is None or isinstance(build_variant, BuildVariant)
-            else BuildVariant(
-                "mirror_gui" if build_variant == "mirror-gui" else build_variant
-            )
+            else BuildVariant("mirror_gui" if build_variant == "mirror-gui" else build_variant)
         )
         # A build will correspond to multiple records, as Doozer will first create a build record with PENDING state.
         # Once the pipeline completed, a new record will be created for the same build, with the final build outcome.
