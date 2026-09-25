@@ -26,6 +26,10 @@ class TestRebaser(TestCase):
         """Resolve known CPE product names through the shared registry."""
         self.assertEqual(_get_cpe_product_name("rhacm2"), "acm")
 
+    def test_cpe_product_name_rhosdt(self):
+        """RHOSDT uses explicit cpe_product_name for distributed tracing."""
+        self.assertEqual(_get_cpe_product_name("openshift-opentelemetry-operator"), "openshift_distributed_tracing")
+
     def test_cpe_product_name_preserves_unknown_product(self):
         """Preserve the raw product name when no CPE mapping exists."""
         self.assertEqual(_get_cpe_product_name("unknown-product"), "unknown-product")

@@ -25,7 +25,13 @@ from artcommonlib.konflux.konflux_build_record import Engine, KonfluxBuildRecord
 from artcommonlib.model import ListModel, Missing, Model
 from artcommonlib.product_catalog import find_product_config
 from artcommonlib.telemetry import start_as_current_span_async
-from artcommonlib.util import deep_merge, detect_package_managers, is_cachito_enabled, oc_image_info_for_arch_async
+from artcommonlib.util import (
+    deep_merge,
+    detect_package_managers,
+    is_cachito_enabled,
+    oc_image_info_for_arch_async,
+    product_version_from_group_name,
+)
 from artcommonlib.variants import BuildVariant
 from dockerfile_parse import DockerfileParser
 from doozerlib import constants, util
@@ -1257,9 +1263,16 @@ class KonfluxRebaser:
         # The vendor should always be Red Hat, Inc.
         dfp.labels["vendor"] = "Red Hat, Inc."
 
-        # "v4.20.0" -> "4.20", "v4.20" -> "4.20"
-        version_parts = version.lstrip('v').split('.')
-        cleaned_version = f"{version_parts[0]}.{version_parts[1]}" if len(version_parts) >= 2 else version_parts[0]
+        # Derive the CPE version from the group name (e.g. "rhosdt-3.11" -> "3.11",
+        # "openshift-4.22" -> "4.22"). Falls back to the version field for groups
+        # whose name does not encode a MAJOR.MINOR suffix.
+        group_version = product_version_from_group_name(self._runtime.group)
+        if group_version is not None:
+            cleaned_version = f"{group_version[0]}.{group_version[1]}"
+        else:
+            # "v4.20.0" -> "4.20", "v4.20" -> "4.20"
+            version_parts = version.lstrip('v').split('.')
+            cleaned_version = f"{version_parts[0]}.{version_parts[1]}" if len(version_parts) >= 2 else version_parts[0]
         # "202509030239.p2.gfe588cb.assembly.stream.el9" -> "el9"
         rhel_version = release.split(".")[-1]
         product = self._runtime.group_config.product if self._runtime.group_config.product else "openshift"
