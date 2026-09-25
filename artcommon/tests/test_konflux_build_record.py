@@ -85,6 +85,27 @@ class TestKonfluxBuild(TestCase):
         self.assertIs(string_record.build_variant, BuildVariant.OADP)
         self.assertEqual(enum_record.to_dict()['build_variant'], 'oadp')
 
+    def test_build_variant_mirror_gui_hyphen_normalization(self):
+        """BQ stores 'mirror-gui' but ProductId uses 'mirror_gui'."""
+        record = KonfluxBuildRecord(build_variant='mirror-gui')
+        self.assertIs(record.build_variant, BuildVariant.MIRROR_GUI)
+        self.assertEqual(record.to_dict()['build_variant'], 'mirror_gui')
+
+    def test_build_variant_preserves_legitimate_hyphens(self):
+        """Hyphenated ProductId values like 'cert-manager' must not be altered."""
+        for value, expected in (
+            ('cert-manager', BuildVariant.CERT_MANAGER),
+            ('cluster-observability-operator', BuildVariant.COO),
+            ('oc-mirror', BuildVariant.OC_MIRROR),
+        ):
+            record = KonfluxBuildRecord(build_variant=value)
+            self.assertIs(record.build_variant, expected, f'{value!r} was not preserved')
+
+    def test_build_variant_unknown_raises_value_error(self):
+        """An unknown value not in the enum or catalog must raise ValueError."""
+        with self.assertRaises(ValueError):
+            KonfluxBuildRecord(build_variant='totally-unknown-product')
+
     def test_build_id_omits_none_variant_but_includes_present_variant(self):
         default_record = KonfluxBuildRecord()
         variant_record = KonfluxBuildRecord(build_variant=BuildVariant.OADP)
