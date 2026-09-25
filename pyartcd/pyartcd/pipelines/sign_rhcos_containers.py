@@ -127,9 +127,12 @@ class SignRhcosContainersPipeline:
 
         return True
 
-    def run(self):
-        """
-        Run the pipeline.
+    async def async_run(self):
+        """Run the pipeline asynchronously.
+
+        Use this method when calling from an already-running async event loop
+        (e.g. from rhcos_sync). The sync ``run()`` method wraps this with
+        ``asyncio.run()`` for use from synchronous CLI entry points.
         """
         self.logger.info(f"Signing RHCOS containers from {self.rhcos_file} ({self.arch})")
         self.logger.info(f"Signing environment: {self.signing_env}")
@@ -145,12 +148,20 @@ class SignRhcosContainersPipeline:
             )
             return
 
-        success = asyncio.run(self._sign_containers(container_images))
+        success = await self._sign_containers(container_images)
 
         if not success:
             raise RuntimeError("Failed to sign one or more RHCOS container images")
 
         self.logger.info("RHCOS container signing complete")
+
+    def run(self):
+        """Run the pipeline synchronously (CLI entry point).
+
+        Wraps ``async_run()`` with ``asyncio.run()`` for use from the
+        synchronous ``sign-rhcos-containers`` CLI command.
+        """
+        asyncio.run(self.async_run())
 
 
 @cli.command("sign-rhcos-containers", help="Sign RHCOS container images with Sigstore/cosign")

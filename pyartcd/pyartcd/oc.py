@@ -176,6 +176,94 @@ def extract_release_client_tools(
     common_oc_wrapper("extract_tools", "adm", args, True, False, registry_config=registry_config)
 
 
+@retry(reraise=True, stop=stop_after_attempt(3))
+async def get_release_image_pullspec_async(
+    release_pullspec: str, image: str, registry_config: Optional[str] = None
+) -> str:
+    """Get the pullspec for a component image within a release payload.
+
+    Equivalent to: oc adm release info --image-for=<image> <release_pullspec>
+
+    Args:
+        release_pullspec: Release payload pullspec (e.g. quay.io/openshift-release-dev/ocp-release:4.19.0-x86_64)
+        image: Component image name (e.g. "installer")
+        registry_config: Optional path to a Docker config.json for registry auth
+
+    Returns:
+        The pullspec of the requested component image.
+
+    Raises:
+        RuntimeError: If the oc command fails.
+    """
+    cmd = ["oc", "adm", "release", "info", f"--image-for={image}"]
+    if registry_config:
+        cmd.append(f"--registry-config={registry_config}")
+    cmd.append(release_pullspec)
+    env = os.environ.copy()
+    env["GOTRACEBACK"] = "all"
+    rc, stdout, stderr = await exectools.cmd_gather_async(cmd, check=False, env=env)
+    if rc != 0:
+        raise RuntimeError(f"Error running {cmd}: exit_code={rc}, stdout={stdout}, stderr={stderr}")
+    return stdout.strip()
+
+
+@retry(reraise=True, stop=stop_after_attempt(3))
+async def extract_release_image_async(
+    image_pullspec: str, src_path: str, dest_dir: str, registry_config: Optional[str] = None
+) -> None:
+    """Extract files from a container image to a local directory.
+
+    Equivalent to: oc image extract --confirm --path <src_path>:<dest_dir> <image_pullspec>
+
+    Args:
+        image_pullspec: Image to extract from.
+        src_path: Path inside the container image (e.g. "/manifests/").
+        dest_dir: Local destination directory.
+        registry_config: Optional path to a Docker config.json for registry auth.
+
+    Raises:
+        RuntimeError: If the oc command fails.
+    """
+    cmd = ["oc", "image", "extract", "--confirm", f"--path={src_path}:{dest_dir}"]
+    if registry_config:
+        cmd.append(f"--registry-config={registry_config}")
+    cmd.append(image_pullspec)
+    env = os.environ.copy()
+    env["GOTRACEBACK"] = "all"
+    rc, stdout, stderr = await exectools.cmd_gather_async(cmd, check=False, env=env)
+    if rc != 0:
+        raise RuntimeError(f"Error running {cmd}: exit_code={rc}, stdout={stdout}, stderr={stderr}")
+
+
+@retry(reraise=True, stop=stop_after_attempt(3))
+async def get_release_info_template_async(pullspec: str, template: str, registry_config: Optional[str] = None) -> str:
+    """Get release info using a Go template.
+
+    Equivalent to: oc adm release info -o template --template '<template>' <pullspec>
+
+    Args:
+        pullspec: Release payload pullspec.
+        template: Go template string (e.g. '{{ .metadata.version }}').
+        registry_config: Optional path to a Docker config.json for registry auth.
+
+    Returns:
+        The rendered template output.
+
+    Raises:
+        RuntimeError: If the oc command fails.
+    """
+    cmd = ["oc", "adm", "release", "info", "-o", "template", f"--template={template}"]
+    if registry_config:
+        cmd.append(f"--registry-config={registry_config}")
+    cmd.append(pullspec)
+    env = os.environ.copy()
+    env["GOTRACEBACK"] = "all"
+    rc, stdout, stderr = await exectools.cmd_gather_async(cmd, check=False, env=env)
+    if rc != 0:
+        raise RuntimeError(f"Error running {cmd}: exit_code={rc}, stdout={stdout}, stderr={stderr}")
+    return stdout.strip()
+
+
 def extract_baremetal_installer(
     release_pullspec: str,
     path: str,
