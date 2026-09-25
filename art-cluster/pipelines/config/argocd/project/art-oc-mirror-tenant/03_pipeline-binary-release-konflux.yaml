@@ -12,6 +12,7 @@ spec:
     description: 'ocp-build-data group branch for this product'
     enum:
     - oc-mirror-2.0
+    - mirror-gui-1.0
     name: group
     type: string
   - default: stream
@@ -89,7 +90,7 @@ spec:
             os.environ["ART_TOOLS_COMMIT"] = art_tools_commit
 
         group = "$(params.group)"
-        allowed_groups = {"oc-mirror-2.0"}
+        allowed_groups = {"oc-mirror-2.0", "mirror-gui-1.0"}
         if group not in allowed_groups:
             raise ValueError(
                 f"Group '{group}' is not valid for this product. "
