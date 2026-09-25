@@ -78,6 +78,34 @@ shipment:
         self.mock_diff = Mock()
         self.mock_file_content = Mock()
 
+    def test_get_shipment_config_records_accepts_product_alias(self):
+        """Product aliases expand record lookup for a canonical product."""
+        self.mock_mr.source_branch = "test-branch"
+        self.mock_diff_info.id = "diff-id"
+        self.mock_mr.diffs.list.return_value = [self.mock_diff_info]
+        self.mock_mr.diffs.get.return_value = self.mock_diff
+        self.mock_diff.diffs = [
+            {
+                'new_path': 'shipment/logging/logging-6.6/fbc-logging-6-6/prod/6.6.1.fbc.yaml',
+                'old_path': None,
+            }
+        ]
+        alias_content = self.sample_yaml_content.replace('product: "test-product"', 'product: "logging"')
+        self.mock_file_content.decode.return_value.decode.return_value = alias_content
+        self.mock_source_project.files.get.return_value = self.mock_file_content
+
+        records = shipment_utils.get_shipment_config_records(
+            self.mock_mr,
+            self.mock_source_project,
+            kinds=None,
+            product='openshift-logging',
+            product_aliases=('logging',),
+            environment='prod',
+        )
+
+        self.assertEqual(len(records), 1)
+        self.assertEqual(records[0].config.shipment.metadata.product, 'logging')
+
     @patch('artcommonlib.gitlab.gitlab.Gitlab')
     @patch.dict(os.environ, {'GITLAB_TOKEN': 'test-token'})
     def test_get_shipment_configs_by_kind_multiple_kinds(self, mock_gitlab_class):

@@ -140,6 +140,7 @@ def test_gitlab_concurrency_blocks_same_product_active_prod():
             project,
             kinds=None,
             product='openshift-logging',
+            product_aliases=('logging',),
             environment='prod',
         )
         client.list_merge_requests.assert_called_once_with(

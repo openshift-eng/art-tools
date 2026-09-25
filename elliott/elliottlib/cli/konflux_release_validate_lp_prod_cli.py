@@ -196,6 +196,7 @@ class ValidateLpProdCli:
                 GitLab state cannot be classified safely.
         """
         gitlab_client = GitLabClient.from_url(self.mr_url)
+        product_aliases = get_product_config(product).aliases
         project_path, current_iid = gitlab_client._parse_mr_url(self.mr_url)
         project = gitlab_client.get_project(project_path)
         source_projects = {project.id: project}
@@ -215,6 +216,7 @@ class ValidateLpProdCli:
                 source_projects[source_project_id],
                 kinds=None,
                 product=product,
+                product_aliases=product_aliases,
                 environment='prod',
             )
             if not records:

@@ -414,6 +414,7 @@ def get_shipment_config_records(
     group: str | None = None,
     product: str | None = None,
     environment: str | None = None,
+    product_aliases: Iterable[str] = (),
 ) -> list[ShipmentConfigRecord]:
     """Fetch validated shipment configuration records from loaded GitLab objects.
 
@@ -427,8 +428,10 @@ def get_shipment_config_records(
         kinds: Shipment kinds to include. ``None`` includes every shipment
             YAML path, including binary and product-specific kinds.
         group: Optional exact group path segment.
-        product: Optional exact product path segment and metadata value.
+        product: Optional canonical product path segment and metadata value.
         environment: Optional environment path segment, such as ``prod``.
+        product_aliases: Additional product names accepted while locating and
+            validating records for ``product``.
 
     Returns:
         Matching path-aware shipment configuration records.
@@ -437,6 +440,7 @@ def get_shipment_config_records(
         ValueError: If a matching path disagrees with parsed shipment metadata.
     """
     records: list[ShipmentConfigRecord] = []
+    accepted_products = {product, *product_aliases} if product else set()
     diff_versions = mr.diffs.list(all=True)
     if not diff_versions:
         return records
@@ -450,7 +454,7 @@ def get_shipment_config_records(
         if product or group or environment:
             if len(path_parts) < 4 or path_parts[0] != "shipment":
                 continue
-            if product and path_parts[1] != product:
+            if product and path_parts[1] not in accepted_products:
                 continue
             if group and path_parts[2] != group:
                 continue
@@ -466,7 +470,7 @@ def get_shipment_config_records(
         content = file_content.decode().decode('utf-8')
         yaml_data = Model(yaml.load(content)).primitive()
         shipment_config = ShipmentConfig(**yaml_data)
-        if product and shipment_config.shipment.metadata.product != product:
+        if product and shipment_config.shipment.metadata.product not in accepted_products:
             raise ValueError(
                 f"Shipment path {file_path} belongs to product {product!r}, but metadata declares "
                 f"{shipment_config.shipment.metadata.product!r}"
