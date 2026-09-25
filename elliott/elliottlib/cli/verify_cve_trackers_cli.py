@@ -144,8 +144,8 @@ async def verify_cve_trackers(runtime, permissive: bool = True) -> VerifyCVETrac
     if not advisories:
         LOGGER.warning("No advisory IDs found in assembly config")
 
-    # Collect jira issues from RHSA advisories
-    rhsa_jira_issues: set[str] = set()
+    # Collect jira issues from RHSA advisories, per kind
+    rhsa_jira_issues_by_kind: dict[str, set[str]] = {}
     for impetus, advisory_id in advisories.items():
         raw = await asyncio.to_thread(errata.get_raw_erratum, advisory_id)
         if "rhsa" not in raw.get("errata", {}):
@@ -153,28 +153,31 @@ async def verify_cve_trackers(runtime, permissive: bool = True) -> VerifyCVETrac
             continue
         issues = await get_advisory_jira_issues(advisory_id)
         LOGGER.info("Advisory %s (%s): RHSA, found %d jira issues", advisory_id, impetus, len(issues))
-        rhsa_jira_issues.update(issues)
+        rhsa_jira_issues_by_kind[impetus] = issues
 
-    # Build set of CVE IDs already covered by RHSA advisory bugs
-    rhsa_covered_cves: Set[str] = set()
-    if rhsa_jira_issues:
-        bug_tracker = runtime.get_bug_tracker("jira")
-        advisory_bugs = await asyncio.to_thread(bug_tracker.get_bugs, list(rhsa_jira_issues), True)
-        for bug in advisory_bugs:
-            if bug.cve_id:
-                rhsa_covered_cves.add(bug.cve_id)
-        LOGGER.info("RHSA advisories cover %d unique CVEs", len(rhsa_covered_cves))
+    # Build set of CVE IDs covered per kind from RHSA advisory bugs
+    rhsa_covered_cves_by_kind: dict[str, Set[str]] = {}
+    bug_tracker = runtime.get_bug_tracker("jira")
+    for kind, jira_issues in rhsa_jira_issues_by_kind.items():
+        if not jira_issues:
+            continue
+        advisory_bugs = await asyncio.to_thread(bug_tracker.get_bugs, list(jira_issues), True)
+        covered_cves = {b.cve_id for b in advisory_bugs if b.cve_id}
+        rhsa_covered_cves_by_kind[kind] = covered_cves
+        LOGGER.info("RHSA advisory for %s covers %d unique CVEs", kind, len(covered_cves))
 
     # Cross-check CVE trackers against RHSA advisories (for rpm and rhcos kinds)
     advisory_kinds = ("rpm", "rhcos")
     for kind in advisory_kinds:
         trackers = cve_trackers_by_kind.get(kind, [])
+        kind_jira_issues = rhsa_jira_issues_by_kind.get(kind, set())
+        kind_covered_cves = rhsa_covered_cves_by_kind.get(kind, set())
         for bug in trackers:
-            if bug.id in rhsa_jira_issues:
+            if bug.id in kind_jira_issues:
                 continue
-            if bug.cve_id and bug.cve_id in rhsa_covered_cves:
+            if bug.cve_id and bug.cve_id in kind_covered_cves:
                 LOGGER.info(
-                    "CVE tracker %s (kind=%s) not on advisory, but %s is covered by another tracker — skipping",
+                    "CVE tracker %s (kind=%s) not on advisory, but %s is covered by another tracker on the same advisory — skipping",
                     bug.id,
                     kind,
                     bug.cve_id,
@@ -192,6 +195,12 @@ async def verify_cve_trackers(runtime, permissive: bool = True) -> VerifyCVETrac
 
         # Only check kinds that go through the shipment flow, not advisory-only kinds (e.g. rhcos, rpm)
         shipment_advisory_kinds = get_shipment_kinds(runtime)
+        if not shipment_advisory_kinds:
+            # Shipment MR exists but no kinds configured — fall back to all non-advisory kinds
+            LOGGER.warning(
+                "Shipment MR exists but no shipment advisory kinds configured — falling back to all non-advisory kinds"
+            )
+            shipment_advisory_kinds = {k for k in cve_trackers_by_kind if k not in advisory_kinds}
         LOGGER.info("Shipment advisory kinds: %s", sorted(shipment_advisory_kinds))
 
         for kind, trackers in cve_trackers_by_kind.items():
