@@ -1420,3 +1420,87 @@ class TestEnsureComponent(IsolatedAsyncioTestCase):
 
         client._create_or_replace.assert_called_once()
         self.assertIs(result, new_resource)
+
+
+class TestRpmsSignatureScanMemoryOverride(IsolatedAsyncioTestCase):
+    """Tests for rpms-signature-scan 2Gi memory override in _new_pipelinerun_for_image_build."""
+
+    # Template that includes rpms-signature-scan task (present in real Konflux pipelines)
+    _TEMPLATE_WITH_RPM_SCAN = jinja2.Template(
+        """
+apiVersion: tekton.dev/v1
+kind: PipelineRun
+metadata:
+  name: test-plr
+  namespace: test-ns
+  annotations:
+    build.appstudio.openshift.io/repo: "{{ source_url }}?rev={{ revision }}"
+    pipelinesascode.tekton.dev/on-cel-expression: "true"
+  labels:
+    appstudio.openshift.io/application: test-app
+    appstudio.openshift.io/component: test-component
+spec:
+  params:
+  - name: output-image
+    value: ""
+  - name: skip-checks
+    value: "false"
+  - name: build-source-image
+    value: "false"
+  - name: build-platforms
+    value: []
+  - name: build-args
+    value: []
+  pipelineSpec:
+    tasks:
+    - name: build-images
+      params:
+      - name: IMAGE
+        value: ""
+    - name: apply-tags
+      params:
+      - name: ADDITIONAL_TAGS
+        value: []
+    - name: prefetch-dependencies
+      params: []
+    - name: clone-repository
+      params: []
+    - name: rpms-signature-scan
+      params: []
+  taskRunTemplate:
+    serviceAccountName: default
+  workspaces:
+  - name: git-auth
+    secret:
+      secretName: "{{ git_auth_secret }}"
+""",
+        autoescape=True,
+    )
+
+    @patch("doozerlib.backend.konflux_client.KonfluxClient._get_pipelinerun_template")
+    async def test_rpms_signature_scan_gets_2gi_memory(self, mock_get_template):
+        """Test that rpms-signature-scan task gets a 2Gi memory override when present in the pipeline."""
+        mock_get_template.return_value = self._TEMPLATE_WITH_RPM_SCAN
+        client = KonfluxClient.__new__(KonfluxClient)
+        client._logger = MagicMock()
+
+        result = await client._new_pipelinerun_for_image_build(**_COMMON_KWARGS)
+
+        task_run_specs = result["spec"]["taskRunSpecs"]
+        rpm_scan_spec = next(s for s in task_run_specs if s["pipelineTaskName"] == "rpms-signature-scan")
+        self.assertIn("stepSpecs", rpm_scan_spec)
+        step = next(s for s in rpm_scan_spec["stepSpecs"] if s["name"] == "rpms-signature-scan")
+        self.assertEqual(step["computeResources"]["requests"]["memory"], "2Gi")
+        self.assertEqual(step["computeResources"]["limits"]["memory"], "2Gi")
+
+    @patch("doozerlib.backend.konflux_client.KonfluxClient._get_pipelinerun_template")
+    async def test_no_rpms_signature_scan_override_when_task_absent(self, mock_get_template):
+        """Test that no rpms-signature-scan override is added when the task is not in the pipeline."""
+        # Use the default template which does NOT have rpms-signature-scan
+        client = _make_mock_client(mock_get_template)
+
+        result = await client._new_pipelinerun_for_image_build(**_COMMON_KWARGS)
+
+        task_run_specs = result["spec"]["taskRunSpecs"]
+        rpm_scan_specs = [s for s in task_run_specs if s["pipelineTaskName"] == "rpms-signature-scan"]
+        self.assertEqual(len(rpm_scan_specs), 0, "Expected no rpms-signature-scan override when task is absent")

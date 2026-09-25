@@ -1527,6 +1527,23 @@ class KonfluxClient:
                 }
             ]
 
+        has_rpms_signature_scan = "rpms-signature-scan" in remaining_task_names
+        if has_rpms_signature_scan:
+            task_run_specs += [
+                {
+                    "pipelineTaskName": "rpms-signature-scan",
+                    "stepSpecs": [
+                        {
+                            "name": "rpms-signature-scan",
+                            "computeResources": {
+                                "requests": {"memory": "2Gi"},
+                                "limits": {"memory": "2Gi"},
+                            },
+                        }
+                    ],
+                }
+            ]
+
         obj["spec"]["taskRunSpecs"] = task_run_specs
 
         if build_params.workspace_storage:
