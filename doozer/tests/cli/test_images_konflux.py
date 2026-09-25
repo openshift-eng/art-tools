@@ -376,13 +376,15 @@ class TestBundleStageReleaseRelatedImagesCli(unittest.IsolatedAsyncioTestCase):
     reaching their FBC builds; every outcome is written to record.log for the calling pipeline.
     """
 
-    def _make_runtime(self, *, product: str, version_str: str = "", major: int = 0, minor: int = 0):
+    def _make_runtime(
+        self, *, product: str, version_str: str = "", major: int = 0, minor: int = 0, group: str = "rhacm2-2.16"
+    ):
         runtime = mock.Mock(spec=Runtime)
         runtime.assembly = "stream"
         runtime.product = product
         runtime.konflux_db = mock.Mock()
         runtime.konflux_db.bind = mock.Mock()
-        runtime.group = "rhacm2-2.16"
+        runtime.group = group
         runtime.record_logger = mock.Mock()
         gc_data = {"vars": {"MAJOR": major, "MINOR": minor}}
         if version_str:
@@ -403,12 +405,12 @@ class TestBundleStageReleaseRelatedImagesCli(unittest.IsolatedAsyncioTestCase):
 
     @mock.patch("doozerlib.cli.images_konflux.KonfluxDb")
     @mock.patch("doozerlib.cli.images_konflux.resolve_konflux_fbc_stage_release_plan")
-    async def test_layered_product_uses_group_config_version(self, mock_resolve, mock_db_class):
-        """ACM: group_config.version='2.16.0' must be used, not vars.MAJOR=4 / MINOR=21."""
+    async def test_layered_product_uses_group_name_version(self, mock_resolve, mock_db_class):
+        """ACM: group name 'rhacm2-2.16' extracts product version (2, 16)."""
         mock_db_class.return_value = mock.Mock()
         mock_resolve.return_value = None  # no plan → early return after the resolve call
 
-        runtime = self._make_runtime(product="rhacm2", version_str="2.16.0", major=4, minor=21)
+        runtime = self._make_runtime(product="rhacm2", version_str="2.16.0", major=4, minor=21, group="rhacm2-2.16")
         await self._make_cli(runtime).run()
 
         mock_resolve.assert_called_once_with("rhacm2", 2, 16)
@@ -416,14 +418,32 @@ class TestBundleStageReleaseRelatedImagesCli(unittest.IsolatedAsyncioTestCase):
     @mock.patch("doozerlib.cli.images_konflux.KonfluxDb")
     @mock.patch("doozerlib.cli.images_konflux.resolve_konflux_fbc_stage_release_plan")
     async def test_ocp_group_uses_vars_major_minor(self, mock_resolve, mock_db_class):
-        """OCP: no version: field in group config; vars.MAJOR/MINOR are the product version."""
+        """OCP: group name 'openshift-5.0' extracts product version (5, 0)."""
         mock_db_class.return_value = mock.Mock()
         mock_resolve.return_value = None
 
-        runtime = self._make_runtime(product="ocp", major=5, minor=0)
+        runtime = self._make_runtime(product="ocp", major=5, minor=0, group="openshift-5.0")
         await self._make_cli(runtime).run()
 
         mock_resolve.assert_called_once_with("ocp", 5, 0)
+
+    @mock.patch("doozerlib.cli.images_konflux.KonfluxDb")
+    @mock.patch("doozerlib.cli.images_konflux.resolve_konflux_fbc_stage_release_plan")
+    async def test_rhosdt_uses_group_name_not_version_field(self, mock_resolve, mock_db_class):
+        """RHOSDT: version='0.158.1' (upstream) must NOT be used; group name 'rhosdt-3.11' → (3, 11)."""
+        mock_db_class.return_value = mock.Mock()
+        mock_resolve.return_value = None
+
+        runtime = self._make_runtime(
+            product="openshift-opentelemetry-operator",
+            version_str="0.158.1",
+            major=4,
+            minor=18,
+            group="rhosdt-3.11",
+        )
+        await self._make_cli(runtime).run()
+
+        mock_resolve.assert_called_once_with("openshift-opentelemetry-operator", 3, 11)
 
     @staticmethod
     def _mock_konflux_client(released_condition):
@@ -677,11 +697,11 @@ class TestKonfluxBuildCliStandaloneStageRelease(unittest.IsolatedAsyncioTestCase
             build_priority="auto",
         )
 
-    def _make_runtime(self, *, product="openshift-logging", version_str="", major=6, minor=6):
+    def _make_runtime(self, *, product="openshift-logging", version_str="", major=6, minor=6, group="logging-6.6"):
         runtime = mock.Mock(spec=Runtime)
         runtime.assembly = "stream"
         runtime.product = product
-        runtime.group = "logging-6.6"
+        runtime.group = group
         runtime.konflux_db = mock.Mock()
         runtime.konflux_db.bind = mock.Mock()
         runtime.record_logger = mock.Mock()
@@ -816,19 +836,21 @@ class TestKonfluxBuildCliStandaloneStageRelease(unittest.IsolatedAsyncioTestCase
 
     @mock.patch("doozerlib.cli.images_konflux.resolve_konflux_fbc_stage_release_plan")
     async def test_trigger_standalone_stage_releases_uses_product_version(self, mock_resolve):
-        """Product version is resolved from group_config.version (layered) or vars.MAJOR/MINOR (OCP)."""
+        """Product version is resolved from group name (primary) or vars.MAJOR/MINOR (fallback)."""
         mock_resolve.return_value = None
 
-        # Layered product: version string takes precedence
-        runtime_layered = self._make_runtime(product="openshift-logging", version_str="6.6.0", major=4, minor=21)
+        # Layered product: group name 'logging-6.6' extracts (6, 6)
+        runtime_layered = self._make_runtime(
+            product="openshift-logging", version_str="6.6.0", major=4, minor=21, group="logging-6.6"
+        )
         cli = self._make_build_cli(runtime_layered)
         await cli._trigger_standalone_stage_releases([self._make_image_meta("img")], {"img": "img-1.0.0-1"})
         mock_resolve.assert_called_with("openshift-logging", 6, 6)
 
         mock_resolve.reset_mock()
 
-        # OCP group: fallback to MAJOR/MINOR
-        runtime_ocp = self._make_runtime(product="ocp", major=5, minor=0)
+        # OCP group: group name 'openshift-5.0' extracts (5, 0)
+        runtime_ocp = self._make_runtime(product="ocp", major=5, minor=0, group="openshift-5.0")
         cli = self._make_build_cli(runtime_ocp)
         await cli._trigger_standalone_stage_releases([self._make_image_meta("img")], {"img": "img-1.0.0-1"})
         mock_resolve.assert_called_with("ocp", 5, 0)

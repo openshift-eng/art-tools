@@ -15,6 +15,7 @@ from artcommonlib.util import (
     isolate_major_minor_in_group,
     normalize_group_name_for_k8s,
     normalize_k8s_dns_label,
+    product_version_from_group_name,
     resolve_konflux_fbc_stage_release_plan,
     validate_k8s_dns_label,
 )
@@ -1329,6 +1330,32 @@ class TestGetInflight(unittest.TestCase):
         result = get_inflight('rc.4', 'openshift-4.22', date='2026-05-25')
 
         self.assertEqual(result, '4.21.16')
+
+
+class TestProductVersionFromGroupName(unittest.TestCase):
+    def test_rhosdt(self):
+        self.assertEqual(product_version_from_group_name('rhosdt-3.11'), (3, 11))
+
+    def test_logging(self):
+        self.assertEqual(product_version_from_group_name('logging-6.7'), (6, 7))
+
+    def test_openshift(self):
+        self.assertEqual(product_version_from_group_name('openshift-4.22'), (4, 22))
+
+    def test_openshift_5_0(self):
+        self.assertEqual(product_version_from_group_name('openshift-5.0'), (5, 0))
+
+    def test_no_version(self):
+        self.assertIsNone(product_version_from_group_name('some-group-no-version'))
+
+    def test_empty(self):
+        self.assertIsNone(product_version_from_group_name(''))
+
+    def test_trailing_newline(self):
+        self.assertIsNone(product_version_from_group_name('rhosdt-3.11\n'))
+
+    def test_unicode_digits(self):
+        self.assertIsNone(product_version_from_group_name('rhosdt-٣.١١'))
 
 
 class TestResolveKonfluxFbcStageReleasePlan(unittest.TestCase):

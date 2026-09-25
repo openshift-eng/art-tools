@@ -19,6 +19,7 @@ from artcommonlib.telemetry import start_as_current_span_async
 from artcommonlib.util import (
     KubeCondition,
     normalize_k8s_dns_label,
+    product_version_from_group_name,
     resolve_konflux_fbc_stage_release_plan,
     validate_build_priority,
 )
@@ -441,9 +442,13 @@ class KonfluxBuildCli:
         runtime = self.runtime
         assert runtime.group_config is not None, "group_config is not initialized. Doozer bug?"
 
-        # Resolve product version the same way BundleStageReleaseRelatedImagesCli does.
+        # Prefer group name for product version (handles products like RHOSDT
+        # where group.yml version is the upstream version, not the product version).
         version_str = runtime.group_config.version
-        if version_str:
+        group_version = product_version_from_group_name(runtime.group)
+        if group_version:
+            product_major, product_minor = group_version
+        elif version_str:
             parts = str(version_str).split(".")
             product_major, product_minor = int(parts[0]), int(parts[1])
         else:
@@ -1056,14 +1061,18 @@ class BundleStageReleaseRelatedImagesCli:
         assert runtime.konflux_db is not None, "konflux_db is not initialized. Doozer bug?"
         runtime.konflux_db.bind(KonfluxBuildRecord)
 
-        # Use product version (not OCP version) to resolve the release plan.
+        # Prefer group name for product version (handles products like RHOSDT
+        # where group.yml version is the upstream version, not the product version).
         # Layered products (e.g. ACM) set `version: 2.16.0` in group.yml; MAJOR/MINOR there are the OCP
         # version used for the brew branch — do NOT use them for product version resolution.
         # OCP groups (e.g. openshift-5.0) have no `version:` field; MAJOR/MINOR ARE the product version.
         # MissingModel.__bool__ is False, so `if version_str:` is the correct guard for the missing case.
         assert runtime.group_config is not None, "group_config is not initialized. Doozer bug?"
         version_str = runtime.group_config.version
-        if version_str:
+        group_version = product_version_from_group_name(runtime.group)
+        if group_version:
+            product_major, product_minor = group_version
+        elif version_str:
             parts = str(version_str).split(".")
             product_major, product_minor = int(parts[0]), int(parts[1])
         else:
