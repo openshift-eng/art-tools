@@ -10,7 +10,6 @@ import asyncio
 import logging
 import re
 from collections import Counter
-from dataclasses import dataclass
 from io import StringIO
 from pathlib import Path
 from typing import Dict
@@ -20,6 +19,7 @@ from artcommonlib import exectools
 from artcommonlib.rpm_utils import parse_nvr
 from artcommonlib.util import new_roundtrip_yaml_handler
 from elliottlib.shipment_model import ShipmentConfig
+from elliottlib.shipment_utils import ShipmentMRCIState, inspect_shipment_mr_ci_state
 from gitlab.exceptions import GitlabCreateError
 
 from pyartcd.fbc_util import extract_ocp_version_from_nvr
@@ -32,19 +32,6 @@ _PROD_RELEASE_LABEL_PREFIX = "prod-release"
 _STAGE_RELEASE_SUCCESS_LABEL = "stage-release-success"
 _MR_CREATION_ATTEMPTS = 3
 _MR_CREATION_RETRY_DELAY_SECONDS = 5
-_ACTIVE_CI_STATUSES = frozenset(
-    {
-        'created',
-        'waiting_for_resource',
-        'preparing',
-        'pending',
-        'running',
-        'scheduled',
-        'canceling',
-    }
-)
-_TERMINAL_CI_STATUSES = frozenset({'success', 'failed', 'canceled', 'skipped', 'manual'})
-_UNTOUCHED_PROD_STATUSES = frozenset({'created', 'manual', 'skipped'})
 
 
 class ShipmentMRValidationError(ValueError):
@@ -103,20 +90,6 @@ async def create_shipment_mr_with_retry(source_project, attributes: dict, logger
             await asyncio.sleep(_MR_CREATION_RETRY_DELAY_SECONDS)
 
     raise AssertionError("Unreachable")
-
-
-@dataclass(frozen=True)
-class ShipmentMRCIState:
-    """Summarize Shipment CI state relevant to layered-product MR reuse.
-
-    Attributes:
-        active_stage: Descriptions of active MR, stage bridge, or downstream
-            stage jobs.
-        prod_attempts: Descriptions proving that production was attempted.
-    """
-
-    active_stage: tuple[str, ...]
-    prod_attempts: tuple[str, ...]
 
 
 def close_superseded_shipment_mr(mr, dry_run: bool) -> None:
@@ -285,126 +258,6 @@ async def verify_shipment_mr_url(repo: GitRepository, group: str, assembly: str,
             f"Shipment MR pointer changed concurrently from {expected_mr_url!r} to {current_mr_url!r}; "
             "refusing to update the old MR"
         )
-
-
-def _object_value(item, name: str, default=None):
-    """Read a field from a python-gitlab object or API response mapping.
-
-    Args:
-        item: Python object or mapping returned by the GitLab API.
-        name: Field name to read.
-        default: Value returned when the field is absent.
-
-    Returns:
-        The field value, or ``default`` when it is absent.
-    """
-    if isinstance(item, dict):
-        return item.get(name, default)
-    return getattr(item, name, default)
-
-
-def _checked_ci_status(item, context: str) -> str:
-    """Return a recognized GitLab CI status or fail closed.
-
-    Args:
-        item: Python-gitlab object or response mapping containing ``status``.
-        context: Human-readable pipeline or job description.
-
-    Returns:
-        The normalized GitLab CI status.
-
-    Raises:
-        RuntimeError: If the status is absent or unknown.
-    """
-    status = _object_value(item, 'status')
-    if status not in _ACTIVE_CI_STATUSES | _TERMINAL_CI_STATUSES:
-        raise RuntimeError(f"Cannot safely classify {context}: unknown GitLab CI status {status!r}")
-    return status
-
-
-def inspect_shipment_mr_ci_state(gitlab_client, mr_url: str, mr) -> ShipmentMRCIState:
-    """Inspect all Shipment CI pipelines belonging to a merge request.
-
-    Parent pipeline state, stage and production trigger bridges, and downstream
-    stage jobs are inspected with pagination enabled. A production bridge is
-    considered attempted once it leaves the untouched ``manual`` or ``skipped``
-    states, or as soon as GitLab associates a downstream pipeline with it.
-
-    Args:
-        gitlab_client: Authenticated ART GitLab client.
-        mr_url: URL of the shipment merge request.
-        mr: Python-gitlab merge request object.
-
-    Returns:
-        Active stage work and evidence of production attempts.
-
-    Raises:
-        RuntimeError: If GitLab returns incomplete or unrecognized pipeline
-            state. Callers must fail closed rather than mutate the MR.
-    """
-    project_path, _ = gitlab_client._parse_mr_url(mr_url)
-    project = gitlab_client.get_project(project_path)
-    active_stage = []
-    prod_attempts = []
-
-    mr_pipelines = mr.pipelines.list(get_all=True)
-    for mr_pipeline in mr_pipelines:
-        pipeline_id = _object_value(mr_pipeline, 'id')
-        if pipeline_id is None:
-            raise RuntimeError("Cannot safely inspect shipment MR CI state: a pipeline has no ID")
-        pipeline = project.pipelines.get(pipeline_id)
-        pipeline_url = _object_value(pipeline, 'web_url', f'pipeline {pipeline_id}')
-        pipeline_status = _checked_ci_status(pipeline, f'MR pipeline {pipeline_url}')
-        bridges = pipeline.bridges.list(get_all=True)
-        stage_bridge_found = False
-
-        for bridge in bridges:
-            bridge_name = _object_value(bridge, 'name')
-            if bridge_name not in {'stage-job', 'prod-job'}:
-                continue
-            bridge_status = _checked_ci_status(bridge, f'{bridge_name} in {pipeline_url}')
-            downstream = _object_value(bridge, 'downstream_pipeline')
-
-            if bridge_name == 'prod-job':
-                if bridge_status not in _UNTOUCHED_PROD_STATUSES or downstream:
-                    prod_attempts.append(f"{pipeline_url} prod-job is {bridge_status}")
-                continue
-
-            stage_bridge_found = True
-            if bridge_status in _ACTIVE_CI_STATUSES:
-                active_stage.append(f"{pipeline_url} stage-job is {bridge_status}")
-
-            if not downstream:
-                continue
-            downstream_id = _object_value(downstream, 'id')
-            downstream_project_id = _object_value(downstream, 'project_id', _object_value(project, 'id'))
-            if downstream_id is None or downstream_project_id is None:
-                raise RuntimeError(
-                    f"Cannot safely inspect {pipeline_url} stage-job: downstream pipeline identification is incomplete"
-                )
-            downstream_project = (
-                project
-                if downstream_project_id == _object_value(project, 'id')
-                else gitlab_client.get_project(downstream_project_id)
-            )
-            downstream_pipeline = downstream_project.pipelines.get(downstream_id)
-            downstream_url = _object_value(downstream_pipeline, 'web_url', f'pipeline {downstream_id}')
-            downstream_status = _checked_ci_status(downstream_pipeline, f'downstream stage pipeline {downstream_url}')
-            if downstream_status in _ACTIVE_CI_STATUSES:
-                active_stage.append(f"downstream stage pipeline {downstream_url} is {downstream_status}")
-
-            for job in downstream_pipeline.jobs.list(get_all=True, include_retried=True):
-                job_name = _object_value(job, 'name', 'unknown job')
-                job_status = _checked_ci_status(job, f'{job_name} in {downstream_url}')
-                if job_status in _ACTIVE_CI_STATUSES:
-                    active_stage.append(f"{downstream_url} job {job_name!r} is {job_status}")
-
-        # A ready MR pipeline can still be validating or generating its dynamic
-        # configuration before GitLab exposes the stage trigger bridge.
-        if pipeline_status in _ACTIVE_CI_STATUSES and not stage_bridge_found:
-            active_stage.append(f"{pipeline_url} is {pipeline_status} before its stage job is available")
-
-    return ShipmentMRCIState(tuple(sorted(set(active_stage))), tuple(sorted(set(prod_attempts))))
 
 
 def validate_shipment_mr_ci_state(

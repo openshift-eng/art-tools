@@ -47,6 +47,21 @@ class TestGitLabClient(unittest.TestCase):
         mock_project.mergerequests.list.assert_called_once_with(state="opened", get_all=True)
 
     @patch("artcommonlib.gitlab.gitlab.Gitlab")
+    def test_list_merge_requests_reuses_prefetched_project(self, mock_gitlab_class):
+        """A caller can avoid fetching a project it has already loaded."""
+        from artcommonlib.gitlab import GitLabClient
+
+        mock_gl = mock_gitlab_class.return_value
+        mock_project = MagicMock()
+        mock_project.mergerequests.list.return_value = []
+
+        client = GitLabClient("https://gitlab.example.com", "fake-token")
+        client.list_merge_requests("group/project", project=mock_project)
+
+        mock_gl.projects.get.assert_not_called()
+        mock_project.mergerequests.list.assert_called_once_with(state="opened", get_all=True)
+
+    @patch("artcommonlib.gitlab.gitlab.Gitlab")
     def test_from_url_extracts_server_and_reads_token_from_env(self, mock_gitlab_class):
         """
         from_url should extract the server base URL and read GITLAB_TOKEN from env.

@@ -1,5 +1,6 @@
 import json
 import logging
+from types import SimpleNamespace
 from unittest import IsolatedAsyncioTestCase, TestCase
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -102,6 +103,24 @@ class TestResourceUrl(TestCase):
         expected = "https://konflux-ui.apps.kflux-ocp-p01.7ayg.p1.openshiftapps.com/ns/foobar-tenant/applications/openshift-4-19/pipelineruns/ose-4-19-ose-ovn-kubernetes-6wv6l"
 
         self.assertEqual(actual, expected)
+
+
+class TestListReleases(IsolatedAsyncioTestCase):
+    """Tests for namespace-scoped Konflux Release listing."""
+
+    async def test_list_releases_uses_default_namespace(self):
+        client = KonfluxClient.__new__(KonfluxClient)
+        client.default_namespace = 'art-logging-tenant'
+        client.request_timeout = 30
+        api = MagicMock()
+        releases = [MagicMock(), MagicMock()]
+        api.get.return_value = SimpleNamespace(items=releases)
+        client._get_api = AsyncMock(return_value=api)
+
+        result = await client.list_releases()
+
+        self.assertEqual(result, releases)
+        api.get.assert_called_once_with(namespace='art-logging-tenant', _request_timeout=30)
 
 
 class TestParseGitHubApiUrl(TestCase):
