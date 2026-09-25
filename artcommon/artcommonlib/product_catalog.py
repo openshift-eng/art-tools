@@ -224,6 +224,7 @@ PRODUCT_CATALOG: tuple[ProductConfig, ...] = (
             application="rhosdt-images-base",
         ),
         fbc_stage_release_plans={(3, 11): "rhosdt-advisory-stage-auto-3-11"},
+        cpe_product_name="openshift_distributed_tracing",
     ),
     ProductConfig(
         product_id=ProductId.ZERO_TRUST,
