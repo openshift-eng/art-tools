@@ -223,7 +223,7 @@ PRODUCT_CATALOG: tuple[ProductConfig, ...] = (
             release_plan="rhosdt-images-base-silent",
             application="rhosdt-images-base",
         ),
-        fbc_stage_release_plans={(3, 11): "rhosdt-stage-auto-3-11"},
+        fbc_stage_release_plans={(3, 11): "rhosdt-advisory-stage-auto-3-11"},
     ),
     ProductConfig(
         product_id=ProductId.ZERO_TRUST,
