@@ -26,7 +26,7 @@ class TestProductId(unittest.TestCase):
             "oadp": ProductId.OADP,
             "quay": ProductId.QUAY,
             "oc-mirror": ProductId.OC_MIRROR,
-            "mirror-gui": ProductId.MIRROR_GUI,
+            "mirror_gui": ProductId.MIRROR_GUI,
             "openshift-opentelemetry-operator": ProductId.RHOSDT,
             "zero-trust-workload-identity-manager": ProductId.ZERO_TRUST,
             "supplemental-tools": ProductId.SUPPLEMENTAL_TOOLS,

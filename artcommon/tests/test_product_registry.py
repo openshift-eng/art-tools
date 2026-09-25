@@ -74,7 +74,7 @@ class TestProductCatalog(unittest.TestCase):
 
     def test_conforma_policy_can_omit_fbc_policy(self):
         """Represent a product with no Conforma FBC policy explicitly."""
-        config = get_product_config("mirror-gui")
+        config = get_product_config("mirror_gui")
 
         self.assertEqual(config.conforma_stage_policies.image_policy, "rhtap-releng-tenant/registry-standard")
         self.assertIsNone(config.conforma_stage_policies.fbc_policy)
