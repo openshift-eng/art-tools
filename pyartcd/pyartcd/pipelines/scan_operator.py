@@ -11,12 +11,20 @@ from artcommonlib.konflux.konflux_build_record import (
     KonfluxFbcBuildRecord,
 )
 from artcommonlib.konflux.konflux_db import KonfluxDb
-from artcommonlib.util import uses_konflux_imagestream_override
+from artcommonlib.util import (
+    product_version_from_group_name,
+    resolve_konflux_fbc_stage_release_plan,
+    uses_konflux_imagestream_override,
+)
 
 from pyartcd import constants, jenkins, locks
 from pyartcd.cli import cli, click_coroutine, pass_runtime
 from pyartcd.locks import Lock
 from pyartcd.runtime import Runtime
+from pyartcd.util import load_group_config
+
+# The stage/delivery registry where bundle images are published after stage release
+STAGE_REGISTRY = "registry.redhat.io"
 
 
 class ScanOperatorPipeline:
@@ -55,10 +63,20 @@ class ScanOperatorPipeline:
         # Track operators needing builds
         self.operators_without_bundles = []
         self.operators_without_fbcs = []
+        self.operators_needing_stage_release = []  # Bundles built but not stage-released
 
         # Populated by load_operator_names(): distgit_key -> bundle short name
         # (honors any per-image `bundle_name_override` config)
         self.bundle_names_by_operator: Dict[str, str] = {}
+
+        # Populated by load_operator_names(): distgit_key -> delivery repo name
+        # (e.g., 'openshift4/ose-ptp-operator-bundle')
+        self.delivery_repo_by_operator: Dict[str, str] = {}
+
+        # Whether to check stage registry for bundle delivery.
+        # Resolved in _init_stage_release_check(): True when assembly is 'stream'
+        # and a stage release plan exists for the product/version.
+        self._check_stage_release = False
 
         # Build doozer base command for metadata loading
         group_param = f'{self.group}'
@@ -78,12 +96,16 @@ class ScanOperatorPipeline:
         self.skipped = False
         self.logger.info(f'Scanning version {self.version}, assembly {self.assembly}')
 
+        # TODO: Deprecate art-images-share check on Oct 31st 2026
         # Check if it's a valid version
         if not uses_konflux_imagestream_override(self.version):
             self.logger.info(f'Version {self.version} is not a valid version')
             return
 
         self.check_params()
+
+        # Check if stage release checking is applicable
+        await self._init_stage_release_check()
 
         operator_names = await self.load_operator_names()
         self.logger.info(f'Found {len(operator_names)} operators in group {self.group}')
@@ -112,6 +134,13 @@ class ScanOperatorPipeline:
                 trigger_errors.append(e)
                 self.logger.error(f'Failed to trigger bundle builds: {e}')
 
+        if self.operators_needing_stage_release:
+            try:
+                self.trigger_bundle_builds(self.operators_needing_stage_release, force_release=True)
+            except Exception as e:
+                trigger_errors.append(e)
+                self.logger.error(f'Failed to trigger force-release bundle builds: {e}')
+
         if self.operators_without_fbcs:
             try:
                 self.trigger_fbc_builds(self.operators_without_fbcs)
@@ -122,6 +151,63 @@ class ScanOperatorPipeline:
         # Raise at the end to mark job as failed
         if trigger_errors:
             raise RuntimeError(f"Failed to trigger bundle and/or FBC builds: {', '.join(map(str, trigger_errors))}")
+
+    async def _init_stage_release_check(self):
+        """Determine whether stage release checking is applicable for this assembly/product.
+
+        Only ``stream`` assembly bundles are stage-released. When applicable,
+        ``check_operator`` will verify that the bundle image exists in the
+        stage registry (registry.redhat.io); operators whose bundle is missing
+        are re-triggered with ``force_release=True``.
+        """
+        self._check_stage_release = False
+
+        if self.assembly != 'stream':
+            self.logger.info("Assembly is '%s' (not 'stream'); skipping stage release checks", self.assembly)
+            return
+
+        # Load group config to get product information
+        group_config = await load_group_config(
+            group=self.group,
+            assembly=self.assembly,
+            doozer_data_path=self.data_path,
+            doozer_data_gitref=self.data_gitref,
+        )
+        product = group_config.get('product') or 'ocp'
+
+        # Resolve product version from group name (preferred) or group config
+        group_version = product_version_from_group_name(self.group)
+        if group_version:
+            product_major, product_minor = group_version
+        else:
+            version_str = group_config.get('version')
+            if version_str:
+                parts = str(version_str).split('.')
+                product_major, product_minor = int(parts[0]), int(parts[1])
+            else:
+                vars_section = group_config.get('vars', {})
+                product_major = int(vars_section.get('MAJOR', 0))
+                product_minor = int(vars_section.get('MINOR', 0))
+
+        plan = resolve_konflux_fbc_stage_release_plan(product, product_major, product_minor)
+
+        if not plan:
+            self.logger.info(
+                "No stage release plan configured for product '%s' (%d.%d); skipping stage release checks",
+                product,
+                product_major,
+                product_minor,
+            )
+            return
+
+        self._check_stage_release = True
+        self.logger.info(
+            "Stage release plan '%s' found for product '%s' (%d.%d); will check stage registry for bundle delivery",
+            plan,
+            product,
+            product_major,
+            product_minor,
+        )
 
     def check_params(self):
         """Validate pipeline parameters."""
@@ -138,18 +224,28 @@ class ScanOperatorPipeline:
 
         As a side effect, populates `self.bundle_names_by_operator` with each
         operator's bundle short name (honoring any `bundle_name_override` config),
-        for use by `get_bundle_name()`.
+        and `self.delivery_repo_by_operator` with each operator's bundle delivery
+        repo name (e.g., 'openshift4/ose-ptp-operator-bundle'), for use by
+        `get_bundle_name()` and `check_stage_registry()`.
         """
         # Use doozer to list operator distgit keys along with their bundle short names
-        # (tab-separated "{distgit_key}\t{bundle_short_name}" pairs).
-        cmd = self.doozer_base_command + ['olm-bundle:list-olm-operators', '--output-format', 'bundle-name']
+        # and delivery repo names (tab-separated
+        # "{distgit_key}\t{bundle_short_name}\t{delivery_repo_name}" triplets).
+        cmd = self.doozer_base_command + ['olm-bundle:list-olm-operators', '--output-format', 'delivery-info']
 
         _, out, _ = await exectools.cmd_gather_async(cmd, stderr=None)
         self.bundle_names_by_operator = {}
+        self.delivery_repo_by_operator = {}
         for line in out.strip().split('\n') if out.strip() else []:
-            distgit_key, _, bundle_name = line.partition('\t')
-            if distgit_key and bundle_name:
-                self.bundle_names_by_operator[distgit_key] = bundle_name
+            parts = line.split('\t')
+            if len(parts) >= 2:
+                distgit_key, bundle_name = parts[0], parts[1]
+                if distgit_key and bundle_name:
+                    self.bundle_names_by_operator[distgit_key] = bundle_name
+            if len(parts) >= 3:
+                distgit_key, delivery_repo = parts[0], parts[2]
+                if distgit_key and delivery_repo:
+                    self.delivery_repo_by_operator[distgit_key] = delivery_repo
 
         return set(self.bundle_names_by_operator.keys())
 
@@ -180,6 +276,14 @@ class ScanOperatorPipeline:
         if bundle is None or bundle.outcome.is_failure():
             self.operators_without_bundles.append(operator)
         elif bundle.outcome == KonfluxBuildOutcome.SUCCESS:
+            # Check stage release status if applicable
+            if self._check_stage_release:
+                is_released = await self.check_stage_registry(operator, bundle)
+                if not is_released:
+                    self.operators_needing_stage_release.append(operator)
+                    # Stage release is a prerequisite for FBC; skip FBC check
+                    return
+
             fbc = await self.check_fbc_exists(operator, bundle)
             if fbc is None or fbc.outcome.is_failure():
                 self.operators_without_fbcs.append(operator)
@@ -279,20 +383,72 @@ class ScanOperatorPipeline:
         self.logger.info(f'  FBC MISSING for operator {operator.nvr}')
         return None
 
-    def trigger_bundle_builds(self, operators: List[KonfluxBuildRecord]):
+    async def check_stage_registry(self, operator: KonfluxBuildRecord, bundle: KonfluxBundleBuildRecord) -> bool:
+        """Check if a bundle image exists in the stage registry.
+
+        Extracts the digest from the bundle's ``image_pullspec`` and checks
+        whether ``registry.redhat.io/{delivery_repo}@{digest}`` exists using
+        ``skopeo inspect --raw``.
+
+        Returns ``True`` if the image exists (or if the check cannot be
+        performed); ``False`` if the image is confirmed missing.
+        """
+        delivery_repo = self.delivery_repo_by_operator.get(operator.name)
+        if not delivery_repo:
+            self.logger.warning('  No delivery repo configured for %s; skipping stage release check', operator.name)
+            return True  # Don't re-trigger if we can't check
+
+        if not bundle.image_pullspec or '@' not in bundle.image_pullspec:
+            self.logger.warning(
+                '  No image digest in bundle pullspec for %s; skipping stage release check', operator.nvr
+            )
+            return True
+
+        digest = bundle.image_pullspec.split('@', 1)[-1]
+        stage_pullspec = f"docker://{STAGE_REGISTRY}/{delivery_repo}@{digest}"
+
+        try:
+            rc, _, err = await exectools.cmd_gather_async(
+                ['skopeo', 'inspect', '--raw', stage_pullspec],
+                check=False,
+            )
+            if rc == 0:
+                self.logger.info(
+                    '  Stage release for %s exists: %s/%s@%s', operator.nvr, STAGE_REGISTRY, delivery_repo, digest
+                )
+                return True
+            if 'manifest unknown' in (err or '').lower():
+                self.logger.info(
+                    '  Stage release MISSING for %s: %s/%s@%s', operator.nvr, STAGE_REGISTRY, delivery_repo, digest
+                )
+                return False
+            self.logger.warning('  Stage registry check inconclusive for %s (rc=%s): %s', operator.nvr, rc, err)
+            return True
+
+        except Exception as e:
+            self.logger.warning('  Failed to check stage registry for %s: %s', operator.nvr, e)
+            # Err on the side of caution: don't re-trigger if we can't check
+            return True
+
+    def trigger_bundle_builds(self, operators: List[KonfluxBuildRecord], force_release: bool = False):
         """Trigger bundle builds for multiple operators in one job."""
         nvrs = [op.nvr for op in operators]
 
         if self.runtime.dry_run:
-            self.logger.info(f'[DRY-RUN] Would trigger bundle builds for {len(nvrs)} operators: {", ".join(nvrs)}')
+            label = ' (force-release)' if force_release else ''
+            self.logger.info(
+                f'[DRY-RUN] Would trigger bundle builds{label} for {len(nvrs)} operators: {", ".join(nvrs)}'
+            )
             return
 
-        self.logger.info(f'Triggering bundle builds for {len(nvrs)} operators')
+        label = ' with force_release' if force_release else ''
+        self.logger.info(f'Triggering bundle builds{label} for {len(nvrs)} operators')
         jenkins.start_olm_bundle_konflux(
             build_version=self.version,
             assembly=self.assembly,
             operator_nvrs=nvrs,
             group=self.group,
+            force_release=force_release,
         )
 
     def trigger_fbc_builds(self, operators: List[KonfluxBuildRecord]):
