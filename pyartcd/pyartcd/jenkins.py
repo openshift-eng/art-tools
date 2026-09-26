@@ -687,6 +687,7 @@ def start_olm_bundle_konflux(
     doozer_data_path: str = constants.OCP_BUILD_DATA_URL,
     doozer_data_gitref: str = '',
     group: Optional[str] = None,
+    force_release: bool = False,
     propagate_params: Optional[dict] = None,
     **kwargs,
 ) -> Optional[str]:
@@ -704,6 +705,9 @@ def start_olm_bundle_konflux(
 
     if group:
         params['GROUP'] = group
+
+    if force_release:
+        params['FORCE_RELEASE'] = 'true'
 
     # Automatically propagate parameters if provided
     # Note: params.update() will override existing parameter values if keys match
