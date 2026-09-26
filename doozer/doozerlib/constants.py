@@ -82,21 +82,21 @@ KONFLUX_TEST_PREGA_EC_POLICY_CONFIGURATION = "ocp-art-tenant/conforma-build-ec-s
 # Product-to-EC-policy mappings for build-time ITS verification.
 # Maps product name -> "namespace/policy-name" for each assembly type.
 PRODUCT_EC_POLICY_MAP = {
-    "logging": "art-logging-tenant/conforma-build-stage",
-    "mta": "art-mta-tenant/conforma-build-stage",
-    "oadp": "art-oadp-tenant/conforma-build-stage",
+    "logging": "rhtap-releng-tenant/registry-art-logging-stage",
+    "mta": "rhtap-releng-tenant/registry-art-mta-stage",
+    "oadp": "rhtap-releng-tenant/registry-art-oadp-stage",
     "ocp": KONFLUX_DEFAULT_EC_POLICY_CONFIGURATION,
-    "openshift-logging": "art-logging-tenant/conforma-build-stage",
-    "rhmtc": "art-mtc-tenant/conforma-build-stage",
+    "openshift-logging": "rhtap-releng-tenant/registry-art-logging-stage",
+    "rhmtc": "rhtap-releng-tenant/registry-art-mtc-stage",
 }
 
 PRODUCT_TEST_EC_POLICY_MAP = {
-    "logging": "art-logging-tenant/conforma-build-stage-test",
-    "mta": "art-mta-tenant/conforma-build-stage-test",
-    "oadp": "art-oadp-tenant/conforma-build-stage-test",
+    "logging": "rhtap-releng-tenant/registry-art-logging-stage",
+    "mta": "rhtap-releng-tenant/registry-art-mta-stage",
+    "oadp": "rhtap-releng-tenant/registry-art-oadp-stage",
     "ocp": KONFLUX_TEST_EC_POLICY_CONFIGURATION,
-    "openshift-logging": "art-logging-tenant/conforma-build-stage-test",
-    "rhmtc": "art-mtc-tenant/conforma-build-stage-test",
+    "openshift-logging": "rhtap-releng-tenant/registry-art-logging-stage",
+    "rhmtc": "rhtap-releng-tenant/registry-art-mtc-stage",
 }
 
 PRODUCT_PREGA_EC_POLICY_MAP = {
