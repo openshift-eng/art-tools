@@ -226,6 +226,7 @@ PRODUCT_CATALOG: tuple[ProductConfig, ...] = (
         conforma_stage_policies=ConformaPolicies(
             image_policy="rhtap-releng-tenant/registry-standard",
         ),
+        fbc_stage_release_plans={(1, 0): "mirror-gui-stage"},
     ),
     ProductConfig(
         product_id=ProductId.RHOSDT,
