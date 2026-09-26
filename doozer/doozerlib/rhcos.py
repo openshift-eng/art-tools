@@ -13,6 +13,7 @@ from artcommonlib.constants import COREOS_RHEL10_STREAMS, RHCOS_RELEASES_BASE_UR
 from artcommonlib.model import Missing, Model
 from artcommonlib.release_util import isolate_el_version_in_release
 from artcommonlib.rhcos import get_build_id_from_rhcos_pullspec
+from artcommonlib.util import should_honor_ignorable_repos
 from tenacity import retry, stop_after_attempt, wait_fixed
 
 from doozerlib import brew
@@ -550,11 +551,38 @@ class RHCOSBuildInspector:
             raise ValueError("RHCOS build repos need to be defined in group config rhcos.enabled_repos.")
         enabled_repos = enabled_repos.primitive()
 
-        enabled_repos_rhel10 = [repo for repo in enabled_repos if "rhel-10" in repo]
-        enabled_repos_rhel9 = [repo for repo in enabled_repos if "rhel-10" not in repo]
-
         group_repos = self.runtime.repos
         arch = self.brew_arch
+
+        # Filter out ignorable repos based on lifecycle phase and release schedule (ART-14091)
+        if should_honor_ignorable_repos(
+            self.runtime, force_ignore=getattr(self.runtime, 'ignore_all_ignorable_repos', False)
+        ):
+            non_ignorable_repos = []
+            for repo_name in enabled_repos:
+                repo = group_repos[repo_name]
+                if repo._data.get('scan_sources', {}).get('ignorable', False):
+                    logger.info(
+                        f'Ignoring repo {repo_name} for RHCOS RPM change detection '
+                        f'(marked as ignorable and conditions allow skipping)'
+                    )
+                else:
+                    non_ignorable_repos.append(repo_name)
+
+            if not non_ignorable_repos:
+                logger.warning(
+                    "All RHCOS enabled repos are marked as ignorable and skipped; no RPM change detection needed"
+                )
+                return []
+
+            enabled_repos = non_ignorable_repos
+        else:
+            logger.info(
+                "Lifecycle phase or release schedule requires processing all RHCOS repos (ignorable flag not honored)"
+            )
+
+        enabled_repos_rhel10 = [repo for repo in enabled_repos if "rhel-10" in repo]
+        enabled_repos_rhel9 = [repo for repo in enabled_repos if "rhel-10" not in repo]
 
         logger.info(
             "Fetching repodatas for enabled repos %s", ", ".join(f"{repo_name}-{arch}" for repo_name in enabled_repos)

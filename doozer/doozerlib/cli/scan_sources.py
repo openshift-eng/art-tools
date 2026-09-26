@@ -748,9 +748,17 @@ class ConfigScanSources:
 @click.option("--yaml", "as_yaml", default=False, is_flag=True, help='Print results in a yaml block')
 @click.option("--rebase-priv", default=False, is_flag=True, help='Try to reconcile public upstream into openshift-priv')
 @click.option('--dry-run', default=False, is_flag=True, help='Do not actually perform reconciliation, just log it')
+@click.option(
+    '--ignore-all-ignorable-repos',
+    default=False,
+    is_flag=True,
+    help='Force ignoring repos marked as ignorable even during GA releases (emergency override)',
+)
 @click_coroutine
 @pass_runtime
-async def config_scan_source_changes(runtime: Runtime, ci_kubeconfig, as_yaml, rebase_priv, dry_run):
+async def config_scan_source_changes(
+    runtime: Runtime, ci_kubeconfig, as_yaml, rebase_priv, dry_run, ignore_all_ignorable_repos
+):
     """
     Determine if any rpms / images need to be rebuilt.
 
@@ -781,6 +789,9 @@ async def config_scan_source_changes(runtime: Runtime, ci_kubeconfig, as_yaml, r
         runtime.initialize(mode="both", clone_distgits=True)
     else:
         runtime.initialize(mode='both', clone_distgits=False)
+
+    # Store CLI flag on runtime for use by helper functions (ART-14091)
+    runtime.ignore_all_ignorable_repos = ignore_all_ignorable_repos
 
     await ConfigScanSources(runtime, ci_kubeconfig, as_yaml, rebase_priv, dry_run).run()
 
