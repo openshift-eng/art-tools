@@ -1,3 +1,4 @@
+import asyncio
 import json
 import os
 import unittest
@@ -182,3 +183,97 @@ class TestVerifyAttachedOperators(unittest.TestCase):
         mock_gadids.side_effect = BrewBuildException("no such build")
         vaocli._missing_references(None, bundles, set(), False, False)
         self.assertIn("failed to look up in errata-tool", out.pop())
+
+
+class TestVerifyAttachedOperatorsKonflux(unittest.TestCase):
+    def test_check_konflux_bundle_references_all_present(self):
+        olm_builds_detail = {
+            "bundle-a-1-1": {"operator_nvr": "operator-a-1-1", "operand_nvrs": ["operand-a-1-1", "operand-b-1-1"]},
+        }
+        image_builds = {"operator-a-1-1", "operand-a-1-1", "operand-b-1-1"}
+        self.assertEqual([], vaocli._check_konflux_bundle_references(olm_builds_detail, image_builds))
+
+    def test_check_konflux_bundle_references_missing_operator(self):
+        olm_builds_detail = {
+            "bundle-a-1-1": {"operator_nvr": "operator-a-1-1", "operand_nvrs": ["operand-a-1-1"]},
+        }
+        image_builds = {"operand-a-1-1"}  # operator missing
+        problems = vaocli._check_konflux_bundle_references(olm_builds_detail, image_builds)
+        self.assertEqual(1, len(problems))
+        self.assertIn("references operator operator-a-1-1", problems[0])
+        self.assertIn("not attached to the shipment", problems[0])
+
+    def test_check_konflux_bundle_references_missing_operand(self):
+        olm_builds_detail = {
+            "bundle-a-1-1": {"operator_nvr": "operator-a-1-1", "operand_nvrs": ["operand-a-1-1", "operand-b-1-1"]},
+        }
+        image_builds = {"operator-a-1-1", "operand-a-1-1"}  # operand-b missing
+        problems = vaocli._check_konflux_bundle_references(olm_builds_detail, image_builds)
+        self.assertEqual(1, len(problems))
+        self.assertIn("references operand operand-b-1-1", problems[0])
+
+    def test_check_konflux_bundle_references_handles_empty_fields(self):
+        olm_builds_detail = {
+            "bundle-a-1-1": {"operator_nvr": "", "operand_nvrs": None},
+        }
+        self.assertEqual([], vaocli._check_konflux_bundle_references(olm_builds_detail, set()))
+
+    @patch("elliottlib.cli.verify_attached_operators_cli.get_builds_from_mr")
+    def test_konflux_missing_references_reads_from_mr(self, mock_get_builds):
+
+        mock_get_builds.return_value = {
+            "metadata": ["bundle-a-1-1"],
+            "image": ["operator-a-1-1", "operand-a-1-1"],
+            "extras": ["operand-b-1-1"],
+        }
+
+        record = MagicMock(
+            nvr="bundle-a-1-1",
+            operator_nvr="operator-a-1-1",
+            operand_nvrs=["operand-a-1-1", "operand-b-1-1"],
+        )
+
+        async def fake_get_latest_build(**kwargs):
+            return record
+
+        runtime = MagicMock()
+        runtime.konflux_db.get_latest_build.side_effect = fake_get_latest_build
+
+        missing = asyncio.run(vaocli._konflux_missing_references(runtime, "https://gitlab/mr/1"))
+        self.assertEqual([], missing)
+        mock_get_builds.assert_called_once_with("https://gitlab/mr/1")
+        runtime.konflux_db.bind.assert_called_once()
+
+    @patch("elliottlib.cli.verify_attached_operators_cli.get_builds_from_mr")
+    def test_konflux_missing_references_flags_unattached_operand(self, mock_get_builds):
+
+        mock_get_builds.return_value = {
+            "metadata": ["bundle-a-1-1"],
+            "image": ["operator-a-1-1"],  # operand-b-1-1 not attached to the MR
+            "extras": [],
+        }
+
+        record = MagicMock(
+            nvr="bundle-a-1-1",
+            operator_nvr="operator-a-1-1",
+            operand_nvrs=["operand-b-1-1"],
+        )
+
+        async def fake_get_latest_build(**kwargs):
+            return record
+
+        runtime = MagicMock()
+        runtime.konflux_db.get_latest_build.side_effect = fake_get_latest_build
+
+        missing = asyncio.run(vaocli._konflux_missing_references(runtime, "https://gitlab/mr/1"))
+        self.assertEqual(1, len(missing))
+        self.assertIn("references operand operand-b-1-1", missing[0])
+
+    @patch("elliottlib.cli.verify_attached_operators_cli.get_builds_from_mr")
+    def test_konflux_missing_references_no_bundles(self, mock_get_builds):
+
+        mock_get_builds.return_value = {"image": ["operator-a-1-1"], "metadata": []}
+        runtime = MagicMock()
+        missing = asyncio.run(vaocli._konflux_missing_references(runtime, "https://gitlab/mr/1"))
+        self.assertEqual([], missing)
+        runtime.konflux_db.get_latest_build.assert_not_called()
