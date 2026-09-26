@@ -14,7 +14,7 @@ from artcommonlib.util import resolve_konflux_kubeconfig_by_product, resolve_kon
 from artcommonlib.variants import BuildVariant, get_build_variant_for_product
 from doozerlib.constants import KONFLUX_DEFAULT_IMAGE_REPO
 
-from pyartcd import constants, jenkins, locks
+from pyartcd import constants, jenkins, locks, tekton
 from pyartcd import record as record_util
 from pyartcd.build_strategy import BuildStrategy
 from pyartcd.cli import cli, click_coroutine, pass_runtime
@@ -90,9 +90,10 @@ class BuildLayeredProductsPipeline:
         if data_path:
             self._doozer_env_vars["DOOZER_DATA_PATH"] = data_path
 
-        jenkins.init_jenkins()
-        if self.assembly.lower() == "test":
-            jenkins.update_title(" [TEST]")
+        if not tekton.is_tekton_context():
+            jenkins.init_jenkins()
+            if self.assembly.lower() == "test":
+                jenkins.update_title(" [TEST]")
 
     def trigger_bundle_build(self):
         if self.skip_bundle_build:
@@ -140,18 +141,35 @@ class BuildLayeredProductsPipeline:
             operator_nvrs = non_embargoed_nvrs
 
             if operator_nvrs:
-                # Automatically propagate parameters if set in environment
-                propagate_params = jenkins.get_propagatable_params()
-
-                jenkins.start_olm_bundle_konflux(
-                    build_version=self.version,
-                    assembly=self.assembly,
-                    group=self.group,
-                    operator_nvrs=operator_nvrs,
-                    doozer_data_path=self._doozer_env_vars["DOOZER_DATA_PATH"] or '',
-                    doozer_data_gitref=self.data_gitref or '',
-                    propagate_params=propagate_params,
-                )
+                if tekton.is_tekton_context():
+                    created_name = tekton.start_pipeline_run(
+                        pipeline_name="olm-bundle-konflux",
+                        params={
+                            "version": self.version,
+                            "assembly": self.assembly,
+                            "group": self.group,
+                            "operator-nvrs": ",".join(operator_nvrs),
+                            "data-path": self._doozer_env_vars["DOOZER_DATA_PATH"] or '',
+                            "data-gitref": self.data_gitref or '',
+                        },
+                    )
+                    if created_name:
+                        tekton.annotate_current_pipelinerun(
+                            {
+                                "art.openshift.io/triggered-olm-bundle-konflux": created_name,
+                            }
+                        )
+                else:
+                    propagate_params = jenkins.get_propagatable_params()
+                    jenkins.start_olm_bundle_konflux(
+                        build_version=self.version,
+                        assembly=self.assembly,
+                        group=self.group,
+                        operator_nvrs=operator_nvrs,
+                        doozer_data_path=self._doozer_env_vars["DOOZER_DATA_PATH"] or '',
+                        doozer_data_gitref=self.data_gitref or '',
+                        propagate_params=propagate_params,
+                    )
         except Exception as e:
             self._logger.exception(f"Failed to trigger bundle build: {e}")
 
@@ -360,6 +378,9 @@ class BuildLayeredProductsPipeline:
 
     def _update_build_description(self):
         """Update Jenkins description with build results (succeeded/failed counts and failed image names)."""
+        if tekton.is_tekton_context():
+            return
+
         record_log = self.parse_record_log()
         if not record_log:
             return
