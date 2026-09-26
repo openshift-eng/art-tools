@@ -505,6 +505,86 @@ class TestCustomIntegrationTestScenarios(IsolatedAsyncioTestCase):
         client._create.assert_awaited_once()
         self.assertEqual(client._trigger_integration_test_scenario.await_count, 2)
 
+    async def test_run_waits_for_status_missing_after_last_trigger(self):
+        client = self._client()
+        client._create = AsyncMock(return_value=self._snapshot([]))
+        qe_a = {"scenario": "qe-a", "status": "TestPassed", "testPipelineRunName": "qe-a-123"}
+        qe_b = {"scenario": "qe-b", "status": "TestPassed", "testPipelineRunName": "qe-b-123"}
+        client._trigger_integration_test_scenario = AsyncMock(
+            side_effect=[self._snapshot([qe_a]), self._snapshot([qe_b])]
+        )
+        client._get = AsyncMock(return_value=self._snapshot([qe_a, qe_b]))
+
+        result = await KonfluxClient.run_integration_test_scenarios(
+            client,
+            ["qe-a", "qe-b"],
+            application_name="test-app",
+            component_name="test-component",
+            image_pullspec="quay.io/example/image@sha256:abc123",
+            source_url="https://github.com/example/repo",
+            commit_sha="deadbeef",
+            blocking_scenario_names=("qe-a",),
+            completion_timeout_seconds=1,
+            poll_interval_seconds=0,
+        )
+
+        self.assertFalse(result.blocking_failed)
+        self.assertEqual(len(result.pipeline_urls), 2)
+        client._get.assert_awaited_once()
+
+    async def test_run_times_out_when_status_remains_missing(self):
+        client = self._client()
+        client._create = AsyncMock(return_value=self._snapshot([]))
+        qe_a = {"scenario": "qe-a", "status": "TestPassed", "testPipelineRunName": "qe-a-123"}
+        qe_b = {"scenario": "qe-b", "status": "TestPassed", "testPipelineRunName": "qe-b-123"}
+        client._trigger_integration_test_scenario = AsyncMock(
+            side_effect=[self._snapshot([qe_a]), self._snapshot([qe_b])]
+        )
+
+        result = await KonfluxClient.run_integration_test_scenarios(
+            client,
+            ["qe-a", "qe-b"],
+            application_name="test-app",
+            component_name="test-component",
+            image_pullspec="quay.io/example/image@sha256:abc123",
+            source_url="https://github.com/example/repo",
+            commit_sha="deadbeef",
+            blocking_scenario_names=("qe-a",),
+            completion_timeout_seconds=0,
+            poll_interval_seconds=0,
+        )
+
+        self.assertTrue(result.blocking_failed)
+        self.assertEqual(result.blocking_failed_pipeline_url, "")
+        self.assertEqual(len(result.pipeline_urls), 1)
+        client._logger.error.assert_called_once()
+
+    async def test_run_missing_optional_status_does_not_block(self):
+        client = self._client()
+        client._create = AsyncMock(return_value=self._snapshot([]))
+        qe_a = {"scenario": "qe-a", "status": "TestPassed", "testPipelineRunName": "qe-a-123"}
+        qe_b = {"scenario": "qe-b", "status": "TestPassed", "testPipelineRunName": "qe-b-123"}
+        client._trigger_integration_test_scenario = AsyncMock(
+            side_effect=[self._snapshot([qe_a]), self._snapshot([qe_b])]
+        )
+
+        result = await KonfluxClient.run_integration_test_scenarios(
+            client,
+            ["qe-a", "qe-b"],
+            application_name="test-app",
+            component_name="test-component",
+            image_pullspec="quay.io/example/image@sha256:abc123",
+            source_url="https://github.com/example/repo",
+            commit_sha="deadbeef",
+            blocking_scenario_names=("qe-b",),
+            completion_timeout_seconds=0,
+            poll_interval_seconds=0,
+        )
+
+        self.assertFalse(result.blocking_failed)
+        self.assertEqual(len(result.pipeline_urls), 1)
+        client._logger.warning.assert_called_once()
+
     async def test_run_reports_test_failure(self):
         client = self._client()
         client._create = AsyncMock(return_value=self._snapshot([]))

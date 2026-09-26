@@ -1297,17 +1297,18 @@ class KonfluxClient:
                     self._custom_integration_test_pipeline_url(
                         namespace,
                         application_name,
-                        statuses_by_scenario[name].get("testPipelineRunName", ""),
+                        statuses_by_scenario.get(name, {}).get("testPipelineRunName", ""),
                     )
                     for name in monitored_scenario_names
-                    if statuses_by_scenario[name].get("testPipelineRunName")
+                    if statuses_by_scenario.get(name, {}).get("testPipelineRunName")
                 ]
                 pending_statuses = {"Pending", "InProgress", "BuildPLRInProgress"}
                 passing_statuses = {"TestPassed", "TestWarning"}
                 failed_scenario_names = [
                     name
                     for name in monitored_scenario_names
-                    if statuses_by_scenario[name].get("status") not in pending_statuses | passing_statuses
+                    if name in statuses_by_scenario
+                    and statuses_by_scenario[name].get("status") not in pending_statuses | passing_statuses
                 ]
                 for name in failed_scenario_names:
                     if name in reported_failures:
@@ -1342,7 +1343,7 @@ class KonfluxClient:
                 pending_scenario_names = [
                     name
                     for name in monitored_scenario_names
-                    if statuses_by_scenario[name].get("status") in pending_statuses
+                    if name not in statuses_by_scenario or statuses_by_scenario[name].get("status") in pending_statuses
                 ]
                 if not pending_scenario_names:
                     for name in monitored_scenario_names:
@@ -1358,12 +1359,13 @@ class KonfluxClient:
                         (name for name in pending_scenario_names if name in blocking_scenario_names),
                         None,
                     )
-                    pending_entry = statuses_by_scenario[blocking_pending_name or pending_scenario_names[0]]
+                    pending_name = blocking_pending_name or pending_scenario_names[0]
+                    pending_entry = statuses_by_scenario.get(pending_name, {})
                     log = self._logger.error if blocking_pending_name else self._logger.warning
                     log(
                         "Timed out waiting for %s custom IntegrationTestScenario %s PipelineRun to complete",
                         "release-blocking" if blocking_pending_name else "optional",
-                        pending_entry.get("scenario"),
+                        pending_name,
                     )
                     return CustomIntegrationTestResult(
                         bool(blocking_pending_name),
@@ -1385,10 +1387,6 @@ class KonfluxClient:
                 statuses_by_scenario = {
                     name: all_statuses[name] for name in monitored_scenario_names if name in all_statuses
                 }
-                if not all(name in statuses_by_scenario for name in monitored_scenario_names):
-                    raise ValueError(
-                        f"Snapshot {snapshot.metadata.name} lost configured integration test status entries"
-                    )
         except Exception:
             passed_blocking_scenario_names = {
                 name

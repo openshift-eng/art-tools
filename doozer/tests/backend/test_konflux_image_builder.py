@@ -95,6 +95,47 @@ class TestKonfluxImageBuilder(unittest.IsolatedAsyncioTestCase):
             "/tmp/merged-auth.json",
         )
 
+    @patch.dict("os.environ", {"RHCOS_QUAY_AUTH_FILE": "/tmp/rhcos-auth.json"}, clear=False)
+    async def test_source_image_signature_uses_image_specific_registry_auth(self):
+        self.builder._config.registry_auth_file = "/tmp/merged-auth.json"
+        source_images = (
+            (
+                "quay.io/redhat-user-workloads/ocp-art-tenant/art-rhcos-images@sha256:digest",
+                "/tmp/rhcos-auth.json",
+            ),
+            ("quay.io/redhat-user-workloads/ocp-art-tenant/art-images@sha256:digest", "/tmp/merged-auth.json"),
+        )
+
+        with (
+            patch("pathlib.Path.is_file", return_value=True),
+            patch("doozerlib.backend.konflux_image_builder.fetch_slsa_attestation", new_callable=AsyncMock) as fetch,
+            patch("doozerlib.backend.konflux_image_builder.get_konflux_data", new_callable=AsyncMock) as signature,
+        ):
+            for source_image, expected_auth_file in source_images:
+                with self.subTest(source_image=source_image):
+                    fetch.return_value = {
+                        "predicate": {
+                            "buildConfig": {
+                                "tasks": [
+                                    {
+                                        "name": "build-source-image",
+                                        "results": [{"name": "IMAGE_REF", "value": source_image}],
+                                    }
+                                ]
+                            }
+                        }
+                    }
+                    await self.builder._validate_build_attestation_and_signature(
+                        "quay.io/example/built-image@sha256:digest", "test-image"
+                    )
+                    signature.assert_awaited_with(
+                        pullspec=source_image,
+                        mode="signature",
+                        registry_auth_file=expected_auth_file,
+                    )
+
+        self.assertEqual(signature.await_count, 2)
+
     async def test_get_successful_image_build_by_nvr_is_not_assembly_scoped(self):
         metadata = self._metadata()
         existing_build = MagicMock(spec=KonfluxBuildRecord)
@@ -202,8 +243,10 @@ class TestKonfluxImageBuilder(unittest.IsolatedAsyncioTestCase):
 
         metadata.is_golang_builder.assert_called_once_with()
 
-    async def test_build_uses_definitive_pullspec_for_attestation_validation(self):
+    async def _assert_build_validates_slsa(self, group_name, variant):
+        self.builder._config.group_name = group_name
         metadata = self._metadata()
+        metadata.runtime.variant = variant
         dest_dir = self.builder._config.base_dir.joinpath(metadata.qualified_key)
         dest_dir.mkdir(parents=True)
 
@@ -256,6 +299,12 @@ class TestKonfluxImageBuilder(unittest.IsolatedAsyncioTestCase):
             await self.builder.build(metadata)
 
         mock_validate.assert_awaited_once_with("quay.io/test/image@sha256:testdigest", "test-image")
+
+    async def test_build_uses_definitive_pullspec_for_attestation_validation(self):
+        await self._assert_build_validates_slsa("openshift-4.17", BuildVariant.OCP)
+
+    async def test_build_validates_slsa_for_layered_product_variant(self):
+        await self._assert_build_validates_slsa("oadp-1.4", BuildVariant.OADP)
 
     async def test_build_skips_slsa_validation_when_configured(self):
         metadata = self._metadata()

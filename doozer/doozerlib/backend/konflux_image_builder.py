@@ -274,6 +274,7 @@ class KonfluxImageBuilder:
 
             for attempt in range(build_attempts):
                 logger.info("Build attempt %s/%s", attempt + 1, build_attempts)
+                custom_its_blocking_failed = False
                 image_pullspec = None
                 image_digest = None
                 definitive_image_pullspec = None
@@ -440,6 +441,7 @@ class KonfluxImageBuilder:
                     for pipeline_url in custom_its_result.pipeline_urls:
                         logger.info("Custom IntegrationTestScenario PipelineRun: %s", pipeline_url)
                     if custom_its_result.blocking_failed:
+                        custom_its_blocking_failed = True
                         if custom_its_result.blocking_failed_pipeline_url:
                             ec_pipeline_url = custom_its_result.blocking_failed_pipeline_url
                             record["ec_pipeline_url"] = ec_pipeline_url
@@ -529,10 +531,9 @@ class KonfluxImageBuilder:
                         pipelinerun_name,
                         pipelinerun_info.to_dict(),
                     )
-                    if ec_pipeline_url:
-                        # EC policy failures are not recoverable by rebuilding -- the image
-                        # artifact is valid but violates policy. Retrying would just rebuild
-                        # the same image and fail EC again, wasting cluster resources.
+                    if ec_pipeline_url or custom_its_blocking_failed:
+                        # EC and blocking custom ITS failures are not recoverable by rebuilding.
+                        # Retrying would rebuild the same image and repeat verification.
                         break
                 else:
                     metadata.build_status = True
@@ -653,7 +654,9 @@ class KonfluxImageBuilder:
         # at release time otherwise
         try:
             await get_konflux_data(
-                pullspec=source_image_pullspec, mode="signature", registry_auth_file=self._config.registry_auth_file
+                pullspec=source_image_pullspec,
+                mode="signature",
+                registry_auth_file=self._registry_auth_file_for_image(source_image_pullspec),
             )
         except ChildProcessError:
             LOGGER.error(f'Failed to fetch signature for {source_image_pullspec}')

@@ -318,6 +318,32 @@ class TestEcVerificationGating(IsolatedAsyncioTestCase):
         self.assertEqual(completion_call.args[3], KonfluxBuildOutcome.ITS_ERROR)
         self.assertEqual(completion_call.kwargs["ec_pipeline_url"], failed_url)
 
+    async def test_blocking_custom_its_failure_without_url_does_not_retry(self, mock_kc_init):
+        config = _make_config(
+            dry_run=False,
+            ec_policy_configuration=None,
+            prega_ec_policy_configuration=None,
+            integration_test_scenarios=("qe-test",),
+        )
+        metadata = _make_metadata(for_release=True)
+        metadata.get_konflux_build_attempts.return_value = 3
+        metadata.should_trigger_base_image_release.return_value = False
+        metadata.should_create_golang_builder_shipment.return_value = False
+
+        await self._run_build_and_get_ec_calls(
+            config,
+            metadata,
+            mock_kc_init,
+            custom_its_result=CustomIntegrationTestResult(True, "", []),
+            blocking_custom_its={"qe-test"},
+            expect_build_error=True,
+        )
+
+        self.last_builder._start_build.assert_awaited_once()
+        completion_call = self.last_builder.update_konflux_db.await_args_list[-1]
+        self.assertEqual(completion_call.args[3], KonfluxBuildOutcome.ITS_ERROR)
+        self.assertEqual(completion_call.kwargs["ec_pipeline_url"], "")
+
     async def test_optional_custom_its_failure_does_not_fail_build(self, mock_kc_init):
         config = _make_config(
             dry_run=False,

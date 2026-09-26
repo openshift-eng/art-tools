@@ -5,7 +5,6 @@ from unittest import IsolatedAsyncioTestCase
 from unittest.mock import AsyncMock, MagicMock, Mock, patch
 
 import yaml
-from artcommonlib.konflux.konflux_build_record import KonfluxBuildOutcome
 from artcommonlib.variants import BuildVariant
 from doozerlib.constants import KONFLUX_DEFAULT_IMAGE_REPO
 from pyartcd.build_strategy import BuildStrategy
@@ -779,7 +778,7 @@ class TestBuildLayeredProductsPipeline(IsolatedAsyncioTestCase):
 
     @patch('pyartcd.pipelines.build_layered_products.increment_fail_counter', new_callable=AsyncMock)
     @patch('pyartcd.pipelines.build_layered_products.reset_fail_counter', new_callable=AsyncMock)
-    async def test_layered_build_failure_counters(self, mock_reset, mock_increment):
+    async def test_rebase_and_build_updates_failure_counters_once(self, mock_reset, mock_increment):
         record_log = {
             'image_build_konflux': [
                 {'name': 'ok', 'status': '0'},
@@ -790,66 +789,29 @@ class TestBuildLayeredProductsPipeline(IsolatedAsyncioTestCase):
                     'outcome': 'build_error',
                     'build_pipeline_url': 'https://example/build',
                 },
-                {
-                    'name': 'its-fail',
-                    'status': '1',
-                    'task_id': 'build-plr',
-                    'outcome': str(KonfluxBuildOutcome.ITS_ERROR),
-                    'ec_pipeline_url': 'https://example/its',
-                },
-                {
-                    'name': 'release-fail',
-                    'status': '1',
-                    'task_id': 'build-plr',
-                    'outcome': str(KonfluxBuildOutcome.RELEASE_ERROR),
-                    'release_pipeline': 'https://example/release',
-                },
-                {'name': 'infra', 'status': '1', 'task_id': 'n/a', 'outcome': 'failure'},
-                {
-                    'name': 'child',
-                    'status': '1',
-                    'task_id': 'n/a',
-                    'message': "Couldn't build child because parent images failed to build",
-                },
             ]
         }
-        with patch.object(self.pipeline, 'parse_record_log', return_value=record_log):
-            await self.pipeline._update_build_fail_counters()
+        with (
+            patch.object(self.pipeline, 'parse_record_log', return_value=record_log),
+            patch.object(self.pipeline, '_rebase', new=AsyncMock(return_value=[])),
+            patch.object(self.pipeline, '_build', new=AsyncMock()),
+            patch.object(self.pipeline, '_update_build_description'),
+        ):
+            await self.pipeline._rebase_and_build('oadp', KONFLUX_DEFAULT_IMAGE_REPO)
 
-        reset_keys = {call.args[0] for call in mock_reset.await_args_list}
-        self.assertEqual(
+        reset_keys = [call.args[0] for call in mock_reset.await_args_list]
+        self.assertCountEqual(
             reset_keys,
-            {
+            [
                 'count:build-failure:konflux:oadp-1.4:ok',
                 'count:ec-failure:konflux:oadp-1.4:ok',
                 'count:release-failure:konflux:oadp-1.4:ok',
-            },
+            ],
         )
-        increment_keys = {call.args[0] for call in mock_increment.await_args_list}
-        self.assertEqual(
-            increment_keys,
-            {
-                'count:build-failure:konflux:oadp-1.4:build-fail',
-                'count:ec-failure:konflux:oadp-1.4:its-fail',
-                'count:release-failure:konflux:oadp-1.4:release-fail',
-            },
+        mock_increment.assert_awaited_once_with(
+            'count:build-failure:konflux:oadp-1.4:build-fail',
+            build_variant='oadp',
+            jenkins_url=os.getenv('BUILD_URL'),
+            nvr=None,
+            pipeline_url='https://example/build',
         )
-
-    @patch('pyartcd.pipelines.build_layered_products.increment_fail_counter', new_callable=AsyncMock)
-    @patch('pyartcd.pipelines.build_layered_products.reset_fail_counter', new_callable=AsyncMock)
-    async def test_failure_counters_skip_non_stream_assemblies(self, mock_reset, mock_increment):
-        self.pipeline.assembly = 'test'
-        await self.pipeline._update_build_fail_counters()
-        mock_reset.assert_not_awaited()
-        mock_increment.assert_not_awaited()
-
-    @patch('pyartcd.pipelines.build_layered_products.increment_fail_counter', new_callable=AsyncMock)
-    @patch('pyartcd.pipelines.build_layered_products.reset_fail_counter', new_callable=AsyncMock)
-    async def test_failure_counters_skip_dry_run(self, mock_reset, mock_increment):
-        self.runtime.dry_run = True
-        with patch.object(self.pipeline, 'parse_record_log') as mock_parse_record_log:
-            await self.pipeline._update_build_fail_counters()
-
-        mock_parse_record_log.assert_not_called()
-        mock_reset.assert_not_awaited()
-        mock_increment.assert_not_awaited()

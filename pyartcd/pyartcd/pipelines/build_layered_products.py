@@ -1,4 +1,3 @@
-import asyncio
 import logging
 import os
 import sys
@@ -10,7 +9,6 @@ import click
 import yaml
 from artcommonlib import exectools
 from artcommonlib.build_visibility import is_nvr_embargoed
-from artcommonlib.konflux.konflux_build_record import KonfluxBuildOutcome
 from artcommonlib.product_catalog import get_kubeconfig_env_vars
 from artcommonlib.util import resolve_konflux_kubeconfig_by_product, resolve_konflux_namespace_by_product
 from artcommonlib.variants import BuildVariant, get_build_variant_for_product
@@ -244,7 +242,6 @@ class BuildLayeredProductsPipeline:
         finally:
             await self.update_build_fail_counters(build_variant)
             self._update_build_description()
-            await self._update_build_fail_counters()
 
     async def update_build_fail_counters(self, build_variant: BuildVariant):
         """Update Redis build, ITS, and release failure counters for layered-product builds."""
@@ -380,56 +377,6 @@ class BuildLayeredProductsPipeline:
             jenkins.update_description(f'Failed images: {", ".join(failed_images)}<br/>')
         elif len(failed_images) > 10:
             jenkins.update_description('Check record.log for the full list of failed images<br/>')
-
-    async def _update_build_fail_counters(self):
-        """Update stream build, EC/ITS, and release failure counters from record.log."""
-        if self.assembly != 'stream' or self.runtime.dry_run:
-            return
-        record_log = self.parse_record_log()
-        if not record_log:
-            return
-
-        records = record_log.get('image_build_konflux', [])
-        successful = [entry for entry in records if not int(entry['status'])]
-        failed = [entry for entry in records if int(entry['status'])]
-        counter_types = ('build-failure', 'ec-failure', 'release-failure')
-
-        await asyncio.gather(
-            *[
-                reset_fail_counter(f'count:{counter_type}:konflux:{self.group}:{entry["name"]}')
-                for entry in successful
-                for counter_type in counter_types
-            ]
-        )
-
-        attempted_failures = [
-            entry
-            for entry in failed
-            if entry.get('task_id') != 'n/a' and 'parent images failed to build' not in entry.get('message', '')
-        ]
-        job_url = os.getenv('BUILD_URL')
-
-        updates = []
-        for entry in attempted_failures:
-            outcome = entry.get('outcome', '')
-            if outcome == str(KonfluxBuildOutcome.ITS_ERROR):
-                counter_type = 'ec-failure'
-                pipeline_url = entry.get('ec_pipeline_url')
-            elif outcome == str(KonfluxBuildOutcome.RELEASE_ERROR):
-                counter_type = 'release-failure'
-                pipeline_url = entry.get('release_pipeline')
-            else:
-                counter_type = 'build-failure'
-                pipeline_url = entry.get('build_pipeline_url')
-            updates.append(
-                increment_fail_counter(
-                    f'count:{counter_type}:konflux:{self.group}:{entry["name"]}',
-                    jenkins_url=job_url,
-                    nvr=entry.get('nvrs'),
-                    pipeline_url=pipeline_url,
-                )
-            )
-        await asyncio.gather(*updates)
 
     async def _build(
         self,
