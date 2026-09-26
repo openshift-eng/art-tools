@@ -42,6 +42,10 @@ spec:
         - mountPath: /tmp/keytab
           name: synced-exd-ocp-buildvm-bot-prod-keytab
       env:
+        - name: TASKRUN_NAME
+          value: $(context.taskRun.name)
+        - name: TASKRUN_NAMESPACE
+          value: $(context.taskRun.namespace)
         - name: SLACK_BOT_TOKEN
           valueFrom:
             secretKeyRef:
