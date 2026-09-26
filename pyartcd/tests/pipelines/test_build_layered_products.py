@@ -754,3 +754,64 @@ class TestBuildLayeredProductsPipeline(IsolatedAsyncioTestCase):
         cmd = mock_cmd.call_args[0][0]
         self.assertIn('--images=', cmd)
         self.assertIn('--exclude=img-a,img-b', cmd)
+
+    async def test_build_passes_independent_verification_options(self):
+        self.pipeline.skip_ec_verify = True
+        self.pipeline.skip_custom_its = True
+        with (
+            patch(
+                'pyartcd.pipelines.build_layered_products.exectools.cmd_assert_async',
+                new_callable=AsyncMock,
+            ) as mock_cmd,
+            patch(
+                'pyartcd.pipelines.build_layered_products.resolve_konflux_kubeconfig_by_product',
+                return_value='/path/to/kubeconfig',
+            ),
+        ):
+            await self.pipeline._build(
+                BuildStrategy.ONLY, 'img-a', [], 'oadp', KONFLUX_DEFAULT_IMAGE_REPO, BuildVariant.OADP
+            )
+
+        cmd = mock_cmd.call_args.args[0]
+        self.assertIn('--skip-ec-verify', cmd)
+        self.assertIn('--skip-custom-its', cmd)
+
+    @patch('pyartcd.pipelines.build_layered_products.increment_fail_counter', new_callable=AsyncMock)
+    @patch('pyartcd.pipelines.build_layered_products.reset_fail_counter', new_callable=AsyncMock)
+    async def test_rebase_and_build_updates_failure_counters_once(self, mock_reset, mock_increment):
+        record_log = {
+            'image_build_konflux': [
+                {'name': 'ok', 'status': '0'},
+                {
+                    'name': 'build-fail',
+                    'status': '1',
+                    'task_id': 'build-plr',
+                    'outcome': 'build_error',
+                    'build_pipeline_url': 'https://example/build',
+                },
+            ]
+        }
+        with (
+            patch.object(self.pipeline, 'parse_record_log', return_value=record_log),
+            patch.object(self.pipeline, '_rebase', new=AsyncMock(return_value=[])),
+            patch.object(self.pipeline, '_build', new=AsyncMock()),
+            patch.object(self.pipeline, '_update_build_description'),
+        ):
+            await self.pipeline._rebase_and_build('oadp', KONFLUX_DEFAULT_IMAGE_REPO)
+
+        reset_keys = [call.args[0] for call in mock_reset.await_args_list]
+        self.assertCountEqual(
+            reset_keys,
+            [
+                'count:build-failure:konflux:oadp-1.4:ok',
+                'count:ec-failure:konflux:oadp-1.4:ok',
+                'count:release-failure:konflux:oadp-1.4:ok',
+            ],
+        )
+        mock_increment.assert_awaited_once_with(
+            'count:build-failure:konflux:oadp-1.4:build-fail',
+            build_variant='oadp',
+            jenkins_url=os.getenv('BUILD_URL'),
+            nvr=None,
+            pipeline_url='https://example/build',
+        )
