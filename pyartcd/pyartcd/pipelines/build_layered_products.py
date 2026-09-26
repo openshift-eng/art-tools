@@ -32,6 +32,7 @@ from pyartcd.util import (
     update_rebase_fail_counters,
 )
 
+
 class BuildLayeredProductsPipeline:
     """Rebase and build layered products for an assembly"""
 

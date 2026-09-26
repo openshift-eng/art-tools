@@ -769,7 +769,9 @@ class TestBuildLayeredProductsPipeline(IsolatedAsyncioTestCase):
                 return_value='/path/to/kubeconfig',
             ),
         ):
-            await self.pipeline._build(BuildStrategy.ONLY, 'img-a', [], 'oadp', KONFLUX_DEFAULT_IMAGE_REPO)
+            await self.pipeline._build(
+                BuildStrategy.ONLY, 'img-a', [], 'oadp', KONFLUX_DEFAULT_IMAGE_REPO, BuildVariant.OADP
+            )
 
         cmd = mock_cmd.call_args.args[0]
         self.assertIn('--skip-ec-verify', cmd)
