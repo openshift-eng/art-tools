@@ -1,6 +1,5 @@
 import os
 import tempfile
-from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from unittest import IsolatedAsyncioTestCase
 from unittest.mock import AsyncMock, MagicMock, Mock, patch
@@ -10,7 +9,7 @@ from artcommonlib.konflux.konflux_build_record import KonfluxBuildOutcome
 from artcommonlib.variants import BuildVariant
 from doozerlib.constants import KONFLUX_DEFAULT_IMAGE_REPO
 from pyartcd.build_strategy import BuildStrategy
-from pyartcd.pipelines.build_layered_products import BuildLayeredProductsPipeline, _resolve_effective_time
+from pyartcd.pipelines.build_layered_products import BuildLayeredProductsPipeline
 from pyartcd.runtime import Runtime
 
 
@@ -757,22 +756,9 @@ class TestBuildLayeredProductsPipeline(IsolatedAsyncioTestCase):
         self.assertIn('--images=', cmd)
         self.assertIn('--exclude=img-a,img-b', cmd)
 
-    def test_effective_time_defaults_to_fourteen_days_ahead(self):
-        before = datetime.now(timezone.utc) + timedelta(days=14)
-        resolved = datetime.fromisoformat(_resolve_effective_time(None).replace('Z', '+00:00'))
-        after = datetime.now(timezone.utc) + timedelta(days=14)
-        self.assertLessEqual(before.replace(microsecond=0), resolved)
-        self.assertLessEqual(resolved, after)
-
-    def test_effective_time_requires_rfc3339_timezone(self):
-        self.assertEqual(_resolve_effective_time('2026-09-22T00:00:00Z'), '2026-09-22T00:00:00Z')
-        with self.assertRaisesRegex(ValueError, 'timezone is required'):
-            _resolve_effective_time('2026-09-22T00:00:00')
-
     async def test_build_passes_independent_verification_options(self):
         self.pipeline.skip_ec_verify = True
         self.pipeline.skip_custom_its = True
-        self.pipeline.effective_time = '2026-09-22T00:00:00Z'
         with (
             patch(
                 'pyartcd.pipelines.build_layered_products.exectools.cmd_assert_async',
@@ -788,7 +774,6 @@ class TestBuildLayeredProductsPipeline(IsolatedAsyncioTestCase):
         cmd = mock_cmd.call_args.args[0]
         self.assertIn('--skip-ec-verify', cmd)
         self.assertIn('--skip-custom-its', cmd)
-        self.assertIn('--effective-time=2026-09-22T00:00:00Z', cmd)
 
     @patch('pyartcd.pipelines.build_layered_products.increment_fail_counter', new_callable=AsyncMock)
     @patch('pyartcd.pipelines.build_layered_products.reset_fail_counter', new_callable=AsyncMock)

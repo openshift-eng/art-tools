@@ -3,7 +3,6 @@ import logging
 import os
 import sys
 import traceback
-from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import List, Optional
 
@@ -33,23 +32,6 @@ from pyartcd.util import (
     update_rebase_fail_counters,
 )
 
-EC_EFFECTIVE_TIME_OFFSET_DAYS = 14
-
-
-def _resolve_effective_time(value: Optional[str]) -> str:
-    if not value:
-        return (datetime.now(timezone.utc) + timedelta(days=EC_EFFECTIVE_TIME_OFFSET_DAYS)).strftime(
-            '%Y-%m-%dT%H:%M:%SZ'
-        )
-    try:
-        parsed = datetime.fromisoformat(value.replace('Z', '+00:00'))
-    except ValueError as exc:
-        raise ValueError(f"Invalid --effective-time {value!r}; expected an RFC3339 timestamp") from exc
-    if parsed.tzinfo is None:
-        raise ValueError(f"Invalid --effective-time {value!r}; timezone is required")
-    return value
-
-
 class BuildLayeredProductsPipeline:
     """Rebase and build layered products for an assembly"""
 
@@ -70,7 +52,6 @@ class BuildLayeredProductsPipeline:
         plr_template: Optional[str] = None,
         skip_ec_verify: bool = False,
         skip_custom_its: bool = False,
-        effective_time: Optional[str] = None,
         logger: Optional[logging.Logger] = None,
     ):
         self.runtime = runtime
@@ -87,7 +68,6 @@ class BuildLayeredProductsPipeline:
         self.plr_template = plr_template
         self.skip_ec_verify = skip_ec_verify
         self.skip_custom_its = skip_custom_its
-        self.effective_time = _resolve_effective_time(effective_time)
         self._logger = logger or runtime.logger
         # Operator NVRs that were dropped from the bundle build trigger because they are embargoed.
         # The caller uses this to mark the Jenkins job UNSTABLE instead of a plain SUCCESS.
@@ -504,7 +484,6 @@ class BuildLayeredProductsPipeline:
             build_cmd.append('--skip-ec-verify')
         if self.skip_custom_its:
             build_cmd.append('--skip-custom-its')
-        build_cmd.append(f'--effective-time={self.effective_time}')
         if self.runtime.dry_run:
             build_cmd.append("--dry-run")
 
@@ -580,11 +559,6 @@ class BuildLayeredProductsPipeline:
     default=False,
     help="Skip custom IntegrationTestScenarios configured in group.yml",
 )
-@click.option(
-    "--effective-time",
-    default=None,
-    help="RFC3339 effective time for ART-managed Enterprise Contract verification (defaults to UTC now plus 14 days)",
-)
 @click.option("--ignore-locks", is_flag=True, default=False, help="(For testing) Do not wait for locks")
 @click.option(
     '--plr-template',
@@ -609,7 +583,6 @@ async def build_layered_products(
     network_mode: Optional[str],
     skip_ec_verify: bool,
     skip_custom_its: bool,
-    effective_time: Optional[str],
     ignore_locks: bool,
     plr_template: str,
 ):
@@ -631,7 +604,6 @@ async def build_layered_products(
             plr_template=plr_template,
             skip_ec_verify=skip_ec_verify,
             skip_custom_its=skip_custom_its,
-            effective_time=effective_time,
         )
 
         lock_identifier = jenkins.get_build_path_or_random()
