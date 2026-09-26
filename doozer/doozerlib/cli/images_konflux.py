@@ -433,9 +433,38 @@ class KonfluxBuildCli:
         )
         refresh_task = asyncio.create_task(builder._konflux_client.token_refresh_loop(namespace=self.konflux_namespace))
 
+        # Start base_image_release builds first so their PLRs reach the
+        # Kubernetes API (and Kueue) before leaf images during mass rebuild
+        # batches.  Creating these tasks first and yielding once gives them
+        # a genuine head start in the event loop.
+        base_image_release_metas = [m for m in metas if m.should_trigger_base_image_release()]
+        if base_image_release_metas:
+            base_keys = {m.distgit_key for m in base_image_release_metas}
+            other_metas = [m for m in metas if m.distgit_key not in base_keys]
+            runtime.logger.info(
+                "Prioritised %d base_image_release image(s) for early PLR submission: %s",
+                len(base_image_release_metas),
+                [m.distgit_key for m in base_image_release_metas],
+            )
+        else:
+            other_metas = list(metas)
+
+        # Phase 1: create tasks for base_image_release images
         tasks = []
-        for image_meta in metas:
+        for image_meta in base_image_release_metas:
             tasks.append(asyncio.create_task(builder.build(image_meta, git_auth_secret=git_auth_secret)))
+
+        # Yield to the event loop so base_image_release tasks begin
+        # processing before leaf-image tasks are even scheduled.
+        if tasks:
+            await asyncio.sleep(0)
+
+        # Phase 2: create tasks for the remaining images
+        for image_meta in other_metas:
+            tasks.append(asyncio.create_task(builder.build(image_meta, git_auth_secret=git_auth_secret)))
+
+        # Reorder metas to match task list for result correlation
+        metas = list(base_image_release_metas) + list(other_metas)
         try:
             results = await asyncio.gather(*tasks, return_exceptions=True)
             failed_images = []
