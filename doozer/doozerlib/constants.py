@@ -85,7 +85,7 @@ PRODUCT_EC_POLICY_MAP = {
     "logging": "art-logging-tenant/conforma-build-stage",
     "mta": "art-mta-tenant/conforma-build-stage",
     "oadp": "art-oadp-tenant/conforma-build-stage",
-    "ocp": "ocp-art-tenant/conforma-build-stage",
+    "ocp": KONFLUX_DEFAULT_EC_POLICY_CONFIGURATION,
     "openshift-logging": "art-logging-tenant/conforma-build-stage",
     "rhmtc": "art-mtc-tenant/conforma-build-stage",
 }
@@ -94,17 +94,17 @@ PRODUCT_TEST_EC_POLICY_MAP = {
     "logging": "art-logging-tenant/conforma-build-stage-test",
     "mta": "art-mta-tenant/conforma-build-stage-test",
     "oadp": "art-oadp-tenant/conforma-build-stage-test",
-    "ocp": "ocp-art-tenant/conforma-build-stage-test",
+    "ocp": KONFLUX_TEST_EC_POLICY_CONFIGURATION,
     "openshift-logging": "art-logging-tenant/conforma-build-stage-test",
     "rhmtc": "art-mtc-tenant/conforma-build-stage-test",
 }
 
 PRODUCT_PREGA_EC_POLICY_MAP = {
-    "ocp": "ocp-art-tenant/conforma-build-ec-stage",
+    "ocp": KONFLUX_PREGA_EC_POLICY_CONFIGURATION,
 }
 
 PRODUCT_TEST_PREGA_EC_POLICY_MAP = {
-    "ocp": "ocp-art-tenant/conforma-build-ec-stage-test",
+    "ocp": KONFLUX_TEST_PREGA_EC_POLICY_CONFIGURATION,
 }
 
 # Base image release EC policies (ReleasePlanAdmission policy name suffix). Selection is by
