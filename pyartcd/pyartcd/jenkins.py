@@ -311,6 +311,40 @@ def is_build_running(build_path: str) -> bool:
     return build.is_running()
 
 
+def get_running_olm_bundle_konflux_nvrs(
+    build_version: str, assembly: str, group: str, operator_nvrs: list[str]
+) -> set[str]:
+    """Return requested operators covered by running bundle jobs for this group."""
+    requested = set(operator_nvrs)
+    if not requested:
+        return set()
+
+    init_jenkins()
+    job = jenkins_client.get_job(Jobs.OLM_BUNDLE_KONFLUX.value)
+    data = job.poll(tree='builds[building,actions[parameters[name,value]]]{0,100}')
+    covered = set()
+    for build in data.get('builds') or []:
+        if not build.get('building'):
+            continue
+        params = {
+            param['name']: param['value']
+            for action in build.get('actions') or []
+            if action
+            for param in action.get('parameters') or []
+            if param and 'name' in param and 'value' in param
+        }
+        if params.get('BUILD_VERSION') != build_version or params.get('ASSEMBLY') != assembly:
+            continue
+        job_group = params.get('GROUP') or f'openshift-{build_version}'
+        if job_group != group:
+            continue
+        job_nvrs = params.get('OPERATOR_NVRS', '')
+        if not job_nvrs:
+            return requested  # An unfiltered bundle job covers the whole group.
+        covered.update(requested.intersection(nvr.strip() for nvr in job_nvrs.split(',')))
+    return covered
+
+
 def get_propagatable_params() -> dict:
     """
     Get parameters that should automatically propagate to downstream jobs.

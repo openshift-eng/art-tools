@@ -173,3 +173,61 @@ class TestJenkinsStartBuild(unittest.TestCase):
             operator_nvrs=[],
         )
         self.assertIsNone(result)
+
+    @mock.patch("pyartcd.jenkins.init_jenkins")
+    @mock.patch("pyartcd.jenkins.jenkins_client")
+    def test_running_bundle_jobs_filter_version_group_and_nvrs(self, mock_client, mock_init_jenkins):
+        def build(building, version, group, nvrs):
+            return {
+                'building': building,
+                'actions': [
+                    None,
+                    {
+                        'parameters': [
+                            {'name': 'BUILD_VERSION', 'value': version},
+                            {'name': 'ASSEMBLY', 'value': 'stream'},
+                            {'name': 'GROUP', 'value': group},
+                            {'name': 'OPERATOR_NVRS', 'value': nvrs},
+                        ]
+                    },
+                ],
+            }
+
+        mock_client.get_job.return_value.poll.return_value = {
+            'builds': [
+                build(True, '4.13', 'openshift-4.13', 'op-a,op-b'),
+                build(True, '4.14', 'openshift-4.14', 'op-c'),
+                build(False, '4.13', 'openshift-4.13', 'op-c'),
+            ]
+        }
+
+        result = jenkins.get_running_olm_bundle_konflux_nvrs('4.13', 'stream', 'openshift-4.13', ['op-a', 'op-c'])
+
+        self.assertEqual(result, {'op-a'})
+        mock_init_jenkins.assert_called_once()
+        mock_client.get_job.assert_called_once_with(Jobs.OLM_BUNDLE_KONFLUX.value)
+
+    @mock.patch("pyartcd.jenkins.init_jenkins")
+    @mock.patch("pyartcd.jenkins.jenkins_client")
+    def test_unfiltered_running_bundle_job_covers_all_nvrs(self, mock_client, mock_init_jenkins):
+        mock_client.get_job.return_value.poll.return_value = {
+            'builds': [
+                {
+                    'building': True,
+                    'actions': [
+                        {
+                            'parameters': [
+                                {'name': 'BUILD_VERSION', 'value': '4.13'},
+                                {'name': 'ASSEMBLY', 'value': 'stream'},
+                                {'name': 'GROUP', 'value': ''},
+                                {'name': 'OPERATOR_NVRS', 'value': ''},
+                            ]
+                        }
+                    ],
+                }
+            ]
+        }
+
+        result = jenkins.get_running_olm_bundle_konflux_nvrs('4.13', 'stream', 'openshift-4.13', ['op-a', 'op-b'])
+
+        self.assertEqual(result, {'op-a', 'op-b'})

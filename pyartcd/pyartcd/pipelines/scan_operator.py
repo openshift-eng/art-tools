@@ -1,5 +1,6 @@
 import asyncio
 import logging
+import os
 from typing import Dict, List, Optional, Set
 
 import click
@@ -23,8 +24,8 @@ from pyartcd.locks import Lock
 from pyartcd.runtime import Runtime
 from pyartcd.util import load_group_config
 
-# The stage/delivery registry where bundle images are published after stage release
-STAGE_REGISTRY = "registry.redhat.io"
+# The registry targeted by advisory-stage ReleasePlanAdmissions.
+STAGE_REGISTRY = "registry.stage.redhat.io"
 
 
 class ScanOperatorPipeline:
@@ -136,10 +137,26 @@ class ScanOperatorPipeline:
 
         if self.operators_needing_stage_release:
             try:
-                self.trigger_bundle_builds(self.operators_needing_stage_release, force_release=True)
+                pending_nvrs = jenkins.get_running_olm_bundle_konflux_nvrs(
+                    build_version=self.version,
+                    assembly=self.assembly,
+                    group=self.group,
+                    operator_nvrs=[op.nvr for op in self.operators_needing_stage_release],
+                )
             except Exception as e:
-                trigger_errors.append(e)
-                self.logger.error(f'Failed to trigger force-release bundle builds: {e}')
+                self.logger.warning('Could not check running bundle jobs; skipping force release this scan: %s', e)
+            else:
+                to_release = [op for op in self.operators_needing_stage_release if op.nvr not in pending_nvrs]
+                if pending_nvrs:
+                    self.logger.info(
+                        'Skipping force release for %d operator(s) in running bundle jobs', len(pending_nvrs)
+                    )
+                if to_release:
+                    try:
+                        self.trigger_bundle_builds(to_release, force_release=True)
+                    except Exception as e:
+                        trigger_errors.append(e)
+                        self.logger.error('Failed to trigger force-release bundle builds: %s', e)
 
         if self.operators_without_fbcs:
             try:
@@ -157,7 +174,7 @@ class ScanOperatorPipeline:
 
         Only ``stream`` assembly bundles are stage-released. When applicable,
         ``check_operator`` will verify that the bundle image exists in the
-        stage registry (registry.redhat.io); operators whose bundle is missing
+        stage registry (registry.stage.redhat.io); operators whose bundle is missing
         are re-triggered with ``force_release=True``.
         """
         self._check_stage_release = False
@@ -279,9 +296,12 @@ class ScanOperatorPipeline:
             # Check stage release status if applicable
             if self._check_stage_release:
                 is_released = await self.check_stage_registry(operator, bundle)
-                if not is_released:
+                if is_released is False:
                     self.operators_needing_stage_release.append(operator)
                     # Stage release is a prerequisite for FBC; skip FBC check
+                    return
+                if is_released is None:
+                    # An unavailable registry is not proof that release happened.
                     return
 
             fbc = await self.check_fbc_exists(operator, bundle)
@@ -383,52 +403,61 @@ class ScanOperatorPipeline:
         self.logger.info(f'  FBC MISSING for operator {operator.nvr}')
         return None
 
-    async def check_stage_registry(self, operator: KonfluxBuildRecord, bundle: KonfluxBundleBuildRecord) -> bool:
+    async def check_stage_registry(
+        self, operator: KonfluxBuildRecord, bundle: KonfluxBundleBuildRecord
+    ) -> Optional[bool]:
         """Check if a bundle image exists in the stage registry.
 
         Extracts the digest from the bundle's ``image_pullspec`` and checks
-        whether ``registry.redhat.io/{delivery_repo}@{digest}`` exists using
+        the ``{{ digest_sha }}`` tag configured by the stage RPA using
         ``skopeo inspect --raw``.
 
-        Returns ``True`` if the image exists (or if the check cannot be
-        performed); ``False`` if the image is confirmed missing.
+        Returns ``True`` if the image exists, ``False`` if confirmed missing,
+        or ``None`` if the check is inconclusive.
         """
         delivery_repo = self.delivery_repo_by_operator.get(operator.name)
         if not delivery_repo:
             self.logger.warning('  No delivery repo configured for %s; skipping stage release check', operator.name)
-            return True  # Don't re-trigger if we can't check
+            return None
 
         if not bundle.image_pullspec or '@' not in bundle.image_pullspec:
             self.logger.warning(
                 '  No image digest in bundle pullspec for %s; skipping stage release check', operator.nvr
             )
-            return True
+            return None
 
         digest = bundle.image_pullspec.split('@', 1)[-1]
-        stage_pullspec = f"docker://{STAGE_REGISTRY}/{delivery_repo}@{digest}"
+        if not digest.startswith('sha256:'):
+            self.logger.warning('  Invalid bundle digest for %s: %s', operator.nvr, digest)
+            return None
+        digest_sha = digest.removeprefix('sha256:')
+        stage_pullspec = f"docker://{STAGE_REGISTRY}/{delivery_repo}:{digest_sha}"
+        cmd = ['skopeo', 'inspect', '--raw']
+        if auth_file := os.environ.get('REGISTRY_AUTH_FILE'):
+            cmd.extend(['--authfile', auth_file])
+        cmd.append(stage_pullspec)
 
         try:
             rc, _, err = await exectools.cmd_gather_async(
-                ['skopeo', 'inspect', '--raw', stage_pullspec],
+                cmd,
                 check=False,
             )
             if rc == 0:
                 self.logger.info(
-                    '  Stage release for %s exists: %s/%s@%s', operator.nvr, STAGE_REGISTRY, delivery_repo, digest
+                    '  Stage release for %s exists: %s/%s:%s', operator.nvr, STAGE_REGISTRY, delivery_repo, digest_sha
                 )
                 return True
             if 'manifest unknown' in (err or '').lower():
                 self.logger.info(
-                    '  Stage release MISSING for %s: %s/%s@%s', operator.nvr, STAGE_REGISTRY, delivery_repo, digest
+                    '  Stage release MISSING for %s: %s/%s:%s', operator.nvr, STAGE_REGISTRY, delivery_repo, digest_sha
                 )
                 return False
             self.logger.warning('  Stage registry check inconclusive for %s (rc=%s): %s', operator.nvr, rc, err)
-            return True
+            return None
 
         except Exception as e:
             self.logger.warning('  Failed to check stage registry for %s: %s', operator.nvr, e)
-            # Err on the side of caution: don't re-trigger if we can't check
-            return True
+            return None
 
     def trigger_bundle_builds(self, operators: List[KonfluxBuildRecord], force_release: bool = False):
         """Trigger bundle builds for multiple operators in one job."""
