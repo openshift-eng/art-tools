@@ -154,6 +154,23 @@ class TestScanOperatorPipeline(unittest.IsolatedAsyncioTestCase):
         self.assertNotIn(operator, pipeline.operators_needing_stage_release)
         self.assertIn(operator, pipeline.operators_without_fbcs)
 
+    async def test_check_operator_stage_release_inconclusive(self):
+        """Do not trigger another release or FBC build when stage cannot be checked."""
+        pipeline = self._make_pipeline()
+        pipeline._check_stage_release = True
+        operator = _make_operator()
+
+        with (
+            patch.object(pipeline, 'check_bundle_exists', new_callable=AsyncMock, return_value=_make_bundle()),
+            patch.object(pipeline, 'check_stage_registry', new_callable=AsyncMock, return_value=None),
+            patch.object(pipeline, 'check_fbc_exists', new_callable=AsyncMock) as mock_check_fbc,
+        ):
+            await pipeline.check_operator(operator)
+
+        self.assertEqual(pipeline.operators_needing_stage_release, [])
+        self.assertEqual(pipeline.operators_without_fbcs, [])
+        mock_check_fbc.assert_not_awaited()
+
     async def test_check_operator_no_stage_check_skips_registry(self):
         """When stage release checking is not applicable, skip the check entirely."""
         pipeline = self._make_pipeline()
@@ -171,6 +188,7 @@ class TestScanOperatorPipeline(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(pipeline.operators_without_fbcs), 0)
 
 
+@patch.dict('os.environ', {'REGISTRY_AUTH_FILE': ''})
 class TestCheckStageRegistry(unittest.IsolatedAsyncioTestCase):
     """Tests for the check_stage_registry method."""
 
@@ -216,7 +234,7 @@ class TestCheckStageRegistry(unittest.IsolatedAsyncioTestCase):
                 'skopeo',
                 'inspect',
                 '--raw',
-                'docker://registry.redhat.io/openshift4/ose-test-operator-bundle@sha256:abc123',
+                'docker://registry.stage.redhat.io/openshift4/ose-test-operator-bundle:abc123',
             ],
             check=False,
         )
@@ -235,8 +253,8 @@ class TestCheckStageRegistry(unittest.IsolatedAsyncioTestCase):
         self.assertFalse(result)
 
     @patch('pyartcd.pipelines.scan_operator.exectools.cmd_gather_async', new_callable=AsyncMock)
-    async def test_stage_registry_inconclusive_error_returns_true(self, mock_cmd):
-        """On non-manifest-unknown skopeo error, return True (inconclusive, don't re-trigger)."""
+    async def test_stage_registry_inconclusive_error_returns_none(self, mock_cmd):
+        """An auth or connection error cannot prove release status."""
         pipeline = self._make_pipeline()
         operator = _make_operator(name='test-operator', nvr='test-operator-1.0-1')
         bundle = _make_bundle(image_pullspec='quay.io/redhat-prod/ocp-art-tenant/test-bundle@sha256:abc123')
@@ -245,11 +263,11 @@ class TestCheckStageRegistry(unittest.IsolatedAsyncioTestCase):
 
         result = await pipeline.check_stage_registry(operator, bundle)
 
-        self.assertTrue(result)  # Inconclusive errors should not trigger re-release
+        self.assertIsNone(result)
 
     @patch('pyartcd.pipelines.scan_operator.exectools.cmd_gather_async', new_callable=AsyncMock)
-    async def test_stage_registry_exception_returns_true(self, mock_cmd):
-        """On unexpected exception, return True (don't re-trigger)."""
+    async def test_stage_registry_exception_returns_none(self, mock_cmd):
+        """An unexpected registry error cannot prove release status."""
         pipeline = self._make_pipeline()
         operator = _make_operator(name='test-operator', nvr='test-operator-1.0-1')
         bundle = _make_bundle(image_pullspec='quay.io/redhat-prod/ocp-art-tenant/test-bundle@sha256:abc123')
@@ -258,10 +276,10 @@ class TestCheckStageRegistry(unittest.IsolatedAsyncioTestCase):
 
         result = await pipeline.check_stage_registry(operator, bundle)
 
-        self.assertTrue(result)  # Err on the side of caution
+        self.assertIsNone(result)
 
     async def test_stage_registry_no_delivery_repo(self):
-        """Return True when no delivery repo is configured for the operator."""
+        """Return inconclusive when no delivery repo is configured."""
         pipeline = self._make_pipeline()
         pipeline.delivery_repo_by_operator = {}  # no delivery repo
         operator = _make_operator(name='test-operator', nvr='test-operator-1.0-1')
@@ -269,27 +287,47 @@ class TestCheckStageRegistry(unittest.IsolatedAsyncioTestCase):
 
         result = await pipeline.check_stage_registry(operator, bundle)
 
-        self.assertTrue(result)
+        self.assertIsNone(result)
 
     async def test_stage_registry_no_pullspec(self):
-        """Return True when bundle has no image_pullspec."""
+        """Return inconclusive when the bundle has no image pullspec."""
         pipeline = self._make_pipeline()
         operator = _make_operator(name='test-operator', nvr='test-operator-1.0-1')
         bundle = _make_bundle(image_pullspec='')
 
         result = await pipeline.check_stage_registry(operator, bundle)
 
-        self.assertTrue(result)
+        self.assertIsNone(result)
 
     async def test_stage_registry_pullspec_without_digest(self):
-        """Return True when bundle pullspec has no @ digest separator."""
+        """Return inconclusive when the bundle pullspec has no digest."""
         pipeline = self._make_pipeline()
         operator = _make_operator(name='test-operator', nvr='test-operator-1.0-1')
         bundle = _make_bundle(image_pullspec='quay.io/redhat-prod/test-bundle:latest')
 
         result = await pipeline.check_stage_registry(operator, bundle)
 
+        self.assertIsNone(result)
+
+    @patch('pyartcd.pipelines.scan_operator.exectools.cmd_gather_async', new_callable=AsyncMock)
+    async def test_stage_registry_uses_explicit_auth_file(self, mock_cmd):
+        pipeline = self._make_pipeline()
+        mock_cmd.return_value = (0, '{}', '')
+
+        with patch.dict('os.environ', {'REGISTRY_AUTH_FILE': '/tmp/registry-auth.json'}):
+            result = await pipeline.check_stage_registry(_make_operator(), _make_bundle())
+
         self.assertTrue(result)
+        self.assertEqual(
+            mock_cmd.await_args.args[0][:5],
+            [
+                'skopeo',
+                'inspect',
+                '--raw',
+                '--authfile',
+                '/tmp/registry-auth.json',
+            ],
+        )
 
 
 class TestTriggerBundleBuilds(unittest.TestCase):
