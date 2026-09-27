@@ -192,13 +192,38 @@ class TestOlmBundleKonfluxStageReleaseGating(unittest.IsolatedAsyncioTestCase):
         mock_locks,
         mock_jenkins,
     ):
-        """When --force-release is set, stage release runs even for skipped bundles."""
+        """A force-release of existing bundles stages images without rebuilding FBCs."""
         mock_stage_release.return_value = []
         await self._run_pipeline(
             mock_stage_release, mock_load_group_config, mock_locks, mock_jenkins, force_release=True
         )
 
         mock_stage_release.assert_called_once()
+        mock_jenkins.start_build_fbc.assert_not_called()
+
+    @mock.patch("pyartcd.pipelines.olm_bundle_konflux.jenkins")
+    @mock.patch("pyartcd.pipelines.olm_bundle_konflux.locks")
+    @mock.patch("pyartcd.pipelines.olm_bundle_konflux.exectools.cmd_assert_async", new_callable=mock.AsyncMock)
+    @mock.patch("pyartcd.pipelines.olm_bundle_konflux.load_group_config", new_callable=mock.AsyncMock)
+    @mock.patch("pyartcd.pipelines.olm_bundle_konflux._stage_release_related_images", new_callable=mock.AsyncMock)
+    async def test_force_release_rebuilt_bundle_still_triggers_fbc(
+        self,
+        mock_stage_release,
+        mock_load_group_config,
+        mock_cmd_assert,
+        mock_locks,
+        mock_jenkins,
+    ):
+        """A bundle rebuilt during force-release still needs a new FBC."""
+        mock_stage_release.return_value = []
+        self._write_bundle_record()
+
+        await self._run_pipeline(
+            mock_stage_release, mock_load_group_config, mock_locks, mock_jenkins, force_release=True
+        )
+
+        mock_stage_release.assert_called_once()
+        mock_jenkins.start_build_fbc.assert_called_once()
 
     @mock.patch("pyartcd.pipelines.olm_bundle_konflux.jenkins")
     @mock.patch("pyartcd.pipelines.olm_bundle_konflux.locks")

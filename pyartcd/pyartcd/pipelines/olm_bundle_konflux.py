@@ -343,8 +343,12 @@ async def olm_bundle_konflux(
                 'Skipping stage release of related images — no new bundles were built (use --force-release to override)'
             )
 
+        # A force-release retry with existing bundles only needs to restore stage delivery.
+        # The scanner will trigger an FBC build separately if one is missing.
+        if force_release and not bundles_were_built:
+            runtime.logger.info('Skipping FBC builds — force-release reused all existing bundles')
         # Check if this is a non-openshift group and if OCP_TARGET_VERSIONS is configured
-        if group and not group.startswith("openshift-"):
+        elif group and not group.startswith("openshift-"):
             runtime.logger.info(f'Group {group} is a non-openshift group, checking for OCP_TARGET_VERSIONS')
             # Load group config to check for OCP_TARGET_VERSIONS
             group_config = await load_group_config(
