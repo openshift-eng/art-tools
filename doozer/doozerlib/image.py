@@ -12,6 +12,7 @@ from artcommonlib import util as artlib_util
 from artcommonlib.constants import GOLANG_BUILDER_IMAGE_NAME
 from artcommonlib.konflux.konflux_build_record import ArtifactType, Engine, KonfluxBuildOutcome, KonfluxBuildRecord
 from artcommonlib.model import Missing, Model
+from artcommonlib.product_catalog import find_product_config
 from artcommonlib.pushd import Dir
 from artcommonlib.rpm_utils import parse_nvr, to_nevra
 from artcommonlib.util import deep_merge
@@ -1461,9 +1462,9 @@ class ImageMetadata(Metadata):
         Determines whether this image should trigger the base image release workflow.
 
         The method checks preconditions in the following order:
-        0. Variant must be OCP (not OKD); OKD never uses RH base-image snapshot→release
-        1. Assembly must not be ``test`` (unconditional block, not bypassed by force)
-        2. Image metadata ``base_image_release.force`` set to true enables workflow (OCP only)
+        0. OKD never uses RH base-image snapshot→release
+        1. For ``test`` assemblies, skip core OCP and products without a base-image release target
+        2. Image metadata ``base_image_release.force`` set to true enables workflow
         3. Image must be ``base_only`` (golang builders are excluded — they use the shipment MR path)
         4. Base image release enabled override:
            - Image metadata configuration (``self.config.base_image_release.enabled``)
@@ -1477,8 +1478,10 @@ class ImageMetadata(Metadata):
             return False
 
         if self.runtime.assembly == "test":
-            self.logger.info("Skipping base image release for test assembly")
-            return False
+            product_config = find_product_config(self.runtime.product)
+            if self.runtime.variant is BuildVariant.OCP or not product_config or not product_config.base_image_release:
+                self.logger.info("Skipping base image release for test assembly of %s", self.runtime.product)
+                return False
 
         base_image_release_force_override = self.config.base_image_release.force
         if base_image_release_force_override not in [Missing, None] and bool(base_image_release_force_override):
