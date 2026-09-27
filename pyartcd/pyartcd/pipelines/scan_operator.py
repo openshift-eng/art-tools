@@ -137,26 +137,10 @@ class ScanOperatorPipeline:
 
         if self.operators_needing_stage_release:
             try:
-                pending_nvrs = jenkins.get_running_olm_bundle_konflux_nvrs(
-                    build_version=self.version,
-                    assembly=self.assembly,
-                    group=self.group,
-                    operator_nvrs=[op.nvr for op in self.operators_needing_stage_release],
-                )
+                self.trigger_bundle_builds(self.operators_needing_stage_release, force_release=True)
             except Exception as e:
-                self.logger.warning('Could not check running bundle jobs; skipping force release this scan: %s', e)
-            else:
-                to_release = [op for op in self.operators_needing_stage_release if op.nvr not in pending_nvrs]
-                if pending_nvrs:
-                    self.logger.info(
-                        'Skipping force release for %d operator(s) in running bundle jobs', len(pending_nvrs)
-                    )
-                if to_release:
-                    try:
-                        self.trigger_bundle_builds(to_release, force_release=True)
-                    except Exception as e:
-                        trigger_errors.append(e)
-                        self.logger.error('Failed to trigger force-release bundle builds: %s', e)
+                trigger_errors.append(e)
+                self.logger.error(f'Failed to trigger force-release bundle builds: {e}')
 
         if self.operators_without_fbcs:
             try:

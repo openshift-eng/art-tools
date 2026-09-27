@@ -187,48 +187,6 @@ class TestScanOperatorPipeline(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(pipeline.operators_needing_stage_release), 0)
         self.assertEqual(len(pipeline.operators_without_fbcs), 0)
 
-    @patch('pyartcd.pipelines.scan_operator.uses_konflux_imagestream_override', return_value=True)
-    @patch('pyartcd.pipelines.scan_operator.jenkins.get_running_olm_bundle_konflux_nvrs')
-    async def test_run_does_not_rerelease_operator_in_running_bundle_job(self, mock_running, _mock_override):
-        pipeline = self._make_pipeline()
-        first = _make_operator(name='first', nvr='first-1')
-        second = _make_operator(name='second', nvr='second-1')
-        pipeline.operators_needing_stage_release = [first, second]
-        mock_running.return_value = {'first-1'}
-
-        with (
-            patch.object(pipeline, '_init_stage_release_check', new_callable=AsyncMock),
-            patch.object(pipeline, 'load_operator_names', new_callable=AsyncMock, return_value={'first', 'second'}),
-            patch.object(pipeline, 'get_latest_operator_builds', new_callable=AsyncMock, return_value=[first, second]),
-            patch.object(pipeline, 'check_operator', new_callable=AsyncMock),
-            patch.object(pipeline, 'trigger_bundle_builds') as mock_trigger,
-        ):
-            await pipeline.run()
-
-        mock_trigger.assert_called_once_with([second], force_release=True)
-        mock_running.assert_called_once_with(
-            build_version='4.18', assembly='stream', group='openshift-4.18', operator_nvrs=['first-1', 'second-1']
-        )
-
-    @patch('pyartcd.pipelines.scan_operator.uses_konflux_imagestream_override', return_value=True)
-    @patch('pyartcd.pipelines.scan_operator.jenkins.get_running_olm_bundle_konflux_nvrs')
-    async def test_run_skips_force_release_when_running_jobs_cannot_be_checked(self, mock_running, _mock_override):
-        pipeline = self._make_pipeline()
-        operator = _make_operator()
-        pipeline.operators_needing_stage_release = [operator]
-        mock_running.side_effect = RuntimeError('Jenkins unavailable')
-
-        with (
-            patch.object(pipeline, '_init_stage_release_check', new_callable=AsyncMock),
-            patch.object(pipeline, 'load_operator_names', new_callable=AsyncMock, return_value={operator.name}),
-            patch.object(pipeline, 'get_latest_operator_builds', new_callable=AsyncMock, return_value=[operator]),
-            patch.object(pipeline, 'check_operator', new_callable=AsyncMock),
-            patch.object(pipeline, 'trigger_bundle_builds') as mock_trigger,
-        ):
-            await pipeline.run()
-
-        mock_trigger.assert_not_called()
-
 
 @patch.dict('os.environ', {'REGISTRY_AUTH_FILE': ''})
 class TestCheckStageRegistry(unittest.IsolatedAsyncioTestCase):
