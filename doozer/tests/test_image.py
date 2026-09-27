@@ -1914,7 +1914,7 @@ class TestImageMetadataAsyncMethods(IsolatedAsyncioTestCase):
         golang_metadata = ImageMetadata(runtime, golang_data)
         self.assertFalse(golang_metadata.should_trigger_base_image_release())
 
-        # Test assembly: base/golang do not use the base-image release path
+        # Core OCP test assembly: base/golang do not use the base-image release path
         test_assembly_runtime = MagicMock()
         test_assembly_runtime.logger = logging.getLogger('test_runtime')
         test_assembly_runtime.variant = BuildVariant.OCP
@@ -2013,12 +2013,30 @@ class TestImageMetadataAsyncMethods(IsolatedAsyncioTestCase):
         # Layered product: base images trigger; golang builders still use the shipment MR path
         layered_runtime = MagicMock()
         layered_runtime.logger = logging.getLogger('test_runtime')
-        layered_runtime.variant = BuildVariant.OCP
+        layered_runtime.variant = BuildVariant.MTC
         layered_runtime.assembly = 'stream'
         layered_runtime.product = 'rhmtc'
         layered_runtime.group_config = Model({})
         self.assertTrue(ImageMetadata(layered_runtime, base_data).should_trigger_base_image_release())
         self.assertFalse(ImageMetadata(layered_runtime, golang_data).should_trigger_base_image_release())
+
+        # Layered-product test builds release eligible base images using the product's release target
+        layered_runtime.assembly = 'test'
+        self.assertTrue(ImageMetadata(layered_runtime, base_data).should_trigger_base_image_release())
+        self.assertFalse(ImageMetadata(layered_runtime, golang_data).should_trigger_base_image_release())
+        self.assertFalse(ImageMetadata(layered_runtime, regular_data).should_trigger_base_image_release())
+        self.assertFalse(ImageMetadata(layered_runtime, base_snap_off_data).should_trigger_base_image_release())
+        self.assertTrue(ImageMetadata(layered_runtime, forced_regular_data).should_trigger_base_image_release())
+
+        # Products without a base-image release target must not release test builds
+        no_target_runtime = MagicMock()
+        no_target_runtime.logger = logging.getLogger('test_runtime')
+        no_target_runtime.variant = BuildVariant.MICROSHIFT
+        no_target_runtime.assembly = 'test'
+        no_target_runtime.product = 'microshift'
+        no_target_runtime.group_config = Model({})
+        self.assertFalse(ImageMetadata(no_target_runtime, base_data).should_trigger_base_image_release())
+        self.assertFalse(ImageMetadata(no_target_runtime, forced_regular_data).should_trigger_base_image_release())
 
         # OKD: base image would trigger on OCP but never on OKD (no RH registry release)
         okd_runtime = MagicMock()
@@ -2040,7 +2058,7 @@ class TestImageMetadataAsyncMethods(IsolatedAsyncioTestCase):
         )
         self.assertFalse(okd_forced_metadata.should_trigger_base_image_release())
 
-        # Force=true does NOT bypass test assembly block (test assembly is unconditional skip)
+        # Force=true does not bypass the core OCP test assembly block
         test_assembly_forced_runtime = MagicMock()
         test_assembly_forced_runtime.logger = logging.getLogger('test_runtime')
         test_assembly_forced_runtime.variant = BuildVariant.OCP
