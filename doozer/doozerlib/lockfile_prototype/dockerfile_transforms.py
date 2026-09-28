@@ -139,7 +139,7 @@ def _transform_shell_run_body(shell_body: str) -> str:
     """
     try:
         nodes = bashlex.parse(shell_body, strictmode=False)
-    except bashlex.errors.ParsingError:
+    except (bashlex.errors.ParsingError, NotImplementedError):
         return shell_body
 
     command_nodes: list = []
