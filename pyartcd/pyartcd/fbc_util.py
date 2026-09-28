@@ -16,14 +16,26 @@ from typing import Dict, List, Optional
 
 from artcommonlib import exectools
 from artcommonlib.rpm_utils import parse_nvr
+from artcommonlib.util import extract_ocp_version_from_fbc_nvr
 from elliottlib.util import extract_nvrs_from_fbc
 from tenacity import retry, stop_after_attempt
 
 logger = logging.getLogger(__name__)
 
-_OCP_VERSION_RE = re.compile(r'\.ocp(\d+\.\d+)')
 _LP_GROUP_VERSION_RE = re.compile(r'-(\d+)\.(\d+)$')
 _LP_ASSEMBLY_VERSION_RE = re.compile(r'^v?(\d+)\.(\d+)(?:\.(\d+))?$')
+
+
+def extract_ocp_version_from_nvr(nvr: str) -> Optional[str]:
+    """Extract the target OCP version from a layered-product FBC NVR.
+
+    Args:
+        nvr: Layered-product FBC NVR.
+
+    Returns:
+        The ``major.minor`` OCP version, or ``None`` when absent.
+    """
+    return extract_ocp_version_from_fbc_nvr(nvr)
 
 
 def validate_layered_product_group_assembly(group: str, assembly: str) -> None:
@@ -106,17 +118,6 @@ def validate_layered_product_fbc_nvrs(assembly: str, fbc_nvrs: List[str]) -> Non
         raise ValueError(
             f"FBC NVRs do not match assembly '{assembly}': {', '.join(mismatches)}. No shipment data was changed."
         )
-
-
-def extract_ocp_version_from_nvr(nvr: str) -> Optional[str]:
-    """Extract the OCP target version from an LP FBC NVR.
-
-    LP FBC NVRs encode the target OCP version in the release field as
-    ``.ocp{major}.{minor}`` (e.g. ``operator-fbc-6.4.1-1234.ocp4.18``).
-    Returns the version string (e.g. ``"4.18"``) or None if not found.
-    """
-    match = _OCP_VERSION_RE.search(nvr)
-    return match.group(1) if match else None
 
 
 async def extract_fbc_labels(fbc_pullspec: str) -> Dict[str, Optional[str]]:

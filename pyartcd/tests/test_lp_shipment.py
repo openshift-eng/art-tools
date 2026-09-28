@@ -268,6 +268,8 @@ def _shipment_ci_graph(
     stage_job_status='success',
     prod_status='manual',
     prod_downstream=None,
+    downstream_prod_status='success',
+    prod_job_status='success',
 ):
     """Build a minimal python-gitlab object graph for Shipment CI tests."""
     client = MagicMock()
@@ -293,8 +295,18 @@ def _shipment_ci_graph(
     )
     stage_pipeline.jobs.list.return_value = [SimpleNamespace(name='shipment-watch-stage', status=stage_job_status)]
 
+    prod_pipeline = SimpleNamespace(
+        id=300,
+        status=downstream_prod_status,
+        web_url='https://gitlab.example/pipelines/300',
+        jobs=MagicMock(),
+    )
+    prod_pipeline.jobs.list.return_value = [SimpleNamespace(name='shipment-watch-prod', status=prod_job_status)]
+
     def get_pipeline(pipeline_id):
-        return parent_pipeline if pipeline_id == 100 else stage_pipeline
+        if pipeline_id == 100:
+            return parent_pipeline
+        return stage_pipeline if pipeline_id == 200 else prod_pipeline
 
     project.pipelines.get.side_effect = get_pipeline
     client.get_project.return_value = project
@@ -306,14 +318,35 @@ def _shipment_ci_graph(
 def test_inspect_shipment_mr_ci_state_accepts_terminal_stage_and_manual_prod():
     """Allow the normal reuse window after stage and before manual prod starts."""
     client, mr, parent, stage = _shipment_ci_graph()
+    project = client.get_project.return_value
 
-    state = inspect_shipment_mr_ci_state(client, 'https://gitlab.example/project/-/merge_requests/42', mr)
+    state = inspect_shipment_mr_ci_state(
+        client, 'https://gitlab.example/project/-/merge_requests/42', mr, project=project
+    )
 
     assert state.active_stage == ()
     assert state.prod_attempts == ()
+    assert state.active_prod == ()
     mr.pipelines.list.assert_called_once_with(get_all=True)
     parent.bridges.list.assert_called_once_with(get_all=True)
     stage.jobs.list.assert_called_once_with(get_all=True, include_retried=True)
+    client.get_project.assert_not_called()
+
+
+def test_inspect_shipment_mr_ci_state_reports_active_prod_downstream():
+    """Report active production work without changing MR-reuse decisions."""
+    client, mr, _, _ = _shipment_ci_graph(
+        prod_status='running',
+        prod_downstream={'id': 300, 'project_id': 10},
+        downstream_prod_status='running',
+        prod_job_status='running',
+    )
+
+    state = inspect_shipment_mr_ci_state(client, 'https://gitlab.example/project/-/merge_requests/42', mr)
+
+    assert state.prod_attempts
+    assert state.active_prod
+    assert any('shipment-watch-prod' in description for description in state.active_prod)
 
 
 @pytest.mark.parametrize(
@@ -361,6 +394,12 @@ def test_validate_shipment_mr_ci_state_reports_active_stage_with_created_prod_br
         stage_job_status='running',
         prod_status='created',
     )
+
+    state = inspect_shipment_mr_ci_state(client, 'https://gitlab.example/project/-/merge_requests/42', mr)
+
+    assert state.active_stage
+    assert state.prod_attempts == ()
+    assert state.active_prod == ()
 
     with pytest.raises(ShipmentMRActiveStageError, match='active stage work'):
         validate_shipment_mr_ci_state(

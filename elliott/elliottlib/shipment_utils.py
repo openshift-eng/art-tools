@@ -1,5 +1,6 @@
 import logging
 import re
+from dataclasses import dataclass
 from datetime import datetime
 from typing import Dict, Iterable, List, Tuple
 from urllib.parse import urlparse
@@ -17,6 +18,185 @@ from elliottlib.shipment_model import Issue, Issues, ReleaseNotes, ShipmentConfi
 logger = logging.getLogger(__name__)
 
 yaml = new_roundtrip_yaml_handler()
+
+_ACTIVE_CI_STATUSES = frozenset(
+    {
+        'created',
+        'waiting_for_resource',
+        'preparing',
+        'pending',
+        'running',
+        'scheduled',
+        'canceling',
+    }
+)
+_TERMINAL_CI_STATUSES = frozenset({'success', 'failed', 'canceled', 'skipped', 'manual'})
+_UNTOUCHED_PROD_STATUSES = frozenset({'created', 'manual', 'skipped'})
+
+
+@dataclass(frozen=True)
+class ShipmentMRCIState:
+    """Summarize Shipment CI state relevant to release safety.
+
+    Attributes:
+        active_stage: Descriptions of active MR, stage bridge, or downstream
+            stage jobs.
+        prod_attempts: Descriptions proving that production was attempted.
+        active_prod: Descriptions of active production bridges, downstream
+            pipelines, or downstream jobs.
+    """
+
+    active_stage: tuple[str, ...]
+    prod_attempts: tuple[str, ...]
+    active_prod: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True)
+class ShipmentConfigRecord:
+    """A validated shipment configuration and its repository path.
+
+    Attributes:
+        path: Path of the shipment YAML file in its repository.
+        config: Validated shipment configuration.
+    """
+
+    path: str
+    config: ShipmentConfig
+
+
+def _object_value(item, name: str, default=None):
+    """Read a field from a python-gitlab object or API response mapping.
+
+    Args:
+        item: Python object or mapping returned by the GitLab API.
+        name: Field name to read.
+        default: Value returned when the field is absent.
+
+    Returns:
+        The field value, or ``default`` when it is absent.
+    """
+    if isinstance(item, dict):
+        return item.get(name, default)
+    return getattr(item, name, default)
+
+
+def _checked_ci_status(item, context: str) -> str:
+    """Return a recognized GitLab CI status or fail closed.
+
+    Args:
+        item: Python-gitlab object or response mapping containing ``status``.
+        context: Human-readable pipeline or job description.
+
+    Returns:
+        The normalized GitLab CI status.
+
+    Raises:
+        RuntimeError: If the status is absent or unknown.
+    """
+    status = _object_value(item, 'status')
+    if status not in _ACTIVE_CI_STATUSES | _TERMINAL_CI_STATUSES:
+        raise RuntimeError(f"Cannot safely classify {context}: unknown GitLab CI status {status!r}")
+    return status
+
+
+def inspect_shipment_mr_ci_state(gitlab_client, mr_url: str, mr, project=None) -> ShipmentMRCIState:
+    """Inspect all Shipment CI pipelines belonging to a merge request.
+
+    Parent pipeline state, stage and production trigger bridges, and their
+    downstream jobs are inspected with pagination enabled. A production bridge
+    is considered attempted once it leaves the untouched ``created``,
+    ``manual``, or ``skipped`` states, or as soon as GitLab associates a
+    downstream pipeline.
+
+    Args:
+        gitlab_client: Authenticated ART GitLab client.
+        mr_url: URL of the shipment merge request.
+        mr: Python-gitlab merge request object.
+        project: Optional pre-fetched target project object.
+
+    Returns:
+        Active stage work, production attempts, and active production work.
+
+    Raises:
+        RuntimeError: If GitLab returns incomplete or unrecognized pipeline
+            state. Callers must fail closed.
+    """
+    project_path, _ = gitlab_client._parse_mr_url(mr_url)
+    project = project if project is not None else gitlab_client.get_project(project_path)
+    active_stage = []
+    prod_attempts = []
+    active_prod = []
+
+    mr_pipelines = mr.pipelines.list(get_all=True)
+    for mr_pipeline in mr_pipelines:
+        pipeline_id = _object_value(mr_pipeline, 'id')
+        if pipeline_id is None:
+            raise RuntimeError("Cannot safely inspect shipment MR CI state: a pipeline has no ID")
+        pipeline = project.pipelines.get(pipeline_id)
+        pipeline_url = _object_value(pipeline, 'web_url', f'pipeline {pipeline_id}')
+        pipeline_status = _checked_ci_status(pipeline, f'MR pipeline {pipeline_url}')
+        bridges = pipeline.bridges.list(get_all=True)
+        stage_bridge_found = False
+
+        for bridge in bridges:
+            bridge_name = _object_value(bridge, 'name')
+            if bridge_name not in {'stage-job', 'prod-job'}:
+                continue
+            bridge_status = _checked_ci_status(bridge, f'{bridge_name} in {pipeline_url}')
+            downstream = _object_value(bridge, 'downstream_pipeline')
+            is_prod = bridge_name == 'prod-job'
+
+            if is_prod:
+                if bridge_status not in _UNTOUCHED_PROD_STATUSES or downstream:
+                    prod_attempts.append(f"{pipeline_url} prod-job is {bridge_status}")
+                if bridge_status in _ACTIVE_CI_STATUSES and (
+                    bridge_status not in _UNTOUCHED_PROD_STATUSES or downstream
+                ):
+                    active_prod.append(f"{pipeline_url} prod-job is {bridge_status}")
+            else:
+                stage_bridge_found = True
+                if bridge_status in _ACTIVE_CI_STATUSES:
+                    active_stage.append(f"{pipeline_url} stage-job is {bridge_status}")
+
+            if not downstream:
+                continue
+            downstream_id = _object_value(downstream, 'id')
+            downstream_project_id = _object_value(downstream, 'project_id', _object_value(project, 'id'))
+            if downstream_id is None or downstream_project_id is None:
+                raise RuntimeError(
+                    f"Cannot safely inspect {pipeline_url} {bridge_name}: downstream pipeline identification is incomplete"
+                )
+            downstream_project = (
+                project
+                if downstream_project_id == _object_value(project, 'id')
+                else gitlab_client.get_project(downstream_project_id)
+            )
+            downstream_pipeline = downstream_project.pipelines.get(downstream_id)
+            downstream_url = _object_value(downstream_pipeline, 'web_url', f'pipeline {downstream_id}')
+            environment = 'production' if is_prod else 'stage'
+            downstream_status = _checked_ci_status(
+                downstream_pipeline, f'downstream {environment} pipeline {downstream_url}'
+            )
+            active_descriptions = active_prod if is_prod else active_stage
+            if downstream_status in _ACTIVE_CI_STATUSES:
+                active_descriptions.append(f"downstream {environment} pipeline {downstream_url} is {downstream_status}")
+
+            for job in downstream_pipeline.jobs.list(get_all=True, include_retried=True):
+                job_name = _object_value(job, 'name', 'unknown job')
+                job_status = _checked_ci_status(job, f'{job_name} in {downstream_url}')
+                if job_status in _ACTIVE_CI_STATUSES:
+                    active_descriptions.append(f"{downstream_url} job {job_name!r} is {job_status}")
+
+        # A ready MR pipeline can still be validating or generating its dynamic
+        # configuration before GitLab exposes the stage trigger bridge.
+        if pipeline_status in _ACTIVE_CI_STATUSES and not stage_bridge_found:
+            active_stage.append(f"{pipeline_url} is {pipeline_status} before its stage job is available")
+
+    return ShipmentMRCIState(
+        active_stage=tuple(sorted(set(active_stage))),
+        prod_attempts=tuple(sorted(set(prod_attempts))),
+        active_prod=tuple(sorted(set(active_prod))),
+    )
 
 
 # Single source of truth for the public errata URL.
@@ -227,6 +407,114 @@ def patch_et_advisory_text(
     return unresolved
 
 
+def get_shipment_config_records(
+    mr,
+    source_project,
+    kinds: Tuple[str, ...] | None = SHIPMENT_CONFIG_KINDS,
+    group: str | None = None,
+    product: str | None = None,
+    environment: str | None = None,
+    product_aliases: Iterable[str] = (),
+) -> list[ShipmentConfigRecord]:
+    """Fetch validated shipment configuration records from loaded GitLab objects.
+
+    Path filters are applied before file contents are fetched. When ``product``
+    is supplied, the path and parsed metadata must agree so callers cannot
+    mistake another product's shipment for the requested one.
+
+    Args:
+        mr: Loaded python-gitlab merge request object.
+        source_project: Loaded source project containing the MR branch.
+        kinds: Shipment kinds to include. ``None`` includes every shipment
+            YAML path, including binary and product-specific kinds.
+        group: Optional exact group path segment.
+        product: Optional canonical product path segment and metadata value.
+        environment: Optional environment path segment, such as ``prod``.
+        product_aliases: Additional product names accepted while locating and
+            validating records for ``product``.
+
+    Returns:
+        Matching path-aware shipment configuration records.
+
+    Raises:
+        ValueError: If a matching path disagrees with parsed shipment metadata.
+    """
+    records: list[ShipmentConfigRecord] = []
+    accepted_products = {product, *product_aliases} if product else set()
+    diff_versions = mr.diffs.list(all=True)
+    if not diff_versions:
+        return records
+    diff = mr.diffs.get(diff_versions[0].id)
+    for file_diff in diff.diffs:
+        file_path = file_diff.get('new_path') or file_diff.get('old_path')
+        if not file_path or not file_path.endswith(('.yaml', '.yml')):
+            continue
+
+        path_parts = file_path.split('/')
+        if product or group or environment:
+            if len(path_parts) < 4 or path_parts[0] != "shipment":
+                continue
+            if product and path_parts[1] not in accepted_products:
+                continue
+            if group and path_parts[2] != group:
+                continue
+            if environment and environment not in path_parts[3:]:
+                continue
+
+        filename = path_parts[-1]
+        parts = filename.replace('.yaml', '').replace('.yml', '')
+        if kinds is not None and not any(kind in parts for kind in kinds):
+            continue
+
+        file_content = source_project.files.get(file_path, mr.source_branch)
+        content = file_content.decode().decode('utf-8')
+        yaml_data = Model(yaml.load(content)).primitive()
+        shipment_config = ShipmentConfig(**yaml_data)
+        if product and shipment_config.shipment.metadata.product not in accepted_products:
+            raise ValueError(
+                f"Shipment path {file_path} belongs to product {product!r}, but metadata declares "
+                f"{shipment_config.shipment.metadata.product!r}"
+            )
+        records.append(ShipmentConfigRecord(path=file_path, config=shipment_config))
+    return records
+
+
+def get_shipment_config_records_from_mr(
+    mr_url: str,
+    kinds: Tuple[str, ...] | None = SHIPMENT_CONFIG_KINDS,
+    group: str | None = None,
+    product: str | None = None,
+    environment: str | None = None,
+) -> list[ShipmentConfigRecord]:
+    """Fetch validated shipment configuration records from a merge request URL.
+
+    Args:
+        mr_url: URL of the merge request.
+        kinds: Shipment kinds to include. ``None`` includes every shipment
+            YAML path, including binary and product-specific kinds.
+        group: Optional exact group path segment.
+        product: Optional exact product path segment and metadata value.
+        environment: Optional environment path segment, such as ``prod``.
+
+    Returns:
+        Matching path-aware shipment configuration records.
+
+    Raises:
+        ValueError: If a matching path disagrees with parsed shipment metadata.
+    """
+    gl = GitLabClient.from_url(mr_url)
+    mr = gl.get_mr_from_url(mr_url)
+    source_project = gl.get_project(mr.source_project_id)
+    return get_shipment_config_records(
+        mr,
+        source_project,
+        kinds=kinds,
+        group=group,
+        product=product,
+        environment=environment,
+    )
+
+
 def get_shipment_configs_from_mr(
     mr_url: str,
     kinds: Tuple[str, ...] = SHIPMENT_CONFIG_KINDS,
@@ -247,38 +535,14 @@ def get_shipment_configs_from_mr(
     """
 
     shipment_configs: Dict[str, ShipmentConfig] = {}
-
-    gl = GitLabClient.from_url(mr_url)
-
-    mr = gl.get_mr_from_url(mr_url)
-    source_project = gl.get_project(mr.source_project_id)
-
-    diff_info = mr.diffs.list(all=True)[0]
-    diff = mr.diffs.get(diff_info.id)
-    for file_diff in diff.diffs:
-        file_path = file_diff.get('new_path') or file_diff.get('old_path')
-        if not file_path or not file_path.endswith(('.yaml', '.yml')):
-            continue
-
-        path_parts = file_path.split('/')
-        if group and (len(path_parts) < 4 or path_parts[0] != "shipment" or path_parts[2] != group):
-            continue
-
-        filename = file_path.split('/')[-1]
+    for record in get_shipment_config_records_from_mr(mr_url, kinds=kinds, group=group):
+        filename = record.path.split('/')[-1]
         parts = filename.replace('.yaml', '').replace('.yml', '')
         kind = next((k for k in kinds if k in parts), None)
-        if not kind:
-            continue
-
-        file_content = source_project.files.get(file_path, mr.source_branch)
-        content = file_content.decode().decode('utf-8')
-
-        # Convert CommentedMap to regular Python objects before creating Pydantic model
-        yaml_data = Model(yaml.load(content)).primitive()
-        shipment_data = ShipmentConfig(**yaml_data)
+        assert kind is not None
         if kind in shipment_configs:
             raise ValueError(f"Multiple shipment configs found for {kind}")
-        shipment_configs[kind] = shipment_data
+        shipment_configs[kind] = record.config
 
     return shipment_configs
 

@@ -738,6 +738,25 @@ class KubeCondition:
         return _default
 
 
+_LP_FBC_OCP_VERSION_RE = re.compile(r'\.ocp(\d+\.\d+)')
+
+
+def extract_ocp_version_from_fbc_nvr(nvr: str) -> Optional[str]:
+    """Extract the target OCP version from a layered-product FBC NVR.
+
+    Layered-product FBC NVRs encode the target version in their release field
+    as ``.ocp{major}.{minor}``.
+
+    Args:
+        nvr: Layered-product FBC NVR.
+
+    Returns:
+        The ``major.minor`` OCP version, or ``None`` when the marker is absent.
+    """
+    match = _LP_FBC_OCP_VERSION_RE.search(nvr)
+    return match.group(1) if match else None
+
+
 def is_cachito_enabled(metadata, group_config, logger):
     """
     Cachito will be configured if `cachito.enabled` is True in image metadata or `cachito.enabled` is True in group config.

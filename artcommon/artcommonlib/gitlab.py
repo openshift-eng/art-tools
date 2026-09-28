@@ -290,16 +290,17 @@ class GitLabClient:
         )
         logger.info("Set MR dependency: %s depends on %s", mr_url, blocking_mr_url)
 
-    def list_merge_requests(self, project_path: str, state: str = "opened", **kwargs):
+    def list_merge_requests(self, project_path: str, state: str = "opened", project=None, **kwargs):
         """
         List merge requests for a project, filtered by state and optional criteria.
 
         Arg(s):
             project_path (str): Project path (e.g., "hybrid-platforms/art/ocp-shipment-data")
             state (str): MR state filter ("opened", "closed", "merged", "all")
+            project: Optional pre-fetched python-gitlab project object.
             **kwargs: Additional filters passed to python-gitlab (source_branch, target_branch, etc.)
         Return Value(s):
             list: List of merge request objects
         """
-        project = self.get_project(project_path)
+        project = project if project is not None else self.get_project(project_path)
         return project.mergerequests.list(state=state, get_all=True, **kwargs)
