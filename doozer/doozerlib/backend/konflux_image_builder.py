@@ -168,6 +168,8 @@ class KonfluxImageBuilder:
         }
         try:
             image_ec_policy = metadata.config.get("konflux", {}).get("build_time_ec_policy", Missing)
+            # Require namespace/policy-name with lowercase alphanumeric ends.
+            # Hyphens are allowed inside both parts; dots are allowed only inside the policy name.
             if image_ec_policy is not Missing and (
                 not isinstance(image_ec_policy, str)
                 or not re.fullmatch(
