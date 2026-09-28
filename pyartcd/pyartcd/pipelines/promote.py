@@ -99,18 +99,18 @@ yaml.default_flow_style = False
 _DROPPABLE_IMPETUSES: tuple[str, ...] = ("rpm", "rhcos")
 
 
-def _get_signing_profile_for_client(client_type: str) -> tuple[str, str]:
+def _get_signing_key_for_client(client_type: str) -> str:
     """
-    Returns the credential environment and signing key name for a client type.
+    Returns the signing key name for a release client type.
 
     Args:
         client_type: Release client type, such as ``ocp`` or ``ocp-dev-preview``.
     Return Value(s):
-        A tuple containing the credential environment and signing key name.
+        The signing key name.
     """
     if client_type == "ocp":
-        return "prod", PROD_SIGNING_KEY_NAME
-    return "stage", STAGE_SIGNING_KEY_NAME
+        return PROD_SIGNING_KEY_NAME
+    return STAGE_SIGNING_KEY_NAME
 
 
 # YAML handler for shipment config dumping
@@ -294,8 +294,7 @@ class PromotePipeline:
             client_type = "ocp-dev-preview"
 
         if not self.skip_signing and self.signing_transport == "direct":
-            credential_env, _ = _get_signing_profile_for_client(client_type)
-            get_direct_signing_credentials(credential_env, dry_run=self.runtime.dry_run)
+            get_direct_signing_credentials(dry_run=self.runtime.dry_run)
 
         release_name = util.get_release_name_for_assembly(self.group, releases_config, self.assembly)
         # Ensure release name is valid
@@ -851,7 +850,7 @@ class PromotePipeline:
             raise ValueError("--signing-env is missing")
         cert_file = os.environ.get("SIGNING_CERT")
         key_file = os.environ.get("SIGNING_KEY")
-        credential_env, sig_keyname = _get_signing_profile_for_client(client_type)
+        sig_keyname = _get_signing_key_for_client(client_type)
         self._logger.info("About to sign artifacts with key %s", sig_keyname)
         json_digest_sig_dir = self._working_dir / "json_digests"
         message_digest_sig_dir = self._working_dir / "message_digests"
@@ -861,7 +860,6 @@ class PromotePipeline:
             self.signing_transport,
             signing_env=self.signing_env,
             sig_keyname=sig_keyname,
-            credential_env=credential_env,
             cert_file=cert_file,
             key_file=key_file,
         ) as signatory:

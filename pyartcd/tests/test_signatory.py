@@ -298,6 +298,8 @@ class TestDirectSignatory(IsolatedAsyncioTestCase):
         command_runner = AsyncMock(return_value=(0, "", ""))
 
         async def write_signature(command, **kwargs):
+            if command[0] == "gpg2":
+                return 0, "", ""
             output_path = Path(command[command.index("--output") + 1])
             output_path.write_bytes(b"fake-direct-signature")
             return 0, "", ""
@@ -313,16 +315,20 @@ class TestDirectSignatory(IsolatedAsyncioTestCase):
         await signatory.sign_message_digest("openshift", "4.19.0", BytesIO(b"sha256 data"), sig_file)
 
         self.assertEqual(sig_file.getvalue(), b"fake-direct-signature")
-        command = command_runner.await_args.args[0]
+        command = command_runner.await_args_list[0].args[0]
         self.assertEqual(command[:3], ["rh-signing-client", "--key", "redhatrelease2"])
         self.assertEqual(command[4], "--gpgsign")
         self.assertEqual(command[5], "--output")
         self.assertEqual(command[7:], ["--onbehalfof", "jupierce@redhat.com"])
+        verification_command = command_runner.await_args_list[1].args[0]
+        self.assertEqual(verification_command[:2], ["gpg2", "-d"])
 
     async def test_sign_json_digest_writes_signature_from_client_output(self):
         command_runner = AsyncMock()
 
         async def write_signature(command, **kwargs):
+            if command[0] == "gpg2":
+                return 0, "", ""
             input_path = Path(command[3])
             output_path = Path(command[command.index("--output") + 1])
             claim = json.loads(input_path.read_text())
@@ -354,7 +360,7 @@ class TestDirectSignatory(IsolatedAsyncioTestCase):
                 client_command=("rh-signing-client",),
                 sig_keyname="redhatrelease2",
                 keytab_file=str(keytab),
-                principal="art-signing@IPA.REDHAT.COM",
+                principal="ocp-art-signing-prod@IPA.REDHAT.COM",
                 ccache_path=str(ccache),
                 command_runner=command_runner,
             )
@@ -386,38 +392,39 @@ class TestDirectSignatory(IsolatedAsyncioTestCase):
 
     async def test_from_environment_requires_direct_signing_credentials(self):
         with patch.dict(os.environ, {}, clear=True):
-            with self.assertRaisesRegex(ValueError, "DIRECT_SIGNING_PROD_KEYTAB"):
-                DirectSignatory.from_environment("prod", "redhatrelease2")
+            with self.assertRaisesRegex(ValueError, "DIRECT_SIGNING_KEYTAB"):
+                DirectSignatory.from_environment("redhatrelease2")
 
-    async def test_from_environment_does_not_use_credentials_from_another_environment(self):
+    async def test_from_environment_ignores_environment_specific_credentials(self):
         with patch.dict(
             os.environ,
             {
+                "DIRECT_SIGNING_PROD_KEYTAB": "/path/to/prod-keytab",
+                "DIRECT_SIGNING_PROD_PRINCIPAL": "ocp-art-signing-prod@IPA.REDHAT.COM",
                 "DIRECT_SIGNING_STAGE_KEYTAB": "/path/to/stage-keytab",
-                "DIRECT_SIGNING_STAGE_PRINCIPAL": "art-signing-stage@IPA.REDHAT.COM",
+                "DIRECT_SIGNING_STAGE_PRINCIPAL": "ocp-art-signing-prod@IPA.REDHAT.COM",
             },
             clear=True,
         ):
-            with self.assertRaisesRegex(ValueError, "DIRECT_SIGNING_PROD_KEYTAB"):
-                DirectSignatory.from_environment("prod", "redhatrelease2")
+            with self.assertRaisesRegex(ValueError, "DIRECT_SIGNING_KEYTAB"):
+                DirectSignatory.from_environment("redhatrelease2")
 
     async def test_from_environment_reads_direct_signing_configuration(self):
         with patch.dict(
             os.environ,
             {
-                "DIRECT_SIGNING_STAGE_KEYTAB": "/path/to/stage-keytab",
-                "DIRECT_SIGNING_STAGE_PRINCIPAL": "art-signing-stage@IPA.REDHAT.COM",
+                "DIRECT_SIGNING_KEYTAB": "/path/to/signing-keytab",
+                "DIRECT_SIGNING_PRINCIPAL": "ocp-art-signing-prod@IPA.REDHAT.COM",
                 "DIRECT_SIGNING_CLIENT_COMMAND": "rh-signing-client --config /path/to/config",
                 "DIRECT_SIGNING_TIMEOUT": "42",
             },
             clear=True,
         ):
-            signatory = DirectSignatory.from_environment("stage", "beta2")
+            signatory = DirectSignatory.from_environment("beta2")
 
         self.assertEqual(signatory.client_command, ("rh-signing-client", "--config", "/path/to/config"))
-        self.assertEqual(signatory.keytab_file, "/path/to/stage-keytab")
-        self.assertEqual(signatory.principal, "art-signing-stage@IPA.REDHAT.COM")
-        self.assertEqual(signatory.signing_env, "stage")
+        self.assertEqual(signatory.keytab_file, "/path/to/signing-keytab")
+        self.assertEqual(signatory.principal, "ocp-art-signing-prod@IPA.REDHAT.COM")
         self.assertEqual(signatory.sig_keyname, "beta2")
         self.assertEqual(signatory.ON_BEHALF_OF, "jupierce@redhat.com")
         self.assertEqual(signatory.timeout, 42)
@@ -440,7 +447,7 @@ class TestCreateSignatory(IsolatedAsyncioTestCase):
     async def test_create_signatory_uses_direct_transport(self, direct_signatory):
         create_signatory("direct", signing_env="prod", sig_keyname="redhatrelease2")
 
-        direct_signatory.assert_called_once_with(signing_env="prod", sig_keyname="redhatrelease2", credential_env=None)
+        direct_signatory.assert_called_once_with(sig_keyname="redhatrelease2")
 
 
 class TestSigstoreSignatory(IsolatedAsyncioTestCase):

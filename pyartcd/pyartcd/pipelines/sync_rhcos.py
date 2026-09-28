@@ -72,8 +72,8 @@ class SyncRhcosPipeline:
         self.staging_dir = Path(runtime.working_dir) / f"staging-{version}"
 
     async def run(self):
-        if self.signing_transport == "direct" and self.signing_env:
-            get_direct_signing_credentials(self.signing_env)
+        if self.signing_transport == "direct":
+            get_direct_signing_credentials()
 
         self.logger.info(
             "Starting RHCOS sync: version=%s, build_id=%s, arch=%s, prefix=%s",
