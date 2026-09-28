@@ -1584,6 +1584,54 @@ class TestKonfluxImageBuilder(unittest.IsolatedAsyncioTestCase):
             with self.assertRaises(NvrCheckComplete):
                 await self.builder.build(metadata)
 
+    async def test_build_skips_nvr_ordering_check_when_ignore_incorrect_nvr_set_on_group(self):
+        """When ignore_incorrect_nvr is set on the group config, a lower NVR should be accepted."""
+        from artcommonlib.model import Model
+
+        metadata = self._metadata()
+        metadata.runtime.assembly = "4.17.1"
+        metadata.config.ignore_incorrect_nvr = False
+        metadata.runtime.group_config = Model({"ignore_incorrect_nvr": True})
+        metadata.get_latest_build.return_value = MagicMock(
+            nvr="test-component-1.0-2.assembly.4.17.1",
+            image_pullspec="quay.io/example/image@sha256:latest",
+        )
+        dest_dir = self.builder._config.base_dir.joinpath(metadata.qualified_key)
+        dest_dir.mkdir(parents=True)
+
+        class NvrCheckComplete(Exception):
+            pass
+
+        with (
+            patch(
+                "doozerlib.backend.konflux_image_builder.BuildRepo.from_local_dir",
+                new=AsyncMock(return_value=MagicMock()),
+            ),
+            patch.object(
+                self.builder,
+                "_parse_dockerfile",
+                return_value=(
+                    "test-uuid",
+                    "test-component",
+                    "1.0",
+                    "1.assembly.4.17.1",
+                ),
+            ),
+            patch.object(
+                self.builder,
+                "_get_successful_image_build_by_nvr",
+                new=AsyncMock(return_value=None),
+            ),
+            patch.object(
+                self.builder,
+                "_wait_for_parent_members",
+                new=AsyncMock(side_effect=NvrCheckComplete),
+            ),
+        ):
+            # Should NOT raise ValueError — the ordering check is skipped via group config
+            with self.assertRaises(NvrCheckComplete):
+                await self.builder.build(metadata)
+
     async def test_build_exact_nvr_dedup_still_enforced_when_ignore_incorrect_nvr_set(self):
         """The exact NVR dedup check must still reject even when ignore_incorrect_nvr is set."""
         metadata = self._metadata()
