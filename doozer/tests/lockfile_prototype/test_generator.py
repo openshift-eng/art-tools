@@ -1631,6 +1631,110 @@ class TestBareUpdateUpgradeResolution(unittest.TestCase):
         config = resolver.resolve.call_args.args[0]
         self.assertEqual(config.upgradePackages, ["glibc", *scoped_upgrade_targets])
 
+    def test_absent_arch_scoped_upgrade_targets_are_dropped_in_one_retry(self):
+        """
+        When RPMDB data contradicts upgrade targets, drop all absent targets
+        for the failed architecture together instead of one DNF error at a time.
+        """
+        container = MagicMock(spec=ContainerImageHelper)
+        container.get_installed_packages_from_rpmdb = AsyncMock(return_value=["installed-pkg"])
+
+        resolver = MagicMock(spec=RpmResolver)
+        resolver.resolve = AsyncMock(
+            side_effect=[
+                RuntimeError(
+                    "Running solver for x86_64\n"
+                    "Package absent-one available, but not installed.\n"
+                    "No match for argument: absent-one"
+                ),
+                FAKE_LOCKFILE_DATA.model_copy(deep=True),
+            ]
+        )
+        generator = RpmLockfilePrototypeGenerator(
+            repos=self._make_mock_repos(),
+            working_dir=Path(tempfile.mkdtemp()),
+            container_helper=container,
+            resolver=resolver,
+        )
+        repo_list = [RepoEntry(repoid="baseos", baseurl="https://example.com/$basearch/")]
+        upgrade_targets = [
+            ArchSpecificPackage(name="absent-one", arches={"only": "x86_64"}),
+            ArchSpecificPackage(name="absent-two", arches={"only": "x86_64"}),
+            ArchSpecificPackage(name="installed-pkg", arches={"only": "x86_64"}),
+            ArchSpecificPackage(name="arm-pkg", arches={"only": "aarch64"}),
+        ]
+
+        result = asyncio.run(
+            generator._resolve_stage_with_retry(
+                repo_list=repo_list,
+                arches=["x86_64", "aarch64"],
+                packages=[],
+                image_pullspec="quay.io/test/base@sha256:abc123",
+                distgit_key="test-image",
+                stage_num=0,
+                upgrade_packages=upgrade_targets,
+            )
+        )
+
+        self.assertIsNotNone(result)
+        self.assertEqual(resolver.resolve.await_count, 2)
+        container.get_installed_packages_from_rpmdb.assert_awaited_once_with(
+            "quay.io/test/base@sha256:abc123", "x86_64"
+        )
+        retry_config = resolver.resolve.call_args_list[1].args[0]
+        self.assertEqual(
+            retry_config.upgradePackages,
+            [
+                ArchSpecificPackage(name="installed-pkg", arches={"only": "x86_64"}),
+                ArchSpecificPackage(name="arm-pkg", arches={"only": "aarch64"}),
+            ],
+        )
+
+    def test_rpmdb_is_not_queried_for_unscoped_upgrade_targets(self):
+        """
+        Plain upgrade targets use the existing bulk-drop path without an RPMDB query.
+        """
+        container = MagicMock(spec=ContainerImageHelper)
+        container.get_installed_packages_from_rpmdb = AsyncMock(return_value=["installed-pkg"])
+
+        resolver = MagicMock(spec=RpmResolver)
+        resolver.resolve = AsyncMock(
+            side_effect=[
+                RuntimeError(
+                    "Running solver for x86_64\n"
+                    "Package absent-one available, but not installed.\n"
+                    "No match for argument: absent-one"
+                ),
+                FAKE_LOCKFILE_DATA.model_copy(deep=True),
+            ]
+        )
+        generator = RpmLockfilePrototypeGenerator(
+            repos=self._make_mock_repos(),
+            working_dir=Path(tempfile.mkdtemp()),
+            container_helper=container,
+            resolver=resolver,
+        )
+        repo_list = [RepoEntry(repoid="baseos", baseurl="https://example.com/$basearch/")]
+
+        result = asyncio.run(
+            generator._resolve_stage_with_retry(
+                repo_list=repo_list,
+                arches=["x86_64"],
+                packages=[],
+                image_pullspec="quay.io/test/base@sha256:abc123",
+                distgit_key="test-image",
+                stage_num=0,
+                upgrade_packages=["absent-one"],
+            )
+        )
+
+        self.assertIsNotNone(result)
+        self.assertTrue(generator.upgrades_dropped)
+        container.get_installed_packages_from_rpmdb.assert_not_awaited()
+        self.assertEqual(resolver.resolve.await_count, 2)
+        retry_config = resolver.resolve.call_args_list[1].args[0]
+        self.assertEqual(retry_config.upgradePackages, [])
+
     def test_upgrade_packages_dropped_on_failure(self):
         """
         When upgrade packages from bare updates cause resolution failure,

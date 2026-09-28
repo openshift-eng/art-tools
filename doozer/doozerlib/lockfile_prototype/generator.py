@@ -327,6 +327,7 @@ class RpmLockfilePrototypeGenerator:
         self.parent_source_dirs: dict[int, Path] = {}
         self.logger = logger or logutil.get_logger(__name__)
         self.upgrades_dropped = False
+        self._rpmdb_package_cache: dict[tuple[str, str], set[str] | None] = {}
         self._container = container_helper or ContainerImageHelper(logger=self.logger)
         self._resolver = resolver or RpmResolver(working_dir=working_dir, logger=self.logger)
 
@@ -822,6 +823,22 @@ class RpmLockfilePrototypeGenerator:
             return True
         return False
 
+    async def _get_base_image_rpmdb_packages(self, image_pullspec: str, arch: str) -> set[str] | None:
+        """
+        Get actual installed package names from an image RPMDB, cached by image and architecture.
+
+        Arg(s):
+            image_pullspec (str): Fully-qualified image pullspec.
+            arch (str): Brew architecture to query.
+        Return Value(s):
+            set[str] | None: Installed package names, or None when the RPMDB could not be queried.
+        """
+        cache_key = (image_pullspec, arch)
+        if cache_key not in self._rpmdb_package_cache:
+            packages = await self._container.get_installed_packages_from_rpmdb(image_pullspec, arch)
+            self._rpmdb_package_cache[cache_key] = set(packages) if packages is not None else None
+        return self._rpmdb_package_cache[cache_key]
+
     async def _resolve_stage_with_retry(
         self,
         repo_list: list[RepoEntry],
@@ -943,14 +960,24 @@ class RpmLockfilePrototypeGenerator:
                 not_installed = RpmResolver.parse_packages_not_installed(str(e))
                 failed_arch = RpmResolver.parse_solver_arch(str(e))
                 not_installed_upgrade_hit = missing & not_installed & upgrade_names
-                if failed_arch and not_installed_upgrade_hit:
-                    dropped_targets = [
+                if failed_arch and image_pullspec and not_installed_upgrade_hit:
+                    arch_upgrade_targets = [
                         package
                         for package in remaining_upgrade
-                        if _package_name(package) in not_installed_upgrade_hit
-                        and isinstance(package, ArchSpecificPackage)
-                        and package.arches.get("only") == failed_arch
+                        if isinstance(package, ArchSpecificPackage) and package.arches.get("only") == failed_arch
                     ]
+                    dropped_targets = []
+                    if arch_upgrade_targets:
+                        installed_packages = await self._get_base_image_rpmdb_packages(image_pullspec, failed_arch)
+                        dropped_targets = [
+                            package
+                            for package in arch_upgrade_targets
+                            if (
+                                _package_name(package) in not_installed_upgrade_hit
+                                if installed_packages is None
+                                else _package_name(package) not in installed_packages
+                            )
+                        ]
                     if dropped_targets:
                         dropped_keys = {_package_key(package) for package in dropped_targets}
                         dropped_names = {_package_name(package) for package in dropped_targets}
