@@ -11,6 +11,10 @@ import gitlab
 logger = getLogger(__name__)
 
 
+class ApprovalRuleSetupError(RuntimeError):
+    """An MR approval rule could not be configured in GitLab."""
+
+
 class GitLabClient:
     """
     GitLab client for ART tools.
@@ -161,18 +165,26 @@ class GitLabClient:
             logger.info("MR is already ready (no draft prefix found)")
             return mr
 
-    def _resolve_user_ids(self, usernames: list[str]) -> list[int]:
+    def _resolve_user_ids(self, usernames: list[str], rule_name: str, mr_url: str) -> list[int]:
         """
         Resolve GitLab usernames to user IDs.
 
         Arg(s):
             usernames: List of GitLab usernames
+            rule_name: Name of the approval rule being configured
+            mr_url: URL of the merge request being configured
         Return Value(s):
             List of resolved user IDs (skips unresolved usernames with a warning)
         """
         user_ids = []
         for username in usernames:
-            users = self._client.users.list(username=username)
+            try:
+                users = self._client.users.list(username=username)
+            except Exception as e:
+                raise ApprovalRuleSetupError(
+                    f"Failed to resolve GitLab username '{username}' for approval rule '{rule_name}' "
+                    f"on MR {mr_url}: {e}"
+                ) from e
             if users:
                 user_ids.append(users[0].id)
             else:
@@ -197,30 +209,46 @@ class GitLabClient:
                 logger.info(f"[DRY-RUN] Would create approval rule '{name}' with users: {usernames}")
             return
 
-        mr = self.get_mr_from_url(mr_url)
+        try:
+            mr = self.get_mr_from_url(mr_url)
+        except Exception as e:
+            raise ApprovalRuleSetupError(f"Failed to retrieve MR {mr_url} for approval rule setup: {e}") from e
         if not mr:
-            logger.error(f"Could not retrieve MR from URL: {mr_url}")
-            return
+            raise ApprovalRuleSetupError(f"Could not retrieve MR {mr_url} for approval rule setup")
 
-        existing_rules = mr.approval_rules.list()
+        try:
+            existing_rules = mr.approval_rules.list()
+        except Exception as e:
+            raise ApprovalRuleSetupError(f"Failed to list existing approval rules on MR {mr_url}: {e}") from e
 
         for rule in existing_rules:
             logger.info(f"Deleting approval rule '{rule.name}' (id={rule.id})")
-            rule.delete()
+            try:
+                rule.delete()
+            except Exception as e:
+                raise ApprovalRuleSetupError(
+                    f"Failed to delete approval rule '{rule.name}' (id={rule.id}) on MR {mr_url}: {e}"
+                ) from e
 
         for name, usernames in approvers_config.items():
-            user_ids = self._resolve_user_ids(usernames)
+            user_ids = self._resolve_user_ids(usernames, name, mr_url)
             if not user_ids:
                 logger.warning(f"No valid user IDs resolved for approval rule '{name}', skipping")
                 continue
-            rule = mr.approval_rules.create(
-                {
-                    "name": name,
-                    "approvals_required": 1,
-                    "user_ids": user_ids,
-                }
-            )
-            actual_ids = [u["id"] for u in rule.users]
+            try:
+                rule = mr.approval_rules.create(
+                    {
+                        "name": name,
+                        "approvals_required": 1,
+                        "user_ids": user_ids,
+                    }
+                )
+            except Exception as e:
+                raise ApprovalRuleSetupError(f"Failed to create approval rule '{name}' on MR {mr_url}: {e}") from e
+            try:
+                actual_ids = [u["id"] for u in rule.users]
+            except Exception as e:
+                raise ApprovalRuleSetupError(f"Failed to inspect approval rule '{name}' on MR {mr_url}: {e}") from e
             dropped = set(user_ids) - set(actual_ids)
             if dropped:
                 dropped_names = [u for u, uid in zip(usernames, user_ids) if uid in dropped]

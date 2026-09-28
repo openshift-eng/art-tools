@@ -19,7 +19,7 @@ from artcommonlib.build_visibility import is_nvr_embargoed
 from artcommonlib.constants import SHIPMENT_DATA_URL_TEMPLATE
 from artcommonlib.gitdata import SafeFormatter
 from artcommonlib.github_auth import get_github_client_for_org
-from artcommonlib.gitlab import GitLabClient
+from artcommonlib.gitlab import ApprovalRuleSetupError, GitLabClient
 from artcommonlib.rpm_utils import parse_nvr
 from artcommonlib.util import new_roundtrip_yaml_handler
 from elliottlib.shipment_model import (
@@ -1058,7 +1058,8 @@ class ReleaseFromFbcPipeline:
                 try:
                     await self._gitlab.set_mr_approval_rules(mr_url, approvers_config)
                 except Exception as e:
-                    self.logger.warning(f"Failed to set MR approval rules: {e}")
+                    self.logger.exception("Failed to set approval rules for shipment MR %s: %s", mr_url, e)
+                    raise
 
         # Store the MR URL for later use
         self.shipment_mr_url = mr_url
@@ -1460,6 +1461,8 @@ class ReleaseFromFbcPipeline:
                         await self._set_shipment_mr_dependency(main_ocp_mr_url)
                     self._update_jira_with_mr_link(mr_url)
                     await self.set_shipment_mr_ready()
+                except ApprovalRuleSetupError:
+                    raise
                 except Exception as e:
                     self.logger.exception("Failed to create MR: %s", e)
                     if not self.dry_run:
