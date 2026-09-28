@@ -390,17 +390,12 @@ class KonfluxImageBuilder:
                 if image_ec_policy is not Missing:
                     ec_policy = image_ec_policy
 
-                # Intermediary images can request base image release without setting base_only.
-                base_image_release_force = metadata.config.get("base_image_release", {}).get("force", False)
-                is_base_image_for_its = metadata.is_base_image() or base_image_release_force is True
-
                 should_run_ec = (
                     outcome is KonfluxBuildOutcome.SUCCESS
                     and metadata.runtime.variant is not BuildVariant.OKD
                     and ec_policy is not None
                     and not self._config.skip_ec_verify
                     and metadata.for_release
-                    and not is_base_image_for_its
                     and definitive_image_pullspec is not None
                 )
                 if should_run_ec:
@@ -447,15 +442,12 @@ class KonfluxImageBuilder:
                             "Skipping EC verification for %s: image is not for_release",
                             metadata.distgit_key,
                         )
-                    elif is_base_image_for_its:
-                        logger.info("Skipping EC verification for %s: base image", metadata.distgit_key)
 
                 should_run_custom_its = (
                     outcome is KonfluxBuildOutcome.SUCCESS
                     and bool(self._config.integration_test_scenarios)
                     and not self._config.skip_custom_its
                     and metadata.for_release
-                    and not is_base_image_for_its
                     and definitive_image_pullspec is not None
                 )
                 if should_run_custom_its:
@@ -488,12 +480,6 @@ class KonfluxImageBuilder:
                         "Skipping custom IntegrationTestScenarios for %s: --skip-custom-its flag is set",
                         metadata.distgit_key,
                     )
-                elif (
-                    outcome is KonfluxBuildOutcome.SUCCESS
-                    and self._config.integration_test_scenarios
-                    and is_base_image_for_its
-                ):
-                    logger.info("Skipping custom IntegrationTestScenarios for %s: base image", metadata.distgit_key)
 
                 if self._config.dry_run:
                     logger.info("Dry run: Would have inserted build record in Konflux DB")
