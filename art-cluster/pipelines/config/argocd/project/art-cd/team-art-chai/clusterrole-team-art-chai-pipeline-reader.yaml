@@ -1,17 +1,11 @@
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRole
 metadata:
-  name: lp-pipeline-viewer
+  name: team-art-chai-pipeline-reader
 rules:
   - apiGroups: ["tekton.dev"]
-    resources: ["pipelines", "tasks"]
+    resources: ["pipelines", "tasks", "pipelineruns", "taskruns", "customruns", "clustertasks"]
     verbs: ["get", "list", "watch"]
-  - apiGroups: ["tekton.dev"]
-    resources: ["pipelineruns", "taskruns", "customruns"]
-    verbs: ["get", "list", "watch"]
-  - apiGroups: ["results.tekton.dev"]
-    resources: ["results", "records", "logs", "summary"]
-    verbs: ["get", "list"]
   - apiGroups: [""]
     resources: ["pods"]
     verbs: ["get", "list", "watch"]
@@ -24,3 +18,6 @@ rules:
   - apiGroups: ["events.k8s.io"]
     resources: ["events"]
     verbs: ["get", "list", "watch"]
+  - apiGroups: ["results.tekton.dev"]
+    resources: ["results", "records", "logs", "summary"]
+    verbs: ["get", "list"]
