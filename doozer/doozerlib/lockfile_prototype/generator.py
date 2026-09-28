@@ -940,6 +940,35 @@ class RpmLockfilePrototypeGenerator:
                         continue
                     upgrade_names = {_package_name(package) for package in remaining_upgrade}
                     upgrade_hit = missing & upgrade_names if remaining_upgrade else set()
+                not_installed = RpmResolver.parse_packages_not_installed(str(e))
+                failed_arch = RpmResolver.parse_solver_arch(str(e))
+                not_installed_upgrade_hit = missing & not_installed & upgrade_names
+                if failed_arch and not_installed_upgrade_hit:
+                    dropped_targets = [
+                        package
+                        for package in remaining_upgrade
+                        if _package_name(package) in not_installed_upgrade_hit
+                        and isinstance(package, ArchSpecificPackage)
+                        and package.arches.get("only") == failed_arch
+                    ]
+                    if dropped_targets:
+                        dropped_keys = {_package_key(package) for package in dropped_targets}
+                        dropped_names = {_package_name(package) for package in dropped_targets}
+                        remaining_upgrade = [
+                            package for package in remaining_upgrade if _package_key(package) not in dropped_keys
+                        ]
+                        missing -= dropped_names
+                        self.logger.info(
+                            f"{distgit_key}: stage {stage_num}: dropping {len(dropped_targets)} "
+                            f"upgrade target(s) absent from the {failed_arch} base image: "
+                            f"{sorted(dropped_names)}"
+                        )
+                        if not remaining_upgrade:
+                            self.upgrades_dropped = True
+                        if not missing:
+                            continue
+                        upgrade_names = {_package_name(package) for package in remaining_upgrade}
+                        upgrade_hit = missing & upgrade_names if remaining_upgrade else set()
                 # When using packagesFromContainerfile, the unavailable packages
                 # come from the upstream extraction — we can't strip them from
                 # our side. Add them to excludePackages so the tool skips them.
@@ -952,8 +981,8 @@ class RpmLockfilePrototypeGenerator:
                             f"packages extracted from Containerfile: {sorted(new_excludes)}"
                         )
                         continue
-                # Drop all bare-update upgrade packages on any miss
-                # (all-or-nothing: partial upgrades cause EVR conflicts).
+                # Drop all remaining bare-update upgrade packages on other
+                # resolution failures; partial upgrades can cause EVR conflicts.
                 upgrade_hit = missing & upgrade_names if remaining_upgrade else set()
                 if upgrade_hit:
                     self.logger.info(

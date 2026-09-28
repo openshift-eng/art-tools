@@ -116,20 +116,26 @@ class RpmResolver:
             if self._xdg_cache_home:
                 env["XDG_CACHE_HOME"] = str(self._xdg_cache_home)
             env["TMPDIR"] = self._working_dir
-            rc, _, stderr = await cmd_gather_async(cmd, check=False, env=env)
+            rc, stdout, stderr = await cmd_gather_async(cmd, check=False, env=env)
 
             if rc != 0:
                 if image_pullspec and self._is_rpmdb_corrupt(stderr):
                     self._clear_rpmdb_cache(image_pullspec)
                     self.logger.info("Retrying rpm-lockfile-prototype after RPMDB cache error")
-                    rc, _, stderr = await cmd_gather_async(cmd, check=False, env=env)
+                    rc, stdout, stderr = await cmd_gather_async(cmd, check=False, env=env)
                     if rc == 0:
                         return LockfileData.model_validate(yaml.safe_load(out_file.read_text()))
                     error_summary = stderr.strip().rsplit("\n", 1)[-1]
                     self.logger.warning("Retry also failed (exit code %d): %s", rc, error_summary)
                     self.logger.debug("Full retry stderr:\n%s", stderr)
 
-                raise RuntimeError(f"rpm-lockfile-prototype failed (exit code {rc}): {stderr}")
+                stdout_diagnostics = "\n".join(
+                    line
+                    for line in stdout.splitlines()
+                    if "Running solver for " in line or "available, but not installed." in line
+                )
+                output = "\n".join(part for part in (stdout_diagnostics, stderr.strip()) if part)
+                raise RuntimeError(f"rpm-lockfile-prototype failed (exit code {rc}):\n{output}")
 
             return LockfileData.model_validate(yaml.safe_load(out_file.read_text()))
 
@@ -179,6 +185,33 @@ class RpmResolver:
                     self.logger.warning("Failed to remove RPMDB cache %s: %s", cache_entry, ex)
 
         return cleared
+
+    @staticmethod
+    def parse_packages_not_installed(error_text: str) -> set[str]:
+        """
+        Parse DNF package names that are available in repos but absent from the image RPMDB.
+
+        Arg(s):
+            error_text (str): Combined rpm-lockfile-prototype stdout and stderr.
+        Return Value(s):
+            set[str]: Package names that DNF reported as available but not installed.
+        """
+        return {
+            match.group(1) for match in re.finditer(r"Package\s+(\S+)\s+available,\s+but\s+not installed\.", error_text)
+        }
+
+    @staticmethod
+    def parse_solver_arch(error_text: str) -> str | None:
+        """
+        Return the architecture whose RPM resolution failed.
+
+        Arg(s):
+            error_text (str): Combined rpm-lockfile-prototype stdout and stderr.
+        Return Value(s):
+            str | None: Architecture from the last solver-start log line, if present.
+        """
+        matches = re.findall(r"Running solver for\s+(\S+)", error_text)
+        return matches[-1] if matches else None
 
     @staticmethod
     def parse_missing_packages(error_text: str) -> set[str]:
