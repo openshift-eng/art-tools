@@ -233,10 +233,13 @@ class KonfluxImageBuilder:
                 # compare_nvr returns: 1 if target > latest, 0 if equal, -1 if target < latest
                 ignore_name = metadata.runtime.assembly == "test" or metadata.is_golang_builder()
                 if compare_nvr(target_nvr_dict, latest_nvr_dict, ignore_name=ignore_name) <= 0:
-                    if metadata.config.ignore_incorrect_nvr:
+                    ignore_incorrect_nvr = (
+                        metadata.config.ignore_incorrect_nvr or metadata.runtime.group_config.ignore_incorrect_nvr
+                    )
+                    if ignore_incorrect_nvr:
                         logger.warning(
                             "NVR validation skipped for %s: target NVR %s is not greater than "
-                            "latest build %s, but ignore_incorrect_nvr is enabled in assembly config",
+                            "latest build %s, but ignore_incorrect_nvr is enabled in config",
                             metadata.distgit_key,
                             nvr,
                             latest_build.nvr,
