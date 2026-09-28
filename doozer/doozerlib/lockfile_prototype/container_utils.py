@@ -110,6 +110,30 @@ class ContainerImageHelper:
             return packages
 
         self.logger.info("No usable SBOM for %s [platform=%s]; extracting RPMDB", image_pullspec, platform)
+        return (await self.get_installed_packages_from_rpmdb(image_pullspec, arch)) or []
+
+    async def get_installed_packages_from_rpmdb(self, image_pullspec: str, arch: str) -> list[str] | None:
+        """
+        Query installed RPM package names directly from an image RPM database.
+
+        Unlike get_installed_packages(), this bypasses SBOM data. Returning
+        None means the RPM database could not be queried; an empty list means
+        the query succeeded and found no packages.
+
+        Arg(s):
+            image_pullspec (str): Fully-qualified image pullspec (digest preferred).
+            arch (str): Brew architecture to query.
+        Return Value(s):
+            list[str] | None: Sorted package names, or None when querying failed.
+        """
+        query_pullspec = self._proxy_pullspec(image_pullspec)
+        platform = f"linux/{go_arch_for_brew_arch(arch)}"
+        self.logger.info(
+            "Discovering installed packages from RPMDB for %s [arch=%s, platform=%s]",
+            image_pullspec,
+            arch,
+            platform,
+        )
         return await self._get_installed_packages_from_rpmdb(query_pullspec, platform, image_pullspec)
 
     async def _get_installed_packages_from_sbom(self, image_pullspec: str, platform: str) -> list[str]:
@@ -372,7 +396,7 @@ class ContainerImageHelper:
 
     async def _get_installed_packages_from_rpmdb(
         self, image_pullspec: str, platform: str, original_pullspec: str
-    ) -> list[str]:
+    ) -> list[str] | None:
         """
         Extract and query an image RPM database with host-side tools.
 
@@ -381,7 +405,7 @@ class ContainerImageHelper:
             platform (str): Image platform in ``os/architecture`` form.
             original_pullspec (str): Original image pullspec used for logging.
         Return Value(s):
-            list[str]: Sorted unique package names, or an empty list on command failure.
+            list[str] | None: Sorted unique package names, or None on command failure.
         """
         rpmdb_paths = ("/usr/lib/sysimage/rpm/", "/var/lib/rpm/")
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -443,7 +467,7 @@ class ContainerImageHelper:
                     self.logger.debug("RPMDB query failed for %s: %s", original_pullspec, stderr[:200])
 
         self.logger.warning("Unable to discover installed packages from %s [platform=%s]", original_pullspec, platform)
-        return []
+        return None
 
     @staticmethod
     def _registry_config_arg() -> list[str]:
