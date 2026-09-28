@@ -233,11 +233,20 @@ class KonfluxImageBuilder:
                 # compare_nvr returns: 1 if target > latest, 0 if equal, -1 if target < latest
                 ignore_name = metadata.runtime.assembly == "test" or metadata.is_golang_builder()
                 if compare_nvr(target_nvr_dict, latest_nvr_dict, ignore_name=ignore_name) <= 0:
-                    raise ValueError(
-                        f"Target NVR {nvr} is not greater than the latest successful build {latest_build.nvr}. "
-                        f"Latest build pullspec: {latest_build.image_pullspec}. "
-                        "To rebuild, please do another rebase to get a newer NVR"
-                    )
+                    if metadata.config.ignore_incorrect_nvr:
+                        logger.warning(
+                            "NVR validation skipped for %s: target NVR %s is not greater than "
+                            "latest build %s, but ignore_incorrect_nvr is enabled in assembly config",
+                            metadata.distgit_key,
+                            nvr,
+                            latest_build.nvr,
+                        )
+                    else:
+                        raise ValueError(
+                            f"Target NVR {nvr} is not greater than the latest successful build {latest_build.nvr}. "
+                            f"Latest build pullspec: {latest_build.image_pullspec}. "
+                            "To rebuild, please do another rebase to get a newer NVR"
+                        )
 
             record["nvrs"] = nvr
             image_repo = metadata.get_konflux_image_repo(default=self._config.image_repo)
