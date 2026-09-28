@@ -10,6 +10,7 @@ from unittest import IsolatedAsyncioTestCase
 from unittest.mock import AsyncMock, MagicMock, patch
 
 from artcommonlib.konflux.konflux_build_record import KonfluxBuildOutcome
+from artcommonlib.model import Missing, Model
 from artcommonlib.variants import BuildVariant
 from doozerlib import constants
 from doozerlib.backend.konflux_client import CustomIntegrationTestResult, ECVerificationResult
@@ -65,7 +66,9 @@ def _make_successful_pipelinerun_info():
     return plr_info
 
 
-def _make_metadata(distgit_key="test-image", for_release=True, is_base_image=False, variant=None):
+def _make_metadata(
+    distgit_key="test-image", for_release=True, is_base_image=False, variant=None, build_time_ec_policy=Missing
+):
     """Create a mock ImageMetadata."""
     metadata = MagicMock()
     metadata.distgit_key = distgit_key
@@ -84,6 +87,9 @@ def _make_metadata(distgit_key="test-image", for_release=True, is_base_image=Fal
     metadata.runtime.variant = variant if variant is not None else BuildVariant.OCP
     metadata.runtime.group_config.software_lifecycle.phase = "release"
     metadata.runtime.konflux_db = MagicMock()
+    metadata.config = Model({})
+    if build_time_ec_policy is not Missing:
+        metadata.config["konflux"] = {"build_time_ec_policy": build_time_ec_policy}
 
     async def search_builds_by_fields(**_kwargs):
         if False:
@@ -120,12 +126,13 @@ class TestEcVerificationGating(IsolatedAsyncioTestCase):
         blocking_custom_its=None,
         completed_plr_info=None,
         expect_build_error=False,
+        builder=None,
     ):
         """Helper: run build() with all heavy methods mocked, return verify_enterprise_contract mock."""
         if ec_result is None:
             ec_result = _ec_passed_result()
 
-        builder = KonfluxImageBuilder(config)
+        builder = builder or KonfluxImageBuilder(config)
         builder._blocking_custom_integration_test_scenarios = set(blocking_custom_its or ())
         self.last_builder = builder
 
@@ -517,3 +524,64 @@ class TestEcVerificationGating(IsolatedAsyncioTestCase):
         verify_ec.assert_called_once()
         call_kwargs = verify_ec.call_args
         self.assertEqual(call_kwargs.kwargs["ec_policy"], constants.KONFLUX_TEST_PREGA_EC_POLICY_CONFIGURATION)
+
+    async def test_image_policy_overrides_normal_and_pre_release_defaults(self, mock_kc_init):
+        config = _make_config()
+        for phase in ("release", "pre-release"):
+            with self.subTest(phase=phase):
+                metadata = _make_metadata(build_time_ec_policy="ocp-art-tenant/image-policy")
+                metadata.runtime.group_config.software_lifecycle.phase = phase
+
+                verify_ec = await self._run_build_and_get_ec_calls(config, metadata, mock_kc_init)
+
+                self.assertEqual(verify_ec.call_args.kwargs["ec_policy"], "ocp-art-tenant/image-policy")
+
+    async def test_image_policy_overrides_test_assembly_default(self, mock_kc_init):
+        config = _make_config(ec_policy_configuration=constants.KONFLUX_TEST_EC_POLICY_CONFIGURATION)
+        metadata = _make_metadata(build_time_ec_policy="ocp-art-tenant/image-policy")
+        metadata.runtime.assembly = "test"
+
+        verify_ec = await self._run_build_and_get_ec_calls(config, metadata, mock_kc_init)
+
+        self.assertEqual(verify_ec.call_args.kwargs["ec_policy"], "ocp-art-tenant/image-policy")
+
+    async def test_image_policy_enables_ec_without_product_default(self, mock_kc_init):
+        config = _make_config(ec_policy_configuration=None, prega_ec_policy_configuration=None)
+        metadata = _make_metadata(build_time_ec_policy="ocp-art-tenant/image-policy")
+
+        verify_ec = await self._run_build_and_get_ec_calls(config, metadata, mock_kc_init)
+
+        self.assertEqual(verify_ec.call_args.kwargs["ec_policy"], "ocp-art-tenant/image-policy")
+
+    async def test_image_policy_respects_skip_ec_flag(self, mock_kc_init):
+        config = _make_config(skip_ec_verify=True)
+        metadata = _make_metadata(build_time_ec_policy="ocp-art-tenant/image-policy")
+
+        verify_ec = await self._run_build_and_get_ec_calls(config, metadata, mock_kc_init)
+
+        verify_ec.assert_not_called()
+
+    async def test_image_policy_does_not_affect_next_image(self, mock_kc_init):
+        config = _make_config()
+        first = _make_metadata(distgit_key="first", build_time_ec_policy="ocp-art-tenant/image-policy")
+        second = _make_metadata(distgit_key="second")
+
+        first_verify = await self._run_build_and_get_ec_calls(config, first, mock_kc_init)
+        second_verify = await self._run_build_and_get_ec_calls(
+            config, second, mock_kc_init, builder=self.last_builder
+        )
+
+        self.assertEqual(first_verify.call_args.kwargs["ec_policy"], "ocp-art-tenant/image-policy")
+        self.assertEqual(second_verify.call_args.kwargs["ec_policy"], constants.KONFLUX_DEFAULT_EC_POLICY_CONFIGURATION)
+
+    async def test_invalid_image_policy_fails_before_build(self, mock_kc_init):
+        for value in (None, "", "policy-without-namespace", "namespace/too/many"):
+            with self.subTest(value=value):
+                metadata = _make_metadata(build_time_ec_policy=value)
+                builder = KonfluxImageBuilder(_make_config())
+                builder._start_build = AsyncMock()
+
+                with self.assertRaisesRegex(ValueError, "invalid konflux.build_time_ec_policy"):
+                    await builder.build(metadata)
+
+                builder._start_build.assert_not_awaited()

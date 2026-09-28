@@ -1570,6 +1570,11 @@
           "$ref": "#/properties/konflux/properties/image_repo"
         },
         "image_repo-": {},
+        "build_time_ec_policy": {
+          "description": "Override the EC policy used by this image's build-time IntegrationTestScenario (namespace/policy-name)",
+          "type": "string",
+          "pattern": "^[a-z0-9]([-a-z0-9]*[a-z0-9])?/[a-z0-9]([-.a-z0-9]*[a-z0-9])?$"
+        },
         "skip_tasks": {
           "description": "List of Tekton task names to remove from PipelineRuns for this image",
           "type": "array",

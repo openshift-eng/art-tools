@@ -484,3 +484,25 @@ class TestImageSchema(unittest.TestCase):
         error = image_schema.validate('filename', invalid_data)
         self.assertIsNotNone(error)
         self.assertIn("is less than the minimum of 1", error)
+
+    def test_validate_with_build_time_ec_policy(self):
+        data = {
+            'from': {},
+            'name': 'my-name',
+            'for_release': False,
+            'konflux': {'build_time_ec_policy': 'ocp-art-tenant/conforma-build-stage'},
+        }
+
+        self.assertIsNone(image_schema.validate('filename', data))
+
+    def test_validate_with_invalid_build_time_ec_policy(self):
+        for policy in ('', 'conforma-build-stage', 'namespace/too/many', None):
+            with self.subTest(policy=policy):
+                data = {
+                    'from': {},
+                    'name': 'my-name',
+                    'for_release': False,
+                    'konflux': {'build_time_ec_policy': policy},
+                }
+
+                self.assertIn('build_time_ec_policy', image_schema.validate('filename', data))

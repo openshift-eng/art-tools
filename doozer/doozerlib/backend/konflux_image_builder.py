@@ -167,6 +167,18 @@ class KonfluxImageBuilder:
             "base_image_release_failed": "false",
         }
         try:
+            image_ec_policy = metadata.config.get("konflux", {}).get("build_time_ec_policy", Missing)
+            if image_ec_policy is not Missing and (
+                not isinstance(image_ec_policy, str)
+                or not re.fullmatch(
+                    r"[a-z0-9]([-a-z0-9]*[a-z0-9])?/[a-z0-9]([-.a-z0-9]*[a-z0-9])?", image_ec_policy
+                )
+            ):
+                raise ValueError(
+                    f"Image {metadata.distgit_key} has invalid konflux.build_time_ec_policy: "
+                    "expected namespace/policy-name"
+                )
+
             if dest_dir.exists():
                 # Load exiting build source repository
                 build_repo = await BuildRepo.from_local_dir(dest_dir, logger)
@@ -373,6 +385,8 @@ class KonfluxImageBuilder:
                     ec_policy = self._config.prega_ec_policy_configuration
                 else:
                     ec_policy = self._config.ec_policy_configuration
+                if image_ec_policy is not Missing:
+                    ec_policy = image_ec_policy
 
                 should_run_ec = (
                     outcome is KonfluxBuildOutcome.SUCCESS
