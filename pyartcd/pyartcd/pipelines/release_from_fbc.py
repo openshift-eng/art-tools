@@ -329,9 +329,7 @@ class ReleaseFromFbcPipeline:
         await build_data_repo.setup(push_url)
         await verify_shipment_mr_url(build_data_repo, self.group, self.assembly, self._configured_shipment_mr_url)
 
-    def _load_release_notes_template(
-        self, kind: str | None = None, errata_type: str = "RHBA"
-    ) -> dict | None:
+    def _load_release_notes_template(self, kind: str | None = None, errata_type: str = "RHBA") -> dict | None:
         """
         Load and populate release notes template from ocp-build-data advisory_templates.yml.
 
