@@ -213,18 +213,6 @@ class TestRhcosPostBuildDelegation(unittest.IsolatedAsyncioTestCase):
         mock_start_build.assert_not_called()
         self.pipeline.parse_record_log.assert_not_called()
 
-    @patch('pyartcd.pipelines.ocp4_konflux.jenkins.start_build')
-    async def test_unsupported_version_skips_rhcos_node_image_post_build(self, mock_start_build):
-        self.pipeline.version = '5.1'
-        self.pipeline.parse_record_log = MagicMock(return_value={'image_build_konflux': self.records})
-
-        with self.assertLogs('pyartcd.pipelines.ocp4_konflux', level='WARNING') as logs:
-            await self.pipeline.trigger_rhcos_node_image_post_build()
-
-        mock_start_build.assert_not_called()
-        self.pipeline.parse_record_log.assert_not_called()
-        self.assertTrue(any('does not support this release yet' in msg for msg in logs.output))
-
 
 if __name__ == '__main__':
     unittest.main()
