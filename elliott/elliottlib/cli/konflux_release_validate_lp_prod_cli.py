@@ -4,9 +4,15 @@ This command is a fail-fast preflight rather than a lock. Two pipelines that
 validate before either exposes active GitLab or Konflux state can still race.
 """
 
+import json
 import logging
+import os
+import time
+from collections import defaultdict
+from dataclasses import dataclass
 from pathlib import Path
-from typing import Iterable
+from tempfile import TemporaryDirectory
+from typing import Iterable, Iterator, TextIO
 
 import click
 from artcommonlib.gitlab import GitLabClient
@@ -22,7 +28,8 @@ from artcommonlib.util import (
 )
 from doozerlib.backend.konflux_client import KonfluxClient
 from doozerlib.backend.konflux_fbc import PRODUCTION_INDEX_PULLSPEC_FORMAT
-from doozerlib.opm import OpmRegistryAuth, render
+from doozerlib.opm import OpmRegistryAuth, gather_opm
+from tenacity import retry, stop_after_attempt, wait_fixed
 
 from elliottlib.cli.common import click_coroutine
 from elliottlib.cli.konflux_release_cli import konflux_release_cli
@@ -32,6 +39,112 @@ from elliottlib.shipment_utils import get_shipment_config_records, inspect_shipm
 LOGGER = logging.getLogger(__name__)
 YAML = new_roundtrip_yaml_handler()
 _ACTIVE_RELEASE_REASONS = frozenset({'Unknown', 'Not Found', 'Progressing'})
+
+
+@dataclass(frozen=True)
+class _CatalogRenderStats:
+    """Resource and object counts for one streamed catalog render."""
+
+    objects_read: int
+    objects_retained: int
+    channels: int
+    entries: int
+    render_seconds: float
+    filter_seconds: float
+    total_seconds: float
+
+
+@dataclass(frozen=True)
+class _RenderedCatalog:
+    """Compact catalog projection and its render statistics."""
+
+    blobs: list[dict]
+    stats: _CatalogRenderStats
+
+
+@dataclass(frozen=True)
+class _FragmentValidation:
+    """One outgoing fragment and the production index it targets."""
+
+    config_path: str
+    fragment_pullspec: str
+    production_index: str
+    rendered: _RenderedCatalog
+
+
+def _iter_json_objects(stream: TextIO) -> Iterator[dict]:
+    """Yield whitespace-delimited JSON objects from a text stream.
+
+    Args:
+        stream: Text stream containing the JSON object stream emitted by ``opm render``.
+
+    Yields:
+        Parsed JSON objects.
+
+    Raises:
+        ValueError: If the stream contains invalid JSON or a non-object value.
+    """
+    decoder = json.JSONDecoder()
+    buffer = ''
+    eof = False
+    while True:
+        chunk = stream.read(1024 * 1024)
+        if chunk:
+            buffer += chunk
+        else:
+            eof = True
+
+        position = 0
+        while True:
+            while position < len(buffer) and buffer[position].isspace():
+                position += 1
+            if position >= len(buffer):
+                buffer = ''
+                break
+            try:
+                value, end = decoder.raw_decode(buffer, position)
+            except json.JSONDecodeError as exc:
+                if eof:
+                    raise ValueError('Invalid JSON in opm render output') from exc
+                buffer = buffer[position:]
+                break
+            if not isinstance(value, dict):
+                raise ValueError(f'Expected JSON object in opm render output, found {type(value).__name__}')
+            yield value
+            position = end
+
+        if eof:
+            if buffer.strip():
+                raise ValueError('Trailing data in opm render output')
+            return
+
+
+def _compact_catalog_blob(blob: dict, packages: set[str] | None) -> dict | None:
+    """Keep only ownership and channel data needed by LP production validation.
+
+    Args:
+        blob: Parsed declarative-config object.
+        packages: Package names to retain, or ``None`` to retain all packages.
+
+    Returns:
+        A compact blob compatible with ``_catalog_channels``, or ``None`` when
+        the blob is unrelated to the requested packages.
+    """
+    package = _catalog_package(blob)
+    if not package or (packages is not None and package not in packages):
+        return None
+
+    schema = blob.get('schema')
+    compact = {'schema': schema}
+    if schema == 'olm.package':
+        compact['name'] = blob.get('name')
+    else:
+        compact['package'] = package
+        if blob.get('name') is not None:
+            compact['name'] = blob['name']
+    if schema == 'olm.channel':
+        compact['entries'] = blob.get('entries')
+    return compact
 
 
 def _catalog_package(blob: dict) -> str | None:
@@ -81,6 +194,76 @@ def _catalog_channels(blobs: Iterable[dict]) -> tuple[set[str], dict[tuple[str, 
             raise ValueError(f"Invalid entries in olm.channel {package}/{channel}: {entries!r}")
         channels.setdefault((package, channel), set()).update(entry['name'] for entry in entries)
     return packages, channels
+
+
+@retry(reraise=True, stop=stop_after_attempt(3), wait=wait_fixed(5))
+async def _render_catalog(input: str, packages: set[str] | None, auth: OpmRegistryAuth) -> _RenderedCatalog:
+    """Run the LP-specific optimized ``opm render`` path and retain ownership data.
+
+    This path is intentionally separate from the shared ``doozerlib.opm.render``
+    helper. It is specially optimized for performance and low resource
+    consumption in constrained CI environments. LP validation renders public
+    production catalogs and usually needs only the package ownership and
+    channel entries for the outgoing fragments, so JSON output is spooled to
+    disk, parsed incrementally, and compacted.
+
+    Args:
+        input: Catalog image or FBC directory to render.
+        packages: Package names to retain, or ``None`` for all packages.
+        auth: Registry authentication used by ``opm``.
+
+    Returns:
+        Compact catalog data and render statistics.
+
+    Raises:
+        IOError: If ``opm render`` exits unsuccessfully.
+        ValueError: If the rendered output is invalid or contains no matching objects.
+    """
+    started = time.perf_counter()
+    with TemporaryDirectory(prefix='_elliott_lp_prod_') as temp_dir:
+        output_path = Path(temp_dir, 'catalog.json')
+        env = os.environ.copy()
+        env.setdefault('GOGC', '20')
+        render_started = time.perf_counter()
+        with output_path.open('w', encoding='utf-8') as output:
+            rc, _, err = await gather_opm(
+                ['render', '--migrate-level', 'none', '-o', 'json', '--', input],
+                auth=auth,
+                check=False,
+                env=env,
+                stdout=output,
+            )
+        render_seconds = time.perf_counter() - render_started
+        if rc != 0:
+            raise IOError(f'opm render failed with exit code {rc}: {err}')
+
+        filter_started = time.perf_counter()
+        objects_read = 0
+        compact_blobs = []
+        with output_path.open(encoding='utf-8') as rendered_output:
+            for blob in _iter_json_objects(rendered_output):
+                objects_read += 1
+                compact = _compact_catalog_blob(blob, packages)
+                if compact is not None:
+                    compact_blobs.append(compact)
+        filter_seconds = time.perf_counter() - filter_started
+
+    if not compact_blobs and (packages is None or objects_read == 0):
+        package_description = sorted(packages) if packages is not None else 'any package'
+        raise ValueError(f'opm render returned no objects for {input} and packages {package_description}')
+
+    channels = [blob for blob in compact_blobs if blob.get('schema') == 'olm.channel']
+    entry_count = sum(len(blob.get('entries') or []) for blob in channels if isinstance(blob.get('entries'), list))
+    stats = _CatalogRenderStats(
+        objects_read=objects_read,
+        objects_retained=len(compact_blobs),
+        channels=len(channels),
+        entries=entry_count,
+        render_seconds=render_seconds,
+        filter_seconds=filter_seconds,
+        total_seconds=time.perf_counter() - started,
+    )
+    return _RenderedCatalog(blobs=compact_blobs, stats=stats)
 
 
 def find_pruned_entries(
@@ -298,7 +481,8 @@ class ValidateLpProdCli:
             IOError: If a production index or fragment cannot be rendered.
         """
         auth = OpmRegistryAuth(path=self.pull_secret)
-        production_cache: dict[str, list[dict]] = {}
+        fragment_validations: list[_FragmentValidation] = []
+        index_packages: defaultdict[str, set[str]] = defaultdict(set)
         for config, config_path in zip(configs, self.config_paths):
             shipment = config.shipment
             if not shipment.metadata.fbc:
@@ -312,24 +496,59 @@ class ValidateLpProdCli:
                 raise ValueError(f"Cannot determine target OCP version from FBC NVR in {config_path}")
             major, minor = ocp_version.split('.', 1)
             production_index = PRODUCTION_INDEX_PULLSPEC_FORMAT.format(major=major, minor=minor)
-            if production_index not in production_cache:
-                production_cache[production_index] = await render(production_index, auth=auth)
-            production_blobs = production_cache[production_index]
-
             for component in shipment.snapshot.spec.components:
                 fragment_pullspec = component.containerImage
-                fragment_blobs = await render(fragment_pullspec, auth=auth)
-                pruned = find_pruned_entries(production_blobs, fragment_blobs)
+                rendered_fragment = await _render_catalog(fragment_pullspec, None, auth)
+                fragment_packages, _ = _catalog_channels(rendered_fragment.blobs)
+                if not fragment_packages:
+                    raise ValueError(f'Outgoing FBC fragment contains no identifiable package: {fragment_pullspec}')
+                fragment_validations.append(
+                    _FragmentValidation(
+                        config_path=config_path,
+                        fragment_pullspec=fragment_pullspec,
+                        production_index=production_index,
+                        rendered=rendered_fragment,
+                    )
+                )
+                index_packages[production_index].update(fragment_packages)
+
+        for production_index, packages in index_packages.items():
+            index_started = time.perf_counter()
+            rendered_production = await _render_catalog(production_index, packages, auth)
+            comparisons = [
+                fragment for fragment in fragment_validations if fragment.production_index == production_index
+            ]
+            comparison_started = time.perf_counter()
+            failures = []
+            for fragment in comparisons:
+                pruned = find_pruned_entries(rendered_production.blobs, fragment.rendered.blobs)
                 if not pruned:
                     continue
                 details = '; '.join(
+                    f"fragment={fragment.config_path} ({fragment.fragment_pullspec}), "
                     f"package={package}, channel={channel}, removed={sorted(entries)}"
                     for (package, channel), entries in sorted(pruned.items())
                 )
+                failures.append(details)
+            comparison_seconds = time.perf_counter() - comparison_started
+            fragment_seconds = sum(fragment.rendered.stats.total_seconds for fragment in comparisons)
+            result = 'FAIL' if failures else 'PASS'
+            summary = (
+                f"validate-lp-prod index={production_index} packages={sorted(packages)} "
+                f"fragments={len(comparisons)} objects_read={rendered_production.stats.objects_read} "
+                f"objects_retained={rendered_production.stats.objects_retained} "
+                f"channels={rendered_production.stats.channels} entries={rendered_production.stats.entries} "
+                f"fragment_time={fragment_seconds:.2f}s production_render={rendered_production.stats.render_seconds:.2f}s "
+                f"production_filter={rendered_production.stats.filter_seconds:.2f}s "
+                f"comparison={comparison_seconds:.2f}s total={time.perf_counter() - index_started:.2f}s "
+                f"result={result}"
+            )
+            if failures:
+                LOGGER.info('%s removed_entries=%s', summary, '; '.join(failures))
                 raise RuntimeError(
-                    f"FBC production validation failed for {config_path} ({fragment_pullspec}) against "
-                    f"{production_index}: {details}"
+                    f"FBC production validation failed against {production_index}: {'; '.join(failures)}"
                 )
+            LOGGER.info(summary)
 
     async def run(self) -> None:
         """Run all layered-product production validations.
