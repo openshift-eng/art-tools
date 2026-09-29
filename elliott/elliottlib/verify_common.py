@@ -51,6 +51,25 @@ def get_assembly_advisory_ids(
     return result
 
 
+def get_assembly_shipment_kinds(runtime) -> set[str]:
+    """Get advisory kinds that go through the shipment flow (not brew advisory).
+
+    Reads the assembly's group config and returns the set of kinds
+    listed under ``shipment.advisories``.
+
+    Args:
+        runtime: Elliott runtime (must be initialized).
+
+    Returns:
+        Set of kind strings (e.g. ``{"image", "extras", "metadata", "fbc"}``).
+    """
+    releases_config = runtime.get_releases_config()
+    group_config = assembly_config_struct(releases_config, runtime.assembly, "group", {})
+    shipment = group_config.get("shipment", {})
+    shipment_advisories = shipment.get("advisories", [])
+    return {sa.get("kind") for sa in shipment_advisories if sa.get("kind")}
+
+
 def get_assembly_shipment_url(runtime, required: bool = False) -> Optional[str]:
     """Get shipment MR URL from assembly config.
 
