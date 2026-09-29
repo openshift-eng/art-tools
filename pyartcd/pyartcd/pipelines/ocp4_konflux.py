@@ -958,16 +958,17 @@ class KonfluxOcpPipeline:
         if self.runtime.dry_run:
             return child_params
 
-        child_result = await asyncio.to_thread(
+        child_result, child_build_url = await asyncio.to_thread(
             jenkins.start_build,
             jenkins.Jobs.RHCOS_NODE_IMAGE_POST_BUILD,
             child_params,
             block_until_complete=True,
+            return_build_url=True,
         )
-        child_job_path = jenkins.Jobs.RHCOS_NODE_IMAGE_POST_BUILD.value.replace('/', '/job/').replace('%2F', '%252F')
-        child_job_url = f'{jenkins.get_jenkins_url()}/job/{child_job_path}/'
+        child_build_url = f'{child_build_url.rstrip("/")}/'
         jenkins.update_description(
-            '<br/>RHCOS %s post-build: <a href="%s">rhcos-node-image-post-build</a><br/>' % (rhel_label, child_job_url)
+            '<br/>RHCOS %s post-build: <a href="%s">rhcos-node-image-post-build</a><br/>'
+            % (rhel_label, child_build_url)
         )
         if child_result != 'SUCCESS':
             raise RuntimeError(f"RHCOS {rhel_label} post-build job did not pass (result={child_result})")

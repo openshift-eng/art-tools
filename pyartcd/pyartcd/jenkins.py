@@ -341,7 +341,8 @@ def start_build(
     block_until_building: bool = True,
     block_until_complete: bool = False,
     watch_building_delay: int = 5,
-) -> Optional[str]:
+    return_build_url: bool = False,
+) -> Optional[str] | tuple[Optional[str], str]:
     """
     Starts a new Jenkins build
 
@@ -351,8 +352,10 @@ def start_build(
         triggered jobs are properly backlinked to parent jobs.
     :param block_until_complete: False by default. Will block until the new build completes
     :param watch_building_delay: Poll rate for building state
+    :param return_build_url: Return the started build URL with its result
 
-    Returns the build result if block_until_complete is True, None otherwise
+    Returns the build result if block_until_complete is True, None otherwise. When
+    return_build_url is True, also returns the URL for the started build.
     """
 
     init_jenkins()
@@ -369,6 +372,8 @@ def start_build(
     triggered_build = wait_until_building(queue_item, job, watch_building_delay)
 
     if not block_until_complete:
+        if return_build_url:
+            return None, triggered_build.baseurl
         return None
 
     # Wait for the build to complete; get its status and return it
@@ -376,6 +381,8 @@ def start_build(
     triggered_build.block_until_complete()
     result = triggered_build.poll()['result']
     logger.info('Build completed with result: %s', result)
+    if return_build_url:
+        return result, triggered_build.baseurl
     return result
 
 

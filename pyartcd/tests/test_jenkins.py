@@ -80,6 +80,32 @@ class TestJenkinsStartBuild(unittest.TestCase):
         mock_queue_item.poll.assert_called_once()
         mock_build.assert_called_once_with(url=triggered_url, buildno=1, job=mock_job)
 
+    @mock.patch("pyartcd.jenkins.Build")
+    @mock.patch("pyartcd.jenkins.init_jenkins")
+    @mock.patch("pyartcd.jenkins.jenkins_client")
+    @mock.patch.dict(
+        os.environ,
+        {
+            'BUILD_URL': 'https://jenkins/job/parent/1/',
+            'JOB_NAME': 'parent',
+            'JENKINS_URL': 'https://jenkins',
+        },
+        clear=False,
+    )
+    def test_start_build_can_return_build_url(self, mock_client, mock_init_jenkins, mock_build):
+        job = Jobs.OCP4
+        mock_job = mock.MagicMock()
+        mock_client.get_job.return_value = mock_job
+        mock_queue_item = mock.MagicMock()
+        mock_job.invoke.return_value = mock_queue_item
+        mock_queue_item.poll.return_value = {'executable': {'number': 106}, 'task': {'url': 'https://jenkins/job/1/'}}
+        mock_build.return_value.baseurl = 'https://jenkins/job/1/106'
+        mock_build.return_value.poll.return_value = {'result': 'SUCCESS'}
+        result = jenkins.start_build(job, {}, block_until_complete=True, return_build_url=True)
+
+        self.assertEqual(result, ('SUCCESS', 'https://jenkins/job/1/106'))
+        mock_init_jenkins.assert_called_once()
+
     def test_get_build_url_and_path(self):
         # No BUILD_URL env var defined
         if os.environ.get('BUILD_URL'):
