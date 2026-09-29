@@ -1704,6 +1704,82 @@ class TestOcpOptionalMode(unittest.TestCase):
 
         pipeline.validate_fbc_related_images.assert_not_awaited()
 
+    @patch('pyartcd.pipelines.release_from_fbc.reconcile_shipment_mr', new_callable=AsyncMock)
+    @patch('pyartcd.pipelines.release_from_fbc.set_shipment_mr_draft')
+    @patch('pyartcd.pipelines.release_from_fbc.validate_shipment_mr_for_operation', new_callable=AsyncMock)
+    def test_reused_mr_applies_approval_rules_before_mutation(self, mock_validate, mock_draft, mock_reconcile):
+        """A no-force rerun applies approvers to its existing MR before changing it."""
+        mr_url = "https://gitlab.example/project/-/merge_requests/42"
+        existing_mr = MagicMock(state='opened', title='Shipment for oadp 1.5.8', description='')
+        mock_validate.return_value = (existing_mr, MagicMock(active_stage=(), prod_attempts=()))
+        pipeline = self._make_pipeline(ocp_optional=False, group="oadp-1.5", assembly="1.5.8")
+        pipeline.create_mr = True
+        pipeline.fbc_pullspecs = []
+        pipeline.extra_image_nvrs = ["oadp-container-v1.5.8-1.el9"]
+        pipeline._configured_shipment_mr_url = mr_url
+        pipeline.check_env_vars = MagicMock()
+        pipeline.setup_working_dir = MagicMock()
+        pipeline.setup_shipment_repo = AsyncMock()
+        pipeline._load_product_from_group_config = AsyncMock(return_value="oadp")
+        pipeline._load_layered_product_shipment_mr = MagicMock(return_value=mr_url)
+        pipeline.create_snapshot = AsyncMock(return_value=_make_snapshot(app="oadp-1-5"))
+        pipeline.create_shipment_config = MagicMock(return_value=MagicMock())
+        pipeline._load_release_notes_template = MagicMock(return_value=None)
+        pipeline._verify_layered_product_shipment_mr = AsyncMock()
+        pipeline.create_shipment_mr = AsyncMock()
+        pipeline.set_shipment_mr_ready = AsyncMock()
+        pipeline.__dict__['_gitlab'] = MagicMock()
+
+        approval_calls = []
+        pipeline._set_shipment_mr_approval_rules = AsyncMock(side_effect=lambda _: approval_calls.append('approval'))
+        mock_draft.side_effect = lambda *_: approval_calls.append('draft')
+        mock_reconcile.side_effect = lambda *_, **__: approval_calls.append('reconcile')
+
+        with patch('pyartcd.pipelines.release_from_fbc.is_nvr_embargoed', return_value=False):
+            asyncio.run(pipeline.run())
+
+        pipeline._set_shipment_mr_approval_rules.assert_awaited_once_with(mr_url)
+        pipeline.create_shipment_mr.assert_not_awaited()
+        self.assertEqual(approval_calls, ['approval', 'draft', 'reconcile'])
+        pipeline.set_shipment_mr_ready.assert_awaited_once()
+
+    @patch('pyartcd.pipelines.release_from_fbc.reconcile_shipment_mr', new_callable=AsyncMock)
+    @patch('pyartcd.pipelines.release_from_fbc.set_shipment_mr_draft')
+    @patch('pyartcd.pipelines.release_from_fbc.validate_shipment_mr_for_operation', new_callable=AsyncMock)
+    def test_reused_mr_approval_failure_stops_before_mutation(self, mock_validate, mock_draft, mock_reconcile):
+        """A 403 while applying approvers fails before the existing MR is drafted."""
+        mr_url = "https://gitlab.example/project/-/merge_requests/42"
+        existing_mr = MagicMock(state='opened', title='Shipment for oadp 1.5.8', description='')
+        mock_validate.return_value = (existing_mr, MagicMock(active_stage=(), prod_attempts=()))
+        pipeline = self._make_pipeline(ocp_optional=False, group="oadp-1.5", assembly="1.5.8")
+        pipeline.create_mr = True
+        pipeline.fbc_pullspecs = []
+        pipeline.extra_image_nvrs = ["oadp-container-v1.5.8-1.el9"]
+        pipeline._configured_shipment_mr_url = mr_url
+        pipeline.check_env_vars = MagicMock()
+        pipeline.setup_working_dir = MagicMock()
+        pipeline.setup_shipment_repo = AsyncMock()
+        pipeline._load_product_from_group_config = AsyncMock(return_value="oadp")
+        pipeline._load_layered_product_shipment_mr = MagicMock(return_value=mr_url)
+        pipeline.create_snapshot = AsyncMock(return_value=_make_snapshot(app="oadp-1-5"))
+        pipeline.create_shipment_config = MagicMock(return_value=MagicMock())
+        pipeline._load_release_notes_template = MagicMock(return_value=None)
+        pipeline._verify_layered_product_shipment_mr = AsyncMock()
+        pipeline._set_shipment_mr_approval_rules = AsyncMock(side_effect=ApprovalRuleSetupError("403 deleting Docs"))
+        pipeline.create_shipment_mr = AsyncMock()
+        pipeline.set_shipment_mr_ready = AsyncMock()
+        pipeline.__dict__['_gitlab'] = MagicMock()
+
+        with patch('pyartcd.pipelines.release_from_fbc.is_nvr_embargoed', return_value=False):
+            with self.assertRaisesRegex(ApprovalRuleSetupError, "403 deleting Docs"):
+                asyncio.run(pipeline.run())
+
+        pipeline._set_shipment_mr_approval_rules.assert_awaited_once_with(mr_url)
+        mock_draft.assert_not_called()
+        mock_reconcile.assert_not_awaited()
+        pipeline.create_shipment_mr.assert_not_awaited()
+        pipeline.set_shipment_mr_ready.assert_not_awaited()
+
     @patch('pyartcd.pipelines.release_from_fbc.validate_shipment_mr_for_operation', new_callable=AsyncMock)
     def test_force_closes_open_previous_mr_before_replacement(self, mock_validate):
         """Close an open stage-only MR before direct release creates its replacement."""
