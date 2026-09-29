@@ -1,3 +1,4 @@
+import unittest
 from unittest import mock
 
 import pytest
@@ -198,7 +199,7 @@ class TestCredentialManagement:
             with pytest.raises(FileNotFoundError, match="QUAY_AUTH_FILE file not found"):
                 pipeline._get_required_env('QUAY_AUTH_FILE')
 
-    @mock.patch('pyartcd.pipelines.sync_ci_images.RegistryConfig')
+    @mock.patch('pyartcd.pipelines.ci_image_sync_common.RegistryConfig')
     def test_create_registry_config(self, mock_registry_config, mock_runtime, tmp_path):
         """Test RegistryConfig creation with all required credentials."""
         # Create temporary credential files
@@ -231,3 +232,81 @@ class TestCredentialManagement:
 
             assert REGISTRY_CI_OPENSHIFT in call_kwargs['registries']
             assert len(call_kwargs['credentials']) == 1
+
+
+class TestSyncCIImagesOrchestration(unittest.IsolatedAsyncioTestCase):
+    """Tests for the orchestrator run() workflow: delegates to independent sub-jobs."""
+
+    def _mock_runtime(self):
+        runtime = mock.MagicMock(spec=Runtime)
+        runtime.logger = mock.MagicMock()
+        runtime.working_dir = mock.MagicMock()
+        runtime.doozer_working = "/workspace/doozer_working"
+        runtime.dry_run = False
+        return runtime
+
+    @mock.patch('pyartcd.pipelines.sync_ci_images.jenkins')
+    async def test_run_skips_sub_jobs_when_no_changes(self, mock_jenkins):
+        """Test run() returns early without triggering any sub-job when no changes are detected."""
+        pipeline = SyncCIImagesPipeline(self._mock_runtime(), for_release="4.17")
+
+        with mock.patch.object(pipeline, '_check_for_changes', new=mock.AsyncMock(return_value=(False, "abc123"))):
+            rc = await pipeline.run()
+
+            self.assertEqual(rc, 0)
+            mock_jenkins.start_open_reconciliation_prs.assert_not_called()
+            mock_jenkins.start_mirror_images_to_ci.assert_not_called()
+            mock_jenkins.start_sync_ci_buildconfigs.assert_not_called()
+
+    @mock.patch('pyartcd.pipelines.sync_ci_images.jenkins')
+    async def test_run_orchestrates_sub_jobs_in_order(self, mock_jenkins):
+        """Test run() fires reconcile-ci-upstream, then waits for mirror then buildconfigs."""
+        mock_jenkins.start_open_reconciliation_prs.return_value = 'SUCCESS'
+        mock_jenkins.start_mirror_images_to_ci.return_value = 'SUCCESS'
+        mock_jenkins.start_sync_ci_buildconfigs.return_value = 'SUCCESS'
+
+        pipeline = SyncCIImagesPipeline(self._mock_runtime(), for_release="4.17")
+
+        with (
+            mock.patch.object(pipeline, '_check_for_changes', new=mock.AsyncMock(return_value=(True, "abc123"))),
+            mock.patch.object(pipeline, '_record_successful_run', new=mock.AsyncMock()) as mock_record,
+        ):
+            rc = await pipeline.run()
+
+            self.assertEqual(rc, 0)
+            mock_jenkins.start_open_reconciliation_prs.assert_called_once_with(version="4.17")
+            mock_jenkins.start_mirror_images_to_ci.assert_called_once_with(version="4.17", block_until_complete=True)
+            mock_jenkins.start_sync_ci_buildconfigs.assert_called_once_with(version="4.17", block_until_complete=True)
+            mock_record.assert_awaited_once_with("abc123")
+
+    @mock.patch('pyartcd.pipelines.sync_ci_images.jenkins')
+    async def test_run_does_not_trigger_buildconfigs_when_mirror_fails(self, mock_jenkins):
+        """Test a mirror-images-to-ci failure prevents sync-ci-buildconfigs from running."""
+        mock_jenkins.start_mirror_images_to_ci.return_value = 'FAILURE'
+
+        pipeline = SyncCIImagesPipeline(self._mock_runtime(), for_release="4.17")
+
+        with mock.patch.object(pipeline, '_check_for_changes', new=mock.AsyncMock(return_value=(True, "abc123"))):
+            with self.assertRaises(RuntimeError):
+                await pipeline.run()
+
+            mock_jenkins.start_sync_ci_buildconfigs.assert_not_called()
+
+    @mock.patch('pyartcd.pipelines.sync_ci_images.jenkins')
+    async def test_run_continues_when_fire_and_forget_trigger_fails(self, mock_jenkins):
+        """Test a failure to trigger reconcile-ci-upstream does not block mirror/buildconfigs."""
+        mock_jenkins.start_open_reconciliation_prs.side_effect = RuntimeError("jenkins unavailable")
+        mock_jenkins.start_mirror_images_to_ci.return_value = 'SUCCESS'
+        mock_jenkins.start_sync_ci_buildconfigs.return_value = 'SUCCESS'
+
+        pipeline = SyncCIImagesPipeline(self._mock_runtime(), for_release="4.17")
+
+        with (
+            mock.patch.object(pipeline, '_check_for_changes', new=mock.AsyncMock(return_value=(True, "abc123"))),
+            mock.patch.object(pipeline, '_record_successful_run', new=mock.AsyncMock()),
+        ):
+            rc = await pipeline.run()
+
+            self.assertEqual(rc, 0)
+            mock_jenkins.start_mirror_images_to_ci.assert_called_once()
+            mock_jenkins.start_sync_ci_buildconfigs.assert_called_once()
