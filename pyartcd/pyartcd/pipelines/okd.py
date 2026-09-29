@@ -729,19 +729,15 @@ class KonfluxOkdPipeline:
     async def mirror_coreos_imagestreams(self):
         """
         Mirror OKD CoreOS imagestream tags from RHCOS team's tags to ART's imagestreams.
-        This is a temporary solution until the RHCOS team starts mirroring to ART's imagestreams directly.
 
-        Mirrors:
-        - QCI proxy:<namespace>_scos-{version}_stream-coreos -> origin/scos-{version}-art:stream-coreos
-        - QCI proxy:<namespace>_scos-{version}_stream-coreos-extensions -> origin/scos-{version}-art:stream-coreos-extensions
+        Only version 4.23 still needs ART mirroring because it has no dedicated
+        scos-4.23 CoreOS stream (master builds 5.0) and must source CoreOS tags
+        from scos-5.0.  All other versions are handled by openshift/release
+        postsubmit jobs and no longer require ART-side mirroring.
 
-        Special case:
-        - 4.23 has no dedicated scos-4.23 CoreOS stream (master builds 5.0), so it
-          sources CoreOS tags from scos-5.0. Every other version mirrors from its own
-          same-version scos stream.
-
-        Mirroring for all versions makes ART the reliable producer of the CoreOS tags
-        in the -art namespace, independent of openshift/release promotion timing.
+        Mirrors (4.23 only):
+        - QCI proxy:<namespace>_scos-5.0_stream-coreos -> origin/scos-4.23-art:stream-coreos
+        - QCI proxy:<namespace>_scos-5.0_stream-coreos-extensions -> origin/scos-4.23-art:stream-coreos-extensions
         """
 
         if self.assembly != 'stream':
@@ -752,10 +748,17 @@ class KonfluxOkdPipeline:
             self.logger.warning('No images were successfully built; skipping CoreOS imagestream mirroring')
             return
 
+        if self.version != '4.23':
+            self.logger.info(
+                'Version %s CoreOS mirroring is handled by openshift/release postsubmits; skipping ART mirror',
+                self.version,
+            )
+            return
+
         tags_to_mirror = ['stream-coreos', 'stream-coreos-extensions']
 
-        # Only 4.23 is special (no own scos-4.23 stream); everything else uses its own version.
-        source_version = '5.0' if self.version == '4.23' else self.version
+        # 4.23 has no own scos-4.23 stream; it sources from scos-5.0.
+        source_version = '5.0'
 
         if self.runtime.dry_run:
             self.logger.info('[DRY RUN] Would mirror CoreOS imagestream tags')
