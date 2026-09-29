@@ -761,3 +761,90 @@ class TestBuildMicroShiftBootcPipeline(IsolatedAsyncioTestCase):
 
             # when / then - should not raise
             await pipeline._build_plashet_for_bootc()
+
+    @patch("pyartcd.pipelines.build_microshift_bootc.load_group_config", new_callable=AsyncMock)
+    @patch("pyartcd.pipelines.build_microshift_bootc.load_releases_config", new_callable=AsyncMock)
+    @patch.object(BuildMicroShiftBootcPipeline, "_build_plashet_for_bootc", new_callable=AsyncMock)
+    @patch.object(BuildMicroShiftBootcPipeline, "_get_bootc_variants", new_callable=AsyncMock)
+    @patch.object(BuildMicroShiftBootcPipeline, "_get_microshift_rpm_commit", new_callable=AsyncMock)
+    @patch.object(BuildMicroShiftBootcPipeline, "_rebase_and_build_bootc", new_callable=AsyncMock)
+    async def test_run_pipeline_raises_on_partial_variant_failure(
+        self,
+        mock_rebase_build,
+        mock_rpm_commit,
+        mock_get_variants,
+        mock_build_plashet,
+        mock_load_releases,
+        mock_load_group,
+    ):
+        """
+        Test that _run_pipeline raises RuntimeError when one variant fails
+        while another succeeds (partial failure → hard fail).
+        """
+        # given
+        pipeline = self._make_pipeline(group="openshift-4.21", assembly="4.21.0")
+
+        mock_load_releases.return_value = {"releases": {"4.21.0": {"assembly": {}}}}
+        mock_load_group.return_value = {}
+        mock_rpm_commit.return_value = "abc1234"
+
+        el9_variant = {"image_name": "microshift-bootc", "el_target": "el9"}
+        el10_variant = {"image_name": "microshift-bootc-rhel10", "el_target": "el10"}
+        mock_get_variants.return_value = [el10_variant, el9_variant]
+
+        # el10 succeeds, el9 fails
+        successful_build = Mock(nvr="microshift-bootc-rhel10-v4.21-1.el10", image_pullspec="quay.io/test:el10")
+        el9_error = RuntimeError("doozer rebase failed for microshift-bootc")
+
+        # Side effects ordered to match variant order: el10 success, el9 failure
+        mock_rebase_build.side_effect = [successful_build, el9_error]
+
+        # when / then
+        with self.assertRaises(RuntimeError) as ctx:
+            await pipeline._run_pipeline()
+        error_msg = str(ctx.exception)
+        self.assertIn("microshift-bootc", error_msg)
+        self.assertNotIn("microshift-bootc-rhel10", error_msg)
+        self.assertIn("failed", error_msg.lower())
+
+    @patch("pyartcd.pipelines.build_microshift_bootc.load_group_config", new_callable=AsyncMock)
+    @patch("pyartcd.pipelines.build_microshift_bootc.load_releases_config", new_callable=AsyncMock)
+    @patch.object(BuildMicroShiftBootcPipeline, "_build_plashet_for_bootc", new_callable=AsyncMock)
+    @patch.object(BuildMicroShiftBootcPipeline, "_get_bootc_variants", new_callable=AsyncMock)
+    @patch.object(BuildMicroShiftBootcPipeline, "_get_microshift_rpm_commit", new_callable=AsyncMock)
+    @patch.object(BuildMicroShiftBootcPipeline, "_rebase_and_build_bootc", new_callable=AsyncMock)
+    @patch.object(BuildMicroShiftBootcPipeline, "_sync_and_publish_build", new_callable=AsyncMock)
+    async def test_run_pipeline_succeeds_when_all_variants_pass(
+        self,
+        mock_sync_publish,
+        mock_rebase_build,
+        mock_rpm_commit,
+        mock_get_variants,
+        mock_build_plashet,
+        mock_load_releases,
+        mock_load_group,
+    ):
+        """
+        Test that _run_pipeline completes successfully when all variants build without error.
+        """
+        # given
+        pipeline = self._make_pipeline(group="openshift-4.21", assembly="stream")
+        pipeline.assembly_type = AssemblyTypes.STREAM
+
+        mock_load_releases.return_value = {"releases": {"stream": {"assembly": {}}}}
+        mock_load_group.return_value = {}
+        mock_rpm_commit.return_value = "abc1234"
+
+        el9_variant = {"image_name": "microshift-bootc", "el_target": "el9"}
+        el10_variant = {"image_name": "microshift-bootc-rhel10", "el_target": "el10"}
+        mock_get_variants.return_value = [el10_variant, el9_variant]
+
+        el10_build = Mock(nvr="microshift-bootc-rhel10-v4.21-1.el10", name="microshift-bootc-rhel10")
+        el9_build = Mock(nvr="microshift-bootc-v4.21-1.el9", name="microshift-bootc")
+        mock_rebase_build.side_effect = [el10_build, el9_build]
+
+        # when - should not raise
+        await pipeline._run_pipeline()
+
+        # then - both builds are synced and published
+        self.assertEqual(mock_sync_publish.call_count, 2)
