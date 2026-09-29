@@ -283,10 +283,10 @@ class TestKonfluxOkdPipeline(IsolatedAsyncioTestCase):
             )
             self.assertEqual(second_call[1]['target_tag'], 'custom-namespace/scos-4.23-art:stream-coreos-extensions')
 
-    async def test_mirror_coreos_imagestreams_skipped_for_non_4_23(self):
+    async def test_mirror_coreos_imagestreams_uses_same_version_source(self):
         """
-        Test that CoreOS mirroring is skipped for non-4.23 versions because
-        openshift/release postsubmits handle mirroring for those versions.
+        Test that CoreOS mirroring uses the version's own scos stream as source for every
+        version except the 4.23 special case (which has no dedicated scos-4.23 stream).
         """
 
         for version in ['4.21', '4.22', '5.0', '5.1']:
@@ -320,7 +320,23 @@ class TestKonfluxOkdPipeline(IsolatedAsyncioTestCase):
                 ):
                     await pipeline.mirror_coreos_imagestreams()
 
-                    mock_tag.assert_not_called()
+                    self.assertEqual(mock_tag.call_count, 2)
+
+                    first_call = mock_tag.call_args_list[0]
+                    self.assertEqual(
+                        first_call[1]['source_pullspec'],
+                        f'quay-proxy.ci.openshift.org/openshift/ci:origin_scos-{version}_stream-coreos',
+                    )
+                    self.assertEqual(first_call[1]['target_tag'], f'origin/scos-{version}-art:stream-coreos')
+
+                    second_call = mock_tag.call_args_list[1]
+                    self.assertEqual(
+                        second_call[1]['source_pullspec'],
+                        f'quay-proxy.ci.openshift.org/openshift/ci:origin_scos-{version}_stream-coreos-extensions',
+                    )
+                    self.assertEqual(
+                        second_call[1]['target_tag'], f'origin/scos-{version}-art:stream-coreos-extensions'
+                    )
 
     async def test_mirror_coreos_imagestreams_4_23_uses_5_0_source(self):
         """
