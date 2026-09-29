@@ -747,17 +747,6 @@ class KonfluxOcpPipeline:
             LOGGER.warning('Skipping RHCOS post-build jobs because --skip-node-image-post-build-ops is set')
             return
 
-        # The RHCOS Jenkins build-node-image job does not support these releases yet.
-        # Skip them until the job is updated to handle them.
-        _UNSUPPORTED_VERSIONS = {'5.1'}
-        if self.version in _UNSUPPORTED_VERSIONS:
-            LOGGER.warning(
-                'Skipping RHCOS node-image post-build for version %s: '
-                'the Jenkins build-node-image job does not support this release yet',
-                self.version,
-            )
-            return
-
         record_log = self.parse_record_log()
         if not record_log:
             LOGGER.warning('record.log not found, skipping RHCOS integration tests')
