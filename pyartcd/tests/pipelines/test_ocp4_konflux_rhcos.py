@@ -132,7 +132,11 @@ class TestRhcosPostBuildDelegation(unittest.IsolatedAsyncioTestCase):
         mock_start_build,
         mock_update_description,
     ):
-        mock_start_build.return_value = 'SUCCESS'
+        child_build_url = (
+            'https://art-jenkins.apps.prod-stable-spoke1-dc-iad2.itup.redhat.com/'
+            'job/aos-cd-builds/job/build%252Frhcos-node-image-post-build/106'
+        )
+        mock_start_build.return_value = ('SUCCESS', child_build_url)
 
         result = await self.pipeline._trigger_rhcos_pair_test(
             'rhel9',
@@ -152,12 +156,13 @@ class TestRhcosPostBuildDelegation(unittest.IsolatedAsyncioTestCase):
             Jobs.RHCOS_NODE_IMAGE_POST_BUILD,
             params,
             block_until_complete=True,
+            return_build_url=True,
         )
         self.assertEqual(result['NODE_IMAGE'], params['NODE_IMAGE'])
         mock_update_description.assert_called_once()
         description = mock_update_description.call_args.args[0]
         self.assertIn('rhcos-node-image-post-build', description)
-        self.assertIn('/job/aos-cd-builds/job/build%252Frhcos-node-image-post-build/', description)
+        self.assertIn(f'href="{child_build_url}/"', description)
         self.assertNotIn('EXTENSIONS_IMAGE', description)
 
     @patch('pyartcd.pipelines.ocp4_konflux.load_group_config', new_callable=AsyncMock)
@@ -170,7 +175,10 @@ class TestRhcosPostBuildDelegation(unittest.IsolatedAsyncioTestCase):
         mock_load_group_config,
     ):
         mock_load_group_config.return_value = self.group_config
-        mock_start_build.side_effect = ['SUCCESS', 'FAILURE']
+        mock_start_build.side_effect = [
+            ('SUCCESS', 'https://jenkins.example/job/post-build/1'),
+            ('FAILURE', 'https://jenkins.example/job/post-build/2'),
+        ]
         self.pipeline.parse_record_log = MagicMock(return_value={'image_build_konflux': self.records})
 
         critical_failures = []
