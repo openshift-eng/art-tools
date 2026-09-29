@@ -5,7 +5,6 @@ from dataclasses import dataclass, field
 from typing import List, Set
 
 import click
-from artcommonlib.assembly import assembly_config_struct
 from artcommonlib.jira_config import JIRA_DOMAIN_NAME
 
 from elliottlib import errata
@@ -18,7 +17,7 @@ from elliottlib.cli.find_bugs_sweep_cli import (
     get_builds_by_advisory_kind,
 )
 from elliottlib.shipment_utils import get_shipment_configs_from_mr
-from elliottlib.verify_common import get_assembly_advisory_ids, get_assembly_shipment_url
+from elliottlib.verify_common import get_assembly_advisory_ids, get_assembly_shipment_kinds, get_assembly_shipment_url
 
 LOGGER = logging.getLogger(__name__)
 
@@ -91,15 +90,6 @@ def get_shipment_jira_issues(mr_url: str, group: str) -> set[str]:
             if issue.source == JIRA_DOMAIN_NAME:
                 issues.add(issue.id)
     return issues
-
-
-def get_shipment_kinds(runtime) -> set[str]:
-    """Get advisory kinds that go through the shipment flow (not brew advisory)."""
-    releases_config = runtime.get_releases_config()
-    group_config = assembly_config_struct(releases_config, runtime.assembly, "group", {})
-    shipment = group_config.get("shipment", {})
-    shipment_advisories = shipment.get("advisories", [])
-    return {sa.get("kind") for sa in shipment_advisories if sa.get("kind")}
 
 
 async def find_cve_tracker_bugs(runtime, permissive: bool = True) -> dict[str, List[Bug]]:
@@ -194,7 +184,7 @@ async def verify_cve_trackers(runtime, permissive: bool = True) -> VerifyCVETrac
         LOGGER.info("Found %d jira issues in shipment MR", len(shipment_jira_issues))
 
         # Only check kinds that go through the shipment flow, not advisory-only kinds (e.g. rhcos, rpm)
-        shipment_advisory_kinds = get_shipment_kinds(runtime)
+        shipment_advisory_kinds = get_assembly_shipment_kinds(runtime)
         if not shipment_advisory_kinds:
             # Shipment MR exists but no kinds configured — fall back to all non-advisory kinds
             LOGGER.warning(

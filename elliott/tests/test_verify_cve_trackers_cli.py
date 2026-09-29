@@ -6,10 +6,10 @@ from elliottlib.cli.verify_cve_trackers_cli import (
     VerifyCVETrackersResult,
     get_advisory_jira_issues,
     get_shipment_jira_issues,
-    get_shipment_kinds,
     render_result,
     verify_cve_trackers,
 )
+from elliottlib.verify_common import get_assembly_shipment_kinds
 
 
 def _mock_bug(bug_id, cve_id=None):
@@ -108,9 +108,9 @@ class TestGetShipmentJiraIssues(unittest.TestCase):
         self.assertEqual(issues, set())
 
 
-class TestGetShipmentKinds(unittest.TestCase):
-    @patch("elliottlib.cli.verify_cve_trackers_cli.assembly_config_struct")
-    def test_get_shipment_kinds(self, mock_acs):
+class TestGetAssemblyShipmentKinds(unittest.TestCase):
+    @patch("elliottlib.verify_common.assembly_config_struct")
+    def test_get_assembly_shipment_kinds(self, mock_acs):
         mock_acs.return_value = {
             "shipment": {
                 "advisories": [
@@ -123,14 +123,14 @@ class TestGetShipmentKinds(unittest.TestCase):
             },
         }
         runtime = MagicMock()
-        kinds = get_shipment_kinds(runtime)
+        kinds = get_assembly_shipment_kinds(runtime)
         self.assertEqual(kinds, {"image", "extras", "metadata", "fbc"})
 
-    @patch("elliottlib.cli.verify_cve_trackers_cli.assembly_config_struct")
-    def test_get_shipment_kinds_empty(self, mock_acs):
+    @patch("elliottlib.verify_common.assembly_config_struct")
+    def test_get_assembly_shipment_kinds_empty(self, mock_acs):
         mock_acs.return_value = {}
         runtime = MagicMock()
-        kinds = get_shipment_kinds(runtime)
+        kinds = get_assembly_shipment_kinds(runtime)
         self.assertEqual(kinds, set())
 
 
@@ -208,7 +208,7 @@ class TestVerifyCVETrackers(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(result.missed_trackers[0].bug_id, "OCPBUGS-99")
         self.assertEqual(result.missed_trackers[0].source, "RHSA advisories")
 
-    @patch("elliottlib.cli.verify_cve_trackers_cli.get_shipment_kinds")
+    @patch("elliottlib.cli.verify_cve_trackers_cli.get_assembly_shipment_kinds")
     @patch("elliottlib.cli.verify_cve_trackers_cli.get_shipment_jira_issues")
     @patch("elliottlib.cli.verify_cve_trackers_cli.get_assembly_shipment_url")
     @patch("elliottlib.cli.verify_cve_trackers_cli.get_assembly_advisory_ids")
@@ -221,13 +221,13 @@ class TestVerifyCVETrackers(unittest.IsolatedAsyncioTestCase):
         mock_get_ads,
         mock_get_mr,
         mock_get_shipment_issues,
-        mock_get_shipment_kinds,
+        mock_get_assembly_shipment_kinds,
     ):
         mock_find.return_value = {"image": [_mock_bug("OCPBUGS-50", "CVE-2026-5555")]}
         mock_get_ads.return_value = {}
         mock_get_mr.return_value = "https://gitlab.cee.redhat.com/mr/1"
         mock_get_shipment_issues.return_value = set()
-        mock_get_shipment_kinds.return_value = {"image", "extras"}
+        mock_get_assembly_shipment_kinds.return_value = {"image", "extras"}
 
         runtime = MagicMock()
         runtime.group = "openshift-4.18"
@@ -237,7 +237,7 @@ class TestVerifyCVETrackers(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(missed_shipment), 1)
         self.assertEqual(missed_shipment[0].bug_id, "OCPBUGS-50")
 
-    @patch("elliottlib.cli.verify_cve_trackers_cli.get_shipment_kinds")
+    @patch("elliottlib.cli.verify_cve_trackers_cli.get_assembly_shipment_kinds")
     @patch("elliottlib.cli.verify_cve_trackers_cli.get_shipment_jira_issues")
     @patch("elliottlib.cli.verify_cve_trackers_cli.get_assembly_shipment_url")
     @patch("elliottlib.cli.verify_cve_trackers_cli.get_assembly_advisory_ids")
@@ -250,13 +250,13 @@ class TestVerifyCVETrackers(unittest.IsolatedAsyncioTestCase):
         mock_get_ads,
         mock_get_mr,
         mock_get_shipment_issues,
-        mock_get_shipment_kinds,
+        mock_get_assembly_shipment_kinds,
     ):
         mock_find.return_value = {"image": [_mock_bug("OCPBUGS-50", "CVE-2026-5555")]}
         mock_get_ads.return_value = {}
         mock_get_mr.return_value = "https://gitlab.cee.redhat.com/mr/1"
         mock_get_shipment_issues.return_value = {"OCPBUGS-50", "OCPBUGS-60"}
-        mock_get_shipment_kinds.return_value = {"image", "extras"}
+        mock_get_assembly_shipment_kinds.return_value = {"image", "extras"}
 
         runtime = MagicMock()
         runtime.group = "openshift-4.18"
@@ -277,7 +277,7 @@ class TestVerifyCVETrackers(unittest.IsolatedAsyncioTestCase):
         with self.assertRaises(RuntimeError):
             await verify_cve_trackers(runtime)
 
-    @patch("elliottlib.cli.verify_cve_trackers_cli.get_shipment_kinds")
+    @patch("elliottlib.cli.verify_cve_trackers_cli.get_assembly_shipment_kinds")
     @patch("elliottlib.cli.verify_cve_trackers_cli.get_shipment_jira_issues")
     @patch("elliottlib.cli.verify_cve_trackers_cli.get_assembly_shipment_url")
     @patch("elliottlib.cli.verify_cve_trackers_cli.get_assembly_advisory_ids")
@@ -290,13 +290,13 @@ class TestVerifyCVETrackers(unittest.IsolatedAsyncioTestCase):
         mock_get_ads,
         mock_get_mr,
         mock_get_shipment_issues,
-        mock_get_shipment_kinds,
+        mock_get_assembly_shipment_kinds,
     ):
         mock_find.return_value = {"image": [_mock_bug("OCPBUGS-50", "CVE-2026-5555")]}
         mock_get_ads.return_value = {}
         mock_get_mr.return_value = "https://gitlab.cee.redhat.com/mr/1"
         mock_get_shipment_issues.side_effect = RuntimeError("GitLab API unavailable")
-        mock_get_shipment_kinds.return_value = {"image"}
+        mock_get_assembly_shipment_kinds.return_value = {"image"}
 
         runtime = MagicMock()
         runtime.group = "openshift-4.18"
@@ -326,7 +326,7 @@ class TestVerifyCVETrackers(unittest.IsolatedAsyncioTestCase):
         result = await verify_cve_trackers(runtime)
         self.assertTrue(result.ok)
 
-    @patch("elliottlib.cli.verify_cve_trackers_cli.get_shipment_kinds")
+    @patch("elliottlib.cli.verify_cve_trackers_cli.get_assembly_shipment_kinds")
     @patch("elliottlib.cli.verify_cve_trackers_cli.get_shipment_jira_issues")
     @patch("elliottlib.cli.verify_cve_trackers_cli.get_assembly_shipment_url")
     @patch("elliottlib.cli.verify_cve_trackers_cli.get_assembly_advisory_ids")
@@ -339,7 +339,7 @@ class TestVerifyCVETrackers(unittest.IsolatedAsyncioTestCase):
         mock_get_ads,
         mock_get_mr,
         mock_get_shipment_issues,
-        mock_get_shipment_kinds,
+        mock_get_assembly_shipment_kinds,
     ):
         """rhcos kind goes through advisory, not shipment — should not be checked against shipment MR."""
         mock_find.return_value = {
@@ -348,7 +348,7 @@ class TestVerifyCVETrackers(unittest.IsolatedAsyncioTestCase):
         mock_get_ads.return_value = {"rhcos": 173004}
         mock_get_mr.return_value = "https://gitlab.cee.redhat.com/mr/1"
         mock_get_shipment_issues.return_value = set()
-        mock_get_shipment_kinds.return_value = {"image", "extras"}
+        mock_get_assembly_shipment_kinds.return_value = {"image", "extras"}
 
         mock_errata.get_raw_erratum.return_value = {"errata": {"rhsa": {}}}
         mock_errata.get_bug_ids.return_value = {"jira": ["OCPBUGS-100"], "bugzilla": []}
@@ -391,7 +391,7 @@ class TestVerifyCVETrackers(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(result.missed_trackers[0].bug_id, "OCPBUGS-2")
         self.assertEqual(result.missed_trackers[0].kind, "rhcos")
 
-    @patch("elliottlib.cli.verify_cve_trackers_cli.get_shipment_kinds")
+    @patch("elliottlib.cli.verify_cve_trackers_cli.get_assembly_shipment_kinds")
     @patch("elliottlib.cli.verify_cve_trackers_cli.get_shipment_jira_issues")
     @patch("elliottlib.cli.verify_cve_trackers_cli.get_assembly_shipment_url")
     @patch("elliottlib.cli.verify_cve_trackers_cli.get_assembly_advisory_ids")
@@ -404,14 +404,14 @@ class TestVerifyCVETrackers(unittest.IsolatedAsyncioTestCase):
         mock_get_ads,
         mock_get_mr,
         mock_get_shipment_issues,
-        mock_get_shipment_kinds,
+        mock_get_assembly_shipment_kinds,
     ):
         """When shipment MR exists but no kinds configured, fall back to checking all non-advisory kinds."""
         mock_find.return_value = {"image": [_mock_bug("OCPBUGS-50", "CVE-2026-5555")]}
         mock_get_ads.return_value = {}
         mock_get_mr.return_value = "https://gitlab.cee.redhat.com/mr/1"
         mock_get_shipment_issues.return_value = set()
-        mock_get_shipment_kinds.return_value = set()  # empty — no kinds configured
+        mock_get_assembly_shipment_kinds.return_value = set()  # empty — no kinds configured
 
         runtime = MagicMock()
         runtime.group = "openshift-4.18"
