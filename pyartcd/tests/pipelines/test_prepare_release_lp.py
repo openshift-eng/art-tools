@@ -26,6 +26,29 @@ class TestPrepareReleaseLPPipeline(unittest.TestCase):
         kwargs.update(overrides)
         return PrepareReleaseLPPipeline(**kwargs)
 
+    @patch("pyartcd.pipelines.prepare_release_lp.get_advisory_boilerplate")
+    @patch.object(PrepareReleaseLPPipeline, "get_file_from_branch")
+    def test_load_release_notes_template_uses_requested_advisory_type(self, mock_get_file, mock_get_boilerplate):
+        mock_get_boilerplate.return_value = {
+            "synopsis": "ACM {PRODUCT_MAJOR}.{PRODUCT_MINOR}.{PRODUCT_PATCH}",
+            "topic": "ACM security fixes",
+            "description": "ACM update",
+            "solution": "Apply the update",
+        }
+        mock_get_file.return_value = b"OCP_RELEASE_NOTES_VERSION: \"4.18\"\n"
+
+        pipeline = self._make_pipeline(group="acm-5.0", assembly="5.0.0")
+        pipeline.product = "rhacm2"
+        result = pipeline._load_release_notes_template(errata_type="RHSA")
+
+        self.assertIsNotNone(result)
+        mock_get_boilerplate.assert_called_once_with(
+            runtime=pipeline,
+            et_data={},
+            art_advisory_key="rhacm2",
+            errata_type="RHSA",
+        )
+
     def test_extract_operand_nvrs_from_assembly(self):
         """Should extract NVRs from assembly members.images."""
         pipeline = self._make_pipeline()

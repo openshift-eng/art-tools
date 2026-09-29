@@ -701,14 +701,14 @@ class PrepareReleaseLPPipeline:
         release_notes_data = stdlib_yaml.safe_load(stdout)
         return ReleaseNotes(**release_notes_data)
 
-    def _load_release_notes_template(self) -> Optional[Dict]:
+    def _load_release_notes_template(self, errata_type: str = "RHBA") -> Optional[Dict]:
         """Load release notes template from ocp-build-data."""
         try:
             boilerplate = get_advisory_boilerplate(
                 runtime=self,
                 et_data={},
                 art_advisory_key=self.product,
-                errata_type="RHBA",
+                errata_type=errata_type,
             )
         except Exception:
             return None
@@ -997,7 +997,8 @@ class PrepareReleaseLPPipeline:
 
         release_notes = self._generate_release_notes()
 
-        template = self._load_release_notes_template()
+        errata_type = release_notes.type if release_notes is not None else "RHBA"
+        template = self._load_release_notes_template(errata_type=errata_type)
         if template:
             if release_notes is None:
                 release_notes = ReleaseNotes(type="RHBA")

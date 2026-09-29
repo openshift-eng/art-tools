@@ -1281,6 +1281,30 @@ OCP_RELEASE_NOTES_VERSION: "4.18"
 
     @patch("pyartcd.pipelines.release_from_fbc.get_advisory_boilerplate")
     @patch.object(ReleaseFromFbcPipeline, "get_file_from_branch")
+    def test_layered_product_template_uses_requested_advisory_type(self, mock_get_file, mock_get_boilerplate):
+        mock_get_boilerplate.return_value = {
+            "synopsis": "ACM {PRODUCT_MAJOR}.{PRODUCT_MINOR}.{PRODUCT_PATCH}",
+            "topic": "ACM security fixes",
+            "description": "ACM update",
+            "solution": "Apply the update",
+        }
+        mock_get_file.return_value = b"OCP_RELEASE_NOTES_VERSION: \"4.18\"\n"
+
+        pipeline = self._make_pipeline(group="acm-5.0", assembly="5.0.0")
+        pipeline.product = "rhacm2"
+        result = pipeline._load_release_notes_template(errata_type="RHSA")
+
+        self.assertIsNotNone(result)
+        self.assertEqual(result["synopsis"], "ACM 5.0.0")
+        mock_get_boilerplate.assert_called_once_with(
+            runtime=pipeline,
+            et_data={},
+            art_advisory_key="rhacm2",
+            errata_type="RHSA",
+        )
+
+    @patch("pyartcd.pipelines.release_from_fbc.get_advisory_boilerplate")
+    @patch.object(ReleaseFromFbcPipeline, "get_file_from_branch")
     def test_layered_product_missing_ocp_release_notes_version_returns_none(self, mock_get_file, mock_get_boilerplate):
         """Layered product without OCP_RELEASE_NOTES_VERSION in group.yml returns None."""
         mock_get_boilerplate.return_value = {

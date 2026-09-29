@@ -329,7 +329,9 @@ class ReleaseFromFbcPipeline:
         await build_data_repo.setup(push_url)
         await verify_shipment_mr_url(build_data_repo, self.group, self.assembly, self._configured_shipment_mr_url)
 
-    def _load_release_notes_template(self, kind: str | None = None) -> dict | None:
+    def _load_release_notes_template(
+        self, kind: str | None = None, errata_type: str = "RHBA"
+    ) -> dict | None:
         """
         Load and populate release notes template from ocp-build-data advisory_templates.yml.
 
@@ -343,6 +345,7 @@ class ReleaseFromFbcPipeline:
         Args:
             kind: When provided, used as the boilerplate lookup key (OCP optional mode).
                   When None, self.product is used (layered product mode).
+            errata_type: Advisory type used to select its matching boilerplate.
 
         Returns:
             dict | None: Template dict with synopsis, topic, description, solution, or None if not found.
@@ -354,7 +357,7 @@ class ReleaseFromFbcPipeline:
                 runtime=self,
                 et_data={},
                 art_advisory_key=art_advisory_key,
-                errata_type="RHBA",
+                errata_type=errata_type,
             )
         except (ValueError, KeyError):
             self.logger.debug("No release notes template found for key '%s'", art_advisory_key)
@@ -1410,11 +1413,12 @@ class ReleaseFromFbcPipeline:
         if self.jira_bugs:
             release_notes = self.generate_release_notes()
 
-        # Load release notes template from ocp-build-data
-        if self.ocp_optional:
-            template = self._load_release_notes_template(kind=image_key)
-        else:
-            template = self._load_release_notes_template()
+        # Load the matching release notes template from ocp-build-data.
+        errata_type = release_notes.type if release_notes is not None else "RHBA"
+        template = self._load_release_notes_template(
+            kind=image_key if self.ocp_optional else None,
+            errata_type=errata_type,
+        )
 
         if template:
             if release_notes is None:
