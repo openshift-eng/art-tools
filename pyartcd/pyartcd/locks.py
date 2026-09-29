@@ -36,6 +36,8 @@ class Lock(enum.Enum):
     SCAN_PLASHET_RPMS = 'lock:scan-plashet-rpms:{assembly}:{group}'
     SCAN_OPERATOR = 'lock:scan-operator:{version}'
     SYNC_CI_IMAGES = 'lock:sync-ci-images:{version}'
+    MIRROR_IMAGES_TO_CI = 'lock:mirror-images-to-ci:{version}'
+    SYNC_CI_BUILDCONFIGS = 'lock:sync-ci-buildconfigs:{version}'
     OPEN_RECONCILIATION_PRS = 'lock:open-reconciliation-prs:{version}'
     OPEN_RECONCILIATION_PRS_LAYERED = 'lock:open-reconciliation-prs-layered:{group}'
     LAYERED_PRODUCT_SHIPMENT = 'lock:layered-product-shipment:{group}:{assembly}'
@@ -164,6 +166,16 @@ LOCK_POLICY = {
         'lock_timeout': DEFAULT_LOCK_TIMEOUT,
     },
     Lock.SYNC_CI_IMAGES: {
+        'retry_count': 36000,
+        'retry_delay_min': 0.1,
+        'lock_timeout': DEFAULT_LOCK_TIMEOUT,
+    },
+    Lock.MIRROR_IMAGES_TO_CI: {
+        'retry_count': 36000,
+        'retry_delay_min': 0.1,
+        'lock_timeout': DEFAULT_LOCK_TIMEOUT,
+    },
+    Lock.SYNC_CI_BUILDCONFIGS: {
         'retry_count': 36000,
         'retry_delay_min': 0.1,
         'lock_timeout': DEFAULT_LOCK_TIMEOUT,
