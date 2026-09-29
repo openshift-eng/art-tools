@@ -216,8 +216,8 @@ class BuildMicroShiftBootcPipeline:
         )
 
         major, minor = self._ocp_version
-        if (major, minor) < (4, 18):
-            self._logger.info("Skipping bootc image build for version < 4.18")
+        if (major, minor) < (4, 19):
+            self._logger.info("Skipping bootc image build for version < 4.19")
             return
 
         # Shared plashet for all variants (both el9 and el10 images use el9 microshift RPMs)
@@ -236,12 +236,22 @@ class BuildMicroShiftBootcPipeline:
             return_exceptions=True,
         )
         builds: dict[str, KonfluxBuildRecord] = {}
+        failed_variants: list[str] = []
         for variant, result in zip(variants, build_results):
             if isinstance(result, Exception):
                 self._logger.error("Failed to build %s: %s", variant["image_name"], result)
+                failed_variants.append(variant["image_name"])
+            elif result is None:
+                self._logger.error("Failed to build %s: returned no build record", variant["image_name"])
+                failed_variants.append(variant["image_name"])
             elif result:
                 builds[variant["image_name"]] = result
                 self._logger.info("Bootc image build for %s: %s", variant["image_name"], result.nvr)
+
+        if failed_variants:
+            raise RuntimeError(
+                f"Bootc variant build(s) failed for assembly {self.assembly}: {', '.join(failed_variants)}"
+            )
 
         if not builds:
             raise ValueError(f"No bootc image builds produced for assembly {self.assembly}")
