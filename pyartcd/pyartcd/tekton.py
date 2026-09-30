@@ -11,11 +11,14 @@ ARTC2023_CONSOLE_URL = "https://console-openshift-console.apps.artc2023.pc3z.p1.
 
 
 def is_tekton_context() -> bool:
-    """Detect if currently running inside a Tekton TaskRun.
+    """Detect if currently running inside a Tekton PipelineRun.
 
-    The artcd Task sets TASKRUN_NAME via stepTemplate when running in Tekton.
+    Requires both TASKRUN_NAME (set by Task stepTemplate) and TEKTON_PIPELINERUN_NAME
+    (set by Pipeline definition) to be present. This prevents false positives from
+    environment pollution and ensures we're in a properly configured Tekton context.
+    Falls back to Jenkins behavior if either is missing.
     """
-    return bool(os.environ.get("TASKRUN_NAME"))
+    return bool(os.environ.get("TASKRUN_NAME") and os.environ.get("TEKTON_PIPELINERUN_NAME"))
 
 
 def get_current_pipelinerun_name() -> Optional[str]:
