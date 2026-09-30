@@ -18,10 +18,10 @@ spec:
   stepTemplate:
     computeResources:
       requests:
-        memory: "4Gi"
+        memory: "15Gi"
         cpu: "2"
       limits:
-        memory: "8Gi"
+        memory: "16Gi"
         cpu: "4"
     env:
     - name: TASKRUN_NAMESPACE
@@ -49,10 +49,10 @@ spec:
     - $(params.args[*])
     computeResources:
       requests:
-        memory: "4Gi"
+        memory: "15Gi"
         cpu: "2"
       limits:
-        memory: "8Gi"
+        memory: "16Gi"
         cpu: "4"
     env:
     - name: SLACK_BOT_TOKEN
