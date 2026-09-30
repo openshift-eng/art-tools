@@ -1008,14 +1008,17 @@ class KonfluxOcpPipeline:
 
         await self.rebase_images(f"v{self.version}.0", self.release)
 
-        # ART-14540: Notify component owners about missing branch protection
-        record_log_path = Path(self.runtime.doozer_working) / "record.log"
-        if record_log_path.exists():
-            await util.notify_branch_protection_missing(
-                version=self.version,
-                doozer_working=self.runtime.doozer_working,
-                mail_client=self.runtime.new_mail_client(),
-            )
+        # ART-14540: Notify component owners about missing branch protection.
+        # Only notify for stream assembly; non-stream assemblies (z-streams, ECs, RCs)
+        # build from specific pinned commits and don't need these notifications.
+        if self.assembly == "stream":
+            record_log_path = Path(self.runtime.doozer_working) / "record.log"
+            if record_log_path.exists():
+                await util.notify_branch_protection_missing(
+                    version=self.version,
+                    doozer_working=self.runtime.doozer_working,
+                    mail_client=self.runtime.new_mail_client(),
+                )
 
         await self.build_images()
 
