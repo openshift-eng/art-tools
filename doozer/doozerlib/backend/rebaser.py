@@ -1260,8 +1260,8 @@ class KonfluxRebaser:
         # Set the image name
         dfp.labels["name"] = metadata.config.name
 
-        # The vendor should always be Red Hat, Inc.
-        dfp.labels["vendor"] = "Red Hat, Inc."
+        # The vendor should always be Red Hat, LLC.
+        dfp.labels["vendor"] = "Red Hat, LLC"
 
         # Derive the CPE version from the group name (e.g. "rhosdt-3.11" -> "3.11",
         # "openshift-4.22" -> "4.22"). Falls back to the version field for groups
