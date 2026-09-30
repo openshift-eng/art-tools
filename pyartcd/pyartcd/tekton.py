@@ -108,8 +108,14 @@ def start_pipeline_run(
 
     merged_params = {**_get_propagatable_params(), **params}
 
-    labels = {}
+    labels = {"app": "artcd"}
     annotations = {}
+
+    if params.get("group"):
+        labels["art.openshift.io/group"] = params["group"]
+    if params.get("assembly"):
+        labels["art.openshift.io/assembly"] = params["assembly"]
+
     parent_pr_name = get_current_pipelinerun_name()
     if parent_pr_name:
         parent_pipeline = os.environ.get("TEKTON_PIPELINE_NAME", "")
