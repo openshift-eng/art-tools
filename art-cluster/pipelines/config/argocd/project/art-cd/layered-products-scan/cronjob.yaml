@@ -1,0 +1,27 @@
+kind: CronJob
+apiVersion: batch/v1
+metadata:
+  name: schedule-layered-products-scan-cron
+spec:
+  schedule: "*/30 * * * *"
+  suspend: true
+  concurrencyPolicy: Forbid
+  jobTemplate:
+    spec:
+      template:
+        spec:
+          containers:
+            - name: schedule-scan
+              image: 'image-registry.openshift-image-registry.svc:5000/art-cd/art-cd:latest'
+              command:
+                - tkn
+                - pipeline
+                - start
+                - schedule-layered-products-scan
+                - '--pipeline-timeout'
+                - 30m
+              imagePullPolicy: Always
+          restartPolicy: OnFailure
+          serviceAccountName: pipeline
+  successfulJobsHistoryLimit: 10
+  failedJobsHistoryLimit: 10
