@@ -15,8 +15,8 @@ spec:
   - description: Assembly name
     name: assembly
     type: string
-  - default: quay-3.19
-    description: The group to use with -g flag (e.g. quay-3.19, quay-3.18)
+  - default: quay-3.18
+    description: The group to use with -g flag (e.g. quay-3.18, quay-3.17)
     name: group
     type: string
   - default: https://github.com/openshift-eng/ocp-build-data
