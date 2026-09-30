@@ -2,6 +2,7 @@ import json
 from unittest import IsolatedAsyncioTestCase, TestCase
 from unittest.mock import AsyncMock, patch
 
+from elliottlib import constants
 from elliottlib.cli.verify_cdn_push_cli import (
     AdvisoryPushResult,
     PushJobInfo,
@@ -10,6 +11,7 @@ from elliottlib.cli.verify_cdn_push_cli import (
     parse_push_jobs,
     verify_cdn_push,
 )
+from elliottlib.errata_async import AsyncErrataAPI
 from elliottlib.verify_common import render_verify_result
 
 
@@ -78,6 +80,17 @@ class TestAdvisoryPushResult(TestCase):
         self.assertFalse(r.complete)
         self.assertFalse(r.failed)
         self.assertTrue(r.pending)
+
+    def test_skipped(self):
+        r = AdvisoryPushResult(advisory_id=12345, impetus="rpm", skipped=True)
+        self.assertTrue(r.complete)
+        self.assertFalse(r.failed)
+        self.assertFalse(r.pending)
+
+    def test_skipped_ignores_error(self):
+        r = AdvisoryPushResult(advisory_id=12345, impetus="rpm", skipped=True, error="something")
+        self.assertTrue(r.complete)
+        self.assertFalse(r.failed)
 
 
 class TestVerifyCdnPushResult(TestCase):
@@ -154,6 +167,33 @@ class TestParsePushJobs(TestCase):
         self.assertEqual(len(jobs), 2)
 
 
+class TestGetAdvisoryState(IsolatedAsyncioTestCase):
+    async def test_returns_state(self):
+        api = AsyncMock(spec=AsyncErrataAPI)
+        api.get_advisory.return_value = {"errata": {"rhba": {"status": "QE"}}}
+        # Call the real method with mocked get_advisory
+        state = await AsyncErrataAPI.get_advisory_state(api, 12345)
+        self.assertEqual(state, "QE")
+
+    async def test_dropped(self):
+        api = AsyncMock(spec=AsyncErrataAPI)
+        api.get_advisory.return_value = {"errata": {"rhba": {"status": "DROPPED_NO_SHIP"}}}
+        state = await AsyncErrataAPI.get_advisory_state(api, 12345)
+        self.assertEqual(state, constants.errata_dropped_advisory_label)
+
+    async def test_api_error_returns_none(self):
+        api = AsyncMock(spec=AsyncErrataAPI)
+        api.get_advisory.side_effect = RuntimeError("connection failed")
+        state = await AsyncErrataAPI.get_advisory_state(api, 12345)
+        self.assertIsNone(state)
+
+    async def test_empty_errata_returns_none(self):
+        api = AsyncMock(spec=AsyncErrataAPI)
+        api.get_advisory.return_value = {"errata": {}}
+        state = await AsyncErrataAPI.get_advisory_state(api, 12345)
+        self.assertIsNone(state)
+
+
 class TestCheckAdvisoryPush(IsolatedAsyncioTestCase):
     async def test_all_complete(self):
         api = AsyncMock()
@@ -227,6 +267,7 @@ class TestVerifyCdnPush(IsolatedAsyncioTestCase):
         mock_api_cls.return_value.__aenter__ = AsyncMock(return_value=api)
         mock_api_cls.return_value.__aexit__ = AsyncMock(return_value=False)
 
+        api.get_advisory_state.return_value = "QE"
         api.get_advisory.return_value = {"errata": {"rhba": {"blocking_advisories": []}}}
         api.get_push_jobs.return_value = [
             {"id": 1, "status": "COMPLETE", "target": {"name": "cdn_stage"}},
@@ -241,6 +282,7 @@ class TestVerifyCdnPush(IsolatedAsyncioTestCase):
         mock_api_cls.return_value.__aenter__ = AsyncMock(return_value=api)
         mock_api_cls.return_value.__aexit__ = AsyncMock(return_value=False)
 
+        api.get_advisory_state.return_value = "QE"
         api.get_advisory.return_value = {"errata": {"rhba": {"blocking_advisories": [999]}}}
         api.get_push_jobs.return_value = [
             {"id": 1, "status": "COMPLETE", "target": {"name": "cdn_stage"}},
@@ -256,6 +298,7 @@ class TestVerifyCdnPush(IsolatedAsyncioTestCase):
         mock_api_cls.return_value.__aenter__ = AsyncMock(return_value=api)
         mock_api_cls.return_value.__aexit__ = AsyncMock(return_value=False)
 
+        api.get_advisory_state.return_value = "QE"
         api.get_advisory.return_value = {"errata": {"rhba": {"blocking_advisories": [999]}}}
         api.get_push_jobs.return_value = [
             {"id": 1, "status": "RUNNING", "target": {"name": "cdn_stage"}},
@@ -270,11 +313,49 @@ class TestVerifyCdnPush(IsolatedAsyncioTestCase):
         mock_api_cls.return_value.__aenter__ = AsyncMock(return_value=api)
         mock_api_cls.return_value.__aexit__ = AsyncMock(return_value=False)
 
+        api.get_advisory_state.return_value = "QE"
         api.get_advisory.side_effect = RuntimeError("connection failed")
 
         result = await verify_cdn_push({"rpm": 111}, do_push=True)
         self.assertFalse(result.passed)
         self.assertTrue(result.failed)
+
+    @patch("elliottlib.cli.verify_cdn_push_cli.AsyncErrataAPI")
+    async def test_dropped_advisory_skipped(self, mock_api_cls):
+        api = AsyncMock()
+        mock_api_cls.return_value.__aenter__ = AsyncMock(return_value=api)
+        mock_api_cls.return_value.__aexit__ = AsyncMock(return_value=False)
+
+        api.get_advisory_state.return_value = constants.errata_dropped_advisory_label
+
+        result = await verify_cdn_push({"rpm": 111}, do_push=True)
+        self.assertTrue(result.passed)
+        self.assertEqual(len(result.advisories), 1)
+        self.assertTrue(result.advisories[0].skipped)
+        api.get_push_jobs.assert_not_called()
+
+    @patch("elliottlib.cli.verify_cdn_push_cli.AsyncErrataAPI")
+    async def test_dropped_rpm_with_complete_rhcos(self, mock_api_cls):
+        api = AsyncMock()
+        mock_api_cls.return_value.__aenter__ = AsyncMock(return_value=api)
+        mock_api_cls.return_value.__aexit__ = AsyncMock(return_value=False)
+
+        def mock_get_state(advisory_id):
+            if advisory_id == 111:
+                return constants.errata_dropped_advisory_label
+            return "QE"
+
+        api.get_advisory_state.side_effect = mock_get_state
+        api.get_advisory.return_value = {"errata": {"rhba": {"status": "QE", "blocking_advisories": []}}}
+        api.get_push_jobs.return_value = [
+            {"id": 1, "status": "COMPLETE", "target": {"name": "cdn_stage"}},
+        ]
+
+        result = await verify_cdn_push({"rpm": 111, "rhcos": 222}, do_push=True)
+        self.assertTrue(result.passed)
+        self.assertEqual(len(result.advisories), 2)
+        self.assertTrue(result.advisories[0].skipped)
+        self.assertTrue(result.advisories[1].complete)
 
 
 class TestRenderResult(TestCase):
@@ -320,6 +401,22 @@ class TestRenderResult(TestCase):
         self.assertTrue(data["passed"])
         self.assertEqual(len(data["advisories"]), 1)
         self.assertEqual(data["advisories"][0]["advisory_id"], 12345)
+
+    def test_text_skipped(self):
+        r = VerifyCdnPushResult(
+            advisories=[
+                AdvisoryPushResult(advisory_id=12345, impetus="rpm", skipped=True),
+                AdvisoryPushResult(
+                    advisory_id=67890,
+                    impetus="rhcos",
+                    push_jobs=[PushJobInfo(target="cdn_stage", job_id=1, status="COMPLETE")],
+                ),
+            ]
+        )
+        text = render_verify_result(r, "text")
+        self.assertIn("SKIP (DROPPED_NO_SHIP)", text)
+        self.assertIn("COMPLETE", text)
+        self.assertIn("Overall: COMPLETE", text)
 
     def test_text_fail(self):
         r = VerifyCdnPushResult(

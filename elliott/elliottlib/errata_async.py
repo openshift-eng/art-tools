@@ -90,6 +90,19 @@ class AsyncErrataAPI:
         path = f"/api/v1/erratum/{quote(str(advisory))}"
         return await self._make_request(aiohttp.hdrs.METH_GET, path)
 
+    async def get_advisory_state(self, advisory_id: int) -> Optional[str]:
+        """Get the errata state of an advisory (e.g. QE, SHIPPED_LIVE, DROPPED_NO_SHIP).
+
+        Returns None if the state cannot be determined (API error or unexpected response).
+        """
+        try:
+            raw = await self.get_advisory(advisory_id)
+            erratum_data = next(iter(raw.get("errata", {}).values()), {})
+            return erratum_data.get("status")
+        except Exception as e:
+            _LOGGER.warning("Failed to get advisory state for %s: %s", advisory_id, e)
+            return None
+
     async def refresh_security_alerts(self, advisory_id: int) -> Dict:
         path = f"/api/v1/erratum/{advisory_id}/security_alerts/refresh"
         return await self._make_request(aiohttp.hdrs.METH_POST, path)

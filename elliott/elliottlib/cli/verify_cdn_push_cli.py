@@ -4,6 +4,7 @@ from typing import Optional
 
 import click
 
+from elliottlib import constants
 from elliottlib.cli.common import cli, click_coroutine
 from elliottlib.errata_async import AsyncErrataAPI
 from elliottlib.verify_common import (
@@ -44,13 +45,18 @@ class AdvisoryPushResult:
     push_jobs: list[PushJobInfo] = field(default_factory=list)
     push_triggered: bool = False
     error: Optional[str] = None
+    skipped: bool = False
 
     @property
     def complete(self) -> bool:
+        if self.skipped:
+            return True
         return bool(self.push_jobs) and all(j.complete for j in self.push_jobs) and not self.error
 
     @property
     def failed(self) -> bool:
+        if self.skipped:
+            return False
         return bool(self.error) or any(j.failed for j in self.push_jobs)
 
     @property
@@ -80,6 +86,7 @@ class VerifyCdnPushResult(VerifyResultBase):
                     "impetus": a.impetus,
                     "complete": a.complete,
                     "failed": a.failed,
+                    "skipped": a.skipped,
                     "push_triggered": a.push_triggered,
                     "error": a.error,
                     "push_jobs": [{"target": j.target, "job_id": j.job_id, "status": j.status} for j in a.push_jobs],
@@ -91,7 +98,14 @@ class VerifyCdnPushResult(VerifyResultBase):
     def render_text(self) -> str:
         lines = ["CDN staging push status", ""]
         for a in self.advisories:
-            status = "COMPLETE" if a.complete else ("FAIL" if a.failed else "PENDING")
+            if a.skipped:
+                status = "SKIP (DROPPED_NO_SHIP)"
+            elif a.complete:
+                status = "COMPLETE"
+            elif a.failed:
+                status = "FAIL"
+            else:
+                status = "PENDING"
             lines.append(f"  Advisory {a.advisory_id} ({a.impetus}): {status}")
             if a.push_triggered:
                 lines.append("    Push re-triggered")
@@ -182,6 +196,12 @@ async def verify_cdn_push(advisories: dict[str, int], do_push: bool) -> VerifyCd
 
     async with AsyncErrataAPI() as api:
         for impetus, advisory_id in advisories.items():
+            state = await api.get_advisory_state(advisory_id)
+            if state == constants.errata_dropped_advisory_label:
+                LOGGER.info("Advisory %s (%s): %s, skipping CDN push check", advisory_id, impetus, state)
+                result.advisories.append(AdvisoryPushResult(advisory_id=advisory_id, impetus=impetus, skipped=True))
+                continue
+
             blocking_results = await check_blocking_advisories(api, advisory_id, do_push)
             result.advisories.extend(blocking_results)
 
