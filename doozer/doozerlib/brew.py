@@ -364,13 +364,14 @@ def has_tag_changed_since_build(runtime, koji_client, build, tag, inherit=True) 
         # deprecated and (2) it does not allow event=# to constrain its search (required
         # to support --brew-event). So we use a combination of listTagged and queryHistory.
 
-        # The listTagged API will do much of this work for us. The reason is that it will report updates to
-        # a tag newest->oldest: https://pagure.io/koji/blob/fedf3ee9f9238ed74c34d51c5458a834732b3346/f/hub/kojihub.py#_1351
-        # In other words, listTagged('rhaos-4.7-rhel-8-build', latest=True, inherit=True)[0] describes a bulid that was
-        # most recently tagged into this tag (or inherited tags).
+        # listTagged(latest=True, inherit=True) does not guarantee a global event order across inherited tags,
+        # so select the returned build with the newest tag event explicitly.
         last_tagged_builds = koji_client.listTagged(tag, latest=True, inherit=inherit)
         if last_tagged_builds:
-            last_tagged_build = last_tagged_builds[0]
+            last_tagged_build = max(
+                last_tagged_builds,
+                key=lambda tagged_build: tagged_build["create_event"],
+            )
             # We now have the build that was tagged, but not WHEN it was tagged. It could have been built
             # a long time ago, and recently tagged into the tag we care about. To figure this out, we
             # need to query the tag_listing table.
