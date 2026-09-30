@@ -88,6 +88,8 @@ class MirrorImagesToCIPipeline(CIImageSyncPipelineBase):
         mirror_args = f"{self._filter_args} --registry-auth {auth_file} "
         if self.update_images_only_when_missing:
             mirror_args += "--only-if-missing "
+        if self._live_test_mode:
+            mirror_args += "--live-test-mode "
         if self.runtime.dry_run:
             mirror_args += "--dry-run"
         await self._run_doozer_command(doozer_opts, "images:streams mirror", mirror_args.strip())

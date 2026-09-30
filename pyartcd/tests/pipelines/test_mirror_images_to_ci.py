@@ -84,6 +84,16 @@ class TestMirrorImagesToCIPipeline:
         assert pipeline.data_path == OCP_BUILD_DATA_URL
         assert pipeline.data_gitref == ""
 
+    def test_live_test_mode_false_for_stream_assembly(self, mock_runtime):
+        """Test _live_test_mode is False for the default stream assembly."""
+        pipeline = MirrorImagesToCIPipeline(mock_runtime, version="4.17")
+        assert pipeline._live_test_mode is False
+
+    def test_live_test_mode_true_for_test_assembly(self, mock_runtime):
+        """Test _live_test_mode is True when assembly is test."""
+        pipeline = MirrorImagesToCIPipeline(mock_runtime, version="4.17", assembly="test")
+        assert pipeline._live_test_mode is True
+
 
 class TestMirrorImagesToCIRun(unittest.IsolatedAsyncioTestCase):
     """Tests for the run() workflow, verifying it skips the SHA change-detection gate."""
@@ -117,6 +127,25 @@ class TestMirrorImagesToCIRun(unittest.IsolatedAsyncioTestCase):
             pipeline._run_doozer_command.assert_awaited_once()
             args, _ = pipeline._run_doozer_command.call_args
             self.assertEqual(args[1], "images:streams mirror")
+
+    @mock.patch('pyartcd.pipelines.mirror_images_to_ci.jenkins')
+    async def test_run_passes_live_test_mode_for_test_assembly(self, _mock_jenkins):
+        """Test run() passes --live-test-mode to doozer mirror when assembly is test."""
+        pipeline = MirrorImagesToCIPipeline(self._mock_runtime(), version="4.17", assembly="test")
+
+        with (
+            mock.patch.object(pipeline, '_clone_ocp_build_data', new=mock.AsyncMock(return_value="/tmp/group")),
+            mock.patch.object(pipeline, '_create_registry_config') as mock_registry_config,
+            mock.patch.object(pipeline, '_run_doozer_command', new=mock.AsyncMock(return_value=(0, "", ""))),
+            mock.patch.object(pipeline, '_cleanup'),
+        ):
+            mock_registry_config.return_value.__enter__ = mock.Mock(return_value="/tmp/auth.json")
+            mock_registry_config.return_value.__exit__ = mock.Mock(return_value=False)
+
+            await pipeline.run()
+
+            args, _ = pipeline._run_doozer_command.call_args
+            self.assertIn("--live-test-mode", args[2])
 
     @mock.patch('pyartcd.pipelines.mirror_images_to_ci.jenkins')
     async def test_run_cleans_up_on_failure(self, _mock_jenkins):

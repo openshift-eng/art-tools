@@ -552,11 +552,35 @@ def start_sync_ci_images(version: str, **kwargs) -> Optional[str]:
     )
 
 
-def start_mirror_images_to_ci(version: str, **kwargs) -> Optional[str]:
+def start_mirror_images_to_ci(
+    version: str,
+    assembly: str = '',
+    data_path: str = '',
+    data_gitref: str = '',
+    only_stream: str = '',
+    images: str = '',
+    update_images_only_when_missing: bool = False,
+    dry_run: bool = False,
+    **kwargs,
+) -> Optional[str]:
     params = {
         'VERSION': version,
-        'ART_TOOLS_COMMIT': 'kopero2000:refactor-sync-ci-images'
+        'ART_TOOLS_COMMIT': 'kopero2000:refactor-sync-ci-images',
     }
+    if assembly:
+        params['ASSEMBLY'] = assembly
+    if data_path:
+        params['DATA_PATH'] = data_path
+    if data_gitref:
+        params['DATA_GITREF'] = data_gitref
+    if only_stream:
+        params['ONLY_STREAM'] = only_stream
+    if images:
+        params['IMAGES'] = images
+    if update_images_only_when_missing:
+        params['UPDATE_IMAGES_ONLY_WHEN_MISSING'] = True
+    if dry_run:
+        params['DRY_RUN'] = True
     return start_build(
         job=Jobs.MIRROR_IMAGES_TO_CI,
         params=params,
@@ -564,11 +588,32 @@ def start_mirror_images_to_ci(version: str, **kwargs) -> Optional[str]:
     )
 
 
-def start_sync_ci_buildconfigs(version: str, **kwargs) -> Optional[str]:
+def start_sync_ci_buildconfigs(
+    version: str,
+    assembly: str = '',
+    data_path: str = '',
+    data_gitref: str = '',
+    only_stream: str = '',
+    images: str = '',
+    dry_run: bool = False,
+    **kwargs,
+) -> Optional[str]:
     params = {
         'VERSION': version,
-        'ART_TOOLS_COMMIT': 'kopero2000:refactor-sync-ci-images'
+        'ART_TOOLS_COMMIT': 'kopero2000:refactor-sync-ci-images',
     }
+    if assembly:
+        params['ASSEMBLY'] = assembly
+    if data_path:
+        params['DATA_PATH'] = data_path
+    if data_gitref:
+        params['DATA_GITREF'] = data_gitref
+    if only_stream:
+        params['ONLY_STREAM'] = only_stream
+    if images:
+        params['IMAGES'] = images
+    if dry_run:
+        params['DRY_RUN'] = True
     return start_build(
         job=Jobs.SYNC_CI_BUILDCONFIGS,
         params=params,
@@ -576,10 +621,25 @@ def start_sync_ci_buildconfigs(version: str, **kwargs) -> Optional[str]:
     )
 
 
-def start_open_reconciliation_prs(version: str, **kwargs) -> Optional[str]:
+def start_open_reconciliation_prs(
+    version: str,
+    assembly: str = '',
+    data_path: str = '',
+    data_gitref: str = '',
+    dry_run: bool = False,
+    **kwargs,
+) -> Optional[str]:
     params = {
         'VERSION': version,
     }
+    if assembly:
+        params['ASSEMBLY'] = assembly
+    if data_path:
+        params['DATA_PATH'] = data_path
+    if data_gitref:
+        params['DATA_GITREF'] = data_gitref
+    if dry_run:
+        params['DRY_RUN'] = True
     return start_build(
         job=Jobs.OPEN_RECONCILIATION_PRS,
         params=params,

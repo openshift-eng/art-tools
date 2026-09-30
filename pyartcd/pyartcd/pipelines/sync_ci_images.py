@@ -327,27 +327,45 @@ class SyncCIImagesPipeline(CIImageSyncPipelineBase):
             await redis.set_value(redis_key, current_sha)
             self._logger.info(f"{self.version}: Updated Redis with SHA {current_sha[:8]}")
 
+    def _shared_sub_job_params(self) -> dict:
+        """Orchestrator config shared by every downstream sync-ci-images sub-job."""
+        return {
+            'assembly': self.assembly,
+            'data_path': self.data_path,
+            'data_gitref': self.data_gitref,
+            'dry_run': self.runtime.dry_run,
+        }
+
     def _start_reconcile_ci_upstream(self) -> None:
         """
         Fire-and-forget trigger for reconcile-ci-upstream (open-reconciliation-prs).
 
         Independent of the other jobs, so a failure to trigger it must not block
-        mirror-images-to-ci or sync-ci-buildconfigs.
+        mirror-images-to-ci or sync-ci-buildconfigs. Triggered even during a dry-run
+        of the orchestrator itself -- dry_run is forwarded so the sub-job runs in its
+        own dry-run mode instead of being skipped entirely.
         """
-        if self.runtime.dry_run:
-            self._logger.info(f"{self.version}: [DRY-RUN] Would trigger reconcile-ci-upstream")
-            return
         try:
-            jenkins.start_open_reconciliation_prs(version=self.version)
+            jenkins.start_open_reconciliation_prs(version=self.version, **self._shared_sub_job_params())
         except Exception as e:
             self._logger.warning(f"{self.version}: Failed to trigger reconcile-ci-upstream (fire-and-forget): {e}")
 
-    def _trigger_and_wait(self, start_fn, job_name: str) -> None:
-        """Trigger a downstream Jenkins job and block until it completes successfully."""
-        if self.runtime.dry_run:
-            self._logger.info(f"{self.version}: [DRY-RUN] Would trigger {job_name} and wait for completion")
-            return
-        result = start_fn(version=self.version, block_until_complete=True)
+    def _trigger_and_wait(self, start_fn, job_name: str, **extra_params) -> None:
+        """
+        Trigger a downstream Jenkins job and block until it completes successfully.
+
+        Always triggers the job, even during a dry-run of the orchestrator itself --
+        dry_run is forwarded (via _shared_sub_job_params) so the sub-job runs in its
+        own dry-run mode instead of being skipped entirely.
+        """
+        result = start_fn(
+            version=self.version,
+            only_stream=self.only_stream,
+            images=','.join(self.images),
+            block_until_complete=True,
+            **self._shared_sub_job_params(),
+            **extra_params,
+        )
         if result != 'SUCCESS':
             raise RuntimeError(f"{self.version}: {job_name} did not succeed (result={result})")
 
@@ -374,7 +392,11 @@ class SyncCIImagesPipeline(CIImageSyncPipelineBase):
 
         self._start_reconcile_ci_upstream()
 
-        self._trigger_and_wait(jenkins.start_mirror_images_to_ci, 'mirror-images-to-ci')
+        self._trigger_and_wait(
+            jenkins.start_mirror_images_to_ci,
+            'mirror-images-to-ci',
+            update_images_only_when_missing=self.update_images_only_when_missing,
+        )
         self._trigger_and_wait(jenkins.start_sync_ci_buildconfigs, 'sync-ci-buildconfigs')
 
         # Record success

@@ -56,6 +56,16 @@ class TestSyncCIBuildconfigsPipeline:
         pipeline = SyncCIBuildconfigsPipeline(mock_runtime, for_release="4.17", only_stream="rhel10")
         assert pipeline._filter_args == "--stream rhel10"
 
+    def test_live_test_mode_false_for_stream_assembly(self, mock_runtime):
+        """Test _live_test_mode is False for the default stream assembly."""
+        pipeline = SyncCIBuildconfigsPipeline(mock_runtime, for_release="4.17")
+        assert pipeline._live_test_mode is False
+
+    def test_live_test_mode_true_for_test_assembly(self, mock_runtime):
+        """Test _live_test_mode is True when assembly is test."""
+        pipeline = SyncCIBuildconfigsPipeline(mock_runtime, for_release="4.17", assembly="test")
+        assert pipeline._live_test_mode is True
+
 
 class TestSyncCIBuildconfigsRun(unittest.IsolatedAsyncioTestCase):
     """Tests for the run() workflow: gen-buildconfigs, start-builds, check-upstream in sequence."""
@@ -91,6 +101,26 @@ class TestSyncCIBuildconfigsRun(unittest.IsolatedAsyncioTestCase):
                 subcommands,
                 ["images:streams gen-buildconfigs", "images:streams start-builds", "images:streams check-upstream"],
             )
+
+    @mock.patch('pyartcd.pipelines.sync_ci_buildconfigs.jenkins')
+    async def test_run_passes_live_test_mode_for_test_assembly(self, _mock_jenkins):
+        """Test run() passes --live-test-mode to all three doozer subcommands when assembly is test."""
+        pipeline = SyncCIBuildconfigsPipeline(self._mock_runtime(), for_release="4.17", assembly="test")
+
+        with (
+            mock.patch.object(pipeline, '_clone_ocp_build_data', new=mock.AsyncMock(return_value="/tmp/group")),
+            mock.patch.object(pipeline, '_create_registry_config') as mock_registry_config,
+            mock.patch.object(pipeline, '_run_doozer_command', new=mock.AsyncMock(return_value=(0, "", ""))),
+            mock.patch.object(pipeline, '_cleanup'),
+        ):
+            mock_registry_config.return_value.__enter__ = mock.Mock(return_value="/tmp/auth.json")
+            mock_registry_config.return_value.__exit__ = mock.Mock(return_value=False)
+
+            await pipeline.run()
+
+            for call in pipeline._run_doozer_command.call_args_list:
+                args, _ = call
+                self.assertIn("--live-test-mode", args[2])
 
     @mock.patch('pyartcd.pipelines.sync_ci_buildconfigs.jenkins')
     async def test_run_cleans_up_on_failure(self, _mock_jenkins):

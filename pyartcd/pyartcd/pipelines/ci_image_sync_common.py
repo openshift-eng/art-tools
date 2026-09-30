@@ -232,6 +232,16 @@ class CIImageSyncPipelineBase:
         """Return combined --stream and --image subcommand args."""
         return f"{self._stream_arg} {self._image_args}".strip()
 
+    @property
+    def _live_test_mode(self) -> bool:
+        """Whether the `test` assembly is in use, which publishes to `.test`-suffixed CI imagestream tags."""
+        return self.assembly == "test"
+
+    @property
+    def _live_test_mode_arg(self) -> str:
+        """Return the --live-test-mode subcommand arg if the assembly is `test`, empty string otherwise."""
+        return "--live-test-mode" if self._live_test_mode else ""
+
     def _cleanup(self, group_dir: "Path | None") -> None:
         """Remove temporary clone directory."""
         if group_dir and group_dir.exists():

@@ -88,13 +88,15 @@ class SyncCIBuildconfigsPipeline(CIImageSyncPipelineBase):
         await self._run_doozer_command(
             doozer_opts,
             "images:streams gen-buildconfigs",
-            f"{self._filter_args} -o {self._working_dir}/buildconfigs.yaml {apply_flag}",
+            f"{self._filter_args} -o {self._working_dir}/buildconfigs.yaml {apply_flag} {self._live_test_mode_arg}",
         )
 
     async def _trigger_ci_builds(self, doozer_opts: str, auth_file: str) -> None:
         """Start CI builds for updated images."""
         self._logger.info(f"{self.version}: Starting builds")
         start_builds_args = f"{self._filter_args} --registry-auth {auth_file} "
+        if self._live_test_mode:
+            start_builds_args += "--live-test-mode "
         if self.runtime.dry_run:
             start_builds_args += "--dry-run"
         await self._run_doozer_command(doozer_opts, "images:streams start-builds", start_builds_args.strip())
@@ -103,7 +105,9 @@ class SyncCIBuildconfigsPipeline(CIImageSyncPipelineBase):
         """Verify CI imagestreams match expected state."""
         self._logger.info(f"{self.version}: Checking upstream consistency")
         await self._run_doozer_command(
-            doozer_opts, "images:streams check-upstream", f"{self._filter_args} --registry-auth {auth_file}"
+            doozer_opts,
+            "images:streams check-upstream",
+            f"{self._filter_args} --registry-auth {auth_file} {self._live_test_mode_arg}",
         )
 
     async def run(self) -> int:

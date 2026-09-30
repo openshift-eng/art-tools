@@ -2,6 +2,7 @@ import unittest
 from unittest import mock
 
 import pytest
+from pyartcd.constants import OCP_BUILD_DATA_URL
 from pyartcd.pipelines.sync_ci_images import SyncCIImagesPipeline
 from pyartcd.runtime import Runtime
 
@@ -274,10 +275,56 @@ class TestSyncCIImagesOrchestration(unittest.IsolatedAsyncioTestCase):
             rc = await pipeline.run()
 
             self.assertEqual(rc, 0)
-            mock_jenkins.start_open_reconciliation_prs.assert_called_once_with(version="4.17")
-            mock_jenkins.start_mirror_images_to_ci.assert_called_once_with(version="4.17", block_until_complete=True)
-            mock_jenkins.start_sync_ci_buildconfigs.assert_called_once_with(version="4.17", block_until_complete=True)
+            mock_jenkins.start_open_reconciliation_prs.assert_called_once_with(
+                version="4.17", assembly="stream", data_path=OCP_BUILD_DATA_URL, data_gitref="", dry_run=False
+            )
+            mock_jenkins.start_mirror_images_to_ci.assert_called_once_with(
+                version="4.17",
+                only_stream="",
+                images="",
+                block_until_complete=True,
+                assembly="stream",
+                data_path=OCP_BUILD_DATA_URL,
+                data_gitref="",
+                dry_run=False,
+                update_images_only_when_missing=False,
+            )
+            mock_jenkins.start_sync_ci_buildconfigs.assert_called_once_with(
+                version="4.17",
+                only_stream="",
+                images="",
+                block_until_complete=True,
+                assembly="stream",
+                data_path=OCP_BUILD_DATA_URL,
+                data_gitref="",
+                dry_run=False,
+            )
             mock_record.assert_awaited_once_with("abc123")
+
+    @mock.patch('pyartcd.pipelines.sync_ci_images.jenkins')
+    async def test_run_triggers_sub_jobs_with_dry_run_forwarded(self, mock_jenkins):
+        """Test a dry-run of the orchestrator still triggers sub-jobs, forwarding dry_run=True instead of skipping."""
+        mock_jenkins.start_open_reconciliation_prs.return_value = 'SUCCESS'
+        mock_jenkins.start_mirror_images_to_ci.return_value = 'SUCCESS'
+        mock_jenkins.start_sync_ci_buildconfigs.return_value = 'SUCCESS'
+
+        mock_runtime = self._mock_runtime()
+        mock_runtime.dry_run = True
+        pipeline = SyncCIImagesPipeline(mock_runtime, for_release="4.17")
+
+        with (
+            mock.patch.object(pipeline, '_check_for_changes', new=mock.AsyncMock(return_value=(True, "abc123"))),
+            mock.patch.object(pipeline, '_record_successful_run', new=mock.AsyncMock()),
+        ):
+            rc = await pipeline.run()
+
+            self.assertEqual(rc, 0)
+            mock_jenkins.start_open_reconciliation_prs.assert_called_once()
+            mock_jenkins.start_mirror_images_to_ci.assert_called_once()
+            mock_jenkins.start_sync_ci_buildconfigs.assert_called_once()
+            self.assertTrue(mock_jenkins.start_open_reconciliation_prs.call_args.kwargs['dry_run'])
+            self.assertTrue(mock_jenkins.start_mirror_images_to_ci.call_args.kwargs['dry_run'])
+            self.assertTrue(mock_jenkins.start_sync_ci_buildconfigs.call_args.kwargs['dry_run'])
 
     @mock.patch('pyartcd.pipelines.sync_ci_images.jenkins')
     async def test_run_does_not_trigger_buildconfigs_when_mirror_fails(self, mock_jenkins):
