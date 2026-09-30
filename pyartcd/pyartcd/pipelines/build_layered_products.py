@@ -142,8 +142,10 @@ class BuildLayeredProductsPipeline:
 
             if operator_nvrs:
                 if tekton.is_tekton_context():
+                    product = self.group.split("-")[0]
+                    pipeline_name = f"{product}-olm-bundle" if product != "ocp" else "olm-bundle-konflux"
                     created_name = tekton.start_pipeline_run(
-                        pipeline_name="olm-bundle-konflux",
+                        pipeline_name=pipeline_name,
                         params={
                             "version": self.version,
                             "assembly": self.assembly,
