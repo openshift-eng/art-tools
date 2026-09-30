@@ -1,0 +1,28 @@
+kind: CronJob
+apiVersion: batch/v1
+metadata:
+  name: quay-schedule-scan-cron
+  namespace: art-quay-tenant
+spec:
+  schedule: "*/30 * * * *"
+  suspend: false
+  concurrencyPolicy: Forbid
+  jobTemplate:
+    spec:
+      template:
+        spec:
+          containers:
+            - name: schedule-scan
+              image: 'image-registry.openshift-image-registry.svc:5000/art-cd/art-cd:latest'
+              command:
+                - tkn
+                - pipeline
+                - start
+                - quay-schedule-scan
+                - '--pipeline-timeout'
+                - 30m
+              imagePullPolicy: Always
+          restartPolicy: OnFailure
+          serviceAccountName: pipeline
+  successfulJobsHistoryLimit: 10
+  failedJobsHistoryLimit: 10
