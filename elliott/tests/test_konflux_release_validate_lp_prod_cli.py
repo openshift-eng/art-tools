@@ -1,12 +1,24 @@
 """Tests for layered-product production pre-validation."""
 
 import asyncio
+import json
+import logging
+from io import StringIO
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, call, patch
 
 import pytest
 import yaml
-from elliottlib.cli.konflux_release_validate_lp_prod_cli import ValidateLpProdCli, find_pruned_entries
+from doozerlib.opm import OpmRegistryAuth
+from elliottlib.cli.konflux_release_validate_lp_prod_cli import (
+    ValidateLpProdCli,
+    _CatalogRenderStats,
+    _compact_catalog_blob,
+    _iter_json_objects,
+    _render_catalog,
+    _RenderedCatalog,
+    find_pruned_entries,
+)
 from elliottlib.shipment_model import ShipmentConfig
 from elliottlib.shipment_utils import ShipmentMRCIState
 
@@ -93,6 +105,46 @@ def test_find_pruned_entries_rejects_known_channel_without_package():
 
     with pytest.raises(ValueError, match='without package/name'):
         find_pruned_entries([], fragment)
+
+
+def test_json_stream_and_compact_projection_preserve_package_ownership():
+    blobs = list(
+        _iter_json_objects(
+            StringIO(
+                '{"schema":"olm.package","name":"example-operator"}\n'
+                '{"schema":"olm.channel","name":"stable","package":"example-operator",'
+                '"entries":[{"name":"example.v1"}]}\n'
+                '{"schema":"future.schema","name":"example-operator"}\n'
+            )
+        )
+    )
+
+    projected = [_compact_catalog_blob(blob, {'example-operator'}) for blob in blobs]
+
+    assert projected == [
+        {'schema': 'olm.package', 'name': 'example-operator'},
+        {
+            'schema': 'olm.channel',
+            'package': 'example-operator',
+            'name': 'stable',
+            'entries': [{'name': 'example.v1'}],
+        },
+        {'schema': 'future.schema', 'package': 'example-operator', 'name': 'example-operator'},
+    ]
+
+
+def test_render_catalog_allows_filtered_package_absent_from_production():
+    async def fake_gather_opm(_args, stdout, **_kwargs):
+        stdout.write(json.dumps(_channel('other-operator', 'stable', 'other.v1')))
+        return 0, '', ''
+
+    with patch(
+        'elliottlib.cli.konflux_release_validate_lp_prod_cli.gather_opm',
+        new=AsyncMock(side_effect=fake_gather_opm),
+    ):
+        rendered = asyncio.run(_render_catalog('registry.example/index:latest', {'new-operator'}, OpmRegistryAuth()))
+
+    assert rendered.blobs == []
 
 
 def test_ocp_is_noop_before_external_checks(tmp_path):
@@ -223,9 +275,69 @@ def test_fbc_validation_reports_pruned_entry():
     production = [_channel('cluster-logging', 'stable-6.6', 'logging.v6.6.0', 'logging.v6.6.1')]
     fragment = [_channel('cluster-logging', 'stable-6.6', 'logging.v6.6.0')]
 
+    async def fake_gather_opm(args, stdout, **_kwargs):
+        rendered = production if args[-1].startswith('registry.redhat.io') else fragment
+        for blob in rendered:
+            stdout.write(json.dumps(blob))
+            stdout.write('\n')
+        return 0, '', ''
+
     with patch(
-        'elliottlib.cli.konflux_release_validate_lp_prod_cli.render',
-        new=AsyncMock(side_effect=[production, fragment]),
-    ):
+        'elliottlib.cli.konflux_release_validate_lp_prod_cli.gather_opm',
+        new=AsyncMock(side_effect=fake_gather_opm),
+    ) as gather:
         with pytest.raises(RuntimeError, match=r'cluster-logging.*stable-6\.6.*logging\.v6\.6\.1'):
             asyncio.run(validator._validate_fbc_fragments([config]))
+
+    assert gather.call_count == 2
+    assert gather.call_args_list[0].args[0][-1] == 'quay.io/example/logging-fbc@sha256:abc'
+    assert gather.call_args_list[1].args[0][-1].startswith('registry.redhat.io/redhat/redhat-operator-index:')
+    assert all(call.kwargs['env']['GOGC'] == '20' for call in gather.call_args_list)
+    assert all(call.kwargs['stdout'] for call in gather.call_args_list)
+
+
+def test_fbc_validation_logs_dynamic_package_index_summary(caplog):
+    config = ShipmentConfig.model_validate(_shipment_config())
+    validator = ValidateLpProdCli(('shipment/logging.fbc.yaml',), 'https://gitlab.example/mr/1', '/tmp/auth.json')
+    fragment = [_channel('cluster-logging', 'stable-6.6', 'logging.v6.6.0')]
+    stats = _CatalogRenderStats(1, 1, 1, 1, 0.1, 0.01, 0.11)
+    rendered_fragment = _RenderedCatalog(fragment, stats)
+    rendered_production = _RenderedCatalog(fragment, stats)
+
+    async def fake_render(_input, packages, _auth):
+        return rendered_fragment if packages is None else rendered_production
+
+    with (
+        patch(
+            'elliottlib.cli.konflux_release_validate_lp_prod_cli._render_catalog',
+            new=AsyncMock(side_effect=fake_render),
+        ),
+        caplog.at_level(logging.INFO),
+    ):
+        asyncio.run(validator._validate_fbc_fragments([config]))
+
+    assert 'packages=[\'cluster-logging\']' in caplog.text
+    assert 'result=PASS' in caplog.text
+
+
+def test_fbc_validation_allows_new_package_absent_from_production(caplog):
+    config = ShipmentConfig.model_validate(_shipment_config())
+    validator = ValidateLpProdCli(('shipment/logging.fbc.yaml',), 'https://gitlab.example/mr/1', '/tmp/auth.json')
+    fragment = [_channel('new-operator', 'stable', 'new.v1')]
+    stats = _CatalogRenderStats(1, 1, 1, 1, 0.1, 0.01, 0.11)
+    rendered_fragment = _RenderedCatalog(fragment, stats)
+    rendered_production = _RenderedCatalog([], _CatalogRenderStats(1, 0, 0, 0, 0.1, 0.01, 0.11))
+
+    async def fake_render(_input, packages, _auth):
+        return rendered_fragment if packages is None else rendered_production
+
+    with (
+        patch(
+            'elliottlib.cli.konflux_release_validate_lp_prod_cli._render_catalog',
+            new=AsyncMock(side_effect=fake_render),
+        ),
+        caplog.at_level(logging.INFO),
+    ):
+        asyncio.run(validator._validate_fbc_fragments([config]))
+
+    assert 'result=PASS' in caplog.text
