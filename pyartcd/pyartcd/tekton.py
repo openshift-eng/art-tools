@@ -126,11 +126,16 @@ def start_pipeline_run(
             parent_pr_name, namespace
         )
 
+    generate_name = pipeline_name
+    if params.get("group"):
+        group = params["group"].replace(".", "-")
+        generate_name = f"{pipeline_name}-{group}"
+
     pipeline_run = {
         "apiVersion": "tekton.dev/v1",
         "kind": "PipelineRun",
         "metadata": {
-            "generateName": f"{pipeline_name}-",
+            "generateName": f"{generate_name}-",
             "namespace": namespace,
             "labels": labels,
             "annotations": annotations,
