@@ -19,6 +19,7 @@ spec:
                 - pipeline
                 - start
                 - schedule-layered-products-scan
+                - '--use-param-defaults'
                 - '--pipeline-timeout'
                 - 30m
               imagePullPolicy: Always
