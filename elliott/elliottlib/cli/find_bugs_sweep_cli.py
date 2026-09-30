@@ -273,15 +273,17 @@ async def get_bugs_sweep(runtime: Runtime, find_bugs_obj, bug_tracker, filter_at
         sweep_cutoff_timestamp = await get_sweep_cutoff_timestamp(runtime)
         if sweep_cutoff_timestamp:
             utc_ts = datetime.fromtimestamp(sweep_cutoff_timestamp, tz=timezone.utc)
-            logger.info(
-                f"Filtering bugs that have changed ({len(bugs)}) to one of the desired statuses before the "
-                f"cutoff time {utc_ts}..."
-            )
+            logger.info(f"Filtering bugs that were in a post-fix state ({len(bugs)}) at the cutoff time {utc_ts}...")
+            # The initial search already ensures bugs are currently VERIFIED (or whatever
+            # find_bugs_obj.status requires). For the historical cutoff check we use a broader
+            # set: any status indicating the bug was already fixed at the cutoff time qualifies,
+            # even if it had not yet been verified.
+            cutoff_eligible_statuses = {'ON_QA', 'VERIFIED', 'RELEASE_PENDING', 'CLOSED'}
             qualified_bugs = []
             unqualified_bugs = []
             for chunk_of_bugs in chunk(bugs, constants.BUG_LOOKUP_CHUNK_SIZE):
                 qualified_bugs_chunk = bug_tracker.filter_bugs_by_cutoff_event(
-                    chunk_of_bugs, find_bugs_obj.status, sweep_cutoff_timestamp, verbose=runtime.debug
+                    chunk_of_bugs, cutoff_eligible_statuses, sweep_cutoff_timestamp, verbose=runtime.debug
                 )
                 qualified_bugs.extend(qualified_bugs_chunk)
                 not_qualified = {b.id for b in chunk_of_bugs} - {b.id for b in qualified_bugs_chunk}
