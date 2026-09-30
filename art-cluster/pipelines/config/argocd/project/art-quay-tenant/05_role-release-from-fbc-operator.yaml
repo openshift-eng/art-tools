@@ -6,7 +6,7 @@ metadata:
 rules:
   - apiGroups: ["tekton.dev"]
     resources: ["pipelines"]
-    resourceNames: ["release-from-fbc", "trigger-prod-release", "quay-scan", "quay-build", "quay-olm-bundle", "quay-build-fbc", "quay-schedule-scan"]
+    resourceNames: ["release-from-fbc", "trigger-prod-release", "layered-products-scan", "build-layered-products", "olm-bundle-konflux", "build-fbc", "schedule-layered-products-scan"]
     verbs: ["get", "list"]
   - apiGroups: ["tekton.dev"]
     resources: ["tasks"]

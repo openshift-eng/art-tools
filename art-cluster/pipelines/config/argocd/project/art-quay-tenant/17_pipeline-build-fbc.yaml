@@ -1,13 +1,12 @@
 apiVersion: tekton.dev/v1
 kind: Pipeline
 metadata:
-  name: quay-olm-bundle
+  name: build-fbc
   namespace: art-quay-tenant
   labels:
     app: artcd
 spec:
-  description: Build OLM bundle containers for Quay operators via Konflux, then trigger
-    downstream FBC build.
+  description: Build File-Based Catalog (FBC) containers for Quay operators via Konflux.
   params:
   - description: OCP version (e.g. 1.5.0)
     name: version
@@ -16,7 +15,7 @@ spec:
     name: assembly
     type: string
   - default: quay-3.19
-    description: The group of components (e.g. quay-3.19, quay-3.18)
+    description: The group to use with -g flag (e.g. quay-3.19, quay-3.18)
     name: group
     type: string
   - default: https://github.com/openshift-eng/ocp-build-data
@@ -24,35 +23,61 @@ spec:
     name: data-path
     type: string
   - default: ""
-    description: (Optional) Doozer data path git [branch / tag / sha] to use
+    description: (Optional) Doozer data path git [branch / tag / sha]
     name: data-gitref
     type: string
-  - description: Comma-separated list of operator NVRs to build bundles for
+  - default: ""
+    description: Comma-separated list of operator NVRs
     name: operator-nvrs
     type: string
   - default: ""
-    description: (Optional) Only build these operators (comma-separated brew packages)
+    description: (Optional) Only build these operators
     name: only
     type: string
   - default: ""
-    description: (Optional) Exclude these operators (comma-separated brew packages)
+    description: (Optional) Exclude these operators
     name: exclude
     type: string
   - default: "false"
-    description: Rebuild bundle containers even if they already exist
+    description: Force rebuild FBC containers
     name: force
     type: string
-  - default: "false"
-    description: Stage-release related images even if bundle containers were not rebuilt
-    name: force-release
+  - default: ""
+    description: (Optional) Target OCP major.minor version for non-OpenShift products
+      (e.g. 4.19, 4.20)
+    name: ocp-target-version
     type: string
   - default: ""
     description: (Optional) Override Pipeline Run template commit
     name: plr-template
     type: string
   - default: ""
+    description: (Optional) URL of the FBC repository
+    name: fbc-repo
+    type: string
+  - default: ""
     description: (Optional) Path to kubeconfig file for Konflux cluster connections
     name: kubeconfig
+    type: string
+  - default: "false"
+    description: Skip all post build checks in the FBC build pipeline
+    name: skip-checks
+    type: string
+  - default: "false"
+    description: Reset FBC builds to the latest production version
+    name: reset-to-prod
+    type: string
+  - default: ""
+    description: (Optional) Registry authentication file path for production index image
+    name: prod-registry-auth
+    type: string
+  - default: "false"
+    description: Do not wait for other FBC builds to complete (use only if they will not conflict)
+    name: ignore-locks
+    type: string
+  - default: "false"
+    description: Insert new bundle entry in version order instead of appending
+    name: insert-missing-entry
     type: string
   - default: "false"
     description: Take no action, just echo what the job would have done
@@ -64,7 +89,7 @@ spec:
     name: art-tools-commit
     type: string
   tasks:
-  - name: quay-olm-bundle
+  - name: quay-build-fbc
     params:
     - name: script
       value: |
@@ -101,7 +126,7 @@ spec:
             cmd.append("--dry-run")
 
         cmd.extend([
-            "olm-bundle-konflux",
+            "build-fbc",
             "--version=$(params.version)",
             "--assembly=$(params.assembly)",
             "--data-path=$(params.data-path)",
@@ -114,7 +139,7 @@ spec:
             cmd.append("--data-gitref=$(params.data-gitref)")
 
         if "$(params.operator-nvrs)":
-            cmd.append("--nvrs=$(params.operator-nvrs)")
+            cmd.append("--operator-nvrs=$(params.operator-nvrs)")
 
         if "$(params.only)":
             cmd.append("--only=$(params.only)")
@@ -125,11 +150,31 @@ spec:
         if "$(params.force)" == "true":
             cmd.append("--force")
 
-        if "$(params.force-release)" == "true":
-            cmd.append("--force-release")
+        if "$(params.ocp-target-version)":
+            cmd.append("--major-minor=$(params.ocp-target-version)")
+
+        if "$(params.fbc-repo)":
+            cmd.append(f"--fbc-repo=$(params.fbc-repo)")
 
         if "$(params.kubeconfig)":
             cmd.append(f"--kubeconfig=$(params.kubeconfig)")
+
+        if "$(params.skip-checks)" == "true":
+            cmd.append("--skip-checks")
+
+        if "$(params.reset-to-prod)" == "true":
+            cmd.append("--reset-to-prod")
+        else:
+            cmd.append("--no-reset-to-prod")
+
+        if "$(params.prod-registry-auth)":
+            cmd.append(f"--prod-registry-auth=$(params.prod-registry-auth)")
+
+        if "$(params.ignore-locks)" == "true":
+            cmd.append("--ignore-locks")
+
+        if "$(params.insert-missing-entry)" == "true":
+            cmd.append("--insert-missing-entry")
 
         if "$(params.plr-template)":
             cmd.append("--plr-template=$(params.plr-template)")

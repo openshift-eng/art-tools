@@ -18,7 +18,7 @@ spec:
                 - tkn
                 - pipeline
                 - start
-                - quay-schedule-scan
+                - schedule-layered-products-scan
                 - '--pipeline-timeout'
                 - 30m
               imagePullPolicy: Always
