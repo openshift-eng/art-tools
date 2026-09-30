@@ -83,7 +83,7 @@ spec:
     description: Take no action, just echo what the job would have done
     name: dry-run
     type: string
-  - default: ""
+  - default: ashwindasr@codex/cleanup-tekton-locks
     description: '(Optional) Override art-tools version. Format: ghuser@branch (e.g.
       ashwindasr@my-feature)'
     name: art-tools-commit
