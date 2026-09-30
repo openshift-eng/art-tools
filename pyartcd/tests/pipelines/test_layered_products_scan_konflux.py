@@ -67,6 +67,38 @@ class TestLayeredProductsScanPipeline(unittest.IsolatedAsyncioTestCase):
             image_list=['oadp-velero-restic-restore-helper', 'oadp-operator'],
         )
 
+    def test_tekton_changed_images_trigger_generic_build_pipeline(self):
+        self.runtime.dry_run = False
+        pipeline = LayeredProductsScanPipeline(
+            runtime=self.runtime,
+            group='quay-3.16',
+            data_path='https://github.com/openshift-eng/ocp-build-data',
+            assembly='stream',
+            data_gitref='',
+            image_list='',
+        )
+        pipeline.changes = {'images': ['quay-operator']}
+        pipeline.report = {'images': [{'name': 'quay-operator', 'changed': True}]}
+
+        with (
+            patch('pyartcd.pipelines.layered_products_scan_konflux.tekton.is_tekton_context', return_value=True),
+            patch(
+                'pyartcd.pipelines.layered_products_scan_konflux.tekton.start_pipeline_run',
+                return_value='build-layered-products-quay-3-16-test',
+            ) as mock_start_pipeline_run,
+            patch('pyartcd.pipelines.layered_products_scan_konflux.tekton.annotate_current_pipelinerun'),
+        ):
+            pipeline.handle_source_changes()
+
+        mock_start_pipeline_run.assert_called_once_with(
+            pipeline_name='build-layered-products',
+            params={
+                'group': 'quay-3.16',
+                'assembly': 'stream',
+                'image-list': 'quay-operator',
+            },
+        )
+
     @patch.dict(os.environ, {'KUBECONFIG': '/path/to/kubeconfig'})
     @patch('pyartcd.pipelines.layered_products_scan_konflux.jenkins')
     @patch('pyartcd.pipelines.layered_products_scan_konflux.exectools.cmd_gather_async')

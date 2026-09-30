@@ -1,7 +1,7 @@
 kind: CronJob
 apiVersion: batch/v1
 metadata:
-  name: quay-schedule-scan-cron
+  name: schedule-layered-products-scan-cron
   namespace: art-quay-tenant
 spec:
   schedule: "*/30 * * * *"
@@ -12,13 +12,13 @@ spec:
       template:
         spec:
           containers:
-            - name: schedule-scan
+            - name: schedule-layered-products-scan
               image: 'image-registry.openshift-image-registry.svc:5000/art-cd/art-cd:latest'
               command:
                 - tkn
                 - pipeline
                 - start
-                - quay-schedule-scan
+                - schedule-layered-products-scan
                 - '--pipeline-timeout'
                 - 30m
               imagePullPolicy: Always

@@ -1,12 +1,12 @@
 apiVersion: tekton.dev/v1
 kind: Pipeline
 metadata:
-  name: quay-build-fbc
+  name: build-fbc
   namespace: art-quay-tenant
   labels:
     app: artcd
 spec:
-  description: Build File-Based Catalog (FBC) containers for Quay operators via Konflux.
+  description: Build File-Based Catalog (FBC) containers for layered-product operators via Konflux.
   params:
   - description: OCP version (e.g. 1.5.0)
     name: version
@@ -15,7 +15,7 @@ spec:
     name: assembly
     type: string
   - default: quay-3.19
-    description: The group of components (e.g. quay-3.19, quay-3.18)
+    description: The layered-products group of components.
     name: group
     type: string
   - default: https://github.com/openshift-eng/ocp-build-data
@@ -89,7 +89,7 @@ spec:
     name: art-tools-commit
     type: string
   tasks:
-  - name: quay-build-fbc
+  - name: build-fbc
     params:
     - name: script
       value: |

@@ -1,14 +1,14 @@
 apiVersion: tekton.dev/v1
 kind: Pipeline
 metadata:
-  name: quay-schedule-scan
+  name: schedule-layered-products-scan
   namespace: art-quay-tenant
   labels:
     app: artcd
 spec:
   description: |
-    Scheduler for Quay scan. Checks locks and freeze automation,
-    then triggers individual quay-scan PipelineRuns for groups that are eligible.
+    Scheduler for layered-products scans. Checks locks and freeze automation,
+    then triggers individual layered-products-scan PipelineRuns for eligible groups.
   params:
   - default: ""
     description: '(Optional) Override art-tools version. Format: ghuser@branch (e.g.
@@ -16,7 +16,7 @@ spec:
     name: art-tools-commit
     type: string
   tasks:
-  - name: quay-schedule-scan
+  - name: schedule-layered-products-scan
     params:
     - name: script
       value: |

@@ -603,6 +603,28 @@ class TestBuildLayeredProductsPipeline(IsolatedAsyncioTestCase):
             lines.append(f'image_build_konflux|name={name}|has_olm_bundle=1|status=0|nvrs={nvr}\n')
         record_log_path.write_text(''.join(lines))
 
+    def test_tekton_bundle_trigger_uses_generic_olm_pipeline(self):
+        self.pipeline.group = 'quay-3.16'
+        self.pipeline.skip_bundle_build = False
+        operator_nvr = 'quay-operator-container-v3.16.0-202609301200.p2.g172d0b2.assembly.stream.el9'
+        self._write_image_build_record_log([('quay-operator', operator_nvr)])
+
+        with (
+            patch('pyartcd.pipelines.build_layered_products.tekton.is_tekton_context', return_value=True),
+            patch('pyartcd.pipelines.build_layered_products.is_nvr_embargoed', return_value=False),
+            patch(
+                'pyartcd.pipelines.build_layered_products.tekton.start_pipeline_run',
+                return_value='olm-bundle-konflux-quay-3-16-test',
+            ) as mock_start_pipeline_run,
+            patch('pyartcd.pipelines.build_layered_products.tekton.annotate_current_pipelinerun'),
+        ):
+            self.pipeline.trigger_bundle_build()
+
+        mock_start_pipeline_run.assert_called_once()
+        self.assertEqual(mock_start_pipeline_run.call_args.kwargs['pipeline_name'], 'olm-bundle-konflux')
+        self.assertEqual(mock_start_pipeline_run.call_args.kwargs['params']['group'], 'quay-3.16')
+        self.assertEqual(mock_start_pipeline_run.call_args.kwargs['params']['operator-nvrs'], operator_nvr)
+
     @patch('pyartcd.pipelines.build_layered_products.jenkins.start_olm_bundle_konflux')
     @patch('pyartcd.pipelines.build_layered_products.jenkins.get_propagatable_params', return_value={})
     def test_trigger_bundle_build_filters_embargoed_operators(self, mock_get_params, mock_start_bundle):

@@ -1,24 +1,20 @@
 apiVersion: tekton.dev/v1
 kind: Pipeline
 metadata:
-  name: quay-build
+  name: layered-products-scan
   namespace: art-quay-tenant
   labels:
     app: artcd
 spec:
-  description: Rebase and build Quay operator images via Konflux, then trigger downstream bundle build.
+  description: Scan layered-product operator images for source changes and trigger downstream builds if changes are detected.
   params:
   - default: quay-3.19
-    description: The group to use with -g flag (e.g. quay-3.19, quay-3.18)
+    description: The layered-products group to use with the -g flag.
     name: group
     type: string
-  - default: test
-    description: The name of an assembly to rebase and build for
+  - default: stream
+    description: Assembly to scan for
     name: assembly
-    type: string
-  - default: quay-operator
-    description: Comma/space-separated list of image names to build
-    name: image-list
     type: string
   - default: https://github.com/openshift-eng/ocp-build-data
     description: ocp-build-data fork to use
@@ -29,37 +25,8 @@ spec:
     name: data-gitref
     type: string
   - default: ""
-    description: '(Optional) Override the Pipeline Run template commit; Format: ghuser@commitish'
-    name: plr-template
-    type: string
-  - default: ""
-    description: Override network mode for Konflux builds (hermetic, internal-only,
-      open)
-    name: network-mode
-    type: string
-  - default: "false"
-    description: Skip the rebase step (for testing)
-    name: skip-rebase
-    type: string
-  - default: "false"
-    description: Do not wait for other builds in this version to complete
-    name: ignore-locks
-    type: string
-  - default: "false"
-    description: Skip Enterprise Contract verification for built images
-    name: skip-ec-verify
-    type: string
-  - default: "false"
-    description: Skip custom IntegrationTestScenarios configured in group.yml
-    name: skip-custom-its
-    type: string
-  - default: only
-    description: 'Build strategy: all (every image) or only (IMAGE_LIST only)'
-    name: image-build-strategy
-    type: string
-  - default: ""
-    description: (Optional) Path to kubeconfig file for Konflux cluster connections
-    name: kubeconfig
+    description: (Optional) Comma/space-separated list of images to scan
+    name: image-list
     type: string
   - default: "false"
     description: Take no action, just echo what the job would have done
@@ -71,7 +38,7 @@ spec:
     name: art-tools-commit
     type: string
   tasks:
-  - name: quay-build
+  - name: layered-products-scan
     params:
     - name: script
       value: |
@@ -108,39 +75,19 @@ spec:
             cmd.append("--dry-run")
 
         cmd.extend([
-            "build-layered-products",
-            "-g", "$(params.group)",
+            "layered-products-scan",
+            "--group=$(params.group)",
             "--assembly=$(params.assembly)",
-            "--data-path=$(params.data-path)",
-            "--image-build-strategy=$(params.image-build-strategy)",
         ])
 
-        if "$(params.image-list)":
-            cmd.append("--image-list=$(params.image-list)")
+        if "$(params.data-path)":
+            cmd.append("--data-path=$(params.data-path)")
 
         if "$(params.data-gitref)":
             cmd.append("--data-gitref=$(params.data-gitref)")
 
-        if "$(params.ignore-locks)" == "true":
-            cmd.append("--ignore-locks")
-
-        if "$(params.skip-rebase)" == "true":
-            cmd.append("--skip-rebase")
-
-        if "$(params.skip-ec-verify)" == "true":
-            cmd.append("--skip-ec-verify")
-
-        if "$(params.skip-custom-its)" == "true":
-            cmd.append("--skip-custom-its")
-
-        if "$(params.network-mode)":
-            cmd.append(f"--network-mode=$(params.network-mode)")
-
-        if "$(params.kubeconfig)":
-            cmd.append(f"--kubeconfig=$(params.kubeconfig)")
-
-        if "$(params.plr-template)":
-            cmd.append(f"--plr-template=$(params.plr-template)")
+        if "$(params.image-list)":
+            cmd.append("--image-list=$(params.image-list)")
 
         print(f"Running {cmd}...")
         subprocess.run(cmd, check=True, env=os.environ.copy())
