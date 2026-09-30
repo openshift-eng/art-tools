@@ -1,7 +1,7 @@
 kind: CronJob
 apiVersion: batch/v1
 metadata:
-  name: schedule-layered-products-scan-cron
+  name: quay-schedule-scan-cron
   namespace: art-quay-tenant
 spec:
   schedule: "*/30 * * * *"
@@ -12,7 +12,7 @@ spec:
       template:
         spec:
           containers:
-            - name: schedule-layered-products-scan
+            - name: schedule-scan
               image: 'image-registry.openshift-image-registry.svc:5000/art-cd/art-cd:latest'
               command:
                 - tkn

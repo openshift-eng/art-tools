@@ -6,10 +6,10 @@ metadata:
   labels:
     app: artcd
 spec:
-  description: Rebase and build layered-product images via Konflux, then trigger downstream bundle build.
+  description: Rebase and build Quay operator images via Konflux, then trigger downstream bundle build.
   params:
   - default: quay-3.19
-    description: The layered-products group to use with the -g flag.
+    description: The group to use with -g flag (e.g. quay-3.19, quay-3.18)
     name: group
     type: string
   - default: test
@@ -71,7 +71,7 @@ spec:
     name: art-tools-commit
     type: string
   tasks:
-  - name: build-layered-products
+  - name: quay-build
     params:
     - name: script
       value: |

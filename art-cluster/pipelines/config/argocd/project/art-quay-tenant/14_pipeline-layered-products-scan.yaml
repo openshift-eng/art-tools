@@ -6,10 +6,10 @@ metadata:
   labels:
     app: artcd
 spec:
-  description: Scan layered-product operator images for source changes and trigger downstream builds if changes are detected.
+  description: Scan Quay operator images for source changes and trigger downstream builds if changes are detected.
   params:
   - default: quay-3.19
-    description: The layered-products group to use with the -g flag.
+    description: The group to use with -g flag (e.g. quay-3.19, quay-3.18)
     name: group
     type: string
   - default: stream
@@ -38,7 +38,7 @@ spec:
     name: art-tools-commit
     type: string
   tasks:
-  - name: layered-products-scan
+  - name: quay-scan
     params:
     - name: script
       value: |
