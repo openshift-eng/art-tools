@@ -54,8 +54,8 @@ class Jobs(Enum):
     BUILD_CONFORMA_VERIFY = 'aos-cd-builds/build%2Fbuild-conforma-verify'
     SCAN_OPERATOR = 'aos-cd-builds/build%2Fscan-operator'
     SYNC_CI_IMAGES = 'aos-cd-builds/build%2Fsync-ci-images'
-    MIRROR_IMAGES_TO_CI = 'aos-cd-builds/build%2Fmirror-images-to-ci'
-    SYNC_CI_BUILDCONFIGS = 'aos-cd-builds/build%2Fsync-ci-buildconfigs'
+    MIRROR_IMAGES_TO_CI = 'hack/bvizi/refactor-sync-ci%2Fmirror-images-to-ci'
+    SYNC_CI_BUILDCONFIGS = 'hack/bvizi/refactor-sync-ci%2Fsync-ci-buildconfigs'
     OPEN_RECONCILIATION_PRS = 'aos-cd-builds/build%2Fopen-reconciliation-prs'
     OPEN_RECONCILIATION_PRS_LAYERED = 'aos-cd-builds/build%2Fopen-reconciliation-prs-layered-products'
 
@@ -555,6 +555,7 @@ def start_sync_ci_images(version: str, **kwargs) -> Optional[str]:
 def start_mirror_images_to_ci(version: str, **kwargs) -> Optional[str]:
     params = {
         'VERSION': version,
+        'ART_TOOLS_COMMIT': 'kopero2000:refactor-sync-ci-images'
     }
     return start_build(
         job=Jobs.MIRROR_IMAGES_TO_CI,
@@ -566,6 +567,7 @@ def start_mirror_images_to_ci(version: str, **kwargs) -> Optional[str]:
 def start_sync_ci_buildconfigs(version: str, **kwargs) -> Optional[str]:
     params = {
         'VERSION': version,
+        'ART_TOOLS_COMMIT': 'kopero2000:refactor-sync-ci-images'
     }
     return start_build(
         job=Jobs.SYNC_CI_BUILDCONFIGS,
