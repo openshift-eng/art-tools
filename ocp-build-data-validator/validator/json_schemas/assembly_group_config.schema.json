@@ -301,6 +301,7 @@
             "type": "object",
             "properties": {
                "name": {"type": "string"},
+               "attach_to_et_advisory": {"type": "boolean"},
                "build_metadata_key": {"type": "string"},
                "primary": {"type": "boolean"},
                "meta_type": {"type": "string"},
