@@ -97,6 +97,7 @@ class TestVerifyReleasePipeline(unittest.IsolatedAsyncioTestCase):
             "security-alerts",
             "kernel-tag",
             "cve-trackers",
+            "stage-testing",
         }
         self.assertEqual({s.name for s in result.steps}, expected_steps)
         for step in result.steps:
