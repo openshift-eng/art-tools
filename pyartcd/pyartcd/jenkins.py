@@ -565,7 +565,7 @@ def start_mirror_images_to_ci(
 ) -> Optional[str]:
     params = {
         'VERSION': version,
-        'ART_TOOLS_COMMIT': 'kopero2000:refactor-sync-ci-images',
+        'ART_TOOLS_COMMIT': 'kopero2000@refactor-sync-ci-images',
     }
     if assembly:
         params['ASSEMBLY'] = assembly
@@ -600,7 +600,7 @@ def start_sync_ci_buildconfigs(
 ) -> Optional[str]:
     params = {
         'VERSION': version,
-        'ART_TOOLS_COMMIT': 'kopero2000:refactor-sync-ci-images',
+        'ART_TOOLS_COMMIT': 'kopero2000@refactor-sync-ci-images',
     }
     if assembly:
         params['ASSEMBLY'] = assembly
