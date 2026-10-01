@@ -2517,6 +2517,13 @@ If you have any questions about this pull request, please reach out in the `#for
                 continue
 
             # Otherwise, we need to create a pull request
+            # TODO: DELETE - testing only, do not create PRs for the test assembly
+            if runtime.assembly == 'test':
+                runtime.logger.info(
+                    f'[TESTING] Would have opened PR against: {public_source_repo.html_url}/blob/{public_branch}/{dockerfile_name}, but assembly is "test"; skipping'
+                )
+                continue
+
             if moist_run or dry_run:
                 green_print(
                     f'Would have opened PR against: {public_source_repo.html_url}/blob/{public_branch}/{dockerfile_name}.'
