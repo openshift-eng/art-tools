@@ -86,6 +86,7 @@ from elliottlib.cli.verify_payload import verify_payload
 from elliottlib.cli.verify_qe_qualifier_cli import verify_qe_qualifier_cli
 from elliottlib.cli.verify_security_alerts_cli import verify_security_alerts_cli
 from elliottlib.cli.verify_signatures_cli import verify_signatures_cli
+from elliottlib.cli.verify_stage_testing_cli import verify_stage_testing_cli
 from elliottlib.exceptions import ElliottFatalError
 from elliottlib.util import pbar_header, progress_func
 
@@ -340,6 +341,7 @@ cli.add_command(verify_csv_versions_cli)
 cli.add_command(verify_cve_trackers_cli)
 cli.add_command(verify_security_alerts_cli)
 cli.add_command(verify_signatures_cli)
+cli.add_command(verify_stage_testing_cli)
 cli.add_command(verify_image_grades_cli)
 cli.add_command(verify_qe_qualifier_cli)
 cli.add_command(verify_kernel_tag_cli)
