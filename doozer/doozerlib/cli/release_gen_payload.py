@@ -1517,7 +1517,7 @@ class GenPayloadCli:
                 )
                 continue
 
-            # Found a matching DTK build — swap it into the payload.
+            # Found a matching DTK build — prepare the swap across all arches.
             old_bri = payload_bri.get(dtk_key)
             old_nvr = old_bri.get_nvr() if old_bri else "unknown"
             new_bri = KonfluxBuildRecordInspector(self.runtime, matching_record)
@@ -1529,14 +1529,15 @@ class GenPayloadCli:
                 kernel_vr,
             )
 
-            # Update the canonical build map in the assembly inspector
-            payload_bri[dtk_key] = new_bri
-
-            # Update payload entries across all architectures.  Each arch
-            # needs its own image_inspector (with arch-specific digest) and
-            # recomputed pullspec destinations so downstream mirroring and
-            # imagestream tags point at the new DTK build, not the old one.
+            # Build replacement entries for every arch BEFORE mutating any
+            # state.  If any arch fails to resolve an image inspector we
+            # abort the entire swap so we never end up with a mix of old
+            # and new builds across architectures.
+            # pending: list of (entries_dict, tag, new_PayloadEntry)
+            pending: List[Tuple[Dict[str, PayloadEntry], str, PayloadEntry]] = []
             dest_repo = self.full_component_repo(repo_type=RepositoryType.PUBLIC)
+            swap_failed = False
+
             for arch, entries in self.payload_entries_for_arch.items():
                 for tag, entry in entries.items():
                     if entry.image_meta and entry.image_meta.distgit_key == dtk_key:
@@ -1544,21 +1545,24 @@ class GenPayloadCli:
                             new_image_inspector = new_bri.get_image_inspector(arch)
                         except Exception:
                             logger.warning(
-                                "Could not obtain image inspector for '%s' arch=%s from %s; keeping original entry",
+                                "Could not obtain image inspector for '%s' arch=%s from %s; "
+                                "aborting DTK swap for this key",
                                 dtk_key,
                                 arch,
                                 matching_record.nvr,
                             )
-                            continue
+                            swap_failed = True
+                            break
 
                         if not new_image_inspector:
                             logger.warning(
-                                "No arch-specific image found for '%s' arch=%s in %s; keeping original entry",
+                                "No arch-specific image found for '%s' arch=%s in %s; aborting DTK swap for this key",
                                 dtk_key,
                                 arch,
                                 matching_record.nvr,
                             )
-                            continue
+                            swap_failed = True
+                            break
 
                         new_dest_pullspec = PayloadGenerator.get_mirroring_destination(
                             new_image_inspector.get_digest(), dest_repo
@@ -1567,17 +1571,38 @@ class GenPayloadCli:
                             new_image_inspector.get_manifest_list_digest(), dest_repo
                         )
 
-                        # PayloadEntry is a NamedTuple — create a replacement
-                        new_entry = PayloadEntry(
-                            issues=entry.issues,
-                            dest_pullspec=new_dest_pullspec,
-                            dest_manifest_list_pullspec=new_ml_pullspec,
-                            image_meta=entry.image_meta,
-                            build_record_inspector=new_bri,
-                            image_inspector=new_image_inspector,
-                            rhcos_build=entry.rhcos_build,
+                        pending.append(
+                            (
+                                entries,
+                                tag,
+                                PayloadEntry(
+                                    issues=entry.issues,
+                                    dest_pullspec=new_dest_pullspec,
+                                    dest_manifest_list_pullspec=new_ml_pullspec,
+                                    image_meta=entry.image_meta,
+                                    build_record_inspector=new_bri,
+                                    image_inspector=new_image_inspector,
+                                    rhcos_build=entry.rhcos_build,
+                                ),
+                            )
                         )
-                        entries[tag] = new_entry
+                if swap_failed:
+                    break
+
+            if swap_failed:
+                # Do NOT mark this key as resolved — payload_bri is untouched
+                # and all arch entries still reference the original build.
+                logger.warning(
+                    "DTK swap aborted for '%s' — not all arches could be resolved; "
+                    "the original mismatch issue will remain",
+                    dtk_key,
+                )
+                continue
+
+            # All arches resolved successfully — apply the swap atomically.
+            payload_bri[dtk_key] = new_bri
+            for target_entries, tag, new_entry in pending:
+                target_entries[tag] = new_entry
 
             resolved_keys.add(dtk_key)
 
