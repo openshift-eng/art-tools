@@ -181,6 +181,7 @@ class VerifyReleasePipeline:
             ("security-alerts", self._verify_security_alerts),
             ("kernel-tag", self._verify_kernel_tag),
             ("cve-trackers", self._verify_cve_trackers),
+            ("stage-testing", self._verify_stage_testing),
         ]
 
         # Build task list (skip user-requested skips)
@@ -272,6 +273,10 @@ class VerifyReleasePipeline:
     async def _verify_cve_trackers(self) -> StepResult:
         cmd = self._elliott_base + ["verify-cve-trackers"]
         return await self._run_elliott_cmd("cve-trackers", cmd)
+
+    async def _verify_stage_testing(self) -> StepResult:
+        cmd = self._elliott_base + ["verify-stage-testing"]
+        return await self._run_elliott_cmd("stage-testing", cmd)
 
 
 @cli.command("verify-release", short_help="Run post-release verification checks")
