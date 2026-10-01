@@ -117,6 +117,7 @@ class KonfluxOcpPipeline:
         build_priority: str = None,
         use_mass_rebuild_locks: bool = False,
         network_mode: Optional[str] = None,
+        mail_list_failure: str = 'aos-art-automation+failed-ocp4-konflux-build@redhat.com',
     ):
         self.runtime = runtime
         self.assembly = assembly
@@ -137,6 +138,7 @@ class KonfluxOcpPipeline:
         self.build_priority = build_priority
         self.use_mass_rebuild_locks = use_mass_rebuild_locks
         self.network_mode = network_mode
+        self.mail_list_failure = mail_list_failure
 
         # If build plan includes more than half or excludes less than half or rebuilds everything, it's a mass rebuild
         self.mass_rebuild = False
@@ -255,50 +257,23 @@ class KonfluxOcpPipeline:
             ]
         )
 
-    async def update_build_fail_counters(self, built_images, failed_images, record_log):
+    def _categorize_build_failures(self, failed_images, record_log):
         """
-        Update Redis failure counters after Konflux build run.
+        Categorize Konflux image build failures into build / EC / release buckets.
 
-        Categorizes failures into three types with separate Redis key patterns:
-        - Build failures:              count:build-failure:konflux:{group}:{image}
-        - EC (ITS) failures:           count:ec-failure:konflux:{group}:{image}
-        - Base image release failures: count:release-failure:konflux:{group}:{image}
-
-        Successfully built images reset all three counter types.
-
-        Infrastructure failures (where builds never started due to API/cluster issues)
-        are detected and skip individual image counter updates to avoid false inflation.
+        Returns None if no builds were actually attempted (all infrastructure or
+        parent-dependency failures) — callers should skip failure counter increments / owner mail.
+        Otherwise returns a dict with:
+            failed_entries, build_failed_images, ec_failed_images, release_failed_images
         """
-        if self.assembly != 'stream':
-            return
-
-        group = f'openshift-{self.version}'
-        job_url = os.getenv('BUILD_URL')
-
-        # Build a lookup of failed entries for metadata
         failed_entries = {
             entry['name']: entry for entry in record_log.get('image_build_konflux', []) if int(entry['status'])
         }
-
-        # Always reset counters for successfully built images first, before any early returns.
-        # Without this, an all-infra-failure batch skips the reset and leaves stale counters.
-        counter_types = ['build-failure', 'ec-failure', 'release-failure']
-        if built_images:
-            await asyncio.gather(
-                *[
-                    reset_fail_counter(f'count:{counter_type}:konflux:{group}:{image}')
-                    for image in built_images
-                    for counter_type in counter_types
-                ]
-            )
 
         # A build failure only counts if a build was actually triggered.
         # If task_id=n/a and task_url=n/a, no PipelineRun was created = not a build failure.
         # Exclude "parent images failed to build" - those never attempted a build either.
         if failed_images:
-            # Filter out images that never had a build attempt:
-            # 1. Parent dependency failures (never attempted)
-            # 2. Infrastructure failures (task_id=n/a, no PipelineRun created)
             attempted_builds = [
                 image
                 for image in failed_images
@@ -306,19 +281,10 @@ class KonfluxOcpPipeline:
                 and failed_entries.get(image, {}).get('task_id') != 'n/a'
             ]
 
-            # If NO builds were actually attempted, skip failure counter increments.
-            # built_images counters were already reset above.
             if not attempted_builds:
-                LOGGER.warning(
-                    f'No builds were actually attempted for {group}: all {len(failed_images)} failures '
-                    f'have task_id=n/a (infrastructure failure) or are parent-dependency failures. '
-                    f'Skipping individual image counter updates. Jenkins job: {job_url}'
-                )
-                return
+                return None
 
         # Exclude images that failed only because their parent images failed to build.
-        # These children were never actually attempted, so incrementing their counters
-        # would be misleading.
         real_failed_images = []
         for image in failed_images:
             entry = failed_entries.get(image, {})
@@ -350,6 +316,59 @@ class KonfluxOcpPipeline:
                 # Fallback: unknown outcome, treat as build failure
                 build_failed_images.append(image)
 
+        return {
+            'failed_entries': failed_entries,
+            'build_failed_images': build_failed_images,
+            'ec_failed_images': ec_failed_images,
+            'release_failed_images': release_failed_images,
+        }
+
+    async def update_build_fail_counters(self, built_images, failed_images, record_log):
+        """
+        Update Redis failure counters after Konflux build run.
+
+        Categorizes failures into three types with separate Redis key patterns:
+        - Build failures:              count:build-failure:konflux:{group}:{image}
+        - EC (ITS) failures:           count:ec-failure:konflux:{group}:{image}
+        - Base image release failures: count:release-failure:konflux:{group}:{image}
+
+        Successfully built images reset all three counter types.
+
+        Infrastructure failures (where builds never started due to API/cluster issues)
+        are detected and skip individual image counter updates to avoid false inflation.
+        """
+        if self.assembly != 'stream':
+            return
+
+        group = f'openshift-{self.version}'
+        job_url = os.getenv('BUILD_URL')
+
+        # Always reset counters for successfully built images first, before any early returns.
+        # Without this, an all-infra-failure batch skips the reset and leaves stale counters.
+        counter_types = ['build-failure', 'ec-failure', 'release-failure']
+        if built_images:
+            await asyncio.gather(
+                *[
+                    reset_fail_counter(f'count:{counter_type}:konflux:{group}:{image}')
+                    for image in built_images
+                    for counter_type in counter_types
+                ]
+            )
+
+        categorized = self._categorize_build_failures(failed_images, record_log)
+        if categorized is None:
+            LOGGER.warning(
+                f'No builds were actually attempted for {group}: all {len(failed_images)} failures '
+                f'have task_id=n/a (infrastructure failure) or are parent-dependency failures. '
+                f'Skipping individual image counter updates. Jenkins job: {job_url}'
+            )
+            return
+
+        failed_entries = categorized['failed_entries']
+        build_failed_images = categorized['build_failed_images']
+        ec_failed_images = categorized['ec_failed_images']
+        release_failed_images = categorized['release_failed_images']
+
         # Increment counters for each failure type
         await asyncio.gather(
             *[
@@ -379,6 +398,58 @@ class KonfluxOcpPipeline:
                 )
                 for image in release_failed_images
             ],
+        )
+
+    def _handle_image_build_failures(self, record_log):
+        """
+        Email component owners about direct Konflux build failures (stream assembly only).
+
+        EC and base-image-release failures are intentionally excluded. Skips owner mail
+        when a large fraction of images failed (likely not an owner-specific issue).
+        """
+        if self.assembly != 'stream':
+            return
+
+        failed_images = [entry['name'] for entry in record_log.get('image_build_konflux', []) if int(entry['status'])]
+        if not failed_images:
+            return
+
+        categorized = self._categorize_build_failures(failed_images, record_log)
+        if categorized is None:
+            return
+
+        build_failed_images = categorized['build_failed_images']
+        if not build_failed_images:
+            return
+
+        # Ratio over non-parent image outcomes in this run (mirrors ocp.py spam gate).
+        last_status = {}
+        for entry in record_log.get('image_build_konflux', []):
+            if 'parent images failed to build' in entry.get('message', ''):
+                continue
+            last_status[entry['name']] = entry['status']
+
+        total = len(last_status)
+        failed = len({name for name, status in last_status.items() if int(status) != 0})
+        ratio = failed / total if total else 0
+
+        if (total > 10 and ratio > 0.25) or (ratio > 1 and failed == total):
+            LOGGER.warning(
+                "%s of %s image builds failed; probably not the owners' fault, will not spam",
+                failed,
+                total,
+            )
+            return
+
+        failed_map = {
+            name: categorized['failed_entries'][name]
+            for name in build_failed_images
+            if name in categorized['failed_entries']
+        }
+        util.mail_build_failure_owners_konflux(
+            failed_builds=failed_map,
+            mail_client=self.runtime.new_mail_client(),
+            default_owner=self.mail_list_failure,
         )
 
     def building_images(self):
@@ -577,6 +648,7 @@ class KonfluxOcpPipeline:
             jenkins.update_description('<br/>'.join(description_parts) + '<br/>')
 
         await self.update_build_fail_counters(built_images, failed_images, record_log)
+        self._handle_image_build_failures(record_log)
 
         if not built_images:
             # Nothing to do, skipping build-sync
@@ -1289,6 +1361,12 @@ class KonfluxOcpPipeline:
     type=click.Choice(['hermetic', 'internal-only', 'open']),
     help='Override network mode for Konflux builds. Takes precedence over image and group config settings.',
 )
+@click.option(
+    '--mail-list-failure',
+    required=False,
+    default='aos-art-automation+failed-ocp4-konflux-build@redhat.com',
+    help='Failure mailing list (default owner when image has no owners)',
+)
 @pass_runtime
 @click_coroutine
 async def ocp4(
@@ -1314,6 +1392,7 @@ async def ocp4(
     build_priority: Optional[str],
     use_mass_rebuild_locks: bool,
     network_mode: Optional[str],
+    mail_list_failure: str,
 ):
     if not kubeconfig:
         kubeconfig = os.environ.get('KONFLUX_SA_KUBECONFIG')
@@ -1343,6 +1422,7 @@ async def ocp4(
         build_priority=build_priority,
         use_mass_rebuild_locks=use_mass_rebuild_locks,
         network_mode=network_mode,
+        mail_list_failure=mail_list_failure,
     )
 
     if ignore_locks:
