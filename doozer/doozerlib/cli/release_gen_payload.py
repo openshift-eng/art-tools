@@ -1475,20 +1475,35 @@ class GenPayloadCli:
 
             kernel_vr = rhcos_kernel_vrs[dtk_stream]
             kernel_devel_nvr = f"kernel-devel-{kernel_vr}"
+
+            # Derive the el_target from the image metadata so we match the
+            # correct RHEL version (e.g. el9 vs el10 for driver-toolkit-rhel10).
+            dtk_image_meta = self.runtime.image_map.get(dtk_key)
+            el_target = str(dtk_image_meta.branch_el_target()) if dtk_image_meta else ""
+
             logger.info(
-                "DTK mismatch detected for '%s': searching KonfluxDB for a DTK build with %s (RHCOS kernel: %s)",
+                "DTK mismatch detected for '%s' (el_target=%s): searching KonfluxDB "
+                "for a DTK build with %s (RHCOS kernel: %s)",
                 dtk_key,
+                el_target,
                 kernel_devel_nvr,
                 kernel_vr,
             )
 
+            # Build the query filter. We require non-embargoed, successful
+            # builds for the correct group and RHEL version.
+            where_filter: Dict[str, Any] = {
+                "name": dtk_key,
+                "group": group,
+                "outcome": str(KonfluxBuildOutcome.SUCCESS),
+                "embargoed": False,
+            }
+            if el_target:
+                where_filter["el_target"] = el_target
+
             matching_record: Optional[KonfluxBuildRecord] = None
             async for record in konflux_db.search_builds_by_fields(
-                where={
-                    "name": dtk_key,
-                    "group": group,
-                    "outcome": str(KonfluxBuildOutcome.SUCCESS),
-                },
+                where=where_filter,
                 array_contains={"installed_rpms": kernel_devel_nvr},
                 limit=1,
             ):
@@ -1517,18 +1532,49 @@ class GenPayloadCli:
             # Update the canonical build map in the assembly inspector
             payload_bri[dtk_key] = new_bri
 
-            # Update payload entries across all architectures
+            # Update payload entries across all architectures.  Each arch
+            # needs its own image_inspector (with arch-specific digest) and
+            # recomputed pullspec destinations so downstream mirroring and
+            # imagestream tags point at the new DTK build, not the old one.
+            dest_repo = self.full_component_repo(repo_type=RepositoryType.PUBLIC)
             for arch, entries in self.payload_entries_for_arch.items():
                 for tag, entry in entries.items():
                     if entry.image_meta and entry.image_meta.distgit_key == dtk_key:
+                        try:
+                            new_image_inspector = new_bri.get_image_inspector(arch)
+                        except Exception:
+                            logger.warning(
+                                "Could not obtain image inspector for '%s' arch=%s from %s; keeping original entry",
+                                dtk_key,
+                                arch,
+                                matching_record.nvr,
+                            )
+                            continue
+
+                        if not new_image_inspector:
+                            logger.warning(
+                                "No arch-specific image found for '%s' arch=%s in %s; keeping original entry",
+                                dtk_key,
+                                arch,
+                                matching_record.nvr,
+                            )
+                            continue
+
+                        new_dest_pullspec = PayloadGenerator.get_mirroring_destination(
+                            new_image_inspector.get_digest(), dest_repo
+                        )
+                        new_ml_pullspec = PayloadGenerator.get_mirroring_destination(
+                            new_image_inspector.get_manifest_list_digest(), dest_repo
+                        )
+
                         # PayloadEntry is a NamedTuple — create a replacement
                         new_entry = PayloadEntry(
                             issues=entry.issues,
-                            dest_pullspec=entry.dest_pullspec,
-                            dest_manifest_list_pullspec=entry.dest_manifest_list_pullspec,
+                            dest_pullspec=new_dest_pullspec,
+                            dest_manifest_list_pullspec=new_ml_pullspec,
                             image_meta=entry.image_meta,
                             build_record_inspector=new_bri,
-                            image_inspector=entry.image_inspector,
+                            image_inspector=new_image_inspector,
                             rhcos_build=entry.rhcos_build,
                         )
                         entries[tag] = new_entry
