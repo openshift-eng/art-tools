@@ -6,6 +6,7 @@ from elliottlib.cli.verify_stage_testing_cli import (
     LabelCheckResult,
     StageTestingResult,
     TriggerResult,
+    _add_mr_label,
     _check_mr_label,
     _parse_gitlab_mr_url,
     get_job_status,
@@ -217,6 +218,33 @@ class TestCheckMrLabel(TestCase):
 
         result = _check_mr_label("https://gitlab.cee.redhat.com/group/project/-/merge_requests/1")
         self.assertFalse(result)
+
+
+class TestAddMrLabel(TestCase):
+    @patch("elliottlib.cli.verify_stage_testing_cli._get_gitlab_headers")
+    @patch("elliottlib.cli.verify_stage_testing_cli._get_session")
+    def test_add_label_success(self, mock_session, mock_headers):
+        mock_headers.return_value = {"PRIVATE-TOKEN": "token"}
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+        mock_session.return_value.put.return_value = mock_response
+
+        _add_mr_label("https://gitlab.cee.redhat.com/group/project/-/merge_requests/1")
+
+        call_kwargs = mock_session.return_value.put.call_args
+        self.assertEqual(call_kwargs.kwargs["json"], {"add_labels": "stage-testing-success"})
+
+    @patch("elliottlib.cli.verify_stage_testing_cli._get_gitlab_headers")
+    @patch("elliottlib.cli.verify_stage_testing_cli._get_session")
+    def test_add_label_http_error(self, mock_session, mock_headers):
+        mock_headers.return_value = {"PRIVATE-TOKEN": "token"}
+        mock_response = MagicMock()
+        mock_response.status_code = 403
+        mock_response.reason = "Forbidden"
+        mock_session.return_value.put.return_value = mock_response
+
+        with self.assertRaises(ClickException):
+            _add_mr_label("https://gitlab.cee.redhat.com/group/project/-/merge_requests/1")
 
 
 class TestTriggerResult(TestCase):

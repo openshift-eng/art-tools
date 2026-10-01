@@ -198,32 +198,15 @@ def _add_mr_label(mr_url: str) -> None:
     encoded_project = requests.utils.quote(project_path, safe="")
     api_url = f"{base_url}/api/v4/projects/{encoded_project}/merge_requests/{mr_iid}"
 
-    response = _get_session().get(
+    response = _get_session().put(
         url=api_url,
         headers=_get_gitlab_headers(),
+        json={"add_labels": STAGE_TESTING_LABEL},
         timeout=REQUEST_TIMEOUT,
         verify=ssl.get_default_verify_paths().openssl_cafile,
     )
     if response.status_code != 200:
-        raise click.ClickException(f"Failed to get MR info: HTTP {response.status_code} {response.reason}")
-
-    current_labels = response.json().get("labels", [])
-    if STAGE_TESTING_LABEL in current_labels:
-        LOGGER.info("Label '%s' already exists on MR", STAGE_TESTING_LABEL)
-        return
-
-    new_labels = current_labels + [STAGE_TESTING_LABEL]
-    update_response = _get_session().put(
-        url=api_url,
-        headers=_get_gitlab_headers(),
-        json={"labels": ",".join(new_labels)},
-        timeout=REQUEST_TIMEOUT,
-        verify=ssl.get_default_verify_paths().openssl_cafile,
-    )
-    if update_response.status_code != 200:
-        raise click.ClickException(
-            f"Failed to add label to MR: HTTP {update_response.status_code} {update_response.reason}"
-        )
+        raise click.ClickException(f"Failed to add label to MR: HTTP {response.status_code} {response.reason}")
     LOGGER.info("Added label '%s' to MR", STAGE_TESTING_LABEL)
 
 
@@ -362,7 +345,7 @@ def _handle_trigger(runtime, output):
     assembly = runtime.assembly
     job_id, job_name = trigger_prow_job(version, assembly)
     result = TriggerResult(job_id=job_id, job_name=job_name)
-    click.echo(render_verify_result(result, output))
+    handle_verify_result(result, output)
 
 
 def _handle_job_check(runtime, job_id, output):
@@ -379,6 +362,7 @@ def _handle_job_check(runtime, job_id, output):
 
     click.echo(render_verify_result(result, output))
 
+    # Exit on failed only, not on pending — artcd relies on rc=0 to continue polling
     if result.failed:
         raise SystemExit(1)
 
