@@ -1280,7 +1280,7 @@ def images_streams_gen_buildconfigs(runtime, streams, images, output, as_user, a
     for upstream_entry_name, config in upstreaming_entries.items():
         transform = config.transform
         if transform is Missing:
-            # No buildconfig is necessary
+            runtime.logger.info(f"Transformation is not set for {upstream_entry_name}. Skipping BuildConfig creation...")
             continue
 
         if transform not in transforms:
