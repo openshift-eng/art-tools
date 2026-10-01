@@ -115,6 +115,7 @@ class KonfluxOcpPipeline:
         build_priority: str = None,
         use_mass_rebuild_locks: bool = False,
         network_mode: Optional[str] = None,
+        mail_list_failure: str = 'aos-art-automation+failed-ocp4-konflux-build@redhat.com',
     ):
         self.runtime = runtime
         self.assembly = assembly
@@ -135,6 +136,7 @@ class KonfluxOcpPipeline:
         self.build_priority = build_priority
         self.use_mass_rebuild_locks = use_mass_rebuild_locks
         self.network_mode = network_mode
+        self.mail_list_failure = mail_list_failure
 
         # If build plan includes more than half or excludes less than half or rebuilds everything, it's a mass rebuild
         self.mass_rebuild = False
@@ -191,6 +193,56 @@ class KonfluxOcpPipeline:
 
         elif build_strategy == BuildStrategy.EXCEPT:
             return [f'--{kind}=', f'--exclude={",".join(excludes)}']
+
+    def _handle_image_build_failures(self, record_log):
+        """
+        Email component owners about direct Konflux build failures (stream assembly only).
+
+        EC and base-image-release failures are intentionally excluded. Skips owner mail
+        when a large fraction of images failed (likely not an owner-specific issue).
+        """
+        if self.assembly != 'stream':
+            return
+
+        failed_entries = {
+            entry['name']: entry for entry in record_log.get('image_build_konflux', []) if int(entry['status'])
+        }
+        if not failed_entries:
+            return
+
+        counter_failed_images = util.get_failed_images_for_counter_updates(list(failed_entries), failed_entries)
+        if not counter_failed_images:
+            return
+
+        build_failed_images = util.categorize_failed_images(counter_failed_images, failed_entries).build
+        if not build_failed_images:
+            return
+
+        # Ratio over non-parent image outcomes in this run (mirrors ocp.py spam gate).
+        last_status = {}
+        for entry in record_log.get('image_build_konflux', []):
+            if 'parent images failed to build' in entry.get('message', ''):
+                continue
+            last_status[entry['name']] = entry['status']
+
+        total = len(last_status)
+        failed = len({name for name, status in last_status.items() if int(status) != 0})
+        ratio = failed / total if total else 0
+
+        if (total > 10 and ratio > 0.25) or (ratio > 1 and failed == total):
+            LOGGER.warning(
+                "%s of %s image builds failed; probably not the owners' fault, will not spam",
+                failed,
+                total,
+            )
+            return
+
+        failed_map = {name: failed_entries[name] for name in build_failed_images if name in failed_entries}
+        util.mail_build_failure_owners_konflux(
+            failed_builds=failed_map,
+            mail_client=self.runtime.new_mail_client(),
+            default_owner=self.mail_list_failure,
+        )
 
     def building_images(self):
         """
@@ -422,6 +474,7 @@ class KonfluxOcpPipeline:
                 increment_counter=increment_fail_counter,
             )
         )
+        self._handle_image_build_failures(record_log)
 
         if not built_images:
             # Nothing to do, skipping build-sync
@@ -1371,6 +1424,12 @@ class KonfluxOcpPipeline:
     type=click.Choice(['hermetic', 'internal-only', 'open']),
     help='Override network mode for Konflux builds. Takes precedence over image and group config settings.',
 )
+@click.option(
+    '--mail-list-failure',
+    required=False,
+    default='aos-art-automation+failed-ocp4-konflux-build@redhat.com',
+    help='Failure mailing list (default owner when image has no owners)',
+)
 @pass_runtime
 @click_coroutine
 async def ocp4(
@@ -1396,6 +1455,7 @@ async def ocp4(
     build_priority: Optional[str],
     use_mass_rebuild_locks: bool,
     network_mode: Optional[str],
+    mail_list_failure: str,
 ):
     if not kubeconfig:
         kubeconfig = os.environ.get('KONFLUX_SA_KUBECONFIG')
@@ -1425,6 +1485,7 @@ async def ocp4(
         build_priority=build_priority,
         use_mass_rebuild_locks=use_mass_rebuild_locks,
         network_mode=network_mode,
+        mail_list_failure=mail_list_failure,
     )
 
     if ignore_locks:
