@@ -107,6 +107,18 @@ class KonfluxOkdPipeline:
 
     async def run(self):
         await self.initialize()
+
+        # Add build history link after initialize() so users can monitor build status live
+        job_url = os.getenv('BUILD_URL', '')
+        build_history_url = build_history_link_url(
+            group=f'okd-{self.version}',
+            assembly=self.assembly,
+            days=2,
+            job_url=job_url,
+            outcomes=['Pending', 'Success', 'Failure'],
+        )
+        jenkins.update_description(f'<a href="{build_history_url}">Status of image builds</a><br/>')
+
         await self.rebase_and_build_images()
         await self.update_imagestreams()
         await self.mirror_coreos_imagestreams()
