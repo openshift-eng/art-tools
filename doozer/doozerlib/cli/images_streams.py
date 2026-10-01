@@ -78,10 +78,16 @@ transforms = set(
 def get_image_digest(pullspec: str, registry_config: Optional[str] = None) -> Optional[str]:
     """
     Get the digest of an image, handling both single-arch and manifest lists.
-    Returns the digest string (e.g., 'sha256:...') or None if not found.
+    For manifest lists, returns the manifest list digest (not a per-arch digest)
+    so that multi-arch references are preserved. Returns the digest string
+    (e.g., 'sha256:...') or None if not found.
     """
-    # Use text output (not -o json) because -o json fails for manifest lists
-    cmd = f'oc image info {pullspec}'
+    # Use text output (not -o json) because -o json fails for manifest lists.
+    # --show-multiarch avoids the "image is a manifest list" ambiguity error without
+    # requiring a specific OS/arch to be present (unlike --filter-by-os, which would
+    # fail again if the list doesn't contain that arch). It prints one block per
+    # variant, each carrying the same "Manifest List:" digest line.
+    cmd = f'oc image info {pullspec} --show-multiarch'
     if registry_config:
         cmd += f' --registry-config={registry_config}'
 
@@ -89,11 +95,16 @@ def get_image_digest(pullspec: str, registry_config: Optional[str] = None) -> Op
     if rc != 0:
         return None
 
-    # Parse digest from text output: "Digest: sha256:..."
+    # Prefer the manifest list digest (present when the image is a manifest list);
+    # fall back to the single-manifest digest otherwise.
+    manifest_list_digest = None
+    single_digest = None
     for line in stdout.splitlines():
-        if line.startswith('Digest:'):
-            return line.split(':', 1)[1].strip()
-    return None
+        if line.startswith('Manifest List:'):
+            manifest_list_digest = line.split(':', 1)[1].strip()
+        elif line.startswith('Digest:'):
+            single_digest = line.split(':', 1)[1].strip()
+    return manifest_list_digest or single_digest
 
 
 def _check_upstream_image_exists(runtime, upstream_image: str) -> None:
@@ -1280,7 +1291,9 @@ def images_streams_gen_buildconfigs(runtime, streams, images, output, as_user, a
     for upstream_entry_name, config in upstreaming_entries.items():
         transform = config.transform
         if transform is Missing:
-            runtime.logger.info(f"Transformation is not set for {upstream_entry_name}. Skipping BuildConfig creation...")
+            runtime.logger.info(
+                f"Transformation is not set for {upstream_entry_name}. Skipping BuildConfig creation..."
+            )
             continue
 
         if transform not in transforms:
