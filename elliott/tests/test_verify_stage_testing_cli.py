@@ -82,6 +82,17 @@ class TestStageTestingResult(TestCase):
         text = r.render_text()
         self.assertIn("stage-testing-success", text)
 
+    def test_label_error(self):
+        r = StageTestingResult(job_id="abc", job_name="test", state="success", label_error="connection refused")
+        self.assertFalse(r.passed)
+        self.assertTrue(r.failed)
+        self.assertTrue(r.terminal)
+        d = r.to_dict()
+        self.assertEqual(d["label_error"], "connection refused")
+        self.assertFalse(d["passed"])
+        text = r.render_text()
+        self.assertIn("Label update failed", text)
+
 
 class TestLabelCheckResult(TestCase):
     def test_found(self):

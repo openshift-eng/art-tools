@@ -46,14 +46,15 @@ class StageTestingResult(VerifyResultBase):
     start_time: Optional[str] = None
     completion_time: Optional[str] = None
     label_added: bool = False
+    label_error: Optional[str] = None
 
     @property
     def passed(self) -> bool:
-        return self.state == "success"
+        return self.state == "success" and self.label_error is None
 
     @property
     def failed(self) -> bool:
-        return self.state in TERMINAL_STATES and self.state != "success"
+        return self.label_error is not None or (self.state in TERMINAL_STATES and self.state != "success")
 
     @property
     def terminal(self) -> bool:
@@ -74,6 +75,7 @@ class StageTestingResult(VerifyResultBase):
             "start_time": self.start_time,
             "completion_time": self.completion_time,
             "label_added": self.label_added,
+            **({"label_error": self.label_error} if self.label_error else {}),
         }
 
     def render_text(self) -> str:
@@ -90,6 +92,8 @@ class StageTestingResult(VerifyResultBase):
             lines.append(f"  Completed: {self.completion_time}")
         if self.label_added:
             lines.append(f"  Label '{STAGE_TESTING_LABEL}' added to MR")
+        if self.label_error:
+            lines.append(f"  Label update failed: {self.label_error}")
         return "\n".join(lines)
 
 
@@ -364,10 +368,14 @@ def _handle_trigger(runtime, output):
 def _handle_job_check(runtime, job_id, output):
     result = get_job_status(job_id)
 
-    if result.passed:
-        mr_url = get_assembly_shipment_url(runtime, required=True)
-        _add_mr_label(mr_url)
-        result.label_added = True
+    if result.state == "success":
+        try:
+            mr_url = get_assembly_shipment_url(runtime, required=True)
+            _add_mr_label(mr_url)
+            result.label_added = True
+        except Exception as exc:
+            result.label_error = str(exc)
+            LOGGER.error("Failed to add stage-testing label: %s", exc)
 
     click.echo(render_verify_result(result, output))
 
