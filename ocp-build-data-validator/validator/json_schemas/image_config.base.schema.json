@@ -1442,7 +1442,7 @@
                 },
                 "enabled-": {},
                 "resources": {
-                  "description": "Array of resource URLs or objects with URL and optional filename",
+                  "description": "Array of generic URLs or Maven artifact resources",
                   "type": "array",
                   "items": {
                     "oneOf": [
@@ -1463,6 +1463,53 @@
                           "filename": {
                             "type": "string",
                             "description": "Custom destination filename (optional)"
+                          }
+                        },
+                        "additionalProperties": false
+                      },
+                      {
+                        "type": "object",
+                        "required": ["type", "attributes"],
+                        "properties": {
+                          "type": {
+                            "const": "maven",
+                            "description": "Maven repository artifact"
+                          },
+                          "filename": {
+                            "type": "string",
+                            "description": "Custom destination filename (optional)"
+                          },
+                          "attributes": {
+                            "type": "object",
+                            "required": ["repository_url", "group_id", "artifact_id", "version"],
+                            "properties": {
+                              "repository_url": {
+                                "type": "string",
+                                "format": "uri"
+                              },
+                              "group_id": {
+                                "type": "string",
+                                "minLength": 1
+                              },
+                              "artifact_id": {
+                                "type": "string",
+                                "minLength": 1
+                              },
+                              "version": {
+                                "type": "string",
+                                "minLength": 1
+                              },
+                              "type": {
+                                "type": "string",
+                                "minLength": 1,
+                                "description": "Maven packaging type (defaults to jar)"
+                              },
+                              "classifier": {
+                                "type": "string",
+                                "description": "Optional Maven classifier"
+                              }
+                            },
+                            "additionalProperties": false
                           }
                         },
                         "additionalProperties": false

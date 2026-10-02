@@ -20,6 +20,19 @@ from doozerlib.repos import Repos
 TRACER = trace.get_tracer(__name__)
 DEFAULT_RPM_LOCKFILE_NAME = "rpms.lock.yaml"
 DEFAULT_ARTIFACT_LOCKFILE_NAME = "artifacts.lock.yaml"
+MAVEN_TYPE_TO_EXTENSION = {
+    "pom": "pom",
+    "jar": "jar",
+    "maven-plugin": "jar",
+    "ear": "ear",
+    "ejb": "jar",
+    "ejb-client": "jar",
+    "javadoc": "jar",
+    "javadoc-source": "jar",
+    "rar": "rar",
+    "test-jar": "jar",
+    "war": "war",
+}
 
 
 def sort_repos_for_lockfile_resolution(repo_names: set[str]) -> list[str]:
@@ -160,6 +173,24 @@ class ArtifactInfo:
             "download_url": self.url,
             "checksum": self.checksum,
             "filename": self.filename,
+        }
+
+
+@dataclass(frozen=True)
+class MavenArtifactInfo:
+    """Artifact metadata for Maven repository downloads."""
+
+    attributes: Dict[str, str]
+    checksum: str
+    filename: str
+
+    def to_dict(self) -> Dict[str, object]:
+        """Convert the artifact metadata to Hermeto's Maven lockfile format."""
+        return {
+            "type": "maven",
+            "filename": self.filename,
+            "attributes": self.attributes,
+            "checksum": self.checksum,
         }
 
 
@@ -980,6 +1011,30 @@ class ArtifactLockfileGenerator:
         """Extract filename from URL for artifact naming."""
         return url.split('/')[-1] or 'artifact'
 
+    def _maven_artifact_filename(self, attributes: Dict[str, str]) -> str:
+        """Build the Maven repository filename from artifact coordinates."""
+        artifact_id = attributes['artifact_id']
+        version = attributes['version']
+        classifier = attributes.get('classifier', '')
+        artifact_type = attributes.get('type', 'jar')
+        # Maven convention: type=test-jar implicitly means classifier=tests
+        # when no explicit classifier is provided.
+        if artifact_type == 'test-jar' and not classifier:
+            classifier = 'tests'
+        extension = MAVEN_TYPE_TO_EXTENSION.get(artifact_type, artifact_type)
+
+        filename = f"{artifact_id}-{version}"
+        if classifier:
+            filename += f"-{classifier}"
+        return f"{filename}.{extension}"
+
+    def _maven_download_url(self, attributes: Dict[str, str]) -> str:
+        """Build the Maven repository download URL from artifact coordinates."""
+        group_path = attributes['group_id'].replace('.', '/')
+        filename = self._maven_artifact_filename(attributes)
+        repository_url = attributes['repository_url'].rstrip('/')
+        return f"{repository_url}/{group_path}/{attributes['artifact_id']}/{attributes['version']}/{filename}"
+
     def should_generate_artifact_lockfile(self, image_meta: ImageMetadata, dest_dir: Path) -> bool:
         """
         Determine if artifact lockfile generation should proceed.
@@ -1033,18 +1088,33 @@ class ArtifactLockfileGenerator:
 
     async def _download_and_compute_checksum(
         self, session: aiohttp.ClientSession, artifact_resource: dict
-    ) -> ArtifactInfo:
+    ) -> ArtifactInfo | MavenArtifactInfo:
         """
         Download artifact and compute its SHA256 checksum.
 
         Args:
             session (aiohttp.ClientSession): HTTP session for downloads.
-            artifact_resource (dict): Resource definition with 'url' and optional 'filename' keys.
+            artifact_resource (dict): Resource definition — either a generic URL
+                resource with 'url' and optional 'filename' keys, or a Maven
+                artifact resource with 'type' set to 'maven' and an 'attributes'
+                dict containing Maven coordinates (repository_url, group_id,
+                artifact_id, version, and optional type/classifier).
 
         Returns:
-            ArtifactInfo: Artifact metadata with checksum.
+            ArtifactInfo | MavenArtifactInfo: Artifact metadata with checksum.
+                Returns MavenArtifactInfo for Maven resources, ArtifactInfo for
+                generic URL resources.
         """
-        url = artifact_resource['url']
+        is_maven = artifact_resource.get('type') == 'maven'
+        if is_maven:
+            attributes = artifact_resource['attributes']
+            url = self._maven_download_url(attributes)
+            default_filename = self._maven_artifact_filename(attributes)
+        else:
+            attributes = None
+            url = artifact_resource['url']
+            default_filename = self._extract_filename_from_url(url)
+
         custom_filename = artifact_resource.get('filename')
 
         self.logger.debug(f"Downloading artifact from {url}")
@@ -1060,8 +1130,14 @@ class ArtifactLockfileGenerator:
             filename = custom_filename
             self.logger.info(f"Using custom destination filename: {filename} for {url}")
         else:
-            filename = self._extract_filename_from_url(url)
+            filename = default_filename
 
+        if is_maven:
+            return MavenArtifactInfo(
+                attributes=attributes,
+                checksum=f"sha256:{checksum}",
+                filename=filename,
+            )
         return ArtifactInfo(url=url, checksum=f"sha256:{checksum}", filename=filename)
 
     def _write_yaml(self, data: dict, output_path: Path) -> None:

@@ -50,3 +50,12 @@ Validations
 
 -  Stream is supported (if declared, value must match one of the entries in ``streams.yml``)
 -  Member exists (if declared, member must be another existing declaration under ``images/``)
+
+Artifact lockfile resources
+---------------------------
+
+Image metadata under ``konflux.cachi2.artifact_lockfile.resources`` accepts
+generic URL resources and Maven resources. Maven resources use the Hermeto
+generic-lockfile fields ``type: maven`` and ``attributes`` containing
+``repository_url``, ``group_id``, ``artifact_id``, and ``version``. An optional
+``filename`` preserves the path expected by the image Dockerfile.
