@@ -5,6 +5,7 @@ This module provides validation for group.yml files using JSON schemas.
 """
 
 import json
+import re
 import sys
 
 from artcommonlib.util import validate_bridge_release_basis_group
@@ -13,6 +14,38 @@ from jsonschema.validators import validator_for
 from schema import SchemaError
 
 from validator.support import replace_vars
+
+GO_VERSION_VARS = ("GO_LATEST", "GO_EXTRA", "GO_PREVIOUS")
+
+
+def _go_major_minor(var_name, value):
+    match = re.fullmatch(r"(\d+)\.(\d+)(?:\.\d+)?", str(value))
+    if not match:
+        raise SchemaError(f"Invalid {var_name} value: {value}")
+    return f"{match[1]}.{match[2]}"
+
+
+def _validate_go_version_vars(vars_map):
+    """
+    GO_LATEST/GO_EXTRA/GO_PREVIOUS must all resolve to distinct major.minor versions.
+    Consumers (e.g. pyartcd's update_golang pipeline) rely on this to identify a single
+    matching variant for a given golang build, rather than having to check every variant
+    that could share the same major.minor.
+    """
+    major_minors = {}
+    for var_name in GO_VERSION_VARS:
+        value = vars_map.get(var_name)
+        if value is None:
+            continue
+        major_minor = _go_major_minor(var_name, value)
+        if major_minor in major_minors:
+            return (
+                f"{var_name} and {major_minors[major_minor]} cannot both resolve to the same "
+                f"major.minor version ({major_minor})"
+            )
+        major_minors[major_minor] = var_name
+    return ''
+
 
 if sys.version_info < (3, 9):
     # importlib.resources either doesn't exist or lacks the files()
@@ -94,5 +127,12 @@ def validate(_, data):
             validate_bridge_release_basis_group(group_name, basis_group)
         except ValueError as e:
             return str(e)
+
+    try:
+        go_version_error = _validate_go_version_vars(vars_map)
+    except SchemaError as e:
+        return str(e)
+    if go_version_error:
+        return go_version_error
 
     return ''
