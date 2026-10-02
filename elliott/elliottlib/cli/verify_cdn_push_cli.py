@@ -86,6 +86,7 @@ class VerifyCdnPushResult(VerifyResultBase):
                     "impetus": a.impetus,
                     "complete": a.complete,
                     "failed": a.failed,
+                    "pending": a.pending,
                     "skipped": a.skipped,
                     "push_triggered": a.push_triggered,
                     "error": a.error,
@@ -152,7 +153,6 @@ async def check_advisory_push(api: AsyncErrataAPI, advisory_id: int, impetus: st
             push_response = await api.push_cdn_stage(advisory_id)
             if push_response is None:
                 LOGGER.warning("Advisory %s (%s): push rejected (unmet dependencies)", advisory_id, impetus)
-                result.error = "push rejected due to unmet dependencies"
             else:
                 result.push_triggered = True
                 raw_jobs = await api.get_push_jobs(advisory_id)
@@ -216,7 +216,6 @@ async def verify_cdn_push(advisories: dict[str, int], do_push: bool) -> VerifyCd
                     AdvisoryPushResult(
                         advisory_id=advisory_id,
                         impetus=impetus,
-                        error="blocking advisories not yet complete",
                     )
                 )
                 continue
