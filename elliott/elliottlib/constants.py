@@ -50,6 +50,7 @@ errata_inactive_advisory_labels = [
 errata_states = errata_active_advisory_labels + errata_inactive_advisory_labels
 
 errata_shipped_advisory_label = "SHIPPED_LIVE"
+errata_dropped_advisory_label = "DROPPED_NO_SHIP"
 
 # These are the types of advisories that may have definitions in group.yml
 # TODO: this should probably be user-definable in some way
