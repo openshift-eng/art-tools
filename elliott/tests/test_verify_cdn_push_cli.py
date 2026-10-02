@@ -256,8 +256,8 @@ class TestCheckAdvisoryPush(IsolatedAsyncioTestCase):
         api.push_cdn_stage.return_value = None
         result = await check_advisory_push(api, 12345, "rpm", do_push=True)
         self.assertFalse(result.push_triggered)
-        self.assertTrue(result.failed)
-        self.assertIn("unmet dependencies", result.error)
+        self.assertFalse(result.failed)
+        self.assertTrue(result.pending)
 
 
 class TestVerifyCdnPush(IsolatedAsyncioTestCase):
