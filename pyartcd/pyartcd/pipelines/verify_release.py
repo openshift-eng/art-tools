@@ -297,6 +297,7 @@ class VerifyReleasePipeline:
             "security-alerts",
             "kernel-tag",
             "cve-trackers",
+            "stage-testing",
         ]
     ),
     help="Steps to skip.",

@@ -27,6 +27,7 @@ GANGWAY_URL = "https://gangway-ci.apps.ci.l2s4.p1.openshiftapps.com/v1/execution
 JOB_NAME_TEMPLATE = "periodic-ci-openshift-openshift-tests-private-release-{version}-stage-testing-e2e-aws-ipi"
 PAYLOAD_TEMPLATE = "quay.io/openshift-release-dev/ocp-release:{assembly}-x86_64"
 
+STAGE_RELEASE_LABEL = "stage-release-success"
 STAGE_TESTING_LABEL = "stage-testing-success"
 TERMINAL_STATES = {"success", "failure", "aborted", "error"}
 REQUEST_TIMEOUT = 30
@@ -175,7 +176,7 @@ def _parse_gitlab_mr_url(mr_url: str) -> tuple[str, str, str]:
     return match.group(1), match.group(2), match.group(3)
 
 
-def _check_mr_label(mr_url: str) -> bool:
+def _check_mr_label(mr_url: str, label: str = STAGE_TESTING_LABEL) -> bool:
     base_url, project_path, mr_iid = _parse_gitlab_mr_url(mr_url)
     encoded_project = requests.utils.quote(project_path, safe="")
     api_url = f"{base_url}/api/v4/projects/{encoded_project}/merge_requests/{mr_iid}"
@@ -190,7 +191,7 @@ def _check_mr_label(mr_url: str) -> bool:
         raise click.ClickException(f"Failed to get MR info: HTTP {response.status_code} {response.reason}")
 
     labels = response.json().get("labels", [])
-    return STAGE_TESTING_LABEL in labels
+    return label in labels
 
 
 def _add_mr_label(mr_url: str) -> None:
@@ -343,6 +344,14 @@ def verify_stage_testing_cli(runtime, job_id, trigger, output):
 def _handle_trigger(runtime, output):
     version = runtime.group.split("-")[-1]
     assembly = runtime.assembly
+
+    mr_url = get_assembly_shipment_url(runtime, required=True)
+    if not _check_mr_label(mr_url, STAGE_RELEASE_LABEL):
+        raise click.ClickException(
+            f"Cannot trigger stage testing: '{STAGE_RELEASE_LABEL}' label not found on shipment MR. "
+            "Stage release (payload + FBC merge) must complete first."
+        )
+
     job_id, job_name = trigger_prow_job(version, assembly)
     result = TriggerResult(job_id=job_id, job_name=job_name)
     handle_verify_result(result, output)
