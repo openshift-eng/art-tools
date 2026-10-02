@@ -1827,6 +1827,39 @@ class TestImageMetadataAsyncMethods(IsolatedAsyncioTestCase):
         ]
         self.assertEqual(result, expected)
 
+    def test_get_required_artifacts_maven_resource(self):
+        metadata = MagicMock()
+        metadata.is_artifact_lockfile_enabled.return_value = True
+        metadata.config.konflux.cachi2.artifact_lockfile.resources = [
+            {
+                'type': 'maven',
+                'filename': 'fernflower.jar',
+                'attributes': {
+                    'repository_url': 'https://repository.example.com/maven2',
+                    'group_id': 'org.jetbrains.java.decompiler',
+                    'artifact_id': 'fernflower',
+                    'version': '8.1.0.GA-redhat-00001',
+                },
+            }
+        ]
+        metadata.get_required_artifacts = ImageMetadata.get_required_artifacts.__get__(metadata, ImageMetadata)
+
+        self.assertEqual(
+            metadata.get_required_artifacts(),
+            [
+                {
+                    'type': 'maven',
+                    'filename': 'fernflower.jar',
+                    'attributes': {
+                        'repository_url': 'https://repository.example.com/maven2',
+                        'group_id': 'org.jetbrains.java.decompiler',
+                        'artifact_id': 'fernflower',
+                        'version': '8.1.0.GA-redhat-00001',
+                    },
+                }
+            ],
+        )
+
     def test_get_required_artifacts_missing_resources(self):
         from artcommonlib.model import Missing
 
