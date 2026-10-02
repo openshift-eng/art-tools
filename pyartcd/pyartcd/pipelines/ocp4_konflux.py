@@ -736,7 +736,7 @@ class KonfluxOcpPipeline:
         child job independently runs build-node-image and mirrors a passing
         pair to art-images.
 
-        Each RHEL version is delegated independently so a failed pair does not
+        Each RHEL version is delegated concurrently so a failed pair does not
         prevent the other pair from being tested.
         """
         if self.assembly != 'stream':
@@ -802,27 +802,32 @@ class KonfluxOcpPipeline:
                 ('rhel10', ('rhcos-node-image-rhel10', 'rhcos-node-extensions-rhel10')),
             ]
 
-            pair_failures = []
-            for rhel_label, pair in rhel_pairs:
-                try:
-                    tested_pair = await self._trigger_rhcos_pair_test(
+            pair_results = await asyncio.gather(
+                *(
+                    self._trigger_rhcos_pair_test(
                         rhel_label,
                         pair,
                         rebuilt_images,
                         all_rhcos_records,
                         release_streams,
                     )
-                except Exception as e:
+                    for rhel_label, pair in rhel_pairs
+                ),
+                return_exceptions=True,
+            )
+
+            pair_failures = []
+            for (rhel_label, _), result in zip(rhel_pairs, pair_results):
+                if isinstance(result, BaseException):
                     LOGGER.warning(
                         "RHCOS %s integration test failed; skipping promotion for this pair: %s",
                         rhel_label,
-                        e,
-                        exc_info=True,
+                        result,
+                        exc_info=(type(result), result, result.__traceback__),
                     )
-                    pair_failures.append((rhel_label, e))
-                else:
-                    if tested_pair:
-                        LOGGER.info('RHCOS %s post-build job completed successfully', rhel_label)
+                    pair_failures.append((rhel_label, result))
+                elif result:
+                    LOGGER.info('RHCOS %s post-build job completed successfully', rhel_label)
 
             if pair_failures:
                 failures = '; '.join(f'{rhel_label}: {error}' for rhel_label, error in pair_failures)
@@ -953,7 +958,8 @@ class KonfluxOcpPipeline:
         if self.runtime.dry_run:
             return child_params
 
-        child_result = jenkins.start_build(
+        child_result = await asyncio.to_thread(
+            jenkins.start_build,
             jenkins.Jobs.RHCOS_NODE_IMAGE_POST_BUILD,
             child_params,
             block_until_complete=True,

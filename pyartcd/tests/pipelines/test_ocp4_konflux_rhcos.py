@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 
 import os
+import threading
 import unittest
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -163,14 +164,20 @@ class TestRhcosPostBuildDelegation(unittest.IsolatedAsyncioTestCase):
     @patch('pyartcd.pipelines.ocp4_konflux.load_group_config', new_callable=AsyncMock)
     @patch('pyartcd.pipelines.ocp4_konflux.jenkins.update_description')
     @patch('pyartcd.pipelines.ocp4_konflux.jenkins.start_build')
-    async def test_pairs_are_independent_and_failures_mark_parent_unstable(
+    async def test_pairs_run_in_parallel_and_failures_mark_parent_unstable(
         self,
         mock_start_build,
         _mock_update_description,
         mock_load_group_config,
     ):
         mock_load_group_config.return_value = self.group_config
-        mock_start_build.side_effect = ['SUCCESS', 'FAILURE']
+        builds_started = threading.Barrier(2)
+
+        def start_build(job, params, **kwargs):
+            builds_started.wait(timeout=5)
+            return 'SUCCESS' if params['RELEASE'] == '4.21-9.8' else 'FAILURE'
+
+        mock_start_build.side_effect = start_build
         self.pipeline.parse_record_log = MagicMock(return_value={'image_build_konflux': self.records})
 
         critical_failures = []
@@ -180,12 +187,13 @@ class TestRhcosPostBuildDelegation(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(mock_start_build.call_count, 2)
         self.assertEqual([name for name, _ in critical_failures], ['trigger_rhcos_node_image_post_build'])
         self.assertTrue(any('RHCOS rhel10 integration test failed' in message for message in logs.output))
+        params_by_release = {call.args[1]['RELEASE']: call.args[1] for call in mock_start_build.call_args_list}
         self.assertEqual(
-            mock_start_build.call_args_list[0].args[1]['NODE_IMAGE'],
+            params_by_release['4.21-9.8']['NODE_IMAGE'],
             self.records[0]['image_pullspec'],
         )
         self.assertEqual(
-            mock_start_build.call_args_list[1].args[1]['EXTENSIONS_IMAGE'],
+            params_by_release['4.21-10.0']['EXTENSIONS_IMAGE'],
             self.records[3]['image_pullspec'],
         )
 
