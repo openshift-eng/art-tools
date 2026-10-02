@@ -52,6 +52,7 @@ from . import (
     tarball_sources,
     update_golang,
     verify_release,
+    verify_stage_testing,
 )
 
 __all__ = [
@@ -104,4 +105,5 @@ __all__ = [
     'tarball_sources',
     'update_golang',
     'verify_release',
+    'verify_stage_testing',
 ]
