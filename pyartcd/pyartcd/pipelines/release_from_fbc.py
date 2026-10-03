@@ -19,7 +19,7 @@ from artcommonlib.build_visibility import is_nvr_embargoed
 from artcommonlib.constants import SHIPMENT_DATA_URL_TEMPLATE
 from artcommonlib.gitdata import SafeFormatter
 from artcommonlib.github_auth import get_github_client_for_org
-from artcommonlib.gitlab import GitLabClient
+from artcommonlib.gitlab import ApprovalRuleSetupError, GitLabClient
 from artcommonlib.rpm_utils import parse_nvr
 from artcommonlib.util import new_roundtrip_yaml_handler
 from elliottlib.shipment_model import (
@@ -976,6 +976,26 @@ class ReleaseFromFbcPipeline:
 
         return ShipmentConfig(shipment=shipment)
 
+    async def _set_shipment_mr_approval_rules(self, mr_url: str) -> None:
+        """Apply configured approval rules to a new or reused shipment MR."""
+        # Try image config first, then fall back to group.yml.
+        approvers_config: dict[str, list[str]] = {}
+        image_key = await self._resolve_single_image_key()
+        if image_key:
+            approvers_config = await self._load_mr_approvers_from_image_config(image_key)
+        if not approvers_config:
+            approvers_config = await self._load_mr_approvers_from_group_config()
+
+        if approvers_config:
+            if self.dry_run:
+                self.logger.info("[DRY-RUN] Would set MR approval rules: %s", approvers_config)
+            else:
+                try:
+                    await self._gitlab.set_mr_approval_rules(mr_url, approvers_config)
+                except Exception as e:
+                    self.logger.exception("Failed to set approval rules for shipment MR %s: %s", mr_url, e)
+                    raise
+
     async def create_shipment_mr(self, shipments_by_kind: Dict[str, ShipmentConfig], env: str = "prod") -> str:
         """
         Create a new shipment MR with the given shipment config files.
@@ -1044,22 +1064,7 @@ class ReleaseFromFbcPipeline:
             mr_url = mr.web_url
             self.logger.info("Created Merge Request: %s", mr_url)
 
-        # Configure approval rules: try image config first, fall back to group.yml
-        approvers_config: dict[str, list[str]] = {}
-        image_key = await self._resolve_single_image_key()
-        if image_key:
-            approvers_config = await self._load_mr_approvers_from_image_config(image_key)
-        if not approvers_config:
-            approvers_config = await self._load_mr_approvers_from_group_config()
-
-        if approvers_config:
-            if self.dry_run:
-                self.logger.info("[DRY-RUN] Would set MR approval rules: %s", approvers_config)
-            else:
-                try:
-                    await self._gitlab.set_mr_approval_rules(mr_url, approvers_config)
-                except Exception as e:
-                    self.logger.warning(f"Failed to set MR approval rules: {e}")
+        await self._set_shipment_mr_approval_rules(mr_url)
 
         # Store the MR URL for later use
         self.shipment_mr_url = mr_url
@@ -1462,6 +1467,8 @@ class ReleaseFromFbcPipeline:
                         await self._set_shipment_mr_dependency(main_ocp_mr_url)
                     self._update_jira_with_mr_link(mr_url)
                     await self.set_shipment_mr_ready()
+                except ApprovalRuleSetupError:
+                    raise
                 except Exception as e:
                     self.logger.exception("Failed to create MR: %s", e)
                     if not self.dry_run:
@@ -1483,6 +1490,7 @@ class ReleaseFromFbcPipeline:
                         allow_active_stage=False,
                     )
                     await self._verify_layered_product_shipment_mr()
+                    await self._set_shipment_mr_approval_rules(self._configured_shipment_mr_url)
                     set_shipment_mr_draft(existing_mr, self.dry_run)
                     if self.test_mode:
                         _mark_shipment_mr_as_test(existing_mr, self.dry_run)

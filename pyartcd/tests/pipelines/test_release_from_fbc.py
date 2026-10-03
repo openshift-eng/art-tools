@@ -3,6 +3,7 @@ import unittest
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import click
+from artcommonlib.gitlab import ApprovalRuleSetupError
 from elliottlib.shipment_model import (
     ComponentSource,
     GitSource,
@@ -13,6 +14,7 @@ from elliottlib.shipment_model import (
     SnapshotComponent,
     SnapshotSpec,
 )
+from gitlab.exceptions import GitlabCreateError, GitlabDeleteError, GitlabListError
 from pyartcd.lp_shipment import ShipmentMRActiveStageError, ShipmentMRValidationError
 from pyartcd.pipelines.release_from_fbc import (
     _TEST_MR_DESCRIPTION_MARKER,
@@ -385,8 +387,8 @@ class TestCreateShipmentMrApprovalRules(unittest.TestCase):
         mock_gitlab.set_mr_approval_rules.assert_not_called()
 
     @patch("pyartcd.pipelines.release_from_fbc.exectools.cmd_gather_async")
-    def test_approval_rules_exception_logged_not_raised(self, mock_cmd):
-        """If set_mr_approval_rules raises, the exception is caught and logged."""
+    def test_approval_rules_exception_logged_and_raised(self, mock_cmd):
+        """Approval setup failures leave the shipment MR draft and fail the pipeline."""
         mock_cmd.return_value = (0, "QE:\n- asdas1\n", "")
 
         pipeline = self._make_pipeline(dry_run=False)
@@ -402,9 +404,11 @@ class TestCreateShipmentMrApprovalRules(unittest.TestCase):
         mock_gitlab.set_mr_approval_rules = AsyncMock(side_effect=RuntimeError("API error"))
         pipeline.__dict__["_gitlab"] = mock_gitlab
 
-        mr_url = asyncio.run(pipeline.create_shipment_mr({}, env="prod"))
+        with self.assertLogs("pyartcd.pipelines.release_from_fbc", level="ERROR") as logs:
+            with self.assertRaisesRegex(RuntimeError, "API error"):
+                asyncio.run(pipeline.create_shipment_mr({}, env="prod"))
 
-        self.assertEqual(mr_url, mock_mr.web_url)
+        self.assertIn(mock_mr.web_url, "\n".join(logs.output))
 
 
 class TestSetMrApprovalRules(unittest.TestCase):
@@ -517,6 +521,57 @@ class TestSetMrApprovalRules(unittest.TestCase):
         )
 
         self.assertEqual(mock_mr.approval_rules.create.call_count, 2)
+
+    def test_failed_delete_identifies_rule(self):
+        client = self._make_client()
+        mr_url = "https://gitlab.example.com/a/b/-/merge_requests/1"
+        mock_mr = MagicMock()
+        existing_rule = MagicMock()
+        existing_rule.name = "Docs"
+        existing_rule.id = 300
+        existing_rule.delete.side_effect = GitlabDeleteError("Prohibited", response_code=403)
+        mock_mr.approval_rules.list.return_value = [existing_rule]
+        client.get_mr_from_url = MagicMock(return_value=mock_mr)
+
+        with self.assertRaises(ApprovalRuleSetupError) as caught:
+            asyncio.run(client.set_mr_approval_rules(mr_url, {"QE": ["user1"]}))
+
+        self.assertIn("delete approval rule 'Docs' (id=300)", str(caught.exception))
+        self.assertIn(mr_url, str(caught.exception))
+        self.assertIn("403: Prohibited", str(caught.exception))
+        mock_mr.approval_rules.create.assert_not_called()
+
+    def test_failed_username_lookup_identifies_user_and_rule(self):
+        client = self._make_client()
+        mr_url = "https://gitlab.example.com/a/b/-/merge_requests/1"
+        mock_mr = MagicMock()
+        mock_mr.approval_rules.list.return_value = []
+        client.get_mr_from_url = MagicMock(return_value=mock_mr)
+        client._client.users.list.side_effect = GitlabListError("Prohibited", response_code=403)
+
+        with self.assertRaises(ApprovalRuleSetupError) as caught:
+            asyncio.run(client.set_mr_approval_rules(mr_url, {"QE": ["sshveta"]}))
+
+        self.assertIn("resolve GitLab username 'sshveta'", str(caught.exception))
+        self.assertIn("approval rule 'QE'", str(caught.exception))
+        self.assertIn("403: Prohibited", str(caught.exception))
+        mock_mr.approval_rules.create.assert_not_called()
+
+    def test_failed_create_identifies_rule(self):
+        client = self._make_client()
+        mr_url = "https://gitlab.example.com/a/b/-/merge_requests/1"
+        mock_mr = MagicMock()
+        mock_mr.approval_rules.list.return_value = []
+        mock_mr.approval_rules.create.side_effect = GitlabCreateError("Prohibited", response_code=403)
+        client.get_mr_from_url = MagicMock(return_value=mock_mr)
+        client._client.users.list.return_value = [MagicMock(id=1293)]
+
+        with self.assertRaises(ApprovalRuleSetupError) as caught:
+            asyncio.run(client.set_mr_approval_rules(mr_url, {"QE": ["sshveta"]}))
+
+        self.assertIn("create approval rule 'QE'", str(caught.exception))
+        self.assertIn(mr_url, str(caught.exception))
+        self.assertIn("403: Prohibited", str(caught.exception))
 
 
 class TestReleaseFromFbcPipelineInit(unittest.TestCase):
@@ -1673,6 +1728,82 @@ class TestOcpOptionalMode(unittest.TestCase):
 
         pipeline.validate_fbc_related_images.assert_not_awaited()
 
+    @patch('pyartcd.pipelines.release_from_fbc.reconcile_shipment_mr', new_callable=AsyncMock)
+    @patch('pyartcd.pipelines.release_from_fbc.set_shipment_mr_draft')
+    @patch('pyartcd.pipelines.release_from_fbc.validate_shipment_mr_for_operation', new_callable=AsyncMock)
+    def test_reused_mr_applies_approval_rules_before_mutation(self, mock_validate, mock_draft, mock_reconcile):
+        """A no-force rerun applies approvers to its existing MR before changing it."""
+        mr_url = "https://gitlab.example/project/-/merge_requests/42"
+        existing_mr = MagicMock(state='opened', title='Shipment for oadp 1.5.8', description='')
+        mock_validate.return_value = (existing_mr, MagicMock(active_stage=(), prod_attempts=()))
+        pipeline = self._make_pipeline(ocp_optional=False, group="oadp-1.5", assembly="1.5.8")
+        pipeline.create_mr = True
+        pipeline.fbc_pullspecs = []
+        pipeline.extra_image_nvrs = ["oadp-container-v1.5.8-1.el9"]
+        pipeline._configured_shipment_mr_url = mr_url
+        pipeline.check_env_vars = MagicMock()
+        pipeline.setup_working_dir = MagicMock()
+        pipeline.setup_shipment_repo = AsyncMock()
+        pipeline._load_product_from_group_config = AsyncMock(return_value="oadp")
+        pipeline._load_layered_product_shipment_mr = MagicMock(return_value=mr_url)
+        pipeline.create_snapshot = AsyncMock(return_value=_make_snapshot(app="oadp-1-5"))
+        pipeline.create_shipment_config = MagicMock(return_value=MagicMock())
+        pipeline._load_release_notes_template = MagicMock(return_value=None)
+        pipeline._verify_layered_product_shipment_mr = AsyncMock()
+        pipeline.create_shipment_mr = AsyncMock()
+        pipeline.set_shipment_mr_ready = AsyncMock()
+        pipeline.__dict__['_gitlab'] = MagicMock()
+
+        approval_calls = []
+        pipeline._set_shipment_mr_approval_rules = AsyncMock(side_effect=lambda _: approval_calls.append('approval'))
+        mock_draft.side_effect = lambda *_: approval_calls.append('draft')
+        mock_reconcile.side_effect = lambda *_, **__: approval_calls.append('reconcile')
+
+        with patch('pyartcd.pipelines.release_from_fbc.is_nvr_embargoed', return_value=False):
+            asyncio.run(pipeline.run())
+
+        pipeline._set_shipment_mr_approval_rules.assert_awaited_once_with(mr_url)
+        pipeline.create_shipment_mr.assert_not_awaited()
+        self.assertEqual(approval_calls, ['approval', 'draft', 'reconcile'])
+        pipeline.set_shipment_mr_ready.assert_awaited_once()
+
+    @patch('pyartcd.pipelines.release_from_fbc.reconcile_shipment_mr', new_callable=AsyncMock)
+    @patch('pyartcd.pipelines.release_from_fbc.set_shipment_mr_draft')
+    @patch('pyartcd.pipelines.release_from_fbc.validate_shipment_mr_for_operation', new_callable=AsyncMock)
+    def test_reused_mr_approval_failure_stops_before_mutation(self, mock_validate, mock_draft, mock_reconcile):
+        """A 403 while applying approvers fails before the existing MR is drafted."""
+        mr_url = "https://gitlab.example/project/-/merge_requests/42"
+        existing_mr = MagicMock(state='opened', title='Shipment for oadp 1.5.8', description='')
+        mock_validate.return_value = (existing_mr, MagicMock(active_stage=(), prod_attempts=()))
+        pipeline = self._make_pipeline(ocp_optional=False, group="oadp-1.5", assembly="1.5.8")
+        pipeline.create_mr = True
+        pipeline.fbc_pullspecs = []
+        pipeline.extra_image_nvrs = ["oadp-container-v1.5.8-1.el9"]
+        pipeline._configured_shipment_mr_url = mr_url
+        pipeline.check_env_vars = MagicMock()
+        pipeline.setup_working_dir = MagicMock()
+        pipeline.setup_shipment_repo = AsyncMock()
+        pipeline._load_product_from_group_config = AsyncMock(return_value="oadp")
+        pipeline._load_layered_product_shipment_mr = MagicMock(return_value=mr_url)
+        pipeline.create_snapshot = AsyncMock(return_value=_make_snapshot(app="oadp-1-5"))
+        pipeline.create_shipment_config = MagicMock(return_value=MagicMock())
+        pipeline._load_release_notes_template = MagicMock(return_value=None)
+        pipeline._verify_layered_product_shipment_mr = AsyncMock()
+        pipeline._set_shipment_mr_approval_rules = AsyncMock(side_effect=ApprovalRuleSetupError("403 deleting Docs"))
+        pipeline.create_shipment_mr = AsyncMock()
+        pipeline.set_shipment_mr_ready = AsyncMock()
+        pipeline.__dict__['_gitlab'] = MagicMock()
+
+        with patch('pyartcd.pipelines.release_from_fbc.is_nvr_embargoed', return_value=False):
+            with self.assertRaisesRegex(ApprovalRuleSetupError, "403 deleting Docs"):
+                asyncio.run(pipeline.run())
+
+        pipeline._set_shipment_mr_approval_rules.assert_awaited_once_with(mr_url)
+        mock_draft.assert_not_called()
+        mock_reconcile.assert_not_awaited()
+        pipeline.create_shipment_mr.assert_not_awaited()
+        pipeline.set_shipment_mr_ready.assert_not_awaited()
+
     @patch('pyartcd.pipelines.release_from_fbc.validate_shipment_mr_for_operation', new_callable=AsyncMock)
     def test_force_closes_open_previous_mr_before_replacement(self, mock_validate):
         """Close an open stage-only MR before direct release creates its replacement."""
@@ -1894,6 +2025,36 @@ class TestOcpOptionalMode(unittest.TestCase):
         pipeline._set_shipment_mr_dependency.assert_awaited_once_with(
             "https://gitlab.example.com/g/p/-/merge_requests/50"
         )
+
+    def test_approval_rule_failure_stops_shipment_run(self):
+        """Neither shipment path may continue to ready or CI after approval setup fails."""
+        for ocp_optional in (False, True):
+            with self.subTest(ocp_optional=ocp_optional):
+                pipeline = self._make_pipeline(
+                    ocp_optional=ocp_optional,
+                    group="openshift-4.22" if ocp_optional else "oadp-1.5",
+                    assembly="4.22.0" if ocp_optional else "1.5.0",
+                )
+                pipeline.create_mr = True
+                pipeline.fbc_pullspecs = []
+                pipeline.extra_image_nvrs = ["operator-container-v1.5.0-1.el9.p2"]
+                pipeline.check_env_vars = MagicMock()
+                pipeline.setup_working_dir = MagicMock()
+                pipeline.setup_shipment_repo = AsyncMock()
+                pipeline._load_product_from_group_config = AsyncMock(return_value="ocp" if ocp_optional else "oadp")
+                pipeline._load_release_notes_template = MagicMock(return_value=None)
+                pipeline._load_layered_product_shipment_mr = MagicMock(return_value=None)
+                pipeline.create_snapshot = AsyncMock(return_value=_make_snapshot())
+                pipeline.create_shipment_config = MagicMock(return_value=MagicMock())
+                pipeline.create_shipment_mr = AsyncMock(side_effect=ApprovalRuleSetupError("GitLab returned 403"))
+                pipeline._update_layered_product_shipment_mr = AsyncMock()
+                pipeline.set_shipment_mr_ready = AsyncMock()
+
+                with self.assertRaisesRegex(ApprovalRuleSetupError, "GitLab returned 403"):
+                    asyncio.run(pipeline.run())
+
+                pipeline._update_layered_product_shipment_mr.assert_not_awaited()
+                pipeline.set_shipment_mr_ready.assert_not_awaited()
 
     def test_mr_dependency_not_set_for_default_mode(self):
         """run() should NOT call _set_shipment_mr_dependency in default (non-ocp-optional) mode."""
