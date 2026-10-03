@@ -405,6 +405,16 @@ class Repodata:
 
 class RepodataLoader:
     @staticmethod
+    def _rewrite_repo_url(repo_url: str) -> str:
+        # Temporary workaround until the ocp-artifacts custom route is restored.
+        old_host = "ocp-artifacts.engineering.redhat.com"
+        new_host = "ocp-artifacts-art--runtime-int.apps.prod-stable-spoke1-dc-iad2.itup.redhat.com"
+        url = parse.urlsplit(repo_url)
+        if url.scheme == "https" and url.netloc == old_host:
+            return url._replace(netloc=new_host).geturl()
+        return repo_url
+
+    @staticmethod
     async def _fetch_remote_compressed(session: aiohttp.ClientSession, url: Optional[str]):
         if not url:
             return b''
@@ -425,6 +435,7 @@ class RepodataLoader:
 
     @retry(stop=stop_after_attempt(3), wait=wait_fixed(5))
     async def load(self, repo_name: str, repo_url: str):
+        repo_url = self._rewrite_repo_url(repo_url)
         if not repo_url.endswith("/"):
             repo_url += "/"
         repomd_url = parse.urljoin(repo_url, "repodata/repomd.xml")
