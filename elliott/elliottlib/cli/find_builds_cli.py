@@ -10,7 +10,6 @@ import requests
 from artcommonlib import logutil
 from artcommonlib.arch_util import BREW_ARCHES
 from artcommonlib.assembly import assembly_excluded_components, assembly_metadata_config, assembly_rhcos_config
-from artcommonlib.constants import COREOS_RHEL10_STREAMS
 from artcommonlib.exectools import cmd_gather_async
 from artcommonlib.format_util import green_print, red_print, yellow_print
 from artcommonlib.konflux.konflux_build_record import KonfluxBuildRecord, KonfluxBundleBuildRecord
@@ -364,12 +363,9 @@ def get_rhcos_nvrs_from_assembly(runtime: Runtime, brew_session: koji.ClientSess
 
     # Keys under rhcos_config are not necessary payload tags. One exception is `dependencies`
     # make sure we only process payload tags
-    rhcos_payload_tags = [c['name'] for c in get_container_configs(runtime)]
-    include_rhel10 = runtime.get_major_minor_fields() == (5, 0)
+    rhcos_payload_tags = [c['name'] for c in get_container_configs(runtime) if c.get('attach_to_et_advisory', True)]
     for key, config in rhcos_config.items():
         if key not in rhcos_payload_tags:
-            continue
-        if key in COREOS_RHEL10_STREAMS and not include_rhel10:
             continue
 
         for arch, pullspec in config['images'].items():
