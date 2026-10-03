@@ -205,8 +205,16 @@ class ReconcileCIUpstreamLayeredPipeline:
 
         self._logger.info(f"Running doozer command: {cmd}")
 
+        env = os.environ.copy()
+        if quay_auth_file := env.get("QUAY_AUTH_FILE"):
+            # `oc image info` honors REGISTRY_AUTH_FILE when checking whether
+            # canonical parent images are accessible.
+            env["REGISTRY_AUTH_FILE"] = quay_auth_file
+        else:
+            env.pop("REGISTRY_AUTH_FILE", None)
+
         # Stream output to Jenkins console in real-time
-        rc, stdout, stderr = await exectools.cmd_gather_async(cmd, check=check, stdout=None)
+        rc, stdout, stderr = await exectools.cmd_gather_async(cmd, check=check, stdout=None, env=env)
 
         return rc, stdout, stderr
 
@@ -270,6 +278,7 @@ class ReconcileCIUpstreamLayeredPipeline:
             )
 
         pr_args = f"--interstitial {self.PR_INTERSTITIAL_SECONDS}"
+        pr_args += " --preserve-non-base-members"
         pr_args += ' --add-auto-labels'
         pr_args += ' --add-label "jira/valid-bug" --add-label "verified"'
         if self.add_labels:
