@@ -33,7 +33,7 @@ LOGGER = logging.getLogger(__name__)
 DEFAULT_JIRA_SERVER_URL = "https://redhat.atlassian.net"
 DEFAULT_JIRA_EMAIL = "aos-team-art-private+openshift-art-jira-bot@redhat.com"
 # Get the JIRA server URL (check environment variable first, then use default)
-JIRA_SERVER_URL = os.environ.get("JIRA_SERVER_URL", DEFAULT_JIRA_SERVER_URL)
+JIRA_SERVER_URL = os.environ.get("JIRA_SERVER_URL", DEFAULT_JIRA_SERVER_URL).rstrip("/")
 JIRA_EMAIL = os.environ.get("JIRA_EMAIL", DEFAULT_JIRA_EMAIL)
 # JIRA API endpoints
 JIRA_API_BASE = f"{JIRA_SERVER_URL}/rest/api/2"
