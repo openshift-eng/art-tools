@@ -15,6 +15,7 @@ import defusedxml.ElementTree as ET
 from artcommonlib import logutil
 from artcommonlib.exectools import cmd_gather_async
 from artcommonlib.rpm_utils import label_compare, parse_nvr
+from artcommonlib.url_utils import rewrite_ocp_artifacts_url
 from ruamel.yaml import YAML
 from tenacity import before_sleep_log, retry, retry_if_exception_type, stop_after_attempt, wait_exponential, wait_fixed
 
@@ -405,16 +406,6 @@ class Repodata:
 
 class RepodataLoader:
     @staticmethod
-    def _rewrite_repo_url(repo_url: str) -> str:
-        # Temporary workaround until the ocp-artifacts custom route is restored.
-        old_host = "ocp-artifacts.engineering.redhat.com"
-        new_host = "ocp-artifacts-art--runtime-int.apps.prod-stable-spoke1-dc-iad2.itup.redhat.com"
-        url = parse.urlsplit(repo_url)
-        if url.scheme == "https" and url.netloc == old_host:
-            return url._replace(netloc=new_host).geturl()
-        return repo_url
-
-    @staticmethod
     async def _fetch_remote_compressed(session: aiohttp.ClientSession, url: Optional[str]):
         if not url:
             return b''
@@ -435,7 +426,7 @@ class RepodataLoader:
 
     @retry(stop=stop_after_attempt(3), wait=wait_fixed(5))
     async def load(self, repo_name: str, repo_url: str):
-        repo_url = self._rewrite_repo_url(repo_url)
+        repo_url = rewrite_ocp_artifacts_url(repo_url)
         if not repo_url.endswith("/"):
             repo_url += "/"
         repomd_url = parse.urljoin(repo_url, "repodata/repomd.xml")

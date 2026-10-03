@@ -4,6 +4,7 @@ from unittest import IsolatedAsyncioTestCase, TestCase
 from unittest.mock import ANY, AsyncMock, MagicMock, Mock, patch
 
 import defusedxml.ElementTree as ET
+from artcommonlib.url_utils import rewrite_ocp_artifacts_url
 from doozerlib.repodata import OutdatedRPMFinder, Repodata, RepodataLoader, Rpm, RpmModule
 from ruamel.yaml import YAML
 
@@ -899,14 +900,13 @@ data:
 
 class TestRepodataLoader(IsolatedAsyncioTestCase):
     def test_rewrite_repo_url_only_for_custom_host(self):
-        loader = RepodataLoader()
         for url in (
             "https://example.com/repos/test/x86_64/os",
             "https://ocp-artifacts.engineering.redhat.com.evil.test/repos/test/x86_64/os",
             "http://ocp-artifacts.engineering.redhat.com/repos/test/x86_64/os",
         ):
             with self.subTest(url=url):
-                self.assertEqual(loader._rewrite_repo_url(url), url)
+                self.assertEqual(rewrite_ocp_artifacts_url(url), url)
 
     @patch("doozerlib.repodata.RepodataLoader._fetch_remote_compressed", autospec=True)
     @patch("aiohttp.ClientSession", autospec=True)
