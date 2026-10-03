@@ -365,13 +365,7 @@ class KonfluxBuildCli:
             ec_policy = constants.PRODUCT_EC_POLICY_MAP.get(product)
             prega_ec_policy = constants.PRODUCT_PREGA_EC_POLICY_MAP.get(product, ec_policy)
 
-        integration_test_scenarios = runtime.group_config.get("konflux", {}).get("integration_test_scenarios", [])
-        if integration_test_scenarios is Missing or integration_test_scenarios is None:
-            integration_test_scenarios = []
-        if not isinstance(integration_test_scenarios, (list, tuple)) or not all(
-            isinstance(name, str) and name for name in integration_test_scenarios
-        ):
-            raise ValueError("konflux.integration_test_scenarios must be a list of non-empty scenario names")
+        integration_test_scenarios = util.get_konflux_integration_test_scenarios(runtime.group_config, "image")
 
         integration_test_snapshot_annotations = runtime.group_config.get("konflux", {}).get(
             "integration_test_snapshot_annotations", {}
@@ -419,7 +413,7 @@ class KonfluxBuildCli:
             prega_ec_policy_configuration=prega_ec_policy,
             skip_ec_verify=self.skip_ec_verify,
             effective_time=self.effective_time,
-            integration_test_scenarios=tuple(dict.fromkeys(integration_test_scenarios)),
+            integration_test_scenarios=integration_test_scenarios,
             integration_test_snapshot_annotations=dict(integration_test_snapshot_annotations),
             skip_custom_its=self.skip_custom_its,
         )

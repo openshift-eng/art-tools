@@ -648,10 +648,21 @@
         },
         "build_attempts-": {},
         "integration_test_scenarios": {
-          "description": "Existing Konflux IntegrationTestScenario names to gate successful releasable builds",
-          "type": "array",
-          "items": { "type": "string", "minLength": 1 },
-          "uniqueItems": true
+          "description": "Existing Konflux IntegrationTestScenario names to run after image or FBC builds",
+          "type": "object",
+          "properties": {
+            "image": {
+              "type": "array",
+              "items": { "type": "string", "minLength": 1 },
+              "uniqueItems": true
+            },
+            "fbc": {
+              "type": "array",
+              "items": { "type": "string", "minLength": 1 },
+              "uniqueItems": true
+            }
+          },
+          "additionalProperties": false
         },
         "integration_test_scenarios!": {
           "$ref": "#/properties/konflux/properties/integration_test_scenarios"

@@ -61,6 +61,7 @@ class BuildFbcPipeline:
         plr_template: str,
         skip_checks: bool,
         skip_tasks: tuple[str, ...] = (),
+        skip_custom_its: bool = False,
         reset_to_prod: bool = True,
         prod_registry_auth: Optional[str] = None,
         force: bool = False,
@@ -83,6 +84,7 @@ class BuildFbcPipeline:
         self.plr_template = plr_template
         self.skip_checks = skip_checks
         self.skip_tasks = skip_tasks
+        self.skip_custom_its = skip_custom_its
         self.reset_to_prod = reset_to_prod
         self.prod_registry_auth = prod_registry_auth
         self.force = force
@@ -229,6 +231,8 @@ class BuildFbcPipeline:
             doozer_opts.extend(['--plr-template', plr_template_url])
         if self.skip_checks:
             doozer_opts.append('--skip-checks')
+        if self.skip_custom_its:
+            doozer_opts.append('--skip-custom-its')
         for task_name in self.skip_tasks:
             doozer_opts.extend(['--skip-task', task_name])
         if self.reset_to_prod:
@@ -329,6 +333,9 @@ class BuildFbcPipeline:
 )
 @click.option("--skip-checks", is_flag=True, help="Skip all post build checks in the FBC build pipeline")
 @click.option(
+    "--skip-custom-its", is_flag=True, help="Skip custom FBC IntegrationTestScenarios configured in group.yml"
+)
+@click.option(
     '--skip-task',
     'skip_tasks',
     multiple=True,
@@ -375,6 +382,7 @@ async def build_fbc(
     kubeconfig: str,
     plr_template: str,
     skip_checks: bool,
+    skip_custom_its: bool,
     skip_tasks: tuple,
     reset_to_prod: bool,
     prod_registry_auth: Optional[str],
@@ -401,6 +409,7 @@ async def build_fbc(
         kubeconfig=kubeconfig,
         plr_template=plr_template,
         skip_checks=skip_checks,
+        skip_custom_its=skip_custom_its,
         skip_tasks=skip_tasks,
         reset_to_prod=reset_to_prod,
         prod_registry_auth=prod_registry_auth,

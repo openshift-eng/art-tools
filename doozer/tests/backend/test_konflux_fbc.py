@@ -12,7 +12,7 @@ from artcommonlib.konflux.konflux_build_record import (
 )
 from artcommonlib.variants import BuildVariant
 from doozerlib.backend.build_repo import BuildRepo
-from doozerlib.backend.konflux_client import ImageBuildParams, KonfluxClient
+from doozerlib.backend.konflux_client import CustomIntegrationTestResult, ImageBuildParams, KonfluxClient
 from doozerlib.backend.konflux_fbc import (
     BASE_IMAGE_RHEL8_PULLSPEC_FORMAT,
     BASE_IMAGE_RHEL9_PULLSPEC_FORMAT,
@@ -3070,9 +3070,20 @@ class TestKonfluxFbcBuilder(unittest.IsolatedAsyncioTestCase):
                 logger=self.logger,
             )
 
+    async def test_validate_custom_integration_test_scenarios(self):
+        self.builder.integration_test_scenarios = ("fbc-test",)
+        self.kube_client.validate_integration_test_scenarios.return_value = {"fbc-test"}
+
+        await self.builder.validate_custom_integration_test_scenarios()
+
+        self.kube_client.validate_integration_test_scenarios.assert_awaited_once_with(
+            ("fbc-test",), application_name="fbc-test-group", namespace="test-namespace"
+        )
+        self.assertEqual(self.builder._blocking_custom_integration_test_scenarios, {"fbc-test"})
+
     @patch("doozerlib.backend.konflux_fbc.DockerfileParser")
     @patch("doozerlib.backend.konflux_fbc.KonfluxClient.resource_url")
-    async def test_update_konflux_db_stores_build_variant(self, mock_resource_url, mock_dockerfile_parser):
+    async def test_update_konflux_db_preserves_its_failure_image(self, mock_resource_url, mock_dockerfile_parser):
         metadata = MagicMock()
         metadata.distgit_key = "test-fbc"
         metadata.runtime.group = "test-group"
@@ -3107,6 +3118,10 @@ class TestKonfluxFbcBuilder(unittest.IsolatedAsyncioTestCase):
                 "status": {
                     "startTime": "2023-10-01T12:00:00Z",
                     "completionTime": "2023-10-01T12:30:00Z",
+                    "results": [
+                        {"name": "IMAGE_URL", "value": "quay.io/test/fbc:test-tag"},
+                        {"name": "IMAGE_DIGEST", "value": "sha256:abc123"},
+                    ],
                 },
             },
             {},
@@ -3117,12 +3132,15 @@ class TestKonfluxFbcBuilder(unittest.IsolatedAsyncioTestCase):
             metadata,
             build_repo,
             pipelinerun,
-            KonfluxBuildOutcome.FAILURE,
+            KonfluxBuildOutcome.ITS_ERROR,
             ["x86_64"],
+            ec_pipeline_url="https://example.com/its",
         )
 
         build_record = self.db.add_build.call_args[0][0]
         self.assertEqual(build_record.build_variant, BuildVariant.COO)
+        self.assertEqual(build_record.image_pullspec, "quay.io/test/fbc@sha256:abc123")
+        self.assertEqual(build_record.ec_pipeline_url, "https://example.com/its")
 
     async def test_start_build(self):
         metadata = MagicMock(spec=ImageMetadata)
@@ -3269,9 +3287,19 @@ class TestKonfluxFbcBuilder(unittest.IsolatedAsyncioTestCase):
         )
         mock_pipelinerun = {
             "metadata": {"name": "test-pipelinerun-name"},
-            "status": {"conditions": [{"type": "Succeeded", "status": "True"}]},
+            "status": {
+                "conditions": [{"type": "Succeeded", "status": "True"}],
+                "results": [
+                    {"name": "IMAGE_URL", "value": "quay.io/test/fbc:test-tag"},
+                    {"name": "IMAGE_DIGEST", "value": "sha256:abc123"},
+                ],
+            },
         }
         mock_konflux_client.wait_for_pipelinerun.return_value = PipelineRunInfo(mock_pipelinerun, {})
+        self.builder.integration_test_scenarios = ("fbc-test",)
+        mock_konflux_client.run_integration_test_scenarios.return_value = CustomIntegrationTestResult(
+            False, "", ["https://example.com/its"]
+        )
 
         mock_dfp = MockDockerfileParser.return_value
         mock_dfp.envs = {
@@ -3285,6 +3313,17 @@ class TestKonfluxFbcBuilder(unittest.IsolatedAsyncioTestCase):
         }
 
         await self.builder.build(metadata)
+        mock_konflux_client.run_integration_test_scenarios.assert_awaited_once_with(
+            scenario_names=("fbc-test",),
+            application_name="fbc-test-group",
+            component_name="fbc-test-group-test-distgit-key",
+            image_pullspec="quay.io/test/fbc@sha256:abc123",
+            source_url=build_repo.https_url,
+            commit_sha=build_repo.commit_hash,
+            blocking_scenario_names=set(),
+            snapshot_annotations={"art.openshift.io/ocp-target-version": "4.9"},
+            namespace="test-namespace",
+        )
         MockBuildRepo.assert_called_once_with(
             url=self.fbc_repo,
             branch="art-test-group-ocp-4.9-assembly-test-assembly-fbc-test-distgit-key",
@@ -3335,7 +3374,7 @@ class TestKonfluxFbcBuilder(unittest.IsolatedAsyncioTestCase):
     @patch("doozerlib.backend.konflux_fbc.KonfluxFbcBuilder._start_build")
     @patch("doozerlib.backend.konflux_fbc.BuildRepo", spec=BuildRepo)
     @patch("doozerlib.backend.konflux_fbc.DockerfileParser")
-    async def test_build_with_existing_repo(
+    async def test_build_with_existing_repo_and_blocking_its_failure(
         self, MockDockerfileParser, MockBuildRepo, mock_start_build, mock_update_konflux_db: AsyncMock, mock_exists
     ):
         mock_konflux_client = self.kube_client
@@ -3362,9 +3401,20 @@ class TestKonfluxFbcBuilder(unittest.IsolatedAsyncioTestCase):
         )
         mock_pipelinerun = {
             "metadata": {"name": "test-pipelinerun-name"},
-            "status": {"conditions": [{"type": "Succeeded", "status": "True"}]},
+            "status": {
+                "conditions": [{"type": "Succeeded", "status": "True"}],
+                "results": [
+                    {"name": "IMAGE_URL", "value": "quay.io/test/fbc:test-tag"},
+                    {"name": "IMAGE_DIGEST", "value": "sha256:abc123"},
+                ],
+            },
         }
         mock_konflux_client.wait_for_pipelinerun.return_value = PipelineRunInfo(mock_pipelinerun, {})
+        self.builder.integration_test_scenarios = ("fbc-test",)
+        self.builder._blocking_custom_integration_test_scenarios = {"fbc-test"}
+        mock_konflux_client.run_integration_test_scenarios.return_value = CustomIntegrationTestResult(
+            True, "https://example.com/its", ["https://example.com/its"]
+        )
 
         mock_dfp = MockDockerfileParser.return_value
         mock_dfp.envs = {
@@ -3377,7 +3427,8 @@ class TestKonfluxFbcBuilder(unittest.IsolatedAsyncioTestCase):
             'com.redhat.art.nvr': 'test-distgit-key-fbc-1.0.0-1',
         }
 
-        await self.builder.build(metadata)
+        with self.assertRaisesRegex(Exception, "failed with its_error"):
+            await self.builder.build(metadata)
         MockBuildRepo.assert_not_called()
         MockDockerfileParser.assert_called_once_with(
             str(self.base_dir.joinpath(metadata.distgit_key, "catalog.Dockerfile"))
@@ -3396,8 +3447,9 @@ class TestKonfluxFbcBuilder(unittest.IsolatedAsyncioTestCase):
                     metadata,
                     build_repo,
                     mock_konflux_client.wait_for_pipelinerun.return_value,
-                    KonfluxBuildOutcome.SUCCESS,
+                    KonfluxBuildOutcome.ITS_ERROR,
                     all_arches,
+                    ec_pipeline_url="https://example.com/its",
                     logger=ANY,
                 ),
             ]
@@ -3407,13 +3459,15 @@ class TestKonfluxFbcBuilder(unittest.IsolatedAsyncioTestCase):
         )
         self.builder._record_logger.add_record.assert_called_once_with(
             "build_fbc_konflux",
-            status=0,
+            status=-1,
             name='test-distgit-key-fbc',
-            message='Success',
+            message='Konflux FBC build for test-distgit-key failed with its_error',
             task_id='test-pipelinerun-name',
             task_url='https://example.com/pipeline',
             fbc_nvr='test-distgit-key-fbc-1.0.0-1',
             bundle_nvrs='foo-bundle-1.0.0-1',
+            outcome='its_error',
+            ec_pipeline_url='https://example.com/its',
         )
         MockBuildRepo.from_local_dir.assert_awaited_once_with(self.base_dir.joinpath(metadata.distgit_key), ANY)
 
