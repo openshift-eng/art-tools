@@ -19,6 +19,11 @@
     "metadata": {
       "description": "Image configuration",
       "$ref": "image_config.base.schema.json"
+    },
+    "until": {
+      "description": "ISO 8601 date (YYYY-MM-DD) after which this member override expires. Builds will fail if today is past this date.",
+      "type": "string",
+      "pattern": "^\\d{4}-\\d{2}-\\d{2}$"
     }
   },
   "required": [
