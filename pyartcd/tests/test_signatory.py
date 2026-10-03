@@ -491,3 +491,36 @@ class TestSigstoreSignatory(IsolatedAsyncioTestCase):
         err_msg = str(result[ps])
         self.assertIn("identity=", err_msg)
         self.assertIn("key=my-key-123", err_msg)
+
+    @patch("pyartcd.signatory.exectools.cmd_gather_async", new_callable=AsyncMock)
+    async def test_has_cosign_signature_returns_true_when_signature_present(self, mock_cmd):
+        """has_cosign_signature returns True when cosign download signature outputs data"""
+        signatory = self._create_signatory()
+        mock_cmd.return_value = (0, '{"sig": "data"}', "")
+        ps = "quay.io/openshift-release-dev/ocp-release@sha256:abc123"
+
+        result = await signatory.has_cosign_signature(ps)
+
+        self.assertTrue(result)
+        cmd_used = mock_cmd.call_args[0][0]
+        self.assertEqual(cmd_used, ["cosign", "download", "signature", ps])
+
+    @patch("pyartcd.signatory.exectools.cmd_gather_async", new_callable=AsyncMock)
+    async def test_has_cosign_signature_returns_false_on_nonzero_rc(self, mock_cmd):
+        """has_cosign_signature returns False when cosign exits non-zero (no signature)"""
+        signatory = self._create_signatory()
+        mock_cmd.return_value = (1, "", "Error: no signatures found")
+
+        result = await signatory.has_cosign_signature("quay.io/openshift-release-dev/ocp-release@sha256:abc")
+
+        self.assertFalse(result)
+
+    @patch("pyartcd.signatory.exectools.cmd_gather_async", new_callable=AsyncMock)
+    async def test_has_cosign_signature_returns_false_on_empty_output(self, mock_cmd):
+        """has_cosign_signature returns False when cosign exits 0 but stdout is empty"""
+        signatory = self._create_signatory()
+        mock_cmd.return_value = (0, "", "")
+
+        result = await signatory.has_cosign_signature("quay.io/openshift-release-dev/ocp-release@sha256:abc")
+
+        self.assertFalse(result)
