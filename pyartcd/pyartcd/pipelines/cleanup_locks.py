@@ -41,6 +41,11 @@ async def cleanup_locks(runtime: Runtime):
                 )
                 continue
 
+            # Kubernetes owners cannot be validated by the Jenkins API.
+            if build_path.startswith('k8s/'):
+                runtime.logger.info('Skipping lock %s with Kubernetes owner %s', lock_name, build_path)
+                continue
+
             build_url = f'{constants.JENKINS_UI_URL}/{build_path}'
             runtime.logger.info("Found build_url for lock %s: %s ", lock_name, build_url)
 
@@ -78,7 +83,6 @@ async def cleanup_locks(runtime: Runtime):
         await lock_manager.destroy()
 
     # Display removed locks in the build title
-    jenkins.init_jenkins()
-    if os.getenv('BUILD_URL') and os.getenv('JOB_NAME'):
-        if removed_locks:
-            jenkins.update_title(f' [{", ".join(removed_locks)}]')
+    if removed_locks and os.getenv('JOB_NAME') and (jenkins.get_build_path() or '').startswith('job/'):
+        jenkins.init_jenkins()
+        jenkins.update_title(f' [{", ".join(removed_locks)}]')
