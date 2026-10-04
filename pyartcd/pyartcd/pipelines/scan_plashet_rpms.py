@@ -14,6 +14,7 @@ import yaml
 from artcommonlib.config.plashet import PlashetConfig
 from artcommonlib.config.repo import Repo, RepoList
 from artcommonlib.constants import BREW_HUB
+from artcommonlib.url_utils import rewrite_ocp_artifacts_url
 
 from pyartcd import constants, jenkins, locks, util
 from pyartcd.cli import cli, click_coroutine, pass_runtime
@@ -273,7 +274,7 @@ class ScanPlashetRpmsPipeline:
 
         # Construct the full URL
         symlink_name = plashet_config.symlink_name
-        url = f'{base_url}/{base_dir}/{symlink_name}/plashet.yml'
+        url = rewrite_ocp_artifacts_url(f'{base_url}/{base_dir}/{symlink_name}/plashet.yml')
 
         self.logger.debug(f'  Fetching plashet.yml from: {url}')
 

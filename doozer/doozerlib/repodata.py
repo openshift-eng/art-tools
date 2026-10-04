@@ -15,6 +15,7 @@ import defusedxml.ElementTree as ET
 from artcommonlib import logutil
 from artcommonlib.exectools import cmd_gather_async
 from artcommonlib.rpm_utils import label_compare, parse_nvr
+from artcommonlib.url_utils import rewrite_ocp_artifacts_url
 from ruamel.yaml import YAML
 from tenacity import before_sleep_log, retry, retry_if_exception_type, stop_after_attempt, wait_exponential, wait_fixed
 
@@ -425,6 +426,7 @@ class RepodataLoader:
 
     @retry(stop=stop_after_attempt(3), wait=wait_fixed(5))
     async def load(self, repo_name: str, repo_url: str):
+        repo_url = rewrite_ocp_artifacts_url(repo_url)
         if not repo_url.endswith("/"):
             repo_url += "/"
         repomd_url = parse.urljoin(repo_url, "repodata/repomd.xml")
