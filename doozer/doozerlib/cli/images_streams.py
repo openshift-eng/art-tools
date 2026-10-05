@@ -1389,9 +1389,8 @@ def images_streams_gen_buildconfigs(runtime, streams, images, output, as_user, a
         if transform == transform_rhel_8_base_repos or config.transform == transform_rhel_8_golang:
             # The repos transform create a build config that will layer the base image with CI appropriate yum
             # repository definitions.
-            # TODO: DELETE - testing only, tolerate base-{MAJOR}-{MINOR}-rhel8.ocp.svc not existing yet for new groups
             dfp.add_lines(
-                f'RUN rm -rf /etc/yum.repos.d/*.repo && (curl http://base-{major}-{minor}-rhel8.ocp.svc > /etc/yum.repos.d/ci-rpm-mirrors.repo || true)'
+                f'RUN rm -rf /etc/yum.repos.d/*.repo && curl http://base-{major}-{minor}-rhel8.ocp.svc > /etc/yum.repos.d/ci-rpm-mirrors.repo'
             )
 
             # Allow the base repos to be used BEFORE art begins mirroring 4.x to openshift mirrors.
