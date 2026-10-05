@@ -14,7 +14,6 @@ from artcommonlib.config.repo import Repo as RepoConf
 from artcommonlib.config.repo import RepoList
 from artcommonlib.exectools import limit_concurrency
 from artcommonlib.model import Missing, Model
-from artcommonlib.url_utils import rewrite_ocp_artifacts_url
 
 from doozerlib.constants import KONFLUX_REPO_CA_BUNDLE_FILENAME, KONFLUX_REPO_CA_BUNDLE_TMP_PATH
 from doozerlib.repodata import Repodata, RepodataLoader
@@ -213,7 +212,7 @@ class Repo(object):
         """Get baseurl based on repo type, if one was specified for this repo."""
         bu = self._data.conf.baseurl
         if isinstance(bu, str):
-            return rewrite_ocp_artifacts_url(bu)
+            return bu
         elif isinstance(bu, dict):
             if arch in bu:
                 bu_sub = bu
@@ -223,14 +222,14 @@ class Repo(object):
                 self.repotypes = list(bu.keys())
                 bu_sub = bu[repotype]
             if isinstance(bu_sub, str):
-                return rewrite_ocp_artifacts_url(bu_sub)
+                return bu_sub
             elif isinstance(bu_sub, dict):
                 if arch not in self._valid_arches:
                     raise ValueError('{} is not a valid arch option!'.format(arch))
                 if arch not in bu_sub:
                     raise ValueError('No baseurl available for arch {}'.format(arch))
-                return rewrite_ocp_artifacts_url(bu_sub[arch])
-            return rewrite_ocp_artifacts_url(bu[repotype])
+                return bu_sub[arch]
+            return bu[repotype]
         else:
             raise ValueError('baseurl must be str or dict!')
 

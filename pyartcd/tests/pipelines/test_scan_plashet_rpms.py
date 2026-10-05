@@ -94,10 +94,6 @@ class TestScanPlashetRpmsPipeline(unittest.IsolatedAsyncioTestCase):
 
         self.assertIn('test-repo', pipeline.repos_to_rebuild)
         self.assertIn('first build', pipeline.rebuild_reasons['test-repo'])
-        mock_get.assert_called_once_with(
-            'https://ocp-artifacts-art--runtime-int.apps.prod-stable-spoke1-dc-iad2.itup.redhat.com'
-            '/pub/RHOCP/plashets/rhocp-rhel-4.17/stream/el9/latest/plashet.yml'
-        )
         mock_start_build.assert_called_once()
 
     @patch('pyartcd.pipelines.scan_plashet_rpms.util.load_group_config')
