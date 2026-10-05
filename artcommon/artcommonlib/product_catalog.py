@@ -77,6 +77,8 @@ PRODUCT_CATALOG: tuple[ProductConfig, ...] = (
             release_plan="coo-images-base-silent",
             application="coo-images-base",
         ),
+        fbc_stage_release_plans={(1, 5): "coo-advisory-stage-auto-1-5"},
+        cpe_product_name="cluster_observability_operator",
     ),
     # NOTE: kueue-images-base-silent / kueue-images-base may not exist yet in
     # konflux-release-data. Reviewers must confirm these exist or create them.
