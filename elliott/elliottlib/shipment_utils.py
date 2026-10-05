@@ -648,7 +648,9 @@ def get_bug_ids_from_open_shipment_mrs(
     for mr in open_mrs:
         try:
             shipment_configs = get_shipment_configs_from_mr(mr.web_url, group=group)
-        except (ValueError, TypeError, KeyError, GitlabGetError):
+        except (ValueError, TypeError, KeyError, GitlabGetError) as exc:
+            if isinstance(exc, GitlabGetError) and exc.response_code != 404:
+                raise
             logger.warning("Failed to parse shipment configs from MR %s, skipping", mr.web_url, exc_info=True)
             continue
 
