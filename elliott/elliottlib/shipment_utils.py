@@ -12,6 +12,7 @@ from artcommonlib.jira_config import JIRA_DOMAIN_NAME
 from artcommonlib.model import Model
 from artcommonlib.util import new_roundtrip_yaml_handler
 from errata_tool import Erratum
+from gitlab.exceptions import GitlabGetError
 
 from elliottlib.shipment_model import Issue, Issues, ReleaseNotes, ShipmentConfig
 
@@ -647,7 +648,7 @@ def get_bug_ids_from_open_shipment_mrs(
     for mr in open_mrs:
         try:
             shipment_configs = get_shipment_configs_from_mr(mr.web_url, group=group)
-        except (ValueError, TypeError, KeyError):
+        except (ValueError, TypeError, KeyError, GitlabGetError):
             logger.warning("Failed to parse shipment configs from MR %s, skipping", mr.web_url, exc_info=True)
             continue
 
