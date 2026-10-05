@@ -24,6 +24,10 @@ class VerifyCdnPushPipeline:
         poll_interval: int = DEFAULT_POLL_INTERVAL,
         timeout: int = DEFAULT_TIMEOUT,
     ):
+        if poll_interval <= 0:
+            raise ValueError(f"poll_interval must be positive, got {poll_interval}")
+        if timeout <= 0:
+            raise ValueError(f"timeout must be positive, got {timeout}")
         self.runtime = runtime
         self.version = version
         self.assembly = assembly
