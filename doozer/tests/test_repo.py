@@ -149,21 +149,6 @@ class TestRepo(unittest.IsolatedAsyncioTestCase):
         # The repo with an 'extra_options' section is correct
         self.assertEqual(EXPECTED_EXTRA_OPTIONS_REPO, conf_str_extra)
 
-    def test_ocp_artifacts_url_in_repo_section(self):
-        old_url = 'https://ocp-artifacts.engineering.redhat.com/pub/RHOCP/plashets/4.18/stream/el9/latest/x86_64/os/'
-        new_url = (
-            'https://ocp-artifacts-art--runtime-int.apps.prod-stable-spoke1-dc-iad2.itup.redhat.com'
-            '/pub/RHOCP/plashets/4.18/stream/el9/latest/x86_64/os/'
-        )
-        repo = Repo(
-            'el9',
-            {'conf': {'baseurl': {'x86_64': old_url}}, 'content_set': {'default': 'rhel-9'}},
-            ['x86_64'],
-        )
-
-        self.assertEqual(repo.baseurl('unsigned', 'x86_64'), new_url)
-        self.assertIn(f'baseurl = {new_url}\n', repo.conf_section('unsigned'))
-
     def test_content_set(self):
         """ensure content sets can be correctly selected"""
         self.assertEqual("rhel-7-server-ose-4.2-rpms", self.repo.content_set('x86_64'))
@@ -389,8 +374,8 @@ class TestRepo(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(repo.enabled)
 
         # Verify baseurl was constructed for each architecture
-        expected_x86_64_url = "https://ocp-artifacts-art--runtime-int.apps.prod-stable-spoke1-dc-iad2.itup.redhat.com/pub/RHOCP/plashets/4.20/stream/el9-embargoed/latest/x86_64/os/"
-        expected_ppc64le_url = "https://ocp-artifacts-art--runtime-int.apps.prod-stable-spoke1-dc-iad2.itup.redhat.com/pub/RHOCP/plashets/4.20/stream/el9-embargoed/latest/ppc64le/os/"
+        expected_x86_64_url = "https://ocp-artifacts.engineering.redhat.com/pub/RHOCP/plashets/4.20/stream/el9-embargoed/latest/x86_64/os/"
+        expected_ppc64le_url = "https://ocp-artifacts.engineering.redhat.com/pub/RHOCP/plashets/4.20/stream/el9-embargoed/latest/ppc64le/os/"
 
         self.assertEqual(repo.baseurl('unsigned', 'x86_64'), expected_x86_64_url)
         self.assertEqual(repo.baseurl('unsigned', 'ppc64le'), expected_ppc64le_url)

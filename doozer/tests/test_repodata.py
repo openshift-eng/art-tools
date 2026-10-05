@@ -4,7 +4,6 @@ from unittest import IsolatedAsyncioTestCase, TestCase
 from unittest.mock import ANY, AsyncMock, MagicMock, Mock, patch
 
 import defusedxml.ElementTree as ET
-from artcommonlib.url_utils import rewrite_ocp_artifacts_url
 from doozerlib.repodata import OutdatedRPMFinder, Repodata, RepodataLoader, Rpm, RpmModule
 from ruamel.yaml import YAML
 
@@ -899,24 +898,11 @@ data:
 
 
 class TestRepodataLoader(IsolatedAsyncioTestCase):
-    def test_rewrite_repo_url_only_for_custom_host(self):
-        for url in (
-            "https://example.com/repos/test/x86_64/os",
-            "https://ocp-artifacts.engineering.redhat.com.evil.test/repos/test/x86_64/os",
-            "http://ocp-artifacts.engineering.redhat.com/repos/test/x86_64/os",
-        ):
-            with self.subTest(url=url):
-                self.assertEqual(rewrite_ocp_artifacts_url(url), url)
-
     @patch("doozerlib.repodata.RepodataLoader._fetch_remote_compressed", autospec=True)
     @patch("aiohttp.ClientSession", autospec=True)
     async def test_load(self, ClientSession: Mock, _fetch_remote_compressed: AsyncMock):
         repo_name = "test-x86_64"
-        repo_url = "https://ocp-artifacts.engineering.redhat.com/repos/test/x86_64/os"
-        rewritten_repo_url = (
-            "https://ocp-artifacts-art--runtime-int.apps.prod-stable-spoke1-dc-iad2.itup.redhat.com"
-            "/repos/test/x86_64/os"
-        )
+        repo_url = "https://example.com/repos/test/x86_64/os"
         loader = RepodataLoader()
         session = ClientSession.return_value.__aenter__.return_value = Mock(name="session")
         resp = session.get.return_value = AsyncMock(name="get")
@@ -1000,14 +986,13 @@ data:
 
         _fetch_remote_compressed.side_effect = _fake_fetch_remote_compressed
         repodata = await loader.load(repo_name, repo_url)
-        session.get.assert_called_once_with(f"{rewritten_repo_url}/repodata/repomd.xml")
         _fetch_remote_compressed.assert_any_await(
             ANY,
-            f"{rewritten_repo_url}/repodata/06ed3172b751202671416050ea432945e54a36ee1ab8ef2cc71307234343f1ef-primary.xml.gz",
+            "https://example.com/repos/test/x86_64/os/repodata/06ed3172b751202671416050ea432945e54a36ee1ab8ef2cc71307234343f1ef-primary.xml.gz",
         )
         _fetch_remote_compressed.assert_any_await(
             ANY,
-            f"{rewritten_repo_url}/repodata/454ea63462df316e80d93b60ce07e4f523bc06dd1989e878cf2df6ee2a762a34-modules.yaml.gz",
+            "https://example.com/repos/test/x86_64/os/repodata/454ea63462df316e80d93b60ce07e4f523bc06dd1989e878cf2df6ee2a762a34-modules.yaml.gz",
         )
         self.assertEqual(repodata.name, repo_name)
         self.assertEqual(
