@@ -570,9 +570,9 @@ def start_mirror_images_to_ci(
     if assembly:
         params['ASSEMBLY'] = assembly
     if data_path:
-        params['DATA_PATH'] = 'https://github.com/kopero2000/ocp-build-data'
+        params['DATA_PATH'] = data_path
     if data_gitref:
-        params['DATA_GITREF'] = 'refactor-sync-ci-images-test'
+        params['DATA_GITREF'] = data_gitref
     if only_stream:
         params['ONLY_STREAM'] = only_stream
     if images:
@@ -605,9 +605,9 @@ def start_sync_ci_buildconfigs(
     if assembly:
         params['ASSEMBLY'] = assembly
     if data_path:
-        params['DATA_PATH'] = 'https://github.com/kopero2000/ocp-build-data'
+        params['DATA_PATH'] = data_path
     if data_gitref:
-        params['DATA_GITREF'] = 'refactor-sync-ci-images-test'
+        params['DATA_GITREF'] = data_gitref
     if only_stream:
         params['ONLY_STREAM'] = only_stream
     if images:
@@ -635,13 +635,11 @@ def start_open_reconciliation_prs(
     if assembly:
         params['ASSEMBLY'] = assembly
     if data_path:
-        params['DATA_PATH'] = 'refactor-sync-ci-images-test'
+        params['DATA_PATH'] = data_path
     if data_gitref:
-        params['DATA_GITREF'] = 'https://github.com/kopero2000/ocp-build-data'
+        params['DATA_GITREF'] = data_gitref
     if dry_run:
         params['DRY_RUN'] = True
-    #TODO remove it, just for testing
-    params['ART_TOOLS_COMMIT'] = "refactor-sync-ci-images"
     return start_build(
         job=Jobs.OPEN_RECONCILIATION_PRS,
         params=params,
