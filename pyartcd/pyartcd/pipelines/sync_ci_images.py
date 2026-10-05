@@ -350,15 +350,20 @@ class SyncCIImagesPipeline(CIImageSyncPipelineBase):
         except Exception as e:
             self._logger.warning(f"{self.version}: Failed to trigger reconcile-ci-upstream (fire-and-forget): {e}")
 
-    def _trigger_and_wait(self, start_fn, job_name: str, **extra_params) -> None:
+    async def _trigger_and_wait(self, start_fn, job_name: str, **extra_params) -> None:
         """
         Trigger a downstream Jenkins job and block until it completes successfully.
 
         Always triggers the job, even during a dry-run of the orchestrator itself --
         dry_run is forwarded (via _shared_sub_job_params) so the sub-job runs in its
         own dry-run mode instead of being skipped entirely.
+
+        start_fn blocks synchronously (polling) for as long as the sub-job runs, so it
+        is offloaded to a thread to avoid stalling the event loop -- and with it, this
+        process's other async work (e.g. the Redis lock's background auto-extend task).
         """
-        result = start_fn(
+        result = await asyncio.to_thread(
+            start_fn,
             version=self.version,
             only_stream=self.only_stream,
             images=','.join(self.images),
@@ -392,12 +397,12 @@ class SyncCIImagesPipeline(CIImageSyncPipelineBase):
 
         self._start_reconcile_ci_upstream()
 
-        self._trigger_and_wait(
+        await self._trigger_and_wait(
             jenkins.start_mirror_images_to_ci,
             'mirror-images-to-ci',
             update_images_only_when_missing=self.update_images_only_when_missing,
         )
-        self._trigger_and_wait(jenkins.start_sync_ci_buildconfigs, 'sync-ci-buildconfigs')
+        await self._trigger_and_wait(jenkins.start_sync_ci_buildconfigs, 'sync-ci-buildconfigs')
 
         # Record success
         await self._record_successful_run(current_sha)
