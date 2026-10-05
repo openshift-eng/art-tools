@@ -53,6 +53,7 @@ spec:
         object.spec.pipelineRef.name in [
           "release-from-fbc",
           "trigger-prod-release",
+          "layered-products-scan",
           "schedule-layered-products-scan"
         ] &&
         !has(object.spec.pipelineSpec) &&
