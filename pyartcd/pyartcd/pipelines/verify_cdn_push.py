@@ -53,6 +53,10 @@ class VerifyCdnPushPipeline:
         elapsed = 0
 
         while True:
+            if elapsed >= self.timeout:
+                LOGGER.error("Timeout reached (%ds) waiting for CDN staging pushes", self.timeout)
+                raise TimeoutError(f"CDN staging push did not complete within {self.timeout}s")
+
             LOGGER.info("Running elliott verify-cdn-push (elapsed %ds)", elapsed)
             result = await self._run_elliott()
 
@@ -68,10 +72,6 @@ class VerifyCdnPushPipeline:
             if not any(a.get("pending") for a in advisories):
                 LOGGER.error("No pending advisories but result is not passed or failed: %s", result)
                 raise RuntimeError("Unexpected state: no pending advisories")
-
-            if elapsed >= self.timeout:
-                LOGGER.error("Timeout reached (%ds) waiting for CDN staging pushes", self.timeout)
-                raise TimeoutError(f"CDN staging push did not complete within {self.timeout}s")
 
             LOGGER.info(
                 "CDN staging pushes still pending, waiting %ds before next check",
@@ -89,7 +89,7 @@ class VerifyCdnPushPipeline:
         try:
             return json.loads(stdout)
         except json.JSONDecodeError:
-            LOGGER.error("Failed to parse elliott output: %s", stdout)
+            LOGGER.error("Failed to parse elliott output: %s", stdout[:500])
             raise
 
 
