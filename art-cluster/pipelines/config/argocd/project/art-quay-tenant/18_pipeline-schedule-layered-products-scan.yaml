@@ -10,7 +10,7 @@ spec:
     Scheduler for Quay scan. Checks locks and freeze automation,
     then triggers individual layered-products-scan PipelineRuns for groups that are eligible.
   params:
-  - default: ashwindasr@codex/cleanup-tekton-locks
+  - default: ""
     description: '(Optional) Override art-tools version. Format: ghuser@branch (e.g.
       ashwindasr@my-feature)'
     name: art-tools-commit
