@@ -6,7 +6,8 @@ metadata:
   name: trigger-prod-release
   namespace: art-oc-mirror-tenant
 spec:
-  description: Validate that all YAML files in a shipment MR are for product oc-mirror, then trigger the prod-job in the prod-release-triggers stage of the MR's latest GitLab CI pipeline.
+  description: Validate that all YAML files in a shipment MR are for product oc-mirror,
+    then trigger the prod-job in the prod-release-triggers stage of the MR's latest GitLab CI pipeline.
   params:
   - description: 'Full GitLab MR URL (e.g. https://gitlab.cee.redhat.com/hybrid-platforms/art/ocp-shipment-data/-/merge_requests/742)'
     name: mr-url
