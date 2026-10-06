@@ -346,7 +346,10 @@ class SyncCIImagesPipeline(CIImageSyncPipelineBase):
         own dry-run mode instead of being skipped entirely.
         """
         try:
-            jenkins.start_open_reconciliation_prs(version=self.version, **self._shared_sub_job_params())
+            _, url = jenkins.start_open_reconciliation_prs(
+                version=self.version, return_build_url=True, **self._shared_sub_job_params()
+            )
+            jenkins.update_description(f'<a href="{url}">open-reconciliation-prs</a><br/>')
         except Exception as e:
             self._logger.warning(f"{self.version}: Failed to trigger reconcile-ci-upstream (fire-and-forget): {e}")
 
@@ -362,15 +365,17 @@ class SyncCIImagesPipeline(CIImageSyncPipelineBase):
         is offloaded to a thread to avoid stalling the event loop -- and with it, this
         process's other async work (e.g. the Redis lock's background auto-extend task).
         """
-        result = await asyncio.to_thread(
+        result, url = await asyncio.to_thread(
             start_fn,
             version=self.version,
             only_stream=self.only_stream,
             images=','.join(self.images),
             block_until_complete=True,
+            return_build_url=True,
             **self._shared_sub_job_params(),
             **extra_params,
         )
+        jenkins.update_description(f'<a href="{url}">{job_name}</a>: {result}<br/>')
         if result != 'SUCCESS':
             raise RuntimeError(f"{self.version}: {job_name} did not succeed (result={result})")
 

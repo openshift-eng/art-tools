@@ -262,9 +262,9 @@ class TestSyncCIImagesOrchestration(unittest.IsolatedAsyncioTestCase):
     @mock.patch('pyartcd.pipelines.sync_ci_images.jenkins')
     async def test_run_orchestrates_sub_jobs_in_order(self, mock_jenkins):
         """Test run() fires reconcile-ci-upstream, then waits for mirror then buildconfigs."""
-        mock_jenkins.start_open_reconciliation_prs.return_value = 'SUCCESS'
-        mock_jenkins.start_mirror_images_to_ci.return_value = 'SUCCESS'
-        mock_jenkins.start_sync_ci_buildconfigs.return_value = 'SUCCESS'
+        mock_jenkins.start_open_reconciliation_prs.return_value = (None, 'http://jenkins/reconcile/1')
+        mock_jenkins.start_mirror_images_to_ci.return_value = ('SUCCESS', 'http://jenkins/mirror/1')
+        mock_jenkins.start_sync_ci_buildconfigs.return_value = ('SUCCESS', 'http://jenkins/buildconfigs/1')
 
         pipeline = SyncCIImagesPipeline(self._mock_runtime(), for_release="4.17")
 
@@ -276,13 +276,19 @@ class TestSyncCIImagesOrchestration(unittest.IsolatedAsyncioTestCase):
 
             self.assertEqual(rc, 0)
             mock_jenkins.start_open_reconciliation_prs.assert_called_once_with(
-                version="4.17", assembly="stream", data_path=OCP_BUILD_DATA_URL, data_gitref="", dry_run=False
+                version="4.17",
+                return_build_url=True,
+                assembly="stream",
+                data_path=OCP_BUILD_DATA_URL,
+                data_gitref="",
+                dry_run=False,
             )
             mock_jenkins.start_mirror_images_to_ci.assert_called_once_with(
                 version="4.17",
                 only_stream="",
                 images="",
                 block_until_complete=True,
+                return_build_url=True,
                 assembly="stream",
                 data_path=OCP_BUILD_DATA_URL,
                 data_gitref="",
@@ -294,6 +300,7 @@ class TestSyncCIImagesOrchestration(unittest.IsolatedAsyncioTestCase):
                 only_stream="",
                 images="",
                 block_until_complete=True,
+                return_build_url=True,
                 assembly="stream",
                 data_path=OCP_BUILD_DATA_URL,
                 data_gitref="",
@@ -304,9 +311,9 @@ class TestSyncCIImagesOrchestration(unittest.IsolatedAsyncioTestCase):
     @mock.patch('pyartcd.pipelines.sync_ci_images.jenkins')
     async def test_run_triggers_sub_jobs_with_dry_run_forwarded(self, mock_jenkins):
         """Test a dry-run of the orchestrator still triggers sub-jobs, forwarding dry_run=True instead of skipping."""
-        mock_jenkins.start_open_reconciliation_prs.return_value = 'SUCCESS'
-        mock_jenkins.start_mirror_images_to_ci.return_value = 'SUCCESS'
-        mock_jenkins.start_sync_ci_buildconfigs.return_value = 'SUCCESS'
+        mock_jenkins.start_open_reconciliation_prs.return_value = (None, 'http://jenkins/reconcile/1')
+        mock_jenkins.start_mirror_images_to_ci.return_value = ('SUCCESS', 'http://jenkins/mirror/1')
+        mock_jenkins.start_sync_ci_buildconfigs.return_value = ('SUCCESS', 'http://jenkins/buildconfigs/1')
 
         mock_runtime = self._mock_runtime()
         mock_runtime.dry_run = True
@@ -329,7 +336,8 @@ class TestSyncCIImagesOrchestration(unittest.IsolatedAsyncioTestCase):
     @mock.patch('pyartcd.pipelines.sync_ci_images.jenkins')
     async def test_run_does_not_trigger_buildconfigs_when_mirror_fails(self, mock_jenkins):
         """Test a mirror-images-to-ci failure prevents sync-ci-buildconfigs from running."""
-        mock_jenkins.start_mirror_images_to_ci.return_value = 'FAILURE'
+        mock_jenkins.start_open_reconciliation_prs.return_value = (None, 'http://jenkins/reconcile/1')
+        mock_jenkins.start_mirror_images_to_ci.return_value = ('FAILURE', 'http://jenkins/mirror/1')
 
         pipeline = SyncCIImagesPipeline(self._mock_runtime(), for_release="4.17")
 
@@ -343,8 +351,8 @@ class TestSyncCIImagesOrchestration(unittest.IsolatedAsyncioTestCase):
     async def test_run_continues_when_fire_and_forget_trigger_fails(self, mock_jenkins):
         """Test a failure to trigger reconcile-ci-upstream does not block mirror/buildconfigs."""
         mock_jenkins.start_open_reconciliation_prs.side_effect = RuntimeError("jenkins unavailable")
-        mock_jenkins.start_mirror_images_to_ci.return_value = 'SUCCESS'
-        mock_jenkins.start_sync_ci_buildconfigs.return_value = 'SUCCESS'
+        mock_jenkins.start_mirror_images_to_ci.return_value = ('SUCCESS', 'http://jenkins/mirror/1')
+        mock_jenkins.start_sync_ci_buildconfigs.return_value = ('SUCCESS', 'http://jenkins/buildconfigs/1')
 
         pipeline = SyncCIImagesPipeline(self._mock_runtime(), for_release="4.17")
 
