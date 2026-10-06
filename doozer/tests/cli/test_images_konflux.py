@@ -229,6 +229,7 @@ class TestBaseImageReleasePrioritisation(unittest.IsolatedAsyncioTestCase):
         # Use a non-stream assembly to avoid triggering the stage_release path
         runtime.assembly = "test"
         runtime.variant = BuildVariant.OCP
+        runtime.product = "ocp"
         runtime.source_resolver = mock.Mock(spec=SourceResolver)
         runtime.konflux_db = mock.Mock()
         runtime.konflux_db.bind = mock.Mock()
@@ -250,6 +251,7 @@ class TestBaseImageReleasePrioritisation(unittest.IsolatedAsyncioTestCase):
 
         mock_builder = mock.Mock()
         mock_builder.build = mock.AsyncMock(side_effect=build_side_effect)
+        mock_builder.validate_custom_integration_test_scenarios = mock.AsyncMock()
         mock_builder._konflux_client.ensure_git_auth_secret = mock.AsyncMock(return_value="test-secret")
         mock_builder._konflux_client.token_refresh_loop = mock.AsyncMock()
         mock_builder._konflux_client.delete_git_auth_secret = mock.AsyncMock()
@@ -311,6 +313,7 @@ class TestBaseImageReleasePrioritisation(unittest.IsolatedAsyncioTestCase):
         runtime.group = "test-group"
         runtime.assembly = "test"
         runtime.variant = BuildVariant.OCP
+        runtime.product = "ocp"
         runtime.source_resolver = mock.Mock(spec=SourceResolver)
         runtime.konflux_db = mock.Mock()
         runtime.konflux_db.bind = mock.Mock()
@@ -322,6 +325,7 @@ class TestBaseImageReleasePrioritisation(unittest.IsolatedAsyncioTestCase):
 
         mock_builder = mock.Mock()
         mock_builder.build = mock.AsyncMock(return_value=("nvr", "plr-name", {}))
+        mock_builder.validate_custom_integration_test_scenarios = mock.AsyncMock()
         mock_builder._konflux_client.ensure_git_auth_secret = mock.AsyncMock(return_value="test-secret")
         mock_builder._konflux_client.token_refresh_loop = mock.AsyncMock()
         mock_builder._konflux_client.delete_git_auth_secret = mock.AsyncMock()
