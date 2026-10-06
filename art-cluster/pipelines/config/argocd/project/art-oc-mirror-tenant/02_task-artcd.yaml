@@ -47,7 +47,7 @@ spec:
         cpu: "2"
         memory: 4Gi
       limits:
-        cpu: "4"
+        cpu: "2"
         memory: 4Gi
     env:
     - name: SLACK_BOT_TOKEN
