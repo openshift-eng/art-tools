@@ -13,6 +13,7 @@ spec:
     description: 'ocp-build-data group branch for this product'
     enum:
     - rhosdt-3.11
+    - rhosdt-0.158
     name: group
     type: string
   - default: ''
@@ -134,6 +135,7 @@ spec:
 
         ALLOWED_GROUPS = {
             "rhosdt-3.11",
+            "rhosdt-0.158",
         }
         ocp_optional = "$(params.ocp-optional)" == "true"
         group = "$(params.group)"
