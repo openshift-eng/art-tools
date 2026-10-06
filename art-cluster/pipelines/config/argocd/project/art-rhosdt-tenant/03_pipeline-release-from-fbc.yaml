@@ -9,7 +9,7 @@ spec:
   description: Create releases from FBC (File-Based Catalogs) for non-OpenShift products
     (RHOSDT, etc.) using artcd release-from-fbc command.
   params:
-  - default: rhosdt-3.11
+  - default: rhosdt-0.158
     description: 'ocp-build-data group branch for this product'
     enum:
     - rhosdt-3.11
