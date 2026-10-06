@@ -45,10 +45,10 @@ spec:
     computeResources:
       requests:
         cpu: "2"
-        memory: 8Gi
+        memory: 15Gi
       limits:
-        cpu: "2"
-        memory: 8Gi
+        cpu: "4"
+        memory: 16Gi
     env:
     - name: SLACK_BOT_TOKEN
       valueFrom:
