@@ -214,8 +214,8 @@ PRODUCT_CATALOG: tuple[ProductConfig, ...] = (
     ),
     ProductConfig(
         product_id=ProductId.OC_MIRROR,
-        namespace="ocp-art-tenant",
-        kubeconfig_env="KONFLUX_SA_KUBECONFIG",
+        namespace="art-oc-mirror-tenant",
+        kubeconfig_env="OC_MIRROR_KONFLUX_SA_KUBECONFIG",
         conforma_stage_policies=ConformaPolicies(
             image_policy="rhtap-releng-tenant/registry-standard",
         ),
@@ -223,8 +223,8 @@ PRODUCT_CATALOG: tuple[ProductConfig, ...] = (
     ProductConfig(
         product_id=ProductId.MIRROR_GUI,
         aliases=("mirror-gui",),
-        namespace="ocp-art-tenant",
-        kubeconfig_env="KONFLUX_SA_KUBECONFIG",
+        namespace="art-oc-mirror-tenant",
+        kubeconfig_env="OC_MIRROR_KONFLUX_SA_KUBECONFIG",
         conforma_stage_policies=ConformaPolicies(
             image_policy="rhtap-releng-tenant/registry-standard",
         ),

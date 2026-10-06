@@ -3,7 +3,7 @@ kind: Task
 metadata:
   labels:
     app: artcd
-  name: artcd
+  name: lp-scan
   namespace: art-oc-mirror-tenant
 spec:
   params:
@@ -16,7 +16,6 @@ spec:
     name: args
     type: array
   stepTemplate:
-    computeResources: {}
     env:
     - name: TASKRUN_NAMESPACE
       value: $(context.taskRun.namespace)
@@ -41,7 +40,6 @@ spec:
   steps:
   - args:
     - $(params.args[*])
-    computeResources: {}
     env:
     - name: SLACK_BOT_TOKEN
       valueFrom:
