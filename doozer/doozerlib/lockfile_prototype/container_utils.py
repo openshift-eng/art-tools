@@ -7,6 +7,7 @@ and reading files from images), SBOMs (querying installed packages),
 and extracted RPM databases as a fallback for images without usable SBOMs.
 """
 
+import asyncio
 import base64
 import binascii
 import json
@@ -33,8 +34,10 @@ class ContainerImageHelper:
     Async utilities for interacting with container images.
     """
 
-    def __init__(self, logger: logging.Logger | None = None):
+    def __init__(self, logger: logging.Logger | None = None, digest_cache: dict[str, str] | None = None):
         self.logger = logger or logutil.get_logger(__name__)
+        self._digest_cache: dict[str, str] = digest_cache if digest_cache is not None else {}
+        self._digest_locks: dict[str, asyncio.Lock] = {}
 
     @staticmethod
     def _proxy_pullspec(pullspec: str) -> str:
@@ -73,24 +76,43 @@ class ContainerImageHelper:
         Return Value(s):
             str: Pullspec with digest. Returns the original pullspec if inspect fails.
         """
-        inspect_pullspec = self._proxy_pullspec(pullspec)
-        registry_config = os.environ.get("QUAY_AUTH_FILE") or os.environ.get("REGISTRY_AUTH_FILE")
-        self.logger.debug(f"Resolving to digest (prefer listDigest): {pullspec}")
+        # Fast path: cache hit (no lock needed)
+        if pullspec in self._digest_cache:
+            cached = self._digest_cache[pullspec]
+            self.logger.debug(f"Digest cache hit for {pullspec}: {cached}")
+            return cached
 
-        try:
-            image_data = await oc_image_info_for_arch_async(inspect_pullspec, registry_config=registry_config)
-        except Exception as e:
-            self.logger.warning(f"Failed to resolve digest for {pullspec}, using original: {e}")
-            return pullspec
+        # Per-key lock: only one coroutine resolves a given pullspec at a time
+        if pullspec not in self._digest_locks:
+            self._digest_locks[pullspec] = asyncio.Lock()
+        async with self._digest_locks[pullspec]:
+            # Double-check after acquiring lock
+            if pullspec in self._digest_cache:
+                cached = self._digest_cache[pullspec]
+                self.logger.debug(f"Digest cache hit for {pullspec}: {cached}")
+                return cached
 
-        digest = image_data.get("listDigest") or image_data.get("digest")
-        if not digest:
-            self.logger.warning(f"No digest found for {pullspec}, using original")
-            return pullspec
+            inspect_pullspec = self._proxy_pullspec(pullspec)
+            registry_config = os.environ.get("QUAY_AUTH_FILE") or os.environ.get("REGISTRY_AUTH_FILE")
+            self.logger.debug(f"Resolving to digest (prefer listDigest): {pullspec}")
 
-        resolved = f"{self._repo_from_pullspec(pullspec)}@{digest}"
-        self.logger.debug(f"Resolved to: {resolved}")
-        return resolved
+            try:
+                image_data = await oc_image_info_for_arch_async(inspect_pullspec, registry_config=registry_config)
+            except Exception as e:
+                self.logger.warning(f"Failed to resolve digest for {pullspec}, using original: {e}")
+                self._digest_cache[pullspec] = pullspec
+                return pullspec
+
+            digest = image_data.get("listDigest") or image_data.get("digest")
+            if not digest:
+                self.logger.warning(f"No digest found for {pullspec}, using original")
+                self._digest_cache[pullspec] = pullspec
+                return pullspec
+
+            resolved = f"{self._repo_from_pullspec(pullspec)}@{digest}"
+            self.logger.debug(f"Resolved to: {resolved}")
+            self._digest_cache[pullspec] = resolved
+            return resolved
 
     async def get_installed_packages(self, image_pullspec: str, arch: str) -> list[str]:
         """

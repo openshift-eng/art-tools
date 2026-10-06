@@ -36,6 +36,7 @@ async def generate_lockfile(
     downstream_parents: list[str] | None = None,
     parent_members: list | None = None,
     shared_dnf_cache: TemporaryDirectory | None = None,
+    shared_digest_cache: dict[str, str] | None = None,
     logger: logging.Logger | None = None,
 ) -> TemporaryDirectory | None:
     """
@@ -53,6 +54,9 @@ async def generate_lockfile(
         downstream_parents (list[str] | None): Parent image pullspecs per stage.
         parent_members (list | None): Parent ImageMetadata objects.
         shared_dnf_cache (TemporaryDirectory | None): Shared cache dir across images.
+        shared_digest_cache (dict[str, str] | None): Shared digest resolution cache
+            across images. Avoids repeating expensive (and failing) network calls
+            for the same pullspec.
         logger (logging.Logger | None): Logger instance.
     Return Value(s):
         TemporaryDirectory | None: The shared cache (created if None was passed in).
@@ -62,8 +66,12 @@ async def generate_lockfile(
     if shared_dnf_cache is None:
         shared_dnf_cache = TemporaryDirectory(prefix="rpm-lockfile-cache-", dir=str(working_dir))
 
+    digest_cache = shared_digest_cache if shared_digest_cache is not None else {}
+
     resolver = RpmResolver(working_dir=working_dir, logger=_logger, cache_dir=shared_dnf_cache.name)
-    generator = RpmLockfilePrototypeGenerator(repos, working_dir=working_dir, resolver=resolver)
+    generator = RpmLockfilePrototypeGenerator(
+        repos, working_dir=working_dir, resolver=resolver, digest_cache=digest_cache
+    )
 
     fallback: dict[int, list[str]] = {}
     parent_dirs: dict[int, Path] = {}

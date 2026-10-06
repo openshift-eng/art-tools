@@ -536,3 +536,103 @@ class TestContainerImageHelper(unittest.TestCase):
         helper = ContainerImageHelper()
         result = asyncio.run(helper.read_file_from_image("quay.io/test/img@sha256:abc", "/etc/*.nonexistent"))
         self.assertEqual(result, "")
+
+    @patch("doozerlib.lockfile_prototype.container_utils.oc_image_info_for_arch_async", new_callable=AsyncMock)
+    def test_resolve_to_digest_cache_hit(self, mock_oc):
+        """
+        When a pullspec is already in the digest cache, return the cached value without calling oc.
+        """
+        cache = {"quay.io/test/img:latest": "quay.io/test/img@sha256:cached123"}
+        helper = ContainerImageHelper(digest_cache=cache)
+        result = asyncio.run(helper.resolve_to_digest("quay.io/test/img:latest"))
+        self.assertEqual(result, "quay.io/test/img@sha256:cached123")
+        mock_oc.assert_not_awaited()
+
+    @patch("doozerlib.lockfile_prototype.container_utils.oc_image_info_for_arch_async", new_callable=AsyncMock)
+    def test_resolve_to_digest_cache_miss_populates_cache(self, mock_oc):
+        """
+        On a cache miss, resolve via oc and store the result in the cache.
+        """
+        mock_oc.return_value = {
+            "listDigest": "sha256:newdigest",
+            "digest": "sha256:platform",
+        }
+        cache: dict[str, str] = {}
+        helper = ContainerImageHelper(digest_cache=cache)
+        result = asyncio.run(helper.resolve_to_digest("quay.io/test/img:v1"))
+        self.assertEqual(result, "quay.io/test/img@sha256:newdigest")
+        mock_oc.assert_awaited_once()
+        self.assertEqual(cache["quay.io/test/img:v1"], "quay.io/test/img@sha256:newdigest")
+
+    @patch("doozerlib.lockfile_prototype.container_utils.oc_image_info_for_arch_async", new_callable=AsyncMock)
+    def test_resolve_to_digest_negative_cache(self, mock_oc):
+        """
+        Failed resolution should cache the original pullspec (negative cache),
+        so the second call does not retry the network call.
+        """
+        mock_oc.side_effect = ChildProcessError("connection refused")
+        cache: dict[str, str] = {}
+        helper = ContainerImageHelper(digest_cache=cache)
+
+        result1 = asyncio.run(helper.resolve_to_digest("quay.io/test/img:unreachable"))
+        self.assertEqual(result1, "quay.io/test/img:unreachable")
+        self.assertEqual(mock_oc.await_count, 1)
+        self.assertEqual(cache["quay.io/test/img:unreachable"], "quay.io/test/img:unreachable")
+
+        result2 = asyncio.run(helper.resolve_to_digest("quay.io/test/img:unreachable"))
+        self.assertEqual(result2, "quay.io/test/img:unreachable")
+        self.assertEqual(mock_oc.await_count, 1)  # no additional call
+
+    def test_resolve_to_digest_concurrent_dedup(self):
+        """
+        Concurrent calls for the same pullspec should only call oc once.
+        """
+
+        async def run():
+            shared_cache: dict[str, str] = {}
+            helper = ContainerImageHelper(digest_cache=shared_cache)
+
+            call_count = 0
+
+            async def mock_oc_image_info(pullspec, **kwargs):
+                nonlocal call_count
+                call_count += 1
+                await asyncio.sleep(0.01)  # Simulate network delay
+                return {"listDigest": "sha256:abc123"}
+
+            with patch(
+                "doozerlib.lockfile_prototype.container_utils.oc_image_info_for_arch_async",
+                side_effect=mock_oc_image_info,
+            ):
+                results = await asyncio.gather(
+                    helper.resolve_to_digest("registry.redhat.io/foo:v1"),
+                    helper.resolve_to_digest("registry.redhat.io/foo:v1"),
+                    helper.resolve_to_digest("registry.redhat.io/foo:v1"),
+                )
+
+            self.assertEqual(call_count, 1, f"Expected 1 oc call but got {call_count}")
+            self.assertTrue(all(r == "registry.redhat.io/foo@sha256:abc123" for r in results))
+
+        asyncio.run(run())
+
+    @patch("doozerlib.lockfile_prototype.container_utils.oc_image_info_for_arch_async", new_callable=AsyncMock)
+    def test_resolve_to_digest_shared_cache_across_instances(self, mock_oc):
+        """
+        A shared cache dict should work across multiple ContainerImageHelper instances,
+        so the second instance benefits from the first's resolution.
+        """
+        mock_oc.return_value = {
+            "listDigest": "sha256:shared123",
+            "digest": "sha256:platform",
+        }
+        shared_cache: dict[str, str] = {}
+        helper1 = ContainerImageHelper(digest_cache=shared_cache)
+        helper2 = ContainerImageHelper(digest_cache=shared_cache)
+
+        result1 = asyncio.run(helper1.resolve_to_digest("quay.io/test/img:shared"))
+        self.assertEqual(result1, "quay.io/test/img@sha256:shared123")
+        self.assertEqual(mock_oc.await_count, 1)
+
+        result2 = asyncio.run(helper2.resolve_to_digest("quay.io/test/img:shared"))
+        self.assertEqual(result2, "quay.io/test/img@sha256:shared123")
+        self.assertEqual(mock_oc.await_count, 1)  # still 1, served from shared cache

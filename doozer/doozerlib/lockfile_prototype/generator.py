@@ -320,6 +320,7 @@ class RpmLockfilePrototypeGenerator:
         logger: logging.Logger | None = None,
         container_helper: ContainerImageHelper | None = None,
         resolver: RpmResolver | None = None,
+        digest_cache: dict[str, str] | None = None,
     ):
         self.repos = repos
         self.downstream_parents: list[str] = []
@@ -328,7 +329,7 @@ class RpmLockfilePrototypeGenerator:
         self.logger = logger or logutil.get_logger(__name__)
         self.upgrades_dropped = False
         self._rpmdb_package_cache: dict[tuple[str, str], set[str] | None] = {}
-        self._container = container_helper or ContainerImageHelper(logger=self.logger)
+        self._container = container_helper or ContainerImageHelper(logger=self.logger, digest_cache=digest_cache)
         self._resolver = resolver or RpmResolver(working_dir=working_dir, logger=self.logger)
 
     async def generate_lockfile(

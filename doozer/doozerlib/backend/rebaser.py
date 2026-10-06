@@ -103,6 +103,7 @@ class KonfluxRebaser:
         )
         self.artifact_lockfile_generator = ArtifactLockfileGenerator(runtime=runtime)
         self._shared_dnf_cache: TemporaryDirectory | None = None
+        self._shared_digest_cache: dict[str, str] = {}
         self.image_repo = image_repo
         self.uuid_tag = ''
         self.variant = variant
@@ -1099,6 +1100,7 @@ class KonfluxRebaser:
             parent_members=parent_members,
             working_dir=Path(self._runtime.working_dir),
             shared_dnf_cache=self._shared_dnf_cache,
+            shared_digest_cache=self._shared_digest_cache,
             logger=self._logger,
         )
 
