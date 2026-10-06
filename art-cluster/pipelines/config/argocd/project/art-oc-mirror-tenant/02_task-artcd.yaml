@@ -41,6 +41,7 @@ spec:
   steps:
   - args:
     - $(params.args[*])
+    # Potentially right-sized for this tenant based on observed PipelineRun usage.
     computeResources:
       requests:
         cpu: 500m
