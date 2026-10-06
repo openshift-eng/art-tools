@@ -1651,7 +1651,9 @@ class TestKonfluxOcpPipelineOwnerFailureEmails(unittest.IsolatedAsyncioTestCase)
         self.assertEqual(categories.release, ['base'])
 
     @patch('pyartcd.pipelines.ocp4_konflux.util.mail_build_failure_owners_konflux')
-    def test_handle_emails_build_failures_on_stream(self, mock_mail):
+    @patch('pyartcd.pipelines.ocp4_konflux.util.get_counter_failures', new_callable=AsyncMock)
+    async def test_handle_emails_build_failures_on_stream(self, mock_counters, mock_mail):
+        mock_counters.return_value = {'ironic': {'failure_count': 5}}
         pipeline = self._make_pipeline()
         record_log = {
             'image_build_konflux': [
@@ -1666,22 +1668,43 @@ class TestKonfluxOcpPipelineOwnerFailureEmails(unittest.IsolatedAsyncioTestCase)
                 },
             ]
         }
-        pipeline._handle_image_build_failures(record_log)
+        await pipeline._handle_image_build_failures(record_log)
 
         mock_mail.assert_called_once()
         failed_builds = mock_mail.call_args.kwargs['failed_builds']
         self.assertEqual(list(failed_builds.keys()), ['ironic'])
         self.assertEqual(mock_mail.call_args.kwargs['default_owner'], pipeline.mail_list_failure)
+        self.assertEqual(mock_mail.call_args.kwargs['failure_counts'], {'ironic': 5})
 
     @patch('pyartcd.pipelines.ocp4_konflux.util.mail_build_failure_owners_konflux')
-    def test_handle_skips_non_stream(self, mock_mail):
-        pipeline = self._make_pipeline(assembly='4.18.1')
-        record_log = {'image_build_konflux': [self._build_failure_entry('ironic')]}
-        pipeline._handle_image_build_failures(record_log)
+    @patch('pyartcd.pipelines.ocp4_konflux.util.get_counter_failures', new_callable=AsyncMock)
+    async def test_handle_skips_first_time_failures(self, mock_counters, mock_mail):
+        # Counter was just incremented to 1 for this run only; not yet a repeat failure.
+        mock_counters.return_value = {'ironic': {'failure_count': 1}}
+        pipeline = self._make_pipeline()
+        record_log = {'image_build_konflux': [self._build_failure_entry('ironic', outcome='failure')]}
+        await pipeline._handle_image_build_failures(record_log)
         mock_mail.assert_not_called()
 
     @patch('pyartcd.pipelines.ocp4_konflux.util.mail_build_failure_owners_konflux')
-    def test_handle_skips_ec_and_release_failures(self, mock_mail):
+    @patch('pyartcd.pipelines.ocp4_konflux.util.get_counter_failures', new_callable=AsyncMock)
+    async def test_handle_skips_below_repeat_threshold(self, mock_counters, mock_mail):
+        # One short of the 5-consecutive-failure threshold.
+        mock_counters.return_value = {'ironic': {'failure_count': 4}}
+        pipeline = self._make_pipeline()
+        record_log = {'image_build_konflux': [self._build_failure_entry('ironic', outcome='failure')]}
+        await pipeline._handle_image_build_failures(record_log)
+        mock_mail.assert_not_called()
+
+    @patch('pyartcd.pipelines.ocp4_konflux.util.mail_build_failure_owners_konflux')
+    async def test_handle_skips_non_stream(self, mock_mail):
+        pipeline = self._make_pipeline(assembly='4.18.1')
+        record_log = {'image_build_konflux': [self._build_failure_entry('ironic')]}
+        await pipeline._handle_image_build_failures(record_log)
+        mock_mail.assert_not_called()
+
+    @patch('pyartcd.pipelines.ocp4_konflux.util.mail_build_failure_owners_konflux')
+    async def test_handle_skips_ec_and_release_failures(self, mock_mail):
         pipeline = self._make_pipeline()
         record_log = {
             'image_build_konflux': [
@@ -1689,11 +1712,11 @@ class TestKonfluxOcpPipelineOwnerFailureEmails(unittest.IsolatedAsyncioTestCase)
                 self._build_failure_entry('base', outcome='release_error'),
             ]
         }
-        pipeline._handle_image_build_failures(record_log)
+        await pipeline._handle_image_build_failures(record_log)
         mock_mail.assert_not_called()
 
     @patch('pyartcd.pipelines.ocp4_konflux.util.mail_build_failure_owners_konflux')
-    def test_handle_skips_high_failure_ratio(self, mock_mail):
+    async def test_handle_skips_high_failure_ratio(self, mock_mail):
         pipeline = self._make_pipeline()
         # 4 failures out of 12 (> 25% and total > 10) → do not spam
         entries = [self._build_failure_entry(f'img-{i}') for i in range(4)]
@@ -1709,11 +1732,13 @@ class TestKonfluxOcpPipelineOwnerFailureEmails(unittest.IsolatedAsyncioTestCase)
             for i in range(8)
         ]
         record_log = {'image_build_konflux': entries}
-        pipeline._handle_image_build_failures(record_log)
+        await pipeline._handle_image_build_failures(record_log)
         mock_mail.assert_not_called()
 
     @patch('pyartcd.pipelines.ocp4_konflux.util.mail_build_failure_owners_konflux')
-    def test_handle_emails_when_ratio_below_threshold(self, mock_mail):
+    @patch('pyartcd.pipelines.ocp4_konflux.util.get_counter_failures', new_callable=AsyncMock)
+    async def test_handle_emails_when_ratio_below_threshold(self, mock_counters, mock_mail):
+        mock_counters.return_value = {'img-0': {'failure_count': 5}, 'img-1': {'failure_count': 6}}
         pipeline = self._make_pipeline()
         # 2 failures out of 12 (< 25%) → spam owners
         entries = [self._build_failure_entry(f'img-{i}') for i in range(2)]
@@ -1729,15 +1754,19 @@ class TestKonfluxOcpPipelineOwnerFailureEmails(unittest.IsolatedAsyncioTestCase)
             for i in range(10)
         ]
         record_log = {'image_build_konflux': entries}
-        pipeline._handle_image_build_failures(record_log)
+        await pipeline._handle_image_build_failures(record_log)
         mock_mail.assert_called_once()
         self.assertEqual(sorted(mock_mail.call_args.kwargs['failed_builds'].keys()), ['img-0', 'img-1'])
 
     @patch('pyartcd.pipelines.ocp4_konflux.util.mail_build_failure_owners_konflux')
+    @patch('pyartcd.pipelines.ocp4_konflux.util.get_counter_failures', new_callable=AsyncMock)
     @patch('pyartcd.pipelines.ocp4_konflux.update_build_fail_counters', new_callable=AsyncMock)
     @patch('pyartcd.pipelines.ocp4_konflux.KonfluxOcpPipeline.parse_record_log')
     @patch('pyartcd.pipelines.ocp4_konflux.jenkins')
-    async def test_sync_images_calls_handle_failures(self, mock_jenkins, mock_parse, mock_counters, mock_mail):
+    async def test_sync_images_calls_handle_failures(
+        self, mock_jenkins, mock_parse, mock_counters_update, mock_counters, mock_mail
+    ):
+        mock_counters.return_value = {'ironic': {'failure_count': 5}}
         pipeline = self._make_pipeline()
         record_log = {
             'image_build_konflux': [
@@ -1758,5 +1787,5 @@ class TestKonfluxOcpPipelineOwnerFailureEmails(unittest.IsolatedAsyncioTestCase)
             with patch('pyartcd.pipelines.ocp4_konflux.jenkins.start_build_sync'):
                 await pipeline.sync_images()
 
-        mock_counters.assert_awaited_once()
+        mock_counters_update.assert_awaited_once()
         mock_mail.assert_called_once()

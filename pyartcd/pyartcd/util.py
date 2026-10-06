@@ -898,7 +898,9 @@ _ART_TEAM_OWNER = 'aos-team-art@redhat.com'
 _KONFLUX_FAILURE_NOTIFY = 'aos-art-automation+failed-ocp4-konflux-build@redhat.com'
 
 
-def mail_build_failure_owners_konflux(failed_builds: dict, mail_client: MailService, default_owner: str):
+def mail_build_failure_owners_konflux(
+    failed_builds: dict, mail_client: MailService, default_owner: str, failure_counts: dict | None = None
+):
     """
     Send email to owners of failed Konflux image builds.
 
@@ -915,7 +917,10 @@ def mail_build_failure_owners_konflux(failed_builds: dict, mail_client: MailServ
 
     :param mail_client: MailService instance
     :param default_owner: if no owner is listed (or only ART), send build failure email to this
+    :param failure_counts: optional map of distgit name => consecutive failure count, used to report
+        exactly how many runs in a row this image has failed
     """
+    failure_counts = failure_counts or {}
     for failure in failed_builds.values():
         if failure['status'] == '0':
             continue
@@ -924,6 +929,7 @@ def mail_build_failure_owners_konflux(failed_builds: dict, mail_client: MailServ
         nvrs = failure.get('nvrs', 'n/a')
         pipeline_url = failure.get('build_pipeline_url') or failure.get('task_url') or 'n/a'
         owners = failure.get('owners') or ''
+        consecutive_failures = failure_counts.get(name)
 
         explanation_body = f"ART's Konflux build of OCP image {name} ({nvrs}) has failed.\n\n"
         if owners:
@@ -931,11 +937,17 @@ def mail_build_failure_owners_konflux(failed_builds: dict, mail_client: MailServ
         else:
             explanation_body += 'There is no owner listed for this build (you may want to add one).'
         explanation_body += '\n\n'
-        explanation_body += (
-            "Builds may fail for many reasons, some under owner control, some under ART's control, "
-            "and some in the domain of other groups. This message is only sent when the build fails "
-            "consistently, so it is unlikely this failure will resolve itself without intervention.\n\n"
-        )
+        explanation_body += "Builds may fail for many reasons, some under owner control, some under ART's control, and some in the domain of other groups. "
+        if consecutive_failures:
+            explanation_body += (
+                f"This image has now failed {consecutive_failures} consecutive Konflux builds, "
+                "so it is unlikely this failure will resolve itself without intervention.\n\n"
+            )
+        else:
+            explanation_body += (
+                "This message is only sent when the build fails consistently, so it is unlikely "
+                "this failure will resolve itself without intervention.\n\n"
+            )
         explanation_body += f'The Konflux PipelineRun {pipeline_url} failed with error message:\n{failure["message"]}\n'
 
         # If ART is the only owner (e.g. CI golang builders), send to the default automation list instead.

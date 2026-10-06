@@ -870,3 +870,21 @@ class TestMailBuildFailureOwnersKonflux(IsolatedAsyncioTestCase):
             self.mail_client.send_mail.call_args.kwargs.get('content') or self.mail_client.send_mail.call_args[0][2]
         )
         self.assertIn('https://konflux.example/task/xyz', content)
+
+    def test_reports_consecutive_failure_count_when_known(self):
+        failed = {'ironic': self._failure()}
+        util.mail_build_failure_owners_konflux(
+            failed, self.mail_client, self.default_owner, failure_counts={'ironic': 3}
+        )
+        content = (
+            self.mail_client.send_mail.call_args.kwargs.get('content') or self.mail_client.send_mail.call_args[0][2]
+        )
+        self.assertIn('failed 3 consecutive Konflux builds', content)
+
+    def test_falls_back_to_generic_text_without_failure_counts(self):
+        failed = {'ironic': self._failure()}
+        util.mail_build_failure_owners_konflux(failed, self.mail_client, self.default_owner)
+        content = (
+            self.mail_client.send_mail.call_args.kwargs.get('content') or self.mail_client.send_mail.call_args[0][2]
+        )
+        self.assertIn('only sent when the build fails consistently', content)

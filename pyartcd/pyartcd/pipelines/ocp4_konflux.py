@@ -194,15 +194,15 @@ class KonfluxOcpPipeline:
         elif build_strategy == BuildStrategy.EXCEPT:
             return [f'--{kind}=', f'--exclude={",".join(excludes)}']
 
-    def _handle_image_build_failures(self, record_log):
+    async def _handle_image_build_failures(self, record_log):
         """
         Email component owners about direct Konflux build failures (stream assembly only).
 
         EC and base-image-release failures are intentionally excluded. Skips owner mail
-        when a large fraction of images failed (likely not an owner-specific issue).
+        when a large fraction of images failed (likely not an owner-specific issue), and
+        for images failing for the first time (alerts once a failure repeats).
         """
-        # TODO set back to stream
-        if self.assembly != 'test':
+        if self.assembly != 'stream':
             return
 
         failed_entries = {
@@ -227,7 +227,7 @@ class KonfluxOcpPipeline:
             last_status[entry['name']] = entry['status']
 
         total = len(last_status)
-        failed = len({name for name, status in last_status.items() if int(status) != 0})
+        failed = len({name for name, status in last_status.items() if int(status)})
         ratio = failed / total if total else 0
 
         if (total > 10 and ratio > 0.25) or (ratio > 1 and failed == total):
@@ -239,10 +239,23 @@ class KonfluxOcpPipeline:
             return
 
         failed_map = {name: failed_entries[name] for name in build_failed_images if name in failed_entries}
+
+        # Only alert once a failure has repeated across consecutive runs, using the same
+        # counters update_build_fail_counters() just incremented for this run.
+        counters = await util.get_counter_failures(
+            'build-failure', f'openshift-{self.version}', build_system='konflux', logger=LOGGER
+        )
+        failure_counts = {name: counters.get(name, {}).get('failure_count', 1) for name in failed_map}
+        failed_map = {name: entry for name, entry in failed_map.items() if failure_counts[name] >= 5}
+        if not failed_map:
+            LOGGER.info("All build failures are first-time occurrences; will not spam owners yet")
+            return
+
         util.mail_build_failure_owners_konflux(
             failed_builds=failed_map,
             mail_client=self.runtime.new_mail_client(),
             default_owner=self.mail_list_failure,
+            failure_counts=failure_counts,
         )
 
     def building_images(self):
@@ -475,7 +488,7 @@ class KonfluxOcpPipeline:
                 increment_counter=increment_fail_counter,
             )
         )
-        self._handle_image_build_failures(record_log)
+        await self._handle_image_build_failures(record_log)
 
         if not built_images:
             # Nothing to do, skipping build-sync
