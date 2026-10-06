@@ -254,6 +254,585 @@ class TestGenPayloadCli(IsolatedAsyncioTestCase):
         self.assertEqual(AssemblyIssueCode.IMPERMISSIBLE, issues[0].code)
         self.assertEqual("missing-image", issues[0].component)
 
+    # --- DTK mismatch resolution tests (ART-9750) ---
+
+    async def test_try_resolve_dtk_mismatch_finds_matching_build(self):
+        """When a DTK/RHCOS kernel mismatch is detected in a stream assembly on Konflux,
+        the system should query KonfluxDB for a DTK build with a matching kernel and
+        resolve the issue by swapping the build — including el_target/embargoed filtering
+        in the query and proper pullspec/image_inspector updates in the payload entry."""
+        from artcommonlib.konflux.konflux_build_record import KonfluxBuildOutcome, KonfluxBuildRecord
+
+        runtime = MagicMock()
+        runtime.assembly_type = AssemblyTypes.STREAM
+        runtime.build_system = 'konflux'
+        runtime.group_config.vars.MAJOR = 4
+        runtime.group_config.vars.MINOR = 17
+        # image_map must provide the DTK metadata so el_target can be derived
+        dtk_meta = MagicMock()
+        dtk_meta.distgit_key = "driver-toolkit"
+        dtk_meta.branch_el_target.return_value = 9
+        runtime.image_map = {"driver-toolkit": dtk_meta}
+
+        gpcli = rgp_cli.GenPayloadCli(runtime=runtime)
+        gpcli.payload_entries_for_arch = {}
+
+        # The consistency issue that would normally block the payload
+        dtk_issue = AssemblyIssue(
+            "RHCOS and 'driver-toolkit' should use the same build of package 'kernel', "
+            "but rhcos has kernel-5.14.0-427.50.1.el9_4 and driver-toolkit has "
+            "kernel-5.14.0-427.116.1.el9_4 in driver-toolkit-container-v4.17.0-1234",
+            "driver-toolkit",
+            AssemblyIssueCode.FAILED_CONSISTENCY_REQUIREMENT,
+        )
+
+        # RHCOS build with kernel version — includes an extension overlay
+        # carrying a newer kernel-core that must be ignored so the base OS
+        # version (427.50.1) is used for the DTK search.
+        rhcos_build = MagicMock()
+        rhcos_build.get_os_metadata_rpm_list.return_value = [
+            ("kernel", 0, "5.14.0", "427.50.1.el9_4", "x86_64", "rhel-coreos"),
+            ("kernel-core", 0, "5.14.0", "427.50.1.el9_4", "x86_64", "rhel-coreos"),
+            ("kernel-core", 0, "5.14.0", "427.116.1.el9_4", "x86_64", "rhcos-coreos-extensions"),
+        ]
+
+        assembly_inspector = MagicMock()
+        # The payload build map (mutable dict)
+        old_bri = MagicMock()
+        old_bri.get_nvr.return_value = "driver-toolkit-container-v4.17.0-1234"
+        payload_bri = {"driver-toolkit": old_bri}
+        assembly_inspector.get_group_release_images.return_value = payload_bri
+
+        cross_payload_requirements = {"driver-toolkit": ["kernel"]}
+
+        # Create a matching KonfluxBuildRecord
+        matching_record = KonfluxBuildRecord(
+            name="driver-toolkit",
+            group="openshift-4.17",
+            nvr="driver-toolkit-container-v4.17.0-999",
+            outcome=KonfluxBuildOutcome.SUCCESS,
+            installed_rpms=["kernel-devel-5.14.0-427.50.1.el9_4"],
+            image_pullspec="quay.io/openshift-release-dev/ocp-v4.0-art-dev@sha256:matching",
+            embargoed=False,
+            el_target="el9",
+        )
+
+        # Mock KonfluxDb — capture the query kwargs so we can assert filters
+        mock_konflux_db = MagicMock()
+        captured_kwargs = {}
+
+        async def mock_search(*args, **kwargs):
+            captured_kwargs.update(kwargs)
+            yield matching_record
+
+        mock_konflux_db.search_builds_by_fields = mock_search
+
+        with (
+            patch("artcommonlib.konflux.konflux_db.KonfluxDb", return_value=mock_konflux_db),
+            patch.object(gpcli.payload_generator, "find_rhcos_payload_rpm_inconsistencies", return_value=[]),
+        ):
+            result = await gpcli._try_resolve_dtk_mismatch(
+                [dtk_issue],
+                rhcos_build,
+                assembly_inspector,
+                cross_payload_requirements,
+            )
+
+        # The DTK issue should be resolved (no issues returned from re-check)
+        self.assertEqual([], result)
+        # The payload_bri should have been updated
+        self.assertNotEqual(payload_bri["driver-toolkit"], old_bri)
+
+        # Verify the query included el_target but NOT embargoed (boolean
+        # columns crash search_builds_by_fields's String-typed Column logic;
+        # embargoed builds are filtered post-query instead).
+        where = captured_kwargs.get("where", {})
+        self.assertNotIn("embargoed", where)
+        self.assertEqual(where.get("el_target"), "el9")
+
+    async def test_try_resolve_dtk_mismatch_no_matching_build(self):
+        """When no matching DTK build is found in KonfluxDB, the original
+        mismatch issue should be preserved."""
+        runtime = MagicMock()
+        runtime.assembly_type = AssemblyTypes.STREAM
+        runtime.build_system = 'konflux'
+        runtime.group_config.vars.MAJOR = 4
+        runtime.group_config.vars.MINOR = 17
+        dtk_meta = MagicMock()
+        dtk_meta.branch_el_target.return_value = 9
+        runtime.image_map = {"driver-toolkit": dtk_meta}
+
+        gpcli = rgp_cli.GenPayloadCli(runtime=runtime)
+        gpcli.payload_entries_for_arch = {}
+
+        dtk_issue = AssemblyIssue(
+            "RHCOS and 'driver-toolkit' mismatch",
+            "driver-toolkit",
+            AssemblyIssueCode.FAILED_CONSISTENCY_REQUIREMENT,
+        )
+
+        rhcos_build = MagicMock()
+        rhcos_build.get_os_metadata_rpm_list.return_value = [
+            ("kernel-core", 0, "5.14.0", "427.50.1.el9_4", "x86_64", "rhel-coreos"),
+            ("kernel-core", 0, "5.14.0", "427.116.1.el9_4", "x86_64", "rhcos-coreos-extensions"),
+        ]
+
+        assembly_inspector = MagicMock()
+        old_bri = MagicMock()
+        old_bri.get_nvr.return_value = "driver-toolkit-container-v4.17.0-1234"
+        payload_bri = {"driver-toolkit": old_bri}
+        assembly_inspector.get_group_release_images.return_value = payload_bri
+
+        cross_payload_requirements = {"driver-toolkit": ["kernel"]}
+
+        # Mock KonfluxDb to return no results
+        mock_konflux_db = MagicMock()
+
+        async def mock_search_empty(*args, **kwargs):
+            return
+            yield  # make it an async generator
+
+        mock_konflux_db.search_builds_by_fields = mock_search_empty
+
+        with patch("artcommonlib.konflux.konflux_db.KonfluxDb", return_value=mock_konflux_db):
+            result = await gpcli._try_resolve_dtk_mismatch(
+                [dtk_issue],
+                rhcos_build,
+                assembly_inspector,
+                cross_payload_requirements,
+            )
+
+        # The issue should remain since no matching build was found
+        self.assertEqual(1, len(result))
+        self.assertEqual("driver-toolkit", result[0].component)
+        # The payload_bri should not have been modified
+        self.assertEqual(payload_bri["driver-toolkit"], old_bri)
+
+    async def test_try_resolve_dtk_mismatch_non_dtk_issues_preserved(self):
+        """Non-DTK consistency issues should be preserved regardless of DTK resolution."""
+        from artcommonlib.konflux.konflux_build_record import KonfluxBuildOutcome, KonfluxBuildRecord
+
+        runtime = MagicMock()
+        runtime.assembly_type = AssemblyTypes.STREAM
+        runtime.build_system = 'konflux'
+        runtime.group_config.vars.MAJOR = 4
+        runtime.group_config.vars.MINOR = 17
+        dtk_meta = MagicMock()
+        dtk_meta.branch_el_target.return_value = 9
+        runtime.image_map = {"driver-toolkit": dtk_meta}
+
+        gpcli = rgp_cli.GenPayloadCli(runtime=runtime)
+        gpcli.payload_entries_for_arch = {}
+
+        # A non-DTK consistency issue (e.g. for some other image)
+        other_issue = AssemblyIssue(
+            "RHCOS and 'some-other-image' mismatch",
+            "some-other-image",
+            AssemblyIssueCode.FAILED_CONSISTENCY_REQUIREMENT,
+        )
+        # A DTK consistency issue
+        dtk_issue = AssemblyIssue(
+            "RHCOS and 'driver-toolkit' mismatch",
+            "driver-toolkit",
+            AssemblyIssueCode.FAILED_CONSISTENCY_REQUIREMENT,
+        )
+
+        rhcos_build = MagicMock()
+        rhcos_build.get_os_metadata_rpm_list.return_value = [
+            ("kernel-core", 0, "5.14.0", "427.50.1.el9_4", "x86_64", "rhel-coreos"),
+            ("kernel-core", 0, "5.14.0", "427.116.1.el9_4", "x86_64", "rhcos-coreos-extensions"),
+        ]
+
+        assembly_inspector = MagicMock()
+        old_bri = MagicMock()
+        old_bri.get_nvr.return_value = "driver-toolkit-container-v4.17.0-1234"
+        payload_bri = {"driver-toolkit": old_bri}
+        assembly_inspector.get_group_release_images.return_value = payload_bri
+
+        cross_payload_requirements = {"driver-toolkit": ["kernel"]}
+
+        # Create a matching record for the DTK issue
+        matching_record = KonfluxBuildRecord(
+            name="driver-toolkit",
+            group="openshift-4.17",
+            nvr="driver-toolkit-container-v4.17.0-999",
+            outcome=KonfluxBuildOutcome.SUCCESS,
+            installed_rpms=["kernel-devel-5.14.0-427.50.1.el9_4"],
+        )
+
+        mock_konflux_db = MagicMock()
+
+        async def mock_search(*args, **kwargs):
+            yield matching_record
+
+        mock_konflux_db.search_builds_by_fields = mock_search
+
+        with (
+            patch("artcommonlib.konflux.konflux_db.KonfluxDb", return_value=mock_konflux_db),
+            patch.object(gpcli.payload_generator, "find_rhcos_payload_rpm_inconsistencies", return_value=[]),
+        ):
+            result = await gpcli._try_resolve_dtk_mismatch(
+                [other_issue, dtk_issue],
+                rhcos_build,
+                assembly_inspector,
+                cross_payload_requirements,
+            )
+
+        # Non-DTK issue should be preserved; DTK issue resolved
+        self.assertEqual(1, len(result))
+        self.assertEqual("some-other-image", result[0].component)
+
+    async def test_try_resolve_dtk_mismatch_updates_pullspecs_and_inspector(self):
+        """When a DTK build is swapped, both public and private payload entries
+        must get updated pullspecs and image_inspector from the new build."""
+        from artcommonlib.konflux.konflux_build_record import KonfluxBuildOutcome, KonfluxBuildRecord
+
+        runtime = MagicMock()
+        runtime.assembly_type = AssemblyTypes.STREAM
+        runtime.build_system = 'konflux'
+        runtime.group_config.vars.MAJOR = 4
+        runtime.group_config.vars.MINOR = 17
+        dtk_meta = MagicMock()
+        dtk_meta.distgit_key = "driver-toolkit"
+        dtk_meta.branch_el_target.return_value = 9
+        runtime.image_map = {"driver-toolkit": dtk_meta}
+
+        gpcli = rgp_cli.GenPayloadCli(runtime=runtime)
+
+        # Set up public and private payload entries for one arch
+        old_image_inspector = MagicMock()
+        old_image_inspector.get_digest.return_value = "sha256:olddigest"
+        old_pub_entry = rgp_cli.PayloadEntry(
+            issues=[],
+            dest_pullspec="quay.io/pub-repo:sha256-olddigest",
+            dest_manifest_list_pullspec="quay.io/pub-repo:sha256-oldmldigest",
+            image_meta=dtk_meta,
+            build_record_inspector=MagicMock(),
+            image_inspector=old_image_inspector,
+        )
+        old_priv_entry = rgp_cli.PayloadEntry(
+            issues=[],
+            dest_pullspec="quay.io/priv-repo:sha256-olddigest",
+            dest_manifest_list_pullspec="quay.io/priv-repo:sha256-oldmldigest",
+            image_meta=dtk_meta,
+            build_record_inspector=MagicMock(),
+            image_inspector=old_image_inspector,
+        )
+        gpcli.payload_entries_for_arch = {"x86_64": {"driver-toolkit": old_pub_entry}}
+        gpcli.private_payload_entries_for_arch = {"x86_64": {"driver-toolkit": old_priv_entry}}
+
+        dtk_issue = AssemblyIssue(
+            "RHCOS and 'driver-toolkit' mismatch",
+            "driver-toolkit",
+            AssemblyIssueCode.FAILED_CONSISTENCY_REQUIREMENT,
+        )
+
+        rhcos_build = MagicMock()
+        rhcos_build.get_os_metadata_rpm_list.return_value = [
+            ("kernel-core", 0, "5.14.0", "427.50.1.el9_4", "x86_64", "rhel-coreos"),
+            ("kernel-core", 0, "5.14.0", "427.116.1.el9_4", "x86_64", "rhcos-coreos-extensions"),
+        ]
+
+        assembly_inspector = MagicMock()
+        old_bri = MagicMock()
+        old_bri.get_nvr.return_value = "driver-toolkit-container-v4.17.0-1234"
+        payload_bri = {"driver-toolkit": old_bri}
+        assembly_inspector.get_group_release_images.return_value = payload_bri
+
+        cross_payload_requirements = {"driver-toolkit": ["kernel"]}
+
+        matching_record = KonfluxBuildRecord(
+            name="driver-toolkit",
+            group="openshift-4.17",
+            nvr="driver-toolkit-container-v4.17.0-999",
+            outcome=KonfluxBuildOutcome.SUCCESS,
+            installed_rpms=["kernel-devel-5.14.0-427.50.1.el9_4"],
+            image_pullspec="quay.io/openshift-release-dev/ocp-v4.0-art-dev@sha256:newbuild",
+            embargoed=False,
+            el_target="el9",
+        )
+
+        mock_konflux_db = MagicMock()
+
+        async def mock_search(*args, **kwargs):
+            yield matching_record
+
+        mock_konflux_db.search_builds_by_fields = mock_search
+
+        # Mock the new BRI's get_image_inspector to return an inspector with new digests
+        new_image_inspector = MagicMock()
+        new_image_inspector.get_digest.return_value = "sha256:newdigest"
+        new_image_inspector.get_manifest_list_digest.return_value = "sha256:newmldigest"
+
+        with (
+            patch("artcommonlib.konflux.konflux_db.KonfluxDb", return_value=mock_konflux_db),
+            patch.object(gpcli.payload_generator, "find_rhcos_payload_rpm_inconsistencies", return_value=[]),
+            patch("doozerlib.cli.release_gen_payload.KonfluxBuildRecordInspector") as mock_bri_class,
+        ):
+            mock_new_bri = mock_bri_class.return_value
+            mock_new_bri.get_nvr.return_value = matching_record.nvr
+            mock_new_bri.get_image_inspector.return_value = new_image_inspector
+
+            result = await gpcli._try_resolve_dtk_mismatch(
+                [dtk_issue],
+                rhcos_build,
+                assembly_inspector,
+                cross_payload_requirements,
+            )
+
+        # DTK issue should be resolved
+        self.assertEqual([], result)
+
+        # Public entry should have new pullspecs and image_inspector
+        pub = gpcli.payload_entries_for_arch["x86_64"]["driver-toolkit"]
+        self.assertIn("sha256-newdigest", pub.dest_pullspec)
+        self.assertIn("sha256-newmldigest", pub.dest_manifest_list_pullspec)
+        self.assertEqual(pub.image_inspector, new_image_inspector)
+        self.assertEqual(pub.build_record_inspector, mock_new_bri)
+        self.assertNotEqual(pub.dest_pullspec, old_pub_entry.dest_pullspec)
+
+        # Private entry should also have been updated
+        priv = gpcli.private_payload_entries_for_arch["x86_64"]["driver-toolkit"]
+        self.assertIn("sha256-newdigest", priv.dest_pullspec)
+        self.assertEqual(priv.image_inspector, new_image_inspector)
+        self.assertEqual(priv.build_record_inspector, mock_new_bri)
+        self.assertNotEqual(priv.dest_pullspec, old_priv_entry.dest_pullspec)
+
+    async def test_try_resolve_dtk_mismatch_partial_arch_failure_aborts(self):
+        """If any arch fails to resolve an image inspector, the entire swap
+        must be aborted: payload_bri stays unchanged, no arch entries are
+        modified, and the DTK issue is preserved."""
+        from artcommonlib.konflux.konflux_build_record import KonfluxBuildOutcome, KonfluxBuildRecord
+
+        runtime = MagicMock()
+        runtime.assembly_type = AssemblyTypes.STREAM
+        runtime.build_system = 'konflux'
+        runtime.group_config.vars.MAJOR = 4
+        runtime.group_config.vars.MINOR = 17
+        dtk_meta = MagicMock()
+        dtk_meta.distgit_key = "driver-toolkit"
+        dtk_meta.branch_el_target.return_value = 9
+        runtime.image_map = {"driver-toolkit": dtk_meta}
+
+        gpcli = rgp_cli.GenPayloadCli(runtime=runtime)
+
+        # Two arches: x86_64 succeeds, aarch64 will fail
+        old_x86_entry = rgp_cli.PayloadEntry(
+            issues=[],
+            dest_pullspec="quay.io/repo:sha256-oldx86",
+            image_meta=dtk_meta,
+            build_record_inspector=MagicMock(),
+            image_inspector=MagicMock(),
+        )
+        old_arm_entry = rgp_cli.PayloadEntry(
+            issues=[],
+            dest_pullspec="quay.io/repo:sha256-oldarm",
+            image_meta=dtk_meta,
+            build_record_inspector=MagicMock(),
+            image_inspector=MagicMock(),
+        )
+        old_x86_priv = rgp_cli.PayloadEntry(
+            issues=[],
+            dest_pullspec="quay.io/priv:sha256-oldx86",
+            image_meta=dtk_meta,
+            build_record_inspector=MagicMock(),
+            image_inspector=MagicMock(),
+        )
+        gpcli.payload_entries_for_arch = {
+            "x86_64": {"driver-toolkit": old_x86_entry},
+            "aarch64": {"driver-toolkit": old_arm_entry},
+        }
+        gpcli.private_payload_entries_for_arch = {
+            "x86_64": {"driver-toolkit": old_x86_priv},
+        }
+
+        dtk_issue = AssemblyIssue(
+            "RHCOS and 'driver-toolkit' mismatch",
+            "driver-toolkit",
+            AssemblyIssueCode.FAILED_CONSISTENCY_REQUIREMENT,
+        )
+
+        rhcos_build = MagicMock()
+        rhcos_build.get_os_metadata_rpm_list.return_value = [
+            ("kernel-core", 0, "5.14.0", "427.50.1.el9_4", "x86_64", "rhel-coreos"),
+            ("kernel-core", 0, "5.14.0", "427.116.1.el9_4", "x86_64", "rhcos-coreos-extensions"),
+        ]
+
+        assembly_inspector = MagicMock()
+        old_bri = MagicMock()
+        old_bri.get_nvr.return_value = "driver-toolkit-container-v4.17.0-1234"
+        payload_bri = {"driver-toolkit": old_bri}
+        assembly_inspector.get_group_release_images.return_value = payload_bri
+
+        cross_payload_requirements = {"driver-toolkit": ["kernel"]}
+
+        matching_record = KonfluxBuildRecord(
+            name="driver-toolkit",
+            group="openshift-4.17",
+            nvr="driver-toolkit-container-v4.17.0-999",
+            outcome=KonfluxBuildOutcome.SUCCESS,
+            installed_rpms=["kernel-devel-5.14.0-427.50.1.el9_4"],
+            image_pullspec="quay.io/some@sha256:new",
+            embargoed=False,
+            el_target="el9",
+        )
+
+        mock_konflux_db = MagicMock()
+
+        async def mock_search(*args, **kwargs):
+            yield matching_record
+
+        mock_konflux_db.search_builds_by_fields = mock_search
+
+        # x86_64 inspector succeeds, aarch64 returns None
+        good_inspector = MagicMock()
+        good_inspector.get_digest.return_value = "sha256:newx86"
+        good_inspector.get_manifest_list_digest.return_value = "sha256:newml"
+
+        def side_effect_by_arch(arch):
+            if arch == "x86_64":
+                return good_inspector
+            return None  # aarch64 fails
+
+        with (
+            patch("artcommonlib.konflux.konflux_db.KonfluxDb", return_value=mock_konflux_db),
+            patch("doozerlib.cli.release_gen_payload.KonfluxBuildRecordInspector") as mock_bri_cls,
+        ):
+            mock_bri_cls.return_value.get_nvr.return_value = matching_record.nvr
+            mock_bri_cls.return_value.get_image_inspector.side_effect = side_effect_by_arch
+
+            result = await gpcli._try_resolve_dtk_mismatch(
+                [dtk_issue],
+                rhcos_build,
+                assembly_inspector,
+                cross_payload_requirements,
+            )
+
+        # The DTK issue must remain — swap was aborted
+        self.assertEqual(1, len(result))
+        self.assertEqual("driver-toolkit", result[0].component)
+
+        # payload_bri must still point to the original build
+        self.assertIs(payload_bri["driver-toolkit"], old_bri)
+
+        # No arch entry (public or private) should have been modified
+        self.assertIs(gpcli.payload_entries_for_arch["x86_64"]["driver-toolkit"], old_x86_entry)
+        self.assertIs(gpcli.payload_entries_for_arch["aarch64"]["driver-toolkit"], old_arm_entry)
+        self.assertIs(gpcli.private_payload_entries_for_arch["x86_64"]["driver-toolkit"], old_x86_priv)
+
+    async def test_detect_extend_skips_dtk_resolution_for_non_stream(self):
+        """detect_extend_payload_entry_issues must NOT call _try_resolve_dtk_mismatch
+        when the assembly type is not STREAM."""
+        runtime = MagicMock()
+        runtime.assembly_type = AssemblyTypes.STANDARD  # Not stream
+        runtime.build_system = 'konflux'
+        runtime.group_config.rhcos.require_consistency = {"driver-toolkit": ["kernel"]}
+
+        gpcli = rgp_cli.GenPayloadCli(runtime=runtime)
+        gpcli.assembly_issues = []
+        gpcli.privacy_modes = [False]
+
+        # Set up a payload entry with an RHCOS build that triggers the consistency path
+        rhcos_build = MagicMock()
+        primary_container = "rhel-coreos"
+        rhcos_entry = rgp_cli.PayloadEntry(issues=[], dest_pullspec="ps", rhcos_build=rhcos_build)
+        gpcli.payload_entries_for_arch = {"x86_64": {primary_container: rhcos_entry}}
+        gpcli.private_payload_entries_for_arch = {}
+
+        assembly_inspector = MagicMock()
+
+        # Consistency check returns an issue so the guard is the only thing stopping resolution
+        dtk_issue = AssemblyIssue("mismatch", "driver-toolkit", AssemblyIssueCode.FAILED_CONSISTENCY_REQUIREMENT)
+
+        with (
+            patch("artcommonlib.rhcos.get_primary_container_name", return_value=primary_container),
+            patch.object(gpcli, "detect_rhcos_issues", new_callable=AsyncMock),
+            patch.object(gpcli, "detect_rhcos_kernel_inconsistencies"),
+            patch.object(gpcli, "detect_rhcos_inconsistent_rpms"),
+            patch.object(gpcli.payload_generator, "find_rhcos_payload_rpm_inconsistencies", return_value=[dtk_issue]),
+            patch.object(gpcli, "_try_resolve_dtk_mismatch", new_callable=AsyncMock) as mock_resolve,
+        ):
+            await gpcli.detect_extend_payload_entry_issues(assembly_inspector)
+
+        mock_resolve.assert_not_awaited()
+        # The issue should still be recorded since resolution was skipped
+        self.assertIn(dtk_issue, gpcli.assembly_issues)
+
+    async def test_detect_extend_skips_dtk_resolution_for_brew(self):
+        """detect_extend_payload_entry_issues must NOT call _try_resolve_dtk_mismatch
+        when the build system is brew."""
+        runtime = MagicMock()
+        runtime.assembly_type = AssemblyTypes.STREAM
+        runtime.build_system = 'brew'  # Not konflux
+        runtime.group_config.rhcos.require_consistency = {"driver-toolkit": ["kernel"]}
+
+        gpcli = rgp_cli.GenPayloadCli(runtime=runtime)
+        gpcli.assembly_issues = []
+        gpcli.privacy_modes = [False]
+
+        rhcos_build = MagicMock()
+        primary_container = "rhel-coreos"
+        rhcos_entry = rgp_cli.PayloadEntry(issues=[], dest_pullspec="ps", rhcos_build=rhcos_build)
+        gpcli.payload_entries_for_arch = {"x86_64": {primary_container: rhcos_entry}}
+        gpcli.private_payload_entries_for_arch = {}
+
+        assembly_inspector = MagicMock()
+        dtk_issue = AssemblyIssue("mismatch", "driver-toolkit", AssemblyIssueCode.FAILED_CONSISTENCY_REQUIREMENT)
+
+        with (
+            patch("artcommonlib.rhcos.get_primary_container_name", return_value=primary_container),
+            patch.object(gpcli, "detect_rhcos_issues", new_callable=AsyncMock),
+            patch.object(gpcli, "detect_rhcos_kernel_inconsistencies"),
+            patch.object(gpcli, "detect_rhcos_inconsistent_rpms"),
+            patch.object(gpcli.payload_generator, "find_rhcos_payload_rpm_inconsistencies", return_value=[dtk_issue]),
+            patch.object(gpcli, "_try_resolve_dtk_mismatch", new_callable=AsyncMock) as mock_resolve,
+        ):
+            await gpcli.detect_extend_payload_entry_issues(assembly_inspector)
+
+        mock_resolve.assert_not_awaited()
+        self.assertIn(dtk_issue, gpcli.assembly_issues)
+
+    async def test_try_resolve_dtk_mismatch_no_dtk_in_config(self):
+        """When the consistency config has no driver-toolkit entries,
+        the method should return the issues unchanged."""
+        runtime = MagicMock()
+        runtime.assembly_type = AssemblyTypes.STREAM
+        runtime.build_system = 'konflux'
+        runtime.group_config.vars.MAJOR = 4
+        runtime.group_config.vars.MINOR = 17
+
+        gpcli = rgp_cli.GenPayloadCli(runtime=runtime)
+        gpcli.payload_entries_for_arch = {}
+
+        some_issue = AssemblyIssue(
+            "RHCOS mismatch",
+            "some-image",
+            AssemblyIssueCode.FAILED_CONSISTENCY_REQUIREMENT,
+        )
+
+        rhcos_build = MagicMock()
+        rhcos_build.get_os_metadata_rpm_list.return_value = [
+            ("kernel-core", 0, "5.14.0", "427.50.1.el9_4", "x86_64", "rhel-coreos"),
+            ("kernel-core", 0, "5.14.0", "427.116.1.el9_4", "x86_64", "rhel-coreos-10-extensions"),
+        ]
+
+        assembly_inspector = MagicMock()
+        assembly_inspector.get_group_release_images.return_value = {}
+
+        # Config without driver-toolkit
+        cross_payload_requirements = {"some-image": ["kernel"]}
+
+        result = await gpcli._try_resolve_dtk_mismatch(
+            [some_issue],
+            rhcos_build,
+            assembly_inspector,
+            cross_payload_requirements,
+        )
+
+        # Issues should pass through unchanged
+        self.assertEqual(1, len(result))
+        self.assertEqual("some-image", result[0].component)
+
     # test parameter validation
     def test_parameter_validation(self):
         # test when assembly is not valid

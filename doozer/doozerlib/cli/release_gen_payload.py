@@ -44,6 +44,7 @@ from doozerlib.brew import KojiWrapperMetaReturn
 from doozerlib.build_info import (
     BuildRecordInspector,
     ImageInspector,
+    KonfluxBuildRecordInspector,
 )
 from doozerlib.cli import cli, click_coroutine, pass_runtime
 from doozerlib.cli.release_gen_assembly import GenAssemblyCli
@@ -1313,14 +1314,29 @@ class GenPayloadCli:
                     targeted_rhcos_builds[False].append(payload_entry.rhcos_build)
 
                     if cross_payload_requirements:
-                        self.assembly_issues.extend(
-                            self.payload_generator.find_rhcos_payload_rpm_inconsistencies(
-                                payload_entry.rhcos_build,
-                                assembly_inspector.get_group_release_images(),
-                                cross_payload_requirements,
-                                self.package_rpm_finder,
-                            ),
+                        consistency_issues = self.payload_generator.find_rhcos_payload_rpm_inconsistencies(
+                            payload_entry.rhcos_build,
+                            assembly_inspector.get_group_release_images(),
+                            cross_payload_requirements,
+                            self.package_rpm_finder,
                         )
+
+                        # For stream assemblies on the Konflux path, attempt to resolve
+                        # DTK/RHCOS kernel mismatches by finding an older DTK build whose
+                        # kernel-devel RPM matches what RHCOS ships.
+                        if (
+                            consistency_issues
+                            and self.runtime.assembly_type is AssemblyTypes.STREAM
+                            and self.runtime.build_system == 'konflux'
+                        ):
+                            consistency_issues = await self._try_resolve_dtk_mismatch(
+                                consistency_issues,
+                                payload_entry.rhcos_build,
+                                assembly_inspector,
+                                cross_payload_requirements,
+                            )
+
+                        self.assembly_issues.extend(consistency_issues)
                 else:
                     raise DoozerFatalError(f"Unsupported PayloadEntry: {payload_entry}")
 
@@ -1373,6 +1389,271 @@ class GenPayloadCli:
                             code=AssemblyIssueCode.FAILED_CROSS_RPM_VERSIONS_REQUIREMENT,
                         )
                     )
+
+    async def _try_resolve_dtk_mismatch(
+        self,
+        consistency_issues: List[AssemblyIssue],
+        rhcos_build: RHCOSBuildInspector,
+        assembly_inspector: AssemblyInspector,
+        cross_payload_requirements: Dict[str, Any],
+    ) -> List[AssemblyIssue]:
+        """
+        For stream assemblies on the Konflux build path, attempt to resolve DTK/RHCOS
+        kernel mismatches by searching KonfluxDB for an older DTK build whose
+        kernel-devel RPM version matches the kernel installed in RHCOS.
+
+        Targeted assemblies already handle this in release_gen_assembly_targeted.py;
+        this method brings the same capability to the stream (nightly) path.
+
+        :param consistency_issues: Issues found by find_rhcos_payload_rpm_inconsistencies
+        :param rhcos_build: The RHCOS build inspector for the current payload
+        :param assembly_inspector: The assembly inspector (holds the build map)
+        :param cross_payload_requirements: The rhcos.require_consistency config
+        :return: Updated list of consistency issues (DTK issues removed if resolved)
+        """
+        from artcommonlib.konflux.konflux_build_record import KonfluxBuildOutcome, KonfluxBuildRecord
+        from artcommonlib.konflux.konflux_db import KonfluxDb
+
+        # Identify DTK-related consistency failures.
+        # The consistency config maps distgit_key -> [package_names]. Only distgit
+        # keys whose name contains "driver-toolkit" are candidates for DTK matching.
+        normalized = PayloadGenerator.normalize_rhcos_consistency_config(cross_payload_requirements)
+        dtk_distgit_keys: Set[str] = set()
+        for _stream_name, stream_config in normalized.items():
+            for distgit_key in stream_config:
+                if 'driver-toolkit' in distgit_key:
+                    dtk_distgit_keys.add(distgit_key)
+
+        if not dtk_distgit_keys:
+            return consistency_issues
+
+        # Separate DTK issues from non-DTK issues
+        dtk_issues = [
+            issue
+            for issue in consistency_issues
+            if issue.code == AssemblyIssueCode.FAILED_CONSISTENCY_REQUIREMENT and issue.component in dtk_distgit_keys
+        ]
+        if not dtk_issues:
+            return consistency_issues
+
+        non_dtk_issues = [issue for issue in consistency_issues if issue not in dtk_issues]
+
+        # Build the RHCOS kernel version-release index by stream.  We use
+        # 'kernel-core' — the RPM carrying the actual kernel binary — rather
+        # than the 'kernel' meta-package, because 'kernel-core' is what RHCOS
+        # actually installs and what the consistency checker compares against.
+        rhcos_kernel_vrs: Dict[str, str] = {}
+        for rpm in rhcos_build.get_os_metadata_rpm_list():
+            name, _, version, release, _, repo_name = rpm
+            # Skip extension RPMs — they may carry a newer kernel than the
+            # base OS actually boots, causing a no-op DTK swap.
+            if name == 'kernel-core' and 'extensions' not in repo_name:
+                stream = (
+                    "rhel-coreos-10" if repo_name in COREOS_RHEL10_STREAMS else PayloadGenerator.RHCOS_DEFAULT_STREAM
+                )
+                rhcos_kernel_vrs[stream] = f"{version}-{release}"
+
+        if not rhcos_kernel_vrs:
+            logger.warning("Could not determine RHCOS kernel version; skipping DTK mismatch resolution")
+            return consistency_issues
+
+        # For each DTK distgit_key that had a mismatch, search KonfluxDB for a
+        # build whose installed_rpms include the matching kernel-devel.
+        group = f"openshift-{self.runtime.group_config.vars.MAJOR}.{self.runtime.group_config.vars.MINOR}"
+        payload_bri = assembly_inspector.get_group_release_images()
+
+        konflux_db = KonfluxDb()
+        konflux_db.bind(KonfluxBuildRecord)
+
+        # Only attempt resolution for DTK keys that actually have mismatch
+        # issues — not every DTK key in the consistency config.
+        dtk_keys_with_issues: Set[str] = {issue.component for issue in dtk_issues}
+
+        resolved_keys: Set[str] = set()
+        for dtk_key in dtk_keys_with_issues:
+            # Determine which stream this DTK belongs to
+            dtk_stream = None
+            for stream_name, stream_config in normalized.items():
+                if dtk_key in stream_config:
+                    dtk_stream = stream_name
+                    break
+
+            if not dtk_stream or dtk_stream not in rhcos_kernel_vrs:
+                continue
+
+            kernel_vr = rhcos_kernel_vrs[dtk_stream]
+            kernel_devel_nvr = f"kernel-devel-{kernel_vr}"
+
+            # Derive the el_target from the image metadata so we match the
+            # correct RHEL version (e.g. el9 vs el10 for driver-toolkit-rhel10).
+            dtk_image_meta = self.runtime.image_map.get(dtk_key)
+            el_target = f"el{dtk_image_meta.branch_el_target()}" if dtk_image_meta else ""
+
+            logger.info(
+                "DTK mismatch detected for '%s' (el_target=%s): searching KonfluxDB "
+                "for a DTK build with %s (RHCOS kernel: %s)",
+                dtk_key,
+                el_target,
+                kernel_devel_nvr,
+                kernel_vr,
+            )
+
+            # Build the query filter.  Only string/enum columns belong in
+            # the ``where`` dict — search_builds_by_fields wraps every value
+            # with ``Column(name, String) == value``, which crashes on Python
+            # booleans (the ``embargoed`` column is BOOL in BigQuery, not
+            # STRING).  We therefore filter embargoed builds post-query.
+            where_filter: Dict[str, Any] = {
+                "name": dtk_key,
+                "group": group,
+                "outcome": str(KonfluxBuildOutcome.SUCCESS),
+            }
+            if el_target:
+                where_filter["el_target"] = el_target
+
+            matching_record: Optional[KonfluxBuildRecord] = None
+            async for record in konflux_db.search_builds_by_fields(
+                where=where_filter,
+                array_contains={"installed_rpms": kernel_devel_nvr},
+                limit=5,  # fetch a few so we can skip embargoed ones
+            ):
+                if record.embargoed:
+                    logger.debug("Skipping embargoed DTK build %s", record.nvr)
+                    continue
+                matching_record = record
+                break  # first non-embargoed match wins
+
+            if not matching_record:
+                logger.warning(
+                    "No DTK build found in KonfluxDB for '%s' with %s; the original mismatch issue will remain",
+                    dtk_key,
+                    kernel_devel_nvr,
+                )
+                continue
+
+            # Found a matching DTK build — prepare the swap across all arches.
+            old_bri = payload_bri.get(dtk_key)
+            old_nvr = old_bri.get_nvr() if old_bri else "unknown"
+            new_bri = KonfluxBuildRecordInspector(self.runtime, matching_record)
+            logger.info(
+                "Swapping DTK build for '%s': %s -> %s (matches RHCOS kernel %s)",
+                dtk_key,
+                old_nvr,
+                matching_record.nvr,
+                kernel_vr,
+            )
+
+            # Build replacement entries for every arch BEFORE mutating any
+            # state.  If any arch fails to resolve an image inspector we
+            # abort the entire swap so we never end up with a mix of old
+            # and new builds across architectures.
+            # Both public and private payload entries must be updated so
+            # that mirroring and imagestream generation are consistent.
+            # pending: list of (entries_dict, tag, new_PayloadEntry)
+            pending: List[Tuple[Dict[str, PayloadEntry], str, PayloadEntry]] = []
+            swap_failed = False
+
+            for repo_type, entries_for_arch in [
+                (RepositoryType.PUBLIC, self.payload_entries_for_arch),
+                (RepositoryType.PRIVATE, self.private_payload_entries_for_arch),
+            ]:
+                dest_repo = self.full_component_repo(repo_type=repo_type)
+                for arch, entries in entries_for_arch.items():
+                    for tag, entry in entries.items():
+                        if entry.image_meta and entry.image_meta.distgit_key == dtk_key:
+                            try:
+                                new_image_inspector = new_bri.get_image_inspector(arch)
+                            except Exception:
+                                logger.warning(
+                                    "Could not obtain image inspector for '%s' arch=%s from %s; "
+                                    "aborting DTK swap for this key",
+                                    dtk_key,
+                                    arch,
+                                    matching_record.nvr,
+                                )
+                                swap_failed = True
+                                break
+
+                            if not new_image_inspector:
+                                logger.warning(
+                                    "No arch-specific image found for '%s' arch=%s in %s; "
+                                    "aborting DTK swap for this key",
+                                    dtk_key,
+                                    arch,
+                                    matching_record.nvr,
+                                )
+                                swap_failed = True
+                                break
+
+                            new_dest_pullspec = PayloadGenerator.get_mirroring_destination(
+                                new_image_inspector.get_digest(), dest_repo
+                            )
+                            new_ml_pullspec = PayloadGenerator.get_mirroring_destination(
+                                new_image_inspector.get_manifest_list_digest(), dest_repo
+                            )
+
+                            pending.append(
+                                (
+                                    entries,
+                                    tag,
+                                    PayloadEntry(
+                                        issues=entry.issues,
+                                        dest_pullspec=new_dest_pullspec,
+                                        dest_manifest_list_pullspec=new_ml_pullspec,
+                                        image_meta=entry.image_meta,
+                                        build_record_inspector=new_bri,
+                                        image_inspector=new_image_inspector,
+                                        rhcos_build=entry.rhcos_build,
+                                    ),
+                                )
+                            )
+                    if swap_failed:
+                        break
+                if swap_failed:
+                    break
+
+            if swap_failed:
+                # Do NOT mark this key as resolved — payload_bri is untouched
+                # and all arch entries still reference the original build.
+                logger.warning(
+                    "DTK swap aborted for '%s' — not all arches could be resolved; "
+                    "the original mismatch issue will remain",
+                    dtk_key,
+                )
+                continue
+
+            # All arches resolved successfully — apply the swap atomically.
+            payload_bri[dtk_key] = new_bri
+            for target_entries, tag, new_entry in pending:
+                target_entries[tag] = new_entry
+
+            resolved_keys.add(dtk_key)
+
+        # Collect issues for DTK keys that were never resolved (no matching
+        # build found, swap aborted, etc.) — these must be preserved.
+        unresolved_dtk_issues = [issue for issue in dtk_issues if issue.component not in resolved_keys]
+
+        if not resolved_keys:
+            return consistency_issues
+
+        # Re-run consistency checks for the resolved DTK keys to confirm the fix
+        recheck_issues = self.payload_generator.find_rhcos_payload_rpm_inconsistencies(
+            rhcos_build,
+            payload_bri,
+            cross_payload_requirements,
+            self.package_rpm_finder,
+        )
+
+        # Keep only issues for resolved DTK keys from the re-check
+        remaining_dtk_issues = [issue for issue in recheck_issues if issue.component in resolved_keys]
+
+        if remaining_dtk_issues:
+            logger.warning(
+                "DTK mismatch persists after swap for %s; issues will be reported",
+                [i.component for i in remaining_dtk_issues],
+            )
+
+        return non_dtk_issues + unresolved_dtk_issues + remaining_dtk_issues
 
     def summarize_issue_permits(self, assembly_inspector: AssemblyInspector) -> (bool, Dict[str, Dict]):
         """
