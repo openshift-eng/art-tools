@@ -41,7 +41,14 @@ spec:
   steps:
   - args:
     - $(params.args[*])
-    computeResources: {}
+    # Potentially right-sized for this tenant based on observed PipelineRun usage.
+    computeResources:
+      requests:
+        cpu: 500m
+        memory: 2Gi
+      limits:
+        cpu: "2"
+        memory: 2Gi
     env:
     - name: SLACK_BOT_TOKEN
       valueFrom:
