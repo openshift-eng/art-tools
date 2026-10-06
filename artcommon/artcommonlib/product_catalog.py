@@ -173,6 +173,7 @@ PRODUCT_CATALOG: tuple[ProductConfig, ...] = (
             application="quay-images-base",
         ),
         fbc_stage_release_plans={
+            (3, 10): "quay-advisory-stage-3-10",
             (3, 17): "quay-advisory-stage-3-17",
             (3, 18): "quay-advisory-stage-3-18",
         },
