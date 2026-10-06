@@ -41,7 +41,13 @@ spec:
   steps:
   - args:
     - $(params.args[*])
-    computeResources: {}
+    computeResources:
+      requests:
+        cpu: 500m
+        memory: 2Gi
+      limits:
+        cpu: "2"
+        memory: 2Gi
     env:
     - name: SLACK_BOT_TOKEN
       valueFrom:
