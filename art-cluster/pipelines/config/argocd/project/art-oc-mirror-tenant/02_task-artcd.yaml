@@ -41,11 +41,11 @@ spec:
   steps:
   - args:
     - $(params.args[*])
-    # Potentially right-sized for this tenant: requests are 2x observed PipelineRun samples.
+    # Potentially right-sized for this tenant: requests are at least 2x observed PipelineRun samples.
     computeResources:
       requests:
-        cpu: 1500m
-        memory: 1.5Gi
+        cpu: "2"
+        memory: 2Gi
       limits:
         cpu: "2"
         memory: 2Gi
