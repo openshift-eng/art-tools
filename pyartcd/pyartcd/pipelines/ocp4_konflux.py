@@ -201,7 +201,8 @@ class KonfluxOcpPipeline:
         EC and base-image-release failures are intentionally excluded. Skips owner mail
         when a large fraction of images failed (likely not an owner-specific issue).
         """
-        if self.assembly != 'stream':
+        # TODO set back to stream
+        if self.assembly != 'test':
             return
 
         failed_entries = {
