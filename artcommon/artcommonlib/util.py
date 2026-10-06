@@ -1078,6 +1078,9 @@ def get_registry_namespace_pattern(product: str) -> str:
     """Return the registry.redhat.io namespace pattern used for a product's published images."""
     if product in ("ocp", "openshift"):
         return r"openshift\d+"
+    if product == "openshift-opentelemetry-operator":
+        # RHOSDT publishes this product under the shared rhosdt registry namespace.
+        return "rhosdt"
     return re.escape(product)
 
 
