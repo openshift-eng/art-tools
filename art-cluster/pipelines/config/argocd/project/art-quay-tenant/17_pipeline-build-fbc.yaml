@@ -63,7 +63,7 @@ spec:
     description: Skip all post build checks in the FBC build pipeline
     name: skip-checks
     type: string
-  - default: "false"
+  - default: "true"
     description: Reset FBC builds to the latest production version
     name: reset-to-prod
     type: string
