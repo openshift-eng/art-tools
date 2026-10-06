@@ -6,7 +6,7 @@ metadata:
   labels:
     app: artcd
 spec:
-  description: Build OLM bundle containers for Quay operators via Konflux, then trigger
+  description: Build OLM bundle containers for layered product operators via Konflux, then trigger
     downstream FBC build.
   params:
   - description: OCP version (e.g. 1.5.0)

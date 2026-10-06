@@ -7,7 +7,7 @@ metadata:
     app: artcd
 spec:
   description: |
-    Scheduler for Quay scan. Checks locks and freeze automation,
+    Scheduler for layered products scan. Checks locks and freeze automation,
     then triggers individual layered-products-scan PipelineRuns for groups that are eligible.
   params:
   - default: ""

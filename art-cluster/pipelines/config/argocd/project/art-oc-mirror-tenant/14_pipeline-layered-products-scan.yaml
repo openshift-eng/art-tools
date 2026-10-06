@@ -6,7 +6,7 @@ metadata:
   labels:
     app: artcd
 spec:
-  description: Scan oc-mirror operator images for source changes and trigger downstream builds if changes are detected.
+  description: Scan layered product operator images for source changes and trigger downstream builds if changes are detected.
   params:
   - default: oc-mirror-2.0
     description: The group to use with -g flag (e.g. oc-mirror-2.0)

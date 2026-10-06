@@ -6,7 +6,7 @@ metadata:
   labels:
     app: artcd
 spec:
-  description: Build File-Based Catalog (FBC) containers for Quay operators via Konflux.
+  description: Build File-Based Catalog (FBC) containers for layered product operators via Konflux.
   params:
   - description: OCP version (e.g. 1.5.0)
     name: version

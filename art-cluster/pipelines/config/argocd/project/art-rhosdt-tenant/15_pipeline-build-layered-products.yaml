@@ -6,7 +6,7 @@ metadata:
   labels:
     app: artcd
 spec:
-  description: Rebase and build Quay operator images via Konflux, then trigger downstream bundle build.
+  description: Rebase and build layered product operator images via Konflux, then trigger downstream bundle build.
   params:
   - default: rhosdt-1.1
     description: The group to use with -g flag (e.g. rhosdt-1.1, rhosdt-1.0)
