@@ -464,46 +464,95 @@ def is_signed(config: SimpleNamespace, nvre: str, koji_api: koji.ClientSession) 
     ``resolve_signed_arch_path`` picks one key per NVR+arch and symlinks
     the whole directory.
     """
-    base_path = get_brewroot_base_path(config, nvre)
-    if base_path is None:
-        logger.warning(f"Cannot verify signing status for {nvre} - brewroot path not found")
-        return False
+    results = are_signed(config, [nvre], koji_api)
+    return results.get(nvre, False)
+
+
+def are_signed(config: SimpleNamespace, nvres: list[str], koji_api: koji.ClientSession) -> dict[str, bool]:
+    """
+    Batch-check whether multiple NVRs are signed with one of the accepted signing keys.
+
+    Uses Koji multicall to fetch build info and RPM lists for all NVRs in
+    parallel, significantly reducing wall-clock time compared to serial
+    ``is_signed()`` calls.
+
+    :param config: cli config object
+    :param nvres: List of NVR strings to check.
+    :param koji_api: Koji client session.
+    :return: Dict mapping each NVR to True (signed) or False (unsigned).
+    """
+    if not nvres:
+        return {}
 
     signing_keys = getattr(config, 'signing_keys', KNOWN_SIGNING_KEYS)
+    results: dict[str, bool] = {}
 
-    build = koji_api.getBuild(strip_epoch(nvre), strict=True)
-    rpms = koji_api.listRPMs(buildID=build["id"])
+    # Resolve brewroot base paths up-front; NVRs with no path are marked False.
+    base_paths: dict[str, Path] = {}
+    nvres_to_check: list[str] = []
+    for nvre in nvres:
+        base_path = get_brewroot_base_path(config, nvre)
+        if base_path is None:
+            logger.warning(f"Cannot verify signing status for {nvre} - brewroot path not found")
+            results[nvre] = False
+        else:
+            base_paths[nvre] = base_path
+            nvres_to_check.append(nvre)
 
-    # queryRPMSigs without sigkey returns ALL signatures for each RPM.
-    sig_tasks = []
+    if not nvres_to_check:
+        return results
+
+    # --- Phase 1: batch getBuild for all NVRs ---
+    build_tasks: list[tuple[str, object]] = []
     with koji_api.multicall(batch=5000) as m:
-        for rpm in rpms:
-            sig_tasks.append((rpm, m.queryRPMSigs(rpm_id=rpm["id"])))
+        for nvre in nvres_to_check:
+            build_tasks.append((nvre, m.getBuild(strip_epoch(nvre), strict=True)))
 
-    # Collect the set of accepted sigkeys each RPM is signed with on disk.
-    keys_per_rpm: list[set[str]] = []
-    for rpm, task in sig_tasks:
-        rpm_keys: set[str] = set()
-        for sig in task.result:
-            sigkey = sig.get("sigkey", "")
-            if sigkey not in signing_keys:
-                continue
-            if (base_path / koji.pathinfo.signed(rpm, sigkey)).exists():
-                rpm_keys.add(sigkey)
-        keys_per_rpm.append(rpm_keys)
+    # --- Phase 2: batch listRPMs for every build ---
+    rpm_tasks: list[tuple[str, object]] = []
+    with koji_api.multicall(batch=5000) as m:
+        for nvre, build_task in build_tasks:
+            build = build_task.result
+            rpm_tasks.append((nvre, m.listRPMs(buildID=build["id"])))
 
-    if not keys_per_rpm:
-        return True
+    # --- Phase 3: batch queryRPMSigs for every RPM across all builds ---
+    # Build mapping: nvre -> list of (rpm, sig_task)
+    sig_tasks_by_nvre: dict[str, list[tuple[dict, object]]] = {nvre: [] for nvre in nvres_to_check}
+    with koji_api.multicall(batch=5000) as m:
+        for nvre, rpm_task in rpm_tasks:
+            rpms = rpm_task.result
+            for rpm in rpms:
+                sig_tasks_by_nvre[nvre].append((rpm, m.queryRPMSigs(rpm_id=rpm["id"])))
 
-    # At least one key must cover every RPM in the build.
-    common_keys = keys_per_rpm[0]
-    for rpm_keys in keys_per_rpm[1:]:
-        common_keys = common_keys & rpm_keys
+    # --- Phase 4: evaluate signatures on disk ---
+    for nvre in nvres_to_check:
+        base_path = base_paths[nvre]
+        sig_tasks = sig_tasks_by_nvre[nvre]
+
+        keys_per_rpm: list[set[str]] = []
+        for rpm, task in sig_tasks:
+            rpm_keys: set[str] = set()
+            for sig in task.result:
+                sigkey = sig.get("sigkey", "")
+                if sigkey not in signing_keys:
+                    continue
+                if (base_path / koji.pathinfo.signed(rpm, sigkey)).exists():
+                    rpm_keys.add(sigkey)
+            keys_per_rpm.append(rpm_keys)
+
+        if not keys_per_rpm:
+            results[nvre] = True
+            continue
+
+        # At least one key must cover every RPM in the build.
+        common_keys = set.intersection(*keys_per_rpm)
         if not common_keys:
             logger.info(f"No single signing key covers all RPMs for {nvre}; signing may still be in progress.")
-            return False
+            results[nvre] = False
+        else:
+            results[nvre] = True
 
-    return True
+    return results
 
 
 def signed_desired(config):
@@ -1017,6 +1066,9 @@ def from_tags(
     if signable_components and possible_signing_needed:
         logger.info('At least one architecture requires signed nvres')
 
+        # Track NVRs already confirmed signed so assert_signed() can skip them.
+        already_signed_nvres: set[str] = set()
+
         # Each set must be attached separately because you cannot attach two nvres of the same
         # package to an errata at the same time.
         for set_name, nvre_set in {'latest_tagged': desired_nvres, 'previous_tagged': historical_nvres}.items():
@@ -1024,30 +1076,45 @@ def from_tags(
                 logger.info(f'NVRE set {set_name} is empty; nothing to sign')
                 continue
 
+            # Batch-check signing status for all signable NVRs in this set
+            # BEFORE the advisory-vs-no-advisory branching so that both paths
+            # benefit from skipping already-signed NVRs.
+            signable_nvres = [nvre for nvre in nvre_set if parse_nvr(nvre)["name"] in signable_components]
+            signing_status = are_signed(config, signable_nvres, koji_proxy) if signable_nvres else {}
+
+            for nvre in signable_nvres:
+                if signing_status.get(nvre, False):
+                    logger.info(f'NVR already signed in set {set_name}, skipping: {nvre}')
+                    already_signed_nvres.add(nvre)
+
             if signing_advisory_id:
-                # Remove all builds attached to advisory before attempting signing
-                update_advisory_builds(config, errata_session, signing_advisory_id, [], nvr_product_version)
-                nvres_for_advisory = []
+                nvres_for_advisory = [nvre for nvre in signable_nvres if nvre not in already_signed_nvres]
 
-                for nvre in nvre_set:
-                    nvre_obj = parse_nvr(nvre)
-                    if nvre_obj["name"] in signable_components and not is_signed(config, nvre, koji_proxy):
-                        logger.info(f'Found an unsigned nvr in nvre set {set_name} (will attempt to sign): {nvre}')
-                        nvres_for_advisory.append(nvre)
+                for nvre in nvres_for_advisory:
+                    logger.info(f'Found an unsigned nvr in nvre set {set_name} (will attempt to sign): {nvre}')
 
-                logger.info(f'Updating advisory to get nvre set {set_name} signed: {signing_advisory_id}')
-                update_advisory_builds(
-                    config, errata_session, signing_advisory_id, nvres_for_advisory, nvr_product_version
-                )
+                if nvres_for_advisory:
+                    # Only manipulate the advisory when there are unsigned NVRs to sign.
+                    update_advisory_builds(config, errata_session, signing_advisory_id, [], nvr_product_version)
+                    logger.info(f'Updating advisory to get nvre set {set_name} signed: {signing_advisory_id}')
+                    update_advisory_builds(
+                        config, errata_session, signing_advisory_id, nvres_for_advisory, nvr_product_version
+                    )
+                else:
+                    logger.info(f'All signable nvres in set {set_name} are already signed; skipping advisory update')
 
             else:
                 logger.warning(f'No signing advisory specified; will simply poll and hope for nvre set {set_name}')
 
-            # Whether we've attached to advisory or no, wait until signing require is met
-            # or throw exception on timeout.
-            logger.info(f'Waiting for all nvres in set {set_name} to be signed..')
-            for nvre in desired_nvres:
-                poll_for -= assert_signed(config, nvre, koji_proxy)
+            # Whether we've attached to advisory or no, wait until signing requirement is met
+            # or throw exception on timeout.  Skip NVRs already confirmed signed.
+            nvres_needing_assert = [nvre for nvre in nvre_set if nvre not in already_signed_nvres]
+            if nvres_needing_assert:
+                logger.info(f'Waiting for {len(nvres_needing_assert)} nvres in set {set_name} to be signed..')
+                for nvre in nvres_needing_assert:
+                    poll_for -= assert_signed(config, nvre, koji_proxy)
+            else:
+                logger.info(f'All nvres in set {set_name} already confirmed signed; skipping poll')
 
     if possible_signing_needed and signing_advisory_id and signing_advisory_mode == 'clean':
         # Seems that everything is signed; remove builds from the advisory.
