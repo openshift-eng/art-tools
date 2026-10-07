@@ -13,6 +13,7 @@ from elliottlib.cli.find_builds_cli import (
     _is_image_released,
     find_builds_konflux,
     find_builds_konflux_all_types,
+    get_rhcos_nvrs_from_assembly,
 )
 from elliottlib.exceptions import ElliottFatalError
 from flexmock import flexmock
@@ -58,6 +59,35 @@ class TestFindBuildsCli(TestCase):
         actual = _find_shipped_builds(build_ids, mock.MagicMock())
         self.assertEqual(expected, actual)
         get_builds_tags.assert_called_once_with(build_ids, mock.ANY)
+
+    @mock.patch("elliottlib.cli.find_builds_cli.get_build_id_from_rhcos_pullspec")
+    @mock.patch("elliottlib.cli.find_builds_cli.get_container_configs")
+    @mock.patch("elliottlib.cli.find_builds_cli.assembly_rhcos_config")
+    def test_get_rhcos_nvrs_honors_attach_to_et_advisory(
+        self, assembly_rhcos_config_mock, get_container_configs_mock, get_build_id_mock
+    ):
+        assembly_rhcos_config_mock.return_value = {
+            "included-by-default": {"images": {"x86_64": "default-pullspec"}},
+            "included-explicitly": {"images": {"x86_64": "included-pullspec"}},
+            "excluded-explicitly": {"images": {"x86_64": "excluded-pullspec"}},
+        }
+        get_container_configs_mock.return_value = [
+            {"name": "included-by-default"},
+            {"name": "included-explicitly", "attach_to_et_advisory": True},
+            {"name": "excluded-explicitly", "attach_to_et_advisory": False},
+        ]
+        get_build_id_mock.side_effect = lambda pullspec, **_: pullspec
+        runtime = MagicMock(assembly="test")
+        brew_session = MagicMock()
+        brew_session.getBuild.return_value = True
+
+        nvrs = get_rhcos_nvrs_from_assembly(runtime, brew_session)
+
+        self.assertCountEqual(
+            nvrs,
+            ["rhcos-x86_64-default-pullspec", "rhcos-x86_64-included-pullspec"],
+        )
+        self.assertEqual(get_build_id_mock.call_count, 2)
 
 
 class TestFindBuildsKonflux(IsolatedAsyncioTestCase):
