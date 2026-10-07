@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
-import { Alert, Button, Card, CardBody, Label, Spinner, Title } from '@patternfly/react-core';
+import { Alert, Button, Label, Spinner, Title } from '@patternfly/react-core';
 
 async function request(path, options = {}) {
   const response = await fetch(path, { credentials: 'same-origin', ...options });
@@ -28,6 +28,17 @@ function navigate(view) {
 
 function formatDate(value) {
   return value ? new Date(value).toLocaleString() : '—';
+}
+
+function formatDuration(started, completed, now) {
+  if (!started) return '—';
+  const seconds = Math.floor((new Date(completed).getTime() || now) / 1000 - new Date(started).getTime() / 1000);
+  if (!Number.isFinite(seconds)) return '—';
+  const elapsed = Math.max(0, seconds);
+  const hours = Math.floor(elapsed / 3600);
+  const minutes = Math.floor((elapsed % 3600) / 60);
+  const remainder = elapsed % 60;
+  return [hours && `${hours}h`, (hours || minutes) && `${minutes}m`, `${remainder}s`].filter(Boolean).join(' ');
 }
 
 function statusColor(status) {
@@ -111,23 +122,49 @@ function App() {
 
 function Pipelines({ namespace }) {
   const [items, setItems] = useState([]);
+  const [latestRuns, setLatestRuns] = useState({});
+  const [latestLoading, setLatestLoading] = useState(true);
   const [search, setSearch] = useState('');
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
+  const [latestError, setLatestError] = useState('');
   useEffect(() => {
     setLoading(true);
     request(`/api/pipelines${namespace ? `?namespace=${encodeURIComponent(namespace)}` : ''}`)
       .then((data) => setItems(data.items)).catch((cause) => setError(cause.message)).finally(() => setLoading(false));
+  }, [namespace]);
+  useEffect(() => {
+    let active = true;
+    setLatestRuns({});
+    setLatestLoading(true);
+    setLatestError('');
+    request(`/api/pipelines/latest-runs${namespace ? `?namespace=${encodeURIComponent(namespace)}` : ''}`)
+      .then((data) => {
+        if (!active) return;
+        setLatestRuns(Object.fromEntries(data.items.map((item) => [`${item.namespace}/${item.pipeline}`, item])));
+        if (data.errors?.length) setLatestError(`Some latest runs could not be loaded (${data.errors.map((item) => item.namespace).join(', ')})`);
+      })
+      .catch((cause) => { if (active) setLatestError(cause.message); })
+      .finally(() => { if (active) setLatestLoading(false); });
+    return () => { active = false; };
   }, [namespace]);
   const filtered = items.filter((item) => item.name.toLowerCase().includes(search.toLowerCase()));
   return <>
     <div className="page-heading"><div><div className="eyebrow">PIPELINE CATALOG</div><Title headingLevel="h1" size="2xl">Pipelines</Title><p>Start a pipeline with its current parameters.</p></div><span className="count">{filtered.length} pipelines</span></div>
     <div className="toolbar"><input className="search-input" placeholder="Search pipeline names" value={search} onChange={(event) => setSearch(event.target.value)} aria-label="Search pipelines" /></div>
     {error && <Alert variant="danger" title={error} className="notice" />}
+    {latestError && <Alert variant="warning" title={latestError} className="notice" />}
     {loading ? <div className="loading"><Spinner size="lg" /></div> : filtered.length === 0 ? <div className="empty">No pipelines match this search.</div> :
-      <div className="pipeline-grid">{filtered.map((item) => <Card key={`${item.namespace}/${item.name}`} className="pipeline-card" isClickable onClick={() => navigate({ kind: 'pipeline', ...item })}>
-        <CardBody><div className="card-top"><span className="pipeline-symbol">▧</span><span className="namespace-pill">{item.namespace}</span></div><h2>{item.name}</h2><p>{item.description || 'Tekton Pipeline'}</p><div className="card-footer"><span>{item.parameterCount} parameters</span><span className="open-link">Open pipeline →</span></div></CardBody>
-      </Card>)}</div>}
+      <div className="table-wrap"><table className="data-table"><thead><tr><th>Pipeline</th><th>Namespace</th><th>Last run</th><th>Last run status</th><th>Last run time</th><th>Parameters</th></tr></thead><tbody>
+        {filtered.map((item) => {
+          const latest = latestRuns[`${item.namespace}/${item.name}`];
+          return <tr key={`${item.namespace}/${item.name}`} onClick={() => navigate({ kind: 'pipeline', ...item })} tabIndex={0} onKeyDown={(event) => event.key === 'Enter' && navigate({ kind: 'pipeline', ...item })}>
+            <td className="primary-cell">{item.name}</td><td>{item.namespace}</td>
+            <td>{latest ? <a href={`#/run/${latest.namespace}/${encodeURIComponent(latest.name)}?uid=${encodeURIComponent(latest.uid || '')}`} onClick={(event) => event.stopPropagation()} onKeyDown={(event) => event.stopPropagation()}>{latest.name}</a> : latestLoading ? 'Loading…' : '—'}</td>
+            <td>{latest ? <Status value={latest.status} /> : '—'}</td><td>{latest ? formatDate(latest.created) : '—'}</td><td>{item.parameterCount}</td>
+          </tr>;
+        })}
+      </tbody></table></div>}
   </>;
 }
 
@@ -143,6 +180,11 @@ function Runs({ namespace, pipeline = '', embedded = false }) {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [warnings, setWarnings] = useState([]);
+  const [now, setNow] = useState(Date.now());
+  useEffect(() => {
+    const interval = window.setInterval(() => setNow(Date.now()), 30000);
+    return () => window.clearInterval(interval);
+  }, []);
   useEffect(() => {
     const params = new URLSearchParams({ page: String(page), page_size: '50' });
     if (namespace) params.set('namespace', namespace);
@@ -170,9 +212,9 @@ function Runs({ namespace, pipeline = '', embedded = false }) {
     </form>
     {error && <Alert variant="danger" title={error} className="notice" />}
     {warnings.length > 0 && <Alert variant="warning" title={`Some history could not be loaded (${warnings.map((item) => item.namespace).join(', ')})`} className="notice" />}
-    {loading ? <div className="loading"><Spinner size="lg" /></div> : items.length === 0 ? <div className="empty">No runs match these filters.</div> : <div className="table-wrap"><table className="data-table"><thead><tr><th>PipelineRun</th><th>Pipeline</th><th>Namespace</th><th>Status</th><th>Created</th><th>Source</th></tr></thead><tbody>
+    {loading ? <div className="loading"><Spinner size="lg" /></div> : items.length === 0 ? <div className="empty">No runs match these filters.</div> : <div className="table-wrap"><table className="data-table"><thead><tr><th>PipelineRun</th><th>Pipeline</th><th>Namespace</th><th>Status</th><th>Run state</th><th>Started</th><th>Duration</th><th>Source</th></tr></thead><tbody>
       {items.map((item) => <tr key={`${item.namespace}/${item.uid}`} onClick={() => navigate({ kind: 'run', ...item })} tabIndex={0} onKeyDown={(event) => event.key === 'Enter' && navigate({ kind: 'run', ...item })}>
-        <td className="primary-cell">{item.name}</td><td>{item.pipeline || '—'}</td><td>{item.namespace}</td><td><Status value={item.status} /></td><td>{formatDate(item.created)}</td><td><span className={item.source === 'archive' ? 'source archived' : 'source'}>{item.source === 'archive' ? 'Results' : 'Live'}</span></td>
+        <td className="primary-cell">{item.name}</td><td>{item.pipeline || '—'}</td><td>{item.namespace}</td><td><Status value={item.status} /></td><td><span className={`run-state-bar ${statusColor(item.status)}`} role="img" aria-label={`${item.status} run state`} /></td><td>{formatDate(item.started || item.created)}</td><td>{formatDuration(item.started, item.completed, now)}</td><td><span className={item.source === 'archive' ? 'source archived' : 'source'}>{item.source === 'archive' ? 'Results' : 'Live'}</span></td>
       </tr>)}</tbody></table></div>}
     <div className="pagination"><span>{total === 0 ? '0' : (page - 1) * 50 + 1}–{Math.min(page * 50, total)} of {total}</span><Button variant="secondary" isDisabled={page <= 1 || loading} onClick={() => setPage(page - 1)}>Previous</Button><Button variant="secondary" isDisabled={page * 50 >= total || loading} onClick={() => setPage(page + 1)}>Next</Button></div>
   </>;

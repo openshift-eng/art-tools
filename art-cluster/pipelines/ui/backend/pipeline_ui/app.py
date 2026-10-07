@@ -101,6 +101,27 @@ def pipeline_summary(pipeline: dict) -> dict:
     }
 
 
+async def read_run_summaries(gateway: Gateway, namespace: str, errors: list, selected: bool) -> list[dict]:
+    items = {}
+    try:
+        async for _record, run in gateway.list_records(namespace, filter_text="data_type == PIPELINE_RUN"):
+            summary = run_summary(run, "archive")
+            if summary["uid"]:
+                items[summary["uid"]] = summary
+    except UpstreamError as error:
+        if error.status != 403:
+            errors.append({"namespace": namespace, "source": "archive", "message": error.message})
+    try:
+        async for run in gateway.list_kube(namespace, "pipelineruns"):
+            summary = run_summary(run, "live")
+            if summary["uid"]:
+                items[summary["uid"]] = summary
+    except UpstreamError as error:
+        if error.status != 403 or selected:
+            errors.append({"namespace": namespace, "source": "live", "message": error.message})
+    return list(items.values())
+
+
 async def find_run(gateway: Gateway, namespace: str, name: str, uid: str | None = None):
     uid = uid or None
     try:
@@ -162,6 +183,28 @@ async def pipelines(request: Request, namespace: str | None = None, q: str = "")
     return {"items": sorted(items, key=lambda item: (item["namespace"], item["name"]))}
 
 
+@app.get("/api/pipelines/latest-runs")
+async def latest_pipeline_runs(request: Request, namespace: str | None = None):
+    names = selected_namespaces(namespace)
+    errors = []
+    async with Gateway(user_token(request)) as gateway:
+        groups = await asyncio.gather(
+            *(read_run_summaries(gateway, name, errors, namespace is not None) for name in names)
+        )
+    latest = {}
+    for group in groups:
+        for run in group:
+            if not run["pipeline"]:
+                continue
+            key = (run["namespace"], run["pipeline"])
+            previous = latest.get(key)
+            if previous is None or (run["created"] or "", run["source"] == "live") > (
+                previous["created"] or "", previous["source"] == "live"
+            ):
+                latest[key] = run
+    return {"items": list(latest.values()), "errors": errors}
+
+
 @app.get("/api/pipelines/{namespace}/{name}")
 async def pipeline_detail(request: Request, namespace: str, name: str):
     allowed_namespace(namespace)
@@ -205,27 +248,9 @@ async def runs(
     names = selected_namespaces(namespace)
     errors = []
     async with Gateway(user_token(request)) as gateway:
-        async def read(current: str):
-            items = {}
-            try:
-                async for record, run in gateway.list_records(current, filter_text="data_type == PIPELINE_RUN"):
-                    summary = run_summary(run, "archive")
-                    if summary["uid"]:
-                        items[summary["uid"]] = summary
-            except UpstreamError as error:
-                if error.status != 403:
-                    errors.append({"namespace": current, "source": "archive", "message": error.message})
-            try:
-                async for run in gateway.list_kube(current, "pipelineruns"):
-                    summary = run_summary(run, "live")
-                    if summary["uid"]:
-                        items[summary["uid"]] = summary
-            except UpstreamError as error:
-                if error.status != 403 or namespace is not None:
-                    errors.append({"namespace": current, "source": "live", "message": error.message})
-            return list(items.values())
-
-        groups = await asyncio.gather(*(read(name) for name in names))
+        groups = await asyncio.gather(
+            *(read_run_summaries(gateway, name, errors, namespace is not None) for name in names)
+        )
     items = [item for group in groups for item in group]
     if pipeline:
         items = [item for item in items if item["pipeline"] == pipeline]
