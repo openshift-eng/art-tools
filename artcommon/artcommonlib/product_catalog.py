@@ -245,7 +245,7 @@ PRODUCT_CATALOG: tuple[ProductConfig, ...] = (
             release_plan="rhosdt-images-base-silent",
             application="rhosdt-images-base",
         ),
-        fbc_stage_release_plans={(0, 158): "rhosdt-advisory-stage-auto-3-11"},
+        fbc_stage_release_plans={(0, 158): "rhosdt-advisory-stage-auto-0-158"},
         cpe_product_name="openshift_distributed_tracing",
     ),
     ProductConfig(
