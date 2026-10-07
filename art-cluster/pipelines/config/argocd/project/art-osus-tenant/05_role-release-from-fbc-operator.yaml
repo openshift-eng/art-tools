@@ -1,0 +1,36 @@
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: release-from-fbc-operator
+  namespace: art-osus-tenant
+rules:
+  - apiGroups: ["tekton.dev"]
+    resources: ["pipelines"]
+    resourceNames: ["release-from-fbc", "trigger-prod-release", "layered-products-scan", "build-layered-products", "olm-bundle-konflux", "build-fbc", "schedule-layered-products-scan"]
+    verbs: ["get", "list"]
+  - apiGroups: ["tekton.dev"]
+    resources: ["tasks"]
+    resourceNames: ["artcd", "lp-scan"]
+    verbs: ["get"]
+  - apiGroups: ["tekton.dev"]
+    resources: ["pipelineruns"]
+    resourceNames: ["release-from-fbc", "trigger-prod-release"]
+    verbs: ["get", "list", "watch", "patch"]
+  - apiGroups: ["tekton.dev"]
+    resources: ["pipelineruns"]
+    verbs: ["create", "get", "list", "watch"]
+  - apiGroups: ["tekton.dev"]
+    resources: ["taskruns"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: [""]
+    resources: ["pods"]
+    verbs: ["get", "list"]
+  - apiGroups: [""]
+    resources: ["pods/log"]
+    verbs: ["get"]
+  - apiGroups: [""]
+    resources: ["events"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: ["events.k8s.io"]
+    resources: ["events"]
+    verbs: ["get", "list", "watch"]
