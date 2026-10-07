@@ -6,8 +6,8 @@ metadata:
   name: release-from-fbc
   namespace: art-osus-tenant
 spec:
-  description: Create releases from FBC (File-Based Catalogs) for non-OpenShift products
-    (OADP, MTA, MTC, logging, etc.) using artcd release-from-fbc command.
+  description: Create releases from FBC (File-Based Catalogs) for OpenShift Update Service
+    using artcd release-from-fbc command.
   params:
   - default: osus-5.0
     description: 'ocp-build-data group branch for this product'

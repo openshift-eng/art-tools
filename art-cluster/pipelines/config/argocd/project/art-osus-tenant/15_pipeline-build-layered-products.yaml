@@ -16,7 +16,7 @@ spec:
     description: The name of an assembly to rebase and build for
     name: assembly
     type: string
-  - default: cincinnati-operator-container
+  - default: cincinnati-operator-container,cincinnati-container
     description: Comma/space-separated list of image names to build
     name: image-list
     type: string
