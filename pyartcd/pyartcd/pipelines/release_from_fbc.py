@@ -551,6 +551,36 @@ class ReleaseFromFbcPipeline:
         self.logger.info(f"Using product extracted from group name: {product}")
         return product
 
+    async def _load_ignore_patch_version_from_group_config(self) -> bool:
+        """Load the optional ignore_patch_version boolean from group.yml.
+
+        The setting defaults to false so existing groups continue to require
+        FBC and assembly patch versions to match exactly.
+        """
+        cmd = [
+            'doozer',
+            f'--group={self.group}',
+            f'--working-dir={self.doozer_working_dir}',
+            'config:read-group',
+            '--default',
+            'false',
+            '--yaml',
+            'ignore_patch_version',
+        ]
+        try:
+            returncode, output, _ = await exectools.cmd_gather_async(cmd)
+        except Exception as e:
+            self.logger.warning("Failed to load ignore_patch_version from group config; defaulting to false: %s", e)
+            return False
+        if returncode != 0:
+            self.logger.warning("Failed to load ignore_patch_version from group config; defaulting to false")
+            return False
+
+        value = stdlib_yaml.safe_load(output)
+        if not isinstance(value, bool):
+            raise ValueError("group.yml ignore_patch_version must be a boolean")
+        return value
+
     async def _load_mr_approvers_from_group_config(self) -> dict[str, list[str]]:
         """
         Load the mr_approvers field from group configuration using doozer command.
@@ -1333,7 +1363,11 @@ class ReleaseFromFbcPipeline:
                 fbc_nvrs.append(nvr)
 
             if not self.ocp_optional:
-                validate_layered_product_fbc_nvrs(self.assembly, fbc_nvrs)
+                ignore_patch_version = await self._load_ignore_patch_version_from_group_config()
+                # This group.yml flag permits patch-version differences while still checking major and minor.
+                validate_layered_product_fbc_nvrs(
+                    self.assembly, fbc_nvrs, ignore_patch_version=ignore_patch_version
+                )
             if fbc_nvrs:
                 self.logger.info(f"Extracted {len(fbc_nvrs)} FBC NVRs: {fbc_nvrs}")
             else:
