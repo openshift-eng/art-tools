@@ -32,6 +32,14 @@ SYNC_TYPE_CONFIG = {
         ],  # Extract RHEL version: "rhel-9.6-te-preview" -> "9.6"
         "enforce_allowlist": True,
     },
+    "ocp4nv": {
+        "arch": "aarch64",
+        "allowlist": {"live-iso"},
+        "s3_base_url": "s3://art-srv-enterprise/pub/openshift-v4/aarch64/dependencies/rhcos-ocp4nv",
+        "extract_major_minor": lambda stream: stream.split("-")[1],
+        # Extract RHEL version: "rhel-10.2-ocp4nv" -> "10.2"
+        "enforce_allowlist": True,
+    },
 }
 
 
@@ -43,6 +51,7 @@ class SyncRhcosSpecializedPipeline:
     Supports:
     - BFB: NVIDIA BFB artifacts (aarch64)
     - Confidential: Confidential clusters images (x86_64)
+    - OCP4NV: NVIDIA OCP4NV boot images (aarch64)
     """
 
     def __init__(self, runtime: Runtime, stream: str, build: str, sync_type: str = "bfb"):
@@ -161,12 +170,11 @@ class SyncRhcosSpecializedPipeline:
         """
         if self.sync_type == "bfb":
             return self.build_bfb_destinations()
-        elif self.sync_type == "confidential":
-            return self.build_confidential_destinations()
+        elif self.sync_type in {"confidential", "ocp4nv"}:
+            return self.build_rhel_based_destinations()
         else:
-            # TODO Implement support for "general" RHCOS sync
             raise Exception(
-                f"Sync type '{self.sync_type}' not yet implemented. Currently only 'bfb' and 'confidential' are supported."
+                f"Sync type '{self.sync_type}' not yet implemented. Currently only 'bfb', 'confidential', and 'ocp4nv' are supported."
             )
 
     def build_bfb_destinations(self) -> Tuple[List[str], List[str]]:
@@ -197,10 +205,9 @@ class SyncRhcosSpecializedPipeline:
 
         return versioned_paths, latest_paths
 
-    def build_confidential_destinations(self) -> Tuple[List[str], List[str]]:
+    def build_rhel_based_destinations(self) -> Tuple[List[str], List[str]]:
         """
-        Build destination paths for confidential cluster artifacts.
-        Uses RHEL version-based structure, similar to BFB's OCP version structure.
+        Build destination paths for artifacts using a RHEL version-based structure.
         """
         versioned_paths = [f"{self.s3_base_url}/{self.major_minor}/{self.build}"]
 
@@ -384,7 +391,7 @@ class SyncRhcosSpecializedPipeline:
     "--type",
     "sync_type",
     default="bfb",
-    help="Type: 'bfb' (NVIDIA BFB, aarch64) or 'confidential' (confidential cluster images, x86_64)",
+    help="Type: 'bfb' (NVIDIA BFB, aarch64), 'confidential' (confidential cluster images, x86_64), or 'ocp4nv' (NVIDIA OCP4NV boot images, aarch64)",
 )
 @pass_runtime
 @click_coroutine
