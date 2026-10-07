@@ -26,6 +26,7 @@ class TestProductId(unittest.TestCase):
             "rhmtc": ProductId.MTC,
             "oadp": ProductId.OADP,
             "quay": ProductId.QUAY,
+            "openshift-update-service": ProductId.OSUS,
             "oc-mirror": ProductId.OC_MIRROR,
             "mirror_gui": ProductId.MIRROR_GUI,
             "openshift-opentelemetry-operator": ProductId.RHOSDT,
