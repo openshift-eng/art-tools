@@ -125,7 +125,7 @@ async def read_run_summaries(gateway: Gateway, namespace: str, errors: list, sel
             if summary["uid"]:
                 items[summary["uid"]] = summary
     except UpstreamError as error:
-        if error.status != 403:
+        if error.status != 403 or selected:
             errors.append({"namespace": namespace, "source": "archive", "message": error.message})
     try:
         async for run in gateway.list_kube(namespace, "pipelineruns"):

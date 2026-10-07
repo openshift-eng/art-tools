@@ -4,6 +4,8 @@ This application lists ART tenant Pipelines and PipelineRuns from the live OpenS
 
 The backend uses the OpenShift OAuth token forwarded by its sidecar. Kubernetes and Tekton Results enforce each user's namespace permissions. The app does not persist run data or user tokens. The OAuth client requests `user:info` and `role:art-pipelines-ui-scope:*`; the scope limits the token to the API operations in `01-oauth-scope.yaml` and does not grant access to Secrets. It does not grant users permissions they do not already have. To add a tenant namespace, update `PIPELINE_NAMESPACES` in the GitOps ConfigMap.
 
+The pod disables automatic service account token mounting. The OAuth proxy still needs an in-cluster Kubernetes client for OAuth discovery, so a projected service account token is mounted only in the proxy container. The backend mounts only the Kubernetes CA from `kube-root-ca.crt`. An ingress-only NetworkPolicy limits access to the proxy to the OpenShift router without restricting the app's outbound cluster API and Results requests.
+
 ## Development
 
 The backend is in `backend/pipeline_ui`; install `backend/requirements.txt` and run `uvicorn pipeline_ui.app:app` from `backend`. The frontend is in `frontend`; run `npm ci` and `npm run build`. Browser requests need an OpenShift OAuth proxy in front of the backend.

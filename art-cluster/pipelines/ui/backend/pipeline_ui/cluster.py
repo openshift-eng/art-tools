@@ -42,7 +42,8 @@ class Gateway:
         if response.is_error:
             try:
                 body = response.json()
-                message = body.get("message") or body.get("error") or response.reason_phrase
+                message = (body.get("message") or body.get("error")) if isinstance(body, dict) else None
+                message = message or response.reason_phrase
             except ValueError:
                 message = response.reason_phrase
             raise UpstreamError(response.status_code, str(message))

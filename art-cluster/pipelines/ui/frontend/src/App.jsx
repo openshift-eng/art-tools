@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { Alert, Button, Label, Spinner, Title } from '@patternfly/react-core';
 
 async function request(path, options = {}) {
@@ -252,17 +252,42 @@ function RunDetail({ view, csrfToken }) {
   const [activeTab, setActiveTab] = useState('logs');
   const [form, setForm] = useState(false);
   const [error, setError] = useState('');
+  const runKey = `${view.namespace}/${view.name}/${view.uid || ''}`;
+  const currentRun = useRef(null);
+  const pending = useRef({});
   const url = `/api/runs/${view.namespace}/${view.name}?uid=${encodeURIComponent(view.uid || '')}`;
   const logsUrl = `/api/runs/${view.namespace}/${view.name}/logs?uid=${encodeURIComponent(view.uid || '')}`;
   const eventsUrl = `/api/runs/${view.namespace}/${view.name}/events?uid=${encodeURIComponent(view.uid || '')}`;
+  useLayoutEffect(() => {
+    currentRun.current = runKey;
+    return () => {
+      currentRun.current = null;
+      Object.values(pending.current).forEach((controller) => controller.abort());
+      pending.current = {};
+    };
+  }, [runKey]);
+  const load = useCallback((kind, path, onSuccess, onFailure) => {
+    pending.current[kind]?.abort();
+    const controller = new AbortController();
+    pending.current[kind] = controller;
+    request(path, { signal: controller.signal })
+      .then((data) => {
+        if (currentRun.current === runKey && !controller.signal.aborted) onSuccess(data);
+      })
+      .catch((cause) => {
+        if (currentRun.current === runKey && !controller.signal.aborted) onFailure(cause);
+      });
+  }, [runKey]);
   const refresh = useCallback(() => {
-    request(url).then(setRun).catch((cause) => setError(cause.message));
-    request(logsUrl).then(setLogs).catch((cause) => setError(cause.message));
-  }, [url, logsUrl]);
+    setError('');
+    load('run', url, setRun, (cause) => setError(cause.message));
+    load('logs', logsUrl, setLogs, (cause) => setError(cause.message));
+  }, [load, url, logsUrl]);
   const refreshEvents = useCallback(() => {
-    request(eventsUrl).then((data) => { setEvents(data); setEventsError(''); }).catch((cause) => setEventsError(cause.message));
-  }, [eventsUrl]);
-  useEffect(() => { setActiveTab('logs'); setRun(null); setLogs(null); setEvents(null); refresh(); }, [refresh]);
+    setEventsError('');
+    load('events', eventsUrl, setEvents, (cause) => setEventsError(cause.message));
+  }, [load, eventsUrl]);
+  useEffect(() => { setActiveTab('logs'); setRun(null); setLogs(null); setEvents(null); setEventsError(''); setForm(false); refresh(); }, [refresh]);
   useEffect(() => { if (activeTab === 'events') refreshEvents(); }, [activeTab, refreshEvents]);
   useEffect(() => {
     if (run?.status !== 'Running') return undefined;
@@ -302,7 +327,10 @@ function RunForm({ namespace, pipeline, sourceRun, csrfToken, onClose }) {
     request(`/api/pipelines/${namespace}/${pipeline}/form?${params}`)
       .then((data) => {
         setForm(data);
-        setValues(Object.fromEntries(data.parameters.map((item) => [item.name, item.type === 'string' ? item.value ?? '' : JSON.stringify(item.value ?? (item.type === 'array' ? [] : {}), null, 2)])));
+        setValues(Object.fromEntries(data.parameters.map((item) => {
+          const value = item.enum?.length && !item.enum.includes(item.value) ? '' : item.value ?? '';
+          return [item.name, item.type === 'string' ? value : JSON.stringify(item.value ?? (item.type === 'array' ? [] : {}), null, 2)];
+        })));
         setWorkspaces(JSON.stringify(data.workspaces, null, 2));
       }).catch((cause) => setError(cause.message));
   }, [namespace, pipeline, sourceRun?.uid]);
@@ -327,7 +355,7 @@ function RunForm({ namespace, pipeline, sourceRun, csrfToken, onClose }) {
       <div className="modal-body">
         {form.removedParameters.length > 0 && <Alert variant="warning" title={`These old parameters are no longer in the pipeline and will be omitted: ${form.removedParameters.join(', ')}`} className="notice" />}
         {form.parameters.map((item) => <Field key={item.name} label={<>{item.name} <span className="origin">{item.source === 'run' ? 'Previous run' : item.source === 'default' ? 'Pipeline default' : 'Required'}</span></>} hint={item.description || (item.type !== 'string' ? `Enter a JSON ${item.type}` : '')}>
-          {item.enum?.length ? <select value={values[item.name] ?? ''} onChange={(event) => setValues({ ...values, [item.name]: event.target.value })}>{item.enum.map((option) => <option key={option} value={option}>{option}</option>)}</select> :
+          {item.enum?.length ? <select value={values[item.name] ?? ''} onChange={(event) => setValues({ ...values, [item.name]: event.target.value })} required={!item.enum.includes('')}>{!item.enum.includes('') && <option value="" disabled>Select a value</option>}{item.enum.map((option) => <option key={option} value={option}>{option}</option>)}</select> :
             <textarea rows={item.type === 'string' ? 2 : 5} value={values[item.name] ?? ''} onChange={(event) => setValues({ ...values, [item.name]: event.target.value })} required={item.source === 'required'} />}
         </Field>)}
         {form.workspaceDefinitions.length > 0 && <Field label="Workspace bindings" hint="JSON array of Tekton workspace bindings; required workspace names must be present."><textarea rows={7} value={workspaces} onChange={(event) => setWorkspaces(event.target.value)} /></Field>}
