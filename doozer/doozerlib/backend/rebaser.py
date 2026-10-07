@@ -65,6 +65,19 @@ def _get_cpe_product_name(product: str) -> str:
     return config.cpe_name if config else product
 
 
+def _get_cpe_version(group_name: str, version: str, override: Optional[str] = None) -> str:
+    """Use the configured product CPE version, then the group or build version."""
+    if override:
+        return str(override)
+
+    group_version = product_version_from_group_name(group_name)
+    if group_version is not None:
+        return f"{group_version[0]}.{group_version[1]}"
+
+    version_parts = version.lstrip('v').split('.')
+    return f"{version_parts[0]}.{version_parts[1]}" if len(version_parts) >= 2 else version_parts[0]
+
+
 class KonfluxRebaser:
     """Rebase images to a new branch in the build source repository.
 
@@ -1265,21 +1278,12 @@ class KonfluxRebaser:
         # The vendor should always be Red Hat, Inc.
         dfp.labels["vendor"] = "Red Hat, Inc."
 
-        # Derive the CPE version from the group name (e.g. "rhosdt-3.11" -> "3.11",
-        # "openshift-4.22" -> "4.22"). Falls back to the version field for groups
-        # whose name does not encode a MAJOR.MINOR suffix.
-        group_version = product_version_from_group_name(self._runtime.group)
-        if group_version is not None:
-            cleaned_version = f"{group_version[0]}.{group_version[1]}"
-        else:
-            # "v4.20.0" -> "4.20", "v4.20" -> "4.20"
-            version_parts = version.lstrip('v').split('.')
-            cleaned_version = f"{version_parts[0]}.{version_parts[1]}" if len(version_parts) >= 2 else version_parts[0]
+        cpe_version = _get_cpe_version(self._runtime.group, version, self._runtime.group_config.vars.get("CPE_VERSION"))
         # "202509030239.p2.gfe588cb.assembly.stream.el9" -> "el9"
         rhel_version = release.split(".")[-1]
         product = self._runtime.group_config.product if self._runtime.group_config.product else "openshift"
         cpe_product_name = _get_cpe_product_name(product)
-        dfp.labels["cpe"] = f"cpe:/a:redhat:{cpe_product_name}:{cleaned_version}::{rhel_version}"
+        dfp.labels["cpe"] = f"cpe:/a:redhat:{cpe_product_name}:{cpe_version}::{rhel_version}"
 
         # Set the distgit repo name
         dfp.labels["com.redhat.component"] = metadata.get_component_name()

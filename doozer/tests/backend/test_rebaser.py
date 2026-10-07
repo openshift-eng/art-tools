@@ -13,7 +13,7 @@ from artcommonlib.model import Missing, Model
 from artcommonlib.variants import BuildVariant
 from dockerfile_parse import DockerfileParser
 from doozerlib import util
-from doozerlib.backend.rebaser import KonfluxRebaser, _get_cpe_product_name
+from doozerlib.backend.rebaser import KonfluxRebaser, _get_cpe_product_name, _get_cpe_version
 from doozerlib.source_resolver import SourceResolution, SourceResolver
 
 
@@ -1468,34 +1468,26 @@ class TestCleanupSymlinks(TestCase):
 
 
 class TestCpeVersionExtraction(TestCase):
-    """
-    Tests for the CPE version extraction logic in _update_dockerfile.
-    The logic must produce major.minor regardless of whether version
-    has 2 segments (v4.20) or 3 segments (v4.20.0).
-    """
+    def test_explicit_product_version_overrides_group_and_build_versions(self):
+        self.assertEqual(_get_cpe_version("rhosdt-0.158", "0.158.0", "3.11"), "3.11")
 
-    @staticmethod
-    def _extract_cpe_version(version: str) -> str:
-        """
-        Replicate the CPE version extraction logic from rebaser.py.
-        """
-        version_parts = version.lstrip("v").split(".")
-        return f"{version_parts[0]}.{version_parts[1]}" if len(version_parts) >= 2 else version_parts[0]
+    def test_group_version(self):
+        self.assertEqual(_get_cpe_version("rhosdt-3.11", "0.158.2"), "3.11")
 
     def test_three_segment_version(self):
-        self.assertEqual(self._extract_cpe_version("v4.20.0"), "4.20")
+        self.assertEqual(_get_cpe_version("custom-group", "v4.20.0"), "4.20")
 
     def test_two_segment_version(self):
-        self.assertEqual(self._extract_cpe_version("v4.20"), "4.20")
+        self.assertEqual(_get_cpe_version("custom-group", "v4.20"), "4.20")
 
     def test_three_segment_nonzero_patch(self):
-        self.assertEqual(self._extract_cpe_version("v4.18.3"), "4.18")
+        self.assertEqual(_get_cpe_version("custom-group", "v4.18.3"), "4.18")
 
     def test_no_prefix(self):
-        self.assertEqual(self._extract_cpe_version("4.20.0"), "4.20")
+        self.assertEqual(_get_cpe_version("custom-group", "4.20.0"), "4.20")
 
     def test_single_segment(self):
-        self.assertEqual(self._extract_cpe_version("v4"), "4")
+        self.assertEqual(_get_cpe_version("custom-group", "v4"), "4")
 
 
 class TestRhArtImagesBasePullspec(TestCase):
