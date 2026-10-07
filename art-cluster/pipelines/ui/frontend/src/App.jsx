@@ -155,13 +155,13 @@ function Pipelines({ namespace }) {
     {error && <Alert variant="danger" title={error} className="notice" />}
     {latestError && <Alert variant="warning" title={latestError} className="notice" />}
     {loading ? <div className="loading"><Spinner size="lg" /></div> : filtered.length === 0 ? <div className="empty">No pipelines match this search.</div> :
-      <div className="table-wrap"><table className="data-table"><thead><tr><th>Pipeline</th><th>Namespace</th><th>Last run</th><th>Last run status</th><th>Last run time</th><th>Parameters</th></tr></thead><tbody>
+      <div className="table-wrap"><table className="data-table"><thead><tr><th>Pipeline</th><th>Namespace</th><th>Last run</th><th>Last run status</th><th>Last run time</th></tr></thead><tbody>
         {filtered.map((item) => {
           const latest = latestRuns[`${item.namespace}/${item.name}`];
           return <tr key={`${item.namespace}/${item.name}`} onClick={() => navigate({ kind: 'pipeline', ...item })} tabIndex={0} onKeyDown={(event) => event.key === 'Enter' && navigate({ kind: 'pipeline', ...item })}>
             <td className="primary-cell">{item.name}</td><td>{item.namespace}</td>
             <td>{latest ? <a href={`#/run/${latest.namespace}/${encodeURIComponent(latest.name)}?uid=${encodeURIComponent(latest.uid || '')}`} onClick={(event) => event.stopPropagation()} onKeyDown={(event) => event.stopPropagation()}>{latest.name}</a> : latestLoading ? 'Loading…' : '—'}</td>
-            <td>{latest ? <Status value={latest.status} /> : '—'}</td><td>{latest ? formatDate(latest.created) : '—'}</td><td>{item.parameterCount}</td>
+            <td>{latest ? <Status value={latest.status} /> : '—'}</td><td>{latest ? formatDate(latest.created) : '—'}</td>
           </tr>;
         })}
       </tbody></table></div>}
