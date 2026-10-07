@@ -72,6 +72,7 @@ PRODUCTION_INDEX_PULLSPEC_FORMAT = "registry.redhat.io/redhat/redhat-operator-in
 BASE_IMAGE_RHEL9_PULLSPEC_FORMAT = "registry.redhat.io/openshift{major}/ose-operator-registry-rhel9:v{major}.{minor}"
 BASE_IMAGE_RHEL8_PULLSPEC_FORMAT = "registry.redhat.io/openshift{major}/ose-operator-registry:v{major}.{minor}"
 FBC_BUILD_PRIORITY = "2"
+LIFECYCLE_SCHEMA = "io.openshift.operators.lifecycles.v1alpha1"
 
 
 def _generate_fbc_branch_name(
@@ -258,8 +259,36 @@ class KonfluxFbcImporter:
         catalog_blobs: List[Dict] | None,
         logger: logging.Logger,
     ):
-        """Update the FBC directory with the given package name and catalog blobs."""
+        """Update the FBC directory with the given package name and catalog blobs.
+
+        Lifecycle schema blobs (``LIFECYCLE_SCHEMA``) are filtered out before
+        writing because the Konflux pipeline injects fresh lifecycle data via
+        its ``fbc-inject-lifecycle-oci-ta`` task.  Keeping stale entries from
+        the production index would cause that task to fail.
+
+        :param build_repo: The build repository to update.
+        :param package_name: OLM package name (e.g. ``cluster-nfd-operator``).
+        :param catalog_blobs: Rendered catalog blobs to write, or ``None``.
+        :param logger: Logger instance.
+        """
         repo_dir = build_repo.local_dir
+
+        # Filter out lifecycle schema blobs before writing to disk.
+        # The Konflux pipeline's fbc-inject-lifecycle-oci-ta task will inject
+        # fresh lifecycle data from PLCC; if we include existing lifecycle blobs
+        # from the production index, the injection task fails because the data
+        # already exists.
+        if catalog_blobs:
+            filtered_blobs = [b for b in catalog_blobs if b.get("schema") != LIFECYCLE_SCHEMA]
+            removed_count = len(catalog_blobs) - len(filtered_blobs)
+            if removed_count:
+                logger.info(
+                    "Filtered out %d lifecycle blob(s) with schema %s for package %s",
+                    removed_count,
+                    LIFECYCLE_SCHEMA,
+                    package_name,
+                )
+            catalog_blobs = filtered_blobs or None  # Treat empty list as None
 
         # Write catalog_blobs to catalog/<package>/catalog.yaml
         catalog_base_dir = repo_dir.joinpath("catalog")
