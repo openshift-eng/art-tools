@@ -72,6 +72,14 @@ class TestProductCatalog(unittest.TestCase):
         self.assertEqual(config.kubeconfig_env, "ASSISTED_INSTALLER_SA_KUBECONFIG")
         self.assertIs(config.product_id, ProductId.AGENT_INSTALLER)
 
+    def test_osus_is_a_buildable_product(self):
+        """Represent OpenShift Update Service as a buildable product."""
+        config = get_product_config("openshift-update-service")
+
+        self.assertEqual(config.namespace, "art-osus-tenant")
+        self.assertEqual(config.kubeconfig_env, "OSUS_KONFLUX_SA_KUBECONFIG")
+        self.assertIs(config.product_id, ProductId.OSUS)
+
     def test_conforma_policy_can_omit_fbc_policy(self):
         """Represent a product with no Conforma FBC policy explicitly."""
         config = get_product_config("mirror_gui")

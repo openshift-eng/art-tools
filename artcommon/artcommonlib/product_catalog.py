@@ -180,6 +180,11 @@ PRODUCT_CATALOG: tuple[ProductConfig, ...] = (
         },
     ),
     ProductConfig(
+        product_id=ProductId.OSUS,
+        namespace="art-osus-tenant",
+        kubeconfig_env="OSUS_KONFLUX_SA_KUBECONFIG",
+    ),
+    ProductConfig(
         product_id=ProductId.MTC,
         namespace="art-mtc-tenant",
         kubeconfig_env="MTC_KONFLUX_SA_KUBECONFIG",
