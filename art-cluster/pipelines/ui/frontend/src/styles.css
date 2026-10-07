@@ -68,7 +68,7 @@ button { cursor: pointer; }
 .topbar-right { display: flex; align-items: center; gap: 14px; margin-left: auto; min-width: 0; }
 .namespace-select, .theme-toggle { height: 39px; background: #26343e; border: 1px solid #52616b; border-radius: 5px; color: #fff; font-size: 13.75px; }
 .namespace-select { max-width: 225px; min-width: 150px; padding: 0 9px; }
-.theme-toggle { display: inline-flex; align-items: center; justify-content: center; gap: 7px; padding: 0 11px; white-space: nowrap; }
+.theme-toggle { display: inline-flex; align-items: center; justify-content: center; width: 39px; padding: 0; }
 .theme-toggle svg { width: 18px; height: 18px; flex: 0 0 18px; }
 .theme-toggle:hover { background: #344550; }
 .theme-toggle:focus-visible, .nav:focus-visible, .brand:focus-visible { outline: 2px solid #91c9ff; outline-offset: 3px; }
@@ -189,7 +189,5 @@ button { cursor: pointer; }
   .logs-panel pre { height: 55vh; min-height: 280px; }
 }
 @media (max-width: 480px) {
-  .theme-toggle { width: 39px; padding: 0; }
-  .theme-toggle span { display: none; }
   .definition-list > div { grid-template-columns: 1fr; }
 }

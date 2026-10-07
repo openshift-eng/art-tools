@@ -118,7 +118,7 @@ function App() {
           {namespaces.map((item) => <option key={item} value={item}>{item}</option>)}
         </select>
         <span className="cluster-name">artc2023</span>
-        <button className="theme-toggle" type="button" aria-label={theme === 'dark' ? 'Switch to light theme' : 'Switch to dark theme'} onClick={() => setTheme(theme === 'dark' ? 'light' : 'dark')}><ThemeIcon theme={theme} /><span>{theme === 'dark' ? 'Light theme' : 'Dark theme'}</span></button>
+        <button className="theme-toggle" type="button" aria-label={theme === 'dark' ? 'Switch to light theme' : 'Switch to dark theme'} onClick={() => setTheme(theme === 'dark' ? 'light' : 'dark')}><ThemeIcon theme={theme} /></button>
         <span className="user-name">{session?.user || 'OpenShift user'}</span>
       </div>
     </header>
