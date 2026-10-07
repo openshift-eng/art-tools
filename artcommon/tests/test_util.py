@@ -1383,6 +1383,7 @@ class TestResolveKonfluxFbcStageReleasePlan(unittest.TestCase):
             ("ocp", 5, 1): "ocp-art-advisory-stage-auto-5-1",
             ("rhacm2", 2, 16): "acm-advisory-stage-2-16",
             ("rhacm2", 5, 0): "acm-advisory-stage-5-0",
+            ("openshift-opentelemetry-operator", 0, 158): "rhosdt-advisory-stage-auto-0-158",
             ("zero-trust-workload-identity-manager", 1, 0): "zt-advisory-stage-auto-1-0",
             ("zero-trust-workload-identity-manager", 1, 1): "zt-advisory-stage-auto-1-1",
         }
@@ -1394,6 +1395,9 @@ class TestResolveKonfluxFbcStageReleasePlan(unittest.TestCase):
     def test_ocp_version_passed_as_product_version_returns_none(self):
         # Passing OCP version (4.18) instead of product version yields None — no such plan
         self.assertIsNone(resolve_konflux_fbc_stage_release_plan("rhacm2", 4, 18))
+
+    def test_rhosdt_old_version_has_no_stage_plan(self):
+        self.assertIsNone(resolve_konflux_fbc_stage_release_plan("openshift-opentelemetry-operator", 3, 11))
 
     def test_unknown_product_returns_none(self):
         self.assertIsNone(resolve_konflux_fbc_stage_release_plan("unknown-product", 4, 18))
