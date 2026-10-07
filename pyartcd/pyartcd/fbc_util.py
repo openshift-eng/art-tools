@@ -75,9 +75,7 @@ def validate_layered_product_group_assembly(group: str, assembly: str) -> None:
         )
 
 
-def validate_layered_product_fbc_nvrs(
-    assembly: str, fbc_nvrs: List[str], ignore_patch_version: bool = False
-) -> None:
+def validate_layered_product_fbc_nvrs(assembly: str, fbc_nvrs: List[str], ignore_patch_version: bool = False) -> None:
     """Validate that layered-product FBC NVRs belong to an assembly.
 
     A three-component assembly requires an exact major, minor, and patch

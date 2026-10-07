@@ -1365,9 +1365,7 @@ class ReleaseFromFbcPipeline:
             if not self.ocp_optional:
                 ignore_patch_version = await self._load_ignore_patch_version_from_group_config()
                 # This group.yml flag permits patch-version differences while still checking major and minor.
-                validate_layered_product_fbc_nvrs(
-                    self.assembly, fbc_nvrs, ignore_patch_version=ignore_patch_version
-                )
+                validate_layered_product_fbc_nvrs(self.assembly, fbc_nvrs, ignore_patch_version=ignore_patch_version)
             if fbc_nvrs:
                 self.logger.info(f"Extracted {len(fbc_nvrs)} FBC NVRs: {fbc_nvrs}")
             else:
