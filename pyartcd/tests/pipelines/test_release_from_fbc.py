@@ -276,6 +276,57 @@ class TestLoadMrApproversFromGroupConfig(unittest.TestCase):
         self.assertEqual(result, {})
 
 
+class TestLoadIgnorePatchVersionFromGroupConfig(unittest.TestCase):
+    """Tests for loading the optional ignore_patch_version group setting."""
+
+    def _make_pipeline(self):
+        runtime = MagicMock()
+        runtime.dry_run = False
+        runtime.working_dir = MagicMock()
+        runtime.working_dir.absolute.return_value = MagicMock()
+        runtime.config = {}
+        return ReleaseFromFbcPipeline(
+            runtime=runtime,
+            group="rhosdt-0.158",
+            assembly="0.158.1",
+            fbc_pullspecs=["quay.io/test/fbc:latest"],
+            create_mr=False,
+        )
+
+    @patch("pyartcd.pipelines.release_from_fbc.exectools.cmd_gather_async")
+    def test_true_setting_is_loaded_as_boolean(self, mock_cmd):
+        mock_cmd.return_value = (0, "true\n", "")
+        result = asyncio.run(self._make_pipeline()._load_ignore_patch_version_from_group_config())
+        self.assertIs(result, True)
+        command = mock_cmd.call_args.args[0]
+        self.assertIn("ignore_patch_version", command)
+        self.assertEqual(command[command.index("--default") + 1], "false")
+
+    @patch("pyartcd.pipelines.release_from_fbc.exectools.cmd_gather_async")
+    def test_missing_setting_defaults_to_false(self, mock_cmd):
+        mock_cmd.return_value = (0, "false\n", "")
+        result = asyncio.run(self._make_pipeline()._load_ignore_patch_version_from_group_config())
+        self.assertIs(result, False)
+
+    @patch("pyartcd.pipelines.release_from_fbc.exectools.cmd_gather_async")
+    def test_invalid_setting_fails_clearly(self, mock_cmd):
+        mock_cmd.return_value = (0, "yes-ish\n", "")
+        with self.assertRaisesRegex(ValueError, "ignore_patch_version must be a boolean"):
+            asyncio.run(self._make_pipeline()._load_ignore_patch_version_from_group_config())
+
+    @patch("pyartcd.pipelines.release_from_fbc.exectools.cmd_gather_async")
+    def test_command_failure_defaults_to_false(self, mock_cmd):
+        mock_cmd.side_effect = RuntimeError("doozer failed")
+        result = asyncio.run(self._make_pipeline()._load_ignore_patch_version_from_group_config())
+        self.assertIs(result, False)
+
+    @patch("pyartcd.pipelines.release_from_fbc.exectools.cmd_gather_async")
+    def test_nonzero_command_defaults_to_false(self, mock_cmd):
+        mock_cmd.return_value = (1, "", "doozer failed")
+        result = asyncio.run(self._make_pipeline()._load_ignore_patch_version_from_group_config())
+        self.assertIs(result, False)
+
+
 class TestCreateShipmentMrApprovalRules(unittest.TestCase):
     """Tests for approval-rule handling inside create_shipment_mr."""
 
@@ -1462,6 +1513,7 @@ class TestOcpOptionalMode(unittest.TestCase):
             exclude_nvr_components=exclude_nvr_components,
         )
         pipeline.product = "ocp"
+        pipeline._load_ignore_patch_version_from_group_config = AsyncMock(return_value=False)
         return pipeline
 
     def test_ocp_optional_flag_stored(self):
@@ -1607,6 +1659,25 @@ class TestOcpOptionalMode(unittest.TestCase):
             asyncio.run(pipeline.run())
 
         pipeline.validate_fbc_related_images.assert_not_awaited()
+        pipeline.create_snapshot.assert_not_awaited()
+
+    def test_patch_mismatched_fbc_is_accepted_when_group_flag_is_true(self):
+        """The group flag lets a same-train FBC reach related-image validation."""
+        pipeline = self._make_pipeline(ocp_optional=False, group="logging-6.2", assembly="6.2.13")
+        pipeline.create_mr = False
+        pipeline.check_env_vars = MagicMock()
+        pipeline.setup_working_dir = MagicMock()
+        pipeline._load_product_from_group_config = AsyncMock(return_value="openshift-logging")
+        pipeline._load_ignore_patch_version_from_group_config = AsyncMock(return_value=True)
+        pipeline.validate_fbc_related_images = AsyncMock(side_effect=RuntimeError("reached related-image validation"))
+        pipeline.extract_fbc_nvr = MagicMock(return_value="cluster-logging-operator-fbc-6.2.12-20260910151430.ocp4.16")
+        pipeline.create_snapshot = AsyncMock()
+
+        with self.assertRaisesRegex(RuntimeError, "reached related-image validation"):
+            asyncio.run(pipeline.run())
+
+        pipeline._load_ignore_patch_version_from_group_config.assert_awaited_once()
+        pipeline.validate_fbc_related_images.assert_awaited_once()
         pipeline.create_snapshot.assert_not_awaited()
 
     def test_missing_layered_product_fbc_nvr_fails_before_snapshot(self):

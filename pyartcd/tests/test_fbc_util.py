@@ -59,6 +59,20 @@ class TestValidateLayeredProductReleaseVersions(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "FBC NVRs do not match assembly '6.5.13'"):
             validate_layered_product_fbc_nvrs("6.5.13", [nvr])
 
+    def test_fbc_nvr_patch_mismatch_fails_by_default(self):
+        nvr = "opentelemetry-operator-fbc-0.158.0-20261006220437.ocp4.16"
+        with self.assertRaisesRegex(ValueError, "FBC NVRs do not match assembly '0.158.1'"):
+            validate_layered_product_fbc_nvrs("0.158.1", [nvr])
+
+    def test_fbc_nvr_patch_mismatch_accepted_when_ignored(self):
+        nvr = "opentelemetry-operator-fbc-0.158.0-20261006220437.ocp4.16"
+        validate_layered_product_fbc_nvrs("0.158.1", [nvr], ignore_patch_version=True)
+
+    def test_fbc_nvr_major_minor_mismatch_still_fails_when_patch_ignored(self):
+        nvr = "cluster-logging-operator-fbc-6.3.12-20260910151430.ocp4.16"
+        with self.assertRaisesRegex(ValueError, "FBC NVRs do not match assembly '6.2.13'"):
+            validate_layered_product_fbc_nvrs("6.2.13", [nvr], ignore_patch_version=True)
+
     def test_unparseable_fbc_nvr_fails_closed(self):
         with self.assertRaisesRegex(ValueError, "Cannot determine.*version of FBC NVR"):
             validate_layered_product_fbc_nvrs("6.2.13", ["not-an-nvr"])

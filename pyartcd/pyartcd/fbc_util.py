@@ -75,17 +75,20 @@ def validate_layered_product_group_assembly(group: str, assembly: str) -> None:
         )
 
 
-def validate_layered_product_fbc_nvrs(assembly: str, fbc_nvrs: List[str]) -> None:
+def validate_layered_product_fbc_nvrs(assembly: str, fbc_nvrs: List[str], ignore_patch_version: bool = False) -> None:
     """Validate that layered-product FBC NVRs belong to an assembly.
 
     A three-component assembly requires an exact major, minor, and patch
-    match. A two-component assembly requires the same major and minor. The
-    NVR release field, including its target OCP version, is intentionally not
-    considered.
+    match unless ``ignore_patch_version`` is true, in which case only major
+    and minor must match. A two-component assembly requires the same major
+    and minor. The NVR release field, including its target OCP version, is
+    intentionally not considered.
 
     Args:
         assembly: Layered-product assembly version.
         fbc_nvrs: FBC NVRs to validate.
+        ignore_patch_version: Whether to allow FBC NVR patch versions to
+            differ from a three-component assembly.
 
     Raises:
         ValueError: If the assembly or an FBC NVR has an unsupported version,
@@ -111,7 +114,10 @@ def validate_layered_product_fbc_nvrs(assembly: str, fbc_nvrs: List[str]) -> Non
         if not nvr_match:
             raise ValueError(f"Cannot determine the layered-product version of FBC NVR '{nvr}'")
         nvr_parts = tuple(part for part in nvr_match.groups() if part is not None)
-        if nvr_parts[: len(assembly_parts)] != assembly_parts:
+        expected_parts = assembly_parts
+        if ignore_patch_version and len(assembly_parts) == 3:
+            expected_parts = assembly_parts[:2]
+        if nvr_parts[: len(expected_parts)] != expected_parts:
             mismatches.append(f"{nvr} (version {nvr_version})")
 
     if mismatches:
