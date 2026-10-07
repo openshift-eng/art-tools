@@ -247,6 +247,7 @@ function PipelineDetail({ view, csrfToken }) {
 function RunDetail({ view, csrfToken }) {
   const [run, setRun] = useState(null);
   const [logs, setLogs] = useState(null);
+  const [activeTab, setActiveTab] = useState('logs');
   const [form, setForm] = useState(false);
   const [error, setError] = useState('');
   const url = `/api/runs/${view.namespace}/${view.name}?uid=${encodeURIComponent(view.uid || '')}`;
@@ -255,7 +256,7 @@ function RunDetail({ view, csrfToken }) {
     request(url).then(setRun).catch((cause) => setError(cause.message));
     request(logsUrl).then(setLogs).catch((cause) => setError(cause.message));
   }, [url, logsUrl]);
-  useEffect(() => { refresh(); }, [refresh]);
+  useEffect(() => { setActiveTab('logs'); refresh(); }, [refresh]);
   useEffect(() => {
     if (run?.status !== 'Running') return undefined;
     const interval = window.setInterval(refresh, 10000);
@@ -266,9 +267,14 @@ function RunDetail({ view, csrfToken }) {
     {error && <Alert variant="danger" title={error} className="notice" />}
     {!run ? <div className="loading"><Spinner size="lg" /></div> : <>
       <div className="page-heading detail-heading"><div><div className="eyebrow">{run.namespace} / {run.pipeline || 'PipelineRun'}</div><Title headingLevel="h1" size="2xl">{run.name}</Title><div className="detail-meta"><Status value={run.status} /><span>Created {formatDate(run.created)}</span><span>{run.source === 'archive' ? 'Tekton Results' : 'Live cluster'}</span></div></div><div className="detail-actions"><Button variant="secondary" onClick={refresh}>Refresh</Button>{run.pipeline && <Button variant="primary" onClick={() => setForm(true)}>Rebuild with parameters</Button>}</div></div>
-      {run.message && <div className="run-message">{run.message}</div>}
-      <div className="detail-grid"><section className="panel"><h2>Parameters <span className="muted">{run.parameters.length}</span></h2>{run.parameters.length ? <div className="value-list">{run.parameters.map((param) => <div key={param.name}><span>{param.name}</span><code>{typeof param.value === 'string' ? param.value : JSON.stringify(param.value)}</code></div>)}</div> : <p className="muted">This run did not specify parameters.</p>}</section><section className="panel"><h2>Task runs</h2>{run.tasks.length ? <div className="task-list">{run.tasks.map((task) => <div key={task.name}><strong>{task.pipelineTaskName || task.name}</strong><small>{task.name}</small></div>)}</div> : <p className="muted">No task runs recorded.</p>}</section></div>
-      <section className="panel logs-panel"><div className="section-heading"><h2>Logs</h2><span className="source">{logs?.source === 'archive' ? 'Tekton Results' : 'Cluster pods'}</span></div>{logs?.truncated && <Alert variant="warning" title="Log display is limited to the first 8 MB per step" className="notice" />}<LogText text={logs?.text || 'Loading logs…'} /></section>
+      <div className="detail-tabs" role="tablist" aria-label="PipelineRun views">
+        <button type="button" role="tab" aria-selected={activeTab === 'logs'} className={activeTab === 'logs' ? 'active' : ''} onClick={() => setActiveTab('logs')}>Logs</button>
+        <button type="button" role="tab" aria-selected={activeTab === 'parameters'} className={activeTab === 'parameters' ? 'active' : ''} onClick={() => setActiveTab('parameters')}>Parameters ({run.parameters.length})</button>
+        <button type="button" role="tab" aria-selected={activeTab === 'tasks'} className={activeTab === 'tasks' ? 'active' : ''} onClick={() => setActiveTab('tasks')}>Task runs ({run.tasks.length})</button>
+      </div>
+      {activeTab === 'logs' && <section className="panel logs-panel" role="tabpanel"><div className="section-heading"><h2>Logs</h2><span className="source">{logs?.source === 'archive' ? 'Tekton Results' : 'Cluster pods'}</span></div>{logs?.truncated && <Alert variant="warning" title="Log display is limited to the first 8 MB per step" className="notice" />}<LogText text={logs?.text || 'Loading logs…'} /></section>}
+      {activeTab === 'parameters' && <section className="panel" role="tabpanel"><h2>Parameters <span className="muted">{run.parameters.length}</span></h2>{run.parameters.length ? <div className="value-list">{run.parameters.map((param) => <div key={param.name}><span>{param.name}</span><code>{typeof param.value === 'string' ? param.value : JSON.stringify(param.value)}</code></div>)}</div> : <p className="muted">This run did not specify parameters.</p>}</section>}
+      {activeTab === 'tasks' && <section className="panel" role="tabpanel">{run.message && <div className="run-message">{run.message}</div>}<h2>Task runs</h2>{run.tasks.length ? <div className="task-list">{run.tasks.map((task) => <div key={task.name}><strong>{task.pipelineTaskName || task.name}</strong><small>{task.name}</small></div>)}</div> : <p className="muted">No task runs recorded.</p>}</section>}
       {form && <RunForm namespace={run.namespace} pipeline={run.pipeline} sourceRun={{ name: run.name, uid: run.uid }} csrfToken={csrfToken} onClose={() => setForm(false)} />}
     </>}
   </>;
