@@ -1796,6 +1796,36 @@ class KonfluxFbcBuilder:
         except Exception:
             logger.exception("Error while syncing FBC related images to art-images-share")
 
+    async def _get_build_arches(self, metadata: ImageMetadata, logger: logging.Logger) -> list[str]:
+        if not self.major_minor_override:
+            return metadata.get_arches()
+
+        major, minor = self.major_minor_override
+        override_group = f"openshift-{major}.{minor}"
+        data_path = metadata.runtime.data_path
+        if not data_path:
+            raise ValueError(f"Cannot read konflux.arches from group {override_group}: no data path configured")
+
+        logger.info("Using major_minor_override %s.%s, getting arches from group %s", major, minor, override_group)
+        doozer_cmd = [
+            'doozer',
+            f'--data-path={data_path}',
+            f'--group={override_group}',
+            'config:read-group',
+            'konflux.arches',
+            '--yaml',
+        ]
+        try:
+            _, out, _ = await exectools.cmd_gather_async(doozer_cmd)
+            arches = yaml.load(out.strip()) if out.strip() else None
+        except Exception as exc:
+            raise RuntimeError(f"Failed to read konflux.arches from group {override_group}") from exc
+
+        if not isinstance(arches, list) or not arches or not all(isinstance(arch, str) for arch in arches):
+            raise ValueError(f"Invalid konflux.arches from group {override_group}: expected a nonempty list of arches")
+        logger.info("Retrieved arches from group %s: %s", override_group, arches)
+        return arches
+
     async def build(
         self, metadata: ImageMetadata, operator_nvr: Optional[str] = None, git_auth_secret: Optional[str] = None
     ):
@@ -1872,38 +1902,11 @@ class KonfluxFbcBuilder:
             record["fbc_nvr"] = nvr
             output_image = f"{self.image_repo}:{nvr}"
 
-            # If major_minor_override is present, get arches from the override group's konflux.arches config
-            if self.major_minor_override:
-                major, minor = self.major_minor_override
-                override_group = f"openshift-{major}.{minor}"
-                logger.info(
-                    "Using major_minor_override %s.%s, getting arches from group %s", major, minor, override_group
-                )
-
-                # Construct doozer command to read group config for konflux.arches
-                doozer_cmd = ['doozer', f'--group={override_group}', 'config:read-group', 'konflux.arches', '--yaml']
-
-                try:
-                    # Execute the command asynchronously
-                    _, out, _ = await exectools.cmd_gather_async(doozer_cmd)
-                    if out.strip():
-                        # Parse the YAML output to get the arches list
-                        arches = yaml.load(out.strip())
-                        logger.info("Retrieved arches from group %s: %s", override_group, arches)
-                    else:
-                        logger.warning(
-                            "No konflux.arches found for group %s, falling back to metadata arches", override_group
-                        )
-                        arches = metadata.get_arches()
-                except Exception as e:
-                    logger.warning(
-                        "Failed to get arches from group %s config: %s, falling back to metadata arches",
-                        override_group,
-                        e,
-                    )
-                    arches = metadata.get_arches()
-            else:
-                arches = metadata.get_arches()
+            try:
+                arches = await self._get_build_arches(metadata, logger)
+            except Exception as exc:
+                record["message"] = str(exc)
+                raise
 
             for attempt in range(build_attempts):
                 logger.info("Build attempt %s/%s", attempt + 1, build_attempts)

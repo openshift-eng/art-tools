@@ -3070,6 +3070,51 @@ class TestKonfluxFbcBuilder(unittest.IsolatedAsyncioTestCase):
                 logger=self.logger,
             )
 
+    @patch("doozerlib.backend.konflux_fbc.exectools.cmd_gather_async", new_callable=AsyncMock)
+    async def test_get_build_arches_uses_target_group(self, mock_read_group):
+        metadata = MagicMock(spec=ImageMetadata)
+        metadata.runtime = MagicMock()
+        metadata.runtime.data_path = "https://example.com/ocp-build-data"
+        metadata.get_arches.return_value = list(KonfluxClient.SUPPORTED_ARCHES.keys())
+        mock_read_group.return_value = (0, "- x86_64\n", "")
+
+        for minor in (12, 13):
+            with self.subTest(minor=minor):
+                self.builder.major_minor_override = (4, minor)
+                arches = await self.builder._get_build_arches(metadata, self.logger)
+                self.assertEqual(arches, ["x86_64"])
+                mock_read_group.assert_awaited_once_with(
+                    [
+                        'doozer',
+                        '--data-path=https://example.com/ocp-build-data',
+                        f'--group=openshift-4.{minor}',
+                        'config:read-group',
+                        'konflux.arches',
+                        '--yaml',
+                    ]
+                )
+                mock_read_group.reset_mock()
+        metadata.get_arches.assert_not_called()
+
+    @patch("doozerlib.backend.konflux_fbc.exectools.cmd_gather_async", new_callable=AsyncMock)
+    async def test_get_build_arches_rejects_failed_or_invalid_target_lookup(self, mock_read_group):
+        metadata = MagicMock(spec=ImageMetadata)
+        metadata.runtime = MagicMock()
+        metadata.runtime.data_path = "https://example.com/ocp-build-data"
+        self.builder.major_minor_override = (4, 13)
+
+        mock_read_group.side_effect = ChildProcessError("config lookup failed")
+        with self.assertRaisesRegex(RuntimeError, "Failed to read konflux.arches from group openshift-4.13"):
+            await self.builder._get_build_arches(metadata, self.logger)
+
+        mock_read_group.side_effect = None
+        for output in ("", "x86_64\n", "- x86_64\n- 42\n"):
+            with self.subTest(output=output):
+                mock_read_group.return_value = (0, output, "")
+                with self.assertRaisesRegex(ValueError, "Invalid konflux.arches from group openshift-4.13"):
+                    await self.builder._get_build_arches(metadata, self.logger)
+        metadata.get_arches.assert_not_called()
+
     @patch("doozerlib.backend.konflux_fbc.DockerfileParser")
     @patch("doozerlib.backend.konflux_fbc.KonfluxClient.resource_url")
     async def test_update_konflux_db_stores_build_variant(self, mock_resource_url, mock_dockerfile_parser):
@@ -3330,25 +3375,36 @@ class TestKonfluxFbcBuilder(unittest.IsolatedAsyncioTestCase):
         )
         MockBuildRepo.from_local_dir.assert_not_called()
 
+    @patch("doozerlib.backend.konflux_fbc.exectools.cmd_gather_async", new_callable=AsyncMock)
     @patch("pathlib.Path.exists", return_value=True)
     @patch("doozerlib.backend.konflux_fbc.KonfluxFbcBuilder._update_konflux_db")
     @patch("doozerlib.backend.konflux_fbc.KonfluxFbcBuilder._start_build")
     @patch("doozerlib.backend.konflux_fbc.BuildRepo", spec=BuildRepo)
     @patch("doozerlib.backend.konflux_fbc.DockerfileParser")
     async def test_build_with_existing_repo(
-        self, MockDockerfileParser, MockBuildRepo, mock_start_build, mock_update_konflux_db: AsyncMock, mock_exists
+        self,
+        MockDockerfileParser,
+        MockBuildRepo,
+        mock_start_build,
+        mock_update_konflux_db: AsyncMock,
+        mock_exists,
+        mock_read_group,
     ):
         mock_konflux_client = self.kube_client
+        self.builder.major_minor_override = (4, 13)
         metadata = MagicMock(spec=ImageMetadata)
         metadata.distgit_key = "test-distgit-key"
         # Mock the runtime and group_config structure
         metadata.runtime = MagicMock()
+        metadata.runtime.data_path = "https://example.com/ocp-build-data"
         metadata.runtime.group_config = MagicMock()
         metadata.runtime.group_config.vars = MagicMock()
         metadata.runtime.group_config.vars.MAJOR = "4"
         metadata.runtime.group_config.vars.MINOR = "9"
         metadata.get_konflux_build_attempts.return_value = 3
-        all_arches = metadata.get_arches.return_value = list(KonfluxClient.SUPPORTED_ARCHES.keys())
+        metadata.get_arches.return_value = list(KonfluxClient.SUPPORTED_ARCHES.keys())
+        all_arches = ["x86_64"]
+        mock_read_group.return_value = (0, "- x86_64\n", "")
         build_repo = MockBuildRepo.from_local_dir.return_value
         build_repo.local_dir = self.base_dir.joinpath(metadata.distgit_key)
         mock_konflux_client.start_pipeline_run_for_image_build = AsyncMock()
@@ -3378,6 +3434,17 @@ class TestKonfluxFbcBuilder(unittest.IsolatedAsyncioTestCase):
         }
 
         await self.builder.build(metadata)
+        mock_read_group.assert_awaited_once_with(
+            [
+                'doozer',
+                '--data-path=https://example.com/ocp-build-data',
+                '--group=openshift-4.13',
+                'config:read-group',
+                'konflux.arches',
+                '--yaml',
+            ]
+        )
+        metadata.get_arches.assert_not_called()
         MockBuildRepo.assert_not_called()
         MockDockerfileParser.assert_called_once_with(
             str(self.base_dir.joinpath(metadata.distgit_key, "catalog.Dockerfile"))
@@ -3416,6 +3483,42 @@ class TestKonfluxFbcBuilder(unittest.IsolatedAsyncioTestCase):
             bundle_nvrs='foo-bundle-1.0.0-1',
         )
         MockBuildRepo.from_local_dir.assert_awaited_once_with(self.base_dir.joinpath(metadata.distgit_key), ANY)
+
+    @patch("pathlib.Path.exists", return_value=True)
+    @patch("doozerlib.backend.konflux_fbc.KonfluxFbcBuilder._start_build")
+    @patch("doozerlib.backend.konflux_fbc.BuildRepo", spec=BuildRepo)
+    @patch("doozerlib.backend.konflux_fbc.DockerfileParser")
+    @patch("doozerlib.backend.konflux_fbc.exectools.cmd_gather_async", new_callable=AsyncMock)
+    async def test_build_stops_before_pipelinerun_when_target_arch_lookup_fails(
+        self, mock_read_group, MockDockerfileParser, MockBuildRepo, mock_start_build, mock_exists
+    ):
+        self.builder.major_minor_override = (4, 13)
+        metadata = MagicMock(spec=ImageMetadata)
+        metadata.distgit_key = "test-distgit-key"
+        metadata.runtime = MagicMock()
+        metadata.runtime.data_path = "https://example.com/ocp-build-data"
+        metadata.get_konflux_build_attempts.return_value = 3
+
+        mock_dfp = MockDockerfileParser.return_value
+        mock_dfp.envs = {"__doozer_version": "1.0.0", "__doozer_release": "1"}
+        mock_dfp.labels = {
+            'com.redhat.art.name': 'test-distgit-key-fbc',
+            'com.redhat.art.nvr': 'test-distgit-key-fbc-1.0.0-1',
+        }
+        mock_read_group.side_effect = ChildProcessError("config lookup failed")
+
+        with self.assertRaisesRegex(RuntimeError, "Failed to read konflux.arches from group openshift-4.13"):
+            await self.builder.build(metadata)
+
+        MockBuildRepo.from_local_dir.assert_awaited_once()
+        mock_start_build.assert_not_awaited()
+        metadata.get_arches.assert_not_called()
+        self.builder._record_logger.add_record.assert_called_once()
+        self.assertEqual(self.builder._record_logger.add_record.call_args.kwargs['status'], -1)
+        self.assertIn(
+            "Failed to read konflux.arches from group openshift-4.13",
+            self.builder._record_logger.add_record.call_args.kwargs['message'],
+        )
 
     def test_extract_git_commits_from_nvrs(self):
         """Test extraction of git commits from bundle NVRs"""
