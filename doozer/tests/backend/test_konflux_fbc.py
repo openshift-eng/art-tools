@@ -16,6 +16,7 @@ from doozerlib.backend.konflux_client import ImageBuildParams, KonfluxClient
 from doozerlib.backend.konflux_fbc import (
     BASE_IMAGE_RHEL8_PULLSPEC_FORMAT,
     BASE_IMAGE_RHEL9_PULLSPEC_FORMAT,
+    LIFECYCLE_SCHEMA,
     AssemblyBundleCsvInfo,
     KonfluxFbcBuilder,
     KonfluxFbcFragmentMerger,
@@ -171,6 +172,7 @@ class TestKonfluxFbcImporter(unittest.IsolatedAsyncioTestCase):
     async def test_update_dir(
         self, mock_opm, mock_get_catalog_blobs, mock_get_package_name, mock_mkdir: MagicMock, mock_open, mock_rmtree
     ):
+        """Catalog blobs are written to catalog/<package>/catalog.yaml and Dockerfile is generated."""
         build_repo = MagicMock()
         build_repo.local_dir = self.base_dir
         logger = MagicMock()
@@ -194,8 +196,101 @@ class TestKonfluxFbcImporter(unittest.IsolatedAsyncioTestCase):
         )
         mock_opm.generate_dockerfile.assert_called_once()
 
+    @patch("shutil.rmtree")
+    @patch("pathlib.Path.open")
+    @patch("pathlib.Path.mkdir")
+    @patch("doozerlib.backend.konflux_fbc.KonfluxFbcImporter._get_package_name", new_callable=AsyncMock)
+    @patch(
+        "doozerlib.backend.konflux_fbc.KonfluxFbcImporter._get_catalog_blobs_from_index_image", new_callable=AsyncMock
+    )
+    @patch("doozerlib.backend.konflux_fbc.opm")
+    async def test_update_dir_filters_lifecycle_blobs(
+        self, mock_opm, mock_get_catalog_blobs, mock_get_package_name, mock_mkdir: MagicMock, mock_open, mock_rmtree
+    ):
+        """Lifecycle schema blobs must be stripped before writing to disk.
+
+        The Konflux pipeline's fbc-inject-lifecycle-oci-ta task injects fresh
+        lifecycle data from PLCC. If existing lifecycle blobs from the production
+        index are written to catalog.yaml, the injection task fails with
+        'lifecycle data already exists'.
+        """
+        build_repo = MagicMock()
+        build_repo.local_dir = self.base_dir
+        logger = MagicMock()
+
+        mock_opm.generate_basic_template = AsyncMock()
+        mock_opm.render_catalog_from_template = AsyncMock()
+        mock_opm.generate_dockerfile = AsyncMock()
+
+        package_name = "test-package"
+        catalog_blobs = [
+            {"schema": "olm.package", "name": "test-package"},
+            {"schema": "olm.channel", "name": "stable", "package": "test-package"},
+            {
+                "schema": LIFECYCLE_SCHEMA,
+                "package": "test-package",
+                "name": "test-lifecycle",
+                "entries": [{"name": "test-package.v1.0.0"}],
+            },
+        ]
+
+        mock_org_catalog_file = mock_open.return_value.__enter__.return_value = StringIO()
+
+        await self.importer._update_dir(build_repo, package_name, catalog_blobs, logger)
+
+        written_content = mock_org_catalog_file.getvalue()
+        # The lifecycle blob should NOT appear in the written output
+        self.assertNotIn(LIFECYCLE_SCHEMA, written_content)
+        # But the regular blobs should be present
+        self.assertIn("olm.package", written_content)
+        self.assertIn("olm.channel", written_content)
+        # Verify logging was called about filtered blobs
+        logger.info.assert_any_call(
+            "Filtered out %d lifecycle blob(s) with schema %s for package %s",
+            1,
+            LIFECYCLE_SCHEMA,
+            package_name,
+        )
+
+    @patch("shutil.rmtree")
+    @patch("pathlib.Path.open")
+    @patch("pathlib.Path.mkdir")
+    @patch("doozerlib.backend.konflux_fbc.KonfluxFbcImporter._get_package_name", new_callable=AsyncMock)
+    @patch(
+        "doozerlib.backend.konflux_fbc.KonfluxFbcImporter._get_catalog_blobs_from_index_image", new_callable=AsyncMock
+    )
+    @patch("doozerlib.backend.konflux_fbc.opm")
+    async def test_update_dir_only_lifecycle_blobs_cleans_up(
+        self, mock_opm, mock_get_catalog_blobs, mock_get_package_name, mock_mkdir: MagicMock, mock_open, mock_rmtree
+    ):
+        """When all blobs are lifecycle schema entries, the catalog dir should be removed."""
+        build_repo = MagicMock()
+        build_repo.local_dir = self.base_dir
+        logger = MagicMock()
+
+        mock_opm.generate_basic_template = AsyncMock()
+        mock_opm.render_catalog_from_template = AsyncMock()
+        mock_opm.generate_dockerfile = AsyncMock()
+
+        package_name = "test-package"
+        catalog_blobs = [
+            {
+                "schema": LIFECYCLE_SCHEMA,
+                "package": "test-package",
+                "name": "test-lifecycle",
+            },
+        ]
+
+        await self.importer._update_dir(build_repo, package_name, catalog_blobs, logger)
+
+        # Since all blobs were lifecycle entries, the filtered list is empty.
+        # This is treated as if catalog_blobs were None — should clean up the dir.
+        # The catalog should NOT be written (no open for writing).
+        mock_rmtree.assert_not_called()  # rmtree only called if catalog_dir.exists()
+
     @patch("doozerlib.backend.konflux_fbc.opm.render")
     async def test_render_index_image(self, mock_render):
+        """Rendering an index image delegates to opm.render with the correct arguments."""
         actual = await self.importer._render_index_image("test-index-image-pullspec")
         self.assertEqual(actual, mock_render.return_value)
         mock_render.assert_called_once_with(
