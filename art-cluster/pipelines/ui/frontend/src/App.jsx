@@ -80,6 +80,13 @@ function App() {
   const [namespace, setNamespace] = useState('');
   const [session, setSession] = useState(null);
   const [error, setError] = useState('');
+  const [theme, setTheme] = useState(() => document.documentElement.dataset.theme || 'light');
+
+  useEffect(() => {
+    document.documentElement.dataset.theme = theme;
+    document.documentElement.classList.toggle('pf-v6-theme-dark', theme === 'dark');
+    try { window.localStorage.setItem('art-pipelines-theme', theme); } catch { /* Browser storage may be unavailable. */ }
+  }, [theme]);
 
   useEffect(() => {
     const onHashChange = () => setView(parseHash());
@@ -95,28 +102,27 @@ function App() {
       <div className="brand" onClick={() => navigate({ kind: 'pipelines' })} role="button" tabIndex={0} onKeyDown={(event) => event.key === 'Enter' && navigate({ kind: 'pipelines' })}>
         <span className="brand-mark">ART</span><span>Pipelines</span>
       </div>
-      <div className="topbar-right"><span className="cluster-name">artc2023</span><span className="user-name">{session?.user || 'OpenShift user'}</span></div>
-    </header>
-    <div className="layout">
-      <aside className="sidebar">
-        <div className="sidebar-section">WORKSPACE</div>
+      <nav className="topnav" aria-label="Workspace navigation">
         <button className={view.kind === 'pipelines' || view.kind === 'pipeline' ? 'nav active' : 'nav'} onClick={() => navigate({ kind: 'pipelines' })}>Pipelines</button>
         <button className={view.kind === 'runs' || view.kind === 'run' ? 'nav active' : 'nav'} onClick={() => navigate({ kind: 'runs' })}>PipelineRuns</button>
-        <div className="sidebar-section namespace-heading">NAMESPACE</div>
+      </nav>
+      <div className="topbar-right">
         <select className="namespace-select" value={namespace} onChange={(event) => setNamespace(event.target.value)} aria-label="Namespace">
           <option value="">All accessible tenants</option>
           {namespaces.map((item) => <option key={item} value={item}>{item}</option>)}
         </select>
-        <div className="sidebar-note">Live cluster data and Tekton Results history</div>
-      </aside>
-      <main className="content">
-        {error && <Alert variant="danger" title={error} className="notice" />}
-        {view.kind === 'pipelines' && <Pipelines namespace={namespace} />}
-        {view.kind === 'runs' && <Runs namespace={namespace} />}
-        {view.kind === 'pipeline' && <PipelineDetail view={view} csrfToken={session?.csrfToken} />}
-        {view.kind === 'run' && <RunDetail view={view} csrfToken={session?.csrfToken} />}
-      </main>
-    </div>
+        <span className="cluster-name">artc2023</span>
+        <button className="theme-toggle" type="button" onClick={() => setTheme(theme === 'dark' ? 'light' : 'dark')}>{theme === 'dark' ? 'Light theme' : 'Dark theme'}</button>
+        <span className="user-name">{session?.user || 'OpenShift user'}</span>
+      </div>
+    </header>
+    <main className="content">
+      {error && <Alert variant="danger" title={error} className="notice" />}
+      {view.kind === 'pipelines' && <Pipelines namespace={namespace} />}
+      {view.kind === 'runs' && <Runs namespace={namespace} />}
+      {view.kind === 'pipeline' && <PipelineDetail view={view} csrfToken={session?.csrfToken} />}
+      {view.kind === 'run' && <RunDetail view={view} csrfToken={session?.csrfToken} />}
+    </main>
   </div>;
 }
 
@@ -125,14 +131,20 @@ function Pipelines({ namespace }) {
   const [latestRuns, setLatestRuns] = useState({});
   const [latestLoading, setLatestLoading] = useState(true);
   const [search, setSearch] = useState('');
+  const [refreshKey, setRefreshKey] = useState(0);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [latestError, setLatestError] = useState('');
   useEffect(() => {
+    let active = true;
     setLoading(true);
+    setError('');
     request(`/api/pipelines${namespace ? `?namespace=${encodeURIComponent(namespace)}` : ''}`)
-      .then((data) => setItems(data.items)).catch((cause) => setError(cause.message)).finally(() => setLoading(false));
-  }, [namespace]);
+      .then((data) => { if (active) setItems(data.items); })
+      .catch((cause) => { if (active) setError(cause.message); })
+      .finally(() => { if (active) setLoading(false); });
+    return () => { active = false; };
+  }, [namespace, refreshKey]);
   useEffect(() => {
     let active = true;
     setLatestRuns({});
@@ -147,11 +159,11 @@ function Pipelines({ namespace }) {
       .catch((cause) => { if (active) setLatestError(cause.message); })
       .finally(() => { if (active) setLatestLoading(false); });
     return () => { active = false; };
-  }, [namespace]);
+  }, [namespace, refreshKey]);
   const filtered = items.filter((item) => item.name.toLowerCase().includes(search.toLowerCase()));
   return <>
     <div className="page-heading"><div><div className="eyebrow">PIPELINE CATALOG</div><Title headingLevel="h1" size="2xl">Pipelines</Title><p>Start a pipeline with its current parameters.</p></div><span className="count">{filtered.length} pipelines</span></div>
-    <div className="toolbar"><input className="search-input" placeholder="Search pipeline names" value={search} onChange={(event) => setSearch(event.target.value)} aria-label="Search pipelines" /></div>
+    <div className="toolbar"><input className="search-input" placeholder="Search pipeline names" value={search} onChange={(event) => setSearch(event.target.value)} aria-label="Search pipelines" /><Button variant="secondary" onClick={() => setRefreshKey((value) => value + 1)}>Refresh</Button></div>
     {error && <Alert variant="danger" title={error} className="notice" />}
     {latestError && <Alert variant="warning" title={latestError} className="notice" />}
     {loading ? <div className="loading"><Spinner size="lg" /></div> : filtered.length === 0 ? <div className="empty">No pipelines match this search.</div> :
