@@ -57,7 +57,7 @@ class TestFbcRebaseAndBuildCli(unittest.IsolatedAsyncioTestCase):
     @mock.patch("doozerlib.cli.fbc.KonfluxDb")
     def setUp(self, mock_konflux_db_class):
         self.runtime = mock.Mock(spec=Runtime)
-        self.runtime.group_config.vars = Model({"MAJOR": 4, "MINOR": 17})
+        self.runtime.group_config = Model({"vars": {"MAJOR": 4, "MINOR": 17}})
         self.runtime.working_dir = "/tmp"
         self.runtime.group = "test-group"
         self.runtime.assembly = "test-assembly"
@@ -131,6 +131,22 @@ class TestFbcRebaseAndBuildCli(unittest.IsolatedAsyncioTestCase):
         build.operator_nvr = operator_nvr
         return build
 
+    async def test_existing_fbc_lookup_scopes_to_target_ocp_version(self):
+        self.fbc_cli.major_minor = "4.22"
+        operator = mock.Mock(distgit_key="test-operator")
+        bundle = self._create_mock_bundle_build("test-operator-bundle", "bundle-1", "operator-1")
+        existing = mock.Mock(spec=KonfluxFbcBuildRecord, nvr="test-operator-fbc-1.0-1.ocp4.22")
+
+        async def builds(**kwargs):
+            yield existing
+
+        search = mock.Mock(side_effect=builds)
+        self.mock_fbc_db.search_builds_by_fields = search
+
+        self.assertIs(await self.fbc_cli._check_existing_fbc_build(operator, bundle), existing)
+        self.assertEqual(search.call_args.kwargs["extra_patterns"], {"release": r"\.ocp4\.22$"})
+        self.assertEqual(search.call_args.kwargs["array_contains"], {"bundle_nvrs": "bundle-1"})
+
     @mock.patch("doozerlib.cli.fbc.KonfluxFbcImporter")
     @mock.patch("doozerlib.cli.fbc.KonfluxFbcBuilder")
     @mock.patch("doozerlib.cli.fbc.KonfluxFbcRebaser")
@@ -168,11 +184,14 @@ class TestFbcRebaseAndBuildCli(unittest.IsolatedAsyncioTestCase):
         mock_importer_class.return_value = mock_importer
 
         self.fbc_cli.operator_nvrs = ("test-operator-1.0.0-1",)
+        self.runtime.group_config["konflux"] = {"integration_test_scenarios": {"fbc": ["fbc-test"]}}
 
         await self.fbc_cli.run()
 
         mock_rebaser.rebase.assert_called_once()
         mock_builder.build.assert_called_once()
+        self.assertEqual(mock_builder_class.call_args.kwargs["integration_test_scenarios"], ("fbc-test",))
+        mock_builder.validate_custom_integration_test_scenarios.assert_awaited_once()
 
     @mock.patch("doozerlib.cli.fbc.KonfluxFbcImporter")
     @mock.patch("doozerlib.cli.fbc.KonfluxFbcBuilder")
@@ -212,10 +231,12 @@ class TestFbcRebaseAndBuildCli(unittest.IsolatedAsyncioTestCase):
         mock_importer = mock.AsyncMock()
         mock_importer_class.return_value = mock_importer
 
+        self.fbc_cli.skip_custom_its = True
         await self.fbc_cli.run()
 
         mock_rebaser.rebase.assert_called_once()
         mock_builder.build.assert_called_once()
+        self.assertTrue(mock_builder_class.call_args.kwargs["skip_custom_its"])
 
     @mock.patch("doozerlib.cli.fbc.KonfluxFbcBuilder")
     @mock.patch("doozerlib.cli.fbc.KonfluxFbcRebaser")

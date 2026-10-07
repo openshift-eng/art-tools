@@ -16,6 +16,25 @@ class TestUtil(unittest.TestCase):
         oc_image_info__cached__lru.cache_clear()
         oc_image_info__cached_async__lru.cache_clear()
 
+    def test_get_konflux_integration_test_scenarios(self):
+        group_config = Model({"konflux": {"integration_test_scenarios": {"image": ["iso-test"], "fbc": ["fbc-test"]}}})
+        self.assertEqual(util.get_konflux_integration_test_scenarios(group_config, "image"), ("iso-test",))
+        self.assertEqual(util.get_konflux_integration_test_scenarios(group_config, "fbc"), ("fbc-test",))
+        self.assertEqual(util.get_konflux_integration_test_scenarios(Model({}), "fbc"), ())
+
+    def test_get_konflux_integration_test_scenarios_rejects_invalid_config(self):
+        invalid_configs = [
+            ["old-image-test"],
+            {"bundle": ["bundle-test"]},
+            {"image": ["duplicate", "duplicate"]},
+            {"fbc": [""]},
+        ]
+        for scenarios in invalid_configs:
+            with self.subTest(scenarios=scenarios), self.assertRaises(ValueError):
+                util.get_konflux_integration_test_scenarios(
+                    Model({"konflux": {"integration_test_scenarios": scenarios}}), "image"
+                )
+
     def test_isolate_nightly_name_components(self):
         self.assertEqual(
             util.isolate_nightly_name_components('4.1.0-0.nightly-2019-11-08-213727'), ('4.1', 'x86_64', False)

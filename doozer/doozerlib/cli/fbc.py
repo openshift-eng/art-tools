@@ -2,6 +2,7 @@ import asyncio
 import json
 import logging
 import os
+import re
 import sys
 import traceback
 from pathlib import Path
@@ -24,7 +25,7 @@ from artcommonlib.util import (
 )
 from tenacity import retry, stop_after_attempt, wait_exponential
 
-from doozerlib import constants, opm
+from doozerlib import constants, opm, util
 from doozerlib.backend.konflux_fbc import (
     KonfluxFbcBuilder,
     KonfluxFbcFragmentMerger,
@@ -495,6 +496,7 @@ class FbcRebaseAndBuildCli:
         major_minor: Optional[str] = None,
         insert_missing_entry: bool = False,
         skip_tasks: tuple[str, ...] = (),
+        skip_custom_its: bool = False,
     ):
         self.runtime = runtime
         self.version = version
@@ -508,6 +510,7 @@ class FbcRebaseAndBuildCli:
         self.image_repo = image_repo
         self.skip_checks = skip_checks
         self.skip_tasks = skip_tasks
+        self.skip_custom_its = skip_custom_its
         self.plr_template = plr_template
         self.dry_run = dry_run
         self.force = force
@@ -629,11 +632,20 @@ class FbcRebaseAndBuildCli:
             "assembly": self.runtime.assembly,
             "outcome": str(KonfluxBuildOutcome.SUCCESS),
         }
+        extra_patterns = None
+        if not self.runtime.group.startswith('openshift-'):
+            target_version = self.major_minor or (
+                f"{self.runtime.group_config.vars.MAJOR}.{self.runtime.group_config.vars.MINOR}"
+            )
+            extra_patterns = {"release": rf"\.ocp{re.escape(target_version)}$"}
 
-        # Search for FBC builds that contain this bundle build NVR
+        # A bundle can have a separate FBC build for each target OCP version.
         existing_fbc_build = await anext(
             self._fbc_db.search_builds_by_fields(
-                where=where, array_contains={"bundle_nvrs": bundle_build.nvr}, limit=1
+                where=where,
+                extra_patterns=extra_patterns,
+                array_contains={"bundle_nvrs": bundle_build.nvr},
+                limit=1,
             ),
             None,
         )
@@ -713,6 +725,7 @@ class FbcRebaseAndBuildCli:
 
         assert runtime.source_resolver is not None, "source_resolver is not initialized. Doozer bug?"
         assert runtime.group_config is not None, "group_config is not initialized. Doozer bug?"
+        integration_test_scenarios = util.get_konflux_integration_test_scenarios(runtime.group_config, "fbc")
 
         self._logger.info(f"Processing {len(dgk_bundle_builds)} operator(s): {list(dgk_bundle_builds.keys())}")
 
@@ -772,7 +785,10 @@ class FbcRebaseAndBuildCli:
             dry_run=self.dry_run,
             major_minor_override=ocp_version if self.major_minor else None,
             record_logger=runtime.record_logger,
+            integration_test_scenarios=integration_test_scenarios,
+            skip_custom_its=self.skip_custom_its,
         )
+        await builder.validate_custom_integration_test_scenarios()
 
         # Mint a per-invocation GitHub App token for git-clone auth
         git_auth_secret = await builder._konflux_client.ensure_git_auth_secret(
@@ -881,6 +897,9 @@ class FbcRebaseAndBuildCli:
 @click.option('--image-repo', default=constants.KONFLUX_DEFAULT_FBC_REPO, help='Push images to the specified repo.')
 @click.option('--skip-checks', default=False, is_flag=True, help='Skip all post build checks')
 @click.option(
+    '--skip-custom-its', is_flag=True, help='Skip custom FBC IntegrationTestScenarios configured in group.yml'
+)
+@click.option(
     '--skip-task',
     'skip_tasks',
     multiple=True,
@@ -944,6 +963,7 @@ async def fbc_rebase_and_build(
     konflux_namespace: str,
     image_repo: str,
     skip_checks: bool,
+    skip_custom_its: bool,
     skip_tasks: tuple,
     dry_run: bool,
     force: bool,
@@ -985,6 +1005,7 @@ async def fbc_rebase_and_build(
         konflux_namespace=konflux_namespace,
         image_repo=image_repo,
         skip_checks=skip_checks,
+        skip_custom_its=skip_custom_its,
         skip_tasks=skip_tasks,
         plr_template=plr_template,
         dry_run=dry_run,

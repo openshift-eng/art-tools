@@ -1669,6 +1669,8 @@ class KonfluxFbcBuilder:
         dry_run: bool = False,
         major_minor_override: Optional[Tuple[int, int]] = None,
         record_logger: Optional[RecordLogger] = None,
+        integration_test_scenarios: Sequence[str] = (),
+        skip_custom_its: bool = False,
         logger: logging.Logger = LOGGER,
     ):
         self.base_dir = base_dir
@@ -1688,12 +1690,27 @@ class KonfluxFbcBuilder:
         self.major_minor_override = major_minor_override
         self.source_git_commits = []
         self._record_logger = record_logger
+        self.integration_test_scenarios = tuple(integration_test_scenarios)
+        self.skip_custom_its = skip_custom_its
+        self._blocking_custom_integration_test_scenarios: Set[str] = set()
         self._logger = logger.getChild(self.__class__.__name__)
         self._konflux_client = KonfluxClient.from_kubeconfig(
             default_namespace=konflux_namespace,
             config_file=konflux_kubeconfig,
             context=konflux_context,
             dry_run=self.dry_run,
+        )
+
+    async def validate_custom_integration_test_scenarios(self) -> None:
+        """Check configured ITS resources before starting FBC builds."""
+        if not self.integration_test_scenarios or self.skip_custom_its:
+            return
+        self._blocking_custom_integration_test_scenarios = (
+            await self._konflux_client.validate_integration_test_scenarios(
+                self.integration_test_scenarios,
+                application_name=self.get_application_name(self.group),
+                namespace=self.konflux_namespace,
+            )
         )
 
     @staticmethod
@@ -1935,23 +1952,73 @@ class KonfluxFbcBuilder:
                 pipelinerun_dict = pipelinerun_info.to_dict()
                 succeeded_condition = pipelinerun_info.find_condition('Succeeded')
                 outcome = KonfluxBuildOutcome.extract_from_pipelinerun_succeeded_condition(succeeded_condition)
+                its_pipeline_url = ''
+
+                if (
+                    outcome is KonfluxBuildOutcome.SUCCESS
+                    and self.integration_test_scenarios
+                    and not self.skip_custom_its
+                ):
+                    if self.dry_run:
+                        logger.info("Dry run: Would have triggered FBC IntegrationTestScenarios")
+                    else:
+                        results = pipelinerun_dict.get('status', {}).get('results', [])
+                        image_url = next((r['value'] for r in results if r['name'] == 'IMAGE_URL'), None)
+                        image_digest = next((r['value'] for r in results if r['name'] == 'IMAGE_DIGEST'), None)
+                        if not (image_url and image_digest):
+                            raise ValueError(f"FBC PipelineRun {pipelinerun_name} has no image URL or digest for ITS")
+                        major, minor = self.major_minor_override or (
+                            int(metadata.runtime.group_config.vars.MAJOR),
+                            int(metadata.runtime.group_config.vars.MINOR),
+                        )
+                        its_result = await self._konflux_client.run_integration_test_scenarios(
+                            scenario_names=self.integration_test_scenarios,
+                            application_name=self.get_application_name(self.group),
+                            component_name=self.get_component_name(self.group, metadata.distgit_key),
+                            image_pullspec=f"{image_url.rsplit(':', 1)[0]}@{image_digest}",
+                            source_url=build_repo.https_url,
+                            commit_sha=build_repo.commit_hash,
+                            blocking_scenario_names=self._blocking_custom_integration_test_scenarios,
+                            snapshot_annotations={"art.openshift.io/ocp-target-version": f"{major}.{minor}"},
+                            namespace=self.konflux_namespace,
+                        )
+                        for pipeline_url in its_result.pipeline_urls:
+                            logger.info(
+                                "FBC IntegrationTestScenario PipelineRun (OCP %s.%s): %s", major, minor, pipeline_url
+                            )
+                        if its_result.blocking_failed:
+                            outcome = KonfluxBuildOutcome.ITS_ERROR
+                            its_pipeline_url = its_result.blocking_failed_pipeline_url
+                            record["outcome"] = str(outcome)
+                            record["ec_pipeline_url"] = its_pipeline_url
+                elif (
+                    outcome is KonfluxBuildOutcome.SUCCESS and self.integration_test_scenarios and self.skip_custom_its
+                ):
+                    logger.info("Skipping FBC IntegrationTestScenarios: --skip-custom-its is set")
 
                 if self.dry_run:
                     logger.info("Dry run: Would have inserted build record in Konflux DB")
                 else:
+                    db_kwargs = {"logger": logger}
+                    if its_pipeline_url:
+                        db_kwargs["ec_pipeline_url"] = its_pipeline_url
                     await self._update_konflux_db(
                         metadata,
                         build_repo,
                         pipelinerun_info,
                         outcome,
                         arches,
-                        logger=logger,
+                        **db_kwargs,
                     )
 
                 if outcome is not KonfluxBuildOutcome.SUCCESS:
                     error = KonfluxFbcBuildError(
-                        f"Konflux image build for {metadata.distgit_key} failed", pipelinerun_name, pipelinerun_dict
+                        f"Konflux FBC build for {metadata.distgit_key} failed with {outcome}",
+                        pipelinerun_name,
+                        pipelinerun_dict,
                     )
+                    if outcome is KonfluxBuildOutcome.ITS_ERROR:
+                        break
                 else:
                     error = None
                     metadata.build_status = True
@@ -2113,6 +2180,7 @@ class KonfluxFbcBuilder:
         pipelinerun_info: PipelineRunInfo,
         outcome: KonfluxBuildOutcome,
         arches: Sequence[str],
+        ec_pipeline_url: str = '',
         logger: Optional[logging.Logger] = None,
     ):
         logger = logger or self._logger.getChild(f"[{metadata.distgit_key}]")
@@ -2167,10 +2235,11 @@ class KonfluxFbcBuilder:
                 'arches': arches,
                 'build_component': build_component,
                 'build_variant': metadata.runtime.variant,
+                'ec_pipeline_url': ec_pipeline_url,
             }
 
             match outcome:
-                case KonfluxBuildOutcome.SUCCESS:
+                case KonfluxBuildOutcome.SUCCESS | KonfluxBuildOutcome.ITS_ERROR:
                     # results:
                     # - name: IMAGE_URL
                     #   value: quay.io/openshift-release-dev/ocp-v4.0-art-dev-test:ose-network-metrics-daemon-rhel9-v4.18.0-20241001.151532
@@ -2193,7 +2262,7 @@ class KonfluxFbcBuilder:
 
                     build_record_params.update(
                         {
-                            'image_pullspec': f"{image_pullspec.split(':')[0]}@{image_digest}",
+                            'image_pullspec': f"{image_pullspec.rsplit(':', 1)[0]}@{image_digest}",
                             'start_time': datetime.strptime(start_time, '%Y-%m-%dT%H:%M:%SZ').replace(
                                 tzinfo=timezone.utc
                             ),

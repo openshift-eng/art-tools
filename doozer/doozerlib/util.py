@@ -52,6 +52,23 @@ DICT_EMPTY = object()
 logger = logging.getLogger(__name__)
 
 
+def get_konflux_integration_test_scenarios(group_config: dict, build_kind: str) -> tuple[str, ...]:
+    """Return group-wide ITS names for an image or FBC build."""
+    if build_kind not in {"image", "fbc"}:
+        raise ValueError(f"Unsupported integration test build kind: {build_kind}")
+    scenarios_by_kind = group_config.get("konflux", {}).get("integration_test_scenarios", {})
+    if scenarios_by_kind is Missing or scenarios_by_kind is None:
+        scenarios_by_kind = {}
+    if not isinstance(scenarios_by_kind, dict) or set(scenarios_by_kind) - {"image", "fbc"}:
+        raise ValueError("konflux.integration_test_scenarios must be a mapping with image and/or fbc lists")
+    for kind, names in scenarios_by_kind.items():
+        if not isinstance(names, (list, tuple)) or any(not isinstance(name, str) or not name for name in names):
+            raise ValueError(f"konflux.integration_test_scenarios.{kind} must be a list of non-empty scenario names")
+        if len(names) != len(set(names)):
+            raise ValueError(f"konflux.integration_test_scenarios.{kind} contains duplicate scenario names")
+    return tuple(scenarios_by_kind.get(build_kind, ()))
+
+
 def rh_art_images_base_pullspec(nvr: str) -> str:
     """registry.redhat.io pullspec after Konflux silent release (image tag = full publish NVR string).
 
