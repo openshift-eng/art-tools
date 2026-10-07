@@ -74,6 +74,12 @@ function LogText({ text }) {
   return <pre>{content}</pre>;
 }
 
+function ThemeIcon({ theme }) {
+  return <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+    {theme === 'dark' ? <><circle cx="12" cy="12" r="4" /><path d="M12 2v2m0 16v2M4.93 4.93l1.42 1.42m11.3 11.3 1.42 1.42M2 12h2m16 0h2M4.93 19.07l1.42-1.42m11.3-11.3 1.42-1.42" /></> : <path d="M20.985 12.486A9 9 0 0 1 11.514 3.015 9 9 0 1 0 20.985 12.486Z" />}
+  </svg>;
+}
+
 function App() {
   const [view, setView] = useState(parseHash);
   const [namespaces, setNamespaces] = useState([]);
@@ -112,7 +118,7 @@ function App() {
           {namespaces.map((item) => <option key={item} value={item}>{item}</option>)}
         </select>
         <span className="cluster-name">artc2023</span>
-        <button className="theme-toggle" type="button" onClick={() => setTheme(theme === 'dark' ? 'light' : 'dark')}>{theme === 'dark' ? 'Light theme' : 'Dark theme'}</button>
+        <button className="theme-toggle" type="button" aria-label={theme === 'dark' ? 'Switch to light theme' : 'Switch to dark theme'} onClick={() => setTheme(theme === 'dark' ? 'light' : 'dark')}><ThemeIcon theme={theme} /><span>{theme === 'dark' ? 'Light theme' : 'Dark theme'}</span></button>
         <span className="user-name">{session?.user || 'OpenShift user'}</span>
       </div>
     </header>
