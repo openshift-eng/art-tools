@@ -276,8 +276,10 @@ class SourceResolver:
                     LOGGER.info(f"Checking out commit-ish {meta.commitish}")
                     exectools.cmd_assert(["git", "-C", source_dir, "reset", "--hard", meta.commitish])
 
-                # fetch public upstream source
-                if has_public_upstream:
+                # fetch public upstream source (skip for fork builds — the fork's
+                # branch likely doesn't exist on the public upstream repo)
+                is_fork = pull_url is not None and pull_url != url
+                if has_public_upstream and not is_fork:
                     self.setup_and_fetch_public_upstream_source(
                         meta.public_upstream_url, meta.public_upstream_branch or clone_branch, source_dir
                     )

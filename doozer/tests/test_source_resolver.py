@@ -281,6 +281,132 @@ class SourceResolverTestCase(TestCase):
         SourceResolver._check_branch_protection("https://github.com/openshift/etcd", "release/4.19")
         mock_get_client.return_value.get_repo.return_value.get_branch.assert_called_with("release/4.19")
 
+    # ART-24447: resolve_source must skip public upstream fetch for fork builds
+    @patch("doozerlib.source_resolver.get_github_git_auth_env", return_value={})
+    @patch("doozerlib.source_resolver.get_github_client_for_org")
+    @patch("doozerlib.source_resolver.git_clone")
+    def test_resolve_source_fetches_public_upstream_for_normal_build(self, mock_clone, mock_gh, mock_auth):
+        """Normal build (no url_pull): public upstream IS fetched."""
+        group_config = Model(
+            dict(
+                public_upstreams=[
+                    {"private": "https://github.com/openshift-priv", "public": "https://github.com/openshift"}
+                ],
+            )
+        )
+        sr = SourceResolver(
+            sources_base_dir="/tmp/sources",
+            cache_dir="/tmp/cache",
+            group_config=group_config,
+        )
+        meta = Mock()
+        meta.qualified_key = "image/test-image"
+        meta.distgit_key = "test-image"
+        meta.namespace = "image"
+        meta.name = "test-image"
+        meta.prevent_cloning = False
+        meta.commitish = None
+        meta.config.content.source = Model(
+            dict(
+                git=dict(
+                    url="https://github.com/openshift-priv/test-repo",
+                    branch=dict(target="release-4.18"),
+                ),
+            )
+        )
+
+        resolution = SourceResolution(
+            source_path="/tmp/sources/test",
+            url="https://github.com/openshift-priv/test-repo",
+            branch="release-4.18",
+            https_url="https://github.com/openshift-priv/test-repo",
+            commit_hash="abc123",
+            committer_date=datetime.fromtimestamp(0, timezone.utc),
+            latest_tag="v1.0",
+            has_public_upstream=True,
+            public_upstream_url="https://github.com/openshift/test-repo",
+            public_upstream_branch="release-4.18",
+        )
+
+        def fake_register(alias, path):
+            sr.source_resolutions[alias] = resolution
+            return resolution
+
+        flexmock(SourceResolver).should_receive("detect_remote_source_branch").and_return(("release-4.18", "abc123"))
+        flexmock(SourceResolver).should_receive("_check_branch_protection").and_return(True)
+        flexmock(SourceResolver).should_receive("setup_and_fetch_public_upstream_source").once()
+        flexmock(sr).should_receive("register_source_alias").replace_with(fake_register)
+
+        sr.resolve_source(meta)
+
+    @patch("doozerlib.source_resolver.get_github_git_auth_env", return_value={})
+    @patch("doozerlib.source_resolver.get_github_client_for_org")
+    @patch("doozerlib.source_resolver.git_clone")
+    def test_resolve_source_skips_public_upstream_for_fork_build(self, mock_clone, mock_gh, mock_auth):
+        """Fork build (url_pull set and differs from url): public upstream is NOT fetched."""
+        group_config = Model(
+            dict(
+                public_upstreams=[
+                    {"private": "https://github.com/openshift-priv", "public": "https://github.com/openshift"}
+                ],
+            )
+        )
+        sr = SourceResolver(
+            sources_base_dir="/tmp/sources",
+            cache_dir="/tmp/cache",
+            group_config=group_config,
+        )
+        meta = Mock()
+        meta.qualified_key = "image/test-image"
+        meta.distgit_key = "test-image"
+        meta.namespace = "image"
+        meta.name = "test-image"
+        meta.prevent_cloning = False
+        meta.commitish = None
+        meta.config.content.source = Model(
+            dict(
+                git=dict(
+                    url="https://github.com/openshift-priv/test-repo",
+                    url_pull="https://github.com/myuser/test-repo-fork",
+                    branch=dict(target="my-feature-branch"),
+                ),
+            )
+        )
+
+        resolution = SourceResolution(
+            source_path="/tmp/sources/test",
+            url="https://github.com/openshift-priv/test-repo",
+            branch="my-feature-branch",
+            https_url="https://github.com/openshift-priv/test-repo",
+            commit_hash="def456",
+            committer_date=datetime.fromtimestamp(0, timezone.utc),
+            latest_tag="v1.0",
+            has_public_upstream=True,
+            public_upstream_url="https://github.com/openshift/test-repo",
+            public_upstream_branch="my-feature-branch",
+            pull_url="https://github.com/myuser/test-repo-fork",
+        )
+
+        def fake_register(alias, path):
+            sr.source_resolutions[alias] = resolution
+            return resolution
+
+        flexmock(SourceResolver).should_receive("detect_remote_source_branch").and_return(
+            ("my-feature-branch", "def456")
+        )
+        flexmock(SourceResolver).should_receive("_check_branch_protection").and_return(True)
+        # setup_and_fetch_public_upstream_source must NOT be called
+        flexmock(SourceResolver).should_receive("setup_and_fetch_public_upstream_source").never()
+        flexmock(exectools).should_receive("cmd_assert").with_args(
+            "git remote set-url origin https://github.com/openshift-priv/test-repo"
+        ).and_return(("", ""))
+        flexmock(exectools).should_receive("cmd_assert").with_args(
+            "git remote add pull https://github.com/myuser/test-repo-fork"
+        ).and_return(("", ""))
+        flexmock(sr).should_receive("register_source_alias").replace_with(fake_register)
+
+        sr.resolve_source(meta)
+
     @patch("doozerlib.source_resolver.get_github_git_auth_env")
     def test_setup_and_fetch_public_upstream_source_uses_auth(self, mock_auth):
         """
