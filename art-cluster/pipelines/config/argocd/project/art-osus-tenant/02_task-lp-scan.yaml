@@ -89,8 +89,8 @@ spec:
       value: /tmp/konflux-kubeconfigs/assisted-installer
     - name: OAP_KONFLUX_SA_KUBECONFIG
       value: /tmp/konflux-kubeconfigs/oap
-    - name: QUAY_KONFLUX_SA_KUBECONFIG
-      value: /tmp/konflux-kubeconfigs/quay
+    - name: OSUS_KONFLUX_SA_KUBECONFIG
+      value: /tmp/konflux-kubeconfigs/osus
     - name: QUAY_AUTH_FILE
       value: /tmp/konflux-art-images-auth/config.json
     - name: DOCKER_CONFIG

@@ -7,7 +7,7 @@ metadata:
     app: artcd
 spec:
   description: |
-    Scheduler for Quay scan. Checks locks and freeze automation,
+    Scheduler for OpenShift Update Service scans. Checks locks and freeze automation,
     then triggers individual layered-products-scan PipelineRuns for groups that are eligible.
   params:
   - default: ""
@@ -16,7 +16,7 @@ spec:
     name: art-tools-commit
     type: string
   tasks:
-  - name: quay-schedule-scan
+  - name: osus-schedule-scan
     params:
     - name: script
       value: |
@@ -48,11 +48,7 @@ spec:
             "--working-dir=./artcd_working",
             "--config=/root/.config/artcd.toml",
             "schedule-layered-products-scan",
-            "--group=quay-3.9",
-            "--group=quay-3.15",
-            "--group=quay-3.16",
-            "--group=quay-3.17",
-            "--group=quay-3.18",
+            "--group=osus-5.0",
         ]
 
         print(f"Running {cmd}...")

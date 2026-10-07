@@ -6,7 +6,7 @@ metadata:
   labels:
     app: artcd
 spec:
-  description: Build OLM bundle containers for Quay operators via Konflux, then trigger
+  description: Build OLM bundle containers for OpenShift Update Service via Konflux, then trigger
     downstream FBC build.
   params:
   - description: OCP version (e.g. 1.5.0)
@@ -15,8 +15,8 @@ spec:
   - description: Assembly name
     name: assembly
     type: string
-  - default: quay-3.18
-    description: The group to use with -g flag (e.g. quay-3.18, quay-3.17)
+  - default: osus-5.0
+    description: The group to use with -g flag (osus-5.0)
     name: group
     type: string
   - default: https://github.com/openshift-eng/ocp-build-data
@@ -64,7 +64,7 @@ spec:
     name: art-tools-commit
     type: string
   tasks:
-  - name: quay-olm-bundle
+  - name: osus-olm-bundle
     params:
     - name: script
       value: |

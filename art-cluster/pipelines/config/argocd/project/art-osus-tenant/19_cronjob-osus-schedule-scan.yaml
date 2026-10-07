@@ -1,7 +1,7 @@
 kind: CronJob
 apiVersion: batch/v1
 metadata:
-  name: quay-schedule-scan-cron
+  name: osus-schedule-scan-cron
   namespace: art-osus-tenant
 spec:
   schedule: "*/30 * * * *"

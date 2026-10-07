@@ -26,6 +26,7 @@ class ProductId(Enum):
     LOGGING = "openshift-logging"
     MTA = "mta"
     QUAY = "quay"
+    OSUS = "openshift-update-service"
     MTC = "rhmtc"
     OADP = "oadp"
     OC_MIRROR = "oc-mirror"

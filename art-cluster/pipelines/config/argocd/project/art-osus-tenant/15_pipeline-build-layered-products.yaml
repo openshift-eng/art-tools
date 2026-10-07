@@ -6,17 +6,17 @@ metadata:
   labels:
     app: artcd
 spec:
-  description: Rebase and build Quay operator images via Konflux, then trigger downstream bundle build.
+  description: Rebase and build OpenShift Update Service images via Konflux, then trigger downstream bundle build.
   params:
-  - default: quay-3.18
-    description: The group to use with -g flag (e.g. quay-3.18, quay-3.17)
+  - default: osus-5.0
+    description: The group to use with -g flag (osus-5.0)
     name: group
     type: string
   - default: test
     description: The name of an assembly to rebase and build for
     name: assembly
     type: string
-  - default: quay-operator
+  - default: cincinnati-operator-container
     description: Comma/space-separated list of image names to build
     name: image-list
     type: string
@@ -71,7 +71,7 @@ spec:
     name: art-tools-commit
     type: string
   tasks:
-  - name: quay-build
+  - name: osus-build
     params:
     - name: script
       value: |
