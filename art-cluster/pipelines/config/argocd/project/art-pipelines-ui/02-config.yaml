@@ -1,0 +1,15 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: art-pipelines-ui-config
+  namespace: art-pipelines-ui
+data:
+  PIPELINE_NAMESPACES: art-acm-tenant,art-installer-agent-tenant,art-logging-tenant,art-mta-tenant,art-mtc-tenant,art-oadp-tenant,art-oap-tenant,art-oc-mirror-tenant,art-osus-tenant,art-quay-tenant,art-rhosdt-tenant
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: art-pipelines-ui-service-ca
+  namespace: art-pipelines-ui
+  annotations:
+    service.beta.openshift.io/inject-cabundle: "true"

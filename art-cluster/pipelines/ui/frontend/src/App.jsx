@@ -1,0 +1,283 @@
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import { Alert, Button, Card, CardBody, Label, Spinner, Title } from '@patternfly/react-core';
+
+async function request(path, options = {}) {
+  const response = await fetch(path, { credentials: 'same-origin', ...options });
+  const body = await response.json().catch(() => ({}));
+  if (!response.ok) throw new Error(body.detail || `Request failed (${response.status})`);
+  return body;
+}
+
+function parseHash() {
+  const parts = window.location.hash.slice(2).split('/');
+  if (parts[0] === 'pipeline' && parts[1] && parts[2]) {
+    return { kind: 'pipeline', namespace: parts[1], name: decodeURIComponent(parts[2]) };
+  }
+  if (parts[0] === 'run' && parts[1] && parts[2]) {
+    const [name, search] = parts[2].split('?');
+    return { kind: 'run', namespace: parts[1], name: decodeURIComponent(name), uid: new URLSearchParams(search).get('uid') };
+  }
+  return { kind: parts[0] === 'runs' ? 'runs' : 'pipelines' };
+}
+
+function navigate(view) {
+  if (view.kind === 'pipeline') window.location.hash = `#/pipeline/${view.namespace}/${encodeURIComponent(view.name)}`;
+  else if (view.kind === 'run') window.location.hash = `#/run/${view.namespace}/${encodeURIComponent(view.name)}?uid=${encodeURIComponent(view.uid || '')}`;
+  else window.location.hash = view.kind === 'runs' ? '#/runs' : '#/pipelines';
+}
+
+function formatDate(value) {
+  return value ? new Date(value).toLocaleString() : '—';
+}
+
+function statusColor(status) {
+  if (status === 'Succeeded') return 'green';
+  if (status === 'Running') return 'blue';
+  if (status === 'Failed' || status?.includes('Timeout')) return 'red';
+  if (status === 'Cancelled') return 'orange';
+  return 'grey';
+}
+
+function Status({ value }) {
+  return <Label color={statusColor(value)}>{value || 'Unknown'}</Label>;
+}
+
+function Field({ label, children, hint }) {
+  return <label className="field"><span className="field-label">{label}</span>{children}{hint && <span className="field-hint">{hint}</span>}</label>;
+}
+
+function LogText({ text }) {
+  const content = useMemo(() => {
+    const parts = [];
+    const urlPattern = /https?:\/\/[^\s<>"'`]+/g;
+    let cursor = 0;
+    for (const match of text.matchAll(urlPattern)) {
+      const url = match[0].replace(/[.,;:!?)}\]]+$/, '');
+      parts.push(text.slice(cursor, match.index));
+      parts.push(<a key={match.index} href={url} target="_blank" rel="noopener noreferrer">{url}</a>);
+      cursor = match.index + url.length;
+    }
+    parts.push(text.slice(cursor));
+    return parts;
+  }, [text]);
+  return <pre>{content}</pre>;
+}
+
+function App() {
+  const [view, setView] = useState(parseHash);
+  const [namespaces, setNamespaces] = useState([]);
+  const [namespace, setNamespace] = useState('');
+  const [session, setSession] = useState(null);
+  const [error, setError] = useState('');
+
+  useEffect(() => {
+    const onHashChange = () => setView(parseHash());
+    window.addEventListener('hashchange', onHashChange);
+    Promise.all([request('/api/session'), request('/api/namespaces')])
+      .then(([identity, result]) => { setSession(identity); setNamespaces(result.namespaces); })
+      .catch((cause) => setError(cause.message));
+    return () => window.removeEventListener('hashchange', onHashChange);
+  }, []);
+
+  return <div className="app-shell">
+    <header className="topbar">
+      <div className="brand" onClick={() => navigate({ kind: 'pipelines' })} role="button" tabIndex={0} onKeyDown={(event) => event.key === 'Enter' && navigate({ kind: 'pipelines' })}>
+        <span className="brand-mark">ART</span><span>Pipelines</span>
+      </div>
+      <div className="topbar-right"><span className="cluster-name">artc2023</span><span className="user-name">{session?.user || 'OpenShift user'}</span></div>
+    </header>
+    <div className="layout">
+      <aside className="sidebar">
+        <div className="sidebar-section">WORKSPACE</div>
+        <button className={view.kind === 'pipelines' || view.kind === 'pipeline' ? 'nav active' : 'nav'} onClick={() => navigate({ kind: 'pipelines' })}>Pipelines</button>
+        <button className={view.kind === 'runs' || view.kind === 'run' ? 'nav active' : 'nav'} onClick={() => navigate({ kind: 'runs' })}>PipelineRuns</button>
+        <div className="sidebar-section namespace-heading">NAMESPACE</div>
+        <select className="namespace-select" value={namespace} onChange={(event) => setNamespace(event.target.value)} aria-label="Namespace">
+          <option value="">All accessible tenants</option>
+          {namespaces.map((item) => <option key={item} value={item}>{item}</option>)}
+        </select>
+        <div className="sidebar-note">Live cluster data and Tekton Results history</div>
+      </aside>
+      <main className="content">
+        {error && <Alert variant="danger" title={error} className="notice" />}
+        {view.kind === 'pipelines' && <Pipelines namespace={namespace} />}
+        {view.kind === 'runs' && <Runs namespace={namespace} />}
+        {view.kind === 'pipeline' && <PipelineDetail view={view} csrfToken={session?.csrfToken} />}
+        {view.kind === 'run' && <RunDetail view={view} csrfToken={session?.csrfToken} />}
+      </main>
+    </div>
+  </div>;
+}
+
+function Pipelines({ namespace }) {
+  const [items, setItems] = useState([]);
+  const [search, setSearch] = useState('');
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState('');
+  useEffect(() => {
+    setLoading(true);
+    request(`/api/pipelines${namespace ? `?namespace=${encodeURIComponent(namespace)}` : ''}`)
+      .then((data) => setItems(data.items)).catch((cause) => setError(cause.message)).finally(() => setLoading(false));
+  }, [namespace]);
+  const filtered = items.filter((item) => item.name.toLowerCase().includes(search.toLowerCase()));
+  return <>
+    <div className="page-heading"><div><div className="eyebrow">PIPELINE CATALOG</div><Title headingLevel="h1" size="2xl">Pipelines</Title><p>Start a pipeline with its current parameters.</p></div><span className="count">{filtered.length} pipelines</span></div>
+    <div className="toolbar"><input className="search-input" placeholder="Search pipeline names" value={search} onChange={(event) => setSearch(event.target.value)} aria-label="Search pipelines" /></div>
+    {error && <Alert variant="danger" title={error} className="notice" />}
+    {loading ? <div className="loading"><Spinner size="lg" /></div> : filtered.length === 0 ? <div className="empty">No pipelines match this search.</div> :
+      <div className="pipeline-grid">{filtered.map((item) => <Card key={`${item.namespace}/${item.name}`} className="pipeline-card" isClickable onClick={() => navigate({ kind: 'pipeline', ...item })}>
+        <CardBody><div className="card-top"><span className="pipeline-symbol">▧</span><span className="namespace-pill">{item.namespace}</span></div><h2>{item.name}</h2><p>{item.description || 'Tekton Pipeline'}</p><div className="card-footer"><span>{item.parameterCount} parameters</span><span className="open-link">Open pipeline →</span></div></CardBody>
+      </Card>)}</div>}
+  </>;
+}
+
+function Runs({ namespace, pipeline = '', embedded = false }) {
+  const [items, setItems] = useState([]);
+  const [total, setTotal] = useState(0);
+  const [page, setPage] = useState(1);
+  const [search, setSearch] = useState('');
+  const [status, setStatus] = useState('');
+  const [since, setSince] = useState('');
+  const [until, setUntil] = useState('');
+  const [submitted, setSubmitted] = useState({ search: '', status: '', since: '', until: '' });
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState('');
+  const [warnings, setWarnings] = useState([]);
+  useEffect(() => {
+    const params = new URLSearchParams({ page: String(page), page_size: '50' });
+    if (namespace) params.set('namespace', namespace);
+    if (pipeline) params.set('pipeline', pipeline);
+    if (submitted.search) params.set('q', submitted.search);
+    if (submitted.status) params.set('status', submitted.status);
+    if (submitted.since) params.set('since', new Date(`${submitted.since}T00:00:00`).toISOString());
+    if (submitted.until) params.set('until', new Date(`${submitted.until}T23:59:59`).toISOString());
+    setLoading(true);
+    request(`/api/runs?${params}`)
+      .then((data) => { setItems(data.items); setTotal(data.total); setWarnings(data.errors || []); setError(''); })
+      .catch((cause) => setError(cause.message)).finally(() => setLoading(false));
+  }, [namespace, pipeline, page, submitted]);
+  const searchRuns = (event) => {
+    event.preventDefault(); setPage(1); setSubmitted({ search, status, since, until });
+  };
+  return <>
+    {embedded ? <div className="embedded-runs-heading"><h2>PipelineRuns</h2><span className="count">{total} runs</span></div> : <div className="page-heading"><div><div className="eyebrow">EXECUTION HISTORY</div><Title headingLevel="h1" size="2xl">PipelineRuns</Title><p>Find live and archived runs, inspect logs, or rebuild with new values.</p></div><span className="count">{total} runs</span></div>}
+    <form className="toolbar run-filters" onSubmit={searchRuns}>
+      <input className="search-input" placeholder={pipeline ? 'Search run names' : 'Pipeline or run name'} value={search} onChange={(event) => setSearch(event.target.value)} aria-label="Search runs" />
+      <select value={status} onChange={(event) => setStatus(event.target.value)} aria-label="Status"><option value="">All statuses</option>{['Succeeded', 'Failed', 'Running', 'Cancelled', 'PipelineRunTimeout'].map((item) => <option key={item}>{item}</option>)}</select>
+      <input type="date" value={since} onChange={(event) => setSince(event.target.value)} aria-label="From date" />
+      <input type="date" value={until} onChange={(event) => setUntil(event.target.value)} aria-label="To date" />
+      <Button type="submit" variant="primary">Search</Button>
+    </form>
+    {error && <Alert variant="danger" title={error} className="notice" />}
+    {warnings.length > 0 && <Alert variant="warning" title={`Some history could not be loaded (${warnings.map((item) => item.namespace).join(', ')})`} className="notice" />}
+    {loading ? <div className="loading"><Spinner size="lg" /></div> : items.length === 0 ? <div className="empty">No runs match these filters.</div> : <div className="table-wrap"><table className="data-table"><thead><tr><th>PipelineRun</th><th>Pipeline</th><th>Namespace</th><th>Status</th><th>Created</th><th>Source</th></tr></thead><tbody>
+      {items.map((item) => <tr key={`${item.namespace}/${item.uid}`} onClick={() => navigate({ kind: 'run', ...item })} tabIndex={0} onKeyDown={(event) => event.key === 'Enter' && navigate({ kind: 'run', ...item })}>
+        <td className="primary-cell">{item.name}</td><td>{item.pipeline || '—'}</td><td>{item.namespace}</td><td><Status value={item.status} /></td><td>{formatDate(item.created)}</td><td><span className={item.source === 'archive' ? 'source archived' : 'source'}>{item.source === 'archive' ? 'Results' : 'Live'}</span></td>
+      </tr>)}</tbody></table></div>}
+    <div className="pagination"><span>{total === 0 ? '0' : (page - 1) * 50 + 1}–{Math.min(page * 50, total)} of {total}</span><Button variant="secondary" isDisabled={page <= 1 || loading} onClick={() => setPage(page - 1)}>Previous</Button><Button variant="secondary" isDisabled={page * 50 >= total || loading} onClick={() => setPage(page + 1)}>Next</Button></div>
+  </>;
+}
+
+function PipelineDetail({ view, csrfToken }) {
+  const [pipeline, setPipeline] = useState(null);
+  const [activeTab, setActiveTab] = useState('details');
+  const [form, setForm] = useState(false);
+  const [error, setError] = useState('');
+  useEffect(() => {
+    setActiveTab('details');
+    request(`/api/pipelines/${view.namespace}/${view.name}`).then(setPipeline).catch((cause) => setError(cause.message));
+  }, [view.namespace, view.name]);
+  return <>
+    <Button variant="link" className="back" onClick={() => navigate({ kind: 'pipelines' })}>← Pipelines</Button>
+    {error && <Alert variant="danger" title={error} className="notice" />}
+    {!pipeline ? <div className="loading"><Spinner size="lg" /></div> : <>
+      <div className="page-heading detail-heading"><div><div className="eyebrow">{pipeline.namespace}</div><Title headingLevel="h1" size="2xl">{pipeline.name}</Title><p>{pipeline.description || 'Tekton Pipeline'}</p></div><Button variant="primary" onClick={() => setForm(true)}>Start pipeline</Button></div>
+      <div className="detail-tabs" role="tablist" aria-label="Pipeline views">
+        <button type="button" role="tab" aria-selected={activeTab === 'details'} className={activeTab === 'details' ? 'active' : ''} onClick={() => setActiveTab('details')}>Details</button>
+        <button type="button" role="tab" aria-selected={activeTab === 'runs'} className={activeTab === 'runs' ? 'active' : ''} onClick={() => setActiveTab('runs')}>PipelineRuns</button>
+      </div>
+      {activeTab === 'details' ? <section className="panel"><h2>Parameters <span className="muted">{pipeline.parameters.length}</span></h2><div className="definition-list">{pipeline.parameters.map((param) => <div key={param.name}><strong>{param.name}</strong><span>{param.description || 'No description'}</span><small>{param.type || 'string'} · {Object.hasOwn(param, 'default') ? 'Has default' : 'Required'}</small></div>)}</div></section> : <Runs namespace={view.namespace} pipeline={view.name} embedded />}
+      {form && <RunForm namespace={view.namespace} pipeline={view.name} csrfToken={csrfToken} onClose={() => setForm(false)} />}
+    </>}
+  </>;
+}
+
+function RunDetail({ view, csrfToken }) {
+  const [run, setRun] = useState(null);
+  const [logs, setLogs] = useState(null);
+  const [form, setForm] = useState(false);
+  const [error, setError] = useState('');
+  const url = `/api/runs/${view.namespace}/${view.name}?uid=${encodeURIComponent(view.uid || '')}`;
+  const logsUrl = `/api/runs/${view.namespace}/${view.name}/logs?uid=${encodeURIComponent(view.uid || '')}`;
+  const refresh = useCallback(() => {
+    request(url).then(setRun).catch((cause) => setError(cause.message));
+    request(logsUrl).then(setLogs).catch((cause) => setError(cause.message));
+  }, [url, logsUrl]);
+  useEffect(() => { refresh(); }, [refresh]);
+  useEffect(() => {
+    if (run?.status !== 'Running') return undefined;
+    const interval = window.setInterval(refresh, 10000);
+    return () => window.clearInterval(interval);
+  }, [run?.status, refresh]);
+  return <>
+    <Button variant="link" className="back" onClick={() => navigate({ kind: 'runs' })}>← PipelineRuns</Button>
+    {error && <Alert variant="danger" title={error} className="notice" />}
+    {!run ? <div className="loading"><Spinner size="lg" /></div> : <>
+      <div className="page-heading detail-heading"><div><div className="eyebrow">{run.namespace} / {run.pipeline || 'PipelineRun'}</div><Title headingLevel="h1" size="2xl">{run.name}</Title><div className="detail-meta"><Status value={run.status} /><span>Created {formatDate(run.created)}</span><span>{run.source === 'archive' ? 'Tekton Results' : 'Live cluster'}</span></div></div><div className="detail-actions"><Button variant="secondary" onClick={refresh}>Refresh</Button>{run.pipeline && <Button variant="primary" onClick={() => setForm(true)}>Rebuild with parameters</Button>}</div></div>
+      {run.message && <div className="run-message">{run.message}</div>}
+      <div className="detail-grid"><section className="panel"><h2>Parameters <span className="muted">{run.parameters.length}</span></h2>{run.parameters.length ? <div className="value-list">{run.parameters.map((param) => <div key={param.name}><span>{param.name}</span><code>{typeof param.value === 'string' ? param.value : JSON.stringify(param.value)}</code></div>)}</div> : <p className="muted">This run did not specify parameters.</p>}</section><section className="panel"><h2>Task runs</h2>{run.tasks.length ? <div className="task-list">{run.tasks.map((task) => <div key={task.name}><strong>{task.pipelineTaskName || task.name}</strong><small>{task.name}</small></div>)}</div> : <p className="muted">No task runs recorded.</p>}</section></div>
+      <section className="panel logs-panel"><div className="section-heading"><h2>Logs</h2><span className="source">{logs?.source === 'archive' ? 'Tekton Results' : 'Cluster pods'}</span></div>{logs?.truncated && <Alert variant="warning" title="Log display is limited to the first 8 MB per step" className="notice" />}<LogText text={logs?.text || 'Loading logs…'} /></section>
+      {form && <RunForm namespace={run.namespace} pipeline={run.pipeline} sourceRun={{ name: run.name, uid: run.uid }} csrfToken={csrfToken} onClose={() => setForm(false)} />}
+    </>}
+  </>;
+}
+
+function RunForm({ namespace, pipeline, sourceRun, csrfToken, onClose }) {
+  const [form, setForm] = useState(null);
+  const [values, setValues] = useState({});
+  const [workspaces, setWorkspaces] = useState('[]');
+  const [error, setError] = useState('');
+  const [saving, setSaving] = useState(false);
+  const params = new URLSearchParams();
+  if (sourceRun) { params.set('source_run', sourceRun.name); params.set('source_uid', sourceRun.uid); }
+  useEffect(() => {
+    request(`/api/pipelines/${namespace}/${pipeline}/form?${params}`)
+      .then((data) => {
+        setForm(data);
+        setValues(Object.fromEntries(data.parameters.map((item) => [item.name, item.type === 'string' ? item.value ?? '' : JSON.stringify(item.value ?? (item.type === 'array' ? [] : {}), null, 2)])));
+        setWorkspaces(JSON.stringify(data.workspaces, null, 2));
+      }).catch((cause) => setError(cause.message));
+  }, [namespace, pipeline, sourceRun?.uid]);
+  const submit = async (event) => {
+    event.preventDefault(); setError(''); setSaving(true);
+    try {
+      const typedValues = {};
+      for (const item of form.parameters) typedValues[item.name] = item.type === 'string' ? values[item.name] : JSON.parse(values[item.name]);
+      const bindings = JSON.parse(workspaces);
+      if (!Array.isArray(bindings)) throw new Error('Workspace bindings must be a JSON array.');
+      const created = await request('/api/runs', {
+        method: 'POST', headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': csrfToken },
+        body: JSON.stringify({ namespace, pipeline, resourceVersion: form.resourceVersion, values: typedValues, workspaces: bindings, sourceRun: sourceRun || null }),
+      });
+      onClose(); navigate({ kind: 'run', ...created });
+    } catch (cause) { setError(cause.message); }
+    finally { setSaving(false); }
+  };
+  return <div className="modal-backdrop" role="presentation" onMouseDown={(event) => event.target === event.currentTarget && onClose()}><div className="modal" role="dialog" aria-modal="true" aria-label={sourceRun ? 'Rebuild PipelineRun' : 'Start PipelineRun'}>
+    <div className="modal-header"><div><div className="eyebrow">{namespace} / {pipeline}</div><h2>{sourceRun ? 'Rebuild with parameters' : 'Start pipeline'}</h2><p>{sourceRun ? `Values from ${sourceRun.name} are prefilled. Current pipeline defaults fill any missing values.` : 'Review parameters before creating a new PipelineRun.'}</p></div><button className="close" type="button" onClick={onClose} aria-label="Close">×</button></div>
+    {!form ? <div className="loading"><Spinner size="lg" /></div> : <form onSubmit={submit}>
+      <div className="modal-body">
+        {form.removedParameters.length > 0 && <Alert variant="warning" title={`These old parameters are no longer in the pipeline and will be omitted: ${form.removedParameters.join(', ')}`} className="notice" />}
+        {form.parameters.map((item) => <Field key={item.name} label={<>{item.name} <span className="origin">{item.source === 'run' ? 'Previous run' : item.source === 'default' ? 'Pipeline default' : 'Required'}</span></>} hint={item.description || (item.type !== 'string' ? `Enter a JSON ${item.type}` : '')}>
+          {item.enum?.length ? <select value={values[item.name] ?? ''} onChange={(event) => setValues({ ...values, [item.name]: event.target.value })}>{item.enum.map((option) => <option key={option} value={option}>{option}</option>)}</select> :
+            <textarea rows={item.type === 'string' ? 2 : 5} value={values[item.name] ?? ''} onChange={(event) => setValues({ ...values, [item.name]: event.target.value })} required={item.source === 'required'} />}
+        </Field>)}
+        {form.workspaceDefinitions.length > 0 && <Field label="Workspace bindings" hint="JSON array of Tekton workspace bindings; required workspace names must be present."><textarea rows={7} value={workspaces} onChange={(event) => setWorkspaces(event.target.value)} /></Field>}
+        {error && <Alert variant="danger" title={error} className="notice" />}
+      </div>
+      <div className="modal-footer"><Button variant="secondary" onClick={onClose}>Cancel</Button><Button type="submit" variant="primary" isDisabled={saving || !csrfToken}>{saving ? 'Starting…' : 'Start PipelineRun'}</Button></div>
+    </form>}
+  </div></div>;
+}
+
+export default App;

@@ -1,0 +1,90 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: art-pipelines-ui
+  namespace: art-pipelines-ui
+  labels:
+    app: art-pipelines-ui
+  annotations:
+    image.openshift.io/triggers: '[{"from":{"kind":"ImageStreamTag","name":"art-pipelines-ui:latest"},"fieldPath":"spec.template.spec.containers[?(@.name==\"app\")].image"}]'
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: art-pipelines-ui
+  template:
+    metadata:
+      labels:
+        app: art-pipelines-ui
+    spec:
+      serviceAccountName: art-pipelines-ui
+      containers:
+        - name: app
+          image: image-registry.openshift-image-registry.svc:5000/art-pipelines-ui/art-pipelines-ui:latest
+          imagePullPolicy: Always
+          envFrom:
+            - configMapRef:
+                name: art-pipelines-ui-config
+          ports:
+            - name: app
+              containerPort: 8080
+          resources:
+            requests:
+              cpu: 100m
+              memory: 256Mi
+            limits:
+              memory: 1Gi
+          volumeMounts:
+            - name: service-ca
+              mountPath: /var/run/secrets/service-ca
+              readOnly: true
+        - name: oauth-proxy
+          image: registry.redhat.io/openshift4/ose-oauth-proxy@sha256:ef45e03a7175ad54e957a67efc819aa4b0412079ed23776b5312f6abc84a30c1
+          args:
+            - --provider=openshift
+            - --client-id=art-pipelines-ui
+            - --client-secret-file=/var/run/oauth-secrets/client-secret
+            - --https-address=:8443
+            - --http-address=
+            - --upstream=http://localhost:8080
+            - --tls-cert=/etc/tls/private/tls.crt
+            - --tls-key=/etc/tls/private/tls.key
+            - --cookie-secret-file=/var/run/oauth-secrets/cookie-secret
+            - --cookie-name=_art_pipelines_ui
+            - --pass-access-token=true
+            - --scope=user:full
+            - --skip-auth-regex=^/api/health$
+            - --upstream-timeout=120s
+          ports:
+            - name: https
+              containerPort: 8443
+          resources:
+            requests:
+              cpu: 50m
+              memory: 64Mi
+            limits:
+              memory: 256Mi
+          readinessProbe:
+            httpGet:
+              path: /api/health
+              port: https
+              scheme: HTTPS
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          volumeMounts:
+            - name: proxy-tls
+              mountPath: /etc/tls/private
+              readOnly: true
+            - name: oauth-secrets
+              mountPath: /var/run/oauth-secrets
+              readOnly: true
+      volumes:
+        - name: oauth-secrets
+          secret:
+            secretName: art-pipelines-ui-oauth
+        - name: service-ca
+          configMap:
+            name: art-pipelines-ui-service-ca
+        - name: proxy-tls
+          secret:
+            secretName: art-pipelines-ui-proxy-tls

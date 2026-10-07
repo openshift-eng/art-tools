@@ -1,0 +1,30 @@
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: art-pipelines-ui
+  namespace: openshift-gitops
+spec:
+  project: default
+  source:
+    repoURL: https://github.com/openshift-eng/art-tools
+    path: art-cluster/pipelines/config/argocd/project/art-pipelines-ui
+    targetRevision: main
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: art-pipelines-ui
+  ignoreDifferences:
+    - group: apps
+      kind: Deployment
+      name: art-pipelines-ui
+      namespace: art-pipelines-ui
+      jsonPointers:
+        - /spec/template/spec/containers/0/image
+  syncPolicy:
+    automated:
+      enabled: true
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true
+      - PruneLast=true
+      - RespectIgnoreDifferences=true

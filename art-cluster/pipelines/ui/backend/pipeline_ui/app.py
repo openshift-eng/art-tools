@@ -1,0 +1,310 @@
+"""ART Pipelines UI API and static frontend."""
+
+import asyncio
+import os
+import secrets
+from pathlib import Path
+
+import httpx
+from fastapi import FastAPI, HTTPException, Query, Request, Response
+from fastapi.responses import JSONResponse
+from fastapi.staticfiles import StaticFiles
+from pydantic import BaseModel, Field
+
+from .cluster import Gateway, UpstreamError
+from .rebuild import InvalidRun, build_run, parameter_form, pipeline_name
+
+
+NAMESPACES = tuple(
+    namespace.strip() for namespace in os.getenv("PIPELINE_NAMESPACES", "").split(",") if namespace.strip()
+)
+CSRF_COOKIE = "__Host-art-pipelines-csrf"
+app = FastAPI(title="ART Pipelines UI", docs_url=None, redoc_url=None, openapi_url=None)
+
+
+class SourceRun(BaseModel):
+    name: str
+    uid: str
+
+
+class CreateRun(BaseModel):
+    namespace: str
+    pipeline: str
+    resourceVersion: str
+    values: dict[str, object] = Field(default_factory=dict)
+    workspaces: list[dict] = Field(default_factory=list)
+    sourceRun: SourceRun | None = None
+
+
+@app.exception_handler(UpstreamError)
+async def upstream_error(_request: Request, error: UpstreamError):
+    return JSONResponse(status_code=error.status, content={"detail": error.message})
+
+
+@app.exception_handler(httpx.RequestError)
+async def network_error(_request: Request, _error: httpx.RequestError):
+    return JSONResponse(status_code=502, content={"detail": "Cluster service is temporarily unavailable"})
+
+
+def user_token(request: Request) -> str:
+    token = request.headers.get("x-forwarded-access-token", "")
+    if not token:
+        raise HTTPException(status_code=401, detail="OpenShift login is required")
+    return token
+
+
+def allowed_namespace(namespace: str) -> str:
+    if namespace not in NAMESPACES:
+        raise HTTPException(status_code=404, detail="Namespace is not configured")
+    return namespace
+
+
+def selected_namespaces(namespace: str | None) -> tuple[str, ...]:
+    return (allowed_namespace(namespace),) if namespace else NAMESPACES
+
+
+def check_csrf(request: Request) -> None:
+    cookie = request.cookies.get(CSRF_COOKIE)
+    header = request.headers.get("x-csrf-token")
+    if not cookie or not header or not secrets.compare_digest(cookie, header):
+        raise HTTPException(status_code=403, detail="Refresh the page before starting a run")
+
+
+def run_summary(run: dict, source: str) -> dict:
+    metadata = run.get("metadata", {})
+    status = run.get("status", {})
+    condition = (status.get("conditions") or [{}])[0]
+    reason = condition.get("reason") or "Unknown"
+    if condition.get("status") == "Unknown":
+        reason = "Running"
+    return {
+        "namespace": metadata.get("namespace"),
+        "name": metadata.get("name"),
+        "uid": metadata.get("uid"),
+        "pipeline": pipeline_name(run),
+        "status": reason,
+        "message": condition.get("message", ""),
+        "created": metadata.get("creationTimestamp"),
+        "started": status.get("startTime"),
+        "completed": status.get("completionTime"),
+        "source": source,
+    }
+
+
+def pipeline_summary(pipeline: dict) -> dict:
+    metadata = pipeline.get("metadata", {})
+    return {
+        "namespace": metadata.get("namespace"),
+        "name": metadata.get("name"),
+        "description": pipeline.get("spec", {}).get("description", ""),
+        "parameterCount": len(pipeline.get("spec", {}).get("params", [])),
+    }
+
+
+async def find_run(gateway: Gateway, namespace: str, name: str, uid: str | None = None):
+    uid = uid or None
+    try:
+        run = await gateway.run(namespace, name)
+        if uid is None or run.get("metadata", {}).get("uid") == uid:
+            return run, "live", None
+    except UpstreamError as error:
+        if error.status != 404:
+            raise
+    record, run = await gateway.archived_run(namespace, name, uid)
+    return run, "archive", record["name"]
+
+
+@app.get("/api/health")
+async def health():
+    return {"ready": True}
+
+
+@app.get("/api/session")
+async def session(request: Request, response: Response):
+    user_token(request)
+    csrf = request.cookies.get(CSRF_COOKIE) or secrets.token_urlsafe(32)
+    response.set_cookie(CSRF_COOKIE, csrf, secure=True, httponly=False, samesite="strict", path="/")
+    return {"csrfToken": csrf, "user": request.headers.get("x-forwarded-user", "")}
+
+
+@app.get("/api/namespaces")
+async def namespaces(request: Request):
+    async with Gateway(user_token(request)) as gateway:
+        async def visible(namespace: str):
+            try:
+                await gateway.kube_json(
+                    "GET", f"/apis/tekton.dev/v1/namespaces/{namespace}/pipelines", params={"limit": 1}
+                )
+                return namespace
+            except UpstreamError as error:
+                if error.status == 403:
+                    return None
+                raise
+
+        found = await asyncio.gather(*(visible(namespace) for namespace in NAMESPACES))
+    return {"namespaces": [namespace for namespace in found if namespace]}
+
+
+@app.get("/api/pipelines")
+async def pipelines(request: Request, namespace: str | None = None, q: str = ""):
+    names = selected_namespaces(namespace)
+    async with Gateway(user_token(request)) as gateway:
+        async def read(current: str):
+            try:
+                return [pipeline_summary(item) async for item in gateway.list_kube(current, "pipelines")]
+            except UpstreamError as error:
+                if error.status == 403 and namespace is None:
+                    return []
+                raise
+
+        groups = await asyncio.gather(*(read(name) for name in names))
+    items = [item for group in groups for item in group if q.lower() in item["name"].lower()]
+    return {"items": sorted(items, key=lambda item: (item["namespace"], item["name"]))}
+
+
+@app.get("/api/pipelines/{namespace}/{name}")
+async def pipeline_detail(request: Request, namespace: str, name: str):
+    allowed_namespace(namespace)
+    async with Gateway(user_token(request)) as gateway:
+        pipeline = await gateway.pipeline(namespace, name)
+    return {
+        **pipeline_summary(pipeline),
+        "parameters": pipeline.get("spec", {}).get("params", []),
+        "workspaces": pipeline.get("spec", {}).get("workspaces", []),
+        "resourceVersion": pipeline["metadata"]["resourceVersion"],
+    }
+
+
+@app.get("/api/pipelines/{namespace}/{name}/form")
+async def run_form(
+    request: Request, namespace: str, name: str, source_run: str | None = None, source_uid: str | None = None
+):
+    allowed_namespace(namespace)
+    async with Gateway(user_token(request)) as gateway:
+        pipeline = await gateway.pipeline(namespace, name)
+        source = None
+        if source_run:
+            source, _, _ = await find_run(gateway, namespace, source_run, source_uid)
+            if pipeline_name(source) != name:
+                raise HTTPException(status_code=400, detail="Source run belongs to another Pipeline")
+    return parameter_form(pipeline, source)
+
+
+@app.get("/api/runs")
+async def runs(
+    request: Request,
+    namespace: str | None = None,
+    pipeline: str = "",
+    q: str = "",
+    status: str = "",
+    since: str = "",
+    until: str = "",
+    page: int = Query(1, ge=1),
+    page_size: int = Query(50, ge=1, le=100),
+):
+    names = selected_namespaces(namespace)
+    errors = []
+    async with Gateway(user_token(request)) as gateway:
+        async def read(current: str):
+            items = {}
+            try:
+                async for record, run in gateway.list_records(current, filter_text="data_type == PIPELINE_RUN"):
+                    summary = run_summary(run, "archive")
+                    if summary["uid"]:
+                        items[summary["uid"]] = summary
+            except UpstreamError as error:
+                if error.status != 403:
+                    errors.append({"namespace": current, "source": "archive", "message": error.message})
+            try:
+                async for run in gateway.list_kube(current, "pipelineruns"):
+                    summary = run_summary(run, "live")
+                    if summary["uid"]:
+                        items[summary["uid"]] = summary
+            except UpstreamError as error:
+                if error.status != 403 or namespace is not None:
+                    errors.append({"namespace": current, "source": "live", "message": error.message})
+            return list(items.values())
+
+        groups = await asyncio.gather(*(read(name) for name in names))
+    items = [item for group in groups for item in group]
+    if pipeline:
+        items = [item for item in items if item["pipeline"] == pipeline]
+    if q:
+        items = [item for item in items if q.lower() in (item["name"] or "").lower() or q.lower() in (item["pipeline"] or "").lower()]
+    if status:
+        items = [item for item in items if item["status"].lower() == status.lower()]
+    if since:
+        items = [item for item in items if (item["created"] or "") >= since]
+    if until:
+        items = [item for item in items if (item["created"] or "") <= until]
+    items.sort(key=lambda item: item["created"] or "", reverse=True)
+    start = (page - 1) * page_size
+    return {"items": items[start : start + page_size], "total": len(items), "page": page, "errors": errors}
+
+
+@app.get("/api/runs/{namespace}/{name}")
+async def run_detail(request: Request, namespace: str, name: str, uid: str | None = None):
+    allowed_namespace(namespace)
+    async with Gateway(user_token(request)) as gateway:
+        run, source, _ = await find_run(gateway, namespace, name, uid)
+    return {
+        **run_summary(run, source),
+        "parameters": run.get("spec", {}).get("params", []),
+        "workspaces": run.get("spec", {}).get("workspaces", []),
+        "tasks": run.get("status", {}).get("childReferences", []),
+    }
+
+
+@app.get("/api/runs/{namespace}/{name}/logs")
+async def run_logs(request: Request, namespace: str, name: str, uid: str | None = None):
+    allowed_namespace(namespace)
+    async with Gateway(user_token(request)) as gateway:
+        run, source, record_name = await find_run(gateway, namespace, name, uid)
+        if source == "live":
+            logs, truncated = await gateway.live_logs(namespace, name)
+            if logs:
+                return {"source": "live", "text": logs, "truncated": truncated}
+            if not run.get("status", {}).get("completionTime"):
+                return {"source": "live", "text": "Logs are not available yet.", "truncated": False}
+            try:
+                record, _ = await gateway.archived_run(namespace, name, run["metadata"]["uid"])
+                record_name = record["name"]
+            except UpstreamError as error:
+                if error.status == 404:
+                    return {"source": "live", "text": "Logs are not available.", "truncated": False}
+                raise
+        if not run.get("status", {}).get("completionTime"):
+            return {"source": "archive", "text": "Logs are not available yet.", "truncated": False}
+        try:
+            logs, truncated = await gateway.archived_logs(record_name)
+        except UpstreamError as error:
+            if error.status in (404, 500):
+                return {"source": "archive", "text": "Archived logs are not available.", "truncated": False}
+            raise
+    return {"source": "archive", "text": logs, "truncated": truncated}
+
+
+@app.post("/api/runs", status_code=201)
+async def create_run(request: Request, body: CreateRun):
+    check_csrf(request)
+    allowed_namespace(body.namespace)
+    async with Gateway(user_token(request)) as gateway:
+        pipeline = await gateway.pipeline(body.namespace, body.pipeline)
+        if pipeline["metadata"]["resourceVersion"] != body.resourceVersion:
+            raise HTTPException(status_code=409, detail="Pipeline changed; refresh the form and review its parameters")
+        source = None
+        if body.sourceRun:
+            source, _, _ = await find_run(gateway, body.namespace, body.sourceRun.name, body.sourceRun.uid)
+        try:
+            manifest = build_run(pipeline, body.values, source_run=source, workspaces=body.workspaces)
+        except InvalidRun as error:
+            raise HTTPException(status_code=400, detail=str(error)) from error
+        created = await gateway.kube_json(
+            "POST", f"/apis/tekton.dev/v1/namespaces/{body.namespace}/pipelineruns", json=manifest
+        )
+    return run_summary(created, "live")
+
+
+static_dir = Path(os.getenv("STATIC_DIR", Path(__file__).resolve().parents[2] / "frontend" / "dist"))
+if static_dir.is_dir():
+    app.mount("/", StaticFiles(directory=static_dir, html=True), name="frontend")
