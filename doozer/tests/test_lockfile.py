@@ -1,4 +1,5 @@
 import asyncio
+import hashlib
 import unittest
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, mock_open, patch
@@ -6,6 +7,7 @@ from unittest.mock import AsyncMock, MagicMock, mock_open, patch
 from doozerlib.lockfile import (
     ArtifactInfo,
     ArtifactLockfileGenerator,
+    MavenArtifactInfo,
     ModuleInfo,
     RpmInfo,
     RpmInfoCollector,
@@ -1435,6 +1437,32 @@ class TestArtifactInfo(unittest.TestCase):
         self.assertEqual(artifact_info.filename, "Current-IT-Root-CAs.pem")
 
 
+class TestMavenArtifactInfo(unittest.TestCase):
+    def test_to_dict(self):
+        attributes = {
+            "repository_url": "https://repository.example.com/maven2",
+            "group_id": "org.example",
+            "artifact_id": "example-artifact",
+            "version": "1.2.3",
+            "type": "jar",
+        }
+        artifact_info = MavenArtifactInfo(
+            attributes=attributes,
+            checksum="sha256:abc123",
+            filename="custom-artifact.jar",
+        )
+
+        self.assertEqual(
+            artifact_info.to_dict(),
+            {
+                "type": "maven",
+                "filename": "custom-artifact.jar",
+                "attributes": attributes,
+                "checksum": "sha256:abc123",
+            },
+        )
+
+
 class TestArtifactLockfileGenerator(unittest.IsolatedAsyncioTestCase):
     def setUp(self):
         self.logger = MagicMock()
@@ -1594,6 +1622,140 @@ class TestArtifactLockfileGenerator(unittest.IsolatedAsyncioTestCase):
             ],
         }
         mock_write_yaml.assert_called_once_with(expected_lockfile_data, mock_dest_dir / "artifacts.lock.yaml")
+
+    @patch.object(ArtifactLockfileGenerator, '_write_yaml')
+    @patch('aiohttp.ClientSession')
+    async def test_generate_artifact_lockfile_maven_resource(self, mock_session_class, mock_write_yaml):
+        mock_image_meta = MagicMock()
+        mock_image_meta.distgit_key = "test-image"
+        maven_resource = {
+            "type": "maven",
+            "filename": "java-analyzer-bundle.core.jar",
+            "attributes": {
+                "repository_url": "https://repository.example.com/maven2",
+                "group_id": "io.konveyor.tackle",
+                "artifact_id": "java-analyzer-bundle.core",
+                "version": "8.1.0.CR1-redhat-00003",
+                "type": "jar",
+            },
+        }
+        mock_image_meta.get_required_artifacts.return_value = [maven_resource]
+        mock_dest_dir = Path("/tmp/test")
+        mock_session = MagicMock()
+        mock_session_class.return_value.__aenter__.return_value = mock_session
+        maven_artifact_info = MavenArtifactInfo(
+            attributes=maven_resource["attributes"],
+            checksum="sha256:abc1",
+            filename="java-analyzer-bundle.core.jar",
+        )
+        self.generator._download_and_compute_checksum = AsyncMock(return_value=maven_artifact_info)
+        self.generator.should_generate_artifact_lockfile = MagicMock(return_value=True)
+
+        await self.generator.generate_artifact_lockfile(mock_image_meta, mock_dest_dir)
+
+        self.generator._download_and_compute_checksum.assert_called_once_with(mock_session, maven_resource)
+        mock_write_yaml.assert_called_once_with(
+            {
+                "metadata": {"version": "1.0"},
+                "artifacts": [maven_artifact_info.to_dict()],
+            },
+            mock_dest_dir / "artifacts.lock.yaml",
+        )
+
+    async def test_download_and_compute_checksum_maven_resource(self):
+        mock_session = MagicMock()
+        mock_response = MagicMock()
+        mock_response.read = AsyncMock(return_value=b"maven artifact")
+        mock_response_context = MagicMock()
+        mock_response_context.__aenter__ = AsyncMock(return_value=mock_response)
+        mock_response_context.__aexit__ = AsyncMock(return_value=None)
+        mock_session.get.return_value = mock_response_context
+        maven_resource = {
+            "type": "maven",
+            "filename": "fernflower.jar",
+            "attributes": {
+                "repository_url": "https://repository.example.com/maven2",
+                "group_id": "org.jetbrains.java.decompiler",
+                "artifact_id": "fernflower",
+                "version": "8.1.0.GA-redhat-00001",
+            },
+        }
+
+        result = await self.generator._download_and_compute_checksum(mock_session, maven_resource)
+
+        mock_session.get.assert_called_once_with(
+            "https://repository.example.com/maven2/org/jetbrains/java/decompiler/fernflower/"
+            "8.1.0.GA-redhat-00001/fernflower-8.1.0.GA-redhat-00001.jar"
+        )
+        self.assertEqual(
+            result,
+            MavenArtifactInfo(
+                attributes=maven_resource["attributes"],
+                checksum=f"sha256:{hashlib.sha256(b'maven artifact').hexdigest()}",
+                filename="fernflower.jar",
+            ),
+        )
+
+    async def test_download_and_compute_checksum_maven_resource_default_filenames(self):
+        mock_session = MagicMock()
+        mock_response = MagicMock()
+        mock_response.read = AsyncMock(return_value=b"maven artifact")
+        mock_response_context = MagicMock()
+        mock_response_context.__aenter__ = AsyncMock(return_value=mock_response)
+        mock_response_context.__aexit__ = AsyncMock(return_value=None)
+        mock_session.get.return_value = mock_response_context
+
+        test_cases = [
+            (
+                {
+                    "repository_url": "https://repository.example.com/maven2",
+                    "group_id": "org.example",
+                    "artifact_id": "example-artifact",
+                    "version": "1.2.3",
+                },
+                "example-artifact-1.2.3.jar",
+            ),
+            (
+                {
+                    "repository_url": "https://repository.example.com/maven2",
+                    "group_id": "org.example",
+                    "artifact_id": "example-artifact",
+                    "version": "1.2.3",
+                    "classifier": "sources",
+                    "type": "jar",
+                },
+                "example-artifact-1.2.3-sources.jar",
+            ),
+            (
+                {
+                    "repository_url": "https://repository.example.com/maven2",
+                    "group_id": "org.example",
+                    "artifact_id": "example-artifact",
+                    "version": "1.2.3",
+                    "type": "test-jar",
+                },
+                "example-artifact-1.2.3-tests.jar",
+            ),
+        ]
+
+        for attributes, expected_filename in test_cases:
+            with self.subTest(attributes=attributes):
+                resource = {"type": "maven", "attributes": attributes}
+
+                result = await self.generator._download_and_compute_checksum(mock_session, resource)
+
+                expected_url = (
+                    "https://repository.example.com/maven2/org/example/example-artifact/1.2.3/" + expected_filename
+                )
+                mock_session.get.assert_called_with(expected_url)
+                self.assertEqual(
+                    result,
+                    MavenArtifactInfo(
+                        attributes=attributes,
+                        checksum=f"sha256:{hashlib.sha256(b'maven artifact').hexdigest()}",
+                        filename=expected_filename,
+                    ),
+                )
 
     async def test_generate_artifact_lockfile_disabled(self):
         """Test skipping when artifact lockfile is disabled"""

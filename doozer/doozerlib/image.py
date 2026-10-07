@@ -1570,8 +1570,7 @@ class ImageMetadata(Metadata):
         Get list of required artifacts from image config.
 
         Returns:
-            list[dict]: List of dicts with 'url' and 'filename' keys.
-                        Normalizes both string URLs and object formats.
+            list[dict]: List of generic URL resources or Maven artifact resources.
         """
         if not self.is_artifact_lockfile_enabled():
             return []
@@ -1587,7 +1586,16 @@ class ImageMetadata(Metadata):
                 # Simple URL string - filename will be extracted from URL
                 normalized.append({'url': resource, 'filename': None})
             elif isinstance(resource, dict):
-                # Object format with url and optional filename
-                normalized.append({'url': resource['url'], 'filename': resource.get('filename', None)})
+                if resource.get('type') == 'maven':
+                    normalized.append(
+                        {
+                            'type': 'maven',
+                            'filename': resource.get('filename', None),
+                            'attributes': dict(resource['attributes']),
+                        }
+                    )
+                else:
+                    # Object format with url and optional filename
+                    normalized.append({'url': resource['url'], 'filename': resource.get('filename', None)})
 
         return normalized

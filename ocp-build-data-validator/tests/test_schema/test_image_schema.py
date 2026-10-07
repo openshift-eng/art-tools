@@ -281,6 +281,59 @@ class TestImageSchema(unittest.TestCase):
         }
         self.assertIsNone(image_schema.validate('filename', valid_data))
 
+    def test_validate_with_valid_maven_artifact_lockfile_resource(self):
+        valid_data = {
+            'from': {},
+            'name': 'my-name',
+            'for_payload': True,
+            'delivery': {'delivery_repo_names': ['foo', 'bar']},
+            'konflux': {
+                'cachi2': {
+                    'artifact_lockfile': {
+                        'resources': [
+                            {
+                                'type': 'maven',
+                                'filename': 'example-artifact.jar',
+                                'attributes': {
+                                    'repository_url': 'https://repository.example.com/maven2',
+                                    'group_id': 'org.example',
+                                    'artifact_id': 'example-artifact',
+                                    'version': '1.2.3',
+                                },
+                            }
+                        ]
+                    }
+                }
+            },
+        }
+        self.assertIsNone(image_schema.validate('filename', valid_data))
+
+    def test_validate_with_invalid_maven_artifact_lockfile_resource(self):
+        invalid_data = {
+            'from': {},
+            'name': 'my-name',
+            'for_payload': True,
+            'delivery': {'delivery_repo_names': ['foo', 'bar']},
+            'konflux': {
+                'cachi2': {
+                    'artifact_lockfile': {
+                        'resources': [
+                            {
+                                'type': 'maven',
+                                'attributes': {
+                                    'repository_url': 'https://repository.example.com/maven2',
+                                    'group_id': 'org.example',
+                                    'artifact_id': 'example-artifact',
+                                },
+                            }
+                        ]
+                    }
+                }
+            },
+        }
+        error = image_schema.validate('filename', invalid_data)
+        self.assertIn('is not valid under any of the given schemas', error)
+
     def test_validate_with_invalid_konflux_cachi2_artifact_lockfile_enabled(self):
         """Test invalid artifact_lockfile.enabled type"""
         invalid_data = {
