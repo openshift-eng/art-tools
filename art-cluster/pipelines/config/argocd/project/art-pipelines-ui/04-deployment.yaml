@@ -50,9 +50,9 @@ spec:
             - --tls-cert=/etc/tls/private/tls.crt
             - --tls-key=/etc/tls/private/tls.key
             - --cookie-secret-file=/var/run/oauth-secrets/cookie-secret
-            - --cookie-name=_art_pipelines_ui
+            - --cookie-name=_art_pipelines_ui_scoped
             - --pass-access-token=true
-            - --scope=user:full
+            - --scope=user:info role:art-pipelines-ui-scope:*
             - --skip-auth-regex=^/api/health$
             - --upstream-timeout=120s
           ports:

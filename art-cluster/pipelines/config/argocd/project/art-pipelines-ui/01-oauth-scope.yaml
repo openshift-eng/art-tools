@@ -1,0 +1,17 @@
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: art-pipelines-ui-scope
+rules:
+  - apiGroups: [tekton.dev]
+    resources: [pipelines, pipelineruns, taskruns]
+    verbs: [get, list]
+  - apiGroups: [tekton.dev]
+    resources: [pipelineruns]
+    verbs: [create]
+  - apiGroups: [""]
+    resources: [pods, pods/log, events]
+    verbs: [get, list]
+  - apiGroups: [results.tekton.dev]
+    resources: [results, records, logs]
+    verbs: [get, list]
