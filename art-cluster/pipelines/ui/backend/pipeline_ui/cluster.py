@@ -66,6 +66,22 @@ class Gateway:
             "GET", f"/apis/tekton.dev/v1/namespaces/{quote(namespace)}/pipelineruns/{quote(name)}"
         )
 
+    async def pod(self, namespace: str, name: str) -> dict:
+        return await self.kube_json("GET", f"/api/v1/namespaces/{quote(namespace)}/pods/{quote(name)}")
+
+    async def list_events(self, namespace: str, name: str):
+        token = ""
+        while True:
+            params = {"limit": 200, "fieldSelector": f"involvedObject.name={name}"}
+            if token:
+                params["continue"] = token
+            data = await self.kube_json("GET", f"/api/v1/namespaces/{quote(namespace)}/events", params=params)
+            for event in data.get("items", []):
+                yield event
+            token = data.get("metadata", {}).get("continue", "")
+            if not token:
+                return
+
     async def list_kube(self, namespace: str, resource: str, *, label_selector: str | None = None):
         token = ""
         while True:

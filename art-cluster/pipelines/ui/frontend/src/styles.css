@@ -84,6 +84,11 @@ button { cursor: pointer; }
 .logs-panel pre { background: #f5f5f5; color: #151515; border: 1px solid #d2d2d2; border-radius: 6px; padding: 20px; white-space: pre-wrap; overflow-wrap: anywhere; height: calc(100vh - 300px); min-height: 420px; overflow: auto; font-size: 12px; line-height: 1.5; }
 .logs-panel pre a { color: #0066cc; text-decoration: underline; text-underline-offset: 2px; }
 .logs-panel pre a:hover { color: #004080; }
+.events-panel > .muted { margin: -6px 0 18px; }
+.events-table td { white-space: normal; vertical-align: top; }
+.events-table td:first-child { white-space: nowrap; }
+.events-table td small { display: block; color: #6a6e73; margin-top: 4px; overflow-wrap: anywhere; }
+.events-table .event-message { min-width: 260px; overflow-wrap: anywhere; }
 .modal-backdrop { position: fixed; inset: 0; z-index: 10; background: #11243dad; display: flex; align-items: center; justify-content: center; padding: 24px; }
 .modal { background: white; width: min(750px, 100%); max-height: min(900px, 94vh); display: flex; flex-direction: column; border-radius: 10px; box-shadow: 0 22px 70px #0b172665; overflow: hidden; }
 .modal form { display: flex; flex-direction: column; min-height: 0; }

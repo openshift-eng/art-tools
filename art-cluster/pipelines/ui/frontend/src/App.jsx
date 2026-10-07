@@ -247,32 +247,42 @@ function PipelineDetail({ view, csrfToken }) {
 function RunDetail({ view, csrfToken }) {
   const [run, setRun] = useState(null);
   const [logs, setLogs] = useState(null);
+  const [events, setEvents] = useState(null);
+  const [eventsError, setEventsError] = useState('');
   const [activeTab, setActiveTab] = useState('logs');
   const [form, setForm] = useState(false);
   const [error, setError] = useState('');
   const url = `/api/runs/${view.namespace}/${view.name}?uid=${encodeURIComponent(view.uid || '')}`;
   const logsUrl = `/api/runs/${view.namespace}/${view.name}/logs?uid=${encodeURIComponent(view.uid || '')}`;
+  const eventsUrl = `/api/runs/${view.namespace}/${view.name}/events?uid=${encodeURIComponent(view.uid || '')}`;
   const refresh = useCallback(() => {
     request(url).then(setRun).catch((cause) => setError(cause.message));
     request(logsUrl).then(setLogs).catch((cause) => setError(cause.message));
   }, [url, logsUrl]);
-  useEffect(() => { setActiveTab('logs'); refresh(); }, [refresh]);
+  const refreshEvents = useCallback(() => {
+    request(eventsUrl).then((data) => { setEvents(data); setEventsError(''); }).catch((cause) => setEventsError(cause.message));
+  }, [eventsUrl]);
+  useEffect(() => { setActiveTab('logs'); setRun(null); setLogs(null); setEvents(null); refresh(); }, [refresh]);
+  useEffect(() => { if (activeTab === 'events') refreshEvents(); }, [activeTab, refreshEvents]);
   useEffect(() => {
     if (run?.status !== 'Running') return undefined;
-    const interval = window.setInterval(refresh, 10000);
+    const interval = window.setInterval(() => { refresh(); if (activeTab === 'events') refreshEvents(); }, 10000);
     return () => window.clearInterval(interval);
-  }, [run?.status, refresh]);
+  }, [run?.status, activeTab, refresh, refreshEvents]);
+  const refreshVisible = () => { refresh(); if (activeTab === 'events') refreshEvents(); };
   return <>
     <Button variant="link" className="back" onClick={() => navigate({ kind: 'runs' })}>← PipelineRuns</Button>
     {error && <Alert variant="danger" title={error} className="notice" />}
     {!run ? <div className="loading"><Spinner size="lg" /></div> : <>
-      <div className="page-heading detail-heading"><div><div className="eyebrow">{run.namespace} / {run.pipeline || 'PipelineRun'}</div><Title headingLevel="h1" size="2xl">{run.name}</Title><div className="detail-meta"><Status value={run.status} /><span>Created {formatDate(run.created)}</span><span>{run.source === 'archive' ? 'Tekton Results' : 'Live cluster'}</span></div></div><div className="detail-actions"><Button variant="secondary" onClick={refresh}>Refresh</Button>{run.pipeline && <Button variant="primary" onClick={() => setForm(true)}>Rebuild with parameters</Button>}</div></div>
+      <div className="page-heading detail-heading"><div><div className="eyebrow">{run.namespace} / {run.pipeline || 'PipelineRun'}</div><Title headingLevel="h1" size="2xl">{run.name}</Title><div className="detail-meta"><Status value={run.status} /><span>Created {formatDate(run.created)}</span><span>{run.source === 'archive' ? 'Tekton Results' : 'Live cluster'}</span></div></div><div className="detail-actions"><Button variant="secondary" onClick={refreshVisible}>Refresh</Button>{run.pipeline && <Button variant="primary" onClick={() => setForm(true)}>Rebuild with parameters</Button>}</div></div>
       <div className="detail-tabs" role="tablist" aria-label="PipelineRun views">
         <button type="button" role="tab" aria-selected={activeTab === 'logs'} className={activeTab === 'logs' ? 'active' : ''} onClick={() => setActiveTab('logs')}>Logs</button>
+        <button type="button" role="tab" aria-selected={activeTab === 'events'} className={activeTab === 'events' ? 'active' : ''} onClick={() => setActiveTab('events')}>Events</button>
         <button type="button" role="tab" aria-selected={activeTab === 'parameters'} className={activeTab === 'parameters' ? 'active' : ''} onClick={() => setActiveTab('parameters')}>Parameters ({run.parameters.length})</button>
         <button type="button" role="tab" aria-selected={activeTab === 'tasks'} className={activeTab === 'tasks' ? 'active' : ''} onClick={() => setActiveTab('tasks')}>Task runs ({run.tasks.length})</button>
       </div>
       {activeTab === 'logs' && <section className="panel logs-panel" role="tabpanel"><div className="section-heading"><h2>Logs</h2><span className="source">{logs?.source === 'archive' ? 'Tekton Results' : 'Cluster pods'}</span></div>{logs?.truncated && <Alert variant="warning" title="Log display is limited to the first 8 MB per step" className="notice" />}<LogText text={logs?.text || 'Loading logs…'} /></section>}
+      {activeTab === 'events' && <section className="panel events-panel" role="tabpanel"><div className="section-heading"><h2>Events</h2><span className="source">Cluster events</span></div><p className="muted">Updates every 10 seconds while the run is active.</p>{eventsError && <Alert variant="danger" title={eventsError} className="notice" />}{!events && !eventsError ? <div className="loading"><Spinner size="lg" /></div> : events?.items.length ? <div className="table-wrap"><table className="data-table events-table"><thead><tr><th>Last seen</th><th>Type</th><th>Resource</th><th>Reason</th><th>Message</th><th>Count</th></tr></thead><tbody>{events.items.map((event) => <tr key={event.uid}><td>{formatDate(event.lastSeen)}</td><td><Label color={event.type === 'Warning' ? 'red' : 'grey'}>{event.type}</Label></td><td><strong>{event.kind}</strong><small>{event.object}</small></td><td>{event.reason || '—'}</td><td className="event-message">{event.message || '—'}</td><td>{event.count}</td></tr>)}</tbody></table></div> : !eventsError && <p className="muted">{run.source === 'archive' ? 'No cluster events remain for this archived run.' : 'No cluster events have been recorded for this run yet.'}</p>}</section>}
       {activeTab === 'parameters' && <section className="panel" role="tabpanel"><h2>Parameters <span className="muted">{run.parameters.length}</span></h2>{run.parameters.length ? <div className="value-list">{run.parameters.map((param) => <div key={param.name}><span>{param.name}</span><code>{typeof param.value === 'string' ? param.value : JSON.stringify(param.value)}</code></div>)}</div> : <p className="muted">This run did not specify parameters.</p>}</section>}
       {activeTab === 'tasks' && <section className="panel" role="tabpanel">{run.message && <div className="run-message">{run.message}</div>}<h2>Task runs</h2>{run.tasks.length ? <div className="task-list">{run.tasks.map((task) => <div key={task.name}><strong>{task.pipelineTaskName || task.name}</strong><small>{task.name}</small></div>)}</div> : <p className="muted">No task runs recorded.</p>}</section>}
       {form && <RunForm namespace={run.namespace} pipeline={run.pipeline} sourceRun={{ name: run.name, uid: run.uid }} csrfToken={csrfToken} onClose={() => setForm(false)} />}

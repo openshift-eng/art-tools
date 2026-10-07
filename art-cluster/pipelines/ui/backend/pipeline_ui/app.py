@@ -101,6 +101,22 @@ def pipeline_summary(pipeline: dict) -> dict:
     }
 
 
+def event_summary(event: dict) -> dict:
+    metadata = event.get("metadata", {})
+    involved = event.get("involvedObject", {})
+    return {
+        "uid": metadata.get("uid"),
+        "kind": involved.get("kind"),
+        "object": involved.get("name"),
+        "type": event.get("type", "Normal"),
+        "reason": event.get("reason", ""),
+        "message": event.get("message", ""),
+        "count": event.get("count", 1),
+        "firstSeen": event.get("firstTimestamp") or event.get("eventTime"),
+        "lastSeen": event.get("lastTimestamp") or event.get("eventTime") or metadata.get("creationTimestamp"),
+    }
+
+
 async def read_run_summaries(gateway: Gateway, namespace: str, errors: list, selected: bool) -> list[dict]:
     items = {}
     try:
@@ -307,6 +323,47 @@ async def run_logs(request: Request, namespace: str, name: str, uid: str | None 
                 return {"source": "archive", "text": "Archived logs are not available.", "truncated": False}
             raise
     return {"source": "archive", "text": logs, "truncated": truncated}
+
+
+@app.get("/api/runs/{namespace}/{name}/events")
+async def run_events(request: Request, namespace: str, name: str, uid: str | None = None):
+    allowed_namespace(namespace)
+    async with Gateway(user_token(request)) as gateway:
+        run, source, _ = await find_run(gateway, namespace, name, uid)
+        run_uid = run.get("metadata", {}).get("uid")
+        targets = [("PipelineRun", name, run_uid)]
+        if source == "live":
+            tasks = [
+                task async for task in gateway.list_kube(
+                    namespace, "taskruns", label_selector=f"tekton.dev/pipelineRun={name}"
+                )
+            ]
+            for task in tasks:
+                metadata = task.get("metadata", {})
+                owners = metadata.get("ownerReferences", [])
+                if owners and not any(owner.get("uid") == run_uid for owner in owners):
+                    continue
+                targets.append(("TaskRun", metadata["name"], metadata["uid"]))
+                pod_name = task.get("status", {}).get("podName")
+                if pod_name:
+                    try:
+                        pod = await gateway.pod(namespace, pod_name)
+                        targets.append(("Pod", pod_name, pod["metadata"]["uid"]))
+                    except UpstreamError as error:
+                        if error.status not in (403, 404):
+                            raise
+
+        async def read_events(kind: str, object_name: str, object_uid: str):
+            return [
+                event_summary(event) async for event in gateway.list_events(namespace, object_name)
+                if event.get("involvedObject", {}).get("kind") == kind
+                and event.get("involvedObject", {}).get("uid") == object_uid
+            ]
+
+        groups = await asyncio.gather(*(read_events(*target) for target in targets))
+    items = [event for group in groups for event in group]
+    items.sort(key=lambda event: (event["lastSeen"] or "", event["uid"] or ""), reverse=True)
+    return {"items": items, "source": "cluster"}
 
 
 @app.post("/api/runs", status_code=201)
