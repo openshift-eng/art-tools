@@ -115,6 +115,8 @@ def start_pipeline_run(
         labels["art.openshift.io/group"] = params["group"]
     if params.get("assembly"):
         labels["art.openshift.io/assembly"] = params["assembly"]
+    if params.get("ocp-target-version"):
+        labels["art.openshift.io/ocp-version"] = params["ocp-target-version"]
 
     parent_pr_name = get_current_pipelinerun_name()
     if parent_pr_name:
@@ -130,6 +132,10 @@ def start_pipeline_run(
     if params.get("group"):
         group = params["group"].replace(".", "-")
         generate_name = f"{pipeline_name}-{group}"
+        # Include OCP target version in name for layered products with multiple OCP targets
+        if params.get("ocp-target-version"):
+            ocp_version = params["ocp-target-version"].replace(".", "-")
+            generate_name = f"{pipeline_name}-{group}-ocp-{ocp_version}"
 
     pipeline_run = {
         "apiVersion": "tekton.dev/v1",
