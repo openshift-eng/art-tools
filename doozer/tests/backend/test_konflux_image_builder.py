@@ -411,6 +411,33 @@ class TestKonfluxImageBuilder(unittest.IsolatedAsyncioTestCase):
         # Validation should NOT be called for OKD groups
         mock_validate.assert_not_awaited()
 
+    async def test_bigquery_write_keeps_slot_until_worker_finishes_after_cancellation(self):
+        self.builder._bigquery_write_semaphore = asyncio.Semaphore(1)
+        started, release, next_started = Event(), Event(), Event()
+
+        def block_write():
+            started.set()
+            assert release.wait(timeout=5)
+
+        write_task = asyncio.create_task(self.builder._run_bigquery_write(block_write))
+        next_task = None
+        try:
+            self.assertTrue(await asyncio.wait_for(asyncio.to_thread(started.wait, 2), timeout=2))
+            write_task.cancel()
+            with self.assertRaises(asyncio.CancelledError):
+                await write_task
+            self.assertTrue(self.builder._bigquery_write_semaphore.locked())
+
+            next_task = asyncio.create_task(self.builder._run_bigquery_write(next_started.set))
+            await asyncio.sleep(0.01)
+            self.assertFalse(next_started.is_set())
+        finally:
+            release.set()
+
+        self.assertTrue(await asyncio.wait_for(asyncio.to_thread(next_started.wait, 2), timeout=2))
+        await asyncio.wait_for(next_task, timeout=2)
+        self.assertFalse(self.builder._bigquery_write_semaphore.locked())
+
     async def test_update_konflux_db_keeps_event_loop_responsive_during_bigquery_writes(self):
         metadata = self._metadata()
         build_repo = MagicMock(
@@ -474,6 +501,14 @@ class TestKonfluxImageBuilder(unittest.IsolatedAsyncioTestCase):
             await asyncio.wait_for(update_task, timeout=5)
             mock_retry.with_timeout.assert_called_once_with(60)
             self.assertEqual(mock_bigquery_client.return_value.client.insert_rows_json.call_args.kwargs["timeout"], 60)
+
+            with patch.object(
+                self.builder, "_run_bigquery_write", new=AsyncMock(side_effect=[None, asyncio.CancelledError()])
+            ):
+                with self.assertRaises(asyncio.CancelledError):
+                    await self.builder.update_konflux_db(
+                        metadata, build_repo, pipelinerun, KonfluxBuildOutcome.PENDING, ["x86_64"], "5"
+                    )
 
     async def test_update_konflux_db_uses_definitive_pullspec_for_installed_packages(self):
         metadata = self._metadata()

@@ -129,6 +129,7 @@ class KonfluxImageBuilder:
         self._record_logger = record_logger
         # A mass rebuild can write hundreds of records at once; limit concurrent BigQuery requests.
         self._bigquery_write_semaphore = asyncio.Semaphore(BIGQUERY_WRITE_CONCURRENCY)
+        self._bigquery_write_tasks: Set[asyncio.Task] = set()
         self._blocking_custom_integration_test_scenarios: Set[str] = set()
         self._konflux_client = KonfluxClient.from_kubeconfig(
             default_namespace=config.namespace,
@@ -1306,8 +1307,7 @@ class KonfluxImageBuilder:
                 build_record_params['end_time'] = datetime.strptime(completion_time, '%Y-%m-%dT%H:%M:%SZ')
 
         build_record = KonfluxBuildRecord(**build_record_params)
-        async with self._bigquery_write_semaphore:
-            await asyncio.to_thread(metadata.runtime.konflux_db.add_build, build_record)
+        await self._run_bigquery_write(metadata.runtime.konflux_db.add_build, build_record)
         logger.info('Konflux build %s info stored successfully with status %s', build_record.nvr, outcome)
 
         try:
@@ -1318,17 +1318,46 @@ class KonfluxImageBuilder:
 
             if rows:
                 try:
-                    async with self._bigquery_write_semaphore:
-                        await asyncio.to_thread(self._insert_taskrun_rows, rows)
-                except:
+                    await self._run_bigquery_write(self._insert_taskrun_rows, rows)
+                except Exception:
                     logger.warning('Error inserting taskrun information in bigquery')
                     pprint.pprint(rows)
                     raise
-        except:
+        except Exception:
             logger.warning('Error recording taskrun information in bigquery')
             traceback.print_exc()
 
         return build_record
+
+    async def _run_bigquery_write(self, func, *args):
+        """Keep a write slot occupied until its worker finishes, even if the caller is cancelled."""
+        await self._bigquery_write_semaphore.acquire()
+        try:
+            worker = asyncio.create_task(asyncio.to_thread(func, *args))
+        except BaseException:
+            self._bigquery_write_semaphore.release()
+            raise
+
+        self._bigquery_write_tasks.add(worker)
+        caller_cancelled = False
+
+        def on_complete(task: asyncio.Task):
+            self._bigquery_write_tasks.discard(task)
+            self._bigquery_write_semaphore.release()
+            if task.cancelled():
+                return
+            error = task.exception()
+            if caller_cancelled and error is not None:
+                self._logger.error(
+                    'BigQuery write failed after cancellation', exc_info=(type(error), error, error.__traceback__)
+                )
+
+        worker.add_done_callback(on_complete)
+        try:
+            return await asyncio.shield(worker)
+        except asyncio.CancelledError:
+            caller_cancelled = True
+            raise
 
     @staticmethod
     def _insert_taskrun_rows(rows: List[Dict]) -> None:
