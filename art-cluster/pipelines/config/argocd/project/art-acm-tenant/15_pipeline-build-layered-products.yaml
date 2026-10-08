@@ -53,7 +53,7 @@ spec:
     description: Skip custom IntegrationTestScenarios configured in group.yml
     name: skip-custom-its
     type: string
-  - default: all
+  - default: only
     description: 'Build strategy: all (every image) or only (IMAGE_LIST only)'
     name: image-build-strategy
     type: string
