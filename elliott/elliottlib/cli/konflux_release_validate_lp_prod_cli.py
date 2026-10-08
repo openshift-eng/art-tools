@@ -392,15 +392,20 @@ class ValidateLpProdCli:
                 continue
             mr = project.mergerequests.get(mr_iid)
             source_project_id = mr.source_project_id
-            if source_project_id not in source_projects:
-                source_projects[source_project_id] = gitlab_client.get_project(source_project_id)
+
+            def load_source_project(source_project_id=source_project_id):
+                if source_project_id not in source_projects:
+                    source_projects[source_project_id] = gitlab_client.get_project(source_project_id)
+                return source_projects[source_project_id]
+
             records = get_shipment_config_records(
                 mr,
-                source_projects[source_project_id],
+                source_projects.get(source_project_id),
                 kinds=None,
                 product=product,
                 product_aliases=product_aliases,
                 environment='prod',
+                source_project_loader=load_source_project,
             )
             if not records:
                 continue

@@ -2,7 +2,7 @@ import logging
 import re
 from dataclasses import dataclass
 from datetime import datetime
-from typing import Dict, Iterable, List, Tuple
+from typing import Callable, Dict, Iterable, List, Tuple
 from urllib.parse import urlparse
 
 from artcommonlib.assembly import assembly_config_struct
@@ -416,16 +416,20 @@ def get_shipment_config_records(
     product: str | None = None,
     environment: str | None = None,
     product_aliases: Iterable[str] = (),
+    source_project_loader: Callable[[], object] | None = None,
 ) -> list[ShipmentConfigRecord]:
     """Fetch validated shipment configuration records from loaded GitLab objects.
 
     Path filters are applied before file contents are fetched. When ``product``
     is supplied, the path and parsed metadata must agree so callers cannot
-    mistake another product's shipment for the requested one.
+    mistake another product's shipment for the requested one. A source-project
+    loader may be supplied when the source project should be fetched only if a
+    matching path is present.
 
     Args:
         mr: Loaded python-gitlab merge request object.
-        source_project: Loaded source project containing the MR branch.
+        source_project: Loaded source project containing the MR branch. May be
+            ``None`` when ``source_project_loader`` is supplied.
         kinds: Shipment kinds to include. ``None`` includes every shipment
             YAML path, including binary and product-specific kinds.
         group: Optional exact group path segment.
@@ -433,6 +437,8 @@ def get_shipment_config_records(
         environment: Optional environment path segment, such as ``prod``.
         product_aliases: Additional product names accepted while locating and
             validating records for ``product``.
+        source_project_loader: Optional callback that loads the source project
+            on demand when a matching file needs to be read.
 
     Returns:
         Matching path-aware shipment configuration records.
@@ -467,6 +473,10 @@ def get_shipment_config_records(
         if kinds is not None and not any(kind in parts for kind in kinds):
             continue
 
+        if source_project is None:
+            if source_project_loader is None:
+                raise ValueError("A source project or source project loader is required for matching shipment files")
+            source_project = source_project_loader()
         file_content = source_project.files.get(file_path, mr.source_branch)
         content = file_content.decode().decode('utf-8')
         yaml_data = Model(yaml.load(content)).primitive()

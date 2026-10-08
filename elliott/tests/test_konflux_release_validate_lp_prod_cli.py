@@ -5,7 +5,7 @@ import json
 import logging
 from io import StringIO
 from types import SimpleNamespace
-from unittest.mock import AsyncMock, MagicMock, call, patch
+from unittest.mock import ANY, AsyncMock, MagicMock, call, patch
 
 import pytest
 import yaml
@@ -194,6 +194,7 @@ def test_gitlab_concurrency_blocks_same_product_active_prod():
             product='openshift-logging',
             product_aliases=('logging',),
             environment='prod',
+            source_project_loader=ANY,
         )
         client.list_merge_requests.assert_called_once_with(
             'project', state='opened', project=project, target_branch='main'
@@ -224,21 +225,49 @@ def test_gitlab_concurrency_reuses_source_project():
         SimpleNamespace(iid=3, web_url='https://gitlab.example/project/-/merge_requests/3'),
     ]
 
+    def load_records(*_args, **kwargs):
+        kwargs['source_project_loader']()
+        return []
+
     with (
         patch('elliottlib.cli.konflux_release_validate_lp_prod_cli.GitLabClient.from_url', return_value=client),
         patch(
             'elliottlib.cli.konflux_release_validate_lp_prod_cli.get_shipment_config_records',
-            return_value=[],
+            side_effect=load_records,
         ) as get_records,
         patch('elliottlib.cli.konflux_release_validate_lp_prod_cli.inspect_shipment_mr_ci_state') as inspect_state,
     ):
         validator._validate_gitlab_concurrency('openshift-logging')
 
     assert get_records.call_count == 2
-    assert all(record_call.args[1] is source_project for record_call in get_records.call_args_list)
+    assert get_records.call_args_list[0].args[1] is None
+    assert get_records.call_args_list[1].args[1] is source_project
     client.get_project.assert_has_calls([call('project'), call(20)])
     assert client.get_project.call_count == 2
     inspect_state.assert_not_called()
+
+
+def test_gitlab_concurrency_skips_unrelated_mr_before_loading_source_project():
+    """An inaccessible source project is ignored when the MR has no shipment file."""
+    validator = ValidateLpProdCli(('unused',), 'https://gitlab.example/project/-/merge_requests/1', None)
+    client = MagicMock()
+    client._parse_mr_url.return_value = ('project', '1')
+    project = MagicMock(id=10)
+    mr = MagicMock(source_project_id=288573, source_branch='branch')
+    diff_info = MagicMock(id='diff-id')
+    diff = MagicMock(diffs=[{'new_path': 'config.yaml', 'old_path': None}])
+    mr.diffs.list.return_value = [diff_info]
+    mr.diffs.get.return_value = diff
+    project.mergerequests.get.return_value = mr
+    client.get_project.return_value = project
+    client.list_merge_requests.return_value = [
+        SimpleNamespace(iid=2, web_url='https://gitlab.example/project/-/merge_requests/2')
+    ]
+
+    with patch('elliottlib.cli.konflux_release_validate_lp_prod_cli.GitLabClient.from_url', return_value=client):
+        validator._validate_gitlab_concurrency('openshift-logging')
+
+    client.get_project.assert_called_once_with('project')
 
 
 def test_konflux_concurrency_ignores_other_product_and_terminal_release():
