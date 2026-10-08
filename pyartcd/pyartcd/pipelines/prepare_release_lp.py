@@ -709,25 +709,46 @@ class PrepareReleaseLPPipeline:
 
         try:
             group_content = self.get_file_from_branch(self.group, "group.yml")
-            group_config = stdlib_yaml.safe_load(group_content)
-            ocp_version = str(group_config.get("OCP_RELEASE_NOTES_VERSION", ""))
-            if not ocp_version:
-                return None
+            group_config = stdlib_yaml.safe_load(group_content) or {}
+            vars_section = group_config.get("vars", {}) or {}
+            replace_vars = {str(key): str(value) for key, value in vars_section.items() if value is not None}
+
+            # Keep supporting existing groups that define this value at the group.yml top level,
+            # but don't require it for templates that don't use OCP release-note placeholders.
+            ocp_version = replace_vars.get("OCP_RELEASE_NOTES_VERSION") or group_config.get("OCP_RELEASE_NOTES_VERSION")
+            if ocp_version:
+                ocp_version = str(ocp_version)
+                replace_vars.setdefault("OCP_RELEASE_NOTES_VERSION", ocp_version)
+                replace_vars.setdefault("OCP_RELEASE_NOTES_VERSION_DASHED", ocp_version.replace(".", "-"))
 
             assembly_parts = self.assembly.split(".")
-            replace_vars = {
-                "OCP_RELEASE_NOTES_VERSION": ocp_version,
-                "OCP_RELEASE_NOTES_VERSION_DASHED": ocp_version.replace(".", "-"),
-                "PRODUCT_MAJOR": assembly_parts[0] if len(assembly_parts) > 0 else "",
-                "PRODUCT_MINOR": assembly_parts[1] if len(assembly_parts) > 1 else "",
-                "PRODUCT_PATCH": assembly_parts[2] if len(assembly_parts) > 2 else "",
-            }
+            replace_vars.update(
+                {
+                    "PRODUCT_MAJOR": assembly_parts[0] if len(assembly_parts) > 0 else "",
+                    "PRODUCT_MINOR": assembly_parts[1] if len(assembly_parts) > 1 else "",
+                    "PRODUCT_PATCH": assembly_parts[2] if len(assembly_parts) > 2 else "",
+                }
+            )
 
             formatter = SafeFormatter()
-            return {
-                field: formatter.format(boilerplate.get(field, ""), **replace_vars)
-                for field in ("synopsis", "topic", "description", "solution")
+            template_fields = ("synopsis", "topic", "description", "solution")
+            required_ocp_vars = {
+                field_name
+                for field in template_fields
+                for _, field_name, _, _ in formatter.parse(boilerplate.get(field, ""))
+                if field_name in {"OCP_RELEASE_NOTES_VERSION", "OCP_RELEASE_NOTES_VERSION_DASHED"}
             }
+            missing_ocp_vars = sorted(name for name in required_ocp_vars if not replace_vars.get(name))
+            if missing_ocp_vars:
+                self._logger.warning(
+                    "Skipping release notes template for product '%s'; group '%s' is missing %s",
+                    self.product,
+                    self.group,
+                    ", ".join(missing_ocp_vars),
+                )
+                return None
+
+            return {field: formatter.format(boilerplate.get(field, ""), **replace_vars) for field in template_fields}
         except Exception:
             return None
 

@@ -33,7 +33,7 @@ class TestPrepareReleaseLPPipeline(unittest.TestCase):
             "synopsis": "ACM {PRODUCT_MAJOR}.{PRODUCT_MINOR}.{PRODUCT_PATCH}",
             "topic": "ACM security fixes",
             "description": "ACM update",
-            "solution": "Apply the update",
+            "solution": "For OCP {OCP_RELEASE_NOTES_VERSION} see ocp-{OCP_RELEASE_NOTES_VERSION_DASHED}-release-notes",
         }
         mock_get_file.return_value = b"OCP_RELEASE_NOTES_VERSION: \"4.18\"\n"
 
@@ -42,12 +42,52 @@ class TestPrepareReleaseLPPipeline(unittest.TestCase):
         result = pipeline._load_release_notes_template(errata_type="RHSA")
 
         self.assertIsNotNone(result)
+        self.assertEqual(result["solution"], "For OCP 4.18 see ocp-4-18-release-notes")
         mock_get_boilerplate.assert_called_once_with(
             runtime=pipeline,
             et_data={},
             art_advisory_key="rhacm2",
             errata_type="RHSA",
         )
+
+    @patch("pyartcd.pipelines.prepare_release_lp.get_advisory_boilerplate")
+    @patch.object(PrepareReleaseLPPipeline, "get_file_from_branch")
+    def test_load_release_notes_template_uses_group_vars_without_ocp_release_notes_version(
+        self, mock_get_file, mock_get_boilerplate
+    ):
+        mock_get_boilerplate.return_value = {
+            "synopsis": "Red Hat build of OpenTelemetry {CPE_VERSION}.{PRODUCT_PATCH}",
+            "topic": "OpenTelemetry",
+            "description": "Operator {PRODUCT_MAJOR}.{PRODUCT_MINOR}.{PRODUCT_PATCH}",
+            "solution": "CPE {CPE_VERSION}",
+        }
+        mock_get_file.return_value = b"vars:\n  CPE_VERSION: \"3.11\"\n"
+
+        pipeline = self._make_pipeline(group="rhosdt-0.158", assembly="0.158.0")
+        pipeline.product = "openshift-opentelemetry-operator"
+        result = pipeline._load_release_notes_template()
+
+        self.assertEqual(result["synopsis"], "Red Hat build of OpenTelemetry 3.11.0")
+        self.assertEqual(result["description"], "Operator 0.158.0")
+        self.assertEqual(result["solution"], "CPE 3.11")
+
+    @patch("pyartcd.pipelines.prepare_release_lp.get_advisory_boilerplate")
+    @patch.object(PrepareReleaseLPPipeline, "get_file_from_branch")
+    def test_load_release_notes_template_skips_when_required_ocp_version_is_missing(
+        self, mock_get_file, mock_get_boilerplate
+    ):
+        mock_get_boilerplate.return_value = {
+            "synopsis": "OpenTelemetry update",
+            "topic": "Topic",
+            "description": "Description",
+            "solution": "For OCP {OCP_RELEASE_NOTES_VERSION}, see ocp-{OCP_RELEASE_NOTES_VERSION_DASHED}-release-notes",
+        }
+        mock_get_file.return_value = b"vars:\n  CPE_VERSION: \"3.11\"\n"
+
+        pipeline = self._make_pipeline(group="rhosdt-0.158", assembly="0.158.0")
+        pipeline.product = "openshift-opentelemetry-operator"
+
+        self.assertIsNone(pipeline._load_release_notes_template())
 
     def test_extract_operand_nvrs_from_assembly(self):
         """Should extract NVRs from assembly members.images."""

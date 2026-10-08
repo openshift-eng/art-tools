@@ -335,10 +335,10 @@ class ReleaseFromFbcPipeline:
 
         Two modes:
         - OCP optional (kind provided): Uses kind (e.g., 'extras') as template key,
-          populates {MAJOR}/{MINOR}/{PATCH} from group.yml vars section.
+          makes group.yml vars available and populates {PATCH} from the assembly.
         - Layered product (kind=None): Uses self.product as template key,
-          populates {PRODUCT_MAJOR}/{PRODUCT_MINOR}/{PRODUCT_PATCH} from assembly
-          and {OCP_RELEASE_NOTES_VERSION} from group.yml.
+          makes group.yml vars available and populates {PRODUCT_MAJOR}/{PRODUCT_MINOR}/{PRODUCT_PATCH}
+          from the assembly. OCP release-notes placeholders are populated when configured.
 
         Args:
             kind: When provided, used as the boilerplate lookup key (OCP optional mode).
@@ -366,37 +366,59 @@ class ReleaseFromFbcPipeline:
 
         try:
             group_content = self.get_file_from_branch(self.group, "group.yml")
-            group_config = stdlib_yaml.safe_load(group_content)
+            group_config = stdlib_yaml.safe_load(group_content) or {}
+            vars_section = group_config.get("vars", {}) or {}
+            replace_vars = {str(key): str(value) for key, value in vars_section.items() if value is not None}
+
+            # Keep supporting existing groups that define this value at the group.yml top level,
+            # but don't require it for templates that don't use OCP release-note placeholders.
+            ocp_version = replace_vars.get("OCP_RELEASE_NOTES_VERSION") or group_config.get("OCP_RELEASE_NOTES_VERSION")
+            if ocp_version:
+                ocp_version = str(ocp_version)
+                replace_vars.setdefault("OCP_RELEASE_NOTES_VERSION", ocp_version)
+                replace_vars.setdefault("OCP_RELEASE_NOTES_VERSION_DASHED", ocp_version.replace(".", "-"))
 
             if kind:
-                # OCP optional mode: use {MAJOR}, {MINOR}, {PATCH} from vars section
-                vars_section = group_config.get("vars", {})
-                major = str(vars_section.get("MAJOR", ""))
-                minor = str(vars_section.get("MINOR", ""))
+                # OCP optional mode uses {MAJOR}, {MINOR}, and {PATCH}.
+                major = replace_vars.get("MAJOR", "")
+                minor = replace_vars.get("MINOR", "")
                 assembly_parts = self.assembly.split(".")
                 patch = assembly_parts[2] if len(assembly_parts) > 2 else "0"
                 if not major or not minor:
                     self.logger.warning("MAJOR/MINOR not found in group.yml vars for group '%s'", self.group)
                     return None
-                replace_vars = {"MAJOR": major, "MINOR": minor, "PATCH": patch}
+                replace_vars["PATCH"] = patch
             else:
-                # Layered product mode: use {PRODUCT_*} and {OCP_RELEASE_NOTES_VERSION}
-                ocp_version = str(group_config.get("OCP_RELEASE_NOTES_VERSION", ""))
-                if not ocp_version:
-                    self.logger.warning("OCP_RELEASE_NOTES_VERSION not found in group.yml for group '%s'", self.group)
-                    return None
+                # Layered product mode: assembly values take precedence for {PRODUCT_*}.
                 assembly_parts = self.assembly.split(".")
-                replace_vars = {
-                    "OCP_RELEASE_NOTES_VERSION": ocp_version,
-                    "OCP_RELEASE_NOTES_VERSION_DASHED": ocp_version.replace(".", "-"),
-                    "PRODUCT_MAJOR": assembly_parts[0] if len(assembly_parts) > 0 else "",
-                    "PRODUCT_MINOR": assembly_parts[1] if len(assembly_parts) > 1 else "",
-                    "PRODUCT_PATCH": assembly_parts[2] if len(assembly_parts) > 2 else "",
-                }
+                replace_vars.update(
+                    {
+                        "PRODUCT_MAJOR": assembly_parts[0] if len(assembly_parts) > 0 else "",
+                        "PRODUCT_MINOR": assembly_parts[1] if len(assembly_parts) > 1 else "",
+                        "PRODUCT_PATCH": assembly_parts[2] if len(assembly_parts) > 2 else "",
+                    }
+                )
 
             formatter = SafeFormatter()
+            template_fields = ("synopsis", "topic", "description", "solution")
+            required_ocp_vars = {
+                field_name
+                for field in template_fields
+                for _, field_name, _, _ in formatter.parse(boilerplate.get(field, ""))
+                if field_name in {"OCP_RELEASE_NOTES_VERSION", "OCP_RELEASE_NOTES_VERSION_DASHED"}
+            }
+            missing_ocp_vars = sorted(name for name in required_ocp_vars if not replace_vars.get(name))
+            if missing_ocp_vars:
+                self.logger.warning(
+                    "Skipping release notes template for key '%s'; group '%s' is missing %s",
+                    art_advisory_key,
+                    self.group,
+                    ", ".join(missing_ocp_vars),
+                )
+                return None
+
             result = {}
-            for field in ("synopsis", "topic", "description", "solution"):
+            for field in template_fields:
                 value = boilerplate.get(field, "")
                 result[field] = formatter.format(value, **replace_vars)
 

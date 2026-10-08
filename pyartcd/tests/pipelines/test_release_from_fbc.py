@@ -1187,12 +1187,13 @@ class TestLoadReleaseNotesTemplate(unittest.TestCase):
             "synopsis": "OpenShift Container Platform 4.{MINOR}.{PATCH} extras update",
             "topic": "Red Hat OpenShift Container Platform release 4.{MINOR}.{PATCH} is now available.",
             "description": "This advisory contains updates for OCP 4.{MINOR}.{PATCH}.",
-            "solution": "For OCP 4.{MINOR} see the docs.",
+            "solution": "For OCP 4.{MINOR} see {CPE_VERSION} docs.",
         }
         mock_get_file.return_value = b"""
 vars:
   MAJOR: 4
   MINOR: 22
+  CPE_VERSION: "3.11"
 """
 
         pipeline = self._make_pipeline()
@@ -1202,7 +1203,7 @@ vars:
         self.assertEqual(result["synopsis"], "OpenShift Container Platform 4.22.0 extras update")
         self.assertEqual(result["topic"], "Red Hat OpenShift Container Platform release 4.22.0 is now available.")
         self.assertEqual(result["description"], "This advisory contains updates for OCP 4.22.0.")
-        self.assertEqual(result["solution"], "For OCP 4.22 see the docs.")
+        self.assertEqual(result["solution"], "For OCP 4.22 see 3.11 docs.")
 
         mock_get_boilerplate.assert_called_once_with(
             runtime=pipeline,
@@ -1356,23 +1357,47 @@ OCP_RELEASE_NOTES_VERSION: "4.18"
 
     @patch("pyartcd.pipelines.release_from_fbc.get_advisory_boilerplate")
     @patch.object(ReleaseFromFbcPipeline, "get_file_from_branch")
-    def test_layered_product_missing_ocp_release_notes_version_returns_none(self, mock_get_file, mock_get_boilerplate):
-        """Layered product without OCP_RELEASE_NOTES_VERSION in group.yml returns None."""
+    def test_layered_product_uses_group_vars_without_ocp_release_notes_version(
+        self, mock_get_file, mock_get_boilerplate
+    ):
+        """Layered product templates can use group vars without an OCP release notes version."""
         mock_get_boilerplate.return_value = {
-            "synopsis": "Synopsis",
+            "synopsis": "OpenTelemetry {CPE_VERSION}.{PRODUCT_PATCH}",
             "topic": "Topic",
-            "description": "Description",
-            "solution": "Solution",
+            "description": "Operator {PRODUCT_MAJOR}.{PRODUCT_MINOR}.{PRODUCT_PATCH}",
+            "solution": "CPE {CPE_VERSION}",
         }
         mock_get_file.return_value = b"""
-product: openshift-logging
+vars:
+  CPE_VERSION: "3.11"
 """
 
-        pipeline = self._make_pipeline(group="logging-6.3", assembly="6.3.5")
-        pipeline.product = "openshift-logging"
+        pipeline = self._make_pipeline(group="rhosdt-0.158", assembly="0.158.0")
+        pipeline.product = "openshift-opentelemetry-operator"
         result = pipeline._load_release_notes_template()
 
-        self.assertIsNone(result)
+        self.assertEqual(result["synopsis"], "OpenTelemetry 3.11.0")
+        self.assertEqual(result["description"], "Operator 0.158.0")
+        self.assertEqual(result["solution"], "CPE 3.11")
+
+    @patch("pyartcd.pipelines.release_from_fbc.get_advisory_boilerplate")
+    @patch.object(ReleaseFromFbcPipeline, "get_file_from_branch")
+    def test_layered_product_skips_template_when_required_ocp_version_is_missing(
+        self, mock_get_file, mock_get_boilerplate
+    ):
+        """A template requiring unavailable OCP release-note placeholders is skipped."""
+        mock_get_boilerplate.return_value = {
+            "synopsis": "OpenTelemetry update",
+            "topic": "Topic",
+            "description": "Description",
+            "solution": "For OCP {OCP_RELEASE_NOTES_VERSION}, see ocp-{OCP_RELEASE_NOTES_VERSION_DASHED}-release-notes",
+        }
+        mock_get_file.return_value = b"vars:\n  CPE_VERSION: \"3.11\"\n"
+
+        pipeline = self._make_pipeline(group="rhosdt-0.158", assembly="0.158.0")
+        pipeline.product = "openshift-opentelemetry-operator"
+
+        self.assertIsNone(pipeline._load_release_notes_template())
 
     @patch("pyartcd.pipelines.release_from_fbc.get_advisory_boilerplate")
     def test_layered_product_no_template_key_returns_none(self, mock_get_boilerplate):
