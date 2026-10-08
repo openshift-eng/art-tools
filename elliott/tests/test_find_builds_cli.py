@@ -295,6 +295,26 @@ class TestIsImageReleased(IsolatedAsyncioTestCase):
         )
 
     @patch("elliottlib.cli.find_builds_cli.cmd_gather_async", new_callable=AsyncMock)
+    async def test_released_image_with_v_prefixed_version(self, mock_cmd):
+        mock_cmd.return_value = (0, "", "")
+        result = await _is_image_released(
+            "openshift5/pf-status-relay-rhel9",
+            "v5.0.0",
+            "202610060557.p2.gfce890b.assembly.stream.el9",
+        )
+        self.assertTrue(result)
+        mock_cmd.assert_called_once_with(
+            [
+                "skopeo",
+                "inspect",
+                "--raw",
+                "docker://registry.redhat.io/openshift5/pf-status-relay-rhel9:v5.0.0-202610060557.p2.gfce890b.assembly.stream.el9",
+            ],
+            check=False,
+            timeout=REGISTRY_CHECK_TIMEOUT,
+        )
+
+    @patch("elliottlib.cli.find_builds_cli.cmd_gather_async", new_callable=AsyncMock)
     async def test_unreleased_image(self, mock_cmd):
         mock_cmd.return_value = (1, "", "not found")
         result = await _is_image_released("openshift4/ose-cli-rhel9", "4.19.0", "202505210330.p0.el9")

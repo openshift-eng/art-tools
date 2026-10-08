@@ -741,14 +741,15 @@ async def _is_image_released(
 
     Arg(s):
         delivery_repo (str): Delivery repository name (e.g. "openshift4/ose-cli-rhel9").
-        version (str): Build version (e.g. "4.19.0").
+        version (str): Build version (e.g. "4.19.0" or "v5.0.0").
         release (str): Build release (e.g. "202505210330.p0.g8f1c8b5.assembly.stream.el9").
         registry_config (str | None): Path to Docker auth config file for registry auth.
 
     Return Value(s):
         bool: True if image tag exists on registry.redhat.io, False otherwise.
     """
-    tag = f"v{version}-{release}"
+    version_tag = version if version.startswith("v") else f"v{version}"
+    tag = f"{version_tag}-{release}"
     pullspec = f"{DELIVERY_IMAGE_REGISTRY}/{delivery_repo}:{tag}"
     try:
         cmd = ["skopeo", "inspect", "--raw"]
