@@ -20,6 +20,7 @@ def invoke_cleanup(
     api_reachable=False,
     build_url='',
     job_name='',
+    dry_run=False,
 ):
     lock_manager = MagicMock()
     lock_manager.get_locks = AsyncMock(return_value=[LOCK_NAME])
@@ -47,7 +48,8 @@ def invoke_cleanup(
         loop = asyncio.new_event_loop()
         asyncio.set_event_loop(loop)
         try:
-            result = CliRunner().invoke(cleanup_locks, [], obj=runtime)
+            args = ['--dry-run'] if dry_run else []
+            result = CliRunner().invoke(cleanup_locks, args, obj=runtime)
         finally:
             asyncio.set_event_loop(None)
             loop.close()
@@ -123,3 +125,34 @@ def test_missing_jenkins_build_uses_existing_api_reachability_check(api_reachabl
     check_jenkins.assert_called_once_with(JENKINS_OWNER)
     check_api.assert_called_once()
     assert lock_manager.unlock.await_count == int(api_reachable)
+
+
+def test_dry_run_does_not_delete_jenkins_locks():
+    """Dry-run mode should not call unlock for Jenkins locks"""
+    lock_manager, check_jenkins, _, init_jenkins, _ = invoke_cleanup(JENKINS_OWNER, jenkins_running=False, dry_run=True)
+
+    check_jenkins.assert_called_once_with(JENKINS_OWNER)
+    lock_manager.unlock.assert_not_awaited()
+    init_jenkins.assert_not_called()
+
+
+def test_dry_run_does_not_delete_orphaned_k8s_locks():
+    """Dry-run mode should not call unlock for orphaned k8s locks"""
+    lock_manager, _, _, init_jenkins, _ = invoke_cleanup(
+        'k8s/ns/art-quay-tenant/tekton.dev~v1~PipelineRun/build-abc', dry_run=True
+    )
+
+    lock_manager.unlock.assert_not_awaited()
+    init_jenkins.assert_not_called()
+
+
+def test_dry_run_does_not_update_title():
+    """Dry-run mode should not update Jenkins build title"""
+    build_url = f'https://jenkins.example.com/{JENKINS_OWNER}'
+    lock_manager, _, _, init_jenkins, update_title = invoke_cleanup(
+        JENKINS_OWNER, build_url=build_url, job_name='aos-cd-jobs/build', dry_run=True
+    )
+
+    init_jenkins.assert_not_called()
+    update_title.assert_not_called()
+    lock_manager.unlock.assert_not_awaited()
