@@ -993,10 +993,7 @@ class KonfluxOlmBundleRebaser:
         bundle_df.content = 'FROM scratch\nCOPY ./manifests /manifests\nCOPY ./metadata /metadata'
 
         component_name = metadata.get_olm_bundle_brew_component_name()
-        if operator_build.engine is Engine.KONFLUX:
-            bundle_version = f'{operator_build.version}.{operator_build.release}'
-        else:
-            bundle_version = f'{operator_df.labels["version"]}.{operator_df.labels["release"]}'
+        bundle_version = f'{operator_build.version}.{operator_build.release}'
         bundle_name = metadata.get_olm_bundle_delivery_repo_name()
 
         # Copy the operator's Dockerfile labels to the bundle's Dockerfile

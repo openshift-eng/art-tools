@@ -389,7 +389,7 @@ class TestKonfluxOlmBundleRebaser(IsolatedAsyncioTestCase):
             'operators.operatorframework.io.bundle.package.v1': 'test-package',
         }
         input_release = "1"
-        operator_build = MagicMock(engine=Engine.BREW, version="2.0", release="new-brew-release")
+        operator_build = MagicMock(engine=Engine.KONFLUX, version="1.0", release="1")
 
         self.rebaser._group_config.vars = {'MAJOR': '4', 'MINOR': '8'}
 
