@@ -1,12 +1,17 @@
 import asyncio
 import logging
 import typing
+from time import monotonic
 
 from artcommonlib import constants
 from google.cloud import bigquery
+from google.cloud.bigquery.retry import DEFAULT_JOB_RETRY, DEFAULT_RETRY
 from google.cloud.bigquery.table import RowIterator
 from sqlalchemy import BinaryExpression, UnaryExpression
 from sqlalchemy.dialects import mysql
+
+QUERY_TIMEOUT_SECONDS = 5 * 60
+REQUEST_TIMEOUT_SECONDS = 30
 
 
 class BigQueryClient:
@@ -40,10 +45,20 @@ class BigQueryClient:
         self.logger.debug('Executing query: %s', query)
 
         try:
-            results = self.client.query(query).result()
+            deadline = monotonic() + QUERY_TIMEOUT_SECONDS
+            retry = DEFAULT_RETRY.with_timeout(REQUEST_TIMEOUT_SECONDS)
+            job_retry = DEFAULT_JOB_RETRY.with_timeout(REQUEST_TIMEOUT_SECONDS)
+            job = self.client.query(query, timeout=REQUEST_TIMEOUT_SECONDS, retry=retry, job_retry=job_retry)
+            remaining = deadline - monotonic()
+            if remaining <= 0:
+                raise TimeoutError(f'BigQuery query submission exceeded {QUERY_TIMEOUT_SECONDS} seconds')
+            results = job.result(timeout=remaining, retry=retry, job_retry=job_retry)
             self.logger.debug('Query returned %s result rows', results.total_rows)
             return results
 
+        except TimeoutError:
+            self.logger.error('BigQuery query timed out (budget: %s seconds)', QUERY_TIMEOUT_SECONDS)
+            raise
         except Exception as err:
             self.logger.error('Failed executing query %s: ', err)
             raise
@@ -53,16 +68,7 @@ class BigQueryClient:
         Asynchronously execute a query in BigQuery and return a generator object with the results
         """
 
-        self.logger.debug('Executing query: %s', query)
-
-        try:
-            results = await asyncio.to_thread(self.client.query(query).result)
-            self.logger.debug('Query returned %s result rows', results.total_rows)
-            return results
-
-        except Exception as err:
-            self.logger.error('Failed executing query: %s', err)
-            raise
+        return await asyncio.to_thread(self.query, query)
 
     def insert(self, items: dict) -> None:
         """
