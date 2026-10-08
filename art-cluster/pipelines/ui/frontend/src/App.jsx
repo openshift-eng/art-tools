@@ -57,7 +57,18 @@ function Field({ label, children, hint }) {
   return <label className="field"><span className="field-label">{label}</span>{children}{hint && <span className="field-hint">{hint}</span>}</label>;
 }
 
-function LogText({ text }) {
+function LogText({ text, streaming }) {
+  const logRef = useRef(null);
+  const followTail = useRef(true);
+  useLayoutEffect(() => {
+    if (streaming && followTail.current && logRef.current) {
+      logRef.current.scrollTop = logRef.current.scrollHeight;
+    }
+  }, [text, streaming]);
+  const onScroll = () => {
+    const element = logRef.current;
+    if (element) followTail.current = element.scrollHeight - element.scrollTop - element.clientHeight < 48;
+  };
   const content = useMemo(() => {
     const parts = [];
     const urlPattern = /https?:\/\/[^\s<>"'`]+/g;
@@ -71,7 +82,7 @@ function LogText({ text }) {
     parts.push(text.slice(cursor));
     return parts;
   }, [text]);
-  return <pre>{content}</pre>;
+  return <pre ref={logRef} onScroll={onScroll}>{content}</pre>;
 }
 
 function ThemeIcon({ theme }) {
@@ -378,7 +389,7 @@ function RunDetail({ view, csrfToken }) {
         <button type="button" role="tab" aria-selected={activeTab === 'parameters'} className={activeTab === 'parameters' ? 'active' : ''} onClick={() => setActiveTab('parameters')}>Parameters ({run.parameters.length})</button>
         <button type="button" role="tab" aria-selected={activeTab === 'tasks'} className={activeTab === 'tasks' ? 'active' : ''} onClick={() => setActiveTab('tasks')}>Task runs ({run.tasks.length})</button>
       </div>
-      {activeTab === 'logs' && <section className="panel logs-panel" role="tabpanel"><div className="section-heading"><h2>Logs</h2><span className="source">{logs?.source === 'archive' ? 'Tekton Results' : 'Cluster pods'}</span></div>{logsError && <Alert variant="warning" title={logsError} className="notice" />}{logs?.truncated && <Alert variant="warning" title="Log display is limited to the first 8 MB per step" className="notice" />}<LogText text={logs?.text || 'Loading logs…'} /></section>}
+      {activeTab === 'logs' && <section className="panel logs-panel" role="tabpanel"><div className="section-heading"><h2>Logs</h2><span className="source">{logs?.source === 'archive' ? 'Tekton Results' : 'Cluster pods'}</span></div>{logsError && <Alert variant="warning" title={logsError} className="notice" />}{logs?.truncated && <Alert variant="warning" title="Log display is limited to the first 8 MB per step" className="notice" />}<LogText text={logs?.text || 'Loading logs…'} streaming={liveRun} /></section>}
       {activeTab === 'events' && <section className="panel events-panel" role="tabpanel"><div className="section-heading"><h2>Events</h2><span className="source">Cluster events</span></div><p className="muted">Updates every 10 seconds while the run is active.</p>{eventsError && <Alert variant="danger" title={eventsError} className="notice" />}{!events && !eventsError ? <div className="loading"><Spinner size="lg" /></div> : events?.items.length ? <div className="table-wrap"><table className="data-table events-table"><thead><tr><th>Last seen</th><th>Type</th><th>Resource</th><th>Reason</th><th>Message</th><th>Count</th></tr></thead><tbody>{events.items.map((event) => <tr key={event.uid}><td>{formatDate(event.lastSeen)}</td><td><Label color={event.type === 'Warning' ? 'red' : 'grey'}>{event.type}</Label></td><td><strong>{event.kind}</strong><small>{event.object}</small></td><td>{event.reason || '—'}</td><td className="event-message">{event.message || '—'}</td><td>{event.count}</td></tr>)}</tbody></table></div> : !eventsError && <p className="muted">{run.source === 'archive' ? 'No cluster events remain for this archived run.' : 'No cluster events have been recorded for this run yet.'}</p>}</section>}
       {activeTab === 'parameters' && <section className="panel" role="tabpanel"><h2>Parameters <span className="muted">{run.parameters.length}</span></h2>{run.parameters.length ? <div className="value-list">{run.parameters.map((param) => <div key={param.name}><span>{param.name}</span><code>{typeof param.value === 'string' ? param.value : JSON.stringify(param.value)}</code></div>)}</div> : <p className="muted">This run did not specify parameters.</p>}</section>}
       {activeTab === 'tasks' && <section className="panel" role="tabpanel">{run.message && <div className="run-message">{run.message}</div>}<h2>Task runs</h2>{run.tasks.length ? <div className="task-list">{run.tasks.map((task) => <div key={task.name}><strong>{task.pipelineTaskName || task.name}</strong><small>{task.name}</small></div>)}</div> : <p className="muted">No task runs recorded.</p>}</section>}
