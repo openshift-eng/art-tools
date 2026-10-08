@@ -1381,6 +1381,25 @@ vars:
         self.assertEqual(result["solution"], "CPE 3.11")
 
     @patch("pyartcd.pipelines.release_from_fbc.get_advisory_boilerplate")
+    @patch.object(ReleaseFromFbcPipeline, "get_file_from_branch")
+    def test_layered_product_skips_template_when_required_ocp_version_is_missing(
+        self, mock_get_file, mock_get_boilerplate
+    ):
+        """A template requiring unavailable OCP release-note placeholders is skipped."""
+        mock_get_boilerplate.return_value = {
+            "synopsis": "OpenTelemetry update",
+            "topic": "Topic",
+            "description": "Description",
+            "solution": "For OCP {OCP_RELEASE_NOTES_VERSION}, see ocp-{OCP_RELEASE_NOTES_VERSION_DASHED}-release-notes",
+        }
+        mock_get_file.return_value = b"vars:\n  CPE_VERSION: \"3.11\"\n"
+
+        pipeline = self._make_pipeline(group="rhosdt-0.158", assembly="0.158.0")
+        pipeline.product = "openshift-opentelemetry-operator"
+
+        self.assertIsNone(pipeline._load_release_notes_template())
+
+    @patch("pyartcd.pipelines.release_from_fbc.get_advisory_boilerplate")
     def test_layered_product_no_template_key_returns_none(self, mock_get_boilerplate):
         """Layered product whose product name has no template key returns None."""
         mock_get_boilerplate.side_effect = ValueError("Boilerplate mta not found")

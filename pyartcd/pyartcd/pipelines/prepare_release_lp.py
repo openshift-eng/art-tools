@@ -731,10 +731,24 @@ class PrepareReleaseLPPipeline:
             )
 
             formatter = SafeFormatter()
-            return {
-                field: formatter.format(boilerplate.get(field, ""), **replace_vars)
-                for field in ("synopsis", "topic", "description", "solution")
+            template_fields = ("synopsis", "topic", "description", "solution")
+            required_ocp_vars = {
+                field_name
+                for field in template_fields
+                for _, field_name, _, _ in formatter.parse(boilerplate.get(field, ""))
+                if field_name in {"OCP_RELEASE_NOTES_VERSION", "OCP_RELEASE_NOTES_VERSION_DASHED"}
             }
+            missing_ocp_vars = sorted(name for name in required_ocp_vars if not replace_vars.get(name))
+            if missing_ocp_vars:
+                self._logger.warning(
+                    "Skipping release notes template for product '%s'; group '%s' is missing %s",
+                    self.product,
+                    self.group,
+                    ", ".join(missing_ocp_vars),
+                )
+                return None
+
+            return {field: formatter.format(boilerplate.get(field, ""), **replace_vars) for field in template_fields}
         except Exception:
             return None
 

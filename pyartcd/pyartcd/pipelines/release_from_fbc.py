@@ -400,8 +400,25 @@ class ReleaseFromFbcPipeline:
                 )
 
             formatter = SafeFormatter()
+            template_fields = ("synopsis", "topic", "description", "solution")
+            required_ocp_vars = {
+                field_name
+                for field in template_fields
+                for _, field_name, _, _ in formatter.parse(boilerplate.get(field, ""))
+                if field_name in {"OCP_RELEASE_NOTES_VERSION", "OCP_RELEASE_NOTES_VERSION_DASHED"}
+            }
+            missing_ocp_vars = sorted(name for name in required_ocp_vars if not replace_vars.get(name))
+            if missing_ocp_vars:
+                self.logger.warning(
+                    "Skipping release notes template for key '%s'; group '%s' is missing %s",
+                    art_advisory_key,
+                    self.group,
+                    ", ".join(missing_ocp_vars),
+                )
+                return None
+
             result = {}
-            for field in ("synopsis", "topic", "description", "solution"):
+            for field in template_fields:
                 value = boilerplate.get(field, "")
                 result[field] = formatter.format(value, **replace_vars)
 
