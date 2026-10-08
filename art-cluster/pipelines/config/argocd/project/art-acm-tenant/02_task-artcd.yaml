@@ -99,6 +99,8 @@ spec:
       value: /tmp/konflux-kubeconfigs/mtc
     - name: LOGGING_KONFLUX_SA_KUBECONFIG
       value: /tmp/konflux-kubeconfigs/logging
+    - name: ACM_KONFLUX_SA_KUBECONFIG
+      value: /tmp/konflux-kubeconfigs/acm
     - name: ASSISTED_INSTALLER_SA_KUBECONFIG
       value: /tmp/konflux-kubeconfigs/assisted-installer
     - name: OAP_KONFLUX_SA_KUBECONFIG
