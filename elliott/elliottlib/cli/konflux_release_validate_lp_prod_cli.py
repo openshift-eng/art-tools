@@ -34,7 +34,11 @@ from tenacity import retry, stop_after_attempt, wait_fixed
 from elliottlib.cli.common import click_coroutine
 from elliottlib.cli.konflux_release_cli import konflux_release_cli
 from elliottlib.shipment_model import ShipmentConfig
-from elliottlib.shipment_utils import get_shipment_config_records, inspect_shipment_mr_ci_state
+from elliottlib.shipment_utils import (
+    ShipmentSourceProjectError,
+    get_shipment_config_records,
+    inspect_shipment_mr_ci_state,
+)
 
 LOGGER = logging.getLogger(__name__)
 YAML = new_roundtrip_yaml_handler()
@@ -398,15 +402,22 @@ class ValidateLpProdCli:
                     source_projects[source_project_id] = gitlab_client.get_project(source_project_id)
                 return source_projects[source_project_id]
 
-            records = get_shipment_config_records(
-                mr,
-                source_projects.get(source_project_id),
-                kinds=None,
-                product=product,
-                product_aliases=product_aliases,
-                environment='prod',
-                source_project_loader=load_source_project,
-            )
+            try:
+                records = get_shipment_config_records(
+                    mr,
+                    source_projects.get(source_project_id),
+                    kinds=None,
+                    product=product,
+                    product_aliases=product_aliases,
+                    environment='prod',
+                    source_project_loader=load_source_project,
+                )
+            except ShipmentSourceProjectError as exc:
+                raise RuntimeError(
+                    f"Cannot inspect matching layered-product shipment MR {mr_url}: source project "
+                    f"{exc.source_project_id!r} is unavailable while reading {exc.file_path} ({exc.cause}). "
+                    "Validation cannot determine whether this MR has active production work."
+                ) from exc
             if not records:
                 continue
             state = inspect_shipment_mr_ci_state(gitlab_client, mr_url, mr, project=project)

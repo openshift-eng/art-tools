@@ -14,6 +14,7 @@ from elliottlib.shipment_model import (
     ShipmentConfig,
     ShipmentEnv,
 )
+from gitlab.exceptions import GitlabGetError
 
 
 class TestShipmentUtils(unittest.TestCase):
@@ -143,6 +144,34 @@ shipment:
 
         self.assertEqual(len(records), 1)
         source_project_loader.assert_called_once_with()
+
+    def test_get_shipment_config_records_reports_unavailable_source_project(self):
+        """A matching file identifies the MR source-project lookup that failed."""
+        self.mock_mr.source_branch = "test-branch"
+        self.mock_mr.source_project_id = 288573
+        self.mock_diff_info.id = "diff-id"
+        self.mock_mr.diffs.list.return_value = [self.mock_diff_info]
+        self.mock_mr.diffs.get.return_value = self.mock_diff
+        self.mock_diff.diffs = [
+            {
+                'new_path': 'shipment/test-product/test-group/fbc/prod/fbc.yaml',
+                'old_path': None,
+            }
+        ]
+        source_project_loader = MagicMock(side_effect=GitlabGetError('Project Not Found', response_code=404))
+
+        with self.assertRaises(shipment_utils.ShipmentSourceProjectError) as context:
+            shipment_utils.get_shipment_config_records(
+                self.mock_mr,
+                None,
+                kinds=None,
+                product='test-product',
+                environment='prod',
+                source_project_loader=source_project_loader,
+            )
+
+        self.assertEqual(context.exception.file_path, 'shipment/test-product/test-group/fbc/prod/fbc.yaml')
+        self.assertEqual(context.exception.source_project_id, 288573)
 
     @patch('artcommonlib.gitlab.gitlab.Gitlab')
     @patch.dict(os.environ, {'GITLAB_TOKEN': 'test-token'})

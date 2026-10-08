@@ -21,6 +21,7 @@ from elliottlib.cli.konflux_release_validate_lp_prod_cli import (
 )
 from elliottlib.shipment_model import ShipmentConfig
 from elliottlib.shipment_utils import ShipmentMRCIState
+from gitlab.exceptions import GitlabGetError
 
 
 def _shipment_config(product='openshift-logging', fbc=True, nvr='logging-fbc-6.6.1-1.ocp4.20') -> dict:
@@ -268,6 +269,34 @@ def test_gitlab_concurrency_skips_unrelated_mr_before_loading_source_project():
         validator._validate_gitlab_concurrency('openshift-logging')
 
     client.get_project.assert_called_once_with('project')
+
+
+def test_gitlab_concurrency_reports_inaccessible_matching_source_project():
+    """A matching MR reports its URL and shipment path when its source project is unavailable."""
+    validator = ValidateLpProdCli(('unused',), 'https://gitlab.example/project/-/merge_requests/1', None)
+    client = MagicMock()
+    client._parse_mr_url.return_value = ('project', '1')
+    project = MagicMock(id=10)
+    mr = MagicMock(source_project_id=288573, source_branch='branch')
+    diff_info = MagicMock(id='diff-id')
+    shipment_path = 'shipment/openshift-logging/logging-6.6/fbc/prod/fbc.yaml'
+    mr.diffs.list.return_value = [diff_info]
+    mr.diffs.get.return_value = MagicMock(diffs=[{'new_path': shipment_path, 'old_path': None}])
+    project.mergerequests.get.return_value = mr
+    client.get_project.side_effect = [project, GitlabGetError('Project Not Found', response_code=404)]
+    client.list_merge_requests.return_value = [
+        SimpleNamespace(iid=2, web_url='https://gitlab.example/project/-/merge_requests/2')
+    ]
+
+    with patch('elliottlib.cli.konflux_release_validate_lp_prod_cli.GitLabClient.from_url', return_value=client):
+        with pytest.raises(RuntimeError) as context:
+            validator._validate_gitlab_concurrency('openshift-logging')
+
+    message = str(context.value)
+    assert 'https://gitlab.example/project/-/merge_requests/2' in message
+    assert '288573' in message
+    assert shipment_path in message
+    assert 'Project Not Found' in message
 
 
 def test_konflux_concurrency_ignores_other_product_and_terminal_release():

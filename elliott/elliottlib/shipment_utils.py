@@ -65,6 +65,24 @@ class ShipmentConfigRecord:
     config: ShipmentConfig
 
 
+class ShipmentSourceProjectError(RuntimeError):
+    """Report a source-project lookup failure for a matching shipment file.
+
+    Attributes:
+        file_path: Matching shipment file that required the source project.
+        source_project_id: GitLab project ID that could not be loaded.
+        cause: GitLab exception raised while loading the source project.
+    """
+
+    def __init__(self, file_path: str, source_project_id, cause: GitlabGetError):
+        self.file_path = file_path
+        self.source_project_id = source_project_id
+        self.cause = cause
+        super().__init__(
+            f"Unable to load source project {source_project_id!r} while reading shipment file {file_path}: {cause}"
+        )
+
+
 def _object_value(item, name: str, default=None):
     """Read a field from a python-gitlab object or API response mapping.
 
@@ -476,7 +494,10 @@ def get_shipment_config_records(
         if source_project is None:
             if source_project_loader is None:
                 raise ValueError("A source project or source project loader is required for matching shipment files")
-            source_project = source_project_loader()
+            try:
+                source_project = source_project_loader()
+            except GitlabGetError as exc:
+                raise ShipmentSourceProjectError(file_path, getattr(mr, 'source_project_id', None), exc) from exc
         file_content = source_project.files.get(file_path, mr.source_branch)
         content = file_content.decode().decode('utf-8')
         yaml_data = Model(yaml.load(content)).primitive()
