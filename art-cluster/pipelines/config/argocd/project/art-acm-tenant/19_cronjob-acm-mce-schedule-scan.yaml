@@ -1,0 +1,29 @@
+kind: CronJob
+apiVersion: batch/v1
+metadata:
+  name: acm-mce-schedule-scan-cron
+  namespace: art-acm-tenant
+spec:
+  schedule: "*/30 * * * *"
+  suspend: false
+  concurrencyPolicy: Forbid
+  jobTemplate:
+    spec:
+      template:
+        spec:
+          containers:
+            - name: schedule-scan
+              image: 'quay.io/redhat-user-workloads/ocp-art-tenant/art-cd:latest'
+              command:
+                - tkn
+                - pipeline
+                - start
+                - schedule-layered-products-scan
+                - '--use-param-defaults'
+                - '--pipeline-timeout'
+                - 30m
+              imagePullPolicy: Always
+          restartPolicy: OnFailure
+          serviceAccountName: pipeline
+  successfulJobsHistoryLimit: 10
+  failedJobsHistoryLimit: 10
