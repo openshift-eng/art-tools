@@ -580,24 +580,13 @@ class KonfluxImageBuilder:
     @staticmethod
     async def _get_successful_image_build_by_nvr(metadata: ImageMetadata, nvr: str) -> Optional[KonfluxBuildRecord]:
         """Find a successful Konflux image build by exact NVR, regardless of assembly or group."""
-        where = {
-            "nvr": nvr,
-            "outcome": KonfluxBuildOutcome.SUCCESS,
-            "artifact_type": ArtifactType.IMAGE,
-            "engine": Engine.KONFLUX,
-        }
-        build = await anext(
-            metadata.runtime.konflux_db.search_builds_by_fields(
-                where=where,
-                limit=1,
-                exclude_columns=["installed_rpms", "installed_packages"],
-            ),
-            None,
+        return await metadata.runtime.konflux_db.get_latest_build(
+            nvr=nvr,
+            outcome=KonfluxBuildOutcome.SUCCESS,
+            artifact_type=ArtifactType.IMAGE,
+            engine=Engine.KONFLUX,
+            exclude_large_columns=True,
         )
-        if build is None:
-            return None
-        assert isinstance(build, KonfluxBuildRecord)
-        return build
 
     def _parse_dockerfile(self, distgit_key: str, df_path: Path):
         """Parse the Dockerfile and return the UUID tag, component name, version, and release.
