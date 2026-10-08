@@ -31,7 +31,7 @@ spec:
         import requests
         import yaml
 
-        EXPECTED_PRODUCT = "kueue"
+        EXPECTED_PRODUCT = "kueue-operator"
         PROD_JOB_NAME = "prod-job"
         PROD_STAGE_NAME = "prod-release-triggers"
         GITLAB_HOST = "https://gitlab.cee.redhat.com"
