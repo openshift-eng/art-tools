@@ -15,11 +15,12 @@ from datetime import datetime, timezone
 from io import StringIO
 from pathlib import Path
 from typing import List, Optional
-from urllib.parse import urlparse, urlunparse
+from urllib.parse import urlparse
 
 import gitlab as python_gitlab
 from artcommonlib import exectools
 from artcommonlib.constants import REDHAT_GITLAB_URL, SHIPMENT_DATA_URL_TEMPLATE
+from artcommonlib.github_auth import build_git_auth_env
 from artcommonlib.release_util import isolate_el_version_in_release
 from artcommonlib.rpm_utils import parse_nvr
 from artcommonlib.util import new_roundtrip_yaml_handler
@@ -74,15 +75,6 @@ def derive_golang_group(nvrs: List[str]) -> str:
                 return f"rhel-{el_v}-golang-{major_minor}"
 
     raise ValueError(f"Cannot derive golang group from NVRs: {nvrs}")
-
-
-def basic_auth_url(url: str, token: str) -> str:
-    """Inject token into a GitLab URL for push authentication."""
-    parsed = urlparse(url)
-    netloc = f"oauth2:{token}@{parsed.hostname}"
-    if parsed.port:
-        netloc += f":{parsed.port}"
-    return urlunparse(parsed._replace(netloc=netloc))
 
 
 class GolangBuilderShipmentHandler:
@@ -205,8 +197,9 @@ class GolangBuilderShipmentHandler:
             shutil.rmtree(self._shipment_data_repo_dir, ignore_errors=True)
 
         await self.shipment_data_repo.setup(
-            remote_url=basic_auth_url(self.shipment_data_repo_push_url, self._gitlab_token),
+            remote_url=self.shipment_data_repo_push_url,
             upstream_remote_url=self.shipment_data_repo_pull_url,
+            remote_auth_envs={"origin": build_git_auth_env(self._gitlab_token, username="oauth2")},
         )
         await self.shipment_data_repo.fetch_switch_branch("main")
 

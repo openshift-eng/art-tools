@@ -15,6 +15,7 @@ import yaml as stdlib_yaml
 from artcommonlib import exectools
 from artcommonlib.build_visibility import is_nvr_embargoed
 from artcommonlib.constants import SHIPMENT_DATA_URL_TEMPLATE
+from artcommonlib.github_auth import build_git_auth_env
 from artcommonlib.gitlab import GitLabClient
 from artcommonlib.release_util import isolate_el_version_in_release
 from artcommonlib.util import new_roundtrip_yaml_handler
@@ -108,30 +109,6 @@ class BinaryReleaseKonfluxPipeline:
             f'--working-dir={self.elliott_working_dir}',
         ]
 
-    @staticmethod
-    def basic_auth_url(url: str, token: str) -> str:
-        """
-        Create a basic auth URL with the given token.
-        """
-        parsed_url = urlparse(url)
-        scheme = parsed_url.scheme or "https"
-        netloc = parsed_url.netloc
-        path = parsed_url.path
-        params = parsed_url.params
-        query = parsed_url.query
-        fragment = parsed_url.fragment
-
-        url_parts = [path]
-        if params:
-            url_parts.append(f";{params}")
-        if query:
-            url_parts.append(f"?{query}")
-        if fragment:
-            url_parts.append(f"#{fragment}")
-
-        rest_of_url = "".join(url_parts)
-        return f'{scheme}://oauth2:{token}@{netloc}{rest_of_url}'
-
     @cached_property
     def _gitlab(self) -> GitLabClient:
         """
@@ -181,8 +158,9 @@ class BinaryReleaseKonfluxPipeline:
             return
 
         await self.shipment_data_repo.setup(
-            remote_url=self.basic_auth_url(self.shipment_data_repo_push_url, self.gitlab_token),
+            remote_url=self.shipment_data_repo_push_url,
             upstream_remote_url=self.shipment_data_repo_pull_url,
+            remote_auth_envs={"origin": build_git_auth_env(self.gitlab_token, username="oauth2")},
         )
         await self.shipment_data_repo.fetch_switch_branch("main")
 

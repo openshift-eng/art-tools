@@ -4,6 +4,7 @@ import os
 from logging import getLogger
 from pathlib import Path
 from typing import Union
+from urllib.parse import urlsplit
 
 import aiofiles
 from artcommonlib import exectools
@@ -20,6 +21,7 @@ class GitRepository:
         self._directory = Path(directory)
         self._dry_run = dry_run
         self._remote_urls: dict[str, str] = {}
+        self._remote_auth_envs: dict[str, dict[str, str]] = {}
 
     @staticmethod
     def _local_env() -> dict[str, str]:
@@ -30,22 +32,38 @@ class GitRepository:
         return env
 
     @staticmethod
-    def _git_env(url: str | None = None) -> dict[str, str]:
+    def _git_env(url: str | None = None, auth_env: dict[str, str] | None = None) -> dict[str, str]:
         """Build env dict with GIT_NO_PROMPTS and GitHub HTTPS auth (if available)."""
         env = os.environ.copy()
         env.update(GIT_NO_PROMPTS)
         env.update(get_github_git_auth_env(url=url))
+        if auth_env:
+            env.update(auth_env)
         return env
 
     def _git_env_for_remote(self, remote: str) -> dict[str, str]:
         """Build env dict resolved for a specific named remote (origin, upstream, etc.)."""
-        return self._git_env(url=self._remote_urls.get(remote))
+        return self._git_env(url=self._remote_urls.get(remote), auth_env=self._remote_auth_envs.get(remote))
 
-    async def setup(self, remote_url, upstream_remote_url=None):
-        """Initialize a git repository with specified remote URL and an optional upstream remote URL."""
+    @staticmethod
+    def _validate_remote_url(remote_url: str) -> None:
+        """Reject HTTP URLs with embedded credentials before they reach logs or git config."""
+        parsed_url = urlsplit(remote_url)
+        if parsed_url.scheme.lower() in {"http", "https"} and (
+            parsed_url.username is not None or parsed_url.password is not None
+        ):
+            raise ValueError("Git remote URLs must not contain embedded credentials; pass auth via remote_auth_envs")
+
+    async def setup(
+        self, remote_url, upstream_remote_url=None, remote_auth_envs: dict[str, dict[str, str]] | None = None
+    ):
+        """Initialize a git repository with clean remote URLs and optional per-remote auth environments."""
+        self._validate_remote_url(remote_url)
         remote_url = ensure_github_https_url(remote_url)
         self._remote_urls["origin"] = remote_url
+        self._remote_auth_envs = {remote: dict(env) for remote, env in (remote_auth_envs or {}).items()}
         if upstream_remote_url:
+            self._validate_remote_url(upstream_remote_url)
             upstream_remote_url = ensure_github_https_url(upstream_remote_url)
             self._remote_urls["upstream"] = upstream_remote_url
         self._directory.mkdir(parents=True, exist_ok=True)

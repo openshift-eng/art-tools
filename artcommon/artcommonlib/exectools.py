@@ -7,6 +7,7 @@ import functools
 import json
 import os
 import platform
+import re
 import shlex
 import subprocess
 import sys
@@ -41,6 +42,7 @@ logger = logutil.get_logger(__name__)
 TRACER = trace.get_tracer(__name__)
 
 _SENSITIVE_ENV_KEY_PATTERNS = frozenset({'PASSWORD', 'TOKEN', 'SECRET', 'KEY', 'CREDENTIAL'})
+_CREDENTIAL_URL_RE = re.compile(r"(?i)\b([a-z][a-z0-9+.-]*://)[^/@\s]+@")
 _MANIFEST_TOOL_AUTH_CACHE_LOCK = threading.Lock()
 _MANIFEST_TOOL_AUTH_CACHE: Dict[Tuple[str, int, str], str] = {}
 _MANIFEST_TOOL_AUTH_TEMP_FILES: set[str] = set()
@@ -53,6 +55,18 @@ def _redact_env_for_logging(env_dict: Dict[str, str]) -> Dict[str, str]:
         k: '***REDACTED***' if any(p in upper_key_cache[k] for p in _SENSITIVE_ENV_KEY_PATTERNS) else v
         for k, v in env_dict.items()
     }
+
+
+def _redact_url_credentials(value: str) -> str:
+    """Redact userinfo from URLs before command text is written to diagnostics."""
+    return _CREDENTIAL_URL_RE.sub(r"\1***@", value)
+
+
+def _redact_command_for_logging(cmd: Union[str, List[str]]) -> Union[str, List[str]]:
+    """Return a diagnostic copy of a command with URL credentials redacted."""
+    if isinstance(cmd, str):
+        return _redact_url_credentials(cmd)
+    return [_redact_url_credentials(str(arg)) for arg in cmd]
 
 
 def _cleanup_manifest_tool_auth_temp_files():
@@ -309,10 +323,13 @@ def cmd_assert(
 
     result, stdout, stderr = -1, '', ''
     try_num = 0
+    diagnostic_cmd = _redact_command_for_logging(cmd)
 
     for try_num in range(0, retries):
         if try_num > 0:
-            logger.debug("cmd_assert: Failed {} times. Retrying in {} seconds: {}".format(try_num, pollrate, cmd))
+            logger.debug(
+                "cmd_assert: Failed {} times. Retrying in {} seconds: {}".format(try_num, pollrate, diagnostic_cmd)
+            )
             time.sleep(pollrate)
             if on_retry is not None:
                 # Run the recovery command between retries. Nothing to collect or assert -- just try it.
@@ -334,8 +351,13 @@ def cmd_assert(
     logger.debug("cmd_assert: Final result = {} in {} tries.".format(result, try_num + 1))
 
     if result != SUCCESS:
-        msg = f"Process {cmd} exited with code {result}:\ncwd={Dir.getcwd()}\nstdout>>{stdout}<<\nstderr>>{stderr}<<\n"
-        raise ChildProcessError(msg, (result, stdout, stderr))
+        diagnostic_stdout = _redact_url_credentials(stdout)
+        diagnostic_stderr = _redact_url_credentials(stderr)
+        msg = (
+            f"Process {diagnostic_cmd} exited with code {result}:\ncwd={Dir.getcwd()}\n"
+            f"stdout>>{diagnostic_stdout}<<\nstderr>>{diagnostic_stderr}<<\n"
+        )
+        raise ChildProcessError(msg, (result, diagnostic_stdout, diagnostic_stderr))
 
     return stdout, stderr
 
@@ -384,9 +406,11 @@ def cmd_gather(
         # convert any non-str into str
         cmd_list = [str(c) for c in cmd]
 
+    diagnostic_cmd_list = _redact_command_for_logging(cmd_list)
+
     if not cwd:
         cwd = Dir.getcwd()
-    cmd_info_base = f'${my_id}: {cmd_list} - [cwd={cwd}]'
+    cmd_info_base = f'${my_id}: {diagnostic_cmd_list} - [cwd={cwd}]'
     cmd_info = cmd_info_base
 
     env = os.environ.copy()
@@ -401,11 +425,13 @@ def cmd_gather(
 
     for try_num in range(retries):
         if try_num > 0:
-            logger.debug("cmd_gather: Failed {} times. Retrying in {} seconds: {}".format(try_num, pollrate, cmd))
+            logger.debug(
+                "cmd_gather: Failed {} times. Retrying in {} seconds: {}".format(try_num, pollrate, diagnostic_cmd_list)
+            )
             time.sleep(pollrate)
 
         with timer(logger.debug, f'{cmd_info}: Executed:cmd_gather'):
-            logger.info(f'{cmd_info}: Executing:cmd_gather: {" ".join(cmd_list)}')
+            logger.info(f'{cmd_info}: Executing:cmd_gather: {" ".join(diagnostic_cmd_list)}')
             try:
                 proc = subprocess.Popen(
                     cmd_list, cwd=cwd, env=env, stdout=subprocess.PIPE, stderr=subprocess.PIPE, stdin=subprocess.DEVNULL
@@ -442,7 +468,7 @@ def cmd_gather(
                     try:
                         output = os.read(proc.stdout.fileno(), 4096)
                         if output:
-                            green_print(output.rstrip())
+                            green_print(_redact_url_credentials(output.decode('utf-8', errors='replace').rstrip()))
                             out += output
                         else:
                             stdout_complete = True
@@ -455,7 +481,7 @@ def cmd_gather(
                     try:
                         error = os.read(proc.stderr.fileno(), 4096)
                         if error:
-                            yellow_print(error.rstrip())
+                            yellow_print(_redact_url_credentials(error.decode('utf-8', errors='replace').rstrip()))
                             err += error
                         else:
                             stderr_complete = True
@@ -473,8 +499,8 @@ def cmd_gather(
             out = out.decode('utf-8')
             err = err.decode('utf-8')
 
-            log_output_stdout = out
-            log_output_stderr = err
+            log_output_stdout = _redact_url_credentials(out)
+            log_output_stderr = _redact_url_credentials(err)
             if not log_stdout and len(out) > 200:
                 log_output_stdout = f'{out[:200]}\n..truncated..'
             if not log_stderr and len(err) > 200:
@@ -739,17 +765,18 @@ async def cmd_gather_async(
 
     # Remove any empty tokens from the command list
     cmd_list = [token for token in cmd_list if token]
+    diagnostic_cmd_list = _redact_command_for_logging(cmd_list)
 
     span = trace.get_current_span()
 
     # Set meaningful span name
-    meaningful_name = _get_meaningful_span_name(cmd_list)
+    meaningful_name = _get_meaningful_span_name(diagnostic_cmd_list)
     span.update_name(meaningful_name)
 
     # Set enhanced span attributes
-    span.set_attribute("param.cmd", cmd_list)
+    span.set_attribute("param.cmd", diagnostic_cmd_list)
     span.set_attribute("param.has_custom_env", "env" in kwargs)
-    span.set_attribute("command.type", cmd_list[0])
+    span.set_attribute("command.type", diagnostic_cmd_list[0])
 
     # capture stdout and stderr if they are not set in kwargs
     if "stdout" not in kwargs:
@@ -770,7 +797,7 @@ async def cmd_gather_async(
             env = kwargs["env"] = os.environ.copy()
         env["TRACEPARENT"] = carrier["traceparent"]
 
-    logger.info(f"Executing:cmd_gather_async: {' '.join(cmd_list)}")
+    logger.info(f"Executing:cmd_gather_async: {' '.join(diagnostic_cmd_list)}")
 
     start_time = time.time()
     proc = await asyncio.subprocess.create_subprocess_exec(cmd_list[0], *cmd_list[1:], **kwargs)
@@ -783,7 +810,7 @@ async def cmd_gather_async(
             async def _stream_and_wait():
                 async for raw_line in proc.stdout:
                     line = raw_line.decode("utf-8", errors="replace").rstrip()
-                    logger.info(line)
+                    logger.info(_redact_url_credentials(line))
                     stdout_lines.append(line)
                 await proc.wait()
 
@@ -808,7 +835,12 @@ async def cmd_gather_async(
     span.set_attribute("result.stdout_length", len(stdout))
     span.set_attribute("result.stderr_length", len(stderr))
     if proc.returncode != 0:
-        msg = f"Process {cmd_list!r} exited with code {proc.returncode}.\nstdout>>{stdout}<<\nstderr>>{stderr}<<\n"
+        diagnostic_stdout = _redact_url_credentials(stdout)
+        diagnostic_stderr = _redact_url_credentials(stderr)
+        msg = (
+            f"Process {diagnostic_cmd_list!r} exited with code {proc.returncode}.\n"
+            f"stdout>>{diagnostic_stdout}<<\nstderr>>{diagnostic_stderr}<<\n"
+        )
         span.set_attribute("result.error_message", msg[:500])  # Truncate long error messages
         span.add_event("command_failed", {"exit_code": proc.returncode, "duration_seconds": duration_seconds})
         if check:
@@ -886,17 +918,18 @@ async def cmd_assert_async(
 
     # Remove any empty tokens from the command list
     cmd_list = [token for token in cmd_list if token]
+    diagnostic_cmd_list = _redact_command_for_logging(cmd_list)
 
     span = trace.get_current_span()
 
     # Set meaningful span name
-    meaningful_name = _get_meaningful_span_name(cmd_list)
+    meaningful_name = _get_meaningful_span_name(diagnostic_cmd_list)
     span.update_name(meaningful_name)
 
     # Set enhanced span attributes
-    span.set_attribute("param.cmd", cmd_list)
+    span.set_attribute("param.cmd", diagnostic_cmd_list)
     span.set_attribute("param.has_custom_env", "env" in kwargs)
-    span.set_attribute("command.type", cmd_list[0])
+    span.set_attribute("command.type", diagnostic_cmd_list[0])
 
     if suppress_output:
         kwargs.setdefault("stdout", asyncio.subprocess.DEVNULL)
@@ -917,7 +950,7 @@ async def cmd_assert_async(
             env = kwargs["env"] = os.environ.copy()
         env["TRACEPARENT"] = carrier["traceparent"]
 
-    logger.info(f"Executing:cmd_assert_async: {' '.join(cmd_list)}")
+    logger.info(f"Executing:cmd_assert_async: {' '.join(diagnostic_cmd_list)}")
 
     start_time = time.time()
     proc = await asyncio.subprocess.create_subprocess_exec(cmd_list[0], *cmd_list[1:], **kwargs)
@@ -928,7 +961,7 @@ async def cmd_assert_async(
 
             async def _stream_and_wait():
                 async for raw_line in proc.stdout:
-                    logger.info(raw_line.decode("utf-8", errors="replace").rstrip())
+                    logger.info(_redact_url_credentials(raw_line.decode("utf-8", errors="replace").rstrip()))
                 return await proc.wait()
 
             returncode = await asyncio.wait_for(_stream_and_wait(), timeout=timeout)
@@ -947,7 +980,7 @@ async def cmd_assert_async(
     span.set_attribute("execution.duration_seconds", duration_seconds)
 
     if returncode != 0:
-        msg = f"Process {cmd_list!r} exited with code {returncode}."
+        msg = f"Process {diagnostic_cmd_list!r} exited with code {returncode}."
         span.set_attribute("result.error_message", msg)
         span.add_event("command_failed", {"exit_code": returncode, "duration_seconds": duration_seconds})
         if check:

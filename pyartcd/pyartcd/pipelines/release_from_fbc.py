@@ -18,7 +18,7 @@ from artcommonlib import exectools
 from artcommonlib.build_visibility import is_nvr_embargoed
 from artcommonlib.constants import SHIPMENT_DATA_URL_TEMPLATE
 from artcommonlib.gitdata import SafeFormatter
-from artcommonlib.github_auth import get_github_client_for_org
+from artcommonlib.github_auth import build_git_auth_env, get_github_client_for_org
 from artcommonlib.gitlab import GitLabClient
 from artcommonlib.rpm_utils import parse_nvr
 from artcommonlib.util import new_roundtrip_yaml_handler
@@ -407,32 +407,6 @@ class ReleaseFromFbcPipeline:
             self.logger.warning("Failed to process release notes template: %s", e)
             return None
 
-    @staticmethod
-    def basic_auth_url(url: str, token: str) -> str:
-        """
-        Create a basic auth URL with the given token.
-        """
-        parsed_url = urlparse(url)
-        scheme = parsed_url.scheme or "https"
-        netloc = parsed_url.netloc
-        path = parsed_url.path
-        params = parsed_url.params
-        query = parsed_url.query
-        fragment = parsed_url.fragment
-
-        # Construct the URL parts
-        url_parts = [path]
-        if params:
-            url_parts.append(f";{params}")
-        if query:
-            url_parts.append(f"?{query}")
-        if fragment:
-            url_parts.append(f"#{fragment}")
-
-        rest_of_url = "".join(url_parts)
-        # Use oauth2 as placeholder username and token as password
-        return f'{scheme}://oauth2:{token}@{netloc}{rest_of_url}'
-
     @cached_property
     def _gitlab(self) -> GitLabClient:
         """
@@ -513,10 +487,11 @@ class ReleaseFromFbcPipeline:
         if not self.create_mr:
             return
 
-        # Setup shipment-data repo with GitLab authentication
+        # Keep the remote URL clean; GitLab credentials are supplied through GIT_ASKPASS.
         await self.shipment_data_repo.setup(
-            remote_url=self.basic_auth_url(self.shipment_data_repo_push_url, self.gitlab_token),
+            remote_url=self.shipment_data_repo_push_url,
             upstream_remote_url=self.shipment_data_repo_pull_url,
+            remote_auth_envs={"origin": build_git_auth_env(self.gitlab_token, username="oauth2")},
         )
         await self.shipment_data_repo.fetch_switch_branch("main")
 

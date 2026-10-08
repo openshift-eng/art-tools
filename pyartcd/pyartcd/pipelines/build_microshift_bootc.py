@@ -28,7 +28,7 @@ from artcommonlib.constants import (
     REGISTRY_REDHAT_IO,
     SHIPMENT_DATA_URL_TEMPLATE,
 )
-from artcommonlib.github_auth import get_github_client_for_org
+from artcommonlib.github_auth import build_git_auth_env, get_github_client_for_org
 from artcommonlib.gitlab import GitLabClient
 from artcommonlib.konflux.konflux_build_record import ArtifactType, Engine, KonfluxBuildOutcome, KonfluxBuildRecord
 from artcommonlib.konflux.konflux_db import KonfluxDb
@@ -1192,11 +1192,11 @@ class BuildMicroShiftBootcPipeline:
         # Initialize GitRepository for shipment data
         self.shipment_data_repo = GitRepository(self._shipment_data_repo_dir, self.runtime.dry_run)
 
-        # Setup shipment-data repo which should reside in GitLab
-        # pushing is done via basic auth
+        # Keep the remote URL clean; GitLab credentials are supplied through GIT_ASKPASS.
         await self.shipment_data_repo.setup(
-            remote_url=self._basic_auth_url(self.shipment_data_repo_push_url, self.gitlab_token),
+            remote_url=self.shipment_data_repo_push_url,
             upstream_remote_url=self.shipment_data_repo_pull_url,
+            remote_auth_envs={"origin": build_git_auth_env(self.gitlab_token, username="oauth2")},
         )
         await self.shipment_data_repo.fetch_switch_branch("main")
 
@@ -1319,17 +1319,6 @@ class BuildMicroShiftBootcPipeline:
         Get GitLab client instance.
         """
         return GitLabClient(self.gitlab_url, self.gitlab_token, self.runtime.dry_run)
-
-    @staticmethod
-    def _basic_auth_url(url: str, token: str) -> str:
-        """Convert URL to basic auth format with token"""
-        parsed_url = urlparse(url)
-        scheme = parsed_url.scheme
-        rest_of_the_url = url[len(scheme + "://") :]
-        # the assumption here is that username can be anything
-        # so we use oauth2 as a placeholder username
-        # and the token as the password
-        return f'https://oauth2:{token}@{rest_of_the_url}'
 
     async def _execute_command_with_logging(self, cmd: list[str]) -> str:
         """Execute a command asynchronously and log its output"""

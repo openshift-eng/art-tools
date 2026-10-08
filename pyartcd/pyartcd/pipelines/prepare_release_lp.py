@@ -16,7 +16,7 @@ import yaml as stdlib_yaml
 from artcommonlib import exectools
 from artcommonlib.constants import SHIPMENT_DATA_URL_TEMPLATE
 from artcommonlib.gitdata import SafeFormatter
-from artcommonlib.github_auth import get_github_client_for_org
+from artcommonlib.github_auth import build_git_auth_env, get_github_client_for_org
 from artcommonlib.gitlab import GitLabClient
 from artcommonlib.rpm_utils import parse_nvr
 from artcommonlib.util import (
@@ -191,12 +191,6 @@ class PrepareReleaseLPPipeline:
             shutil.rmtree(self._elliott_working_dir, ignore_errors=True)
         if self.create_mr and self._shipment_data_repo_dir.exists():
             shutil.rmtree(self._shipment_data_repo_dir, ignore_errors=True)
-
-    @staticmethod
-    def _basic_auth_url(url: str, token: str) -> str:
-        parsed = urlparse(url)
-        scheme = parsed.scheme or "https"
-        return f'{scheme}://oauth2:{token}@{parsed.netloc}{parsed.path}'
 
     @cached_property
     def _gitlab(self) -> GitLabClient:
@@ -755,8 +749,9 @@ class PrepareReleaseLPPipeline:
         if not self.create_mr:
             return
         await self.shipment_data_repo.setup(
-            remote_url=self._basic_auth_url(self.shipment_data_repo_push_url, self.gitlab_token),
+            remote_url=self.shipment_data_repo_push_url,
             upstream_remote_url=self.shipment_data_repo_pull_url,
+            remote_auth_envs={"origin": build_git_auth_env(self.gitlab_token, username="oauth2")},
         )
         await self.shipment_data_repo.fetch_switch_branch("main")
 

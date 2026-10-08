@@ -196,6 +196,7 @@ def get_github_git_auth_env(url: str | None = None, force_refresh: bool = False)
     script = _ensure_askpass_script()
     return {
         "GIT_ASKPASS": script,
+        "GIT_USERNAME": "x-access-token",
         "GIT_PASSWORD": token,
         "GIT_TERMINAL_PROMPT": "0",
     }
@@ -220,30 +221,34 @@ def get_github_git_pat_env() -> dict[str, str]:
     script = _ensure_askpass_script()
     return {
         "GIT_ASKPASS": script,
+        "GIT_USERNAME": "x-access-token",
         "GIT_PASSWORD": token,
         "GIT_TERMINAL_PROMPT": "0",
     }
 
 
-def build_git_auth_env(token: str) -> dict[str, str]:
+def build_git_auth_env(token: str, username: str = "x-access-token") -> dict[str, str]:
     """
     Build GIT_ASKPASS environment variables from an explicit token.
 
     Unlike :func:`get_github_git_auth_env`, this does **not** resolve
-    credentials via GitHub App installations or environment variables --
-    it uses the supplied *token* directly.  Useful when the caller already
-    holds the correct PAT (e.g. the ``--github-access-token`` CLI option)
-    and org-based App-token resolution would pick the wrong installation
-    or fall through to an unrelated ``GITHUB_TOKEN``.
+    credentials via GitHub App installations or environment variables; it
+    uses the supplied *token* and *username* directly. The default username
+    preserves GitHub's ``x-access-token`` convention. Callers for other Git
+    hosts can supply the username required by that host.
 
-    :param token: A GitHub personal-access or fine-grained token.
-    :return: Dict with GIT_ASKPASS, GIT_PASSWORD, GIT_TERMINAL_PROMPT.
+    :param token: A Git access token accepted by the remote host.
+    :param username: The username returned for Git's username prompt.
+    :return: Dict with GIT_ASKPASS, GIT_USERNAME, GIT_PASSWORD, GIT_TERMINAL_PROMPT.
     """
     if not token:
         raise ValueError("build_git_auth_env() requires a non-empty token")
+    if not username:
+        raise ValueError("build_git_auth_env() requires a non-empty username")
     script = _ensure_askpass_script()
     return {
         "GIT_ASKPASS": script,
+        "GIT_USERNAME": username,
         "GIT_PASSWORD": token,
         "GIT_TERMINAL_PROMPT": "0",
     }
@@ -292,7 +297,9 @@ def _ensure_askpass_script() -> str:
 
     fd, path = tempfile.mkstemp(prefix="art-git-askpass-", suffix=".sh")
     with os.fdopen(fd, "w") as f:
-        f.write('#!/bin/sh\ncase "$1" in\n  Username*) echo "x-access-token" ;;\n  *) echo "$GIT_PASSWORD" ;;\nesac\n')
+        f.write(
+            '#!/bin/sh\ncase "$1" in\n  Username*) echo "${GIT_USERNAME:-x-access-token}" ;;\n  *) echo "$GIT_PASSWORD" ;;\nesac\n'
+        )
     os.chmod(path, stat.S_IRWXU)
     _askpass_script_path = path
     return path

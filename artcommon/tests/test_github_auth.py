@@ -1,10 +1,12 @@
 import os
+import subprocess
 from unittest.mock import MagicMock, patch
 
 import artcommonlib.github_auth as gh_auth
 import pytest
 from artcommonlib.github_auth import (
     _extract_org_from_github_url,
+    build_git_auth_env,
     get_github_app_token,
     get_github_app_token_for_org,
     get_github_app_token_from_env,
@@ -372,7 +374,31 @@ class TestGetGithubGitAuthEnv:
 
         assert "GIT_ASKPASS" in result
         assert result["GIT_PASSWORD"] == "ghp_my_pat"
+        assert result["GIT_USERNAME"] == "x-access-token"
         assert result["GIT_TERMINAL_PROMPT"] == "0"
+
+    def test_explicit_auth_env_supports_non_github_username(self):
+        token = "glpat_test_secret"
+        result = build_git_auth_env(token, username="oauth2")
+        askpass_env = {**os.environ, **result}
+
+        username = subprocess.run(
+            [result["GIT_ASKPASS"], "Username for 'https://gitlab.example.com':"],
+            check=True,
+            capture_output=True,
+            text=True,
+            env=askpass_env,
+        )
+        password = subprocess.run(
+            [result["GIT_ASKPASS"], "Password for 'https://gitlab.example.com':"],
+            check=True,
+            capture_output=True,
+            text=True,
+            env=askpass_env,
+        )
+
+        assert username.stdout.strip() == "oauth2"
+        assert password.stdout.strip() == token
 
     def test_returns_empty_dict_when_no_creds(self, monkeypatch):
         monkeypatch.delenv("GITHUB_APP_ID", raising=False)
