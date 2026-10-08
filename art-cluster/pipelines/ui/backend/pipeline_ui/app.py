@@ -1,13 +1,14 @@
 """ART Pipelines UI API and static frontend."""
 
 import asyncio
+import json
 import os
 import secrets
 from pathlib import Path
 
 import httpx
 from fastapi import FastAPI, HTTPException, Query, Request, Response
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
@@ -361,6 +362,124 @@ async def run_logs(request: Request, namespace: str, name: str, uid: str | None 
                 return {"source": "archive", "text": "Archived logs are not available.", "truncated": False}
             raise
     return {"source": "archive", "text": logs, "truncated": truncated}
+
+
+@app.get("/api/runs/{namespace}/{name}/logs/stream")
+async def run_log_stream(request: Request, namespace: str, name: str, uid: str | None = None):
+    allowed_namespace(namespace)
+    token = user_token(request)
+    async with Gateway(token) as gateway:
+        run, source, _ = await find_run(gateway, namespace, name, uid)
+
+    def event(kind: str, payload: dict) -> str:
+        return f"event: {kind}\ndata: {json.dumps(payload)}\n\n"
+
+    async def stream():
+        if source != "live" or run.get("status", {}).get("completionTime"):
+            yield event("done", {})
+            return
+
+        queue = asyncio.Queue(maxsize=100)
+        watchers = {}
+        seen = set()
+        async with Gateway(token) as gateway:
+
+            async def follow(key: str, title: str, pod: str, container: str):
+                length = 0
+                retry = False
+                try:
+                    async for chunk in gateway.follow_step_logs(namespace, pod, container):
+                        if not chunk:
+                            continue
+                        encoded = chunk.encode("utf-8")
+                        remaining = 8_000_000 - length
+                        clipped = len(encoded) > remaining
+                        if clipped:
+                            chunk = encoded[:remaining].decode("utf-8", errors="ignore")
+                        if chunk:
+                            await queue.put(("chunk", {"key": key, "title": title, "text": chunk}))
+                        length += len(chunk.encode("utf-8"))
+                        if clipped:
+                            await queue.put(("truncated", {}))
+                            break
+                except UpstreamError as error:
+                    if error.status in (400, 404) and length == 0:
+                        retry = True
+                    else:
+                        await queue.put(("failure", {"message": error.message}))
+                except httpx.RequestError:
+                    if length == 0:
+                        retry = True
+                    else:
+                        await queue.put(("failure", {"message": "Log stream temporarily unavailable"}))
+                finally:
+                    if not asyncio.current_task().cancelling():
+                        await queue.put(("closed", {"key": key, "retry": retry}))
+
+            yield "retry: 1000\n\n"
+            yield event("reset", {})
+            loop = asyncio.get_running_loop()
+            next_scan = 0
+            current = run
+            retry_stream = False
+            try:
+                while not await request.is_disconnected():
+                    if loop.time() >= next_scan:
+                        try:
+                            current = await gateway.run(namespace, name)
+                            if uid and current.get("metadata", {}).get("uid") != uid:
+                                break
+                            async for taskrun in gateway.list_kube(
+                                namespace, "taskruns", label_selector=f"tekton.dev/pipelineRun={name}"
+                            ):
+                                metadata = taskrun.get("metadata", {})
+                                owners = metadata.get("ownerReferences", [])
+                                if owners and not any(owner.get("uid") == current["metadata"]["uid"] for owner in owners):
+                                    continue
+                                pod = taskrun.get("status", {}).get("podName")
+                                if not pod:
+                                    continue
+                                for step in taskrun.get("status", {}).get("steps", []):
+                                    container = step.get("container") or f"step-{step.get('name', '')}"
+                                    key = f"{metadata['uid']}/{container}"
+                                    if key not in seen:
+                                        seen.add(key)
+                                        title = f"## {metadata['name']} / {step.get('name', container)}"
+                                        watchers[key] = asyncio.create_task(follow(key, title, pod, container))
+                        except UpstreamError as error:
+                            if error.status != 404:
+                                yield event("failure", {"message": error.message})
+                                retry_stream = error.status >= 500
+                            break
+                        except httpx.RequestError:
+                            yield event("failure", {"message": "Cluster service is temporarily unavailable"})
+                            retry_stream = True
+                            break
+                        next_scan = loop.time() + 2
+
+                    try:
+                        kind, payload = await asyncio.wait_for(queue.get(), timeout=max(0.01, next_scan - loop.time()))
+                    except TimeoutError:
+                        yield ": keepalive\n\n"
+                    else:
+                        if kind == "closed":
+                            watchers.pop(payload["key"], None)
+                            if payload["retry"]:
+                                seen.discard(payload["key"])
+                        else:
+                            yield event(kind, payload)
+                    if current.get("status", {}).get("completionTime") and not watchers and queue.empty():
+                        break
+            finally:
+                for watcher in watchers.values():
+                    watcher.cancel()
+                await asyncio.gather(*watchers.values(), return_exceptions=True)
+            if not retry_stream:
+                yield event("done", {})
+
+    return StreamingResponse(
+        stream(), media_type="text/event-stream", headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"}
+    )
 
 
 @app.get("/api/runs/{namespace}/{name}/events")

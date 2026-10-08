@@ -178,3 +178,14 @@ class Gateway:
                 sections.append(f"## {taskrun['metadata']['name']} / {step.get('name', container)}\n{contents}")
                 truncated = truncated or clipped
         return "\n\n".join(sections), truncated
+
+    async def follow_step_logs(self, namespace: str, pod: str, container: str):
+        path = f"/api/v1/namespaces/{quote(namespace)}/pods/{quote(pod)}/log"
+        async with self.kube.stream(
+            "GET", path, params={"container": container, "follow": "true"}, timeout=None
+        ) as response:
+            if response.is_error:
+                await response.aread()
+            self._check(response)
+            async for chunk in response.aiter_text():
+                yield chunk

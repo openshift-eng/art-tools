@@ -267,6 +267,8 @@ function RunDetail({ view, csrfToken }) {
   const [children, setChildren] = useState(null);
   const [childrenError, setChildrenError] = useState('');
   const [logs, setLogs] = useState(null);
+  const [logsError, setLogsError] = useState('');
+  const [streamKey, setStreamKey] = useState(0);
   const [events, setEvents] = useState(null);
   const [eventsError, setEventsError] = useState('');
   const [activeTab, setActiveTab] = useState('logs');
@@ -278,7 +280,10 @@ function RunDetail({ view, csrfToken }) {
   const url = `/api/runs/${view.namespace}/${view.name}?uid=${encodeURIComponent(view.uid || '')}`;
   const childrenUrl = `/api/runs/${view.namespace}/${view.name}/children`;
   const logsUrl = `/api/runs/${view.namespace}/${view.name}/logs?uid=${encodeURIComponent(view.uid || '')}`;
+  const streamUrl = `/api/runs/${view.namespace}/${view.name}/logs/stream?uid=${encodeURIComponent(view.uid || '')}`;
   const eventsUrl = `/api/runs/${view.namespace}/${view.name}/events?uid=${encodeURIComponent(view.uid || '')}`;
+  const selectedRun = run?.namespace === view.namespace && run?.name === view.name && (!view.uid || run.uid === view.uid);
+  const liveRun = selectedRun && run.source === 'live' && !run.completed;
   useLayoutEffect(() => {
     currentRun.current = runKey;
     return () => {
@@ -302,8 +307,7 @@ function RunDetail({ view, csrfToken }) {
   const refresh = useCallback(() => {
     setError('');
     load('run', url, setRun, (cause) => setError(cause.message));
-    load('logs', logsUrl, setLogs, (cause) => setError(cause.message));
-  }, [load, url, logsUrl]);
+  }, [load, url]);
   const refreshChildren = useCallback(() => {
     setChildrenError('');
     load('children', childrenUrl, setChildren, (cause) => setChildrenError(cause.message));
@@ -312,19 +316,55 @@ function RunDetail({ view, csrfToken }) {
     setEventsError('');
     load('events', eventsUrl, setEvents, (cause) => setEventsError(cause.message));
   }, [load, eventsUrl]);
-  useEffect(() => { setActiveTab('logs'); setRun(null); setChildren(null); setChildrenError(''); setLogs(null); setEvents(null); setEventsError(''); setForm(false); refresh(); refreshChildren(); }, [refresh, refreshChildren]);
+  useEffect(() => { setActiveTab('logs'); setRun(null); setChildren(null); setChildrenError(''); setLogs(null); setLogsError(''); setEvents(null); setEventsError(''); setForm(false); refresh(); refreshChildren(); }, [refresh, refreshChildren]);
+  useEffect(() => {
+    if (!selectedRun || liveRun) return undefined;
+    setLogsError('');
+    load('logs', logsUrl, setLogs, (cause) => setLogsError(cause.message));
+    return undefined;
+  }, [selectedRun, liveRun, logsUrl, load]);
+  useEffect(() => {
+    if (!liveRun) return undefined;
+    let sections = new Map();
+    let truncated = false;
+    let flushTimer = null;
+    const source = new EventSource(streamUrl);
+    const update = () => {
+      if (flushTimer) return;
+      flushTimer = window.setTimeout(() => {
+        flushTimer = null;
+        setLogs({ source: 'live', text: [...sections.values()].map((section) => `${section.title}\n${section.text}`).join('\n\n'), truncated });
+      }, 100);
+    };
+    source.addEventListener('reset', () => { window.clearTimeout(flushTimer); flushTimer = null; sections = new Map(); truncated = false; setLogsError(''); setLogs({ source: 'live', text: '', truncated: false }); });
+    source.addEventListener('chunk', (event) => {
+      const { key, title, text } = JSON.parse(event.data);
+      const section = sections.get(key) || { title, text: '' };
+      sections.set(key, { title, text: section.text + text });
+      update();
+    });
+    source.addEventListener('truncated', () => { truncated = true; update(); });
+    source.addEventListener('failure', (event) => setLogsError(JSON.parse(event.data).message));
+    source.addEventListener('done', () => {
+      source.close();
+      window.clearTimeout(flushTimer);
+      load('logs', logsUrl, (data) => { setLogs(data); setLogsError(''); }, (cause) => setLogsError(cause.message));
+    });
+    source.onerror = () => setLogsError('Log stream interrupted. Reconnecting…');
+    return () => { source.close(); window.clearTimeout(flushTimer); };
+  }, [liveRun, streamKey, streamUrl, logsUrl, load]);
   useEffect(() => { if (activeTab === 'events') refreshEvents(); }, [activeTab, refreshEvents]);
   useEffect(() => {
-    if (run?.status !== 'Running') return undefined;
+    if (!liveRun) return undefined;
     const interval = window.setInterval(() => { refresh(); if (activeTab === 'events') refreshEvents(); }, 10000);
     return () => window.clearInterval(interval);
-  }, [run?.status, activeTab, refresh, refreshEvents]);
+  }, [liveRun, activeTab, refresh, refreshEvents]);
   useEffect(() => {
-    if (run?.status !== 'Running') return undefined;
+    if (!liveRun) return undefined;
     const interval = window.setInterval(refreshChildren, 30000);
     return () => window.clearInterval(interval);
-  }, [run?.status, refreshChildren]);
-  const refreshVisible = () => { refresh(); refreshChildren(); if (activeTab === 'events') refreshEvents(); };
+  }, [liveRun, refreshChildren]);
+  const refreshVisible = () => { refresh(); refreshChildren(); if (liveRun) setStreamKey((value) => value + 1); else load('logs', logsUrl, setLogs, (cause) => setLogsError(cause.message)); if (activeTab === 'events') refreshEvents(); };
   return <>
     <Button variant="link" className="back" onClick={() => navigate({ kind: 'runs' })}>← PipelineRuns</Button>
     {error && <Alert variant="danger" title={error} className="notice" />}
@@ -338,7 +378,7 @@ function RunDetail({ view, csrfToken }) {
         <button type="button" role="tab" aria-selected={activeTab === 'parameters'} className={activeTab === 'parameters' ? 'active' : ''} onClick={() => setActiveTab('parameters')}>Parameters ({run.parameters.length})</button>
         <button type="button" role="tab" aria-selected={activeTab === 'tasks'} className={activeTab === 'tasks' ? 'active' : ''} onClick={() => setActiveTab('tasks')}>Task runs ({run.tasks.length})</button>
       </div>
-      {activeTab === 'logs' && <section className="panel logs-panel" role="tabpanel"><div className="section-heading"><h2>Logs</h2><span className="source">{logs?.source === 'archive' ? 'Tekton Results' : 'Cluster pods'}</span></div>{logs?.truncated && <Alert variant="warning" title="Log display is limited to the first 8 MB per step" className="notice" />}<LogText text={logs?.text || 'Loading logs…'} /></section>}
+      {activeTab === 'logs' && <section className="panel logs-panel" role="tabpanel"><div className="section-heading"><h2>Logs</h2><span className="source">{logs?.source === 'archive' ? 'Tekton Results' : 'Cluster pods'}</span></div>{logsError && <Alert variant="warning" title={logsError} className="notice" />}{logs?.truncated && <Alert variant="warning" title="Log display is limited to the first 8 MB per step" className="notice" />}<LogText text={logs?.text || 'Loading logs…'} /></section>}
       {activeTab === 'events' && <section className="panel events-panel" role="tabpanel"><div className="section-heading"><h2>Events</h2><span className="source">Cluster events</span></div><p className="muted">Updates every 10 seconds while the run is active.</p>{eventsError && <Alert variant="danger" title={eventsError} className="notice" />}{!events && !eventsError ? <div className="loading"><Spinner size="lg" /></div> : events?.items.length ? <div className="table-wrap"><table className="data-table events-table"><thead><tr><th>Last seen</th><th>Type</th><th>Resource</th><th>Reason</th><th>Message</th><th>Count</th></tr></thead><tbody>{events.items.map((event) => <tr key={event.uid}><td>{formatDate(event.lastSeen)}</td><td><Label color={event.type === 'Warning' ? 'red' : 'grey'}>{event.type}</Label></td><td><strong>{event.kind}</strong><small>{event.object}</small></td><td>{event.reason || '—'}</td><td className="event-message">{event.message || '—'}</td><td>{event.count}</td></tr>)}</tbody></table></div> : !eventsError && <p className="muted">{run.source === 'archive' ? 'No cluster events remain for this archived run.' : 'No cluster events have been recorded for this run yet.'}</p>}</section>}
       {activeTab === 'parameters' && <section className="panel" role="tabpanel"><h2>Parameters <span className="muted">{run.parameters.length}</span></h2>{run.parameters.length ? <div className="value-list">{run.parameters.map((param) => <div key={param.name}><span>{param.name}</span><code>{typeof param.value === 'string' ? param.value : JSON.stringify(param.value)}</code></div>)}</div> : <p className="muted">This run did not specify parameters.</p>}</section>}
       {activeTab === 'tasks' && <section className="panel" role="tabpanel">{run.message && <div className="run-message">{run.message}</div>}<h2>Task runs</h2>{run.tasks.length ? <div className="task-list">{run.tasks.map((task) => <div key={task.name}><strong>{task.pipelineTaskName || task.name}</strong><small>{task.name}</small></div>)}</div> : <p className="muted">No task runs recorded.</p>}</section>}
