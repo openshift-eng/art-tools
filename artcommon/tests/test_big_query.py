@@ -1,3 +1,4 @@
+import asyncio
 import threading
 from unittest import IsolatedAsyncioTestCase
 from unittest.mock import Mock, patch
@@ -44,7 +45,7 @@ class TestQuery(TestBigQuery):
         self.assertEqual(submit_kwargs['retry'].timeout, REQUEST_TIMEOUT_SECONDS)
         self.assertEqual(submit_kwargs['job_retry'].timeout, REQUEST_TIMEOUT_SECONDS)
         result_kwargs = job.result.call_args.kwargs
-        self.assertEqual(result_kwargs['timeout'], QUERY_TIMEOUT_SECONDS - 10)
+        self.assertEqual(result_kwargs['timeout'], REQUEST_TIMEOUT_SECONDS)
         self.assertEqual(result_kwargs['retry'].timeout, REQUEST_TIMEOUT_SECONDS)
         self.assertEqual(result_kwargs['job_retry'].timeout, REQUEST_TIMEOUT_SECONDS)
 
@@ -55,7 +56,8 @@ class TestQuery(TestBigQuery):
 
         self.client.client.query.return_value.result.assert_not_called()
 
-    def test_query_reports_result_timeout(self):
+    @patch('artcommonlib.bigquery.monotonic', side_effect=[100, 110, 100 + QUERY_TIMEOUT_SECONDS + 1])
+    def test_query_reports_result_timeout(self, _):
         self.client.client.query.return_value.result.side_effect = TimeoutError
 
         with patch.object(self.client.logger, 'error') as log_error:
@@ -63,6 +65,28 @@ class TestQuery(TestBigQuery):
                 self.client.query('SELECT 1')
 
         log_error.assert_called_once_with('BigQuery query timed out (budget: %s seconds)', QUERY_TIMEOUT_SECONDS)
+
+    @patch('artcommonlib.bigquery.monotonic', side_effect=[100, 110, 130])
+    def test_query_retries_short_result_waits_within_budget(self, _):
+        results = Mock(total_rows=1)
+        job = self.client.client.query.return_value
+        job.result.side_effect = [TimeoutError(), results]
+
+        self.assertIs(self.client.query('SELECT 1'), results)
+        self.assertEqual(job.result.call_count, 2)
+        self.assertTrue(all(call.kwargs['timeout'] == REQUEST_TIMEOUT_SECONDS for call in job.result.call_args_list))
+
+    @patch('artcommonlib.bigquery.monotonic', side_effect=[100, 100 + QUERY_TIMEOUT_SECONDS - 5])
+    def test_query_shortens_request_at_deadline(self, _):
+        job = self.client.client.query.return_value
+        job.result.return_value = Mock(total_rows=1)
+
+        self.client.query('SELECT 1')
+
+        result_kwargs = job.result.call_args.kwargs
+        self.assertEqual(result_kwargs['timeout'], 5)
+        self.assertEqual(result_kwargs['retry'].timeout, 5)
+        self.assertEqual(result_kwargs['job_retry'].timeout, 5)
 
     async def test_async_query_offloads_submission_and_result_wait(self):
         event_loop_thread = threading.get_ident()
@@ -85,6 +109,39 @@ class TestQuery(TestBigQuery):
         self.assertEqual(len(worker_threads), 2)
         self.assertEqual(worker_threads[0], worker_threads[1])
         self.assertNotEqual(worker_threads[0], event_loop_thread)
+
+    async def test_async_query_stops_polling_after_cancellation(self):
+        started = threading.Event()
+        release = threading.Event()
+        finished = threading.Event()
+        job = self.client.client.query.return_value
+
+        def wait(*args, **kwargs):
+            started.set()
+            assert release.wait(timeout=5)
+            raise TimeoutError()
+
+        job.result.side_effect = wait
+        original_query = self.client.query
+
+        def tracked_query(query, cancel_event=None):
+            try:
+                return original_query(query, cancel_event)
+            finally:
+                finished.set()
+
+        with patch.object(self.client, 'query', side_effect=tracked_query):
+            task = asyncio.create_task(self.client.query_async('SELECT 1'))
+            try:
+                self.assertTrue(await asyncio.wait_for(asyncio.to_thread(started.wait, 2), timeout=2))
+                task.cancel()
+                with self.assertRaises(asyncio.CancelledError):
+                    await task
+            finally:
+                release.set()
+
+            self.assertTrue(await asyncio.wait_for(asyncio.to_thread(finished.wait, 2), timeout=2))
+            job.result.assert_called_once()
 
 
 class TestSelect(TestBigQuery):

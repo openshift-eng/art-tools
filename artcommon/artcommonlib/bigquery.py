@@ -1,6 +1,8 @@
 import asyncio
 import logging
+import threading
 import typing
+from concurrent.futures import CancelledError as FutureCancelledError
 from time import monotonic
 
 from artcommonlib import constants
@@ -37,7 +39,7 @@ class BigQueryClient:
     def table_ref(self):
         return self._table_ref
 
-    def query(self, query: str) -> RowIterator:
+    def query(self, query: str, cancel_event: typing.Optional[threading.Event] = None) -> RowIterator:
         """
         Execute a query in BigQuery and return a generator object with the results
         """
@@ -49,13 +51,26 @@ class BigQueryClient:
             retry = DEFAULT_RETRY.with_timeout(REQUEST_TIMEOUT_SECONDS)
             job_retry = DEFAULT_JOB_RETRY.with_timeout(REQUEST_TIMEOUT_SECONDS)
             job = self.client.query(query, timeout=REQUEST_TIMEOUT_SECONDS, retry=retry, job_retry=job_retry)
-            remaining = deadline - monotonic()
-            if remaining <= 0:
-                raise TimeoutError(f'BigQuery query submission exceeded {QUERY_TIMEOUT_SECONDS} seconds')
-            results = job.result(timeout=remaining, retry=retry, job_retry=job_retry)
-            self.logger.debug('Query returned %s result rows', results.total_rows)
-            return results
+            while True:
+                if cancel_event and cancel_event.is_set():
+                    raise FutureCancelledError()
+                remaining = deadline - monotonic()
+                if remaining <= 0:
+                    raise TimeoutError(f'BigQuery query exceeded {QUERY_TIMEOUT_SECONDS} seconds')
+                request_timeout = min(remaining, REQUEST_TIMEOUT_SECONDS)
+                retry = DEFAULT_RETRY.with_timeout(request_timeout)
+                job_retry = DEFAULT_JOB_RETRY.with_timeout(request_timeout)
+                try:
+                    results = job.result(timeout=request_timeout, retry=retry, job_retry=job_retry)
+                except TimeoutError:
+                    continue
+                if cancel_event and cancel_event.is_set():
+                    raise FutureCancelledError()
+                self.logger.debug('Query returned %s result rows', results.total_rows)
+                return results
 
+        except FutureCancelledError:
+            raise
         except TimeoutError:
             self.logger.error('BigQuery query timed out (budget: %s seconds)', QUERY_TIMEOUT_SECONDS)
             raise
@@ -68,7 +83,12 @@ class BigQueryClient:
         Asynchronously execute a query in BigQuery and return a generator object with the results
         """
 
-        return await asyncio.to_thread(self.query, query)
+        cancel_event = threading.Event()
+        try:
+            return await asyncio.to_thread(self.query, query, cancel_event)
+        except asyncio.CancelledError:
+            cancel_event.set()
+            raise
 
     def insert(self, items: dict) -> None:
         """
