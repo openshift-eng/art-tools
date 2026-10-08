@@ -23,6 +23,27 @@ spec:
                 - '--pipeline-timeout'
                 - 30m
               imagePullPolicy: Always
+              securityContext:
+                runAsNonRoot: true
+                runAsUser: 1000
+                readOnlyRootFilesystem: true
+                allowPrivilegeEscalation: false
+                capabilities:
+                  drop:
+                    - ALL
+              resources:
+                requests:
+                  cpu: 50m
+                  memory: 64Mi
+                limits:
+                  cpu: 200m
+                  memory: 256Mi
+              volumeMounts:
+                - name: tmp
+                  mountPath: /tmp
+          volumes:
+            - name: tmp
+              emptyDir: {}
           restartPolicy: OnFailure
           serviceAccountName: pipeline
   successfulJobsHistoryLimit: 10

@@ -6,7 +6,7 @@ metadata:
   name: trigger-prod-release
   namespace: art-kueue-tenant
 spec:
-  description: Validate that all YAML files in a shipment MR are for product quay,
+  description: Validate that all YAML files in a shipment MR are for product kueue,
     then trigger the prod-job in the prod-release-triggers stage of the MR's latest GitLab CI pipeline.
   params:
   - description: 'Full GitLab MR URL (e.g. https://gitlab.cee.redhat.com/hybrid-platforms/art/ocp-shipment-data/-/merge_requests/742)'
@@ -31,7 +31,7 @@ spec:
         import requests
         import yaml
 
-        EXPECTED_PRODUCT = "quay"
+        EXPECTED_PRODUCT = "kueue"
         PROD_JOB_NAME = "prod-job"
         PROD_STAGE_NAME = "prod-release-triggers"
         GITLAB_HOST = "https://gitlab.cee.redhat.com"
