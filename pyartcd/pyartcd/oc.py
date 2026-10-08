@@ -1,6 +1,13 @@
 import json
 import logging
 import os
+import random
+import shutil
+import stat
+import subprocess
+import tempfile
+import time
+from pathlib import Path
 from typing import List, Optional
 
 import openshift_client as octool
@@ -167,13 +174,76 @@ def get_release_image_pullspec(release_pullspec: str, image: str, registry_confi
 
 def extract_release_client_tools(
     release_pullspec: str, path_arg: str, single_arch: Optional[str] = None, registry_config: Optional[str] = None
-) -> (int, str):
-    # oc adm release extract --tools --command-os=* -n ocp --to=<workdir> --filter-by-os=<arch> --from <pullspec> --to <path>
-    args = ["release", "extract", "--tools", "--command-os=*", "-n=ocp"]
+) -> None:
+    """Extract tools without leaving partial archives in the publish directory.
+
+    The command offers no partial-layer resume option, so each transient
+    failure gets a fresh extraction directory and a delayed retry.
+    """
+    if not path_arg.startswith("--to=") or not path_arg[len("--to=") :]:
+        raise ValueError(f"Expected a --to=<directory> argument, got {path_arg!r}")
+
+    destination = Path(path_arg[len("--to=") :]).absolute()
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    if destination.is_symlink() or (destination.exists() and (not destination.is_dir() or any(destination.iterdir()))):
+        raise ValueError(f"Extraction destination must be empty: {destination}")
+
+    args = ["oc", "adm", "release", "extract", "--tools", "--command-os=*", "-n=ocp", "--max-per-registry=1"]
     if single_arch:
         args += [f"--filter-by-os={single_arch}"]
-    args += [f"--from={release_pullspec}", path_arg]
-    common_oc_wrapper("extract_tools", "adm", args, True, False, registry_config=registry_config)
+    if registry_config:
+        args += [f"--registry-config={registry_config}"]
+    args += [f"--from={release_pullspec}"]
+
+    transient_errors = (
+        "connection reset by peer",
+        "connection timed out",
+        "connection refused",
+        "i/o timeout",
+        "unexpected eof",
+        "tls handshake timeout",
+        "context deadline exceeded",
+        "502 bad gateway",
+        "503 service unavailable",
+        "504 gateway timeout",
+        "too many requests",
+    )
+    max_attempts = 5
+    for attempt in range(1, max_attempts + 1):
+        stage = Path(tempfile.mkdtemp(prefix=f".{destination.name}.extract-", dir=destination.parent))
+        try:
+            rc, stdout, stderr = exectools.cmd_gather([*args, f"--to={stage}"])
+            if rc == 0:
+                checksum_file = stage / "sha256sum.txt"
+                if not checksum_file.is_file() or not checksum_file.stat().st_size:
+                    raise RuntimeError(f"oc completed without a populated {checksum_file}")
+                result = subprocess.run(
+                    ["sha256sum", "--check", "sha256sum.txt"], cwd=stage, capture_output=True, text=True, check=False
+                )
+                if result.returncode:
+                    raise RuntimeError(
+                        f"Extracted client tools failed checksum verification: {result.stdout}{result.stderr}"
+                    )
+                # mkdtemp creates a private 0700 directory; retain the publish directory's mode.
+                mode = stat.S_IMODE(destination.stat().st_mode) if destination.exists() else 0o755
+                stage.chmod(mode)
+                os.replace(stage, destination)
+                logger.info("Extracted and verified client tools at %s on attempt %s", destination, attempt)
+                return
+
+            error = (stderr or stdout).strip()
+        finally:
+            if stage.exists():
+                shutil.rmtree(stage)
+
+        if not any(message in error.lower() for message in transient_errors) or attempt == max_attempts:
+            raise RuntimeError(f"oc adm release extract failed after {attempt} attempt(s): {error}")
+
+        delay = min(30 * 2 ** (attempt - 1), 180) + random.uniform(0, 10)
+        logger.warning(
+            "Client tools extraction attempt %s/%s failed: %s. Retrying in %.1fs", attempt, max_attempts, error, delay
+        )
+        time.sleep(delay)
 
 
 @retry(reraise=True, stop=stop_after_attempt(3))
