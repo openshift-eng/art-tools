@@ -38,18 +38,26 @@ class CreateRun(BaseModel):
 
 @app.exception_handler(UpstreamError)
 async def upstream_error(_request: Request, error: UpstreamError):
-    return JSONResponse(status_code=error.status, content={"detail": error.message})
+    return JSONResponse(
+        status_code=error.status, content={"detail": error.message}, headers={"Cache-Control": "no-store"}
+    )
 
 
 @app.exception_handler(httpx.RequestError)
 async def network_error(_request: Request, _error: httpx.RequestError):
-    return JSONResponse(status_code=502, content={"detail": "Cluster service is temporarily unavailable"})
+    return JSONResponse(
+        status_code=502,
+        content={"detail": "Cluster service is temporarily unavailable"},
+        headers={"Cache-Control": "no-store"},
+    )
 
 
 def user_token(request: Request) -> str:
     token = request.headers.get("x-forwarded-access-token", "")
     if not token:
-        raise HTTPException(status_code=401, detail="OpenShift login is required")
+        raise HTTPException(
+            status_code=401, detail="OpenShift login is required", headers={"Cache-Control": "no-store"}
+        )
     return token
 
 
@@ -125,6 +133,8 @@ async def read_run_summaries(gateway: Gateway, namespace: str, errors: list, sel
             if summary["uid"]:
                 items[summary["uid"]] = summary
     except UpstreamError as error:
+        if error.status == 401:
+            raise
         if error.status != 403 or selected:
             errors.append({"namespace": namespace, "source": "archive", "message": error.message})
     try:
@@ -133,6 +143,8 @@ async def read_run_summaries(gateway: Gateway, namespace: str, errors: list, sel
             if summary["uid"]:
                 items[summary["uid"]] = summary
     except UpstreamError as error:
+        if error.status == 401:
+            raise
         if error.status != 403 or selected:
             errors.append({"namespace": namespace, "source": "live", "message": error.message})
     return list(items.values())
@@ -158,10 +170,12 @@ async def health():
 
 @app.get("/api/session")
 async def session(request: Request, response: Response):
-    user_token(request)
+    async with Gateway(user_token(request)) as gateway:
+        user = await gateway.kube_json("GET", "/apis/user.openshift.io/v1/users/~")
     csrf = request.cookies.get(CSRF_COOKIE) or secrets.token_urlsafe(32)
+    response.headers["Cache-Control"] = "no-store"
     response.set_cookie(CSRF_COOKIE, csrf, secure=True, httponly=False, samesite="strict", path="/")
-    return {"csrfToken": csrf, "user": request.headers.get("x-forwarded-user", "")}
+    return {"csrfToken": csrf, "user": user["metadata"]["name"]}
 
 
 @app.get("/api/namespaces")
@@ -322,6 +336,8 @@ async def run_children(request: Request, namespace: str, name: str):
                 if (run.get("metadata", {}).get("labels") or {}).get(label) == name:
                     found.append(run_summary(run, "archive"))
         except UpstreamError as error:
+            if error.status == 401:
+                raise
             return found, {"source": "archive", "message": error.message}
         return found, None
 
@@ -331,6 +347,8 @@ async def run_children(request: Request, namespace: str, name: str):
             async for run in gateway.list_kube(namespace, "pipelineruns", label_selector=f"{label}={name}"):
                 found.append(run_summary(run, "live"))
         except UpstreamError as error:
+            if error.status == 401:
+                raise
             return found, {"source": "live", "message": error.message}
         return found, None
 
@@ -414,7 +432,7 @@ async def run_log_stream(request: Request, namespace: str, name: str, uid: str |
                     if error.status in (400, 404) and length == 0:
                         retry = True
                     else:
-                        await queue.put(("failure", {"message": error.message}))
+                        await queue.put(("failure", {"status": error.status, "message": error.message}))
                 except httpx.RequestError:
                     if length == 0:
                         retry = True
@@ -458,7 +476,9 @@ async def run_log_stream(request: Request, namespace: str, name: str, uid: str |
                                         watchers[key] = asyncio.create_task(follow(key, title, pod, container))
                         except UpstreamError as error:
                             if error.status != 404:
-                                yield event("failure", {"message": error.message})
+                                yield event("failure", {"status": error.status, "message": error.message})
+                                if error.status == 401:
+                                    return
                                 retry_stream = error.status >= 500
                             break
                         except httpx.RequestError:
@@ -478,6 +498,8 @@ async def run_log_stream(request: Request, namespace: str, name: str, uid: str |
                                 seen.discard(payload["key"])
                         else:
                             yield event(kind, payload)
+                            if kind == "failure" and payload.get("status") == 401:
+                                return
                     if current.get("status", {}).get("completionTime") and not watchers and queue.empty():
                         break
             finally:

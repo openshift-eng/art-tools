@@ -1,12 +1,9 @@
 import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { Alert, Button, Label, Spinner, Title } from '@patternfly/react-core';
+import { AuthenticationError, createApi } from './api';
 
-async function request(path, options = {}) {
-  const response = await fetch(path, { credentials: 'same-origin', ...options });
-  const body = await response.json().catch(() => ({}));
-  if (!response.ok) throw new Error(body.detail || `Request failed (${response.status})`);
-  return body;
-}
+const api = createApi();
+const { request } = api;
 
 const runTabs = ['details', 'logs', 'events', 'parameters', 'tasks'];
 
@@ -152,6 +149,7 @@ function App() {
   const [namespace, setNamespace] = useState('');
   const [session, setSession] = useState(null);
   const [error, setError] = useState('');
+  const [authenticationError, setAuthenticationError] = useState(null);
   const [theme, setTheme] = useState(() => document.documentElement.dataset.theme || 'light');
 
   useEffect(() => {
@@ -161,12 +159,13 @@ function App() {
   }, [theme]);
 
   useEffect(() => {
+    const unsubscribe = api.subscribeAuthentication(setAuthenticationError);
     const onHashChange = () => setView(parseHash());
     window.addEventListener('hashchange', onHashChange);
     Promise.all([request('/api/session'), request('/api/namespaces')])
       .then(([identity, result]) => { setSession(identity); setNamespaces(result.namespaces); })
       .catch((cause) => setError(cause.message));
-    return () => window.removeEventListener('hashchange', onHashChange);
+    return () => { unsubscribe(); window.removeEventListener('hashchange', onHashChange); };
   }, []);
 
   return <div className="app-shell">
@@ -189,11 +188,15 @@ function App() {
       </div>
     </header>
     <main className="content">
-      {error && <Alert variant="danger" title={error} className="notice" />}
-      {view.kind === 'pipelines' && <Pipelines namespace={namespace} />}
-      {view.kind === 'runs' && <Runs namespace={namespace} />}
-      {view.kind === 'pipeline' && <PipelineDetail view={view} csrfToken={session?.csrfToken} />}
-      {view.kind === 'run' && <RunDetail view={view} csrfToken={session?.csrfToken} />}
+      {authenticationError ? (
+        <Alert variant="danger" title={authenticationError.message} className="notice" actionLinks={<Button variant="link" onClick={api.signIn}>Sign in again</Button>} />
+      ) : <>
+        {error && <Alert variant="danger" title={error} className="notice" />}
+        {view.kind === 'pipelines' && <Pipelines namespace={namespace} />}
+        {view.kind === 'runs' && <Runs namespace={namespace} />}
+        {view.kind === 'pipeline' && <PipelineDetail view={view} csrfToken={session?.csrfToken} />}
+        {view.kind === 'run' && <RunDetail view={view} csrfToken={session?.csrfToken} />}
+      </>}
     </main>
   </div>;
 }
@@ -410,13 +413,26 @@ function RunDetail({ view, csrfToken }) {
       update();
     });
     source.addEventListener('truncated', () => { truncated = true; update(); });
-    source.addEventListener('failure', (event) => setLogsError(JSON.parse(event.data).message));
+    source.addEventListener('failure', (event) => {
+      const failure = JSON.parse(event.data);
+      setLogsError(failure.message);
+      if (failure.status === 401) {
+        source.close();
+        api.checkSession().catch((cause) => setLogsError(cause.message));
+      }
+    });
     source.addEventListener('done', () => {
       source.close();
       window.clearTimeout(flushTimer);
       load('logs', logsUrl, (data) => { setLogs(data); setLogsError(''); }, (cause) => setLogsError(cause.message));
     });
-    source.onerror = () => setLogsError('Log stream interrupted. Reconnecting…');
+    source.onerror = () => {
+      setLogsError('Log stream interrupted. Reconnecting…');
+      api.checkSession().catch((cause) => {
+        if (cause instanceof AuthenticationError) source.close();
+        setLogsError(cause.message);
+      });
+    };
     return () => { source.close(); window.clearTimeout(flushTimer); };
   }, [liveRun, streamKey, streamUrl, logsUrl, load]);
   useEffect(() => { if (activeTab === 'events') refreshEvents(); }, [activeTab, refreshEvents]);

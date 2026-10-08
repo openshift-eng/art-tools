@@ -6,11 +6,15 @@ The interface uses a compact top navigation and supports light and dark themes. 
 
 The backend uses the OpenShift OAuth token forwarded by its sidecar. Kubernetes and Tekton Results enforce each user's namespace permissions. The app does not persist run data or user tokens. The OAuth client requests `user:info` and `role:art-pipelines-ui-scope:*`; the scope limits the token to the API operations in `01-oauth-scope.yaml` and does not grant access to Secrets. It does not grant users permissions they do not already have. To add a tenant namespace, update `PIPELINE_NAMESPACES` in the GitOps ConfigMap.
 
+When the saved OAuth token expires, the UI validates the session against OpenShift and automatically starts a fresh sign-in, returning to the current page and run tab. A page refresh alone does not clear the proxy cookie. Authentication failures in run history and live logs use the same recovery flow. Permission errors and service outages remain visible as errors. If sign-in does not restore the session, requests stop and a **Sign in again** action allows an explicit retry. Unsent Start/Rebuild edits may be lost during sign-in; submissions are never replayed automatically.
+
 The pod disables automatic service account token mounting. The OAuth proxy still needs an in-cluster Kubernetes client for OAuth discovery, so a projected service account token is mounted only in the proxy container. The backend mounts only the Kubernetes CA from `kube-root-ca.crt`. An ingress-only NetworkPolicy limits access to the proxy to the OpenShift router without restricting the app's outbound cluster API and Results requests.
 
 ## Development
 
 The backend is in `backend/pipeline_ui`; install `backend/requirements.txt` and run `uvicorn pipeline_ui.app:app` from `backend`. The frontend is in `frontend`; run `npm ci` and `npm run build`. Browser requests need an OpenShift OAuth proxy in front of the backend.
+
+Run backend tests from `backend` with `python -m unittest discover -s tests`. Run frontend request and authentication tests from `frontend` with `npm test`.
 
 ## Pilot and promotion
 
@@ -27,3 +31,5 @@ For the theme, switch between light and dark on the Pipelines list and verify th
 For parent navigation, open a PipelineRun with an `art.openshift.io/parent-pipelinerun` label and confirm the banner shows a clickable parent name that opens the parent run. Repeat with a parent that has been pruned from the cluster but remains in Tekton Results. Confirm a run without the label has no parent link. Open a parent run and confirm its banner links to the live and archived children with that label, including newly triggered children after Refresh.
 
 For live logs, open an active run and confirm new log lines appear without waiting for the 10-second run status refresh. Confirm the log panel follows new lines, pauses when scrolled up, and resumes when scrolled back to the bottom. Confirm a newly started task step appears within a few seconds. After completion, confirm the final log snapshot remains available and the archived run still loads logs from Tekton Results.
+
+For session recovery, use an expired UI session in a normal browser window and confirm a request starts sign-in without clearing cookies or opening incognito. After signing in, confirm the same PipelineRun and tab reopen and active logs resume. Repeat from PipelineRuns history and a Start/Rebuild form; confirm no run is submitted automatically after login. Verify a namespace permission error does not start sign-in and a failed sign-in attempt shows **Sign in again** without repeated redirects.
