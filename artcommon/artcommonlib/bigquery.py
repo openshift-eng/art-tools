@@ -10,7 +10,7 @@ from google.cloud.bigquery.table import RowIterator
 from sqlalchemy import BinaryExpression, UnaryExpression
 from sqlalchemy.dialects import mysql
 
-QUERY_TIMEOUT_SECONDS = 5 * 60
+QUERY_TIMEOUT_SECONDS = 15 * 60
 REQUEST_TIMEOUT_SECONDS = 30
 
 

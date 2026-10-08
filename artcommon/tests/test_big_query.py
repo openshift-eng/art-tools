@@ -48,7 +48,7 @@ class TestQuery(TestBigQuery):
         self.assertEqual(result_kwargs['retry'].timeout, REQUEST_TIMEOUT_SECONDS)
         self.assertEqual(result_kwargs['job_retry'].timeout, REQUEST_TIMEOUT_SECONDS)
 
-    @patch('artcommonlib.bigquery.monotonic', side_effect=[100, 401])
+    @patch('artcommonlib.bigquery.monotonic', side_effect=[100, 100 + QUERY_TIMEOUT_SECONDS + 1])
     def test_query_does_not_wait_after_submission_exhausts_budget(self, _):
         with self.assertRaises(TimeoutError):
             self.client.query('SELECT 1')
