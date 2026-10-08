@@ -8,6 +8,8 @@ async function request(path, options = {}) {
   return body;
 }
 
+const runTabs = ['details', 'logs', 'events', 'parameters', 'tasks'];
+
 function parseHash() {
   const parts = window.location.hash.slice(2).split('/');
   if (parts[0] === 'pipeline' && parts[1] && parts[2]) {
@@ -15,7 +17,15 @@ function parseHash() {
   }
   if (parts[0] === 'run' && parts[1] && parts[2]) {
     const [name, search] = parts[2].split('?');
-    return { kind: 'run', namespace: parts[1], name: decodeURIComponent(name), uid: new URLSearchParams(search).get('uid') };
+    const params = new URLSearchParams(search);
+    const tab = params.get('tab');
+    return {
+      kind: 'run',
+      namespace: parts[1],
+      name: decodeURIComponent(name),
+      uid: params.get('uid'),
+      tab: runTabs.includes(tab) ? tab : 'details',
+    };
   }
   return { kind: parts[0] === 'runs' ? 'runs' : 'pipelines' };
 }
@@ -325,7 +335,7 @@ function RunDetail({ view, csrfToken }) {
   const [streamKey, setStreamKey] = useState(0);
   const [events, setEvents] = useState(null);
   const [eventsError, setEventsError] = useState('');
-  const [activeTab, setActiveTab] = useState('details');
+  const [activeTab, setActiveTab] = useState(() => runTabs.includes(view.tab) ? view.tab : 'details');
   const [form, setForm] = useState(false);
   const [error, setError] = useState('');
   const runKey = `${view.namespace}/${view.name}/${view.uid || ''}`;
@@ -370,7 +380,7 @@ function RunDetail({ view, csrfToken }) {
     setEventsError('');
     load('events', eventsUrl, setEvents, (cause) => setEventsError(cause.message));
   }, [load, eventsUrl]);
-  useEffect(() => { setActiveTab('details'); setRun(null); setChildren(null); setChildrenError(''); setLogs(null); setLogsError(''); setEvents(null); setEventsError(''); setForm(false); refresh(); refreshChildren(); }, [refresh, refreshChildren]);
+  useEffect(() => { setActiveTab(runTabs.includes(view.tab) ? view.tab : 'details'); setRun(null); setChildren(null); setChildrenError(''); setLogs(null); setLogsError(''); setEvents(null); setEventsError(''); setForm(false); refresh(); refreshChildren(); }, [refresh, refreshChildren, view.tab]);
   useEffect(() => {
     if (!selectedRun || liveRun) return undefined;
     setLogsError('');
@@ -419,6 +429,13 @@ function RunDetail({ view, csrfToken }) {
     return () => window.clearInterval(interval);
   }, [liveRun, refreshChildren]);
   const refreshVisible = () => { refresh(); refreshChildren(); if (liveRun) setStreamKey((value) => value + 1); else load('logs', logsUrl, setLogs, (cause) => setLogsError(cause.message)); if (activeTab === 'events') refreshEvents(); };
+  const selectTab = (tab) => {
+    setActiveTab(tab);
+    const params = new URLSearchParams();
+    if (view.uid) params.set('uid', view.uid);
+    params.set('tab', tab);
+    window.history.replaceState(null, '', `#/run/${encodeURIComponent(view.namespace)}/${encodeURIComponent(view.name)}?${params}`);
+  };
   return <>
     <Button variant="link" className="back" onClick={() => navigate({ kind: 'runs' })}>← PipelineRuns</Button>
     {error && <Alert variant="danger" title={error} className="notice" />}
@@ -427,11 +444,11 @@ function RunDetail({ view, csrfToken }) {
       {childrenError && <Alert variant="warning" title={`Child PipelineRuns could not be loaded: ${childrenError}`} className="notice" />}
       {children?.errors?.length > 0 && <Alert variant="warning" title={`Some child PipelineRuns could not be loaded (${children.errors.map((item) => item.source).join(', ')})`} className="notice" />}
       <div className="detail-tabs" role="tablist" aria-label="PipelineRun views">
-        <button type="button" role="tab" aria-selected={activeTab === 'details'} className={activeTab === 'details' ? 'active' : ''} onClick={() => setActiveTab('details')}>Details</button>
-        <button type="button" role="tab" aria-selected={activeTab === 'logs'} className={activeTab === 'logs' ? 'active' : ''} onClick={() => setActiveTab('logs')}>Logs</button>
-        <button type="button" role="tab" aria-selected={activeTab === 'events'} className={activeTab === 'events' ? 'active' : ''} onClick={() => setActiveTab('events')}>Events</button>
-        <button type="button" role="tab" aria-selected={activeTab === 'parameters'} className={activeTab === 'parameters' ? 'active' : ''} onClick={() => setActiveTab('parameters')}>Parameters ({run.parameters.length})</button>
-        <button type="button" role="tab" aria-selected={activeTab === 'tasks'} className={activeTab === 'tasks' ? 'active' : ''} onClick={() => setActiveTab('tasks')}>Task runs ({run.tasks.length})</button>
+        <button type="button" role="tab" aria-selected={activeTab === 'details'} className={activeTab === 'details' ? 'active' : ''} onClick={() => selectTab('details')}>Details</button>
+        <button type="button" role="tab" aria-selected={activeTab === 'logs'} className={activeTab === 'logs' ? 'active' : ''} onClick={() => selectTab('logs')}>Logs</button>
+        <button type="button" role="tab" aria-selected={activeTab === 'events'} className={activeTab === 'events' ? 'active' : ''} onClick={() => selectTab('events')}>Events</button>
+        <button type="button" role="tab" aria-selected={activeTab === 'parameters'} className={activeTab === 'parameters' ? 'active' : ''} onClick={() => selectTab('parameters')}>Parameters ({run.parameters.length})</button>
+        <button type="button" role="tab" aria-selected={activeTab === 'tasks'} className={activeTab === 'tasks' ? 'active' : ''} onClick={() => selectTab('tasks')}>Task runs ({run.tasks.length})</button>
       </div>
       {activeTab === 'details' && <RunDetails run={run} />}
       {activeTab === 'logs' && <section className="panel logs-panel" role="tabpanel"><div className="section-heading"><h2>Logs</h2><span className="source">{logs?.source === 'archive' ? 'Tekton Results' : 'Cluster pods'}</span></div>{logsError && <Alert variant="warning" title={logsError} className="notice" />}{logs?.truncated && <Alert variant="warning" title="Log display is limited to the first 8 MB per step" className="notice" />}<LogText text={logs?.text || 'Loading logs…'} streaming={liveRun} /></section>}
