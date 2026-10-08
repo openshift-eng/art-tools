@@ -40,12 +40,15 @@ from doozerlib.image import ImageMetadata
 from doozerlib.lockfile import DEFAULT_ARTIFACT_LOCKFILE_NAME, DEFAULT_RPM_LOCKFILE_NAME
 from doozerlib.record_logger import RecordLogger
 from doozerlib.source_resolver import SourceResolution
+from google.cloud.bigquery.retry import DEFAULT_RETRY
 from packageurl import PackageURL
 from tenacity import retry, stop_after_attempt, wait_fixed
 
 from pyartcd import constants as pyartcd_constants
 
 LOGGER = logging.getLogger(__name__)
+BIGQUERY_WRITE_CONCURRENCY = 4
+TASKRUN_INSERT_TIMEOUT_SECONDS = 60
 
 
 def _normalize_version(version: str) -> str:
@@ -124,6 +127,9 @@ class KonfluxImageBuilder:
         self._config = config
         self._logger = logger or LOGGER
         self._record_logger = record_logger
+        # A mass rebuild can write hundreds of records at once; limit concurrent BigQuery requests.
+        self._bigquery_write_semaphore = asyncio.Semaphore(BIGQUERY_WRITE_CONCURRENCY)
+        self._bigquery_write_tasks: Set[asyncio.Task] = set()
         self._blocking_custom_integration_test_scenarios: Set[str] = set()
         self._konflux_client = KonfluxClient.from_kubeconfig(
             default_namespace=config.namespace,
@@ -1301,13 +1307,10 @@ class KonfluxImageBuilder:
                 build_record_params['end_time'] = datetime.strptime(completion_time, '%Y-%m-%dT%H:%M:%SZ')
 
         build_record = KonfluxBuildRecord(**build_record_params)
-        metadata.runtime.konflux_db.add_build(build_record)
+        await self._run_bigquery_write(metadata.runtime.konflux_db.add_build, build_record)
         logger.info('Konflux build %s info stored successfully with status %s', build_record.nvr, outcome)
 
         try:
-            taskrun_db_client = bigquery.BigQueryClient()
-            taskrun_db_client.bind(artlib_constants.TASKRUN_TABLE_ID)
-
             # Use the static method to build taskrun records
             rows = self.build_taskrun_records(
                 pipelinerun_info, build_id=build_record.build_id, record_id=build_record.record_id
@@ -1315,19 +1318,57 @@ class KonfluxImageBuilder:
 
             if rows:
                 try:
-                    taskrun_db_client.client.insert_rows_json(
-                        f'{artlib_constants.GOOGLE_CLOUD_PROJECT}.{artlib_constants.DATASET_ID}.{artlib_constants.TASKRUN_TABLE_ID}',
-                        rows,
-                    )
-                except:
+                    await self._run_bigquery_write(self._insert_taskrun_rows, rows)
+                except Exception:
                     logger.warning('Error inserting taskrun information in bigquery')
                     pprint.pprint(rows)
                     raise
-        except:
+        except Exception:
             logger.warning('Error recording taskrun information in bigquery')
             traceback.print_exc()
 
         return build_record
+
+    async def _run_bigquery_write(self, func, *args):
+        """Keep a write slot occupied until its worker finishes, even if the caller is cancelled."""
+        await self._bigquery_write_semaphore.acquire()
+        try:
+            worker = asyncio.create_task(asyncio.to_thread(func, *args))
+        except BaseException:
+            self._bigquery_write_semaphore.release()
+            raise
+
+        self._bigquery_write_tasks.add(worker)
+        caller_cancelled = False
+
+        def on_complete(task: asyncio.Task):
+            self._bigquery_write_tasks.discard(task)
+            self._bigquery_write_semaphore.release()
+            if task.cancelled():
+                return
+            error = task.exception()
+            if caller_cancelled and error is not None:
+                self._logger.error(
+                    'BigQuery write failed after cancellation', exc_info=(type(error), error, error.__traceback__)
+                )
+
+        worker.add_done_callback(on_complete)
+        try:
+            return await asyncio.shield(worker)
+        except asyncio.CancelledError:
+            caller_cancelled = True
+            raise
+
+    @staticmethod
+    def _insert_taskrun_rows(rows: List[Dict]) -> None:
+        taskrun_db_client = bigquery.BigQueryClient()
+        taskrun_db_client.bind(artlib_constants.TASKRUN_TABLE_ID)
+        taskrun_db_client.client.insert_rows_json(
+            taskrun_db_client.table_ref,
+            rows,
+            retry=DEFAULT_RETRY.with_timeout(TASKRUN_INSERT_TIMEOUT_SECONDS),
+            timeout=TASKRUN_INSERT_TIMEOUT_SECONDS,
+        )
 
     @staticmethod
     def build_taskrun_records(

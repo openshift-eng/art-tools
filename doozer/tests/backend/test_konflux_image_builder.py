@@ -1,6 +1,8 @@
+import asyncio
 import tempfile
 import unittest
 from pathlib import Path
+from threading import Event
 from unittest.mock import AsyncMock, MagicMock, patch
 
 from artcommonlib.konflux.konflux_build_record import (
@@ -408,6 +410,105 @@ class TestKonfluxImageBuilder(unittest.IsolatedAsyncioTestCase):
 
         # Validation should NOT be called for OKD groups
         mock_validate.assert_not_awaited()
+
+    async def test_bigquery_write_keeps_slot_until_worker_finishes_after_cancellation(self):
+        self.builder._bigquery_write_semaphore = asyncio.Semaphore(1)
+        started, release, next_started = Event(), Event(), Event()
+
+        def block_write():
+            started.set()
+            assert release.wait(timeout=5)
+
+        write_task = asyncio.create_task(self.builder._run_bigquery_write(block_write))
+        next_task = None
+        try:
+            self.assertTrue(await asyncio.wait_for(asyncio.to_thread(started.wait, 2), timeout=2))
+            write_task.cancel()
+            with self.assertRaises(asyncio.CancelledError):
+                await write_task
+            self.assertTrue(self.builder._bigquery_write_semaphore.locked())
+
+            next_task = asyncio.create_task(self.builder._run_bigquery_write(next_started.set))
+            await asyncio.sleep(0.01)
+            self.assertFalse(next_started.is_set())
+        finally:
+            release.set()
+
+        self.assertTrue(await asyncio.wait_for(asyncio.to_thread(next_started.wait, 2), timeout=2))
+        await asyncio.wait_for(next_task, timeout=2)
+        self.assertFalse(self.builder._bigquery_write_semaphore.locked())
+
+    async def test_update_konflux_db_keeps_event_loop_responsive_during_bigquery_writes(self):
+        metadata = self._metadata()
+        build_repo = MagicMock(
+            https_url="https://example.com/repo.git",
+            commit_hash="test-commit",
+            local_dir=Path(self.temp_dir.name),
+        )
+        pipelinerun = PipelineRunInfo(
+            {
+                "metadata": {
+                    "name": "test-pipelinerun",
+                    "uid": "test-uid",
+                    "labels": {"appstudio.openshift.io/component": "test-component"},
+                }
+            },
+            {},
+        )
+        build_started, build_release = Event(), Event()
+        taskrun_started, taskrun_release = Event(), Event()
+
+        def block_write(started, release):
+            started.set()
+            release.wait(timeout=5)
+
+        metadata.runtime.konflux_db.add_build.side_effect = lambda _: block_write(build_started, build_release)
+
+        with (
+            patch("doozerlib.backend.konflux_image_builder.DockerfileParser") as mock_dockerfile_parser,
+            patch.object(self.builder, "extract_parent_image_nvrs", new=AsyncMock(return_value=[])),
+            patch.object(self.builder, "build_taskrun_records", return_value=[{"name": "test-taskrun"}]),
+            patch("doozerlib.backend.konflux_image_builder.bigquery.BigQueryClient") as mock_bigquery_client,
+            patch("doozerlib.backend.konflux_image_builder.DEFAULT_RETRY") as mock_retry,
+        ):
+            mock_dockerfile_parser.return_value.labels = {
+                "io.openshift.build.source-location": "https://example.com/source.git",
+                "io.openshift.build.commit.id": "source-commit",
+                "com.redhat.component": "test-component",
+                "version": "1.0",
+                "release": "1.el9",
+            }
+            mock_dockerfile_parser.return_value.parent_images = []
+            mock_bigquery_client.return_value.client.insert_rows_json.side_effect = lambda *args, **kwargs: block_write(
+                taskrun_started, taskrun_release
+            )
+
+            update_task = asyncio.create_task(
+                self.builder.update_konflux_db(
+                    metadata, build_repo, pipelinerun, KonfluxBuildOutcome.PENDING, ["x86_64"], "5"
+                )
+            )
+            try:
+                self.assertTrue(await asyncio.wait_for(asyncio.to_thread(build_started.wait, 2), timeout=2))
+                self.assertFalse(update_task.done())
+                build_release.set()
+                self.assertTrue(await asyncio.wait_for(asyncio.to_thread(taskrun_started.wait, 2), timeout=2))
+                self.assertFalse(update_task.done())
+            finally:
+                build_release.set()
+                taskrun_release.set()
+
+            await asyncio.wait_for(update_task, timeout=5)
+            mock_retry.with_timeout.assert_called_once_with(60)
+            self.assertEqual(mock_bigquery_client.return_value.client.insert_rows_json.call_args.kwargs["timeout"], 60)
+
+            with patch.object(
+                self.builder, "_run_bigquery_write", new=AsyncMock(side_effect=[None, asyncio.CancelledError()])
+            ):
+                with self.assertRaises(asyncio.CancelledError):
+                    await self.builder.update_konflux_db(
+                        metadata, build_repo, pipelinerun, KonfluxBuildOutcome.PENDING, ["x86_64"], "5"
+                    )
 
     async def test_update_konflux_db_uses_definitive_pullspec_for_installed_packages(self):
         metadata = self._metadata()
