@@ -124,6 +124,8 @@ button { cursor: pointer; }
 .embedded-runs-heading { display: flex; align-items: center; justify-content: space-between; margin: 0 0 10px; }
 .embedded-runs-heading h2 { font-size: 22.5px; margin: 0; }
 .detail-meta { display: flex; align-items: center; gap: 13px; color: var(--ui-muted); font-size: 13.75px; margin-top: 12px; flex-wrap: wrap; }
+.detail-meta a { color: var(--ui-link); text-decoration: underline; text-underline-offset: 2px; }
+.detail-meta a:hover { color: var(--ui-link-hover); }
 .detail-actions { display: flex; gap: 9px; flex-wrap: wrap; }
 .run-message { border-left: 3px solid #df7a4b; background: var(--ui-warning-bg); padding: 12px 15px; color: var(--ui-warning-text); margin: 0 0 20px; font-size: 15px; white-space: pre-wrap; }
 .panel { background: var(--ui-surface); border: 1px solid var(--ui-line); border-radius: 7px; padding: 22px; margin: 0 0 20px; }
