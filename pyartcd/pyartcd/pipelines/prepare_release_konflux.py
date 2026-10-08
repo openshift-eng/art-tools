@@ -33,7 +33,7 @@ from artcommonlib.constants import (
     REGISTRY_REDHAT_IO,
     SHIPMENT_DATA_URL_TEMPLATE,
 )
-from artcommonlib.github_auth import get_github_client_for_org
+from artcommonlib.github_auth import build_git_auth_env, get_github_client_for_org
 from artcommonlib.gitlab import GitLabClient
 from artcommonlib.jira_config import JIRA_EMAIL
 from artcommonlib.konflux.konflux_build_record import KonfluxBuildOutcome, KonfluxBundleBuildRecord
@@ -183,16 +183,6 @@ class PrepareReleaseKonfluxPipeline:
             f'--working-dir={self.doozer_working_dir}',
             f'--data-path={self.build_data_repo_pull_url}',
         ]
-
-    @staticmethod
-    def basic_auth_url(url: str, token: str) -> str:
-        parsed_url = urlparse(url)
-        scheme = parsed_url.scheme
-        rest_of_the_url = url[len(scheme + "://") :]
-        # the assumption here is that username can be anything
-        # so we use oauth2 as a placeholder username
-        # and the token as the password
-        return f'https://oauth2:{token}@{rest_of_the_url}'
 
     def _build_data_repo_vars(self, build_data_repo_url: Optional[str]):
         build_data_repo_pull_url = (
@@ -376,11 +366,11 @@ class PrepareReleaseKonfluxPipeline:
         )
         await self.build_data_repo.fetch_switch_branch(self.build_data_gitref or self.group)
 
-        # setup shipment-data repo which should reside in GitLab
-        # pushing is done via basic auth
+        # Keep the remote URL clean; GitLab credentials are supplied through GIT_ASKPASS.
         await self.shipment_data_repo.setup(
-            remote_url=self.basic_auth_url(self.shipment_data_repo_push_url, self.gitlab_token),
+            remote_url=self.shipment_data_repo_push_url,
             upstream_remote_url=self.shipment_data_repo_pull_url,
+            remote_auth_envs={"origin": build_git_auth_env(self.gitlab_token, username="oauth2")},
         )
         await self.shipment_data_repo.fetch_switch_branch("main")
 

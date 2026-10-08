@@ -158,6 +158,55 @@ class TestExectools(IsolatedAsyncioTestCase):
                     any(line for line in cm.output if "Exited with error: 1\nstdout>><<\nstderr>>error<<\n" in line)
                 )
 
+    def test_gather_redacts_url_credentials_in_logs_but_executes_original_command(self):
+        token = "glpat_command_log_test_secret"
+        url = f"https://oauth2:{token}@gitlab.example.com/group/repo.git"
+        command = ["git", "remote", "add", "origin", url]
+
+        with mock.patch("subprocess.Popen") as mock_popen:
+            proc = mock_popen.return_value
+            proc.communicate.return_value = (b"", b"")
+            proc.returncode = 0
+
+            with self.assertLogs(level=logging.DEBUG) as captured:
+                exectools.cmd_gather(command)
+
+        self.assertEqual(mock_popen.call_args.args[0], command)
+        log_text = "\n".join(captured.output)
+        self.assertNotIn(token, log_text)
+        self.assertIn("https://***@gitlab.example.com/group/repo.git", log_text)
+
+    async def test_gather_async_redacts_credentials_in_logs_traces_and_failure(self):
+        token = "glpat_async_command_test_secret"
+        url = f"https://oauth2:{token}@gitlab.example.com/group/repo.git"
+        command = ["git", "fetch", url]
+        diagnostic_command = ["git", "fetch", "https://***@gitlab.example.com/group/repo.git"]
+        span = mock.MagicMock()
+
+        with (
+            mock.patch("artcommonlib.exectools.trace.get_current_span", return_value=span),
+            mock.patch.object(exectools.TraceContextTextMapPropagator, "inject"),
+            mock.patch("asyncio.subprocess.create_subprocess_exec") as create_subprocess_exec,
+        ):
+            proc = create_subprocess_exec.return_value
+            proc.pid = 123
+            proc.returncode = 1
+            proc.communicate.return_value = (
+                b"fatal: remote https://oauth2:glpat_async_command_test_secret@gitlab.example.com/group/repo.git",
+                b"",
+            )
+
+            with self.assertLogs(level=logging.DEBUG) as captured:
+                with self.assertRaises(ChildProcessError) as ctx:
+                    await exectools.cmd_gather_async(command)
+
+        self.assertEqual(create_subprocess_exec.call_args.args, tuple(command))
+        span.set_attribute.assert_any_call("param.cmd", diagnostic_command)
+        self.assertNotIn(token, str(ctx.exception))
+        self.assertIn("https://***@gitlab.example.com/group/repo.git", str(ctx.exception))
+        self.assertNotIn(token, "\n".join(captured.output))
+        self.assertIn("https://***@gitlab.example.com/group/repo.git", "\n".join(captured.output))
+
     def test_cmd_assert_success(self):
         with mock.patch("artcommonlib.exectools.cmd_gather") as cmd_gather:
             cmd_gather.return_value = (0, "hello there", "")

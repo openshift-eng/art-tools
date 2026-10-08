@@ -1,12 +1,13 @@
 import unittest
 from pathlib import Path
+from tempfile import TemporaryDirectory
 from unittest import IsolatedAsyncioTestCase
 from unittest.mock import AsyncMock, MagicMock, Mock, patch
 
+from artcommonlib.github_auth import build_git_auth_env
 from artcommonlib.model import Model
 from doozerlib.backend.golang_builder_shipment import (
     GolangBuilderShipmentHandler,
-    basic_auth_url,
     derive_golang_group,
     format_shipment_mr_title,
 )
@@ -21,15 +22,6 @@ class TestFormatShipmentMrTitle(unittest.TestCase):
             format_shipment_mr_title("rhel-9-golang-1.25"),
             "Shipment for rhel-9-golang-1.25",
         )
-
-
-class TestBasicAuthUrl(unittest.TestCase):
-    def test_injects_token(self):
-        url = "https://gitlab.cee.redhat.com/hybrid-platforms/art/ocp-shipment-data.git"
-        result = basic_auth_url(url, "mytoken")
-        self.assertIn("oauth2:mytoken@", result)
-        self.assertIn("gitlab.cee.redhat.com", result)
-        self.assertTrue(result.startswith("https://"))
 
 
 class TestBuildShipmentConfig(unittest.TestCase):
@@ -197,6 +189,32 @@ class TestSetupReposNoToken(IsolatedAsyncioTestCase):
         handler = GolangBuilderShipmentHandler(runtime=runtime)
         with self.assertRaises(ValueError):
             await handler._setup_repos()
+
+    async def test_setup_uses_clean_url_and_gitlab_askpass(self):
+        token = "glpat_doozer_setup_test_secret"
+        push_url = "https://gitlab.example.com/group/ocp-shipment-data.git"
+        pull_url = "https://gitlab.example.com/group/ocp-shipment-data.git"
+        with TemporaryDirectory() as tmpdir:
+            runtime = Mock()
+            runtime.logger = Mock()
+            runtime.group_config = Model({})
+            runtime.working_dir = tmpdir
+            handler = GolangBuilderShipmentHandler(
+                runtime=runtime,
+                shipment_data_repo_pull_url=pull_url,
+                shipment_data_repo_push_url=push_url,
+            )
+            handler.shipment_data_repo = AsyncMock()
+
+            with patch.dict("os.environ", {"GITLAB_TOKEN": token}, clear=False):
+                await handler._setup_repos()
+
+        handler.shipment_data_repo.setup.assert_awaited_once_with(
+            remote_url=push_url,
+            upstream_remote_url=pull_url,
+            remote_auth_envs={"origin": build_git_auth_env(token, username="oauth2")},
+        )
+        handler.shipment_data_repo.fetch_switch_branch.assert_awaited_once_with("main")
 
 
 class TestSnapshotWithQuayAuth(IsolatedAsyncioTestCase):

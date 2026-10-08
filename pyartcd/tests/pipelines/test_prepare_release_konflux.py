@@ -6,6 +6,7 @@ from unittest.mock import AsyncMock, MagicMock, Mock, PropertyMock, call, patch
 
 from artcommonlib.assembly import AssemblyTypes
 from artcommonlib.constants import SHIPMENT_DATA_URL_TEMPLATE
+from artcommonlib.github_auth import build_git_auth_env
 from artcommonlib.jira_config import JIRA_DOMAIN_NAME
 from artcommonlib.model import Model
 from artcommonlib.util import convert_remote_git_to_ssh
@@ -147,8 +148,9 @@ class TestPrepareReleaseKonfluxPipeline(unittest.IsolatedAsyncioTestCase):
 
         # Verify shipment repo setup
         mock_shipment_data_repo.setup.assert_awaited_once_with(
-            remote_url=pipeline.basic_auth_url(pipeline.shipment_data_repo_push_url, pipeline.gitlab_token),
+            remote_url=pipeline.shipment_data_repo_push_url,
             upstream_remote_url=pipeline.shipment_data_repo_pull_url,
+            remote_auth_envs={"origin": build_git_auth_env(pipeline.gitlab_token, username="oauth2")},
         )
         mock_shipment_data_repo.fetch_switch_branch.assert_awaited_once_with("main")
         mock_shipment_data_repo.read_file.assert_not_awaited()
