@@ -7,13 +7,22 @@ metadata:
   namespace: art-acm-tenant
 spec:
   description: Create releases from FBC (File-Based Catalogs) for non-OpenShift products
-    (OADP, MTA, MTC, logging, etc.) using artcd release-from-fbc command.
+    (ACM, MCE, OADP, MTA, MTC, logging, etc.) using artcd release-from-fbc command.
   params:
   - default: acm-2.16
     description: 'ocp-build-data group branch for this product'
     enum:
+    - acm-2.14
+    - acm-2.15
     - acm-2.16
+    - acm-2.17
     - acm-5.0
+    - mce-2.8
+    - mce-2.9
+    - mce-2.10
+    - mce-2.11
+    - mce-2.17
+    - mce-5.0
     name: group
     type: string
   - default: ''
@@ -133,7 +142,19 @@ spec:
         if not fbc_pullspecs and not extra_image_nvrs:
             raise ValueError("At least one of fbc-pullspecs or extra-image-nvrs must be provided")
 
-        ALLOWED_GROUPS = {"acm-2.16", "acm-5.0"}
+        ALLOWED_GROUPS = {
+            "acm-2.14",
+            "acm-2.15",
+            "acm-2.16",
+            "acm-2.17",
+            "acm-5.0",
+            "mce-2.8",
+            "mce-2.9",
+            "mce-2.10",
+            "mce-2.11",
+            "mce-2.17",
+            "mce-5.0",
+        }
         ocp_optional = "$(params.ocp-optional)" == "true"
         group = "$(params.group)"
 

@@ -1,0 +1,83 @@
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: art-acm-tenant-admission-manager
+  annotations:
+    argocd.argoproj.io/sync-wave: "-4"
+rules:
+  - apiGroups: ["admissionregistration.k8s.io"]
+    resources: ["validatingadmissionpolicies", "validatingadmissionpolicybindings"]
+    verbs: ["create", "list", "watch"]
+  - apiGroups: ["admissionregistration.k8s.io"]
+    resources: ["validatingadmissionpolicies", "validatingadmissionpolicybindings"]
+    resourceNames: ["art-acm-tenant-team-pipelineruns"]
+    verbs: ["get", "update", "patch", "delete"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: art-acm-tenant-admission-manager
+  annotations:
+    argocd.argoproj.io/sync-wave: "-3"
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: art-acm-tenant-admission-manager
+subjects:
+  - kind: ServiceAccount
+    name: openshift-gitops-argocd-application-controller
+    namespace: openshift-gitops
+---
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicy
+metadata:
+  name: art-acm-tenant-team-pipelineruns
+  annotations:
+    argocd.argoproj.io/sync-wave: "-2"
+spec:
+  failurePolicy: Fail
+  matchConstraints:
+    resourceRules:
+      - apiGroups: ["tekton.dev"]
+        apiVersions: ["*"]
+        operations: ["CREATE"]
+        resources: ["pipelineruns"]
+        scope: Namespaced
+  matchConditions:
+    - name: acm-team
+      expression: '"art-acm-team-members" in request.userInfo.groups'
+  validations:
+    - expression: >-
+        has(object.spec.pipelineRef) &&
+        has(object.spec.pipelineRef.name) &&
+        object.spec.pipelineRef.name in [
+          "release-from-fbc",
+          "trigger-prod-release",
+          "layered-products-scan",
+          "schedule-layered-products-scan"
+        ] &&
+        !has(object.spec.pipelineSpec) &&
+        (!has(object.spec.pipelineRef.resolver) || object.spec.pipelineRef.resolver == "") &&
+        (!has(object.spec.pipelineRef.params) || size(object.spec.pipelineRef.params) == 0) &&
+        (!has(object.spec.taskRunSpecs) || size(object.spec.taskRunSpecs) == 0) &&
+        (!has(object.spec.workspaces) || size(object.spec.workspaces) == 0) &&
+        (!has(object.spec.taskRunTemplate) ||
+          ((!has(object.spec.taskRunTemplate.serviceAccountName) ||
+            object.spec.taskRunTemplate.serviceAccountName in ["", "pipeline"]) &&
+           !has(object.spec.taskRunTemplate.podTemplate)))
+      message: ACM team members may only start approved local Pipelines without task or service account overrides
+      reason: Forbidden
+---
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicyBinding
+metadata:
+  name: art-acm-tenant-team-pipelineruns
+  annotations:
+    argocd.argoproj.io/sync-wave: "-1"
+spec:
+  policyName: art-acm-tenant-team-pipelineruns
+  validationActions: ["Deny"]
+  matchResources:
+    namespaceSelector:
+      matchLabels:
+        kubernetes.io/metadata.name: art-acm-tenant
