@@ -16,7 +16,13 @@ spec:
     name: args
     type: array
   stepTemplate:
-    computeResources: {}
+    computeResources:
+      requests:
+        memory: "15Gi"
+        cpu: "2"
+      limits:
+        memory: "16Gi"
+        cpu: "4"
     env:
     - name: TASKRUN_NAMESPACE
       value: $(context.taskRun.namespace)
@@ -41,7 +47,13 @@ spec:
   steps:
   - args:
     - $(params.args[*])
-    computeResources: {}
+    computeResources:
+      requests:
+        memory: "15Gi"
+        cpu: "2"
+      limits:
+        memory: "16Gi"
+        cpu: "4"
     env:
     - name: SLACK_BOT_TOKEN
       valueFrom:
