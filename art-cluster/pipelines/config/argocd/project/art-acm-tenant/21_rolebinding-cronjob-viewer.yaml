@@ -1,0 +1,13 @@
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: art-acm-team-members-cronjob-viewer
+  namespace: art-acm-tenant
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: art-acm-cronjob-viewer
+subjects:
+  - apiGroup: rbac.authorization.k8s.io
+    kind: Group
+    name: art-acm-team-members
