@@ -126,6 +126,10 @@ button { cursor: pointer; }
 .detail-meta { display: flex; align-items: center; gap: 13px; color: var(--ui-muted); font-size: 13.75px; margin-top: 12px; flex-wrap: wrap; }
 .detail-meta a { color: var(--ui-link); text-decoration: underline; text-underline-offset: 2px; }
 .detail-meta a:hover { color: var(--ui-link-hover); }
+.related-runs { margin-top: 13px; color: var(--ui-body); font-size: 13.75px; }
+.related-runs > div { display: flex; flex-wrap: wrap; gap: 7px; margin-top: 7px; }
+.related-runs a { color: var(--ui-link); background: var(--ui-subtle); border: 1px solid var(--ui-line); border-radius: 4px; padding: 4px 8px; text-decoration: none; overflow-wrap: anywhere; }
+.related-runs a:hover { color: var(--ui-link-hover); text-decoration: underline; }
 .detail-actions { display: flex; gap: 9px; flex-wrap: wrap; }
 .run-message { border-left: 3px solid #df7a4b; background: var(--ui-warning-bg); padding: 12px 15px; color: var(--ui-warning-text); margin: 0 0 20px; font-size: 15px; white-space: pre-wrap; }
 .panel { background: var(--ui-surface); border: 1px solid var(--ui-line); border-radius: 7px; padding: 22px; margin: 0 0 20px; }

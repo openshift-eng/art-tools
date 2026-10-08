@@ -264,6 +264,8 @@ function PipelineDetail({ view, csrfToken }) {
 
 function RunDetail({ view, csrfToken }) {
   const [run, setRun] = useState(null);
+  const [children, setChildren] = useState(null);
+  const [childrenError, setChildrenError] = useState('');
   const [logs, setLogs] = useState(null);
   const [events, setEvents] = useState(null);
   const [eventsError, setEventsError] = useState('');
@@ -274,6 +276,7 @@ function RunDetail({ view, csrfToken }) {
   const currentRun = useRef(null);
   const pending = useRef({});
   const url = `/api/runs/${view.namespace}/${view.name}?uid=${encodeURIComponent(view.uid || '')}`;
+  const childrenUrl = `/api/runs/${view.namespace}/${view.name}/children`;
   const logsUrl = `/api/runs/${view.namespace}/${view.name}/logs?uid=${encodeURIComponent(view.uid || '')}`;
   const eventsUrl = `/api/runs/${view.namespace}/${view.name}/events?uid=${encodeURIComponent(view.uid || '')}`;
   useLayoutEffect(() => {
@@ -301,23 +304,34 @@ function RunDetail({ view, csrfToken }) {
     load('run', url, setRun, (cause) => setError(cause.message));
     load('logs', logsUrl, setLogs, (cause) => setError(cause.message));
   }, [load, url, logsUrl]);
+  const refreshChildren = useCallback(() => {
+    setChildrenError('');
+    load('children', childrenUrl, setChildren, (cause) => setChildrenError(cause.message));
+  }, [load, childrenUrl]);
   const refreshEvents = useCallback(() => {
     setEventsError('');
     load('events', eventsUrl, setEvents, (cause) => setEventsError(cause.message));
   }, [load, eventsUrl]);
-  useEffect(() => { setActiveTab('logs'); setRun(null); setLogs(null); setEvents(null); setEventsError(''); setForm(false); refresh(); }, [refresh]);
+  useEffect(() => { setActiveTab('logs'); setRun(null); setChildren(null); setChildrenError(''); setLogs(null); setEvents(null); setEventsError(''); setForm(false); refresh(); refreshChildren(); }, [refresh, refreshChildren]);
   useEffect(() => { if (activeTab === 'events') refreshEvents(); }, [activeTab, refreshEvents]);
   useEffect(() => {
     if (run?.status !== 'Running') return undefined;
     const interval = window.setInterval(() => { refresh(); if (activeTab === 'events') refreshEvents(); }, 10000);
     return () => window.clearInterval(interval);
   }, [run?.status, activeTab, refresh, refreshEvents]);
-  const refreshVisible = () => { refresh(); if (activeTab === 'events') refreshEvents(); };
+  useEffect(() => {
+    if (run?.status !== 'Running') return undefined;
+    const interval = window.setInterval(refreshChildren, 30000);
+    return () => window.clearInterval(interval);
+  }, [run?.status, refreshChildren]);
+  const refreshVisible = () => { refresh(); refreshChildren(); if (activeTab === 'events') refreshEvents(); };
   return <>
     <Button variant="link" className="back" onClick={() => navigate({ kind: 'runs' })}>← PipelineRuns</Button>
     {error && <Alert variant="danger" title={error} className="notice" />}
     {!run ? <div className="loading"><Spinner size="lg" /></div> : <>
-      <div className="page-heading detail-heading"><div><div className="eyebrow">{run.namespace} / {run.pipeline || 'PipelineRun'}</div><Title headingLevel="h1" size="2xl">{run.name}</Title><div className="detail-meta"><Status value={run.status} /><span>Created {formatDate(run.created)}</span><span>{run.source === 'archive' ? 'Tekton Results' : 'Live cluster'}</span>{run.parentPipelineRun && <span>Parent PipelineRun: <a href={`#/run/${encodeURIComponent(run.namespace)}/${encodeURIComponent(run.parentPipelineRun)}`}>{run.parentPipelineRun}</a></span>}</div></div><div className="detail-actions"><Button variant="secondary" onClick={refreshVisible}>Refresh</Button>{run.pipeline && <Button variant="primary" onClick={() => setForm(true)}>Rebuild with parameters</Button>}</div></div>
+      <div className="page-heading detail-heading"><div><div className="eyebrow">{run.namespace} / {run.pipeline || 'PipelineRun'}</div><Title headingLevel="h1" size="2xl">{run.name}</Title><div className="detail-meta"><Status value={run.status} /><span>Created {formatDate(run.created)}</span><span>{run.source === 'archive' ? 'Tekton Results' : 'Live cluster'}</span>{run.parentPipelineRun && <span>Parent PipelineRun: <a href={`#/run/${encodeURIComponent(run.namespace)}/${encodeURIComponent(run.parentPipelineRun)}`}>{run.parentPipelineRun}</a></span>}</div>{children?.items.length > 0 && <div className="related-runs"><strong>Triggered PipelineRuns</strong><div>{children.items.map((child) => <a key={child.uid} href={`#/run/${encodeURIComponent(run.namespace)}/${encodeURIComponent(child.name)}?uid=${encodeURIComponent(child.uid)}`}>{child.name}</a>)}</div></div>}</div><div className="detail-actions"><Button variant="secondary" onClick={refreshVisible}>Refresh</Button>{run.pipeline && <Button variant="primary" onClick={() => setForm(true)}>Rebuild with parameters</Button>}</div></div>
+      {childrenError && <Alert variant="warning" title={`Child PipelineRuns could not be loaded: ${childrenError}`} className="notice" />}
+      {children?.errors?.length > 0 && <Alert variant="warning" title={`Some child PipelineRuns could not be loaded (${children.errors.map((item) => item.source).join(', ')})`} className="notice" />}
       <div className="detail-tabs" role="tablist" aria-label="PipelineRun views">
         <button type="button" role="tab" aria-selected={activeTab === 'logs'} className={activeTab === 'logs' ? 'active' : ''} onClick={() => setActiveTab('logs')}>Logs</button>
         <button type="button" role="tab" aria-selected={activeTab === 'events'} className={activeTab === 'events' ? 'active' : ''} onClick={() => setActiveTab('events')}>Events</button>

@@ -299,6 +299,41 @@ async def run_detail(request: Request, namespace: str, name: str, uid: str | Non
     }
 
 
+@app.get("/api/runs/{namespace}/{name}/children")
+async def run_children(request: Request, namespace: str, name: str):
+    allowed_namespace(namespace)
+    label = "art.openshift.io/parent-pipelinerun"
+    escaped = name.replace("\\", "\\\\").replace("'", "\\'")
+    query = f"data_type == PIPELINE_RUN && data.metadata.labels['{label}'] == '{escaped}'"
+
+    async def archived_children(gateway: Gateway):
+        found = []
+        try:
+            async for _record, run in gateway.list_records(namespace, filter_text=query):
+                if (run.get("metadata", {}).get("labels") or {}).get(label) == name:
+                    found.append(run_summary(run, "archive"))
+        except UpstreamError as error:
+            return found, {"source": "archive", "message": error.message}
+        return found, None
+
+    async def live_children(gateway: Gateway):
+        found = []
+        try:
+            async for run in gateway.list_kube(namespace, "pipelineruns", label_selector=f"{label}={name}"):
+                found.append(run_summary(run, "live"))
+        except UpstreamError as error:
+            return found, {"source": "live", "message": error.message}
+        return found, None
+
+    async with Gateway(user_token(request)) as gateway:
+        (archived, archive_error), (live, live_error) = await asyncio.gather(
+            archived_children(gateway), live_children(gateway)
+        )
+    items = {item["uid"]: item for item in archived + live if item["uid"]}
+    children = sorted(items.values(), key=lambda item: item["created"] or "", reverse=True)
+    return {"items": children, "errors": [error for error in (archive_error, live_error) if error]}
+
+
 @app.get("/api/runs/{namespace}/{name}/logs")
 async def run_logs(request: Request, namespace: str, name: str, uid: str | None = None):
     allowed_namespace(namespace)
