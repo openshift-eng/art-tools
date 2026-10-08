@@ -82,7 +82,7 @@ function RunDetails({ run }) {
   const parentHref = run.parentPipelineRun
     ? `#/run/${encodeURIComponent(run.namespace)}/${encodeURIComponent(run.parentPipelineRun)}`
     : null;
-  const consoleHref = `https://console-openshift-console.apps.artc2023.pc3z.p1.openshiftapps.com/k8s/ns/${encodeURIComponent(run.namespace)}/tekton.dev~v1~PipelineRun/${encodeURIComponent(run.name)}/logs`;
+  const consoleHref = `https://console-openshift-console.apps.artc2023.pc3z.p1.openshiftapps.com/k8s/ns/${encodeURIComponent(run.namespace)}/tekton.dev~v1~PipelineRun/${encodeURIComponent(run.name)}`;
   return <section className="panel run-details-panel" role="tabpanel" aria-label="PipelineRun details">
     <h2>PipelineRun details</h2>
     <div className="run-details-grid">
