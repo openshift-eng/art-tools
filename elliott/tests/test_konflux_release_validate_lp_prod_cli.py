@@ -15,6 +15,7 @@ from elliottlib.cli.konflux_release_validate_lp_prod_cli import (
     _CatalogRenderStats,
     _compact_catalog_blob,
     _iter_json_objects,
+    _memory_status,
     _render_catalog,
     _RenderedCatalog,
     find_pruned_entries,
@@ -319,7 +320,23 @@ def test_fbc_validation_logs_dynamic_package_index_summary(caplog):
     assert 'packages=[\'cluster-logging\']' in caplog.text
     assert 'rendering fragment 1' in caplog.text
     assert 'starting index 1/1' in caplog.text
+    assert 'ocp=4.20' in caplog.text
+    assert 'production_index=registry.redhat.io/redhat/redhat-operator-index:v4.20' in caplog.text
     assert 'result=PASS' in caplog.text
+
+
+def test_memory_status_is_best_effort():
+    with (
+        patch(
+            'elliottlib.cli.konflux_release_validate_lp_prod_cli.psutil.Process',
+            side_effect=RuntimeError('unavailable'),
+        ),
+        patch(
+            'elliottlib.cli.konflux_release_validate_lp_prod_cli.psutil.virtual_memory',
+            side_effect=RuntimeError('unavailable'),
+        ),
+    ):
+        assert _memory_status() == 'unavailable'
 
 
 def test_runtime_diagnostics_logs_opm_version_and_memory(caplog):

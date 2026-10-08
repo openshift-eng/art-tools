@@ -114,7 +114,26 @@ def _memory_status() -> str:
     Returns:
         Cgroup current, limit, and available memory when available, followed by
         the validator process RSS. Falls back to host-level available memory
-        when no cgroup limit is visible.
+        when no cgroup limit is visible. Returns ``unavailable`` when memory
+        information cannot be read; diagnostics must never stop validation.
+    """
+    try:
+        return _memory_status_from_system()
+    except Exception as exc:
+        LOGGER.debug('Unable to determine validator memory status: %s', exc)
+        return 'unavailable'
+
+
+def _memory_status_from_system() -> str:
+    """Read cgroup or host memory information for diagnostic logging.
+
+    Returns:
+        Formatted memory information.
+
+    Raises:
+        Exception: If the operating system or ``psutil`` cannot provide memory
+            information. The public ``_memory_status`` wrapper handles this
+            because diagnostics must remain best effort.
     """
     cgroup_paths = (
         (Path('/sys/fs/cgroup/memory.current'), Path('/sys/fs/cgroup/memory.max')),
@@ -588,6 +607,7 @@ class ValidateLpProdCli:
         auth = OpmRegistryAuth(path=self.pull_secret)
         fragment_validations: list[_FragmentValidation] = []
         index_packages: defaultdict[str, set[str]] = defaultdict(set)
+        index_versions: dict[str, str] = {}
         fragment_number = 0
         for config, config_path in zip(configs, self.config_paths):
             shipment = config.shipment
@@ -602,14 +622,16 @@ class ValidateLpProdCli:
                 raise ValueError(f"Cannot determine target OCP version from FBC NVR in {config_path}")
             major, minor = ocp_version.split('.', 1)
             production_index = PRODUCTION_INDEX_PULLSPEC_FORMAT.format(major=major, minor=minor)
+            index_versions[production_index] = ocp_version
             for component in shipment.snapshot.spec.components:
                 fragment_pullspec = component.containerImage
                 fragment_number += 1
                 fragment_started = time.perf_counter()
                 LOGGER.info(
-                    'validate-lp-prod rendering fragment %d: %s (target index=%s, memory=%s)',
+                    'validate-lp-prod rendering fragment %d: %s (target_ocp=%s production_index=%s memory=%s)',
                     fragment_number,
                     fragment_pullspec,
+                    ocp_version,
                     production_index,
                     _memory_status(),
                 )
@@ -639,9 +661,10 @@ class ValidateLpProdCli:
         for index_number, (production_index, packages) in enumerate(index_packages.items(), 1):
             index_started = time.perf_counter()
             LOGGER.info(
-                'validate-lp-prod starting index %d/%d: %s packages=%s memory=%s',
+                'validate-lp-prod starting index %d/%d: ocp=%s production_index=%s packages=%s memory=%s',
                 index_number,
                 total_indexes,
+                index_versions[production_index],
                 production_index,
                 sorted(packages),
                 _memory_status(),
@@ -666,7 +689,8 @@ class ValidateLpProdCli:
             fragment_seconds = sum(fragment.rendered.stats.total_seconds for fragment in comparisons)
             result = 'FAIL' if failures else 'PASS'
             summary = (
-                f"validate-lp-prod index={index_number}/{total_indexes} {production_index} "
+                f"validate-lp-prod index={index_number}/{total_indexes} ocp={index_versions[production_index]} "
+                f"production_index={production_index} "
                 f"packages={sorted(packages)} "
                 f"fragments={len(comparisons)} objects_read={rendered_production.stats.objects_read} "
                 f"objects_retained={rendered_production.stats.objects_retained} "
