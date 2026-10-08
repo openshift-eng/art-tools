@@ -709,19 +709,26 @@ class PrepareReleaseLPPipeline:
 
         try:
             group_content = self.get_file_from_branch(self.group, "group.yml")
-            group_config = stdlib_yaml.safe_load(group_content)
-            ocp_version = str(group_config.get("OCP_RELEASE_NOTES_VERSION", ""))
-            if not ocp_version:
-                return None
+            group_config = stdlib_yaml.safe_load(group_content) or {}
+            vars_section = group_config.get("vars", {}) or {}
+            replace_vars = {str(key): str(value) for key, value in vars_section.items() if value is not None}
+
+            # Keep supporting existing groups that define this value at the group.yml top level,
+            # but don't require it for templates that don't use OCP release-note placeholders.
+            ocp_version = replace_vars.get("OCP_RELEASE_NOTES_VERSION") or group_config.get("OCP_RELEASE_NOTES_VERSION")
+            if ocp_version:
+                ocp_version = str(ocp_version)
+                replace_vars.setdefault("OCP_RELEASE_NOTES_VERSION", ocp_version)
+                replace_vars.setdefault("OCP_RELEASE_NOTES_VERSION_DASHED", ocp_version.replace(".", "-"))
 
             assembly_parts = self.assembly.split(".")
-            replace_vars = {
-                "OCP_RELEASE_NOTES_VERSION": ocp_version,
-                "OCP_RELEASE_NOTES_VERSION_DASHED": ocp_version.replace(".", "-"),
-                "PRODUCT_MAJOR": assembly_parts[0] if len(assembly_parts) > 0 else "",
-                "PRODUCT_MINOR": assembly_parts[1] if len(assembly_parts) > 1 else "",
-                "PRODUCT_PATCH": assembly_parts[2] if len(assembly_parts) > 2 else "",
-            }
+            replace_vars.update(
+                {
+                    "PRODUCT_MAJOR": assembly_parts[0] if len(assembly_parts) > 0 else "",
+                    "PRODUCT_MINOR": assembly_parts[1] if len(assembly_parts) > 1 else "",
+                    "PRODUCT_PATCH": assembly_parts[2] if len(assembly_parts) > 2 else "",
+                }
+            )
 
             formatter = SafeFormatter()
             return {
