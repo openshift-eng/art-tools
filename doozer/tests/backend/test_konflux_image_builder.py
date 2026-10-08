@@ -60,11 +60,7 @@ class TestKonfluxImageBuilder(unittest.IsolatedAsyncioTestCase):
         metadata.runtime.variant = BuildVariant.OCP
         metadata.runtime.konflux_db = MagicMock()
 
-        async def search_builds_by_fields(**_kwargs):
-            if False:
-                yield
-
-        metadata.runtime.konflux_db.search_builds_by_fields = MagicMock(side_effect=search_builds_by_fields)
+        metadata.runtime.konflux_db.get_latest_build = AsyncMock(return_value=None)
         metadata.runtime.group_config.software_lifecycle.phase = "release"
         metadata.config.konflux.get.return_value = False
         metadata.for_release = True
@@ -136,27 +132,21 @@ class TestKonfluxImageBuilder(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(signature.await_count, 2)
 
-    async def test_get_successful_image_build_by_nvr_is_not_assembly_scoped(self):
+    async def test_get_successful_image_build_by_nvr_delegates_to_get_latest_build(self):
         metadata = self._metadata()
         existing_build = MagicMock(spec=KonfluxBuildRecord)
 
-        async def search_builds_by_fields(**_kwargs):
-            yield existing_build
-
-        metadata.runtime.konflux_db.search_builds_by_fields = MagicMock(side_effect=search_builds_by_fields)
+        metadata.runtime.konflux_db.get_latest_build = AsyncMock(return_value=existing_build)
 
         result = await self.builder._get_successful_image_build_by_nvr(metadata, "test-component-1.0-1.assembly.test")
 
         self.assertIs(result, existing_build)
-        metadata.runtime.konflux_db.search_builds_by_fields.assert_called_once_with(
-            where={
-                "nvr": "test-component-1.0-1.assembly.test",
-                "outcome": KonfluxBuildOutcome.SUCCESS,
-                "artifact_type": ArtifactType.IMAGE,
-                "engine": Engine.KONFLUX,
-            },
-            limit=1,
-            exclude_columns=["installed_rpms", "installed_packages"],
+        metadata.runtime.konflux_db.get_latest_build.assert_called_once_with(
+            nvr="test-component-1.0-1.assembly.test",
+            outcome=KonfluxBuildOutcome.SUCCESS,
+            artifact_type=ArtifactType.IMAGE,
+            engine=Engine.KONFLUX,
+            exclude_large_columns=True,
         )
 
     async def test_build_rejects_exact_nvr_before_assembly_scoped_latest_check(self):
