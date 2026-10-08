@@ -231,6 +231,26 @@ class TestSyncRhcosSpecializedPipeline(IsolatedAsyncioTestCase):
 
         self.assertEqual(artifacts, ["rhcos-10.2.20261001-0101-live-iso.aarch64.iso"])
 
+    @patch(
+        "pyartcd.pipelines.sync_rhcos_specialized.SyncRhcosSpecializedPipeline.sync_artifacts",
+        new_callable=AsyncMock,
+    )
+    @patch(
+        "pyartcd.pipelines.sync_rhcos_specialized.SyncRhcosSpecializedPipeline.download_all_artifacts",
+        new_callable=AsyncMock,
+    )
+    async def test_run_fails_when_no_allowlisted_artifacts(self, mock_download, mock_sync):
+        pipeline = self._make_pipeline(sync_type="ocp4nv", stream="rhel-10.2-ocp4nv")
+        pipeline.fetch_rhcos_metadata = AsyncMock(
+            return_value={"images": {"live-kernel": {"path": "rhcos-live-kernel.aarch64"}}}
+        )
+
+        with self.assertRaisesRegex(ValueError, r"No allowlisted artifacts found.*rhel-10\.2-ocp4nv.*meta\.json"):
+            await pipeline.run()
+
+        mock_download.assert_not_awaited()
+        mock_sync.assert_not_awaited()
+
     @patch("pyartcd.pipelines.sync_rhcos_specialized.util.mirror_to_s3", new_callable=AsyncMock)
     async def test_sync_to_destination(self, mock_mirror):
         pipeline = self._make_pipeline(sync_type="confidential")

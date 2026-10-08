@@ -369,6 +369,8 @@ class SyncRhcosSpecializedPipeline:
                 self.is_prerelease = "ec" in self.ocp_version or "rc" in self.ocp_version
 
             artifacts = self.discover_artifacts()
+            if not artifacts:
+                raise ValueError(f"No allowlisted artifacts found in {self.rhcos_base_url}/meta.json")
             self.runtime.logger.info(f"Discovered the following artifacts: {', '.join(artifacts)}")
 
             await self.download_all_artifacts(artifacts)
