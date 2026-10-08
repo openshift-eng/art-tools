@@ -388,7 +388,8 @@ class TestKonfluxOlmBundleRebaser(IsolatedAsyncioTestCase):
             'operators.operatorframework.io.bundle.metadata.v1': 'metadata/',
             'operators.operatorframework.io.bundle.package.v1': 'test-package',
         }
-        input_release = "1.0-1"
+        input_release = "1"
+        operator_build = MagicMock(engine=Engine.BREW, version="2.0", release="new-brew-release")
 
         self.rebaser._group_config.vars = {'MAJOR': '4', 'MINOR': '8'}
 
@@ -404,7 +405,9 @@ class TestKonfluxOlmBundleRebaser(IsolatedAsyncioTestCase):
             mock_bundle_df = MagicMock()
             mock_dockerfile_parser.side_effect = [mock_operator_df, mock_bundle_df]
 
-            self.rebaser._create_dockerfile(metadata, operator_dir, bundle_dir, operator_framework_tags, input_release)
+            self.rebaser._create_dockerfile(
+                metadata, operator_dir, bundle_dir, operator_framework_tags, input_release, operator_build
+            )
 
             mock_dockerfile_parser.assert_any_call(str(operator_dir.joinpath('Dockerfile')))
             mock_dockerfile_parser.assert_any_call(str(bundle_dir.joinpath('Dockerfile')))
@@ -419,7 +422,7 @@ class TestKonfluxOlmBundleRebaser(IsolatedAsyncioTestCase):
                     'com.redhat.delivery.appregistry': '',
                     'name': 'openshift4/test-image-bundle',
                     'version': '1.0.1',
-                    'release': '1.0-1',
+                    'release': '1',
                     'com.redhat.delivery.operator.bundle': 'true',
                     'com.redhat.openshift.versions': '=v4.8',
                     'operators.operatorframework.io.bundle.channel.default.v1': 'stable',
@@ -440,9 +443,48 @@ class TestKonfluxOlmBundleRebaser(IsolatedAsyncioTestCase):
             mock_bundle_df_413 = MagicMock()
             mock_dockerfile_parser.side_effect = [mock_operator_df_413, mock_bundle_df_413]
 
-            self.rebaser._create_dockerfile(metadata, operator_dir, bundle_dir, operator_framework_tags, input_release)
+            self.rebaser._create_dockerfile(
+                metadata, operator_dir, bundle_dir, operator_framework_tags, input_release, operator_build
+            )
 
             self.assertEqual(mock_bundle_df_413.labels['name'], 'openshift4/test-image-bundle')
+
+    def test_create_dockerfile_uses_operator_build_version_for_konflux(self):
+        metadata = MagicMock()
+        metadata.get_olm_bundle_brew_component_name.return_value = "test-component"
+        metadata.get_olm_bundle_delivery_repo_name.return_value = "openshift4/test-image-bundle"
+
+        operator_dir = Path("/path/to/operator/dir")
+        bundle_dir = Path("/path/to/bundle/dir")
+        operator_framework_tags = {}
+        operator_build = MagicMock(
+            engine=Engine.KONFLUX,
+            version="2.17.3",
+            release="202610082055.p2.g7dc085e.assembly.stream.el9",
+        )
+        expected_bundle_version = "2.17.3.202610082055.p2.g7dc085e.assembly.stream.el9"
+
+        self.rebaser._group_config.vars = {'MAJOR': '4', 'MINOR': '8'}
+
+        with patch("doozerlib.backend.konflux_olm_bundler.DockerfileParser") as mock_dockerfile_parser:
+            mock_operator_df = MagicMock()
+            mock_operator_df.labels = {
+                'com.redhat.component': 'test-component',
+                'version': '2.17.3',
+                'release': '202610081720.p2.g344a3bc.assembly.stream.el9',
+                'distribution-scope': 'public',
+                'url': 'https://example.com',
+            }
+            mock_bundle_df = MagicMock()
+            mock_dockerfile_parser.side_effect = [mock_operator_df, mock_bundle_df]
+
+            nvr = self.rebaser._create_dockerfile(
+                metadata, operator_dir, bundle_dir, operator_framework_tags, "1", operator_build
+            )
+
+        self.assertEqual(mock_bundle_df.labels['version'], expected_bundle_version)
+        self.assertEqual(mock_bundle_df.labels['release'], "1")
+        self.assertEqual(nvr, f"test-component-{expected_bundle_version}-1")
 
     @patch("pathlib.Path.iterdir")
     @patch("aiofiles.open")
@@ -510,7 +552,8 @@ spec:
         mock_iterdir.side_effect = lambda: iter(bundle_files)
 
         operator_nvr = "test-component-1.0-1"
-        await self.rebaser._rebase_dir(metadata, operator_dir, bundle_dir, MagicMock(nvr=operator_nvr), input_release)
+        operator_build = MagicMock(engine=Engine.KONFLUX, nvr=operator_nvr, version="1.0", release="1")
+        await self.rebaser._rebase_dir(metadata, operator_dir, bundle_dir, operator_build, input_release)
 
         mock_mkdir.assert_any_call(parents=True, exist_ok=True)
         mock_open.assert_any_call("/path/to/operator/dir/manifests/package.yaml", 'r')
@@ -531,6 +574,7 @@ spec:
                 'operators.operatorframework.io.bundle.package.v1': 'test-package',
             },
             input_release,
+            operator_build,
         )
         mock_create_oit_files.assert_called_once_with(
             'test-package',

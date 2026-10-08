@@ -57,7 +57,8 @@ def is_nvr_embargoed(nvr: str, build_system: str = 'konflux') -> bool:
     than isolating the release field first. Not all NVR shapes put the p-flag in the release
     field: e.g. OLM bundle "metadata-container" NVRs embed the referenced operator's full
     release string (including its p-flag) in the *version* field instead
-    (bundle_version = f'{operator_version}.{operator_release}' in konflux_olm_bundler.py),
+    (bundle_version = f'{operator_build.version}.{operator_build.release}' for Konflux
+    bundles in konflux_olm_bundler.py),
     while the bundle's own release is just a trivial build counter like "1". Searching the
     whole NVR finds the p-flag wherever it actually lives.
 

@@ -404,7 +404,13 @@ class KonfluxOlmBundleRebaser:
 
         # Generate bundle's Dockerfile
         nvr = await asyncio.to_thread(
-            self._create_dockerfile, metadata, operator_dir, bundle_dir, operator_framework_tags, input_release
+            self._create_dockerfile,
+            metadata,
+            operator_dir,
+            bundle_dir,
+            operator_framework_tags,
+            input_release,
+            operator_build,
         )
 
         # Write .oit files. Those files are used by Doozer for additional information about the bundle
@@ -979,6 +985,7 @@ class KonfluxOlmBundleRebaser:
         bundle_dir: Path,
         operator_framework_tags: Dict[str, str],
         input_release: str,
+        operator_build: KonfluxBuildRecord,
     ) -> str:
         operator_df = DockerfileParser(str(operator_dir.joinpath('Dockerfile')))
         bundle_df = DockerfileParser(str(bundle_dir.joinpath('Dockerfile')))
@@ -986,7 +993,10 @@ class KonfluxOlmBundleRebaser:
         bundle_df.content = 'FROM scratch\nCOPY ./manifests /manifests\nCOPY ./metadata /metadata'
 
         component_name = metadata.get_olm_bundle_brew_component_name()
-        bundle_version = f'{operator_df.labels["version"]}.{operator_df.labels["release"]}'
+        if operator_build.engine is Engine.KONFLUX:
+            bundle_version = f'{operator_build.version}.{operator_build.release}'
+        else:
+            bundle_version = f'{operator_df.labels["version"]}.{operator_df.labels["release"]}'
         bundle_name = metadata.get_olm_bundle_delivery_repo_name()
 
         # Copy the operator's Dockerfile labels to the bundle's Dockerfile
