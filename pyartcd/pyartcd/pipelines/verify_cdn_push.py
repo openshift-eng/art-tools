@@ -90,6 +90,9 @@ class VerifyCdnPushPipeline:
         if rc != 0:
             LOGGER.warning("elliott verify-cdn-push exited with rc=%s", rc)
 
+        if not stdout.strip():
+            raise RuntimeError(f"elliott produced no output (rc={rc}): {stderr}")
+
         try:
             return json.loads(stdout)
         except json.JSONDecodeError:
