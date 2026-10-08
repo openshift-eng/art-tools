@@ -131,6 +131,24 @@ button { cursor: pointer; }
 .related-runs a { color: var(--ui-link); background: var(--ui-subtle); border: 1px solid var(--ui-line); border-radius: 4px; padding: 4px 8px; text-decoration: none; overflow-wrap: anywhere; }
 .related-runs a:hover { color: var(--ui-link-hover); text-decoration: underline; }
 .detail-actions { display: flex; gap: 9px; flex-wrap: wrap; }
+.run-details-panel h2 { margin-bottom: 19px; }
+.run-details-grid { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 34px; }
+.run-detail-column { min-width: 0; }
+.run-detail-field { min-width: 0; padding: 13px 0; border-top: 1px solid var(--ui-line); font-size: 15px; }
+.run-detail-field:first-child { padding-top: 0; border-top: 0; }
+.run-detail-field > strong { display: block; margin-bottom: 6px; color: var(--ui-text); }
+.run-detail-field > div { color: var(--ui-body); overflow-wrap: anywhere; }
+.run-detail-field a { color: var(--ui-link); text-decoration: underline; text-underline-offset: 2px; }
+.run-detail-field a:hover { color: var(--ui-link-hover); }
+.run-detail-message { display: block; color: var(--ui-muted); margin-top: 6px; overflow-wrap: anywhere; }
+.metadata-chips { display: flex; flex-wrap: wrap; gap: 7px; }
+.metadata-chip { display: inline-flex; gap: 4px; max-width: 100%; align-items: baseline; padding: 5px 8px; border: 1px solid var(--ui-line); border-radius: 14px; background: var(--ui-subtle); color: var(--ui-body); font-size: 13px; overflow-wrap: anywhere; }
+.metadata-chip code, .metadata-row code { font: inherit; }
+.metadata-chip code:first-child { font-weight: 700; }
+.metadata-rows { border-bottom: 1px solid var(--ui-line); }
+.metadata-row { display: grid; grid-template-columns: minmax(120px, .8fr) minmax(0, 1.4fr); gap: 12px; padding: 7px 0; border-top: 1px solid var(--ui-line); font-size: 13px; }
+.metadata-row code { color: var(--ui-muted); overflow-wrap: anywhere; }
+.metadata-row > span { color: var(--ui-body); overflow-wrap: anywhere; white-space: pre-wrap; }
 .run-message { border-left: 3px solid #df7a4b; background: var(--ui-warning-bg); padding: 12px 15px; color: var(--ui-warning-text); margin: 0 0 20px; font-size: 15px; white-space: pre-wrap; }
 .panel { background: var(--ui-surface); border: 1px solid var(--ui-line); border-radius: 7px; padding: 22px; margin: 0 0 20px; }
 .panel h2 { margin: 0 0 18px; font-size: 20px; color: var(--ui-text); }
@@ -190,10 +208,13 @@ button { cursor: pointer; }
   .count { display: none; }
   .detail-heading { display: block; }
   .detail-actions { margin-top: 18px; }
+  .run-details-grid { grid-template-columns: 1fr; gap: 0; }
+  .run-detail-column + .run-detail-column .run-detail-field:first-child { border-top: 1px solid var(--ui-line); padding-top: 13px; }
   .modal-backdrop { padding: 8px; }
   .modal-header, .modal-body, .modal-footer { padding-left: 18px; padding-right: 18px; }
   .logs-panel pre { height: 55vh; min-height: 280px; }
 }
 @media (max-width: 480px) {
   .definition-list > div { grid-template-columns: 1fr; }
+  .metadata-row { grid-template-columns: 1fr; gap: 4px; }
 }

@@ -53,6 +53,49 @@ function Status({ value }) {
   return <Label color={statusColor(value)}>{value || 'Unknown'}</Label>;
 }
 
+function RunDetailField({ label, children }) {
+  return <div className="run-detail-field"><strong>{label}</strong><div>{children ?? '—'}</div></div>;
+}
+
+function MetadataValues({ values, chips = false }) {
+  const entries = Object.entries(values || {}).sort(([left], [right]) => left.localeCompare(right));
+  if (!entries.length) return <span className="muted">None</span>;
+  return <div className={chips ? 'metadata-chips' : 'metadata-rows'}>{entries.map(([key, value]) => chips
+    ? <span className="metadata-chip" key={key}><code>{key}</code><span>=</span><code>{String(value)}</code></span>
+    : <div className="metadata-row" key={key}><code>{key}</code><span>{String(value)}</span></div>)}</div>;
+}
+
+function RunDetails({ run }) {
+  const pipelineHref = run.pipeline
+    ? `#/pipeline/${encodeURIComponent(run.namespace)}/${encodeURIComponent(run.pipeline)}`
+    : null;
+  const parentHref = run.parentPipelineRun
+    ? `#/run/${encodeURIComponent(run.namespace)}/${encodeURIComponent(run.parentPipelineRun)}`
+    : null;
+  return <section className="panel run-details-panel" role="tabpanel" aria-label="PipelineRun details">
+    <h2>PipelineRun details</h2>
+    <div className="run-details-grid">
+      <div className="run-detail-column">
+        <RunDetailField label="Name">{run.name}</RunDetailField>
+        <RunDetailField label="Namespace">{run.namespace}</RunDetailField>
+        <RunDetailField label="Labels"><MetadataValues values={run.labels} chips /></RunDetailField>
+        <RunDetailField label="Annotations"><MetadataValues values={run.annotations} /></RunDetailField>
+        <RunDetailField label="Parent PipelineRun">{parentHref ? <a href={parentHref}>{run.parentPipelineRun}</a> : null}</RunDetailField>
+      </div>
+      <div className="run-detail-column">
+        <RunDetailField label="Status"><Status value={run.status} />{run.message && <small className="run-detail-message">{run.message}</small>}</RunDetailField>
+        <RunDetailField label="Pipeline">{pipelineHref ? <a href={pipelineHref}>{run.pipeline}</a> : null}</RunDetailField>
+        <RunDetailField label="Created">{formatDate(run.created)}</RunDetailField>
+        <RunDetailField label="Start time">{formatDate(run.started)}</RunDetailField>
+        <RunDetailField label="Completion time">{formatDate(run.completed)}</RunDetailField>
+        <RunDetailField label="Duration">{formatDuration(run.started, run.completed, Date.now())}</RunDetailField>
+        <RunDetailField label="UID">{run.uid}</RunDetailField>
+        <RunDetailField label="Source">{run.source === 'archive' ? 'Tekton Results' : 'Live cluster'}</RunDetailField>
+      </div>
+    </div>
+  </section>;
+}
+
 function Field({ label, children, hint }) {
   return <label className="field"><span className="field-label">{label}</span>{children}{hint && <span className="field-hint">{hint}</span>}</label>;
 }
@@ -282,7 +325,7 @@ function RunDetail({ view, csrfToken }) {
   const [streamKey, setStreamKey] = useState(0);
   const [events, setEvents] = useState(null);
   const [eventsError, setEventsError] = useState('');
-  const [activeTab, setActiveTab] = useState('logs');
+  const [activeTab, setActiveTab] = useState('details');
   const [form, setForm] = useState(false);
   const [error, setError] = useState('');
   const runKey = `${view.namespace}/${view.name}/${view.uid || ''}`;
@@ -327,7 +370,7 @@ function RunDetail({ view, csrfToken }) {
     setEventsError('');
     load('events', eventsUrl, setEvents, (cause) => setEventsError(cause.message));
   }, [load, eventsUrl]);
-  useEffect(() => { setActiveTab('logs'); setRun(null); setChildren(null); setChildrenError(''); setLogs(null); setLogsError(''); setEvents(null); setEventsError(''); setForm(false); refresh(); refreshChildren(); }, [refresh, refreshChildren]);
+  useEffect(() => { setActiveTab('details'); setRun(null); setChildren(null); setChildrenError(''); setLogs(null); setLogsError(''); setEvents(null); setEventsError(''); setForm(false); refresh(); refreshChildren(); }, [refresh, refreshChildren]);
   useEffect(() => {
     if (!selectedRun || liveRun) return undefined;
     setLogsError('');
@@ -384,11 +427,13 @@ function RunDetail({ view, csrfToken }) {
       {childrenError && <Alert variant="warning" title={`Child PipelineRuns could not be loaded: ${childrenError}`} className="notice" />}
       {children?.errors?.length > 0 && <Alert variant="warning" title={`Some child PipelineRuns could not be loaded (${children.errors.map((item) => item.source).join(', ')})`} className="notice" />}
       <div className="detail-tabs" role="tablist" aria-label="PipelineRun views">
+        <button type="button" role="tab" aria-selected={activeTab === 'details'} className={activeTab === 'details' ? 'active' : ''} onClick={() => setActiveTab('details')}>Details</button>
         <button type="button" role="tab" aria-selected={activeTab === 'logs'} className={activeTab === 'logs' ? 'active' : ''} onClick={() => setActiveTab('logs')}>Logs</button>
         <button type="button" role="tab" aria-selected={activeTab === 'events'} className={activeTab === 'events' ? 'active' : ''} onClick={() => setActiveTab('events')}>Events</button>
         <button type="button" role="tab" aria-selected={activeTab === 'parameters'} className={activeTab === 'parameters' ? 'active' : ''} onClick={() => setActiveTab('parameters')}>Parameters ({run.parameters.length})</button>
         <button type="button" role="tab" aria-selected={activeTab === 'tasks'} className={activeTab === 'tasks' ? 'active' : ''} onClick={() => setActiveTab('tasks')}>Task runs ({run.tasks.length})</button>
       </div>
+      {activeTab === 'details' && <RunDetails run={run} />}
       {activeTab === 'logs' && <section className="panel logs-panel" role="tabpanel"><div className="section-heading"><h2>Logs</h2><span className="source">{logs?.source === 'archive' ? 'Tekton Results' : 'Cluster pods'}</span></div>{logsError && <Alert variant="warning" title={logsError} className="notice" />}{logs?.truncated && <Alert variant="warning" title="Log display is limited to the first 8 MB per step" className="notice" />}<LogText text={logs?.text || 'Loading logs…'} streaming={liveRun} /></section>}
       {activeTab === 'events' && <section className="panel events-panel" role="tabpanel"><div className="section-heading"><h2>Events</h2><span className="source">Cluster events</span></div><p className="muted">Updates every 10 seconds while the run is active.</p>{eventsError && <Alert variant="danger" title={eventsError} className="notice" />}{!events && !eventsError ? <div className="loading"><Spinner size="lg" /></div> : events?.items.length ? <div className="table-wrap"><table className="data-table events-table"><thead><tr><th>Last seen</th><th>Type</th><th>Resource</th><th>Reason</th><th>Message</th><th>Count</th></tr></thead><tbody>{events.items.map((event) => <tr key={event.uid}><td>{formatDate(event.lastSeen)}</td><td><Label color={event.type === 'Warning' ? 'red' : 'grey'}>{event.type}</Label></td><td><strong>{event.kind}</strong><small>{event.object}</small></td><td>{event.reason || '—'}</td><td className="event-message">{event.message || '—'}</td><td>{event.count}</td></tr>)}</tbody></table></div> : !eventsError && <p className="muted">{run.source === 'archive' ? 'No cluster events remain for this archived run.' : 'No cluster events have been recorded for this run yet.'}</p>}</section>}
       {activeTab === 'parameters' && <section className="panel" role="tabpanel"><h2>Parameters <span className="muted">{run.parameters.length}</span></h2>{run.parameters.length ? <div className="value-list">{run.parameters.map((param) => <div key={param.name}><span>{param.name}</span><code>{typeof param.value === 'string' ? param.value : JSON.stringify(param.value)}</code></div>)}</div> : <p className="muted">This run did not specify parameters.</p>}</section>}

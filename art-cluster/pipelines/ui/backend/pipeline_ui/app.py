@@ -289,11 +289,13 @@ async def run_detail(request: Request, namespace: str, name: str, uid: str | Non
     allowed_namespace(namespace)
     async with Gateway(user_token(request)) as gateway:
         run, source, _ = await find_run(gateway, namespace, name, uid)
+    metadata = run.get("metadata", {})
+    labels = metadata.get("labels") or {}
     return {
         **run_summary(run, source),
-        "parentPipelineRun": (run.get("metadata", {}).get("labels") or {}).get(
-            "art.openshift.io/parent-pipelinerun"
-        ),
+        "labels": labels,
+        "annotations": metadata.get("annotations") or {},
+        "parentPipelineRun": labels.get("art.openshift.io/parent-pipelinerun"),
         "parameters": run.get("spec", {}).get("params", []),
         "workspaces": run.get("spec", {}).get("workspaces", []),
         "tasks": run.get("status", {}).get("childReferences", []),
