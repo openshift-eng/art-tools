@@ -9,7 +9,6 @@ import json
 import secrets
 import subprocess
 
-
 NAMESPACE = "art-pipelines-ui"
 NAME = "art-pipelines-ui-oauth"
 CLIENT = "art-pipelines-ui"
@@ -38,10 +37,7 @@ def main() -> None:
         check=False,
     )
     if existing.returncode == 0:
-        values = {
-            key: base64.b64decode(value).decode()
-            for key, value in json.loads(existing.stdout)["data"].items()
-        }
+        values = {key: base64.b64decode(value).decode() for key, value in json.loads(existing.stdout)["data"].items()}
     elif "NotFound" in existing.stderr:
         values = {"client-secret": secrets.token_hex(16), "cookie-secret": secrets.token_hex(16)}
     else:

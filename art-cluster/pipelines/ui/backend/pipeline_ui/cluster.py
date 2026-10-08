@@ -7,11 +7,10 @@ from urllib.parse import quote
 
 import httpx
 
-
 KUBE_API = os.getenv("KUBE_API_URL", "https://kubernetes.default.svc").rstrip("/")
-RESULTS_API = os.getenv(
-    "RESULTS_API_URL", "https://tekton-results-api-service.openshift-pipelines.svc:8080"
-).rstrip("/")
+RESULTS_API = os.getenv("RESULTS_API_URL", "https://tekton-results-api-service.openshift-pipelines.svc:8080").rstrip(
+    "/"
+)
 KUBE_CA = os.getenv("KUBE_CA_FILE", "/var/run/secrets/kubernetes.io/serviceaccount/ca.crt")
 RESULTS_CA = os.getenv("RESULTS_CA_FILE", "/var/run/secrets/service-ca/service-ca.crt")
 RESULTS_PREFIX = "/apis/results.tekton.dev/v1alpha2/parents"
@@ -58,9 +57,7 @@ class Gateway:
         return self._check(response).json()
 
     async def pipeline(self, namespace: str, name: str) -> dict:
-        return await self.kube_json(
-            "GET", f"/apis/tekton.dev/v1/namespaces/{quote(namespace)}/pipelines/{quote(name)}"
-        )
+        return await self.kube_json("GET", f"/apis/tekton.dev/v1/namespaces/{quote(namespace)}/pipelines/{quote(name)}")
 
     async def run(self, namespace: str, name: str) -> dict:
         return await self.kube_json(
@@ -106,9 +103,7 @@ class Gateway:
             params = {"filter": filter_text, "page_size": 200, "order_by": "create_time desc"}
             if token:
                 params["page_token"] = token
-            data = await self.results_json(
-                f"{RESULTS_PREFIX}/{quote(namespace)}/results/-/records", params=params
-            )
+            data = await self.results_json(f"{RESULTS_PREFIX}/{quote(namespace)}/results/-/records", params=params)
             for record in data.get("records", []):
                 try:
                     run = json.loads(base64.b64decode(record["data"]["value"]))
@@ -152,9 +147,7 @@ class Gateway:
 
     async def live_logs(self, namespace: str, run_name: str):
         taskruns = []
-        async for taskrun in self.list_kube(
-            namespace, "taskruns", label_selector=f"tekton.dev/pipelineRun={run_name}"
-        ):
+        async for taskrun in self.list_kube(namespace, "taskruns", label_selector=f"tekton.dev/pipelineRun={run_name}"):
             taskruns.append(taskrun)
         taskruns.sort(key=lambda task: task.get("metadata", {}).get("creationTimestamp", ""))
         sections = []

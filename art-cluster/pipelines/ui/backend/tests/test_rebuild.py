@@ -2,7 +2,6 @@ import unittest
 
 from pipeline_ui.rebuild import InvalidRun, build_run, parameter_form
 
-
 PIPELINE = {
     "metadata": {"namespace": "art-logging-tenant", "name": "release-from-fbc", "resourceVersion": "42"},
     "spec": {

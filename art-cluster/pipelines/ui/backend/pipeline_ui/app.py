@@ -15,7 +15,6 @@ from pydantic import BaseModel, Field
 from .cluster import Gateway, UpstreamError
 from .rebuild import InvalidRun, build_run, parameter_form, pipeline_name
 
-
 NAMESPACES = tuple(
     namespace.strip() for namespace in os.getenv("PIPELINE_NAMESPACES", "").split(",") if namespace.strip()
 )
@@ -168,6 +167,7 @@ async def session(request: Request, response: Response):
 @app.get("/api/namespaces")
 async def namespaces(request: Request):
     async with Gateway(user_token(request)) as gateway:
+
         async def visible(namespace: str):
             try:
                 await gateway.kube_json(
@@ -187,6 +187,7 @@ async def namespaces(request: Request):
 async def pipelines(request: Request, namespace: str | None = None, q: str = ""):
     names = selected_namespaces(namespace)
     async with Gateway(user_token(request)) as gateway:
+
         async def read(current: str):
             try:
                 return [pipeline_summary(item) async for item in gateway.list_kube(current, "pipelines")]
@@ -216,7 +217,8 @@ async def latest_pipeline_runs(request: Request, namespace: str | None = None):
             key = (run["namespace"], run["pipeline"])
             previous = latest.get(key)
             if previous is None or (run["created"] or "", run["source"] == "live") > (
-                previous["created"] or "", previous["source"] == "live"
+                previous["created"] or "",
+                previous["source"] == "live",
             ):
                 latest[key] = run
     return {"items": list(latest.values()), "errors": errors}
@@ -272,7 +274,11 @@ async def runs(
     if pipeline:
         items = [item for item in items if item["pipeline"] == pipeline]
     if q:
-        items = [item for item in items if q.lower() in (item["name"] or "").lower() or q.lower() in (item["pipeline"] or "").lower()]
+        items = [
+            item
+            for item in items
+            if q.lower() in (item["name"] or "").lower() or q.lower() in (item["pipeline"] or "").lower()
+        ]
     if status:
         items = [item for item in items if item["status"].lower() == status.lower()]
     if since:
@@ -436,7 +442,9 @@ async def run_log_stream(request: Request, namespace: str, name: str, uid: str |
                             ):
                                 metadata = taskrun.get("metadata", {})
                                 owners = metadata.get("ownerReferences", [])
-                                if owners and not any(owner.get("uid") == current["metadata"]["uid"] for owner in owners):
+                                if owners and not any(
+                                    owner.get("uid") == current["metadata"]["uid"] for owner in owners
+                                ):
                                     continue
                                 pod = taskrun.get("status", {}).get("podName")
                                 if not pod:
@@ -493,7 +501,8 @@ async def run_events(request: Request, namespace: str, name: str, uid: str | Non
         targets = [("PipelineRun", name, run_uid)]
         if source == "live":
             tasks = [
-                task async for task in gateway.list_kube(
+                task
+                async for task in gateway.list_kube(
                     namespace, "taskruns", label_selector=f"tekton.dev/pipelineRun={name}"
                 )
             ]
@@ -514,7 +523,8 @@ async def run_events(request: Request, namespace: str, name: str, uid: str | Non
 
         async def read_events(kind: str, object_name: str, object_uid: str):
             return [
-                event_summary(event) async for event in gateway.list_events(namespace, object_name)
+                event_summary(event)
+                async for event in gateway.list_events(namespace, object_name)
                 if event.get("involvedObject", {}).get("kind") == kind
                 and event.get("involvedObject", {}).get("uid") == object_uid
             ]

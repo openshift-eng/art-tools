@@ -8,9 +8,9 @@ class InvalidRun(ValueError):
 
 
 def pipeline_name(run: dict) -> str | None:
-    return (run.get("spec", {}).get("pipelineRef") or {}).get("name") or run.get("metadata", {}).get(
-        "labels", {}
-    ).get("tekton.dev/pipeline")
+    return (run.get("spec", {}).get("pipelineRef") or {}).get("name") or run.get("metadata", {}).get("labels", {}).get(
+        "tekton.dev/pipeline"
+    )
 
 
 def parameter_form(pipeline: dict, source_run: dict | None = None) -> dict:
@@ -42,9 +42,7 @@ def parameter_form(pipeline: dict, source_run: dict | None = None) -> dict:
         "workspaces": deepcopy((source_run or {}).get("spec", {}).get("workspaces", [])),
         "workspaceDefinitions": deepcopy(pipeline.get("spec", {}).get("workspaces", [])),
         "sourceRun": (
-            {"name": source_run["metadata"]["name"], "uid": source_run["metadata"]["uid"]}
-            if source_run
-            else None
+            {"name": source_run["metadata"]["name"], "uid": source_run["metadata"]["uid"]} if source_run else None
         ),
     }
 
@@ -55,9 +53,7 @@ def _validate_value(name: str, value, definition: dict) -> None:
         raise InvalidRun(f"Parameter {name} must be a string")
     if kind == "array" and (not isinstance(value, list) or any(not isinstance(item, str) for item in value)):
         raise InvalidRun(f"Parameter {name} must be an array of strings")
-    if kind == "object" and (
-        not isinstance(value, dict) or any(not isinstance(item, str) for item in value.values())
-    ):
+    if kind == "object" and (not isinstance(value, dict) or any(not isinstance(item, str) for item in value.values())):
         raise InvalidRun(f"Parameter {name} must be an object of strings")
     if kind not in ("string", "array", "object"):
         raise InvalidRun(f"Unsupported parameter type for {name}: {kind}")
@@ -74,9 +70,7 @@ def build_run(
 ) -> dict:
     namespace = pipeline["metadata"]["namespace"]
     name = pipeline["metadata"]["name"]
-    if source_run and (
-        source_run["metadata"]["namespace"] != namespace or pipeline_name(source_run) != name
-    ):
+    if source_run and (source_run["metadata"]["namespace"] != namespace or pipeline_name(source_run) != name):
         raise InvalidRun("The source run does not reference this Pipeline")
     definitions = {param["name"]: param for param in pipeline.get("spec", {}).get("params", [])}
     unknown = set(values) - set(definitions)
