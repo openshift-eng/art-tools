@@ -1,3 +1,4 @@
+import asyncio
 import enum
 import logging
 from types import coroutine
@@ -50,6 +51,7 @@ class Keys(enum.Enum):
 # since we usually start a long-running job/operation & after acquiring lock do not
 # check its validity again (if this pattern changes then we should change this).
 DEFAULT_LOCK_TIMEOUT = 60 * 60 * 96  # 96 hours
+LOCK_WAIT_LOG_INTERVAL = 10 * 60  # 10 minutes
 
 # This constant defines for each lock type:
 # - how many times the lock manager should try to acquire the lock before giving up
@@ -227,12 +229,22 @@ class LockManager(Aioredlock):
 
     async def lock(self, resource, *args, **kwargs):
         self.logger.info('Trying to acquire lock %s', resource)
+        loop = asyncio.get_running_loop()
+
+        def report_wait():
+            nonlocal reminder
+            self.logger.info('Still waiting to acquire lock %s', resource)
+            reminder = loop.call_later(LOCK_WAIT_LOG_INTERVAL, report_wait)
+
+        reminder = loop.call_later(LOCK_WAIT_LOG_INTERVAL, report_wait)
         try:
             lock = await super().lock(resource, *args, **kwargs)
             self.logger.info('Acquired lock %s', resource)
         except LockError:
             self.logger.error('Failed acquiring lock %s', resource)
             raise
+        finally:
+            reminder.cancel()
         return lock
 
     async def unlock(self, lock):
