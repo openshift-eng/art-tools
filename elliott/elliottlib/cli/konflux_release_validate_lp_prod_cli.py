@@ -15,6 +15,7 @@ from tempfile import TemporaryDirectory
 from typing import Iterable, Iterator, TextIO
 
 import click
+import psutil
 from artcommonlib.gitlab import GitLabClient
 from artcommonlib.product_catalog import get_product_config
 from artcommonlib.product_ids import ProductId
@@ -43,6 +44,7 @@ from elliottlib.shipment_utils import (
 LOGGER = logging.getLogger(__name__)
 YAML = new_roundtrip_yaml_handler()
 _ACTIVE_RELEASE_REASONS = frozenset({'Unknown', 'Not Found', 'Progressing'})
+_MEMORY_BYTES_PER_GIB = 1024**3
 
 
 @dataclass(frozen=True)
@@ -74,6 +76,82 @@ class _FragmentValidation:
     fragment_pullspec: str
     production_index: str
     rendered: _RenderedCatalog
+
+
+def _format_memory_bytes(value: int) -> str:
+    """Format a byte count for human-readable progress logs.
+
+    Args:
+        value: Number of bytes.
+
+    Returns:
+        Byte count formatted in GiB.
+    """
+    return f'{value / _MEMORY_BYTES_PER_GIB:.2f} GiB'
+
+
+def _read_memory_value(path: Path) -> int | None:
+    """Read a numeric cgroup memory value when the file is available.
+
+    Args:
+        path: Cgroup memory file to read.
+
+    Returns:
+        Parsed byte count, or ``None`` when the file is absent, unlimited, or invalid.
+    """
+    try:
+        value = path.read_text(encoding='utf-8').strip()
+    except (OSError, UnicodeDecodeError):
+        return None
+    if value == 'max':
+        return None
+    try:
+        parsed = int(value)
+    except ValueError:
+        return None
+    return parsed if parsed < 1 << 60 else None
+
+
+def _memory_status() -> str:
+    """Describe memory available to the validator process.
+
+    Returns:
+        Cgroup current, limit, and available memory when available, followed by
+        the validator process RSS. Falls back to host-level available memory
+        when no cgroup limit is visible.
+    """
+    cgroup_paths = (
+        (Path('/sys/fs/cgroup/memory.current'), Path('/sys/fs/cgroup/memory.max')),
+        (
+            Path('/sys/fs/cgroup/memory/memory.usage_in_bytes'),
+            Path('/sys/fs/cgroup/memory/memory.limit_in_bytes'),
+        ),
+    )
+    cgroup_memory = next(
+        (
+            (current, limit)
+            for current_path, limit_path in cgroup_paths
+            if (current := _read_memory_value(current_path)) is not None
+            and (limit := _read_memory_value(limit_path)) is not None
+        ),
+        None,
+    )
+    process_rss = psutil.Process().memory_info().rss
+    if cgroup_memory is not None:
+        current, limit = cgroup_memory
+        available = max(limit - current, 0)
+        return (
+            f'cgroup_current={_format_memory_bytes(current)} '
+            f'cgroup_limit={_format_memory_bytes(limit)} '
+            f'cgroup_available={_format_memory_bytes(available)} '
+            f'process_rss={_format_memory_bytes(process_rss)}'
+        )
+    host_memory = psutil.virtual_memory()
+    return (
+        f'host_available={_format_memory_bytes(host_memory.available)} '
+        f'host_total={_format_memory_bytes(host_memory.total)} '
+        f'process_rss={_format_memory_bytes(process_rss)}'
+    )
 
 
 def _iter_json_objects(stream: TextIO) -> Iterator[dict]:
@@ -485,6 +563,33 @@ class ValidateLpProdCli:
                 "Retry after it finishes."
             )
 
+    async def _log_runtime_diagnostics(self) -> None:
+        """Log the ``opm`` version and available memory before catalog rendering.
+
+        Version lookup is diagnostic only. If it fails, validation continues so
+        the existing render failure remains the authoritative result.
+        """
+        memory_before = _memory_status()
+        try:
+            rc, stdout, stderr = await gather_opm(['version'], auth=OpmRegistryAuth(path=self.pull_secret), check=False)
+        except Exception as exc:
+            LOGGER.warning(
+                'validate-lp-prod could not determine opm version: %s; memory_before_render=%s',
+                exc,
+                memory_before,
+            )
+            return
+        version = ' '.join((stdout or '').split()) or 'unknown'
+        if rc == 0:
+            LOGGER.info('validate-lp-prod opm=%s memory_before_render=%s', version, memory_before)
+        else:
+            LOGGER.warning(
+                'validate-lp-prod opm version command failed rc=%s stderr=%s memory_before_render=%s',
+                rc,
+                ' '.join((stderr or '').split()),
+                memory_before,
+            )
+
     async def _validate_fbc_fragments(self, configs: list[ShipmentConfig]) -> None:
         """Fail if any outgoing FBC fragment prunes a production entry.
 
@@ -499,6 +604,7 @@ class ValidateLpProdCli:
         auth = OpmRegistryAuth(path=self.pull_secret)
         fragment_validations: list[_FragmentValidation] = []
         index_packages: defaultdict[str, set[str]] = defaultdict(set)
+        fragment_number = 0
         for config, config_path in zip(configs, self.config_paths):
             shipment = config.shipment
             if not shipment.metadata.fbc:
@@ -514,10 +620,27 @@ class ValidateLpProdCli:
             production_index = PRODUCTION_INDEX_PULLSPEC_FORMAT.format(major=major, minor=minor)
             for component in shipment.snapshot.spec.components:
                 fragment_pullspec = component.containerImage
+                fragment_number += 1
+                fragment_started = time.perf_counter()
+                LOGGER.info(
+                    'validate-lp-prod rendering fragment %d: %s (target index=%s, memory=%s)',
+                    fragment_number,
+                    fragment_pullspec,
+                    production_index,
+                    _memory_status(),
+                )
                 rendered_fragment = await _render_catalog(fragment_pullspec, None, auth)
                 fragment_packages, _ = _catalog_channels(rendered_fragment.blobs)
                 if not fragment_packages:
                     raise ValueError(f'Outgoing FBC fragment contains no identifiable package: {fragment_pullspec}')
+                LOGGER.info(
+                    'validate-lp-prod finished fragment %d: %s packages=%s elapsed=%.2fs memory=%s',
+                    fragment_number,
+                    fragment_pullspec,
+                    sorted(fragment_packages),
+                    time.perf_counter() - fragment_started,
+                    _memory_status(),
+                )
                 fragment_validations.append(
                     _FragmentValidation(
                         config_path=config_path,
@@ -528,8 +651,17 @@ class ValidateLpProdCli:
                 )
                 index_packages[production_index].update(fragment_packages)
 
-        for production_index, packages in index_packages.items():
+        total_indexes = len(index_packages)
+        for index_number, (production_index, packages) in enumerate(index_packages.items(), 1):
             index_started = time.perf_counter()
+            LOGGER.info(
+                'validate-lp-prod starting index %d/%d: %s packages=%s memory=%s',
+                index_number,
+                total_indexes,
+                production_index,
+                sorted(packages),
+                _memory_status(),
+            )
             rendered_production = await _render_catalog(production_index, packages, auth)
             comparisons = [
                 fragment for fragment in fragment_validations if fragment.production_index == production_index
@@ -550,13 +682,15 @@ class ValidateLpProdCli:
             fragment_seconds = sum(fragment.rendered.stats.total_seconds for fragment in comparisons)
             result = 'FAIL' if failures else 'PASS'
             summary = (
-                f"validate-lp-prod index={production_index} packages={sorted(packages)} "
+                f"validate-lp-prod index={index_number}/{total_indexes} {production_index} "
+                f"packages={sorted(packages)} "
                 f"fragments={len(comparisons)} objects_read={rendered_production.stats.objects_read} "
                 f"objects_retained={rendered_production.stats.objects_retained} "
                 f"channels={rendered_production.stats.channels} entries={rendered_production.stats.entries} "
                 f"fragment_time={fragment_seconds:.2f}s production_render={rendered_production.stats.render_seconds:.2f}s "
                 f"production_filter={rendered_production.stats.filter_seconds:.2f}s "
                 f"comparison={comparison_seconds:.2f}s total={time.perf_counter() - index_started:.2f}s "
+                f"memory={_memory_status()} "
                 f"result={result}"
             )
             if failures:
@@ -584,6 +718,7 @@ class ValidateLpProdCli:
         self._validate_gitlab_concurrency(product)
         konflux_client = self._new_konflux_client(product)
         await self._validate_konflux_concurrency(product, konflux_client)
+        await self._log_runtime_diagnostics()
         await self._validate_fbc_fragments(configs)
         LOGGER.info("Layered-product production validation passed for %s", product)
 
