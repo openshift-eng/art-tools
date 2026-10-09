@@ -527,8 +527,9 @@ class ReleaseFromFbcPipeline:
             doozer_cmd = ['doozer', f'--group={self.group}', 'config:read-group', 'product']
 
             _, product_output, _ = await exectools.cmd_gather_async(doozer_cmd)
-            # Clean up the output - remove all whitespace (including newlines)
-            product = product_output.strip()
+            # Doozer may print its first-run notice before the scalar value.
+            output_lines = [line.strip() for line in (product_output or "").splitlines() if line.strip()]
+            product = output_lines[-1] if output_lines else ""
 
             if product and product != 'None' and product != 'null':
                 self.logger.info(f"Loaded product from group config: {product}")
