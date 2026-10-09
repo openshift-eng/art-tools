@@ -28,9 +28,7 @@ PIPELINE_ORDER = (
     ("release-from-fbc", "binary-release", "binary-release-konflux"),
     ("trigger-prod-release",),
 )
-PIPELINE_PRIORITY = {
-    name: priority for priority, names in enumerate(PIPELINE_ORDER) for name in names
-}
+PIPELINE_PRIORITY = {name: priority for priority, names in enumerate(PIPELINE_ORDER) for name in names}
 CSRF_COOKIE = "__Host-art-pipelines-csrf"
 app = FastAPI(title="ART Pipelines UI", docs_url=None, redoc_url=None, openapi_url=None)
 
