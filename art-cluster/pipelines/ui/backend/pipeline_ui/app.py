@@ -368,9 +368,7 @@ async def run_detail(request: Request, namespace: str, name: str, uid: str | Non
         "annotations": annotations,
         "parentPipelineRun": labels.get("art.openshift.io/parent-pipelinerun"),
         "rebuiltFrom": (
-            {"name": rebuilt_from_name, "uid": rebuilt_from_uid}
-            if rebuilt_from_name and rebuilt_from_uid
-            else None
+            {"name": rebuilt_from_name, "uid": rebuilt_from_uid} if rebuilt_from_name and rebuilt_from_uid else None
         ),
         "parameters": run.get("spec", {}).get("params", []),
         "workspaces": run.get("spec", {}).get("workspaces", []),

@@ -2,7 +2,6 @@ import unittest
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import httpx
-
 from pipeline_ui import app as api
 
 NAMESPACE = "art-test-tenant"
