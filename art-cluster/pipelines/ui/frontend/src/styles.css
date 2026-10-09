@@ -281,3 +281,14 @@ button { cursor: pointer; }
   .definition-list > div { grid-template-columns: 1fr; }
   .metadata-row { grid-template-columns: 1fr; gap: 4px; }
 }
+
+@media (max-width: 1280px) {
+  .cluster-name, .user-name { display: none; }
+}
+@media (max-width: 1100px) {
+  .topbar { flex-wrap: wrap; gap: 0 18px; padding: 10px 20px 0; }
+  .brand { min-height: 36px; }
+  .topnav { order: 3; width: 100%; height: auto; min-height: 39px; flex-wrap: wrap; gap: 0 18px; }
+  .nav { min-height: 39px; }
+  .topbar-right { margin-left: auto; }
+}
