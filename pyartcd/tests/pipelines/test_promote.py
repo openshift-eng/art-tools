@@ -2131,6 +2131,21 @@ class TestPromotePipeline(IsolatedAsyncioTestCase):
             self.assertNotIn("RPM_ADVISORY", str(call))
 
     @patch("pyartcd.jira_client.JIRAClient.from_url", return_value=None)
+    @patch(
+        "pyartcd.pipelines.promote.get_github_client_for_org", side_effect=AssertionError("Unexpected GitHub access")
+    )
+    async def test_update_qe_repo_dry_run_skips_github(self, mock_get_github_client: Mock, _):
+        runtime = MagicMock(working_dir=Path("/tmp"), dry_run=True)
+        pipeline = PromotePipeline(runtime, group="openshift-4.21", assembly="4.21.0", signing_env="stage")
+
+        pipeline._update_qe_repo(
+            release_name="4.21.0", release_jira="ART-1234", advisories={"image": 12345, "rpm": 67890}
+        )
+
+        mock_get_github_client.assert_not_called()
+        pipeline._logger.info.assert_called_once_with("[DRY RUN] Would update QE release tests repo for %s", "4.21.0")
+
+    @patch("pyartcd.jira_client.JIRAClient.from_url", return_value=None)
     @patch("pyartcd.pipelines.promote.get_github_client_for_org")
     @patch.dict(os.environ, {"GITHUB_TOKEN": "fake-token"})
     async def test_update_qe_repo_releases_is_none(self, mock_get_github_client: Mock, _):
@@ -2184,7 +2199,12 @@ class TestPromotePipeline(IsolatedAsyncioTestCase):
         )
 
         # then
+        mock_fork_repo.create_git_ref.assert_called_once_with("refs/heads/4.21.0", "fake-sha")
         mock_fork_repo.update_file.assert_called_once()
+        mock_upstream_repo.create_pull.assert_called_once_with(
+            title="Add release 4.21.0", body="Add release 4.21.0", base="z-stream", head="openshift-bot:4.21.0"
+        )
+        mock_upstream_repo.create_pull.return_value.merge.assert_called_once_with()
         pipeline._logger.warning.assert_called_with("release file not in valid yaml format, overwrite with new value")
 
         call_args = mock_fork_repo.update_file.call_args

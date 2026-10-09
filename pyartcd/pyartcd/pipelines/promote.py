@@ -2556,6 +2556,10 @@ class PromotePipeline:
 
     @retry(reraise=True, stop=stop_after_attempt(3), wait=wait_fixed(10))
     def _update_qe_repo(self, release_name: str, release_jira: str, advisories: Dict[str, int]):
+        if self.runtime.dry_run:
+            self._logger.info("[DRY RUN] Would update QE release tests repo for %s", release_name)
+            return
+
         upstream_repo = get_github_client_for_org("openshift").get_repo("openshift/release-tests")
         fork_repo = get_github_client_for_org("openshift-bot").get_repo("openshift-bot/release-tests")
         update_message = f"Add release {release_name}"
