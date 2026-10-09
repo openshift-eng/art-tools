@@ -4,7 +4,7 @@ metadata:
   name: acm-mce-schedule-scan-cron
   namespace: art-acm-tenant
 spec:
-  schedule: "*/30 * * * *"
+  schedule: "0 * * * *"
   suspend: false
   concurrencyPolicy: Forbid
   jobTemplate:
