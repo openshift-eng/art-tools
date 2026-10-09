@@ -19,7 +19,7 @@ OLD_RUN = {
         "pipelineRef": {"name": "release-from-fbc"},
         "params": [{"name": "assembly", "value": "4.20"}, {"name": "removed", "value": "old"}],
         "taskRunTemplate": {"serviceAccountName": "pipeline"},
-        "timeouts": {"pipeline": "1h"},
+        "timeouts": {"pipeline": "3h", "tasks": "2h", "finally": "15m"},
     },
 }
 
@@ -33,7 +33,7 @@ class RebuildTests(unittest.TestCase):
         self.assertEqual(values["new-required"], (None, "required"))
         self.assertEqual(form["removedParameters"], ["removed"])
 
-    def test_rebuild_uses_current_pipeline_and_preserves_execution_settings(self):
+    def test_rebuild_preserves_execution_settings_and_uses_cluster_timeout_defaults(self):
         run = build_run(
             PIPELINE,
             {"assembly": "4.21", "force": "true", "new-required": ["x"]},
@@ -41,7 +41,8 @@ class RebuildTests(unittest.TestCase):
         )
         self.assertEqual(run["spec"]["pipelineRef"], {"name": "release-from-fbc"})
         self.assertEqual(run["spec"]["taskRunTemplate"], {"serviceAccountName": "pipeline"})
-        self.assertEqual(run["spec"]["timeouts"], {"pipeline": "1h"})
+        self.assertNotIn("timeouts", run["spec"])
+        self.assertEqual(OLD_RUN["spec"]["timeouts"], {"pipeline": "3h", "tasks": "2h", "finally": "15m"})
         self.assertNotIn("status", run)
         self.assertNotIn("removed", {item["name"] for item in run["spec"]["params"]})
 

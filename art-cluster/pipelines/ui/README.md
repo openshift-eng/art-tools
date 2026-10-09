@@ -10,6 +10,8 @@ When the saved OAuth token expires, the UI validates the session against OpenShi
 
 The pod disables automatic service account token mounting. The OAuth proxy still needs an in-cluster Kubernetes client for OAuth discovery, so a projected service account token is mounted only in the proxy container. The backend mounts only the Kubernetes CA from `kube-root-ca.crt`. An ingress-only NetworkPolicy limits access to the proxy to the OpenShift router without restricting the app's outbound cluster API and Results requests.
 
+Start and Rebuild omit `spec.timeouts`, allowing Tekton to apply the current cluster timeout defaults. Rebuilds do not copy the previous run's timeout settings.
+
 ## PipelineHealth (Beta)
 
 The `#/health` page shows a compact matrix of scan-rooted build chains, grouped by tenant, group, and assembly. A bookmarked tenant view uses `#/health?namespace=art-acm-tenant`. The read-only `/api/pipeline-health` endpoint combines live PipelineRuns and Tekton Results, deduplicating by UID with live data preferred.
@@ -27,6 +29,8 @@ Navigation links and detail tabs open in the current tab with an ordinary click.
 The backend is in `backend/pipeline_ui`; install `backend/requirements.txt` and run `uvicorn pipeline_ui.app:app` from `backend`. The frontend is in `frontend`; run `npm ci` and `npm run build`. Browser requests need an OpenShift OAuth proxy in front of the backend.
 
 Run backend tests from `backend` with `python -m unittest discover -s tests`. Run frontend request and authentication tests from `frontend` with `npm test`.
+
+For timeout acceptance after deployment, rebuild a harmless test run with an older timeout and confirm the new run receives the current cluster default. Verify the source run's timeout remains unchanged.
 
 ## Pilot and promotion
 
