@@ -24,8 +24,6 @@ spec:
         import os
         import subprocess
 
-        subprocess.run(["kinit", "-f", "-k", "-t", "/tmp/keytab/keytab", "exd-ocp-buildvm-bot-prod@IPA.REDHAT.COM"], check=True)
-
         os.makedirs("/root/.config", exist_ok=True)
         open("/root/.config/artcd.toml", "a").close()
 

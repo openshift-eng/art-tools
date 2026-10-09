@@ -1,0 +1,47 @@
+apiVersion: tekton.dev/v1
+kind: Task
+metadata:
+  labels:
+    app: artcd
+  name: lp-trigger-prod-release
+  namespace: art-kueue-tenant
+spec:
+  params:
+  - default: artcd $@
+    description: The artcd script to run
+    name: script
+    type: string
+  - default: []
+    description: artcd arguments to be passed
+    name: args
+    type: array
+  stepTemplate:
+    computeResources:
+      requests:
+        cpu: "100m"
+        memory: "512Mi"
+    env:
+    - name: TASKRUN_NAMESPACE
+      value: $(context.taskRun.namespace)
+    - name: TASKRUN_NAME
+      value: $(context.taskRun.name)
+    - name: TASKRUN_UID
+      value: $(context.taskRun.uid)
+    - name: BUILD_URL
+      value: https://console-openshift-console.apps.artc2023.pc3z.p1.openshiftapps.com/k8s/ns/art-kueue-tenant/tekton.dev~v1~TaskRun/$(context.taskRun.name)
+  steps:
+  - args:
+    - $(params.args[*])
+    env:
+    - name: GITLAB_TOKEN
+      valueFrom:
+        secretKeyRef:
+          key: token
+          name: gitlab-token
+    image: quay.io/redhat-user-workloads/ocp-art-tenant/art-cd:latest
+    name: invoke-artcd
+    script: $(params.script)
+    securityContext:
+      privileged: true
+      runAsGroup: 0
+      runAsUser: 0
