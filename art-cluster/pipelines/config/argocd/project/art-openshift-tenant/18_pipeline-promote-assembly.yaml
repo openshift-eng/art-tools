@@ -1,0 +1,252 @@
+apiVersion: tekton.dev/v1
+kind: Pipeline
+metadata:
+  labels:
+    app: artcd
+  name: promote-assembly
+  namespace: art-openshift-tenant
+spec:
+  description: Publish official OpenShift release artifacts using artcd promote.
+  params:
+  - description: OpenShift major.minor version (e.g. 4.22 or 5.0)
+    name: version
+    type: string
+  - default: stream
+    description: The name of an assembly to promote
+    name: assembly
+    type: string
+  - default: 'false'
+    description: Do not promote a multi-arch payload
+    name: no-multi
+    type: string
+  - default: 'false'
+    description: Promote only the multi-arch payload
+    name: multi-only
+    type: string
+  - default: 'false'
+    description: Do not mirror client binaries (useful when rerunning after a later failure)
+    name: skip-mirror-binaries
+    type: string
+  - default: 'false'
+    description: Do not create Cincinnati PRs; requires team lead approval
+    name: skip-cincinnati-pr-creation
+    type: string
+  - default: 'false'
+    description: Do not notify the OTA team about new Cincinnati PRs
+    name: skip-ota-slack-notification
+    type: string
+  - default: 'false'
+    description: Do not trigger the Jenkins build-microshift job
+    name: skip-build-microshift
+    type: string
+  - default: 'false'
+    description: Do not gather an advisory image list for documentation
+    name: skip-image-list
+    type: string
+  - default: 'false'
+    description: Do not sign artifacts using legacy signing
+    name: skip-signing
+    type: string
+  - default: 'false'
+    description: Do not sign the release using sigstore
+    name: skip-sigstore
+    type: string
+  - default: aos-cicd@redhat.com,aos-qe@redhat.com,aos-art-automation+new-release@redhat.com
+    description: Comma-separated recipients for the promotion completion email
+    name: mail-list-success
+    type: string
+  - default: 'true'
+    description: Run promotion in dry-run mode with stage signing credentials
+    name: dry-run
+    type: string
+  - default: ''
+    description: '(Optional) Override art-tools version. Format: ghuser@branch (e.g. ashwindasr@my-feature)'
+    name: art-tools-commit
+    type: string
+  tasks:
+  - name: promote-assembly
+    params:
+    - name: args
+      value:
+      - --version=$(params.version)
+      - --assembly=$(params.assembly)
+      - --no-multi=$(params.no-multi)
+      - --multi-only=$(params.multi-only)
+      - --skip-mirror-binaries=$(params.skip-mirror-binaries)
+      - --skip-cincinnati-pr-creation=$(params.skip-cincinnati-pr-creation)
+      - --skip-ota-slack-notification=$(params.skip-ota-slack-notification)
+      - --skip-build-microshift=$(params.skip-build-microshift)
+      - --skip-image-list=$(params.skip-image-list)
+      - --skip-signing=$(params.skip-signing)
+      - --skip-sigstore=$(params.skip-sigstore)
+      - --mail-list-success=$(params.mail-list-success)
+      - --dry-run=$(params.dry-run)
+      - --art-tools-commit=$(params.art-tools-commit)
+    - name: script
+      value: |
+        #!/usr/bin/env python3
+        import argparse
+        import base64
+        import json
+        import os
+        import re
+        import shlex
+        import subprocess
+        from pathlib import Path
+
+        parser = argparse.ArgumentParser()
+        parser.add_argument("--version", required=True)
+        parser.add_argument("--assembly", required=True)
+        parser.add_argument("--mail-list-success", required=True)
+        parser.add_argument("--art-tools-commit", default="")
+        flags = {
+            "no-multi": "--no-multi",
+            "multi-only": "--multi-only",
+            "skip-mirror-binaries": "--skip-mirror-binaries",
+            "skip-cincinnati-pr-creation": "--skip-cincinnati-prs",
+            "skip-ota-slack-notification": "--skip-ota-notification",
+            "skip-build-microshift": "--skip-build-microshift",
+            "skip-image-list": "--skip-image-list",
+            "skip-signing": "--skip-signing",
+            "skip-sigstore": "--skip-sigstore",
+        }
+        for name in [*flags, "dry-run"]:
+            parser.add_argument(f"--{name}", choices=("true", "false"), required=True)
+        options = vars(parser.parse_args())
+        enabled = {name: options[name.replace("-", "_")] == "true" for name in [*flags, "dry-run"]}
+
+        version = options["version"].strip()
+        if not re.fullmatch(r"\d+\.\d+", version):
+            raise ValueError("version must be a major.minor version (e.g. 4.22 or 5.0)")
+        major, minor = map(int, version.split("."))
+        if major < 4:
+            raise ValueError("promote-assembly requires OpenShift 4 or later")
+        assembly = options["assembly"].strip()
+        if not assembly:
+            raise ValueError("assembly must not be empty")
+        if enabled["no-multi"] and enabled["multi-only"]:
+            raise ValueError("no-multi and multi-only cannot both be true")
+
+        signing_env = "stage" if enabled["dry-run"] else "prod"
+        credentials_dir = Path("/tmp/promote-credentials")
+        missing = []
+
+        def credential_file(key, variable):
+            path = credentials_dir / key
+            if not path.is_file() or not path.stat().st_size:
+                missing.append(key)
+                return
+            os.environ[variable] = str(path)
+
+        def credential_value(key, variable):
+            path = credentials_dir / key
+            if not path.is_file() or not path.read_text().strip():
+                missing.append(key)
+                return
+            os.environ[variable] = path.read_text().strip()
+
+        credential_file("app-ci-kubeconfig", "KUBECONFIG")
+        # Jenkins also runs rhcos_sync, even when MicroShift builds are skipped.
+        credential_value("jenkins-service-account", "JENKINS_SERVICE_ACCOUNT")
+        credential_value("jenkins-token", "JENKINS_SERVICE_ACCOUNT_TOKEN")
+        if not enabled["dry-run"] and not any(marker in assembly for marker in ("rc", "ec", "art")):
+            credential_file("art-cd-kubeconfig", "ART_CLUSTER_ART_CD_PIPELINE_KUBECONFIG")
+        if not enabled["skip-mirror-binaries"] or not enabled["skip-signing"]:
+            credential_file("aws-credentials", "AWS_SHARED_CREDENTIALS_FILE")
+            credential_value("cloudflare-endpoint", "CLOUDFLARE_ENDPOINT")
+        if not enabled["skip-signing"]:
+            credential_file(f"signing-{signing_env}.crt", "SIGNING_CERT")
+            credential_file(f"signing-{signing_env}.key", "SIGNING_KEY")
+        if not enabled["skip-sigstore"]:
+            credential_file(f"kms-{signing_env}-credentials", "KMS_CRED_FILE")
+            credential_value(f"kms-{signing_env}-key-id", "KMS_KEY_ID")
+            credential_value("rekor-url", "REKOR_URL")
+
+        publishing_config = credentials_dir / "quay-config.json"
+        if not publishing_config.is_file():
+            missing.append("quay-config.json (synced-art-publish-ci-dockerconfigjson/config.json)")
+        if missing:
+            raise ValueError("Missing promotion credentials: " + ", ".join(missing))
+
+        publishing_auth = json.loads(publishing_config.read_text()).get("auths", {})
+        quay_auth = publishing_auth.get("quay.io/openshift-release-dev") or publishing_auth.get("quay.io")
+        if not quay_auth:
+            raise ValueError("Publishing credentials must contain quay.io/openshift-release-dev or quay.io")
+        if quay_auth.get("auth"):
+            username, password = base64.b64decode(quay_auth["auth"]).decode().split(":", 1)
+        else:
+            username, password = quay_auth.get("username"), quay_auth.get("password")
+        if not username or not password:
+            raise ValueError("Publishing credentials must contain a Quay username and password")
+        os.environ["QUAY_USERNAME"] = username
+        os.environ["QUAY_PASSWORD"] = password
+
+        # Retain the existing registry credentials and add release-dev publishing auth.
+        auth_config = json.loads(Path(os.environ["QUAY_AUTH_FILE"]).read_text())
+        auth_config.setdefault("auths", {}).update(publishing_auth)
+        auth_config["auths"]["quay.io/openshift-release-dev"] = quay_auth
+        docker_dir = Path("/root/.docker")
+        docker_dir.mkdir(parents=True, exist_ok=True)
+        auth_file = docker_dir / "config.json"
+        auth_file.write_text(json.dumps(auth_config))
+        auth_file.chmod(0o600)
+        os.environ["QUAY_AUTH_FILE"] = str(auth_file)
+        os.environ["DOCKER_CONFIG"] = str(docker_dir)
+
+        os.environ["TEKTON_PIPELINERUN_NAME"] = "$(context.pipelineRun.name)"
+        os.environ["TEKTON_PIPELINE_NAME"] = "$(context.pipeline.name)"
+        os.environ["BUILD_URL"] = "https://console-openshift-console.apps.artc2023.pc3z.p1.openshiftapps.com/k8s/ns/art-openshift-tenant/tekton.dev~v1~PipelineRun/$(context.pipelineRun.name)"
+        os.environ["DOOZER_DB_NAME"] = "art_dash"
+        os.environ["DOOZER_DATA_PATH"] = "https://github.com/openshift-eng/ocp-build-data"
+        os.environ["ELLIOTT_DATA_PATH"] = os.environ["DOOZER_DATA_PATH"]
+
+        art_tools_commit = options["art_tools_commit"].strip()
+        if art_tools_commit:
+            allowed_owners = {
+                "adobes1", "ashwindasr", "fbladilo", "fgallott", "joepvd",
+                "jupierce", "lgarciaaco", "locriandev", "mbiarnes", "pruan-rht",
+                "rayfordj", "redhat-chai-bot", "thegreyd",
+            }
+            owner, branch = art_tools_commit.split("@", 1)
+            owner = owner.lower()
+            if owner not in allowed_owners or not branch or branch.startswith("-"):
+                raise ValueError("art-tools-commit must use an allowed repository owner and a valid branch")
+            subprocess.run(["git", "clone", "-b", branch, f"https://github.com/{owner}/art-tools.git"], check=True)
+            subprocess.run(["pip", "install", "./art-tools"], check=True)
+            os.environ["ART_TOOLS_COMMIT"] = art_tools_commit
+
+        subprocess.run(["kinit", "-f", "-k", "-t", "/tmp/keytab/keytab", "exd-ocp-buildvm-bot-prod@IPA.REDHAT.COM"], check=True)
+
+        recipients = [address.strip() for address in options["mail_list_success"].split(",") if address.strip()]
+        config = """[build_config]
+        ocp_build_data_url = "https://github.com/openshift-eng/ocp-build-data.git"
+        ocp_build_data_repo_push_url = "git@github.com:openshift-eng/ocp-build-data.git"
+        [email]
+        smtp_server = "smtp.corp.redhat.com"
+        from = "aos-art-automation@redhat.com"
+        reply_to = "aos-team-art@redhat.com"
+        cc = ["aos-art-automation@redhat.com"]
+        qe_notification_recipients_ocp4 = ["multi-arch-zstream-testing@redhat.com", "aos-qe@redhat.com"]
+        qe_notification_recipients_ocp5 = ["multi-arch-zstream-testing@redhat.com", "aos-qe@redhat.com"]
+        promote_image_list_recipients = ["openshift-ccs@redhat.com"]
+        """
+        config += "promote_complete_recipients = " + json.dumps(recipients) + "\n"
+        config_dir = Path("/root/.config")
+        config_dir.mkdir(parents=True, exist_ok=True)
+        config_file = config_dir / "artcd.toml"
+        config_file.write_text(config)
+
+        Path("./artcd_working").mkdir(exist_ok=True)
+        cmd = ["artcd", "-v", "--working-dir=./artcd_working", f"--config={config_file}"]
+        if enabled["dry-run"]:
+            cmd.append("--dry-run")
+        cmd.extend(["promote", f"--group=openshift-{version}", f"--assembly={assembly}"])
+        cmd.extend(flag for name, flag in flags.items() if enabled[name])
+        if major == 4 and minor <= 11:
+            cmd.append("--use-multi-hack")
+        cmd.append(f"--signing-env={signing_env}")
+        print(f"Running {shlex.join(cmd)}...", flush=True)
+        subprocess.run(cmd, check=True, env=os.environ.copy())
+    taskRef:
+      kind: Task
+      name: artcd

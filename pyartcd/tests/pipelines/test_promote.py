@@ -2336,6 +2336,42 @@ class TestPromotePipeline(IsolatedAsyncioTestCase):
             self.assertNotIn("--exclude-bugs", call_args)
 
 
+class TestDoomsdayBackup(IsolatedAsyncioTestCase):
+    def _make_pipeline(self, dry_run):
+        runtime = MagicMock(
+            config={},
+            dry_run=dry_run,
+            working_dir=Path("/tmp/promote-test"),
+            logger=MagicMock(),
+            new_slack_client=MagicMock(return_value=AsyncMock()),
+        )
+        with patch("pyartcd.jira_client.JIRAClient.from_url", return_value=None):
+            return PromotePipeline(runtime, group="openshift-4.22", assembly="4.22.1", signing_env="prod")
+
+    @patch("pyartcd.pipelines.promote.exectools.cmd_gather_async", new_callable=AsyncMock)
+    async def test_dry_run_does_not_start_backup_or_require_kubeconfig(self, cmd_gather_async):
+        pipeline = self._make_pipeline(dry_run=True)
+        with patch.dict(os.environ):
+            os.environ.pop("ART_CLUSTER_ART_CD_PIPELINE_KUBECONFIG", None)
+            await pipeline.ocp_doomsday_backup()
+
+        cmd_gather_async.assert_not_awaited()
+
+    @patch("pyartcd.pipelines.promote.exectools.cmd_gather_async", new_callable=AsyncMock)
+    async def test_production_starts_backup_with_art_cluster_kubeconfig(self, cmd_gather_async):
+        pipeline = self._make_pipeline(dry_run=False)
+        cmd_gather_async.return_value = (0, "", "")
+        with patch.dict(os.environ, {"ART_CLUSTER_ART_CD_PIPELINE_KUBECONFIG": "/tmp/art-cd-kubeconfig"}):
+            await pipeline.ocp_doomsday_backup()
+
+        cmd_gather_async.assert_awaited_once()
+        self.assertEqual(
+            cmd_gather_async.call_args.args[0],
+            "tkn pipeline start doomsday-pipeline --kubeconfig /tmp/art-cd-kubeconfig "
+            "--param major=4.22 --param version=4.22.1 --pipeline-timeout 4h",
+        )
+
+
 class TestDropAdvisory(IsolatedAsyncioTestCase):
     """Tests for the reusable drop_advisory function."""
 

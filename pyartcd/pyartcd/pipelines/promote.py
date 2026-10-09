@@ -2711,6 +2711,10 @@ class PromotePipeline:
         :param major: Eg. 4.15
         :param version: Eg. 4.15.10
         """
+        if self.runtime.dry_run:
+            self._logger.info("[DRY RUN] Would trigger doomsday backup for %s/%s", self.group, self.assembly)
+            return
+
         pipeline_name = "doomsday-pipeline"
         cmd = (
             f"tkn pipeline start {pipeline_name} "

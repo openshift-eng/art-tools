@@ -124,6 +124,9 @@ spec:
     - mountPath: /tmp/quay-authfile
       name: quay-authfile
       readOnly: true
+    - mountPath: /tmp/promote-credentials
+      name: promote-credentials
+      readOnly: true
   volumes:
   - name: doozer-config
     secret:
@@ -153,3 +156,26 @@ spec:
       - key: auth.json
         path: config.json
       secretName: quay-authfile
+  # Optional so the other artcd pipelines can run before promotion is configured.
+  # promote-assembly validates the credentials needed for its selected options.
+  - name: promote-credentials
+    projected:
+      defaultMode: 256
+      sources:
+      - secret:
+          name: promote-credentials
+          optional: true
+      - secret:
+          name: synced-art-publish-ci-dockerconfigjson
+          optional: true
+          items:
+          - key: config.json
+            path: quay-config.json
+      - secret:
+          name: jenkins-credentials
+          optional: true
+          items:
+          - key: jenkins-service-account
+            path: jenkins-service-account
+          - key: jenkins-token
+            path: jenkins-token
