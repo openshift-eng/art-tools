@@ -1,10 +1,11 @@
 import React, { useEffect, useState } from 'react';
 import { Alert, Button, Label, Spinner, Title } from '@patternfly/react-core';
+import { viewHref } from './navigation';
 
 const stageNames = ['Scan', 'Images', 'Bundle', 'FBC'];
 const colors = { Succeeded: 'green', Failed: 'red', Running: 'blue', Cancelled: 'orange' };
 const symbols = { Succeeded: '✓', Failed: '✕', Running: '◷', Cancelled: '⊘' };
-const runHref = (run) => `#/run/${encodeURIComponent(run.namespace)}/${encodeURIComponent(run.name)}?uid=${encodeURIComponent(run.uid)}`;
+const FilterNamespace = React.createContext('');
 const groupKey = (item) => `${item.namespace}/${item.group}/${item.assembly}`;
 const date = (value) => value ? new Date(value).toLocaleString() : '—';
 
@@ -13,7 +14,8 @@ function HealthStatus({ status, children }) {
 }
 
 function RunLink({ run, children, className = '' }) {
-  return <a className={className} href={runHref(run)}>{children || run.name}</a>;
+  const filterNamespace = React.useContext(FilterNamespace);
+  return <a className={className} href={viewHref({ kind: 'run', ...run, filterNamespace })}>{children || run.name}</a>;
 }
 
 function stageStatus(stage) {
@@ -98,7 +100,7 @@ export default function PipelineHealth({ namespace, request }) {
   const filtered = items.filter((item) => `${item.group} ${item.assembly} ${item.namespace}`.toLowerCase().includes(search.toLowerCase()));
   const toggle = (key) => setExpanded((previous) => { const next = new Set(previous); next.has(key) ? next.delete(key) : next.add(key); return next; });
   const expand = (key) => setExpanded((previous) => new Set([...previous, key]));
-  return <>
+  return <FilterNamespace.Provider value={namespace}>
     <div className="page-heading"><div><div className="eyebrow">END-TO-END BUILD STATUS</div><Title headingLevel="h1" size="2xl">Pipeline health <span className="health-beta">Beta</span></Title><p>From source scan to every FBC target. See what passed and where work stopped.</p></div><span className="count">{updated ? `Updated ${new Date(updated).toLocaleTimeString()}` : 'Loading health…'}</span></div>
     <div className="toolbar"><input className="search-input" placeholder="Find a group…" aria-label="Search group health" value={search} onChange={(event) => setSearch(event.target.value)} /><div className="health-counts"><span>{items.length} groups</span><span>{items.filter((item) => item.health === 'Failed').length} failed</span><span>{items.filter((item) => item.currentChain?.active.length).length} running</span><span>{items.filter((item) => item.health === 'Succeeded').length} E2E green</span></div><Button variant="secondary" isDisabled={loading} onClick={() => setRefreshKey((value) => value + 1)}>Refresh</Button></div>
     {error && <Alert variant="danger" title={error} className="notice" />}
@@ -114,5 +116,5 @@ export default function PipelineHealth({ namespace, request }) {
       </React.Fragment>;
     })}</tbody></table></div>}
     <p className="health-definition">Green requires a successful scan, image build, bundle build, and every triggered FBC target. Current activity appears separately from the last completed result. Scans without builds do not replace E2E health. Expand a group to see target runs, retries, and earlier chains.</p>
-  </>;
+  </FilterNamespace.Provider>;
 }

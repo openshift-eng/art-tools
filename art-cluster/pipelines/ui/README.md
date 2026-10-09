@@ -20,6 +20,8 @@ The last completed chain supplies the group's health; current running work and t
 
 For acceptance in `art-acm-tenant`, confirm a failed image build is red despite a successful root scan and follow its failure link. Expand ACM 2.15 to inspect all FBC target statuses, and ACM 2.17 to inspect its linked image-build retries. Verify that a later scan without builds preserves E2E health, an active newer build preserves the last completed result, and a completed successful retry restores green while retaining earlier failures. Check light/dark themes, namespace switching, refresh, archived run navigation, and expired-session recovery. The automated health tests cover complete success, fan-out failure/running states, retries, missing/ambiguous relationships, dry runs, tenant isolation, and partial history.
 
+Navigation links and detail tabs open in the current tab with an ordinary click. Use Ctrl-click on Windows/Linux, Command-click on macOS, middle-click, or the link context menu to open a new tab. Pipeline and PipelineRun rows also support modified clicks outside their links. The selected tenant is preserved in navigation URLs, including when opening another tab. Pipeline tabs use `tab=details|runs`; PipelineRun tabs use `tab=details|logs|events|parameters|tasks`, preserving archived run UIDs.
+
 ## Development
 
 The backend is in `backend/pipeline_ui`; install `backend/requirements.txt` and run `uvicorn pipeline_ui.app:app` from `backend`. The frontend is in `frontend`; run `npm ci` and `npm run build`. Browser requests need an OpenShift OAuth proxy in front of the backend.

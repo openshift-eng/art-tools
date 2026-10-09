@@ -2,39 +2,24 @@ import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useSta
 import { Alert, Button, Label, Spinner, Title } from '@patternfly/react-core';
 import { AuthenticationError, createApi } from './api';
 import PipelineHealth from './PipelineHealth';
+import { isPlainClick, navigateRow, parseHash, pipelineTabs, runTabs, viewHref } from './navigation';
 
 const api = createApi();
 const { request } = api;
 
-const runTabs = ['details', 'logs', 'events', 'parameters', 'tasks'];
-
-function parseHash() {
-  const parts = window.location.hash.slice(2).split('/');
-  const [kind, search] = parts[0].split('?');
-  if (kind === 'health') return { kind: 'health', namespace: new URLSearchParams(search).get('namespace') || '' };
-  if (parts[0] === 'pipeline' && parts[1] && parts[2]) {
-    return { kind: 'pipeline', namespace: parts[1], name: decodeURIComponent(parts[2]) };
-  }
-  if (parts[0] === 'run' && parts[1] && parts[2]) {
-    const [name, search] = parts[2].split('?');
-    const params = new URLSearchParams(search);
-    const tab = params.get('tab');
-    return {
-      kind: 'run',
-      namespace: parts[1],
-      name: decodeURIComponent(name),
-      uid: params.get('uid'),
-      tab: runTabs.includes(tab) ? tab : 'details',
-    };
-  }
-  return { kind: parts[0] === 'runs' ? 'runs' : 'pipelines' };
+function navigate(view) {
+  window.location.hash = viewHref({ filterNamespace: parseHash().filterNamespace, ...view });
 }
 
-function navigate(view) {
-  if (view.kind === 'pipeline') window.location.hash = `#/pipeline/${view.namespace}/${encodeURIComponent(view.name)}`;
-  else if (view.kind === 'run') window.location.hash = `#/run/${view.namespace}/${encodeURIComponent(view.name)}?uid=${encodeURIComponent(view.uid || '')}`;
-  else if (view.kind === 'health') window.location.hash = `#/health${view.namespace ? `?namespace=${encodeURIComponent(view.namespace)}` : ''}`;
-  else window.location.hash = view.kind === 'runs' ? '#/runs' : '#/pipelines';
+function DetailTabs({ view, tabs, labels, activeTab, onSelect, ariaLabel }) {
+  return <div className="detail-tabs" role="tablist" aria-label={ariaLabel}>{tabs.map((tab) =>
+    <a key={tab} href={viewHref({ ...view, tab })} role="tab" aria-selected={activeTab === tab} className={activeTab === tab ? 'active' : ''} onClick={(event) => {
+      if (!isPlainClick(event)) return;
+      event.preventDefault();
+      onSelect(tab);
+      window.history.replaceState(null, '', viewHref({ ...view, tab }));
+    }}>{labels[tab]}</a>
+  )}</div>;
 }
 
 function formatDate(value) {
@@ -76,12 +61,12 @@ function MetadataValues({ values, chips = false }) {
     : <div className="metadata-row" key={key}><code>{key}</code><span>{String(value)}</span></div>)}</div>;
 }
 
-function RunDetails({ run }) {
+function RunDetails({ run, filterNamespace }) {
   const pipelineHref = run.pipeline
-    ? `#/pipeline/${encodeURIComponent(run.namespace)}/${encodeURIComponent(run.pipeline)}`
+    ? viewHref({ kind: 'pipeline', namespace: run.namespace, name: run.pipeline, filterNamespace })
     : null;
   const parentHref = run.parentPipelineRun
-    ? `#/run/${encodeURIComponent(run.namespace)}/${encodeURIComponent(run.parentPipelineRun)}`
+    ? viewHref({ kind: 'run', namespace: run.namespace, name: run.parentPipelineRun, filterNamespace })
     : null;
   const consoleHref = `https://console-openshift-console.apps.artc2023.pc3z.p1.openshiftapps.com/k8s/ns/${encodeURIComponent(run.namespace)}/tekton.dev~v1~PipelineRun/${encodeURIComponent(run.name)}`;
   return <section className="panel run-details-panel" role="tabpanel" aria-label="PipelineRun details">
@@ -150,7 +135,7 @@ function ThemeIcon({ theme }) {
 function App() {
   const [view, setView] = useState(parseHash);
   const [namespaces, setNamespaces] = useState([]);
-  const [namespace, setNamespace] = useState(() => { const initial = parseHash(); return initial.kind === 'health' ? initial.namespace : ''; });
+  const namespace = view.filterNamespace;
   const [session, setSession] = useState(null);
   const [error, setError] = useState('');
   const [authenticationError, setAuthenticationError] = useState(null);
@@ -172,20 +157,22 @@ function App() {
     return () => { unsubscribe(); window.removeEventListener('hashchange', onHashChange); };
   }, []);
 
-  useEffect(() => { if (view.kind === 'health') setNamespace(view.namespace); }, [view]);
-
   return <div className="app-shell">
     <header className="topbar">
-      <div className="brand" onClick={() => navigate({ kind: 'pipelines' })} role="button" tabIndex={0} onKeyDown={(event) => event.key === 'Enter' && navigate({ kind: 'pipelines' })}>
+      <a className="brand" href={viewHref({ kind: 'pipelines', filterNamespace: namespace })}>
         <span className="brand-mark">ART</span><span>Pipelines</span>
-      </div>
+      </a>
       <nav className="topnav" aria-label="Workspace navigation">
-        <button className={view.kind === 'pipelines' || view.kind === 'pipeline' ? 'nav active' : 'nav'} onClick={() => navigate({ kind: 'pipelines' })}>Pipelines</button>
-        <button className={view.kind === 'runs' || view.kind === 'run' ? 'nav active' : 'nav'} onClick={() => navigate({ kind: 'runs' })}>PipelineRuns</button>
-        <button className={view.kind === 'health' ? 'nav active' : 'nav'} onClick={() => navigate({ kind: 'health', namespace })}>PipelineHealth (Beta)</button>
+        <a className={view.kind === 'pipelines' || view.kind === 'pipeline' ? 'nav active' : 'nav'} href={viewHref({ kind: 'pipelines', filterNamespace: namespace })}>Pipelines</a>
+        <a className={view.kind === 'runs' || view.kind === 'run' ? 'nav active' : 'nav'} href={viewHref({ kind: 'runs', filterNamespace: namespace })}>PipelineRuns</a>
+        <a className={view.kind === 'health' ? 'nav active' : 'nav'} href={viewHref({ kind: 'health', filterNamespace: namespace })}>PipelineHealth (Beta)</a>
       </nav>
       <div className="topbar-right">
-        <select className="namespace-select" value={namespace} onChange={(event) => { setNamespace(event.target.value); if (view.kind === 'health') navigate({ kind: 'health', namespace: event.target.value }); }} aria-label="Namespace">
+        <select className="namespace-select" value={namespace} onChange={(event) => {
+          const next = { ...parseHash(), filterNamespace: event.target.value };
+          window.history.replaceState(null, '', viewHref(next));
+          setView(next);
+        }} aria-label="Namespace">
           <option value="">All accessible tenants</option>
           {namespaces.map((item) => <option key={item} value={item}>{item}</option>)}
         </select>
@@ -253,9 +240,11 @@ function Pipelines({ namespace }) {
       <div className="table-wrap"><table className="data-table"><thead><tr><th>Pipeline</th><th>Namespace</th><th>Last run</th><th>Last run status</th><th>Last run time</th></tr></thead><tbody>
         {filtered.map((item) => {
           const latest = latestRuns[`${item.namespace}/${item.name}`];
-          return <tr key={`${item.namespace}/${item.name}`} onClick={() => navigate({ kind: 'pipeline', ...item })} tabIndex={0} onKeyDown={(event) => event.key === 'Enter' && navigate({ kind: 'pipeline', ...item })}>
-            <td className="primary-cell">{item.name}</td><td>{item.namespace}</td>
-            <td>{latest ? <a href={`#/run/${latest.namespace}/${encodeURIComponent(latest.name)}?uid=${encodeURIComponent(latest.uid || '')}`} onClick={(event) => event.stopPropagation()} onKeyDown={(event) => event.stopPropagation()}>{latest.name}</a> : latestLoading ? 'Loading…' : '—'}</td>
+          const href = viewHref({ kind: 'pipeline', ...item, filterNamespace: namespace });
+          const onNavigate = (event) => navigateRow(event, href);
+          return <tr key={`${item.namespace}/${item.name}`} onClick={onNavigate} onAuxClick={onNavigate} tabIndex={0} onKeyDown={onNavigate}>
+            <td className="primary-cell"><a href={href}>{item.name}</a></td><td>{item.namespace}</td>
+            <td>{latest ? <a href={viewHref({ kind: 'run', ...latest, filterNamespace: namespace })}>{latest.name}</a> : latestLoading ? 'Loading…' : '—'}</td>
             <td>{latest ? <Status value={latest.status} /> : '—'}</td><td>{latest ? formatDate(latest.created) : '—'}</td>
           </tr>;
         })}
@@ -263,7 +252,7 @@ function Pipelines({ namespace }) {
   </>;
 }
 
-function Runs({ namespace, pipeline = '', embedded = false }) {
+function Runs({ namespace, pipeline = '', embedded = false, filterNamespace = namespace }) {
   const [items, setItems] = useState([]);
   const [total, setTotal] = useState(0);
   const [page, setPage] = useState(1);
@@ -308,32 +297,33 @@ function Runs({ namespace, pipeline = '', embedded = false }) {
     {error && <Alert variant="danger" title={error} className="notice" />}
     {warnings.length > 0 && <Alert variant="warning" title={`Some history could not be loaded (${warnings.map((item) => item.namespace).join(', ')})`} className="notice" />}
     {loading ? <div className="loading"><Spinner size="lg" /></div> : items.length === 0 ? <div className="empty">No runs match these filters.</div> : <div className="table-wrap"><table className="data-table"><thead><tr><th>PipelineRun</th><th>Pipeline</th><th>Namespace</th><th>Status</th><th>Run state</th><th>Started</th><th>Duration</th><th>Source</th></tr></thead><tbody>
-      {items.map((item) => <tr key={`${item.namespace}/${item.uid}`} onClick={() => navigate({ kind: 'run', ...item })} tabIndex={0} onKeyDown={(event) => event.key === 'Enter' && navigate({ kind: 'run', ...item })}>
-        <td className="primary-cell">{item.name}</td><td>{item.pipeline || '—'}</td><td>{item.namespace}</td><td><Status value={item.status} /></td><td><span className={`run-state-bar ${statusColor(item.status)}`} role="img" aria-label={`${item.status} run state`} /></td><td>{formatDate(item.started || item.created)}</td><td>{formatDuration(item.started, item.completed, now)}</td><td><span className={item.source === 'archive' ? 'source archived' : 'source'}>{item.source === 'archive' ? 'Results' : 'Live'}</span></td>
-      </tr>)}</tbody></table></div>}
+      {items.map((item) => {
+        const href = viewHref({ kind: 'run', ...item, filterNamespace });
+        const onNavigate = (event) => navigateRow(event, href);
+        return <tr key={`${item.namespace}/${item.uid}`} onClick={onNavigate} onAuxClick={onNavigate} tabIndex={0} onKeyDown={onNavigate}>
+          <td className="primary-cell"><a href={href}>{item.name}</a></td><td>{item.pipeline ? <a href={viewHref({ kind: 'pipeline', namespace: item.namespace, name: item.pipeline, filterNamespace })}>{item.pipeline}</a> : '—'}</td><td>{item.namespace}</td><td><Status value={item.status} /></td><td><span className={`run-state-bar ${statusColor(item.status)}`} role="img" aria-label={`${item.status} run state`} /></td><td>{formatDate(item.started || item.created)}</td><td>{formatDuration(item.started, item.completed, now)}</td><td><span className={item.source === 'archive' ? 'source archived' : 'source'}>{item.source === 'archive' ? 'Results' : 'Live'}</span></td>
+        </tr>;
+      })}</tbody></table></div>}
     <div className="pagination"><span>{total === 0 ? '0' : (page - 1) * 50 + 1}–{Math.min(page * 50, total)} of {total}</span><Button variant="secondary" isDisabled={page <= 1 || loading} onClick={() => setPage(page - 1)}>Previous</Button><Button variant="secondary" isDisabled={page * 50 >= total || loading} onClick={() => setPage(page + 1)}>Next</Button></div>
   </>;
 }
 
 function PipelineDetail({ view, csrfToken }) {
   const [pipeline, setPipeline] = useState(null);
-  const [activeTab, setActiveTab] = useState('details');
+  const [activeTab, setActiveTab] = useState(view.tab);
   const [form, setForm] = useState(false);
   const [error, setError] = useState('');
   useEffect(() => {
-    setActiveTab('details');
     request(`/api/pipelines/${view.namespace}/${view.name}`).then(setPipeline).catch((cause) => setError(cause.message));
   }, [view.namespace, view.name]);
+  useEffect(() => { setActiveTab(view.tab); }, [view.namespace, view.name, view.tab]);
   return <>
-    <Button variant="link" className="back" onClick={() => navigate({ kind: 'pipelines' })}>← Pipelines</Button>
+    <Button component="a" variant="link" className="back" href={viewHref({ kind: 'pipelines', filterNamespace: view.filterNamespace })}>← Pipelines</Button>
     {error && <Alert variant="danger" title={error} className="notice" />}
     {!pipeline ? <div className="loading"><Spinner size="lg" /></div> : <>
       <div className="page-heading detail-heading"><div><div className="eyebrow">{pipeline.namespace}</div><Title headingLevel="h1" size="2xl">{pipeline.name}</Title><p>{pipeline.description || 'Tekton Pipeline'}</p></div><Button variant="primary" onClick={() => setForm(true)}>Start pipeline</Button></div>
-      <div className="detail-tabs" role="tablist" aria-label="Pipeline views">
-        <button type="button" role="tab" aria-selected={activeTab === 'details'} className={activeTab === 'details' ? 'active' : ''} onClick={() => setActiveTab('details')}>Details</button>
-        <button type="button" role="tab" aria-selected={activeTab === 'runs'} className={activeTab === 'runs' ? 'active' : ''} onClick={() => setActiveTab('runs')}>PipelineRuns</button>
-      </div>
-      {activeTab === 'details' ? <section className="panel"><h2>Parameters <span className="muted">{pipeline.parameters.length}</span></h2><div className="definition-list">{pipeline.parameters.map((param) => <div key={param.name}><strong>{param.name}</strong><span>{param.description || 'No description'}</span><small>{param.type || 'string'} · {Object.hasOwn(param, 'default') ? 'Has default' : 'Required'}</small></div>)}</div></section> : <Runs namespace={view.namespace} pipeline={view.name} embedded />}
+      <DetailTabs view={view} tabs={pipelineTabs} labels={{ details: 'Details', runs: 'PipelineRuns' }} activeTab={activeTab} onSelect={setActiveTab} ariaLabel="Pipeline views" />
+      {activeTab === 'details' ? <section className="panel"><h2>Parameters <span className="muted">{pipeline.parameters.length}</span></h2><div className="definition-list">{pipeline.parameters.map((param) => <div key={param.name}><strong>{param.name}</strong><span>{param.description || 'No description'}</span><small>{param.type || 'string'} · {Object.hasOwn(param, 'default') ? 'Has default' : 'Required'}</small></div>)}</div></section> : <Runs namespace={view.namespace} pipeline={view.name} filterNamespace={view.filterNamespace} embedded />}
       {form && <RunForm namespace={view.namespace} pipeline={view.name} csrfToken={csrfToken} onClose={() => setForm(false)} />}
     </>}
   </>;
@@ -393,7 +383,8 @@ function RunDetail({ view, csrfToken }) {
     setEventsError('');
     load('events', eventsUrl, setEvents, (cause) => setEventsError(cause.message));
   }, [load, eventsUrl]);
-  useEffect(() => { setActiveTab(runTabs.includes(view.tab) ? view.tab : 'details'); setRun(null); setChildren(null); setChildrenError(''); setLogs(null); setLogsError(''); setEvents(null); setEventsError(''); setForm(false); refresh(); refreshChildren(); }, [refresh, refreshChildren, view.tab]);
+  useEffect(() => { setActiveTab(view.tab); }, [runKey, view.tab]);
+  useEffect(() => { setRun(null); setChildren(null); setChildrenError(''); setLogs(null); setLogsError(''); setEvents(null); setEventsError(''); setForm(false); refresh(); refreshChildren(); }, [refresh, refreshChildren]);
   useEffect(() => {
     if (!selectedRun || liveRun) return undefined;
     setLogsError('');
@@ -455,28 +446,15 @@ function RunDetail({ view, csrfToken }) {
     return () => window.clearInterval(interval);
   }, [liveRun, refreshChildren]);
   const refreshVisible = () => { refresh(); refreshChildren(); if (liveRun) setStreamKey((value) => value + 1); else load('logs', logsUrl, setLogs, (cause) => setLogsError(cause.message)); if (activeTab === 'events') refreshEvents(); };
-  const selectTab = (tab) => {
-    setActiveTab(tab);
-    const params = new URLSearchParams();
-    if (view.uid) params.set('uid', view.uid);
-    params.set('tab', tab);
-    window.history.replaceState(null, '', `#/run/${encodeURIComponent(view.namespace)}/${encodeURIComponent(view.name)}?${params}`);
-  };
   return <>
-    <Button variant="link" className="back" onClick={() => navigate({ kind: 'runs' })}>← PipelineRuns</Button>
+    <Button component="a" variant="link" className="back" href={viewHref({ kind: 'runs', filterNamespace: view.filterNamespace })}>← PipelineRuns</Button>
     {error && <Alert variant="danger" title={error} className="notice" />}
     {!run ? <div className="loading"><Spinner size="lg" /></div> : <>
-      <div className="page-heading detail-heading"><div><div className="eyebrow">{run.namespace} / {run.pipeline || 'PipelineRun'}</div><Title headingLevel="h1" size="2xl">{run.name}</Title><div className="detail-meta"><Status value={run.status} /><span>Created {formatDate(run.created)}</span><span>{run.source === 'archive' ? 'Tekton Results' : 'Live cluster'}</span>{run.parentPipelineRun && <span>Parent PipelineRun: <a href={`#/run/${encodeURIComponent(run.namespace)}/${encodeURIComponent(run.parentPipelineRun)}`}>{run.parentPipelineRun}</a></span>}</div>{children?.items.length > 0 && <div className="related-runs"><strong>Triggered PipelineRuns</strong><div>{children.items.map((child) => <a key={child.uid} href={`#/run/${encodeURIComponent(run.namespace)}/${encodeURIComponent(child.name)}?uid=${encodeURIComponent(child.uid)}`}>{child.name}</a>)}</div></div>}</div><div className="detail-actions"><Button variant="secondary" onClick={refreshVisible}>Refresh</Button>{run.pipeline && <Button variant="primary" onClick={() => setForm(true)}>Rebuild with parameters</Button>}</div></div>
+      <div className="page-heading detail-heading"><div><div className="eyebrow">{run.namespace} / {run.pipeline || 'PipelineRun'}</div><Title headingLevel="h1" size="2xl">{run.name}</Title><div className="detail-meta"><Status value={run.status} /><span>Created {formatDate(run.created)}</span><span>{run.source === 'archive' ? 'Tekton Results' : 'Live cluster'}</span>{run.parentPipelineRun && <span>Parent PipelineRun: <a href={viewHref({ kind: 'run', namespace: run.namespace, name: run.parentPipelineRun, filterNamespace: view.filterNamespace })}>{run.parentPipelineRun}</a></span>}</div>{children?.items.length > 0 && <div className="related-runs"><strong>Triggered PipelineRuns</strong><div>{children.items.map((child) => <a key={child.uid} href={viewHref({ kind: 'run', namespace: run.namespace, name: child.name, uid: child.uid, filterNamespace: view.filterNamespace })}>{child.name}</a>)}</div></div>}</div><div className="detail-actions"><Button variant="secondary" onClick={refreshVisible}>Refresh</Button>{run.pipeline && <Button variant="primary" onClick={() => setForm(true)}>Rebuild with parameters</Button>}</div></div>
       {childrenError && <Alert variant="warning" title={`Child PipelineRuns could not be loaded: ${childrenError}`} className="notice" />}
       {children?.errors?.length > 0 && <Alert variant="warning" title={`Some child PipelineRuns could not be loaded (${children.errors.map((item) => item.source).join(', ')})`} className="notice" />}
-      <div className="detail-tabs" role="tablist" aria-label="PipelineRun views">
-        <button type="button" role="tab" aria-selected={activeTab === 'details'} className={activeTab === 'details' ? 'active' : ''} onClick={() => selectTab('details')}>Details</button>
-        <button type="button" role="tab" aria-selected={activeTab === 'logs'} className={activeTab === 'logs' ? 'active' : ''} onClick={() => selectTab('logs')}>Logs</button>
-        <button type="button" role="tab" aria-selected={activeTab === 'events'} className={activeTab === 'events' ? 'active' : ''} onClick={() => selectTab('events')}>Events</button>
-        <button type="button" role="tab" aria-selected={activeTab === 'parameters'} className={activeTab === 'parameters' ? 'active' : ''} onClick={() => selectTab('parameters')}>Parameters ({run.parameters.length})</button>
-        <button type="button" role="tab" aria-selected={activeTab === 'tasks'} className={activeTab === 'tasks' ? 'active' : ''} onClick={() => selectTab('tasks')}>Task runs ({run.tasks.length})</button>
-      </div>
-      {activeTab === 'details' && <RunDetails run={run} />}
+      <DetailTabs view={view} tabs={runTabs} labels={{ details: 'Details', logs: 'Logs', events: 'Events', parameters: `Parameters (${run.parameters.length})`, tasks: `Task runs (${run.tasks.length})` }} activeTab={activeTab} onSelect={setActiveTab} ariaLabel="PipelineRun views" />
+      {activeTab === 'details' && <RunDetails run={run} filterNamespace={view.filterNamespace} />}
       {activeTab === 'logs' && <section className="panel logs-panel" role="tabpanel"><div className="section-heading"><h2>Logs</h2><span className="source">{logs?.source === 'archive' ? 'Tekton Results' : 'Cluster pods'}</span></div>{logsError && <Alert variant="warning" title={logsError} className="notice" />}{logs?.truncated && <Alert variant="warning" title="Log display is limited to the first 8 MB per step" className="notice" />}<LogText text={logs?.text || 'Loading logs…'} streaming={liveRun} /></section>}
       {activeTab === 'events' && <section className="panel events-panel" role="tabpanel"><div className="section-heading"><h2>Events</h2><span className="source">Cluster events</span></div><p className="muted">Updates every 10 seconds while the run is active.</p>{eventsError && <Alert variant="danger" title={eventsError} className="notice" />}{!events && !eventsError ? <div className="loading"><Spinner size="lg" /></div> : events?.items.length ? <div className="table-wrap"><table className="data-table events-table"><thead><tr><th>Last seen</th><th>Type</th><th>Resource</th><th>Reason</th><th>Message</th><th>Count</th></tr></thead><tbody>{events.items.map((event) => <tr key={event.uid}><td>{formatDate(event.lastSeen)}</td><td><Label color={event.type === 'Warning' ? 'red' : 'grey'}>{event.type}</Label></td><td><strong>{event.kind}</strong><small>{event.object}</small></td><td>{event.reason || '—'}</td><td className="event-message">{event.message || '—'}</td><td>{event.count}</td></tr>)}</tbody></table></div> : !eventsError && <p className="muted">{run.source === 'archive' ? 'No cluster events remain for this archived run.' : 'No cluster events have been recorded for this run yet.'}</p>}</section>}
       {activeTab === 'parameters' && <section className="panel" role="tabpanel"><h2>Parameters <span className="muted">{run.parameters.length}</span></h2>{run.parameters.length ? <div className="value-list">{run.parameters.map((param) => <div key={param.name}><span>{param.name}</span><code>{typeof param.value === 'string' ? param.value : JSON.stringify(param.value)}</code></div>)}</div> : <p className="muted">This run did not specify parameters.</p>}</section>}
