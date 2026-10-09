@@ -3,7 +3,7 @@ kind: Task
 metadata:
   labels:
     app: artcd
-  name: lp-scan
+  name: lp-release
   namespace: art-osus-tenant
 spec:
   params:

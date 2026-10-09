@@ -16,6 +16,10 @@ spec:
     name: args
     type: array
   stepTemplate:
+    computeResources:
+      requests:
+        cpu: "100m"
+        memory: "512Mi"
     env:
     - name: TASKRUN_NAMESPACE
       value: $(context.taskRun.namespace)

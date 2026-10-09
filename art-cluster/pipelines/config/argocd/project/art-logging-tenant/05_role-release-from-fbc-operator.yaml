@@ -13,7 +13,7 @@ rules:
     verbs: ["list"]
   - apiGroups: ["tekton.dev"]
     resources: ["tasks"]
-    resourceNames: ["artcd"]
+    resourceNames: ["artcd", "lp-release"]
     verbs: ["get"]
   - apiGroups: ["tekton.dev"]
     resources: ["pipelineruns"]

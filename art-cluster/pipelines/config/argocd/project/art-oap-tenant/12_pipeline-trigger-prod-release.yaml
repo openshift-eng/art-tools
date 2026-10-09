@@ -227,4 +227,4 @@ spec:
         log(f"Job URL: {gitlab_host}/{project_path}/-/jobs/{job_id}")
     taskRef:
       kind: Task
-      name: artcd
+      name: lp-release

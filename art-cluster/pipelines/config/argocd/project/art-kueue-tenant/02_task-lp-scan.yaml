@@ -18,11 +18,8 @@ spec:
   stepTemplate:
     computeResources:
       requests:
-        memory: "2Gi"
-        cpu: "1"
-      limits:
-        memory: "4Gi"
-        cpu: "2"
+        cpu: "100m"
+        memory: "512Mi"
     env:
     - name: TASKRUN_NAMESPACE
       value: $(context.taskRun.namespace)
@@ -106,13 +103,6 @@ spec:
       value: /tmp/konflux-art-images-auth
     image: quay.io/redhat-user-workloads/ocp-art-tenant/art-cd:latest
     name: invoke-artcd
-    computeResources:
-      requests:
-        memory: "2Gi"
-        cpu: "1"
-      limits:
-        memory: "4Gi"
-        cpu: "2"
     script: $(params.script)
     securityContext:
       privileged: true

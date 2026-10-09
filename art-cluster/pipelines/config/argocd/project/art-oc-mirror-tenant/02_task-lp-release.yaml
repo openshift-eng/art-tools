@@ -3,8 +3,8 @@ kind: Task
 metadata:
   labels:
     app: artcd
-  name: lp-scan
-  namespace: art-osus-tenant
+  name: lp-release
+  namespace: art-oc-mirror-tenant
 spec:
   params:
   - default: artcd $@
@@ -28,7 +28,7 @@ spec:
     - name: TASKRUN_UID
       value: $(context.taskRun.uid)
     - name: BUILD_URL
-      value: https://console-openshift-console.apps.artc2023.pc3z.p1.openshiftapps.com/k8s/ns/art-osus-tenant/tekton.dev~v1~TaskRun/$(context.taskRun.name)
+      value: https://console-openshift-console.apps.artc2023.pc3z.p1.openshiftapps.com/k8s/ns/art-oc-mirror-tenant/tekton.dev~v1~TaskRun/$(context.taskRun.name)
     - name: GIT_SSH_COMMAND
       value: ssh -o StrictHostKeyChecking=no
     - name: GOOGLE_APPLICATION_CREDENTIALS
@@ -93,12 +93,14 @@ spec:
       value: /tmp/konflux-kubeconfigs/assisted-installer
     - name: OAP_KONFLUX_SA_KUBECONFIG
       value: /tmp/konflux-kubeconfigs/oap
-    - name: OSUS_KONFLUX_SA_KUBECONFIG
-      value: /tmp/konflux-kubeconfigs/osus
+    - name: OC_MIRROR_KONFLUX_SA_KUBECONFIG
+      value: /tmp/konflux-kubeconfigs/oc-mirror
+    - name: QUAY_KONFLUX_SA_KUBECONFIG
+      value: /tmp/konflux-kubeconfigs/quay
     - name: QUAY_AUTH_FILE
-      value: /tmp/konflux-art-images-auth/config.json
+      value: /tmp/quay-authfile/config.json
     - name: DOCKER_CONFIG
-      value: /tmp/konflux-art-images-auth
+      value: /tmp/quay-authfile
     image: quay.io/redhat-user-workloads/ocp-art-tenant/art-cd:latest
     name: invoke-artcd
     script: $(params.script)
@@ -125,8 +127,8 @@ spec:
     - mountPath: /root/.ssh
       name: openshift-bot-ssh-key
       readOnly: true
-    - mountPath: /tmp/konflux-art-images-auth
-      name: konflux-art-images-auth-file
+    - mountPath: /tmp/quay-authfile
+      name: quay-authfile
       readOnly: true
   volumes:
   - name: doozer-config
@@ -151,9 +153,9 @@ spec:
     secret:
       defaultMode: 256
       secretName: openshift-bot-ssh-key
-  - name: konflux-art-images-auth-file
+  - name: quay-authfile
     secret:
       items:
       - key: auth.json
         path: config.json
-      secretName: konflux-art-images-auth-file
+      secretName: quay-authfile

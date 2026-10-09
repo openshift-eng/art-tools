@@ -3,8 +3,8 @@ kind: Task
 metadata:
   labels:
     app: artcd
-  name: lp-scan
-  namespace: art-osus-tenant
+  name: lp-release
+  namespace: art-oap-tenant
 spec:
   params:
   - default: artcd $@
@@ -28,7 +28,7 @@ spec:
     - name: TASKRUN_UID
       value: $(context.taskRun.uid)
     - name: BUILD_URL
-      value: https://console-openshift-console.apps.artc2023.pc3z.p1.openshiftapps.com/k8s/ns/art-osus-tenant/tekton.dev~v1~TaskRun/$(context.taskRun.name)
+      value: https://console-openshift-console.apps.artc2023.pc3z.p1.openshiftapps.com/k8s/ns/art-oap-tenant/tekton.dev~v1~TaskRun/$(context.taskRun.name)
     - name: GIT_SSH_COMMAND
       value: ssh -o StrictHostKeyChecking=no
     - name: GOOGLE_APPLICATION_CREDENTIALS
@@ -93,8 +93,8 @@ spec:
       value: /tmp/konflux-kubeconfigs/assisted-installer
     - name: OAP_KONFLUX_SA_KUBECONFIG
       value: /tmp/konflux-kubeconfigs/oap
-    - name: OSUS_KONFLUX_SA_KUBECONFIG
-      value: /tmp/konflux-kubeconfigs/osus
+    - name: QUAY_KONFLUX_SA_KUBECONFIG
+      value: /tmp/konflux-kubeconfigs/quay
     - name: QUAY_AUTH_FILE
       value: /tmp/konflux-art-images-auth/config.json
     - name: DOCKER_CONFIG
