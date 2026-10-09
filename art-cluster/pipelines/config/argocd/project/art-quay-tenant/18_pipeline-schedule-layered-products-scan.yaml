@@ -47,6 +47,7 @@ spec:
             "--config=/root/.config/artcd.toml",
             "schedule-layered-products-scan",
             "--group=quay-3.9",
+            "--group=quay-3.10",
             "--group=quay-3.12",
             "--group=quay-3.14",
             "--group=quay-3.16",
