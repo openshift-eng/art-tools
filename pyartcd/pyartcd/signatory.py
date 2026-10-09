@@ -274,6 +274,10 @@ class SigstoreSignatory:
     ENV = {k: v for k, v in os.environ.items() if not k.startswith("AWS_")}
     # it's easier to set AWS_REGION for now than to create a whole AWS_CONFIG_FILE
     ENV["AWS_REGION"] = "us-east-1"
+    # Preserve legacy signatures and explicit Rekor URLs with cosign 3.
+    # Environment overrides also work with older versions that lack these flags.
+    ENV["COSIGN_USE_SIGNING_CONFIG"] = "false"
+    ENV["COSIGN_NEW_BUNDLE_FORMAT"] = "false"
 
     def __init__(
         self,

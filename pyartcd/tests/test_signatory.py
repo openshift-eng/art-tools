@@ -350,6 +350,36 @@ class TestSigstoreSignatory(IsolatedAsyncioTestCase):
         dry_run_calls = [call for call in signatory._logger.info.call_args_list if "[DRY RUN]" in str(call)]
         self.assertEqual(len(dry_run_calls), 1)
 
+    @patch("pyartcd.signatory.asyncio.sleep", new_callable=AsyncMock)
+    @patch("pyartcd.signatory.exectools.cmd_gather_async", new_callable=AsyncMock)
+    async def test_sign_manifest_uses_legacy_cosign_signing(self, mock_cmd, mock_sleep):
+        """Keep custom Rekor services and legacy image signatures with cosign 3."""
+        pullspec = "quay.io/openshift-release-dev/ocp-release@sha256:abc123"
+        canonical_tag = "4.16.1-x86_64"
+        identities = [pullspec, f"quay.io/openshift-release-dev/ocp-release:{canonical_tag}"]
+        mock_cmd.return_value = (0, "ok", "")
+
+        for rekor_url in ("https://rekor.example.com", ""):
+            with self.subTest(rekor_url=rekor_url):
+                mock_cmd.reset_mock()
+                signatory = self._create_signatory(dry_run=False, rekor_url=rekor_url)
+
+                result = await signatory._sign_manifest(pullspec, canonical_tag)
+
+                self.assertEqual(result, {})
+                self.assertEqual(mock_cmd.await_count, len(identities))
+                for call, identity in zip(mock_cmd.await_args_list, identities):
+                    cmd = call.args[0]
+                    env = call.kwargs["env"]
+                    self.assertEqual(env["COSIGN_USE_SIGNING_CONFIG"], "false")
+                    self.assertEqual(env["COSIGN_NEW_BUNDLE_FORMAT"], "false")
+                    self.assertNotIn("--use-signing-config=false", cmd)
+                    self.assertNotIn("--new-bundle-format=false", cmd)
+                    self.assertIn(f"--sign-container-identity={identity}", cmd)
+                    self.assertEqual(cmd[cmd.index("--key") + 1], "awskms:///test-key-id")
+                    self.assertIn(f"--rekor-url={rekor_url}" if rekor_url else "--tlog-upload=false", cmd)
+                    self.assertEqual(cmd[-1], pullspec)
+
     async def test_sign_release_images_with_multiple_manifests(self):
         """Test signing release images where a manifest list has multiple arch manifests.
 
