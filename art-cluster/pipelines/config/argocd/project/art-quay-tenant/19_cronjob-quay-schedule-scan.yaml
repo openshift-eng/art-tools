@@ -4,7 +4,7 @@ metadata:
   name: quay-schedule-scan-cron
   namespace: art-quay-tenant
 spec:
-  schedule: "*/30 * * * *"
+  schedule: "0 * * * *"
   suspend: false
   concurrencyPolicy: Forbid
   jobTemplate:

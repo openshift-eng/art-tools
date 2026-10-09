@@ -4,7 +4,7 @@ metadata:
   name: oc-mirror-schedule-scan-cron
   namespace: art-oc-mirror-tenant
 spec:
-  schedule: "*/30 * * * *"
+  schedule: "0 * * * *"
   suspend: false
   concurrencyPolicy: Forbid
   jobTemplate:
