@@ -21,7 +21,7 @@ spec:
                 - schedule-layered-products-scan
                 - '--use-param-defaults'
                 - '--pipeline-timeout'
-                - 30m
+                - 6h
               imagePullPolicy: Always
           restartPolicy: OnFailure
           serviceAccountName: pipeline
