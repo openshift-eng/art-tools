@@ -147,7 +147,7 @@ class OkdRebaseCli:
             }
 
         except Exception as e:
-            self.logger.warning('Failed rebasing %s: %s', image_name, e)
+            self.logger.exception('Failed rebasing %s: %s', image_name, e)
             self.state[image_name] = {
                 'status': 'failure',
                 'private_fix': False,
