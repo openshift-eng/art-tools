@@ -44,8 +44,6 @@ spec:
         import os
         import subprocess
 
-        subprocess.run(["kinit", "-f", "-k", "-t", "/tmp/keytab/keytab", "exd-ocp-buildvm-bot-prod@IPA.REDHAT.COM"], check=True)
-
         # Ensure oras can find registry credentials via ~/.docker/config.json
         auth_file = os.environ.get("QUAY_AUTH_FILE", "/tmp/quay-authfile/config.json")
         if os.path.exists(auth_file):

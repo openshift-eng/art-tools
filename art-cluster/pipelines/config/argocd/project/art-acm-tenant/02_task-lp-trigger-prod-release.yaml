@@ -3,7 +3,7 @@ kind: Task
 metadata:
   labels:
     app: artcd
-  name: lp-scan
+  name: lp-trigger-prod-release
   namespace: art-acm-tenant
 spec:
   params:
@@ -33,11 +33,11 @@ spec:
   - args:
     - $(params.args[*])
     env:
-    - name: REDIS_SERVER_PASSWORD
+    - name: GITLAB_TOKEN
       valueFrom:
         secretKeyRef:
-          key: password
-          name: redis-server-password
+          key: token
+          name: gitlab-token
     image: quay.io/redhat-user-workloads/ocp-art-tenant/art-cd:latest
     name: invoke-artcd
     script: $(params.script)

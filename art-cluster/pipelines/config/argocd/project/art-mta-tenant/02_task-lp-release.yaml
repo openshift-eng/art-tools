@@ -29,8 +29,6 @@ spec:
       value: $(context.taskRun.uid)
     - name: BUILD_URL
       value: https://console-openshift-console.apps.artc2023.pc3z.p1.openshiftapps.com/k8s/ns/art-mta-tenant/tekton.dev~v1~TaskRun/$(context.taskRun.name)
-    - name: GIT_SSH_COMMAND
-      value: ssh -o StrictHostKeyChecking=no
     - name: GOOGLE_APPLICATION_CREDENTIALS
       value: /tmp/gcp-sa/sa.json
     - name: GIT_AUTHOR_NAME
@@ -45,11 +43,6 @@ spec:
   - args:
     - $(params.args[*])
     env:
-    - name: SLACK_BOT_TOKEN
-      valueFrom:
-        secretKeyRef:
-          key: slack-api-token
-          name: art-bot-config
     - name: JIRA_TOKEN
       valueFrom:
         secretKeyRef:
@@ -60,18 +53,11 @@ spec:
         secretKeyRef:
           key: password
           name: redis-server-password
-    - name: GITHUB_TOKEN
-      valueFrom:
-        secretKeyRef:
-          key: token
-          name: github-token
-          optional: true
     - name: GITLAB_TOKEN
       valueFrom:
         secretKeyRef:
           key: token
           name: gitlab-token
-          optional: true
     - name: GITHUB_APP_ID
       valueFrom:
         secretKeyRef:
@@ -79,22 +65,8 @@ spec:
           name: github-app-credentials
     - name: GITHUB_APP_PRIVATE_KEY_PATH
       value: /tmp/github-app/private-key.pem
-    - name: KONFLUX_SA_KUBECONFIG
-      value: /tmp/konflux-kubeconfigs/ocp
-    - name: OADP_KONFLUX_SA_KUBECONFIG
-      value: /tmp/konflux-kubeconfigs/oadp
     - name: MTA_KONFLUX_SA_KUBECONFIG
       value: /tmp/konflux-kubeconfigs/mta
-    - name: MTC_KONFLUX_SA_KUBECONFIG
-      value: /tmp/konflux-kubeconfigs/mtc
-    - name: LOGGING_KONFLUX_SA_KUBECONFIG
-      value: /tmp/konflux-kubeconfigs/logging
-    - name: ASSISTED_INSTALLER_SA_KUBECONFIG
-      value: /tmp/konflux-kubeconfigs/assisted-installer
-    - name: OAP_KONFLUX_SA_KUBECONFIG
-      value: /tmp/konflux-kubeconfigs/oap
-    - name: QUAY_KONFLUX_SA_KUBECONFIG
-      value: /tmp/konflux-kubeconfigs/quay
     - name: QUAY_AUTH_FILE
       value: /tmp/konflux-art-images-auth/config.json
     - name: DOCKER_CONFIG
@@ -107,12 +79,6 @@ spec:
       runAsGroup: 0
       runAsUser: 0
     volumeMounts:
-    - mountPath: /root/.config/doozer
-      name: doozer-config
-    - mountPath: /tmp/keytab
-      name: kerberos-keytab
-    - mountPath: /root/.config/art-bot
-      name: art-bot-docker-config
     - mountPath: /tmp/gcp-sa
       name: gcp-sa-key
       readOnly: true
@@ -122,35 +88,22 @@ spec:
     - mountPath: /tmp/github-app
       name: github-app-credentials
       readOnly: true
-    - mountPath: /root/.ssh
-      name: openshift-bot-ssh-key
-      readOnly: true
     - mountPath: /tmp/konflux-art-images-auth
       name: konflux-art-images-auth-file
       readOnly: true
   volumes:
-  - name: doozer-config
-    secret:
-      secretName: doozer-config
-  - name: kerberos-keytab
-    secret:
-      secretName: synced-exd-ocp-buildvm-bot-prod-keytab
-  - name: art-bot-docker-config
-    secret:
-      secretName: art-bot-docker-config
   - name: gcp-sa-key
     secret:
       secretName: gcp-sa-key
   - name: konflux-sa-kubeconfigs
     secret:
       secretName: konflux-sa-kubeconfigs
+      items:
+      - key: mta
+        path: mta
   - name: github-app-credentials
     secret:
       secretName: github-app-credentials
-  - name: openshift-bot-ssh-key
-    secret:
-      defaultMode: 256
-      secretName: openshift-bot-ssh-key
   - name: konflux-art-images-auth-file
     secret:
       items:

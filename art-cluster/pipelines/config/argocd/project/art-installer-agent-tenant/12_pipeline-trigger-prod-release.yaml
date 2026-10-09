@@ -231,4 +231,4 @@ spec:
         log(f"Job URL: {GITLAB_HOST}/{PROJECT_PATH}/-/jobs/{job_id}")
     taskRef:
       kind: Task
-      name: lp-release
+      name: lp-trigger-prod-release
