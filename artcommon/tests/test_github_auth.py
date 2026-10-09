@@ -14,6 +14,9 @@ from artcommonlib.github_auth import (
     get_github_git_auth_env,
     get_github_git_pat_env,
 )
+from github import GithubException
+
+FAKE_PAT = "test-only-token"
 
 FAKE_PEM = "-----BEGIN RSA PRIVATE KEY-----\nfake\n-----END RSA PRIVATE KEY-----"
 
@@ -194,6 +197,7 @@ class TestGetGithubClientForOrg:
     @patch("artcommonlib.github_auth.GithubIntegration")
     @patch("artcommonlib.github_auth.Auth.AppAuth")
     def test_auto_detect_from_api(self, mock_app_auth_cls, mock_gi_cls, mock_github_cls, monkeypatch):
+        monkeypatch.setenv("GITHUB_TOKEN", FAKE_PAT)
         monkeypatch.setenv("GITHUB_APP_ID", "100")
         monkeypatch.setenv("GITHUB_APP_PRIVATE_KEY", FAKE_PEM)
         monkeypatch.delenv("GITHUB_APP_INSTALLATION_ID_OPENSHIFT_ENG", raising=False)
@@ -214,6 +218,7 @@ class TestGetGithubClientForOrg:
         result = get_github_client_for_org("openshift-eng")
 
         mock_app_auth.get_installation_auth.assert_called_once_with(10)
+        mock_github_cls.assert_called_once_with(auth=mock_install_auth)
         assert result is mock_client
 
     @patch("artcommonlib.github_auth.Github")
@@ -263,9 +268,69 @@ class TestGetGithubClientForOrg:
         assert client1 is client2
         assert mock_github_cls.call_count == 1
 
+    @patch("artcommonlib.github_auth.Github")
+    @patch("artcommonlib.github_auth.Auth.Token")
+    @patch("artcommonlib.github_auth.GithubIntegration")
+    @patch("artcommonlib.github_auth.Auth.AppAuth")
+    def test_pat_fallback_when_org_has_no_installation(
+        self, mock_app_auth_cls, mock_gi_cls, mock_token_cls, mock_github_cls, monkeypatch
+    ):
+        monkeypatch.setenv("GITHUB_APP_ID", "100")
+        monkeypatch.setenv("GITHUB_APP_PRIVATE_KEY", FAKE_PEM)
+        monkeypatch.setenv("GITHUB_TOKEN", FAKE_PAT)
+        monkeypatch.delenv("GITHUB_APP_INSTALLATION_ID", raising=False)
+        monkeypatch.delenv("GITHUB_APP_INSTALLATION_ID_OPENSHIFT_BOT", raising=False)
+        mock_gi_cls.return_value.get_installations.return_value = [
+            _make_installation("openshift", 30),
+        ]
+
+        client1 = get_github_client_for_org("openshift-bot")
+        client2 = get_github_client_for_org("openshift-bot")
+
+        assert client1 is client2 is mock_github_cls.return_value
+        mock_token_cls.assert_called_once_with(FAKE_PAT)
+        mock_github_cls.assert_called_once_with(auth=mock_token_cls.return_value)
+        mock_app_auth_cls.return_value.get_installation_auth.assert_not_called()
+
+    @pytest.mark.parametrize("has_pat", [True, False])
+    @pytest.mark.parametrize("failure_stage", ["call", "iteration"])
+    @patch("artcommonlib.github_auth.Github")
+    @patch("artcommonlib.github_auth.Auth.Token")
+    @patch("artcommonlib.github_auth.GithubIntegration")
+    @patch("artcommonlib.github_auth.Auth.AppAuth")
+    def test_installation_api_error_uses_pat_if_available(
+        self, mock_app_auth_cls, mock_gi_cls, mock_token_cls, mock_github_cls, monkeypatch, has_pat, failure_stage
+    ):
+        """Fallback covers API errors at lookup or pagination and preserves them without a PAT."""
+        monkeypatch.setenv("GITHUB_APP_ID", "100")
+        monkeypatch.setenv("GITHUB_APP_PRIVATE_KEY", FAKE_PEM)
+        monkeypatch.delenv("GITHUB_APP_INSTALLATION_ID", raising=False)
+        monkeypatch.delenv("GITHUB_APP_INSTALLATION_ID_OPENSHIFT_BOT", raising=False)
+        error = GithubException(503, {"message": "Installation lookup unavailable"})
+        installations = mock_gi_cls.return_value.get_installations
+        if failure_stage == "call":
+            installations.side_effect = error
+        else:
+            installations.return_value.__iter__.side_effect = error
+
+        if has_pat:
+            monkeypatch.setenv("GITHUB_TOKEN", FAKE_PAT)
+            result = get_github_client_for_org("openshift-bot")
+            assert result is mock_github_cls.return_value
+            mock_token_cls.assert_called_once_with(FAKE_PAT)
+            mock_github_cls.assert_called_once_with(auth=mock_token_cls.return_value)
+        else:
+            monkeypatch.delenv("GITHUB_TOKEN", raising=False)
+            with pytest.raises(GithubException) as caught:
+                get_github_client_for_org("openshift-bot")
+            assert caught.value is error
+            mock_github_cls.assert_not_called()
+        mock_app_auth_cls.return_value.get_installation_auth.assert_not_called()
+
     @patch("artcommonlib.github_auth.GithubIntegration")
     @patch("artcommonlib.github_auth.Auth.AppAuth")
     def test_unknown_org_no_fallback_raises(self, mock_app_auth_cls, mock_gi_cls, monkeypatch):
+        monkeypatch.delenv("GITHUB_TOKEN", raising=False)
         monkeypatch.setenv("GITHUB_APP_ID", "100")
         monkeypatch.setenv("GITHUB_APP_PRIVATE_KEY", FAKE_PEM)
         monkeypatch.delenv("GITHUB_APP_INSTALLATION_ID", raising=False)
@@ -276,6 +341,25 @@ class TestGetGithubClientForOrg:
 
         with pytest.raises(ValueError, match="No GitHub App installation found for org 'totally-unknown'"):
             get_github_client_for_org("totally-unknown")
+
+    @pytest.mark.parametrize("has_pat", [True, False])
+    @patch("artcommonlib.github_auth.Github")
+    @patch("artcommonlib.github_auth.Auth.Token")
+    def test_missing_app_key_uses_pat_if_available(self, mock_token_cls, mock_github_cls, monkeypatch, has_pat):
+        monkeypatch.setenv("GITHUB_APP_ID", "100")
+        monkeypatch.delenv("GITHUB_APP_PRIVATE_KEY", raising=False)
+        monkeypatch.delenv("GITHUB_APP_PRIVATE_KEY_PATH", raising=False)
+        if has_pat:
+            monkeypatch.setenv("GITHUB_TOKEN", FAKE_PAT)
+            result = get_github_client_for_org("openshift-bot")
+            assert result is mock_github_cls.return_value
+            mock_token_cls.assert_called_once_with(FAKE_PAT)
+            mock_github_cls.assert_called_once_with(auth=mock_token_cls.return_value)
+        else:
+            monkeypatch.delenv("GITHUB_TOKEN", raising=False)
+            with pytest.raises(EnvironmentError, match="GITHUB_APP_PRIVATE_KEY"):
+                get_github_client_for_org("openshift-bot")
+            mock_github_cls.assert_not_called()
 
     @patch("artcommonlib.github_auth.Github")
     def test_pat_fallback_when_no_app_id(self, mock_github_cls, monkeypatch):
