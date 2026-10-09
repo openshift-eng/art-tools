@@ -268,6 +268,7 @@ def _shipment_ci_graph(
     stage_job_status='success',
     prod_status='manual',
     prod_downstream=None,
+    prod_started_at=None,
     downstream_prod_status='success',
     prod_job_status='success',
 ):
@@ -284,7 +285,9 @@ def _shipment_ci_graph(
     )
     stage_downstream = {'id': 200, 'project_id': 10}
     stage_bridge = SimpleNamespace(name='stage-job', status=stage_status, downstream_pipeline=stage_downstream)
-    prod_bridge = SimpleNamespace(name='prod-job', status=prod_status, downstream_pipeline=prod_downstream)
+    prod_bridge = SimpleNamespace(
+        name='prod-job', status=prod_status, started_at=prod_started_at, downstream_pipeline=prod_downstream
+    )
     parent_pipeline.bridges.list.return_value = [stage_bridge, prod_bridge]
 
     stage_pipeline = SimpleNamespace(
@@ -410,7 +413,7 @@ def test_validate_shipment_mr_ci_state_reports_active_stage_with_created_prod_br
         )
 
 
-@pytest.mark.parametrize('status', ['pending', 'running', 'success', 'failed', 'canceled'])
+@pytest.mark.parametrize('status', ['pending', 'running', 'success', 'failed'])
 def test_validate_shipment_mr_ci_state_rejects_any_prod_attempt(status):
     """Block replacement once the production bridge leaves its untouched state."""
     client, mr, _, _ = _shipment_ci_graph(prod_status=status)
@@ -424,7 +427,53 @@ def test_validate_shipment_mr_ci_state_rejects_any_prod_attempt(status):
         )
 
 
-@pytest.mark.parametrize('prod_status', ['created', 'manual'])
+def test_validate_shipment_mr_ci_state_allows_canceled_unstarted_prod_bridge():
+    """Ignore GitLab cancellation of a prod bridge that never started."""
+    client, mr, _, _ = _shipment_ci_graph(prod_status='canceled', prod_started_at=None)
+
+    state = validate_shipment_mr_ci_state(
+        client,
+        'https://gitlab.example/project/-/merge_requests/42',
+        mr,
+        allow_active_stage=True,
+    )
+
+    assert state.prod_attempts == ()
+    assert state.active_prod == ()
+
+
+def test_validate_shipment_mr_ci_state_rejects_canceled_started_prod_bridge():
+    """Block a canceled prod bridge when GitLab reports that it started."""
+    client, mr, _, _ = _shipment_ci_graph(
+        prod_status='canceled',
+        prod_started_at='2026-10-09T13:45:40.642Z',
+    )
+
+    with pytest.raises(ShipmentMRProductionError, match='Manual release recovery'):
+        validate_shipment_mr_ci_state(
+            client,
+            'https://gitlab.example/project/-/merge_requests/42',
+            mr,
+            allow_active_stage=True,
+        )
+
+
+def test_validate_shipment_mr_ci_state_fails_closed_when_canceled_prod_bridge_omits_started_at():
+    """Fail closed when GitLab omits canceled-bridge execution evidence."""
+    client, mr, parent, _ = _shipment_ci_graph(prod_status='canceled')
+    prod_bridge = parent.bridges.list.return_value[1]
+    del prod_bridge.started_at
+
+    with pytest.raises(RuntimeError, match='has no started_at field'):
+        validate_shipment_mr_ci_state(
+            client,
+            'https://gitlab.example/project/-/merge_requests/42',
+            mr,
+            allow_active_stage=True,
+        )
+
+
+@pytest.mark.parametrize('prod_status', ['created', 'manual', 'canceled'])
 def test_validate_shipment_mr_ci_state_rejects_prod_downstream_from_untouched_bridge(prod_status):
     """Treat any associated production child pipeline as an attempted release."""
     client, mr, _, _ = _shipment_ci_graph(

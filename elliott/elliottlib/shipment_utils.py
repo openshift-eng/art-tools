@@ -33,6 +33,7 @@ _ACTIVE_CI_STATUSES = frozenset(
 )
 _TERMINAL_CI_STATUSES = frozenset({'success', 'failed', 'canceled', 'skipped', 'manual'})
 _UNTOUCHED_PROD_STATUSES = frozenset({'created', 'manual', 'skipped'})
+_MISSING = object()
 
 
 @dataclass(frozen=True)
@@ -100,6 +101,39 @@ def _checked_ci_status(item, context: str) -> str:
     return status
 
 
+def _prod_bridge_was_attempted(bridge, status: str, downstream, context: str) -> bool:
+    """Determine whether a GitLab production bridge started release work.
+
+    GitLab can mark an unstarted manual bridge ``canceled`` when its parent
+    pipeline is canceled. Such a bridge is untouched when it has no start time
+    and no downstream pipeline.
+
+    Args:
+        bridge: GitLab bridge job object or API response mapping.
+        status: Validated GitLab bridge status.
+        downstream: Downstream pipeline data associated with the bridge.
+        context: Human-readable bridge description for error reporting.
+
+    Returns:
+        Whether the bridge provides evidence of a production attempt.
+
+    Raises:
+        RuntimeError: If a canceled bridge omits the start-time field needed
+            for safe classification.
+    """
+    if downstream:
+        return True
+    if status in _UNTOUCHED_PROD_STATUSES:
+        return False
+    if status != 'canceled':
+        return True
+
+    started_at = _object_value(bridge, 'started_at', _MISSING)
+    if started_at is _MISSING:
+        raise RuntimeError(f"Cannot safely classify {context}: canceled GitLab bridge has no started_at field")
+    return started_at is not None
+
+
 def inspect_shipment_mr_ci_state(gitlab_client, mr_url: str, mr, project=None) -> ShipmentMRCIState:
     """Inspect all Shipment CI pipelines belonging to a merge request.
 
@@ -107,7 +141,8 @@ def inspect_shipment_mr_ci_state(gitlab_client, mr_url: str, mr, project=None) -
     downstream jobs are inspected with pagination enabled. A production bridge
     is considered attempted once it leaves the untouched ``created``,
     ``manual``, or ``skipped`` states, or as soon as GitLab associates a
-    downstream pipeline.
+    downstream pipeline. A canceled bridge that never started and has no
+    downstream pipeline remains untouched.
 
     Args:
         gitlab_client: Authenticated ART GitLab client.
@@ -148,11 +183,12 @@ def inspect_shipment_mr_ci_state(gitlab_client, mr_url: str, mr, project=None) -
             is_prod = bridge_name == 'prod-job'
 
             if is_prod:
-                if bridge_status not in _UNTOUCHED_PROD_STATUSES or downstream:
+                prod_attempted = _prod_bridge_was_attempted(
+                    bridge, bridge_status, downstream, f'prod-job in {pipeline_url}'
+                )
+                if prod_attempted:
                     prod_attempts.append(f"{pipeline_url} prod-job is {bridge_status}")
-                if bridge_status in _ACTIVE_CI_STATUSES and (
-                    bridge_status not in _UNTOUCHED_PROD_STATUSES or downstream
-                ):
+                if bridge_status in _ACTIVE_CI_STATUSES and prod_attempted:
                     active_prod.append(f"{pipeline_url} prod-job is {bridge_status}")
             else:
                 stage_bridge_found = True
