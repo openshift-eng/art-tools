@@ -10,7 +10,11 @@ import yaml
 from artcommonlib import exectools
 from artcommonlib.build_visibility import is_nvr_embargoed
 from artcommonlib.product_catalog import get_kubeconfig_env_vars
-from artcommonlib.util import resolve_konflux_kubeconfig_by_product, resolve_konflux_namespace_by_product
+from artcommonlib.util import (
+    product_version_from_group_name,
+    resolve_konflux_kubeconfig_by_product,
+    resolve_konflux_namespace_by_product,
+)
 from artcommonlib.variants import BuildVariant, get_build_variant_for_product
 from doozerlib.constants import KONFLUX_DEFAULT_IMAGE_REPO
 
@@ -192,15 +196,19 @@ class BuildLayeredProductsPipeline:
             doozer_data_gitref=self.data_gitref,
         )
 
-        # Set version from group config if not provided
+        # Set version from group config or the OpenShift group name if not provided
         if not self.version:
             self.version = group_config.get('version')
+            if not self.version and self.group.startswith('openshift-'):
+                group_version = product_version_from_group_name(self.group)
+                if group_version:
+                    self.version = '.'.join(str(part) for part in group_version)
             if not self.version:
                 raise ValueError(f"No version found in group config for {self.group}")
-            self._logger.info(f"Using version {self.version} from group config")
+            self._logger.info(f"Using version {self.version} from group configuration or name")
 
         # Extract product from group config
-        product = group_config['product']
+        product = group_config.get('product') or 'ocp'
         image_repo = group_config.get('konflux', {}).get('image_repo') or KONFLUX_DEFAULT_IMAGE_REPO
         await self._rebase_and_build(product, image_repo)
         self.trigger_bundle_build()
