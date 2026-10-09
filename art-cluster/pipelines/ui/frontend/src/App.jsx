@@ -1,6 +1,7 @@
 import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { Alert, Button, Label, Spinner, Title } from '@patternfly/react-core';
 import { AuthenticationError, createApi } from './api';
+import PipelineHealth from './PipelineHealth';
 
 const api = createApi();
 const { request } = api;
@@ -9,6 +10,8 @@ const runTabs = ['details', 'logs', 'events', 'parameters', 'tasks'];
 
 function parseHash() {
   const parts = window.location.hash.slice(2).split('/');
+  const [kind, search] = parts[0].split('?');
+  if (kind === 'health') return { kind: 'health', namespace: new URLSearchParams(search).get('namespace') || '' };
   if (parts[0] === 'pipeline' && parts[1] && parts[2]) {
     return { kind: 'pipeline', namespace: parts[1], name: decodeURIComponent(parts[2]) };
   }
@@ -30,6 +33,7 @@ function parseHash() {
 function navigate(view) {
   if (view.kind === 'pipeline') window.location.hash = `#/pipeline/${view.namespace}/${encodeURIComponent(view.name)}`;
   else if (view.kind === 'run') window.location.hash = `#/run/${view.namespace}/${encodeURIComponent(view.name)}?uid=${encodeURIComponent(view.uid || '')}`;
+  else if (view.kind === 'health') window.location.hash = `#/health${view.namespace ? `?namespace=${encodeURIComponent(view.namespace)}` : ''}`;
   else window.location.hash = view.kind === 'runs' ? '#/runs' : '#/pipelines';
 }
 
@@ -146,7 +150,7 @@ function ThemeIcon({ theme }) {
 function App() {
   const [view, setView] = useState(parseHash);
   const [namespaces, setNamespaces] = useState([]);
-  const [namespace, setNamespace] = useState('');
+  const [namespace, setNamespace] = useState(() => { const initial = parseHash(); return initial.kind === 'health' ? initial.namespace : ''; });
   const [session, setSession] = useState(null);
   const [error, setError] = useState('');
   const [authenticationError, setAuthenticationError] = useState(null);
@@ -168,6 +172,8 @@ function App() {
     return () => { unsubscribe(); window.removeEventListener('hashchange', onHashChange); };
   }, []);
 
+  useEffect(() => { if (view.kind === 'health') setNamespace(view.namespace); }, [view]);
+
   return <div className="app-shell">
     <header className="topbar">
       <div className="brand" onClick={() => navigate({ kind: 'pipelines' })} role="button" tabIndex={0} onKeyDown={(event) => event.key === 'Enter' && navigate({ kind: 'pipelines' })}>
@@ -176,9 +182,10 @@ function App() {
       <nav className="topnav" aria-label="Workspace navigation">
         <button className={view.kind === 'pipelines' || view.kind === 'pipeline' ? 'nav active' : 'nav'} onClick={() => navigate({ kind: 'pipelines' })}>Pipelines</button>
         <button className={view.kind === 'runs' || view.kind === 'run' ? 'nav active' : 'nav'} onClick={() => navigate({ kind: 'runs' })}>PipelineRuns</button>
+        <button className={view.kind === 'health' ? 'nav active' : 'nav'} onClick={() => navigate({ kind: 'health', namespace })}>PipelineHealth (Beta)</button>
       </nav>
       <div className="topbar-right">
-        <select className="namespace-select" value={namespace} onChange={(event) => setNamespace(event.target.value)} aria-label="Namespace">
+        <select className="namespace-select" value={namespace} onChange={(event) => { setNamespace(event.target.value); if (view.kind === 'health') navigate({ kind: 'health', namespace: event.target.value }); }} aria-label="Namespace">
           <option value="">All accessible tenants</option>
           {namespaces.map((item) => <option key={item} value={item}>{item}</option>)}
         </select>
@@ -194,6 +201,7 @@ function App() {
         {error && <Alert variant="danger" title={error} className="notice" />}
         {view.kind === 'pipelines' && <Pipelines namespace={namespace} />}
         {view.kind === 'runs' && <Runs namespace={namespace} />}
+        {view.kind === 'health' && <PipelineHealth namespace={namespace} request={request} />}
         {view.kind === 'pipeline' && <PipelineDetail view={view} csrfToken={session?.csrfToken} />}
         {view.kind === 'run' && <RunDetail view={view} csrfToken={session?.csrfToken} />}
       </>}

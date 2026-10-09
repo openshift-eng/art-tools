@@ -13,6 +13,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
 from .cluster import Gateway, UpstreamError
+from .health import build_health, health_run
 from .rebuild import InvalidRun, build_run, parameter_form, pipeline_name
 
 NAMESPACES = tuple(
@@ -125,11 +126,15 @@ def event_summary(event: dict) -> dict:
     }
 
 
-async def read_run_summaries(gateway: Gateway, namespace: str, errors: list, selected: bool) -> list[dict]:
+async def read_run_summaries(
+    gateway: Gateway, namespace: str, errors: list, selected: bool, *, include_health: bool = False
+) -> list[dict]:
     items = {}
     try:
         async for _record, run in gateway.list_records(namespace, filter_text="data_type == PIPELINE_RUN"):
             summary = run_summary(run, "archive")
+            if include_health:
+                summary = health_run(run, summary)
             if summary["uid"]:
                 items[summary["uid"]] = summary
     except UpstreamError as error:
@@ -140,6 +145,8 @@ async def read_run_summaries(gateway: Gateway, namespace: str, errors: list, sel
     try:
         async for run in gateway.list_kube(namespace, "pipelineruns"):
             summary = run_summary(run, "live")
+            if include_health:
+                summary = health_run(run, summary)
             if summary["uid"]:
                 items[summary["uid"]] = summary
     except UpstreamError as error:
@@ -148,6 +155,21 @@ async def read_run_summaries(gateway: Gateway, namespace: str, errors: list, sel
         if error.status != 403 or selected:
             errors.append({"namespace": namespace, "source": "live", "message": error.message})
     return list(items.values())
+
+
+@app.get("/api/pipeline-health")
+async def pipeline_health(request: Request, response: Response, namespace: str | None = None):
+    names = selected_namespaces(namespace)
+    errors = []
+    async with Gateway(user_token(request)) as gateway:
+        groups = await asyncio.gather(
+            *(read_run_summaries(gateway, name, errors, namespace is not None, include_health=True) for name in names)
+        )
+    response.headers["Cache-Control"] = "no-store"
+    return {
+        "items": build_health([run for group in groups for run in group], {error["namespace"] for error in errors}),
+        "errors": errors,
+    }
 
 
 async def find_run(gateway: Gateway, namespace: str, name: str, uid: str | None = None):

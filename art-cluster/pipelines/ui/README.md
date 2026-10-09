@@ -10,6 +10,16 @@ When the saved OAuth token expires, the UI validates the session against OpenShi
 
 The pod disables automatic service account token mounting. The OAuth proxy still needs an in-cluster Kubernetes client for OAuth discovery, so a projected service account token is mounted only in the proxy container. The backend mounts only the Kubernetes CA from `kube-root-ca.crt`. An ingress-only NetworkPolicy limits access to the proxy to the OpenShift router without restricting the app's outbound cluster API and Results requests.
 
+## PipelineHealth (Beta)
+
+The `#/health` page shows a compact matrix of scan-rooted build chains, grouped by tenant, group, and assembly. A bookmarked tenant view uses `#/health?namespace=art-acm-tenant`. The read-only `/api/pipeline-health` endpoint combines live PipelineRuns and Tekton Results, deduplicating by UID with live data preferred.
+
+The chain starts at `layered-products-scan` and follows `build-layered-products`, `olm-bundle-konflux`, and all triggered `build-fbc` targets. Parent labels and triggered-run annotations establish relationships; `art.openshift.io/rebuilt-from` connects retries by UID. The newest explicit retry supplies the effective stage result, while original attempts remain visible in recovery history. Green requires every stage and target to succeed. Dry runs, missing triggered runs, reused parent names, and missing stages cannot establish green health.
+
+The last completed chain supplies the group's health; current running work and the latest scan are shown separately. A failed chain that stops before FBC makes the group red. Successful scans without downstream builds do not overwrite a previous build result. Expand a row for FBC targets, recovery attempts, and the ten most recent build chains. Every run link opens the existing Details page with its UID, including archived runs. Incomplete source history is reported and prevents confirming a group's green result. The page refreshes every ten seconds with active work and every thirty seconds otherwise, pausing requests while the tab is hidden.
+
+For acceptance in `art-acm-tenant`, confirm a failed image build is red despite a successful root scan and follow its failure link. Expand ACM 2.15 to inspect all FBC target statuses, and ACM 2.17 to inspect its linked image-build retries. Verify that a later scan without builds preserves E2E health, an active newer build preserves the last completed result, and a completed successful retry restores green while retaining earlier failures. Check light/dark themes, namespace switching, refresh, archived run navigation, and expired-session recovery. The automated health tests cover complete success, fan-out failure/running states, retries, missing/ambiguous relationships, dry runs, tenant isolation, and partial history.
+
 ## Development
 
 The backend is in `backend/pipeline_ui`; install `backend/requirements.txt` and run `uvicorn pipeline_ui.app:app` from `backend`. The frontend is in `frontend`; run `npm ci` and `npm run build`. Browser requests need an OpenShift OAuth proxy in front of the backend.
