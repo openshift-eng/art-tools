@@ -2,21 +2,21 @@ apiVersion: tekton.dev/v1
 kind: Pipeline
 metadata:
   name: build-layered-products
-  namespace: art-oc-mirror-tenant
+  namespace: art-installer-agent-tenant
   labels:
     app: artcd
 spec:
   description: Rebase and build Quay operator images via Konflux, then trigger downstream bundle build.
   params:
-  - default: quay-3.18
-    description: The group to use with -g flag (e.g. quay-3.18, quay-3.17)
+  - default: assisted-installer-2.15
+    description: The group to use with -g flag (e.g. assisted-installer-2.15, assisted-installer-2.14)
     name: group
     type: string
   - default: test
     description: The name of an assembly to rebase and build for
     name: assembly
     type: string
-  - default: quay-operator
+  - default: installer-agent-operator
     description: Comma/space-separated list of image names to build
     name: image-list
     type: string
@@ -71,7 +71,7 @@ spec:
     name: art-tools-commit
     type: string
   tasks:
-  - name: quay-build
+  - name: installer-agent-build
     params:
     - name: script
       value: |
@@ -86,7 +86,7 @@ spec:
 
         os.environ["TEKTON_PIPELINERUN_NAME"] = "$(context.pipelineRun.name)"
         os.environ["TEKTON_PIPELINE_NAME"] = "$(context.pipeline.name)"
-        os.environ["BUILD_URL"] = "https://console-openshift-console.apps.artc2023.pc3z.p1.openshiftapps.com/k8s/ns/art-quay-tenant/tekton.dev~v1~PipelineRun/$(context.pipelineRun.name)"
+        os.environ["BUILD_URL"] = "https://console-openshift-console.apps.artc2023.pc3z.p1.openshiftapps.com/k8s/ns/art-installer-agent-tenant/tekton.dev~v1~PipelineRun/$(context.pipelineRun.name)"
 
         art_tools_commit = "$(params.art-tools-commit)"
         if art_tools_commit:
