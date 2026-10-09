@@ -20,13 +20,16 @@ publishing credentials from `art-cd`, using the existing AWS path
 `art/prod/openshift-release-dev+art_quay_dev@quay.io-dockerconfigjson-plaintext`.
 The wrapper derives `QUAY_USERNAME` and `QUAY_PASSWORD` from this Docker config.
 
-The cluster audit on 2026-10-09 found `art-bot/jenkins-credentials`, with keys
-`jenkins-service-account` and `jenkins-token`. Sync these to a same-named secret
-in this tenant once its AWS source is supplied.
+`01_externalsecrets.yaml` syncs `jenkins-credentials` from
+`art/prod/jenkins/jenkins-service-account` and
+`art/prod/jenkins/jenkins-service-account-token`, mapping them to
+`jenkins-service-account` and `jenkins-token` respectively.
 
-The remaining credentials were absent from the cluster audit. Create an
-ExternalSecret targeting `promote-credentials` once the AWS Secrets Manager
-paths and, where applicable, JSON properties are supplied. Its keys must be:
+The `promote-credentials` ExternalSecret syncs each credential below from
+`art/prod/jenkins/<Jenkins credential ID>`. Each source is read as a complete
+secret value, matching the existing Jenkins credential mappings in this tenant.
+Check that both new ExternalSecrets are Ready after GitOps sync before running
+promotion.
 
 | Secret key | Jenkins credential / purpose |
 | --- | --- |
