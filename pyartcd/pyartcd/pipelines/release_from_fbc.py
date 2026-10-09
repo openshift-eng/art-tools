@@ -565,17 +565,39 @@ class ReleaseFromFbcPipeline:
             'ignore_patch_version',
         ]
         try:
-            returncode, output, _ = await exectools.cmd_gather_async(cmd)
+            returncode, output, stderr = await exectools.cmd_gather_async(cmd)
         except Exception as e:
-            self.logger.warning("Failed to load ignore_patch_version from group config; defaulting to false: %s", e)
+            self.logger.warning(
+                "Failed to load ignore_patch_version for group %s because the Doozer command failed: %s; "
+                "defaulting to false",
+                self.group,
+                e,
+            )
             return False
         if returncode != 0:
-            self.logger.warning("Failed to load ignore_patch_version from group config; defaulting to false")
+            error_output = (stderr or "").strip() or (output or "").strip() or "<no command output>"
+            self.logger.warning(
+                "Failed to load ignore_patch_version for group %s: Doozer exited with code %s: %s; defaulting to false",
+                self.group,
+                returncode,
+                error_output[-500:],
+            )
             return False
 
-        value = stdlib_yaml.safe_load(output)
+        output_lines = [line.strip() for line in (output or "").splitlines() if line.strip()]
+        value_output = output_lines[-1] if output_lines else ""
+        output_excerpt = (output or "")[-500:]
+        try:
+            value = stdlib_yaml.safe_load(value_output)
+        except stdlib_yaml.YAMLError as e:
+            message = f"Failed to parse ignore_patch_version for group {self.group} from Doozer output: {e}"
+            self.logger.error("%s; Doozer output tail: %r", message, output_excerpt)
+            raise ValueError(message) from e
+
         if not isinstance(value, bool):
-            raise ValueError("group.yml ignore_patch_version must be a boolean")
+            message = f"group.yml ignore_patch_version must be a boolean for group {self.group}; got {value!r}"
+            self.logger.error("%s; Doozer output tail: %r", message, output_excerpt)
+            raise ValueError(message)
         return value
 
     async def _load_mr_approvers_from_group_config(self) -> dict[str, list[str]]:

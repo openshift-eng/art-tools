@@ -309,22 +309,63 @@ class TestLoadIgnorePatchVersionFromGroupConfig(unittest.TestCase):
         self.assertIs(result, False)
 
     @patch("pyartcd.pipelines.release_from_fbc.exectools.cmd_gather_async")
+    def test_first_run_notice_does_not_break_boolean_output(self, mock_cmd):
+        notice = (
+            "It appears you may be using Doozer for the first time.\n"
+            "Be sure to setup Doozer using the user config file:\n"
+            "/root/.config/doozer/settings.yaml\n"
+        )
+        for output, expected in (("false\n", False), ("true\n", True)):
+            with self.subTest(expected=expected):
+                mock_cmd.return_value = (0, notice + output, "")
+                result = asyncio.run(self._make_pipeline()._load_ignore_patch_version_from_group_config())
+                self.assertIs(result, expected)
+
+    @patch("pyartcd.pipelines.release_from_fbc.exectools.cmd_gather_async")
+    def test_yaml_parse_error_logs_group_and_core_error(self, mock_cmd):
+        mock_cmd.return_value = (0, "Doozer startup notice\nnot: [valid\n", "")
+        pipeline = self._make_pipeline()
+        with self.assertLogs("pyartcd.pipelines.release_from_fbc", level="ERROR") as logs:
+            with self.assertRaisesRegex(ValueError, "Failed to parse ignore_patch_version") as raised:
+                asyncio.run(pipeline._load_ignore_patch_version_from_group_config())
+
+        log_output = "\n".join(logs.output)
+        self.assertIn("rhosdt-0.158", log_output)
+        self.assertIn("not: [valid", log_output)
+        self.assertIn("expected", log_output.lower())
+        self.assertIsNotNone(raised.exception.__cause__)
+
+    @patch("pyartcd.pipelines.release_from_fbc.exectools.cmd_gather_async")
     def test_invalid_setting_fails_clearly(self, mock_cmd):
         mock_cmd.return_value = (0, "yes-ish\n", "")
-        with self.assertRaisesRegex(ValueError, "ignore_patch_version must be a boolean"):
-            asyncio.run(self._make_pipeline()._load_ignore_patch_version_from_group_config())
+        pipeline = self._make_pipeline()
+        with self.assertLogs("pyartcd.pipelines.release_from_fbc", level="ERROR") as logs:
+            with self.assertRaisesRegex(ValueError, "ignore_patch_version must be a boolean"):
+                asyncio.run(pipeline._load_ignore_patch_version_from_group_config())
+        self.assertIn("rhosdt-0.158", "\n".join(logs.output))
+        self.assertIn("yes-ish", "\n".join(logs.output))
 
     @patch("pyartcd.pipelines.release_from_fbc.exectools.cmd_gather_async")
     def test_command_failure_defaults_to_false(self, mock_cmd):
         mock_cmd.side_effect = RuntimeError("doozer failed")
-        result = asyncio.run(self._make_pipeline()._load_ignore_patch_version_from_group_config())
+        pipeline = self._make_pipeline()
+        with self.assertLogs("pyartcd.pipelines.release_from_fbc", level="WARNING") as logs:
+            result = asyncio.run(pipeline._load_ignore_patch_version_from_group_config())
         self.assertIs(result, False)
+        self.assertIn("rhosdt-0.158", "\n".join(logs.output))
+        self.assertIn("doozer failed", "\n".join(logs.output))
 
     @patch("pyartcd.pipelines.release_from_fbc.exectools.cmd_gather_async")
     def test_nonzero_command_defaults_to_false(self, mock_cmd):
-        mock_cmd.return_value = (1, "", "doozer failed")
-        result = asyncio.run(self._make_pipeline()._load_ignore_patch_version_from_group_config())
+        mock_cmd.return_value = (1, "", "group.yml could not be loaded")
+        pipeline = self._make_pipeline()
+        with self.assertLogs("pyartcd.pipelines.release_from_fbc", level="WARNING") as logs:
+            result = asyncio.run(pipeline._load_ignore_patch_version_from_group_config())
         self.assertIs(result, False)
+        log_output = "\n".join(logs.output)
+        self.assertIn("rhosdt-0.158", log_output)
+        self.assertIn("code 1", log_output)
+        self.assertIn("group.yml could not be loaded", log_output)
 
 
 class TestCreateShipmentMrApprovalRules(unittest.TestCase):
