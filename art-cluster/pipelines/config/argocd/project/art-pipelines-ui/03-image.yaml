@@ -1,0 +1,29 @@
+apiVersion: image.openshift.io/v1
+kind: ImageStream
+metadata:
+  name: art-pipelines-ui
+  namespace: art-pipelines-ui
+---
+apiVersion: build.openshift.io/v1
+kind: BuildConfig
+metadata:
+  name: art-pipelines-ui
+  namespace: art-pipelines-ui
+spec:
+  source:
+    type: Git
+    git:
+      uri: https://github.com/openshift-eng/art-tools
+      ref: main
+    contextDir: art-cluster/pipelines/ui
+  strategy:
+    type: Docker
+    dockerStrategy:
+      dockerfilePath: Containerfile
+  output:
+    to:
+      kind: ImageStreamTag
+      name: art-pipelines-ui:latest
+  successfulBuildsHistoryLimit: 5
+  failedBuildsHistoryLimit: 3
+  triggers: []

@@ -1,0 +1,7 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: art-pipelines-ui
+  annotations:
+    openshift.io/display-name: ART Pipelines UI
+    openshift.io/description: Search and rebuild ART tenant PipelineRuns
