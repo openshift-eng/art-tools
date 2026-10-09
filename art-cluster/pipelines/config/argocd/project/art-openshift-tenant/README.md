@@ -20,6 +20,13 @@ publishing credentials from `art-cd`, using the existing AWS path
 `art/prod/openshift-release-dev+art_quay_dev@quay.io-dockerconfigjson-plaintext`.
 The wrapper derives `QUAY_USERNAME` and `QUAY_PASSWORD` from this Docker config.
 
+The `bugzilla-apikey` ExternalSecret reads the complete INI configuration from
+`art/prod/konflux/bugzilla-apikey` into its `bugzillarc` key. The shared `artcd`
+Task mounts this file read-only at `/etc/bugzillarc`, which python-bugzilla reads
+when Elliott checks blocker bugs, including during dry runs. The AWS secret must
+contain a `[bugzilla.redhat.com]` section with a nonempty `api_key`. Verify that
+this ExternalSecret is Ready before starting an `artcd` TaskRun.
+
 `01_externalsecrets.yaml` syncs `jenkins-credentials` from
 `art/prod/jenkins/jenkins-service-account` and
 `art/prod/jenkins/jenkins-service-account-token`, mapping them to
@@ -28,8 +35,8 @@ The wrapper derives `QUAY_USERNAME` and `QUAY_PASSWORD` from this Docker config.
 The `promote-credentials` ExternalSecret syncs each credential below from
 `art/prod/jenkins/<Jenkins credential ID>`. Each source is read as a complete
 secret value, matching the existing Jenkins credential mappings in this tenant.
-Check that both new ExternalSecrets are Ready after GitOps sync before running
-promotion.
+Check that the promotion ExternalSecrets are Ready after GitOps sync before
+running promotion.
 
 | Secret key | Jenkins credential / purpose |
 | --- | --- |

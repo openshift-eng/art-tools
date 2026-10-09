@@ -103,6 +103,10 @@ spec:
       runAsGroup: 0
       runAsUser: 0
     volumeMounts:
+    - mountPath: /etc/bugzillarc
+      name: bugzilla-apikey
+      readOnly: true
+      subPath: bugzillarc
     - mountPath: /root/.config/doozer
       name: doozer-config
     - mountPath: /tmp/keytab
@@ -128,6 +132,13 @@ spec:
       name: promote-credentials
       readOnly: true
   volumes:
+  - name: bugzilla-apikey
+    secret:
+      defaultMode: 256
+      items:
+      - key: bugzillarc
+        path: bugzillarc
+      secretName: bugzilla-apikey
   - name: doozer-config
     secret:
       secretName: doozer-config
