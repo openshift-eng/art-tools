@@ -153,6 +153,7 @@ def start_pipeline_run(
             ],
         },
     }
+
     pr_json = json.dumps(pipeline_run)
     logger.info("Creating PipelineRun for pipeline %s in namespace %s", pipeline_name, namespace)
     logger.debug("PipelineRun spec: %s", pr_json)
