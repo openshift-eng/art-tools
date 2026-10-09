@@ -14,7 +14,14 @@ from pydantic import BaseModel, Field
 
 from .cluster import Gateway, UpstreamError
 from .health import build_health, health_run
-from .rebuild import InvalidRun, build_run, parameter_form, pipeline_name
+from .rebuild import (
+    REBUILT_FROM_ANNOTATION,
+    REBUILT_FROM_NAME_ANNOTATION,
+    InvalidRun,
+    build_run,
+    parameter_form,
+    pipeline_name,
+)
 
 NAMESPACES = tuple(
     namespace.strip() for namespace in os.getenv("PIPELINE_NAMESPACES", "").split(",") if namespace.strip()
@@ -352,11 +359,19 @@ async def run_detail(request: Request, namespace: str, name: str, uid: str | Non
         run, source, _ = await find_run(gateway, namespace, name, uid)
     metadata = run.get("metadata", {})
     labels = metadata.get("labels") or {}
+    annotations = metadata.get("annotations") or {}
+    rebuilt_from_name = annotations.get(REBUILT_FROM_NAME_ANNOTATION)
+    rebuilt_from_uid = annotations.get(REBUILT_FROM_ANNOTATION)
     return {
         **run_summary(run, source),
         "labels": labels,
-        "annotations": metadata.get("annotations") or {},
+        "annotations": annotations,
         "parentPipelineRun": labels.get("art.openshift.io/parent-pipelinerun"),
+        "rebuiltFrom": (
+            {"name": rebuilt_from_name, "uid": rebuilt_from_uid}
+            if rebuilt_from_name and rebuilt_from_uid
+            else None
+        ),
         "parameters": run.get("spec", {}).get("params", []),
         "workspaces": run.get("spec", {}).get("workspaces", []),
         "tasks": run.get("status", {}).get("childReferences", []),
