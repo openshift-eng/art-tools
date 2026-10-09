@@ -160,12 +160,12 @@ function App() {
   return <div className="app-shell">
     <header className="topbar">
       <a className="brand" href={viewHref({ kind: 'pipelines', filterNamespace: namespace })}>
-        <span className="brand-mark">ART</span><span>Pipelines</span>
+        <span className="brand-mark">ART</span><span>Pipelines</span><span className="beta-badge">Beta</span>
       </a>
       <nav className="topnav" aria-label="Workspace navigation">
         <a className={view.kind === 'pipelines' || view.kind === 'pipeline' ? 'nav active' : 'nav'} href={viewHref({ kind: 'pipelines', filterNamespace: namespace })}>Pipelines</a>
         <a className={view.kind === 'runs' || view.kind === 'run' ? 'nav active' : 'nav'} href={viewHref({ kind: 'runs', filterNamespace: namespace })}>PipelineRuns</a>
-        <a className={view.kind === 'health' ? 'nav active' : 'nav'} href={viewHref({ kind: 'health', filterNamespace: namespace })}>PipelineHealth (Beta)</a>
+        <a className={view.kind === 'health' ? 'nav active' : 'nav'} href={viewHref({ kind: 'health', filterNamespace: namespace })}>PipelineHealth</a>
       </nav>
       <div className="topbar-right">
         <select className="namespace-select" value={namespace} onChange={(event) => {
