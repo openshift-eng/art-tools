@@ -85,7 +85,7 @@ def build_run(
         params.append({"name": param_name, "value": value})
     spec = {"pipelineRef": {"name": name}, "params": params}
     if source_run:
-        for field in ("taskRunTemplate", "taskRunSpecs", "timeouts", "podTemplate", "computeResources"):
+        for field in ("taskRunTemplate", "taskRunSpecs", "podTemplate", "computeResources"):
             if field in source_run.get("spec", {}):
                 spec[field] = deepcopy(source_run["spec"][field])
         if "serviceAccountName" in source_run.get("spec", {}):
