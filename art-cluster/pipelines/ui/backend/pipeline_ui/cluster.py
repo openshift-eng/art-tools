@@ -1,5 +1,6 @@
 """Request-scoped clients for OpenShift and Tekton Results."""
 
+import asyncio
 import base64
 import json
 import os
@@ -28,11 +29,16 @@ class Gateway:
         headers = {"Authorization": f"Bearer {token}", "Accept": "application/json"}
         self.kube = httpx.AsyncClient(base_url=KUBE_API, headers=headers, verify=KUBE_CA, timeout=30)
         self.results = httpx.AsyncClient(base_url=RESULTS_API, headers=headers, verify=RESULTS_CA, timeout=45)
+        self._session_check = None
 
     async def __aenter__(self):
         return self
 
     async def __aexit__(self, *_args):
+        if self._session_check is not None:
+            if not self._session_check.done():
+                self._session_check.cancel()
+            await asyncio.gather(self._session_check, return_exceptions=True)
         await self.kube.aclose()
         await self.results.aclose()
 
@@ -54,7 +60,17 @@ class Gateway:
 
     async def results_json(self, path: str, **kwargs) -> dict:
         response = await self.results.get(path, **kwargs)
-        return self._check(response).json()
+        return (await self._check_results(response)).json()
+
+    async def _check_results(self, response: httpx.Response) -> httpx.Response:
+        if response.status_code == 401:
+            # Results returns 401 for both expired tokens and namespace RBAC denials.
+            # Validate the session before allowing callers to skip an inaccessible tenant.
+            if self._session_check is None:
+                self._session_check = asyncio.create_task(self.kube_json("GET", "/apis/user.openshift.io/v1/users/~"))
+            await self._session_check
+            raise UpstreamError(403, "You do not have access to this Tekton Results history")
+        return self._check(response)
 
     async def pipeline(self, namespace: str, name: str) -> dict:
         return await self.kube_json("GET", f"/apis/tekton.dev/v1/namespaces/{quote(namespace)}/pipelines/{quote(name)}")
@@ -130,7 +146,10 @@ class Gateway:
         async with client.stream("GET", path, params=params) as response:
             if response.is_error:
                 await response.aread()
-            self._check(response)
+            if client is self.results:
+                await self._check_results(response)
+            else:
+                self._check(response)
             async for chunk in response.aiter_bytes():
                 remaining = 8_000_000 - length
                 if len(chunk) > remaining:
