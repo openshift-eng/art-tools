@@ -5,7 +5,7 @@ Primary API -- org-aware client with PAT fallback:
     from artcommonlib.github_auth import get_github_client_for_org
     client = get_github_client_for_org("openshift-eng")
     # auto-discovers installation ID for the org, caches clients per-org
-    # falls back to GITHUB_TOKEN PAT if GITHUB_APP_ID is not set
+    # falls back to GITHUB_TOKEN PAT if App credentials or installation are unavailable
 
 Raw token (for non-PyGithub callers / shell scripts):
     from artcommonlib.github_auth import get_github_app_token
@@ -41,7 +41,7 @@ import tempfile
 import time
 from pathlib import Path
 
-from github import Auth, Github, GithubIntegration
+from github import Auth, Github, GithubException, GithubIntegration
 
 LOGGER = logging.getLogger(__name__)
 
@@ -317,21 +317,29 @@ def get_github_client_for_org(org: str) -> Github:
     Tries GitHub App auth first, falls back to GITHUB_TOKEN PAT:
     1. If GITHUB_APP_ID is set, resolves the org's installation and returns
        an auto-refreshing App client (cached per installation_id).
-    2. Otherwise, returns a PAT client from GITHUB_TOKEN (cached, shared across orgs).
-    3. Raises EnvironmentError if neither is configured.
+    2. If App credentials or installation cannot be resolved, uses GITHUB_TOKEN
+       when available (cached, shared across orgs).
+    3. If GITHUB_APP_ID is absent, uses GITHUB_TOKEN or raises EnvironmentError.
 
     :param org: GitHub organization name (e.g. "openshift-eng", "openshift-priv")
     :return: Authenticated Github client
     :raises EnvironmentError: If neither App credentials nor GITHUB_TOKEN are configured
-    :raises ValueError: If App auth is configured but no installation matches the org
+    :raises ValueError: If App installation resolution fails and GITHUB_TOKEN is unavailable
+    :raises GithubException: If the installation API fails and GITHUB_TOKEN is unavailable
     """
     if not os.environ.get("GITHUB_APP_ID"):
         LOGGER.info("GITHUB_APP_ID not set; using GITHUB_TOKEN (PAT) for org '%s'", org)
         return _get_pat_client()
 
     LOGGER.info("Using GitHub App auth for org '%s'", org)
-    app_id, private_key, _ = _read_env_credentials()
-    installation_id = _resolve_installation_id(org, app_id, private_key)
+    try:
+        app_id, private_key, _ = _read_env_credentials()
+        installation_id = _resolve_installation_id(org, app_id, private_key)
+    except (EnvironmentError, ValueError, GithubException) as exc:
+        if not os.environ.get("GITHUB_TOKEN"):
+            raise
+        LOGGER.warning("GitHub App auth unavailable for org '%s' (%s); using GITHUB_TOKEN (PAT)", org, exc)
+        return _get_pat_client()
 
     if installation_id not in _client_cache:
         app_auth = Auth.AppAuth(app_id, private_key)
