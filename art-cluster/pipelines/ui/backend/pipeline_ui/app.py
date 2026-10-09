@@ -140,8 +140,10 @@ async def read_run_summaries(
     except UpstreamError as error:
         if error.status == 401:
             raise
-        if error.status != 403 or selected:
-            errors.append({"namespace": namespace, "source": "archive", "message": error.message})
+        if error.status != 403 or selected or include_health:
+            errors.append(
+                {"namespace": namespace, "source": "archive", "message": error.message, "status": error.status}
+            )
     try:
         async for run in gateway.list_kube(namespace, "pipelineruns"):
             summary = run_summary(run, "live")
@@ -152,8 +154,8 @@ async def read_run_summaries(
     except UpstreamError as error:
         if error.status == 401:
             raise
-        if error.status != 403 or selected:
-            errors.append({"namespace": namespace, "source": "live", "message": error.message})
+        if error.status != 403 or selected or include_health:
+            errors.append({"namespace": namespace, "source": "live", "message": error.message, "status": error.status})
     return list(items.values())
 
 
@@ -165,6 +167,8 @@ async def pipeline_health(request: Request, response: Response, namespace: str |
         groups = await asyncio.gather(
             *(read_run_summaries(gateway, name, errors, namespace is not None, include_health=True) for name in names)
         )
+    visible = {run["namespace"] for group in groups for run in group}
+    errors = [error for error in errors if namespace or error["status"] != 403 or error["namespace"] in visible]
     response.headers["Cache-Control"] = "no-store"
     return {
         "items": build_health([run for group in groups for run in group], {error["namespace"] for error in errors}),

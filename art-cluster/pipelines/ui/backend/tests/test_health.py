@@ -260,6 +260,25 @@ class HealthApiTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(response.json()["errors"][0]["source"], "archive")
         self.assertEqual(response.headers["cache-control"], "no-store")
 
+    async def test_all_tenants_view_reports_one_source_permission_failure(self):
+        raw = {
+            "metadata": {"namespace": "art-acm-tenant", "name": "scan", "uid": "uid-scan"},
+            "spec": {"pipelineRef": {"name": PIPELINES[0]}, "params": [{"name": "group", "value": "acm-2.15"}]},
+            "status": {"conditions": [{"type": "Succeeded", "status": "True", "reason": "Succeeded"}]},
+        }
+        self.gateway.list_records.side_effect = lambda *_args, **_kwargs: items(error=UpstreamError(403, "Forbidden"))
+        self.gateway.list_kube.side_effect = lambda *_args, **_kwargs: items((raw,))
+        response = await self.client.get("/api/pipeline-health")
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["errors"][0]["status"], 403)
+        self.assertTrue(response.json()["items"][0]["incompleteHistory"])
+
+    async def test_all_tenants_view_omits_fully_inaccessible_namespaces(self):
+        self.gateway.list_records.side_effect = lambda *_args, **_kwargs: items(error=UpstreamError(403, "Forbidden"))
+        self.gateway.list_kube.side_effect = lambda *_args, **_kwargs: items(error=UpstreamError(403, "Forbidden"))
+        response = await self.client.get("/api/pipeline-health")
+        self.assertEqual(response.json(), {"items": [], "errors": []})
+
     async def test_live_data_replaces_archived_snapshot_by_uid(self):
         raw = {
             "metadata": {"namespace": "art-acm-tenant", "name": "scan", "uid": "uid-scan"},
