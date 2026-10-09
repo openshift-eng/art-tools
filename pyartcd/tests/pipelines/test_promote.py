@@ -2134,7 +2134,9 @@ class TestPromotePipeline(IsolatedAsyncioTestCase):
     @patch(
         "pyartcd.pipelines.promote.get_github_client_for_org", side_effect=AssertionError("Unexpected GitHub access")
     )
-    async def test_update_qe_repo_dry_run_skips_github(self, mock_get_github_client: Mock, _):
+    @patch("pyartcd.pipelines.promote.Github", side_effect=AssertionError("Unexpected GitHub access"))
+    @patch.dict(os.environ, {"GITHUB_TOKEN": ""})
+    async def test_update_qe_repo_dry_run_skips_github(self, mock_github: Mock, mock_get_github_client: Mock, _):
         runtime = MagicMock(working_dir=Path("/tmp"), dry_run=True)
         pipeline = PromotePipeline(runtime, group="openshift-4.21", assembly="4.21.0", signing_env="stage")
 
@@ -2142,13 +2144,14 @@ class TestPromotePipeline(IsolatedAsyncioTestCase):
             release_name="4.21.0", release_jira="ART-1234", advisories={"image": 12345, "rpm": 67890}
         )
 
+        mock_github.assert_not_called()
         mock_get_github_client.assert_not_called()
         pipeline._logger.info.assert_called_once_with("[DRY RUN] Would update QE release tests repo for %s", "4.21.0")
 
     @patch("pyartcd.jira_client.JIRAClient.from_url", return_value=None)
-    @patch("pyartcd.pipelines.promote.get_github_client_for_org")
+    @patch("pyartcd.pipelines.promote.Github")
     @patch.dict(os.environ, {"GITHUB_TOKEN": "fake-token"})
-    async def test_update_qe_repo_releases_is_none(self, mock_get_github_client: Mock, _):
+    async def test_update_qe_repo_releases_is_none(self, mock_github: Mock, _):
         """
         Test _update_qe_repo handles TypeError when YAML contains 'releases:' with no value.
         When yaml.load returns {'releases': None}, attempting file_content['releases'][release_name]
@@ -2163,19 +2166,7 @@ class TestPromotePipeline(IsolatedAsyncioTestCase):
 
         mock_upstream_repo = MagicMock()
         mock_fork_repo = MagicMock()
-        mock_openshift_client = MagicMock()
-        mock_openshift_client.get_repo.return_value = mock_upstream_repo
-        mock_openshift_bot_client = MagicMock()
-        mock_openshift_bot_client.get_repo.return_value = mock_fork_repo
-
-        def get_client_side_effect(org):
-            if org == "openshift":
-                return mock_openshift_client
-            if org == "openshift-bot":
-                return mock_openshift_bot_client
-            return MagicMock()
-
-        mock_get_github_client.side_effect = get_client_side_effect
+        mock_github.return_value.get_repo.side_effect = [mock_upstream_repo, mock_fork_repo]
 
         mock_fork_repo.get_branches.return_value = []
         mock_upstream_branch = MagicMock()
@@ -2223,6 +2214,62 @@ class TestPromotePipeline(IsolatedAsyncioTestCase):
                 }
             },
         )
+
+    @patch("pyartcd.jira_client.JIRAClient.from_url", return_value=None)
+    @patch(
+        "pyartcd.pipelines.promote.get_github_client_for_org",
+        side_effect=AssertionError("Unexpected App authentication"),
+    )
+    @patch("pyartcd.pipelines.promote.Github")
+    @patch.dict(os.environ, {"GITHUB_TOKEN": "fake-token", "GITHUB_APP_ID": "12345"})
+    async def test_update_qe_repo_uses_pat_with_app_credentials(
+        self, mock_github: Mock, mock_get_github_client: Mock, _
+    ):
+        runtime = MagicMock(working_dir=Path("/tmp"), dry_run=False)
+        pipeline = PromotePipeline(runtime, group="openshift-4.21", assembly="4.21.0", signing_env="prod")
+        upstream_repo = MagicMock()
+        fork_repo = MagicMock()
+        mock_github.return_value.get_repo.side_effect = [upstream_repo, fork_repo]
+        fork_repo.get_branches.return_value = []
+        upstream_repo.get_branch.return_value.commit.sha = "fake-sha"
+        upstream_repo.get_contents.return_value.decoded_content = b"releases: {}"
+        fork_repo.get_contents.return_value.sha = "file-sha"
+
+        pipeline._update_qe_repo("4.21.0", "ART-1234", {"rpm": 67890})
+
+        mock_github.assert_called_once()
+        self.assertEqual(mock_github.call_args.kwargs["auth"].token, "fake-token")
+        mock_get_github_client.assert_not_called()
+        self.assertEqual(mock_github.return_value.get_repo.call_count, 2)
+        mock_github.return_value.get_repo.assert_any_call("openshift/release-tests")
+        mock_github.return_value.get_repo.assert_any_call("openshift-bot/release-tests")
+        fork_repo.create_git_ref.assert_called_once_with("refs/heads/4.21.0", "fake-sha")
+        fork_repo.update_file.assert_called_once()
+        upstream_repo.create_pull.assert_called_once_with(
+            title="Add release 4.21.0", body="Add release 4.21.0", base="z-stream", head="openshift-bot:4.21.0"
+        )
+        upstream_repo.create_pull.return_value.add_to_labels.assert_called_once_with("lgtm", "approved")
+        upstream_repo.create_pull.return_value.merge.assert_called_once_with()
+
+    @patch("pyartcd.jira_client.JIRAClient.from_url", return_value=None)
+    @patch("pyartcd.pipelines.promote.get_github_client_for_org")
+    @patch("pyartcd.pipelines.promote.Github")
+    @patch.dict(os.environ, {"GITHUB_APP_ID": "12345"})
+    async def test_update_qe_repo_requires_pat(self, mock_github: Mock, mock_get_github_client: Mock, _):
+        runtime = MagicMock(working_dir=Path("/tmp"), dry_run=False)
+        pipeline = PromotePipeline(runtime, group="openshift-4.21", assembly="4.21.0", signing_env="prod")
+
+        for token in (None, ""):
+            with self.subTest(token=token), patch.dict(os.environ):
+                if token is None:
+                    os.environ.pop("GITHUB_TOKEN", None)
+                else:
+                    os.environ["GITHUB_TOKEN"] = token
+                with self.assertRaisesRegex(EnvironmentError, "GITHUB_TOKEN must be set"):
+                    pipeline._update_qe_repo.__wrapped__(pipeline, "4.21.0", "ART-1234", {"rpm": 67890})
+
+        mock_github.assert_not_called()
+        mock_get_github_client.assert_not_called()
 
     @patch("pyartcd.jira_client.JIRAClient.from_url", return_value=None)
     @patch("pyartcd.pipelines.promote.exectools.cmd_assert_async")
