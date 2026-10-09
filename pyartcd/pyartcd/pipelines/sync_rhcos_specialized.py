@@ -41,6 +41,7 @@ SYNC_TYPE_CONFIG = {
         "enforce_allowlist": True,
     },
 }
+ALLOWED_SYNC_TYPES = list(SYNC_TYPE_CONFIG.keys())
 
 
 class SyncRhcosSpecializedPipeline:
@@ -62,9 +63,8 @@ class SyncRhcosSpecializedPipeline:
         self.working_dir = self.runtime.working_dir
         self.artifacts_dir = self.working_dir / "rhcos-artifacts"
 
-        if sync_type not in SYNC_TYPE_CONFIG:
-            supported_types = ", ".join(f"'{t}'" for t in SYNC_TYPE_CONFIG.keys())
-            raise ValueError(f"Sync type '{sync_type}' not supported. Valid types: {supported_types}")
+        if sync_type not in ALLOWED_SYNC_TYPES:
+            raise ValueError(f"Sync type '{sync_type}' not supported. Valid types: {', '.join(ALLOWED_SYNC_TYPES)}")
 
         config = SYNC_TYPE_CONFIG[sync_type]
         self.arch = config["arch"]
@@ -393,7 +393,8 @@ class SyncRhcosSpecializedPipeline:
     "--type",
     "sync_type",
     default="bfb",
-    help="Type: 'bfb' (NVIDIA BFB, aarch64), 'confidential' (confidential cluster images, x86_64), or 'ocp4nv' (NVIDIA OCP4NV boot images, aarch64)",
+    type=click.Choice(ALLOWED_SYNC_TYPES),
+    help=f"Type of artifacts to sync to mirror.openshift.com, supported: {', '.join(ALLOWED_SYNC_TYPES)}",
 )
 @pass_runtime
 @click_coroutine
