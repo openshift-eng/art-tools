@@ -97,7 +97,7 @@ class LayeredProductsImageHealthPipeline:
 
     async def run(self) -> None:
         """
-        Collect all configured groups and publish one aggregated report.
+        Collect all configured groups and publish one message per variant.
         """
         reports = await asyncio.gather(*(self._collect_group_safely(group) for group in self.groups))
         reports = sorted(reports, key=lambda report: report.group)
@@ -263,45 +263,35 @@ class LayeredProductsImageHealthPipeline:
         )
         return set(images)
 
-    def _build_summary_message(self, reports: list[LayeredProductHealthReport]) -> str:
+    def _build_variant_message(self, variant_name: str, reports: list[LayeredProductHealthReport]) -> str:
         """
-        Build the aggregated Slack parent message.
+        Build one Slack summary message for a layered-product variant.
 
         Args:
-            reports: Group health reports sorted for display.
+            variant_name: Product-specific build variant.
+            reports: Health reports for groups belonging to the variant.
 
         Returns:
-            Slack-formatted summary text.
+            Slack-formatted variant summary.
         """
-        message_parts = [":alert: Layered product image health report:"]
+        message_parts = [f":alert: Layered product image health report for `{variant_name}`:"]
         for report in reports:
             if report.error:
                 message_parts.append(f"- `{report.group}`: :warning: incomplete ({report.error})")
                 continue
 
-            failure_parts = []
-            build_concerns = self._get_failure_concerns(report.build_concerns)
-            if build_concerns:
-                failure_parts.append(f"{len(build_concerns)} build failure(s)")
-            if report.its_failures:
-                failure_parts.append(f"{len(report.its_failures)} ITS failure(s)")
-            if report.release_failures:
-                failure_parts.append(f"{len(report.release_failures)} release failure(s)")
-            if report.rebase_failures:
-                failure_parts.append(f"{len(report.rebase_failures)} rebase failure(s)")
-
+            failure_parts = self._get_failure_parts(report)
             if failure_parts:
-                summary = ", ".join(failure_parts)
-                message_parts.append(f"- `{report.group}` ({report.product}): {summary}")
+                message_parts.append(f"- `{report.group}`: {', '.join(failure_parts)}")
             else:
-                message_parts.append(f"- `{report.group}` ({report.product}): :white_check_mark: healthy")
+                message_parts.append(f"- `{report.group}`: :white_check_mark: healthy")
 
         message_parts.append(f"\nFor details, see <{ART_BUILD_FAILURES_URL}|ART Build Failures Dashboard>.")
         return "\n".join(message_parts)
 
     def _build_group_message(self, report: LayeredProductHealthReport) -> str:
         """
-        Build one detailed Slack thread section for a product group.
+        Build a detailed Slack thread message for one product group.
 
         Args:
             report: Group health report to format.
@@ -309,12 +299,21 @@ class LayeredProductsImageHealthPipeline:
         Returns:
             Slack-formatted group details.
         """
-        variant = report.variant.value if report.variant else "unknown"
-        header = f"*{report.product}* (`{report.group}`, variant `{variant}`)"
         if report.error:
-            return f"{header}\n:warning: Report incomplete: {report.error}"
+            return f"*{report.group}*\n:warning: Report incomplete: {report.error}"
+        return self._build_group_details(report)
 
-        sections = [header]
+    def _build_group_details(self, report: LayeredProductHealthReport) -> str:
+        """
+        Build detailed Slack report sections for one product group.
+
+        Args:
+            report: Group health report to format.
+
+        Returns:
+            Slack-formatted group details.
+        """
+        sections = [f"*{report.group}*"]
         build_concerns = self._get_failure_concerns(report.build_concerns)
         if build_concerns:
             lines = [f"*Build Failures ({len(build_concerns)}):*"]
@@ -330,27 +329,61 @@ class LayeredProductsImageHealthPipeline:
             sections.append(":white_check_mark: Healthy")
         return "\n\n".join(sections)
 
+    def _get_failure_parts(self, report: LayeredProductHealthReport) -> list[str]:
+        """
+        Return summary labels for all failures in a group report.
+
+        Args:
+            report: Group health report to summarize.
+
+        Returns:
+            Failure categories with their counts.
+        """
+        failure_parts = []
+        build_concerns = self._get_failure_concerns(report.build_concerns)
+        if build_concerns:
+            failure_parts.append(f"{len(build_concerns)} build failure(s)")
+        if report.its_failures:
+            failure_parts.append(f"{len(report.its_failures)} ITS failure(s)")
+        if report.release_failures:
+            failure_parts.append(f"{len(report.release_failures)} release failure(s)")
+        if report.rebase_failures:
+            failure_parts.append(f"{len(report.rebase_failures)} rebase failure(s)")
+        return failure_parts
+
     async def _notify_slack(self, reports: list[LayeredProductHealthReport]) -> None:
         """
-        Send the aggregated parent message and per-group thread sections.
+        Send one summary message per variant and thread failure details under it.
 
         Args:
             reports: Group health reports sorted for display.
         """
         self.slack_client.bind_channel(SlackClient.DEFAULT_CHANNEL_LAYERED_OPERATORS)
-        response = await self.slack_client.say(
-            self._build_summary_message(reports),
-            link_build_url=False,
-            unfurl_links=False,
-            unfurl_media=False,
-        )
+
+        reports_by_variant: dict[str, list[LayeredProductHealthReport]] = {}
+        variant_names: dict[str, str] = {}
         for report in reports:
-            await self.slack_client.say(
-                self._build_group_message(report),
-                thread_ts=response["ts"],
+            variant_name = report.variant.value if report.variant else "unknown"
+            variant_key = variant_name if report.variant else f"unknown:{report.group}"
+            variant_names[variant_key] = variant_name
+            reports_by_variant.setdefault(variant_key, []).append(report)
+
+        for variant_key, variant_reports in reports_by_variant.items():
+            response = await self.slack_client.say(
+                self._build_variant_message(variant_names[variant_key], variant_reports),
+                link_build_url=False,
                 unfurl_links=False,
                 unfurl_media=False,
             )
+            for report in variant_reports:
+                if not self._get_failure_parts(report):
+                    continue
+                await self.slack_client.say(
+                    self._build_group_message(report),
+                    thread_ts=response["ts"],
+                    unfurl_links=False,
+                    unfurl_media=False,
+                )
 
     @staticmethod
     def _get_failure_concerns(concerns: list[dict]) -> list[dict]:

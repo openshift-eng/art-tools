@@ -264,11 +264,13 @@ class TestLayeredProductHealthReport(unittest.IsolatedAsyncioTestCase):
             ),
         ]
 
-        summary = pipeline._build_summary_message(reports)
-        details = pipeline._build_group_message(reports[1])
+        summary = pipeline._build_variant_message("openshift-logging", [reports[1]])
+        details = pipeline._build_group_details(reports[1])
 
-        self.assertLess(summary.index("oadp-1.5"), summary.index("logging-6.7"))
-        self.assertIn("openshift-logging", details)
+        self.assertIn("logging-6.7", summary)
+        self.assertNotIn("(openshift-logging)", summary)
+        self.assertNotIn("*Build Failures (", summary)
+        self.assertIn("openshift-logging", summary)
         self.assertIn("Build Failures", details)
         self.assertIn("ITS Verification Failures", details)
         self.assertIn("Release to Authz Failures", details)
@@ -279,30 +281,50 @@ class TestLayeredProductHealthReport(unittest.IsolatedAsyncioTestCase):
         pipeline = self._make_pipeline()
         report = self._make_report("oadp-1.5", "oadp", BuildVariant.OADP)
 
-        details = pipeline._build_group_message(report)
+        details = pipeline._build_variant_message("oadp", [report])
 
-        self.assertIn("white_check_mark", details)
-        self.assertNotIn("Build Failures", details)
+        self.assertIn("oadp-1.5", details)
+        self.assertIn(":white_check_mark: healthy", details)
+        self.assertNotIn("*Build Failures (", details)
         self.assertNotIn("Rebase Failures", details)
 
-    async def test_notify_slack_posts_parent_and_group_threads(self):
+    async def test_notify_slack_posts_variant_summaries_and_threads_failures(self):
         pipeline = self._make_pipeline()
         reports = [
             self._make_report("oadp-1.5", "oadp", BuildVariant.OADP),
-            self._make_report("logging-6.7", "openshift-logging", BuildVariant.LOGGING),
+            self._make_report(
+                "logging-6.7",
+                "openshift-logging",
+                BuildVariant.LOGGING,
+                build_concerns=[
+                    {
+                        "image_name": "logging-collector",
+                        "code": "LATEST_ATTEMPT_FAILED",
+                        "latest_success_idx": 2,
+                        "latest_failed_nvr": "logging-collector-1",
+                        "latest_failed_build_record_id": "record-1",
+                        "latest_failed_build_time": "2026-09-22T09:00:00+00:00",
+                    }
+                ],
+            ),
+            self._make_report("logging-6.0", "openshift-logging", BuildVariant.LOGGING),
         ]
-        pipeline.slack_client.say = AsyncMock(
-            side_effect=[{"ts": "parent"}, {"ts": "oadp-thread"}, {"ts": "logging-thread"}]
-        )
+        pipeline.slack_client.say = AsyncMock(side_effect=[{"ts": "oadp"}, {"ts": "logging"}, {}])
 
         await pipeline._notify_slack(reports)
 
         pipeline.slack_client.bind_channel.assert_called_once_with("#art-release-layered-operators")
         self.assertEqual(pipeline.slack_client.say.await_count, 3)
-        self.assertIn("oadp-1.5", pipeline.slack_client.say.await_args_list[1].args[0])
-        self.assertIn("logging-6.7", pipeline.slack_client.say.await_args_list[2].args[0])
-        self.assertEqual(pipeline.slack_client.say.await_args_list[1].kwargs["thread_ts"], "parent")
-        self.assertEqual(pipeline.slack_client.say.await_args_list[2].kwargs["thread_ts"], "parent")
+        self.assertIn("oadp-1.5", pipeline.slack_client.say.await_args_list[0].args[0])
+        logging_summary = pipeline.slack_client.say.await_args_list[1].args[0]
+        self.assertIn("logging-6.7", logging_summary)
+        self.assertIn("logging-6.0", logging_summary)
+        self.assertNotIn("*Build Failures (", logging_summary)
+        logging_details = pipeline.slack_client.say.await_args_list[2]
+        self.assertIn("Build Failures", logging_details.args[0])
+        self.assertEqual(logging_details.kwargs["thread_ts"], "logging")
+        self.assertNotIn("thread_ts", pipeline.slack_client.say.await_args_list[0].kwargs)
+        self.assertNotIn("thread_ts", pipeline.slack_client.say.await_args_list[1].kwargs)
 
     async def test_run_reports_partial_group_failure_then_raises(self):
         pipeline = self._make_pipeline()
