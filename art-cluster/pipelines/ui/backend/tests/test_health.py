@@ -177,17 +177,18 @@ class HealthTests(unittest.TestCase):
         self.assertEqual(result["health"], "Unknown")
         self.assertEqual(result["currentChain"]["status"], "Incomplete")
 
-    def test_namespaces_groups_and_assemblies_are_isolated(self):
+    def test_namespaces_groups_and_only_stream_assemblies_are_included(self):
         runs = (
             complete_chain()
             + complete_chain(namespace="other-tenant")
             + complete_chain("other-", group="acm-2.17")
             + complete_chain("assembly-", assembly="test")
         )
-        self.assertEqual(len(build_health(runs)), 4)
+        self.assertEqual(len(build_health(runs)), 3)
         runs[-1]["status"] = "Failed"
         results = build_health(runs)
-        self.assertEqual(sum(item["health"] == "Succeeded" for item in results), 3)
+        self.assertEqual({item["assembly"] for item in results}, {"stream"})
+        self.assertTrue(all(item["health"] == "Succeeded" for item in results))
 
     def test_incomplete_history_prevents_confirming_green_but_preserves_known_failures(self):
         runs = complete_chain()

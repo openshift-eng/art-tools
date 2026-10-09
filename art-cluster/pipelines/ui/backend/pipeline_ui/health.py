@@ -40,7 +40,11 @@ def health_run(run: dict, summary: dict) -> dict:
 def build_health(runs: list[dict], incomplete_namespaces: set[str] | None = None) -> list[dict]:
     """A group is green only when a complete, unambiguous, non-dry-run chain succeeded."""
     incomplete_namespaces = incomplete_namespaces or set()
-    runs = [run for run in runs if run["pipeline"] in PIPELINES and run["group"] and run["uid"]]
+    runs = [
+        run
+        for run in runs
+        if run["pipeline"] in PIPELINES and run["group"] and run["uid"] and run["assembly"] == "stream"
+    ]
     by_uid = {run["uid"]: run for run in runs}
     by_name = defaultdict(list)
     retries = defaultdict(list)
