@@ -8,6 +8,7 @@ from typing import Optional
 logger = logging.getLogger(__name__)
 
 ARTC2023_CONSOLE_URL = "https://console-openshift-console.apps.artc2023.pc3z.p1.openshiftapps.com"
+TENANT_PIPELINERUN_TIMEOUT = "6h"
 
 
 def is_tekton_context() -> bool:
@@ -153,6 +154,8 @@ def start_pipeline_run(
             ],
         },
     }
+    if namespace.endswith("-tenant"):
+        pipeline_run["spec"]["timeouts"] = {"pipeline": TENANT_PIPELINERUN_TIMEOUT}
 
     pr_json = json.dumps(pipeline_run)
     logger.info("Creating PipelineRun for pipeline %s in namespace %s", pipeline_name, namespace)

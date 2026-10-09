@@ -2,6 +2,8 @@
 
 from copy import deepcopy
 
+TENANT_PIPELINERUN_TIMEOUT = "6h"
+
 
 class InvalidRun(ValueError):
     pass
@@ -92,6 +94,9 @@ def build_run(
             spec.setdefault("taskRunTemplate", {})["serviceAccountName"] = source_run["spec"]["serviceAccountName"]
     else:
         spec["taskRunTemplate"] = {"serviceAccountName": "pipeline"}
+    if namespace.endswith("-tenant"):
+        timeouts = spec.setdefault("timeouts", {})
+        timeouts["pipeline"] = TENANT_PIPELINERUN_TIMEOUT
     bindings = workspaces if workspaces is not None else (source_run or {}).get("spec", {}).get("workspaces", [])
     declared = {workspace["name"]: workspace for workspace in pipeline.get("spec", {}).get("workspaces", [])}
     provided = {workspace.get("name") for workspace in bindings}

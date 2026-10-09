@@ -41,7 +41,7 @@ class RebuildTests(unittest.TestCase):
         )
         self.assertEqual(run["spec"]["pipelineRef"], {"name": "release-from-fbc"})
         self.assertEqual(run["spec"]["taskRunTemplate"], {"serviceAccountName": "pipeline"})
-        self.assertEqual(run["spec"]["timeouts"], {"pipeline": "1h"})
+        self.assertEqual(run["spec"]["timeouts"], {"pipeline": "6h"})
         self.assertNotIn("status", run)
         self.assertNotIn("removed", {item["name"] for item in run["spec"]["params"]})
 
