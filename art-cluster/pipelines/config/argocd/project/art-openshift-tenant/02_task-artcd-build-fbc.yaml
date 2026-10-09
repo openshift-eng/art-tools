@@ -32,6 +32,8 @@ spec:
       value: $(context.taskRun.uid)
     - name: BUILD_URL
       value: https://console-openshift-console.apps.artc2023.pc3z.p1.openshiftapps.com/k8s/ns/art-openshift-tenant/tekton.dev~v1~TaskRun/$(context.taskRun.name)
+    - name: GOOGLE_APPLICATION_CREDENTIALS
+      value: /tmp/gcp-sa/sa.json
     - name: GIT_AUTHOR_NAME
       value: openshift-art-build-bot
     - name: GIT_AUTHOR_EMAIL
@@ -86,6 +88,9 @@ spec:
       name: doozer-config
     - mountPath: /tmp/keytab
       name: kerberos-keytab
+    - mountPath: /tmp/gcp-sa
+      name: gcp-sa-key
+      readOnly: true
     - mountPath: /tmp/konflux-kubeconfigs
       name: konflux-sa-kubeconfigs
       readOnly: true
@@ -102,6 +107,9 @@ spec:
   - name: kerberos-keytab
     secret:
       secretName: synced-exd-ocp-buildvm-bot-prod-keytab
+  - name: gcp-sa-key
+    secret:
+      secretName: gcp-sa-key
   - name: konflux-sa-kubeconfigs
     secret:
       secretName: konflux-sa-kubeconfigs
