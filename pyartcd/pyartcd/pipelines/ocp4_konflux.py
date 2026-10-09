@@ -251,13 +251,15 @@ class KonfluxOcpPipeline:
             LOGGER.info("All build failures are first-time occurrences; will not spam owners yet")
             return
 
-        util.mail_build_failure_owners_konflux(
-            failed_builds=failed_map,
-            mail_client=self.runtime.new_mail_client(),
-            default_owner=self.mail_list_failure,
-            failure_counts=failure_counts,
-        )
-
+        try:
+            util.mail_build_failure_owners_konflux(
+                failed_builds=failed_map,
+                mail_client=self.runtime.new_mail_client(),
+                default_owner=self.mail_list_failure,
+                failure_counts=failure_counts,
+            )
+        except Exception:
+            LOGGER.exception("Failed to send Konflux image build failure notifications")
     def building_images(self):
         """
         Returns True if images are being built, False otherwise.
