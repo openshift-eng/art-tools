@@ -19,6 +19,16 @@ from .rebuild import InvalidRun, build_run, parameter_form, pipeline_name
 NAMESPACES = tuple(
     namespace.strip() for namespace in os.getenv("PIPELINE_NAMESPACES", "").split(",") if namespace.strip()
 )
+PIPELINE_ORDER = (
+    ("schedule-layered-products-scan",),
+    ("layered-products-scan",),
+    ("build-layered-products",),
+    ("olm-bundle-konflux",),
+    ("build-fbc",),
+    ("release-from-fbc", "binary-release", "binary-release-konflux"),
+    ("trigger-prod-release",),
+)
+PIPELINE_PRIORITY = {name: priority for priority, names in enumerate(PIPELINE_ORDER) for name in names}
 CSRF_COOKIE = "__Host-art-pipelines-csrf"
 app = FastAPI(title="ART Pipelines UI", docs_url=None, redoc_url=None, openapi_url=None)
 
@@ -108,6 +118,11 @@ def pipeline_summary(pipeline: dict) -> dict:
         "description": pipeline.get("spec", {}).get("description", ""),
         "parameterCount": len(pipeline.get("spec", {}).get("params", [])),
     }
+
+
+def pipeline_sort_key(pipeline: dict) -> tuple[str, int, str]:
+    name = pipeline["name"]
+    return (pipeline["namespace"], PIPELINE_PRIORITY.get(name, len(PIPELINE_ORDER)), name)
 
 
 def event_summary(event: dict) -> dict:
@@ -238,7 +253,7 @@ async def pipelines(request: Request, namespace: str | None = None, q: str = "")
 
         groups = await asyncio.gather(*(read(name) for name in names))
     items = [item for group in groups for item in group if q.lower() in item["name"].lower()]
-    return {"items": sorted(items, key=lambda item: (item["namespace"], item["name"]))}
+    return {"items": sorted(items, key=pipeline_sort_key)}
 
 
 @app.get("/api/pipelines/latest-runs")
