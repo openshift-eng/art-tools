@@ -51,7 +51,7 @@ from elliottlib.shipment_utils import (
     strip_advisory_cross_reference,
     strip_et_advisory_rpm_reference,
 )
-from github import GithubException
+from github import Auth, Github, GithubException
 from ruamel.yaml import YAML
 from ruamel.yaml.error import YAMLError
 from ruamel.yaml.parser import ParserError
@@ -2560,8 +2560,13 @@ class PromotePipeline:
             self._logger.info("[DRY RUN] Would update QE release tests repo for %s", release_name)
             return
 
-        upstream_repo = get_github_client_for_org("openshift").get_repo("openshift/release-tests")
-        fork_repo = get_github_client_for_org("openshift-bot").get_repo("openshift-bot/release-tests")
+        github_token = os.environ.get("GITHUB_TOKEN")
+        if not github_token:
+            raise EnvironmentError("GITHUB_TOKEN must be set to update QE release tests using the openshift-bot PAT")
+        # Use the bot PAT for both repositories, including when App credentials are configured.
+        github_client = Github(auth=Auth.Token(github_token))
+        upstream_repo = github_client.get_repo("openshift/release-tests")
+        fork_repo = github_client.get_repo("openshift-bot/release-tests")
         update_message = f"Add release {release_name}"
         major, minor = isolate_major_minor_in_group(self.group)
         file_path = f"_releases/{major}.{minor}/{major}.{minor}.z.yaml"
