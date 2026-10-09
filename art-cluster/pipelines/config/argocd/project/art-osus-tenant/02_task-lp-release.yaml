@@ -79,6 +79,8 @@ spec:
       runAsGroup: 0
       runAsUser: 0
     volumeMounts:
+    - mountPath: /root/.config/doozer
+      name: doozer-config
     - mountPath: /tmp/gcp-sa
       name: gcp-sa-key
       readOnly: true
@@ -92,6 +94,9 @@ spec:
       name: konflux-art-images-auth-file
       readOnly: true
   volumes:
+  - name: doozer-config
+    secret:
+      secretName: doozer-config
   - name: gcp-sa-key
     secret:
       secretName: gcp-sa-key
