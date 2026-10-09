@@ -713,6 +713,43 @@ class TestBuildLayeredProductsPipeline(IsolatedAsyncioTestCase):
         )
         self.assertEqual(self.pipeline.embargoed_operators_skipped, [])
 
+    async def test_run_resolves_product_and_version(self):
+        cases = [
+            ('openshift-4.22', None, {}, 'ocp', '4.22'),
+            ('openshift-5.0', None, {}, 'ocp', '5.0'),
+            ('openshift-4.22', None, {'product': None, 'version': None}, 'ocp', '4.22'),
+            ('openshift-4.22', None, {'version': '4.22.1'}, 'ocp', '4.22.1'),
+            ('openshift-4.22', '4.22.2', {'version': '4.22.1'}, 'ocp', '4.22.2'),
+            ('oadp-1.4', None, {'product': 'oadp', 'version': '1.4.9'}, 'oadp', '1.4.9'),
+        ]
+        for group, version, config, expected_product, expected_version in cases:
+            with self.subTest(group=group, version=version, config=config):
+                self.pipeline.group = group
+                self.pipeline.version = version
+                with (
+                    patch('pyartcd.pipelines.build_layered_products.load_group_config', return_value=config),
+                    patch.object(self.pipeline, '_rebase_and_build', new_callable=AsyncMock) as mock_build,
+                    patch.object(self.pipeline, 'trigger_bundle_build') as mock_trigger,
+                ):
+                    await self.pipeline.run()
+
+                self.assertEqual(self.pipeline.version, expected_version)
+                mock_build.assert_awaited_once_with(expected_product, KONFLUX_DEFAULT_IMAGE_REPO)
+                mock_trigger.assert_called_once()
+
+    async def test_run_rejects_missing_version_for_layered_product_or_invalid_openshift_group(self):
+        for group in ('oadp-1.4', 'openshift-invalid'):
+            with self.subTest(group=group):
+                self.pipeline.group = group
+                self.pipeline.version = None
+                with (
+                    patch('pyartcd.pipelines.build_layered_products.load_group_config', return_value={}),
+                    patch.object(self.pipeline, '_rebase_and_build', new_callable=AsyncMock) as mock_build,
+                    self.assertRaisesRegex(ValueError, 'No version found in group config'),
+                ):
+                    await self.pipeline.run()
+                mock_build.assert_not_awaited()
+
     @patch('pyartcd.pipelines.build_layered_products.jenkins.init_jenkins')
     @patch('pyartcd.pipelines.build_layered_products.load_group_config')
     async def test_run_exits_unstable_when_embargoed_operators_skipped(self, mock_load_config, mock_jenkins):
