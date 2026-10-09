@@ -183,4 +183,4 @@ spec:
         subprocess.run(cmd, check=True, env=os.environ.copy())
     taskRef:
       kind: Task
-      name: artcd
+      name: artcd-build-fbc
