@@ -31,6 +31,14 @@ test('missing and invalid tabs default to Details without losing archived identi
   }
 });
 
+test('rebuilt-from links preserve the source run identity and selected tenant', () => {
+  const sourceRun = {
+    kind: 'run', namespace: 'source-tenant', name: 'source-run', uid: 'source-uid',
+    filterNamespace: 'selected-tenant', tab: 'details',
+  };
+  assert.deepEqual(parseHash(viewHref(sourceRun)), sourceRun);
+});
+
 function setupEvent(overrides = {}, nested = false) {
   const opened = [];
   const browser = { location: { hash: '#/pipelines' }, open: (...args) => opened.push(args) };

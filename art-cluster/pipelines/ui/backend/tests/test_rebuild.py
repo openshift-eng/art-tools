@@ -42,6 +42,13 @@ class RebuildTests(unittest.TestCase):
         self.assertEqual(run["spec"]["pipelineRef"], {"name": "release-from-fbc"})
         self.assertEqual(run["spec"]["taskRunTemplate"], {"serviceAccountName": "pipeline"})
         self.assertNotIn("timeouts", run["spec"])
+        self.assertEqual(
+            run["metadata"]["annotations"],
+            {
+                "art.openshift.io/rebuilt-from": "old-uid",
+                "art.openshift.io/rebuilt-from-name": "release-from-fbc-abc",
+            },
+        )
         self.assertEqual(OLD_RUN["spec"]["timeouts"], {"pipeline": "3h", "tasks": "2h", "finally": "15m"})
         self.assertNotIn("status", run)
         self.assertNotIn("removed", {item["name"] for item in run["spec"]["params"]})

@@ -2,6 +2,9 @@
 
 from copy import deepcopy
 
+REBUILT_FROM_ANNOTATION = "art.openshift.io/rebuilt-from"
+REBUILT_FROM_NAME_ANNOTATION = "art.openshift.io/rebuilt-from-name"
+
 
 class InvalidRun(ValueError):
     pass
@@ -104,5 +107,8 @@ def build_run(
         spec["workspaces"] = deepcopy(bindings)
     metadata = {"namespace": namespace, "generateName": f"{name[:48]}-"}
     if source_run:
-        metadata["annotations"] = {"art.openshift.io/rebuilt-from": source_run["metadata"]["uid"]}
+        metadata["annotations"] = {
+            REBUILT_FROM_ANNOTATION: source_run["metadata"]["uid"],
+            REBUILT_FROM_NAME_ANNOTATION: source_run["metadata"]["name"],
+        }
     return {"apiVersion": "tekton.dev/v1", "kind": "PipelineRun", "metadata": metadata, "spec": spec}
