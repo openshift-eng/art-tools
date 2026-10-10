@@ -32,6 +32,18 @@ class SourceResolverTestCase(TestCase):
         flexmock(exectools).should_receive("cmd_assert").once().and_raise(Exception("whatever"))
         self.assertIsNone(sr._get_remote_branch_ref("giturl", "branch"))
 
+    @patch("doozerlib.source_resolver.get_github_git_pat_env", return_value={"GIT_ASKPASS": "/tmp/askpass.sh", "GIT_PASSWORD": "pat-token", "GIT_TERMINAL_PROMPT": "0"})
+    @patch("doozerlib.source_resolver.get_github_git_auth_env", return_value={"GIT_ASKPASS": "/tmp/askpass.sh"})
+    @patch("doozerlib.source_resolver.art_util.ensure_github_https_url", side_effect=lambda u: u)
+    def test_get_remote_branch_ref_use_pat(self, mock_ensure, mock_auth, mock_pat):
+        """When use_pat=True, get_github_git_pat_env should be used instead of get_github_git_auth_env."""
+        sr = self.create_source_resolver()
+        flexmock(exectools).should_receive("cmd_assert").once().and_return("abc123", "")
+        res = sr._get_remote_branch_ref("giturl", "branch", use_pat=True)
+        self.assertEqual(res, "abc123")
+        mock_pat.assert_called_once()
+        mock_auth.assert_not_called()
+
     def test_detect_remote_source_branch(self):
         sr = self.create_source_resolver()
         source_details = dict(
@@ -155,8 +167,8 @@ class SourceResolverTestCase(TestCase):
         result = resolution.https_pull_url
         self.assertEqual(result, "https://push.example.com/repo.git")
 
-    def test_detect_remote_source_branch_uses_pull_url(self):
-        """Test that detect_remote_source_branch uses url_pull when available."""
+    def test_detect_remote_source_branch_uses_pull_url_with_pat(self):
+        """Test that detect_remote_source_branch uses url_pull with PAT auth when available."""
         sr = self.create_source_resolver()
         source_details = dict(
             url='https://push.example.com/repo.git',
@@ -167,13 +179,43 @@ class SourceResolverTestCase(TestCase):
             ),
         )
 
-        # Mock the _get_remote_branch_ref to expect pull URL
         flexmock(SourceResolver).should_receive("_get_remote_branch_ref").with_args(
-            'https://pull.example.com/repo.git', 'main_branch'
+            'https://pull.example.com/repo.git', 'main_branch', use_pat=True
         ).once().and_return("commit_hash")
 
         result = sr.detect_remote_source_branch(source_details, stage=False)
         self.assertEqual(result, ("main_branch", "commit_hash"))
+
+    def test_detect_remote_source_branch_pull_url_fallback_to_push_url(self):
+        """When url_pull branch check fails (e.g. GitHub App has no access to
+        a personal fork), fall back to checking the push url."""
+        sr = self.create_source_resolver()
+        source_details = dict(
+            url='https://push.example.com/repo.git',
+            url_pull='https://pull.example.com/repo.git',
+            branch=dict(
+                target='main_branch',
+                fallback='fallback_branch',
+            ),
+        )
+
+        (
+            flexmock(SourceResolver)
+            .should_receive("_get_remote_branch_ref")
+            .with_args('https://pull.example.com/repo.git', 'main_branch', use_pat=True)
+            .once()
+            .and_return(None)
+        )
+        (
+            flexmock(SourceResolver)
+            .should_receive("_get_remote_branch_ref")
+            .with_args('https://push.example.com/repo.git', 'main_branch')
+            .once()
+            .and_return("commit_hash_from_push")
+        )
+
+        result = sr.detect_remote_source_branch(source_details, stage=False)
+        self.assertEqual(result, ("main_branch", "commit_hash_from_push"))
 
     def test_detect_remote_source_branch_falls_back_to_url(self):
         """Test that detect_remote_source_branch falls back to url when url_pull is not available."""
@@ -186,9 +228,8 @@ class SourceResolverTestCase(TestCase):
             ),
         )
 
-        # Mock the _get_remote_branch_ref to expect main URL
         flexmock(SourceResolver).should_receive("_get_remote_branch_ref").with_args(
-            'https://push.example.com/repo.git', 'main_branch'
+            'https://push.example.com/repo.git', 'main_branch', use_pat=False
         ).once().and_return("commit_hash")
 
         result = sr.detect_remote_source_branch(source_details, stage=False)
