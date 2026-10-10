@@ -54,6 +54,7 @@ class Runtime:
             job_name=jenkins.get_job_name(),
             build_url=jenkins.get_build_url(),
             build_id=jenkins.get_build_id(),
+            triggered_by_email=os.environ.get("BUILD_USER_EMAIL"),
         )
 
     def new_mail_client(self):
