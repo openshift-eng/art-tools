@@ -1,10 +1,6 @@
 import json
 import sys
 
-from jsonschema import RefResolver, ValidationError
-from jsonschema.validators import validator_for
-from schema import SchemaError
-
 if sys.version_info < (3, 9):
     # importlib.resources either doesn't exist or lacks the files()
     # function, so use the PyPI version:
@@ -12,6 +8,12 @@ if sys.version_info < (3, 9):
 else:
     # importlib.resources has files(), so use that:
     import importlib.resources as importlib_resources
+
+from artcommonlib.assembly import assembly_permits, check_assembly_overrides_expiry
+from artcommonlib.model import Model
+from jsonschema import RefResolver, ValidationError
+from jsonschema.validators import validator_for
+from schema import SchemaError
 
 
 def _demerge(data):
@@ -57,3 +59,18 @@ def validate(_, data):
     except ValidationError:
         errors = validator.iter_errors(demerged_data)
         return '\n'.join([f"{e.json_path}: {e.message}" for e in errors])
+
+    # Check for expired 'until' dates on permits and member overrides
+    releases_model = Model(dict_to_model=data)
+    group_config_stub = Model(dict_to_model={})
+    for assembly_name in data.get('releases', {}):
+        try:
+            assembly_permits(releases_model, group_config_stub, assembly_name)
+        except ValueError as e:
+            return str(e)
+        try:
+            expiry_errors = check_assembly_overrides_expiry(releases_model, assembly_name)
+            if expiry_errors:
+                return '\n'.join(expiry_errors)
+        except ValueError as e:
+            return str(e)
