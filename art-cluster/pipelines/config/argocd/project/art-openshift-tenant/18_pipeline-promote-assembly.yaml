@@ -131,12 +131,13 @@ spec:
         credentials_dir = Path("/tmp/promote-credentials")
         missing = []
 
-        def credential_file(key, variable):
+        def credential_file(key, variable=None):
             path = credentials_dir / key
             if not path.is_file() or not path.stat().st_size:
                 missing.append(key)
                 return
-            os.environ[variable] = str(path)
+            if variable:
+                os.environ[variable] = str(path)
 
         def credential_value(key, variable):
             path = credentials_dir / key
@@ -157,6 +158,9 @@ spec:
         if not enabled["skip-signing"]:
             credential_file(f"signing-{signing_env}.crt", "SIGNING_CERT")
             credential_file(f"signing-{signing_env}.key", "SIGNING_KEY")
+            if not enabled["dry-run"]:
+                credential_file("gcs-publish-adc.json")
+                credential_file("gcs-publish.boto", "BOTO_CONFIG")
         if not enabled["skip-sigstore"]:
             credential_file(f"kms-{signing_env}-credentials", "KMS_CRED_FILE")
             credential_value(f"kms-{signing_env}-key-id", "KMS_KEY_ID")

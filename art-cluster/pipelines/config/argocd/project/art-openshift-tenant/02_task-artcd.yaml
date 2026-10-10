@@ -177,6 +177,9 @@ spec:
           name: promote-credentials
           optional: true
       - secret:
+          name: gcs-publish-credentials
+          optional: true
+      - secret:
           name: synced-art-publish-ci-dockerconfigjson
           optional: true
           items:
