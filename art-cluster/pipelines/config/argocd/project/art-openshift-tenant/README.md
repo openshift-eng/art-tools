@@ -60,6 +60,72 @@ unnecessary with `skip-sigstore=true`. Mirror credentials are unnecessary only
 when both `skip-mirror-binaries` and `skip-signing` are true. The ART kubeconfig
 is required for production assemblies that trigger doomsday backup.
 
+## Google Cloud signature publishing
+
+Signature publishing uses
+`openshift-art-mirror-publish-b@openshift-release.iam.gserviceaccount.com`.
+The existing `GOOGLE_APPLICATION_CREDENTIALS=/tmp/gcp-sa/sa.json` supplies
+BigQuery access. `gsutil` reads the publishing credential through a separate
+Boto config, while Jenkins uses its existing VM Cloud SDK configuration.
+
+The `gcs-publish-credentials` ExternalSecret reads the complete service-account
+JSON from AWS Secrets Manager at
+`art/prod/jenkins/openshift-art-mirror-publish-b`. It preserves the JSON as
+`gcs-publish-adc.json` and adds `gcs-publish.boto`, which points to the mounted
+JSON at `/tmp/promote-credentials/gcs-publish-adc.json`. The shared `artcd`
+Task projects both files read-only into `/tmp/promote-credentials`.
+The promotion wrapper sets `BOTO_CONFIG` to the mounted config and validates
+both files when `dry-run=false` and `skip-signing=false`.
+
+1. On the Jenkins VM, select AWS credentials for the ART account used by
+   `main-secret-store`, then upload the existing publishing key. Use the file
+   directly so its contents are kept out of command arguments and output:
+
+   ```bash
+   aws secretsmanager create-secret \
+     --region us-east-1 \
+     --name art/prod/jenkins/openshift-art-mirror-publish-b \
+     --description "OpenShift release GCS signature publishing service account" \
+     --secret-string file:///home/jenkins/.config/gcloud/legacy_credentials/openshift-art-mirror-publish-b@openshift-release.iam.gserviceaccount.com/adc.json \
+     --query ARN --output text
+   ```
+
+   If this secret already exists, update it with `put-secret-value`, using
+   `--secret-id` in place of `--name` and omitting `--description`.
+   Ensure `main-secret-store` can read this secret. Its value is the original
+   JSON document; no extra JSON property or base64 encoding is needed.
+
+2. Merge the [gsutil installation change](https://github.com/openshift-eng/art-tools/pull/3671)
+   and this credential change, then sync the `art-openshift-tenant` Argo CD application.
+   Wait for the publishing ExternalSecret to become Ready:
+
+   ```bash
+   oc -n art-openshift-tenant wait externalsecret/gcs-publish-credentials \
+     --for=condition=Ready --timeout=120s
+   ```
+
+3. Rebuild `art-cd:base` from the merged code to install `gsutil`:
+
+   ```bash
+   oc -n art-cd start-build art-cd-base --follow
+   ```
+
+   Its image change triggers `art-cd-update`, which publishes the new
+   `quay.io/redhat-user-workloads/ocp-art-tenant/art-cd:latest`. Wait for that
+   build to complete. If it does not trigger, run
+   `oc -n art-cd start-build art-cd-update --follow`.
+
+4. In a new task using the updated image and publishing mount, verify
+   `gsutil version -l` and the configured Boto path. Verify the mounted JSON's
+   `client_email` matches the publishing account without printing the key.
+   Validate an upload of a disposable file to an agreed nonproduction prefix;
+   listing a public bucket or running `artcd --dry-run` does not establish
+   authenticated write access.
+
+5. Start a new `promote-assembly` run after secret and image rollout. Confirm
+   the GCS signature copies complete. Setting `art-tools-commit` alone
+   does not install the missing `gsutil` executable in an old image.
+
 ## Testing plan
 
 1. Parse all tenant YAML and compile embedded Python. Check parameter forwarding,
