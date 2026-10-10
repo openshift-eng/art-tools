@@ -54,6 +54,8 @@ class Jobs(Enum):
     BUILD_CONFORMA_VERIFY = 'aos-cd-builds/build%2Fbuild-conforma-verify'
     SCAN_OPERATOR = 'aos-cd-builds/build%2Fscan-operator'
     SYNC_CI_IMAGES = 'aos-cd-builds/build%2Fsync-ci-images'
+    MIRROR_IMAGES_TO_CI = 'aos-cd-builds/build%2Fmirror-images-to-ci'
+    SYNC_CI_BUILDCONFIGS = 'aos-cd-builds/build%2Fsync-ci-buildconfigs'
     OPEN_RECONCILIATION_PRS = 'aos-cd-builds/build%2Fopen-reconciliation-prs'
     OPEN_RECONCILIATION_PRS_LAYERED = 'aos-cd-builds/build%2Fopen-reconciliation-prs-layered-products'
 
@@ -550,10 +552,92 @@ def start_sync_ci_images(version: str, **kwargs) -> Optional[str]:
     )
 
 
-def start_open_reconciliation_prs(version: str, **kwargs) -> Optional[str]:
+def start_mirror_images_to_ci(
+    version: str,
+    assembly: str = '',
+    data_path: str = '',
+    data_gitref: str = '',
+    only_stream: str = '',
+    images: str = '',
+    update_images_only_when_missing: bool = False,
+    dry_run: bool = False,
+    **kwargs,
+) -> Optional[str]:
     params = {
         'VERSION': version,
     }
+    if assembly:
+        params['ASSEMBLY'] = assembly
+    if data_path:
+        params['DATA_PATH'] = data_path
+    if data_gitref:
+        params['DATA_GITREF'] = data_gitref
+    if only_stream:
+        params['ONLY_STREAM'] = only_stream
+    if images:
+        params['IMAGES'] = images
+    if update_images_only_when_missing:
+        params['UPDATE_IMAGES_ONLY_WHEN_MISSING'] = True
+    if dry_run:
+        params['DRY_RUN'] = True
+    return start_build(
+        job=Jobs.MIRROR_IMAGES_TO_CI,
+        params=params,
+        **kwargs,
+    )
+
+
+def start_sync_ci_buildconfigs(
+    version: str,
+    assembly: str = '',
+    data_path: str = '',
+    data_gitref: str = '',
+    only_stream: str = '',
+    images: str = '',
+    dry_run: bool = False,
+    **kwargs,
+) -> Optional[str]:
+    params = {
+        'VERSION': version,
+    }
+    if assembly:
+        params['ASSEMBLY'] = assembly
+    if data_path:
+        params['DATA_PATH'] = data_path
+    if data_gitref:
+        params['DATA_GITREF'] = data_gitref
+    if only_stream:
+        params['ONLY_STREAM'] = only_stream
+    if images:
+        params['IMAGES'] = images
+    if dry_run:
+        params['DRY_RUN'] = True
+    return start_build(
+        job=Jobs.SYNC_CI_BUILDCONFIGS,
+        params=params,
+        **kwargs,
+    )
+
+
+def start_open_reconciliation_prs(
+    version: str,
+    assembly: str = '',
+    data_path: str = '',
+    data_gitref: str = '',
+    dry_run: bool = False,
+    **kwargs,
+) -> Optional[str]:
+    params = {
+        'VERSION': version,
+    }
+    if assembly:
+        params['ASSEMBLY'] = assembly
+    if data_path:
+        params['DATA_PATH'] = data_path
+    if data_gitref:
+        params['DATA_GITREF'] = data_gitref
+    if dry_run:
+        params['DRY_RUN'] = True
     return start_build(
         job=Jobs.OPEN_RECONCILIATION_PRS,
         params=params,
