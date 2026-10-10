@@ -20,7 +20,6 @@ from elliottlib import Runtime, bzutil, constants, errata
 from elliottlib.bzutil import Bug, BugTracker, JIRABug, is_rhcos_pscomponent
 from elliottlib.cli import common
 from elliottlib.cli.common import click_coroutine
-from elliottlib.exceptions import ElliottFatalError
 from elliottlib.shipment_utils import get_bug_ids_from_open_shipment_mrs, get_builds_from_mr
 from elliottlib.util import chunk, normalize_component_by_ocp_delivery_repo
 
@@ -162,6 +161,7 @@ def filter_art_managed_jira_trackers(
     help="Ignore bugs that are determined to be invalid and continue",
 )
 @click.option("--noop", "--dry-run", is_flag=True, default=False, help="Don't change anything")
+@click.option("--comment-on-invalid-bugs", is_flag=True, default=False, help="Add comments to invalid bugs")
 @click.pass_obj
 @click_coroutine
 async def find_bugs_sweep_cli(
@@ -178,6 +178,7 @@ async def find_bugs_sweep_cli(
     advance_release,
     permissive,
     noop,
+    comment_on_invalid_bugs,
 ):
     """Find OCP bugs and (optional) add them to ADVISORY.
 
@@ -210,6 +211,10 @@ async def find_bugs_sweep_cli(
     """
     operator_bundle_advisory = "advance" if advance_release else "metadata"
 
+    if permissive and comment_on_invalid_bugs:
+        logger.warning("--comment-on-invalid-bugs is ignored when --permissive is set")
+        comment_on_invalid_bugs = False
+
     count_advisory_attach_flags = sum(map(bool, [advisory_id, default_advisory_type, into_default_advisories]))
     if count_advisory_attach_flags > 1:
         raise click.BadParameter("Use only one of --use-default-advisory, --add, or --into-default-advisories")
@@ -231,6 +236,7 @@ async def find_bugs_sweep_cli(
         permissive=permissive,
         bug_tracker=runtime.get_bug_tracker('jira'),
         operator_bundle_advisory=operator_bundle_advisory,
+        comment_on_invalid_bugs=comment_on_invalid_bugs,
     )
 
     if not bugs:
@@ -362,6 +368,7 @@ async def find_and_attach_bugs(
     permissive,
     bug_tracker,
     operator_bundle_advisory,
+    comment_on_invalid_bugs: bool = False,
 ):
     statuses = sorted(find_bugs_obj.status)
     tr = bug_tracker.target_release()
@@ -385,6 +392,7 @@ async def find_and_attach_bugs(
         minor_version=minor_version,
         operator_bundle_advisory=operator_bundle_advisory,
         permissive=permissive,
+        comment_on_invalid_bugs=comment_on_invalid_bugs,
     )
     for kind, kind_bugs in bugs_by_type.items():
         logger.info(f'{kind} bugs: {[b.id for b in kind_bugs]}')
@@ -484,6 +492,7 @@ def categorize_bugs_by_type(
     operator_bundle_advisory: Optional[str] = "metadata",
     permissive: bool = False,
     exclude_trackers: bool = False,
+    comment_on_invalid_bugs: bool = False,
 ) -> tuple[Dict[str, type_bug_set], List[str]]:
     """Categorize bugs into different types of advisories
     :param bugs: List of Bug objects to categorize
@@ -493,6 +502,7 @@ def categorize_bugs_by_type(
     :param operator_bundle_advisory: Type of advisory for operator bundles, defaults to "metadata"
     :param permissive: If True, ignore invalid bugs instead of raising an error
     :param exclude_trackers: If True, exclude tracker bugs from the categorization
+    :param comment_on_invalid_bugs: If True, add comments to invalid bugs
     :return: (bugs_by_type, issues) where bugs_by_type is a dict of {advisory_kind: bug_ids} and issues is a list of problems found
     """
 
@@ -525,12 +535,16 @@ def categorize_bugs_by_type(
 
     # Categorize into tracker and non-tracker bugs
     # while also collecting fake trackers
+    fake_tracker_results = {}  # Store validation results for fake trackers
     for b in bugs:
-        if b.is_tracker_bug():
+        tracker_result = b.is_tracker_bug()
+        if tracker_result:
             tracker_bugs.add(b)
         else:
-            if b.is_invalid_tracker_bug():
+            invalid_result = b.is_invalid_tracker_bug()
+            if invalid_result:
                 fake_trackers.add(b)
+                fake_tracker_results[b.id] = invalid_result
             else:
                 non_tracker_bugs.add(b)
 
@@ -561,7 +575,15 @@ def categorize_bugs_by_type(
             logger.warning(f"{message} Ignoring them.")
             issues.append(message)
         else:
-            raise ElliottFatalError(f"{message} Please fix.")
+            for t in fake_trackers:
+                # Add comment with the validation result reason
+                validation_result = fake_tracker_results.get(t.id)
+                try:
+                    runtime.get_bug_tracker(t.bug_class).add_invalid_tracker_comment(
+                        t.id, validation_result.reason, noop=not comment_on_invalid_bugs
+                    )
+                except Exception as e:
+                    logger.error(f"Failed to create comment for bug {t.id}: {e}")
 
     if exclude_trackers:
         logger.info("Excluding tracker bugs because --exclude-trackers is set")
@@ -588,7 +610,13 @@ def categorize_bugs_by_type(
             logger.warning(f"{message} Ignoring them.")
             issues.append(message)
         else:
-            raise ElliottFatalError(f"{message} Please fix.")
+            for t in invalid_summary_trackers:
+                try:
+                    runtime.get_bug_tracker(t.bug_class).add_invalid_summary_comment(
+                        t, major_version, minor_version, noop=not comment_on_invalid_bugs
+                    )
+                except Exception as e:
+                    logger.error(f"Failed to create comment for bug {t.id}: {e}")
 
         tracker_bugs -= invalid_summary_trackers
 
