@@ -939,12 +939,7 @@ async def mirror_to_google_cloud(source: Union[str, Path], dest: str, dry_run=Fa
     Copy to Google Cloud
     """
     # -n - no clobber/overwrite; -v - print url of item; -L - write to log for auto re-processing; -r - recursive
-    cmd = ["gsutil"]
-    credentials_file = os.environ.get("GOOGLE_APPLICATION_CREDENTIALS")
-    if credentials_file:
-        # Standalone gsutil reads service account keys from Boto config.
-        cmd.extend(["-o", f"Credentials:gs_service_key_file={credentials_file}"])
-    cmd.extend(["cp", "-n", "-v", "-r", "--", f"{source}", f"{dest}"])
+    cmd = ["gsutil", "cp", "-n", "-v", "-r", "--", f"{source}", f"{dest}"]
     if dry_run:
         logger.warning("[DRY RUN] Would have run %s", cmd)
         return
