@@ -75,20 +75,12 @@ spec:
         secretKeyRef:
           key: token
           name: github-token
-          optional: true
     - name: GITLAB_TOKEN
       valueFrom:
         secretKeyRef:
           key: token
           name: gitlab-token
           optional: true
-    - name: GITHUB_APP_ID
-      valueFrom:
-        secretKeyRef:
-          key: app-id
-          name: github-app-credentials
-    - name: GITHUB_APP_PRIVATE_KEY_PATH
-      value: /tmp/github-app/private-key.pem
     - name: KONFLUX_SA_KUBECONFIG
       value: /tmp/konflux-kubeconfigs/ocp
     - name: QUAY_AUTH_FILE
@@ -118,9 +110,6 @@ spec:
       readOnly: true
     - mountPath: /tmp/konflux-kubeconfigs
       name: konflux-sa-kubeconfigs
-      readOnly: true
-    - mountPath: /tmp/github-app
-      name: github-app-credentials
       readOnly: true
     - mountPath: /root/.ssh
       name: openshift-bot-ssh-key
@@ -154,9 +143,6 @@ spec:
   - name: konflux-sa-kubeconfigs
     secret:
       secretName: konflux-sa-kubeconfigs
-  - name: github-app-credentials
-    secret:
-      secretName: github-app-credentials
   - name: openshift-bot-ssh-key
     secret:
       defaultMode: 256
