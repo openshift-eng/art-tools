@@ -788,8 +788,42 @@ class TestCreateReleaseCli(IsolatedAsyncioTestCase):
         self.assertEqual(calls, ["ocp-art-advisory-stage-4-18", "ocp-art-advisory-prod-4-18"])
 
     @patch("elliottlib.cli.konflux_release_cli.fetch_rpa", new_callable=AsyncMock)
-    async def test_validate_rpa_skipped_for_non_openshift(self, mock_fetch_rpa):
-        await validate_snapshot_against_rpa("oadp-1.5", "prod", "image", ["comp1"])
+    async def test_validate_rpa_lp_oadp_success(self, mock_fetch_rpa):
+        rpa_data = {"spec": {"data": {"mapping": {"components": [{"name": "oadp-1-5-oadp-operator"}]}}}}
+        mock_fetch_rpa.return_value = rpa_data
+
+        await validate_snapshot_against_rpa("oadp-1.5", "prod", "image", ["oadp-1-5-oadp-operator"])
+        self.assertEqual(mock_fetch_rpa.await_count, 2)
+        mock_fetch_rpa.assert_any_await("oadp-advisory-prod-1-5")
+        mock_fetch_rpa.assert_any_await("oadp-advisory-stage-1-5")
+
+    @patch("elliottlib.cli.konflux_release_cli.fetch_rpa", new_callable=AsyncMock)
+    async def test_validate_rpa_lp_mta_success(self, mock_fetch_rpa):
+        rpa_data = {"spec": {"data": {"mapping": {"components": [{"name": "mta-8-2-mta-operator"}]}}}}
+        mock_fetch_rpa.return_value = rpa_data
+
+        await validate_snapshot_against_rpa("mta-8.2", "stage", "image", ["mta-8-2-mta-operator"])
+        self.assertEqual(mock_fetch_rpa.await_count, 2)
+        calls = [c.args[0] for c in mock_fetch_rpa.await_args_list]
+        self.assertEqual(calls, ["mta-advisory-stage-8-2", "mta-advisory-prod-8-2"])
+
+    @patch("elliottlib.cli.konflux_release_cli.fetch_rpa", new_callable=AsyncMock)
+    async def test_validate_rpa_lp_logging_success(self, mock_fetch_rpa):
+        rpa_data = {"spec": {"data": {"mapping": {"components": [{"name": "logging-6-6-logging-operator"}]}}}}
+        mock_fetch_rpa.return_value = rpa_data
+
+        await validate_snapshot_against_rpa("logging-6.6", "prod", "image", ["logging-6-6-logging-operator"])
+        self.assertEqual(mock_fetch_rpa.await_count, 2)
+        mock_fetch_rpa.assert_any_await("logging-advisory-prod-6-6")
+
+    @patch("elliottlib.cli.konflux_release_cli.fetch_rpa", new_callable=AsyncMock)
+    async def test_validate_rpa_lp_unsupported_product_skipped(self, mock_fetch_rpa):
+        await validate_snapshot_against_rpa("unknown-product-1.0", "prod", "image", ["comp1"])
+        mock_fetch_rpa.assert_not_called()
+
+    @patch("elliottlib.cli.konflux_release_cli.fetch_rpa", new_callable=AsyncMock)
+    async def test_validate_rpa_lp_invalid_format_skipped(self, mock_fetch_rpa):
+        await validate_snapshot_against_rpa("invalid_group_format", "prod", "image", ["comp1"])
         mock_fetch_rpa.assert_not_called()
 
     @patch("elliottlib.cli.konflux_release_cli.fetch_rpa", new_callable=AsyncMock)
