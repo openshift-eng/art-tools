@@ -4,6 +4,7 @@ import os
 import time
 import uuid
 from enum import Enum
+from html import escape
 from typing import Optional
 from urllib.parse import unquote, urlparse
 
@@ -16,7 +17,7 @@ from jenkinsapi.queue import QueueItem
 from jenkinsapi.utils.crumb_requester import CrumbRequester
 from tenacity import retry, stop_after_attempt, wait_fixed
 
-from pyartcd import constants
+from pyartcd import constants, tekton
 
 logger = logging.getLogger(__name__)
 
@@ -232,11 +233,24 @@ def check_env_vars(func):
     return wrapped
 
 
-@check_env_vars
+def check_trigger_context(func):
+    """Allow Tekton triggers while requiring parent build variables for Jenkins callers."""
+    jenkins_func = check_env_vars(func)
+
+    @functools.wraps(func)
+    def wrapped(*args, **kwargs):
+        if tekton.is_tekton_context():
+            return func(*args, **kwargs)
+        return jenkins_func(*args, **kwargs)
+
+    return wrapped
+
+
+@check_trigger_context
 def wait_until_building(queue_item: QueueItem, job: Job, delay: int = 5) -> Build:
     """
     Watches a queue item and blocks until the scheduled build starts.
-    Updates the description of the new build with the details of the caller job
+    Updates the description of the new build with the Jenkins or Tekton parent details
     Returns a jenkinsapi.build.Build object representing the new build.
     """
 
@@ -256,10 +270,16 @@ def wait_until_building(queue_item: QueueItem, job: Job, delay: int = 5) -> Buil
     jenkins_url = get_jenkins_url()
     triggered_build_url = triggered_build_url.replace(constants.JENKINS_UI_URL, jenkins_url)
     triggered_build = Build(url=triggered_build_url, buildno=get_build_id_from_url(triggered_build_url), job=job)
-    description = (
-        f'Started by upstream project <b>{current_job_name}</b> '
-        f'build number <a href="{current_build_url}">{get_build_id_from_url(current_build_url)}</a><br><br>'
-    )
+    if tekton.is_tekton_context():
+        parent_name = escape(tekton.get_current_pipelinerun_name())
+        parent_url = get_build_url()
+        parent = f'<a href="{escape(parent_url)}">{parent_name}</a>' if parent_url else f'<b>{parent_name}</b>'
+        description = f'Started by upstream Tekton PipelineRun {parent}<br><br>'
+    else:
+        description = (
+            f'Started by upstream project <b>{current_job_name}</b> '
+            f'build number <a href="{current_build_url}">{get_build_id_from_url(current_build_url)}</a><br><br>'
+        )
     set_build_description(triggered_build, description)
 
     return triggered_build
@@ -334,7 +354,7 @@ def get_propagatable_params() -> dict:
     return propagatable
 
 
-@check_env_vars
+@check_trigger_context
 def start_build(
     job: Jobs,
     params: dict,
