@@ -1,5 +1,6 @@
 """Build a new PipelineRun from a current Pipeline and optional prior run."""
 
+import re
 from copy import deepcopy
 
 REBUILT_FROM_ANNOTATION = "art.openshift.io/rebuilt-from"
@@ -64,6 +65,20 @@ def _validate_value(name: str, value, definition: dict) -> None:
         raise InvalidRun(f"Parameter {name} must match one of its allowed values")
 
 
+def _generate_name(name: str, params: list) -> str:
+    prefix = name[:48]
+    if name == "promote-assembly":
+        assembly = next((param["value"] for param in params if param["name"] == "assembly"), "")
+        if isinstance(assembly, str):
+            assembly = re.sub(r"[^a-z0-9.-]+", "-", assembly.lower())
+            segments = [segment.strip("-") for segment in assembly.split(".")]
+            assembly = ".".join(segment for segment in segments if segment)
+            assembly = assembly[: 48 - len(prefix) - 1].rstrip(".-")
+            if assembly:
+                prefix = f"{prefix}-{assembly}"
+    return f"{prefix}-"
+
+
 def build_run(
     pipeline: dict,
     values: dict,
@@ -105,7 +120,7 @@ def build_run(
         raise InvalidRun(f"Required workspace bindings are missing: {', '.join(missing)}")
     if bindings:
         spec["workspaces"] = deepcopy(bindings)
-    metadata = {"namespace": namespace, "generateName": f"{name[:48]}-"}
+    metadata = {"namespace": namespace, "generateName": _generate_name(name, params)}
     if source_run:
         metadata["annotations"] = {
             REBUILT_FROM_ANNOTATION: source_run["metadata"]["uid"],
