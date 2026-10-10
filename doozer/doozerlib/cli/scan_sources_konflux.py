@@ -600,8 +600,9 @@ class ConfigScanSources:
     async def scan_images(self, image_names: List[str]):
         span = trace.get_current_span()
 
-        # Filter to only enabled images (variant-aware filtering is handled by _is_image_enabled)
-        image_names = filter(lambda name: self._is_image_enabled(self.runtime.image_map[name]), image_names)
+        # Filter to only enabled images (variant-aware filtering is handled by _is_image_enabled_for_scan,
+        # which also honors --load-disabled -- unlike _is_image_enabled alone)
+        image_names = filter(lambda name: self._is_image_enabled_for_scan(self.runtime.image_map[name]), image_names)
 
         # Do not scan images that have already been requested for rebuild
         image_names = list(filter(lambda name: name not in self.changing_image_names, image_names))
