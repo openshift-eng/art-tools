@@ -12,6 +12,8 @@ The pod disables automatic service account token mounting. The OAuth proxy still
 
 Start and Rebuild omit `spec.timeouts`, allowing Tekton to apply the current cluster timeout defaults. Rebuilds do not copy the previous run's timeout settings.
 
+Start and Rebuild name new `promote-assembly` runs `promote-assembly-<assembly>-<random suffix>`. For example, assembly `4.22.18` produces `promote-assembly-4.22.18-ql58s`; the default assembly produces `promote-assembly-stream-*`. The name uses the assembly submitted in the form, including edits during Rebuild. The assembly fragment is normalized to lowercase Kubernetes name characters while preserving version dots, and truncated to keep the name stem within 48 characters. An empty or unusable fragment falls back to `promote-assembly-*`. The assembly parameter passed to the pipeline retains its original value.
+
 ## PipelineHealth (Beta)
 
 The `#/health` page shows a compact matrix of scan-rooted build chains, grouped by tenant, group, and assembly. A bookmarked tenant view uses `#/health?namespace=art-acm-tenant`. The read-only `/api/pipeline-health` endpoint combines live PipelineRuns and Tekton Results, deduplicating by UID with live data preferred.
