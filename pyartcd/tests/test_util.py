@@ -800,3 +800,91 @@ class TestUtil(IsolatedAsyncioTestCase):
         mock_get_keys.return_value = []
         result = await util.get_counter_failures('ec-failure', 'openshift-4.21')
         self.assertEqual(result, {})
+
+
+class TestMailBuildFailureOwnersKonflux(IsolatedAsyncioTestCase):
+    """Tests for mail_build_failure_owners_konflux (ART-21640)."""
+
+    def setUp(self):
+        self.mail_client = MagicMock()
+        self.default_owner = 'aos-art-automation+failed-ocp4-konflux-build@redhat.com'
+
+    def _failure(self, **overrides):
+        record = {
+            'name': 'ironic',
+            'nvrs': 'ironic-container-v4.20.0-1',
+            'status': '-1',
+            'owners': 'owner@redhat.com',
+            'message': 'build failed',
+            'build_pipeline_url': 'https://konflux.example/pipelinerun/abc',
+            'task_url': 'https://konflux.example/pipelinerun/abc',
+        }
+        record.update(overrides)
+        return record
+
+    def test_sends_to_owners_with_pipeline_url(self):
+        failed = {'ironic': self._failure()}
+        util.mail_build_failure_owners_konflux(failed, self.mail_client, self.default_owner)
+
+        self.mail_client.send_mail.assert_called_once()
+        args, kwargs = self.mail_client.send_mail.call_args
+        to = kwargs.get('to') or args[0]
+        subject = kwargs.get('subject') or args[1]
+        content = kwargs.get('content') or args[2]
+
+        self.assertIn('owner@redhat.com', to)
+        self.assertIn(self.default_owner, to)
+        self.assertIn('ironic', subject)
+        self.assertIn('https://konflux.example/pipelinerun/abc', content)
+        self.assertIn('build failed', content)
+        self.assertNotIn('OSBS', content)
+
+    def test_skips_successful_status(self):
+        failed = {'ironic': self._failure(status='0')}
+        util.mail_build_failure_owners_konflux(failed, self.mail_client, self.default_owner)
+        self.mail_client.send_mail.assert_not_called()
+
+    def test_art_only_owner_uses_default(self):
+        failed = {'ironic': self._failure(owners='aos-team-art@redhat.com')}
+        util.mail_build_failure_owners_konflux(failed, self.mail_client, self.default_owner)
+
+        to = self.mail_client.send_mail.call_args.kwargs.get('to') or self.mail_client.send_mail.call_args[0][0]
+        self.assertEqual(to, [self.default_owner, self.default_owner])
+
+    def test_missing_owners_uses_default(self):
+        failed = {'ironic': self._failure(owners='')}
+        util.mail_build_failure_owners_konflux(failed, self.mail_client, self.default_owner)
+
+        to = self.mail_client.send_mail.call_args.kwargs.get('to') or self.mail_client.send_mail.call_args[0][0]
+        self.assertEqual(to, [self.default_owner, self.default_owner])
+
+    def test_falls_back_to_task_url(self):
+        failed = {
+            'ironic': self._failure(
+                build_pipeline_url='',
+                task_url='https://konflux.example/task/xyz',
+            )
+        }
+        util.mail_build_failure_owners_konflux(failed, self.mail_client, self.default_owner)
+        content = (
+            self.mail_client.send_mail.call_args.kwargs.get('content') or self.mail_client.send_mail.call_args[0][2]
+        )
+        self.assertIn('https://konflux.example/task/xyz', content)
+
+    def test_reports_consecutive_failure_count_when_known(self):
+        failed = {'ironic': self._failure()}
+        util.mail_build_failure_owners_konflux(
+            failed, self.mail_client, self.default_owner, failure_counts={'ironic': 3}
+        )
+        content = (
+            self.mail_client.send_mail.call_args.kwargs.get('content') or self.mail_client.send_mail.call_args[0][2]
+        )
+        self.assertIn('failed 3 consecutive Konflux builds', content)
+
+    def test_falls_back_to_generic_text_without_failure_counts(self):
+        failed = {'ironic': self._failure()}
+        util.mail_build_failure_owners_konflux(failed, self.mail_client, self.default_owner)
+        content = (
+            self.mail_client.send_mail.call_args.kwargs.get('content') or self.mail_client.send_mail.call_args[0][2]
+        )
+        self.assertIn('only sent when the build fails consistently', content)

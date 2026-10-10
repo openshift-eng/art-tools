@@ -894,6 +894,76 @@ The following logs are just the container build portion of the OSBS build:
         )
 
 
+_ART_TEAM_OWNER = 'aos-team-art@redhat.com'
+_KONFLUX_FAILURE_NOTIFY = 'aos-art-automation+failed-ocp4-konflux-build@redhat.com'
+
+
+def mail_build_failure_owners_konflux(
+    failed_builds: dict, mail_client: MailService, default_owner: str, failure_counts: dict | None = None
+):
+    """
+    Send email to owners of failed Konflux image builds.
+
+    :param failed_builds: map of distgit name => image_build_konflux record (all values strings), e.g.
+
+        ironic:
+            status: -1
+            name: ironic
+            nvrs: ironic-container-v4.20.0-1
+            owners: owner@redhat.com
+            message: "..."
+            build_pipeline_url: https://...
+            task_url: https://...
+
+    :param mail_client: MailService instance
+    :param default_owner: if no owner is listed (or only ART), send build failure email to this
+    :param failure_counts: optional map of distgit name => consecutive failure count, used to report
+        exactly how many runs in a row this image has failed
+    """
+    failure_counts = failure_counts or {}
+    for failure in failed_builds.values():
+        if failure['status'] == '0':
+            continue
+
+        name = failure.get('name', 'unknown')
+        nvrs = failure.get('nvrs', 'n/a')
+        pipeline_url = failure.get('build_pipeline_url') or failure.get('task_url') or 'n/a'
+        owners = failure.get('owners') or ''
+        consecutive_failures = failure_counts.get(name)
+
+        explanation_body = f"ART's Konflux build of OCP image {name} ({nvrs}) has failed.\n\n"
+        if owners:
+            explanation_body += "This email is addressed to the owner(s) of this image per ART's build configuration."
+        else:
+            explanation_body += 'There is no owner listed for this build (you may want to add one).'
+        explanation_body += '\n\n'
+        explanation_body += "Builds may fail for many reasons, some under owner control, some under ART's control, and some in the domain of other groups. "
+        if consecutive_failures:
+            explanation_body += (
+                f"This image has now failed {consecutive_failures} consecutive Konflux builds, "
+                "so it is unlikely this failure will resolve itself without intervention.\n\n"
+            )
+        else:
+            explanation_body += (
+                "This message is only sent when the build fails consistently, so it is unlikely "
+                "this failure will resolve itself without intervention.\n\n"
+            )
+        explanation_body += f'The Konflux PipelineRun {pipeline_url} failed with error message:\n{failure["message"]}\n'
+
+        # If ART is the only owner (e.g. CI golang builders), send to the default automation list instead.
+        owners_list = [o.strip() for o in owners.split(',') if o.strip()]
+        if owners_list and owners_list != [_ART_TEAM_OWNER]:
+            owner = owners
+        else:
+            owner = default_owner
+
+        mail_client.send_mail(
+            to=[_KONFLUX_FAILURE_NOTIFY, owner],
+            subject=f'Failed OCP Konflux build of {name}:{nvrs}',
+            content=explanation_body,
+        )
+
+
 async def invalidate_cloudfront_cache(invalidation_path):
     """
     Invalidate s3 Cloudfront cache

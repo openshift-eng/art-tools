@@ -1630,6 +1630,68 @@ class TestKonfluxImageBuilder(unittest.IsolatedAsyncioTestCase):
         self.assertIn("Target NVR", kwargs["message"])
         self.assertNotEqual(kwargs["message"], "Unknown failure")
 
+    async def test_build_record_includes_owners(self):
+        """image_build_konflux records must include owners from image config (ART-21640)."""
+        metadata = self._metadata()
+        metadata.config.owners = ["owner1@redhat.com", "owner2@redhat.com"]
+        dest_dir = self.builder._config.base_dir.joinpath(metadata.qualified_key)
+        dest_dir.mkdir(parents=True)
+
+        build_repo = MagicMock()
+        build_repo.local_dir = dest_dir
+
+        record_logger = MagicMock()
+        self.builder._record_logger = record_logger
+
+        with (
+            patch(
+                "doozerlib.backend.konflux_image_builder.BuildRepo.from_local_dir",
+                new=AsyncMock(return_value=build_repo),
+            ),
+            patch.object(
+                self.builder,
+                "_parse_dockerfile",
+                side_effect=ValueError("Target NVR 1.0-1 is not greater than the latest"),
+            ),
+        ):
+            with self.assertRaises(ValueError):
+                await self.builder.build(metadata)
+
+        _, kwargs = record_logger.add_record.call_args
+        self.assertEqual(kwargs["owners"], "owner1@redhat.com,owner2@redhat.com")
+
+    async def test_build_record_owners_empty_when_missing(self):
+        """When config.owners is Missing, record owners should be an empty string."""
+        from artcommonlib.model import Missing
+
+        metadata = self._metadata()
+        metadata.config.owners = Missing
+        dest_dir = self.builder._config.base_dir.joinpath(metadata.qualified_key)
+        dest_dir.mkdir(parents=True)
+
+        build_repo = MagicMock()
+        build_repo.local_dir = dest_dir
+
+        record_logger = MagicMock()
+        self.builder._record_logger = record_logger
+
+        with (
+            patch(
+                "doozerlib.backend.konflux_image_builder.BuildRepo.from_local_dir",
+                new=AsyncMock(return_value=build_repo),
+            ),
+            patch.object(
+                self.builder,
+                "_parse_dockerfile",
+                side_effect=ValueError("Target NVR 1.0-1 is not greater than the latest"),
+            ),
+        ):
+            with self.assertRaises(ValueError):
+                await self.builder.build(metadata)
+
+        _, kwargs = record_logger.add_record.call_args
+        self.assertEqual(kwargs["owners"], "")
+
     async def test_build_skips_nvr_ordering_check_when_ignore_incorrect_nvr_set(self):
         """When ignore_incorrect_nvr is set in assembly config, a lower NVR should be accepted."""
         metadata = self._metadata()

@@ -12,7 +12,7 @@ from pyartcd.jenkins import Jobs
 from pyartcd.pipelines import ocp
 from pyartcd.util import update_build_fail_counters
 
-from pyartcd import constants
+from pyartcd import constants, util
 
 
 class TestInitialBuildPlan(unittest.IsolatedAsyncioTestCase):
@@ -1568,3 +1568,224 @@ class TestKonfluxOcpPipelineBuildFailCounters(unittest.IsolatedAsyncioTestCase):
         # Should show count instead of listing all skipped images
         expected_description = '12 images skipped due to parent failures<br/>'
         mock_jenkins.update_description.assert_called_once_with(expected_description)
+
+
+class TestKonfluxOcpPipelineOwnerFailureEmails(unittest.IsolatedAsyncioTestCase):
+    """Tests for _handle_image_build_failures owner emails (ART-21640)."""
+
+    def setUp(self):
+        self.tmpdir = tempfile.mkdtemp()
+        self.runtime = MagicMock()
+        self.runtime.dry_run = False
+        self.runtime.doozer_working = str(Path(self.tmpdir) / 'doozer_working')
+        Path(self.runtime.doozer_working).mkdir(parents=True)
+        self.mail_client = MagicMock()
+        self.runtime.new_mail_client.return_value = self.mail_client
+
+    def _make_pipeline(self, assembly='stream', **kwargs):
+        from pyartcd.pipelines.ocp4_konflux import KonfluxOcpPipeline
+
+        defaults = {
+            'runtime': self.runtime,
+            'assembly': assembly,
+            'version': '4.18',
+            'data_path': 'test-path',
+            'image_build_strategy': 'all',
+            'image_list': '',
+            'rpm_build_strategy': 'none',
+            'rpm_list': '',
+            'data_gitref': '',
+            'kubeconfig': None,
+            'skip_rebase': False,
+            'skip_bundle_build': False,
+            'arches': (),
+            'plr_template': '',
+            'lock_identifier': 'test',
+            'skip_plashets': False,
+            'build_priority': 'auto',
+            'use_mass_rebuild_locks': False,
+            'network_mode': None,
+            'mail_list_failure': 'aos-art-automation+failed-ocp4-konflux-build@redhat.com',
+        }
+        defaults.update(kwargs)
+        return KonfluxOcpPipeline(**defaults)
+
+    def _build_failure_entry(self, name, outcome='failure', **extra):
+        entry = {
+            'name': name,
+            'status': '-1',
+            'nvrs': f'{name}-1.0-1',
+            'outcome': outcome,
+            'owners': 'owner@redhat.com',
+            'message': 'build failed',
+            'task_id': 'plr-1',
+            'task_url': f'http://build/plr/{name}',
+            'build_pipeline_url': f'http://build/plr/{name}',
+            'ec_pipeline_url': '',
+            'release_pipeline': '',
+        }
+        entry.update(extra)
+        return entry
+
+    def test_categorize_separates_failure_types(self):
+        record_log = {
+            'image_build_konflux': [
+                self._build_failure_entry('ironic', outcome='failure'),
+                self._build_failure_entry('ceo', outcome='its_error'),
+                self._build_failure_entry('base', outcome='release_error'),
+                self._build_failure_entry(
+                    'child',
+                    message='parent images failed to build: base',
+                    task_id='n/a',
+                ),
+            ]
+        }
+        failed_entries = {entry['name']: entry for entry in record_log['image_build_konflux'] if int(entry['status'])}
+        counter_failed_images = util.get_failed_images_for_counter_updates(
+            ['ironic', 'ceo', 'base', 'child'], failed_entries
+        )
+        categories = util.categorize_failed_images(counter_failed_images, failed_entries)
+
+        self.assertEqual(categories.build, ['ironic'])
+        self.assertEqual(categories.its, ['ceo'])
+        self.assertEqual(categories.release, ['base'])
+
+    @patch('pyartcd.pipelines.ocp4_konflux.util.mail_build_failure_owners_konflux')
+    @patch('pyartcd.pipelines.ocp4_konflux.util.get_counter_failures', new_callable=AsyncMock)
+    async def test_handle_emails_build_failures_on_stream(self, mock_counters, mock_mail):
+        mock_counters.return_value = {'ironic': {'failure_count': 5}}
+        pipeline = self._make_pipeline()
+        record_log = {
+            'image_build_konflux': [
+                self._build_failure_entry('ironic', outcome='failure'),
+                {
+                    'name': 'ok-image',
+                    'status': '0',
+                    'nvrs': 'ok-1.0-1',
+                    'outcome': 'success',
+                    'message': '',
+                    'task_id': 'plr-ok',
+                },
+            ]
+        }
+        await pipeline._handle_image_build_failures(record_log)
+
+        mock_mail.assert_called_once()
+        failed_builds = mock_mail.call_args.kwargs['failed_builds']
+        self.assertEqual(list(failed_builds.keys()), ['ironic'])
+        self.assertEqual(mock_mail.call_args.kwargs['default_owner'], pipeline.mail_list_failure)
+        self.assertEqual(mock_mail.call_args.kwargs['failure_counts'], {'ironic': 5})
+
+    @patch('pyartcd.pipelines.ocp4_konflux.util.mail_build_failure_owners_konflux')
+    @patch('pyartcd.pipelines.ocp4_konflux.util.get_counter_failures', new_callable=AsyncMock)
+    async def test_handle_skips_first_time_failures(self, mock_counters, mock_mail):
+        # Counter was just incremented to 1 for this run only; not yet a repeat failure.
+        mock_counters.return_value = {'ironic': {'failure_count': 1}}
+        pipeline = self._make_pipeline()
+        record_log = {'image_build_konflux': [self._build_failure_entry('ironic', outcome='failure')]}
+        await pipeline._handle_image_build_failures(record_log)
+        mock_mail.assert_not_called()
+
+    @patch('pyartcd.pipelines.ocp4_konflux.util.mail_build_failure_owners_konflux')
+    @patch('pyartcd.pipelines.ocp4_konflux.util.get_counter_failures', new_callable=AsyncMock)
+    async def test_handle_skips_below_repeat_threshold(self, mock_counters, mock_mail):
+        # One short of the 5-consecutive-failure threshold.
+        mock_counters.return_value = {'ironic': {'failure_count': 4}}
+        pipeline = self._make_pipeline()
+        record_log = {'image_build_konflux': [self._build_failure_entry('ironic', outcome='failure')]}
+        await pipeline._handle_image_build_failures(record_log)
+        mock_mail.assert_not_called()
+
+    @patch('pyartcd.pipelines.ocp4_konflux.util.mail_build_failure_owners_konflux')
+    async def test_handle_skips_non_stream(self, mock_mail):
+        pipeline = self._make_pipeline(assembly='4.18.1')
+        record_log = {'image_build_konflux': [self._build_failure_entry('ironic')]}
+        await pipeline._handle_image_build_failures(record_log)
+        mock_mail.assert_not_called()
+
+    @patch('pyartcd.pipelines.ocp4_konflux.util.mail_build_failure_owners_konflux')
+    async def test_handle_skips_ec_and_release_failures(self, mock_mail):
+        pipeline = self._make_pipeline()
+        record_log = {
+            'image_build_konflux': [
+                self._build_failure_entry('ceo', outcome='its_error'),
+                self._build_failure_entry('base', outcome='release_error'),
+            ]
+        }
+        await pipeline._handle_image_build_failures(record_log)
+        mock_mail.assert_not_called()
+
+    @patch('pyartcd.pipelines.ocp4_konflux.util.mail_build_failure_owners_konflux')
+    async def test_handle_skips_high_failure_ratio(self, mock_mail):
+        pipeline = self._make_pipeline()
+        # 4 failures out of 12 (> 25% and total > 10) → do not spam
+        entries = [self._build_failure_entry(f'img-{i}') for i in range(4)]
+        entries += [
+            {
+                'name': f'ok-{i}',
+                'status': '0',
+                'nvrs': f'ok-{i}-1.0-1',
+                'outcome': 'success',
+                'message': '',
+                'task_id': f'plr-ok-{i}',
+            }
+            for i in range(8)
+        ]
+        record_log = {'image_build_konflux': entries}
+        await pipeline._handle_image_build_failures(record_log)
+        mock_mail.assert_not_called()
+
+    @patch('pyartcd.pipelines.ocp4_konflux.util.mail_build_failure_owners_konflux')
+    @patch('pyartcd.pipelines.ocp4_konflux.util.get_counter_failures', new_callable=AsyncMock)
+    async def test_handle_emails_when_ratio_below_threshold(self, mock_counters, mock_mail):
+        mock_counters.return_value = {'img-0': {'failure_count': 5}, 'img-1': {'failure_count': 6}}
+        pipeline = self._make_pipeline()
+        # 2 failures out of 12 (< 25%) → spam owners
+        entries = [self._build_failure_entry(f'img-{i}') for i in range(2)]
+        entries += [
+            {
+                'name': f'ok-{i}',
+                'status': '0',
+                'nvrs': f'ok-{i}-1.0-1',
+                'outcome': 'success',
+                'message': '',
+                'task_id': f'plr-ok-{i}',
+            }
+            for i in range(10)
+        ]
+        record_log = {'image_build_konflux': entries}
+        await pipeline._handle_image_build_failures(record_log)
+        mock_mail.assert_called_once()
+        self.assertEqual(sorted(mock_mail.call_args.kwargs['failed_builds'].keys()), ['img-0', 'img-1'])
+
+    @patch('pyartcd.pipelines.ocp4_konflux.util.mail_build_failure_owners_konflux')
+    @patch('pyartcd.pipelines.ocp4_konflux.util.get_counter_failures', new_callable=AsyncMock)
+    @patch('pyartcd.pipelines.ocp4_konflux.update_build_fail_counters', new_callable=AsyncMock)
+    @patch('pyartcd.pipelines.ocp4_konflux.KonfluxOcpPipeline.parse_record_log')
+    @patch('pyartcd.pipelines.ocp4_konflux.jenkins')
+    async def test_sync_images_calls_handle_failures(
+        self, mock_jenkins, mock_parse, mock_counters_update, mock_counters, mock_mail
+    ):
+        mock_counters.return_value = {'ironic': {'failure_count': 5}}
+        pipeline = self._make_pipeline()
+        record_log = {
+            'image_build_konflux': [
+                self._build_failure_entry('ironic'),
+                {
+                    'name': 'ok-image',
+                    'status': '0',
+                    'nvrs': 'ok-1.0-1',
+                    'outcome': 'success',
+                    'message': '',
+                    'task_id': 'plr-ok',
+                },
+            ]
+        }
+        mock_parse.return_value = record_log
+
+        with patch.object(pipeline, 'building_images', return_value=True):
+            with patch('pyartcd.pipelines.ocp4_konflux.jenkins.start_build_sync'):
+                await pipeline.sync_images()
+
+        mock_counters_update.assert_awaited_once()
+        mock_mail.assert_called_once()
