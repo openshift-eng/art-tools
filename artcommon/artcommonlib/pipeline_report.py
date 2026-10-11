@@ -1,7 +1,7 @@
 """Best-effort component reporting on the ART PipelineRun that invoked a tool.
 
 Konflux clients use their own credentials. Reporting deliberately uses ``oc``'s
-ART cluster credentials instead, and never changes build or release decisions.
+ART cluster credentials instead, and never changes build decisions.
 """
 
 import asyncio
@@ -15,7 +15,6 @@ import weakref
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 from functools import wraps
-from urllib.parse import quote
 
 LOGGER = logging.getLogger(__name__)
 COMPONENT_PREFIX = 'art.openshift.io/component-build-'
@@ -81,8 +80,8 @@ class PipelineReporter:
                     component = json.loads(value)
                     if (
                         component.get('version') == 1
-                        and isinstance(component.get('stages'), dict)
-                        and isinstance(component.get('resources'), list)
+                        and isinstance(component.get('status'), str)
+                        and isinstance(component.get('pipelineRuns'), list)
                     ):
                         self._components[key] = component
                     else:
@@ -132,26 +131,6 @@ class PipelineReporter:
             except Exception as exc:
                 self._failed(exc)
 
-    async def stage_all(self, artifact_type, key, status, *, operator_nvrs=None, **kwargs):
-        if not self.enabled:
-            return
-        try:
-            async with self._lock:
-                self._loaded = False
-                await self._load()
-                components = list(self._components.values())
-            for entry in components:
-                if entry['type'] == artifact_type and (
-                    operator_nvrs is None or entry.get('operatorNvr') in operator_nvrs
-                ):
-                    fields = dict(kwargs)
-                    previous = entry.get('stages', {}).get(key, {})
-                    if status == 'Failed' and previous.get('reason'):
-                        fields['reason'] = previous['reason']
-                    await self.component(artifact_type, entry['name']).stage(key, status, **fields)
-        except Exception as exc:
-            self._failed(exc)
-
     def _failed(self, error):
         if not self._partial:
             LOGGER.warning('Component reporting is incomplete for %s/%s: %s', self.namespace, self.name, error)
@@ -177,15 +156,14 @@ class PipelineReporter:
                         'type': component.artifact_type,
                         'name': component.name,
                         'displayName': component.display_name or component.name,
-                        'stages': {},
-                        'resources': [],
+                        'status': 'Pending',
+                        'reason': '',
+                        'pipelineRuns': [],
                     },
                 )
                 previous = copy.deepcopy(entry)
                 if component.display_name:
                     entry['displayName'] = component.display_name
-                if component.dry_run:
-                    entry['dryRun'] = True
                 mutate(entry)
                 published = json.loads(self._annotations.get(key, 'null'))
                 marker = json.loads(self._annotations.get(REPORT_ANNOTATION, '{}'))
@@ -240,219 +218,69 @@ class ComponentReport:
         self.display_name = display_name
         self.dry_run = dry_run
 
-    @asynccontextmanager
-    async def phase(self, key, *, category='preparation', required=True, **fields):
-        await self.stage(key, 'Running', category=category, required=required, **fields)
-        try:
-            yield self
-        except Exception as exc:
-            await self.stage(key, 'Failed', category=category, required=required, reason=str(exc), **fields)
-            raise
-        else:
-            await self.stage(key, 'Succeeded', category=category, required=required, **fields)
-
-    async def observe_release(self, resource, client, *, role='stage-release', required=True):
-        if not self.reporter.enabled:
-            return
-        data = resource_dict(resource)
-        if data.get('kind') == 'Snapshot':
-            await self.resource(data, resource_url(client, data), role='release-snapshot')
-        else:
-            await self.release(data, client, role=role, required=required)
-
-    async def stage(self, key, status, *, category='build', required=True, reason='', **fields):
+    async def set_status(self, status, *, reason=''):
         def mutate(entry):
-            entry.update({k: v for k, v in fields.items() if v is not None})
-            stage = {
-                'name': key,
-                'category': category,
-                'required': required,
-                'status': 'DryRun' if self.dry_run else status,
-                'reason': str(reason)[:500],
-                'updatedAt': _now(),
-            }
-            previous = entry['stages'].get(key, {})
-            if previous.get('status') == stage['status'] and not reason:
-                stage['reason'] = previous.get('reason', '')
-            if any(previous.get(k) != v for k, v in stage.items() if k != 'updatedAt'):
-                entry['stages'][key] = stage
+            entry['status'] = 'DryRun' if self.dry_run else status
+            entry['reason'] = str(reason)[:500]
 
         await self.reporter.update(self, mutate)
 
+    async def failed(self, reason):
+        """Record preparation errors without overriding a native build result."""
+
+        def mutate(entry):
+            runs = entry['pipelineRuns']
+            if runs and runs[-1]['status'] in ('Succeeded', 'Failed', 'Cancelled'):
+                return
+            entry['status'] = 'DryRun' if self.dry_run else 'Unknown' if runs else 'Failed'
+            entry['reason'] = str(reason)[:500]
+
+        await self.reporter.update(self, mutate)
+
+    @asynccontextmanager
+    async def preparing(self):
+        await self.set_status('Pending')
+        try:
+            yield self
+        except Exception as exc:
+            await self.failed(str(exc))
+            raise
+
     @best_effort
-    async def resource(
-        self, resource, url, *, role, status='Unknown', attempt=None, reason='', started=None, completed=None
-    ):
-        if not self.reporter.enabled or self.dry_run or not resource:
+    async def observe(self, resource, client, *, attempt):
+        if not self.reporter.enabled or self.dry_run:
             return
         data = resource_dict(resource)
         metadata = data.get('metadata') or {}
         if not metadata.get('name'):
             return
+        status = data.get('status') or {}
+        condition = next((c for c in status.get('conditions', []) if c.get('type') == 'Succeeded'), {})
         item = {
-            'kind': data.get('kind', 'PipelineRun'),
-            'role': role,
             'name': metadata['name'],
             'namespace': metadata.get('namespace', ''),
-            'uid': metadata.get('uid'),
-            'url': url,
-            'status': status,
+            'url': resource_url(client, data),
+            'status': pipeline_status(data),
             'attempt': attempt,
-            'reason': str(reason)[:500] if reason else None,
-            'started': started,
-            'completed': completed,
+            'reason': str(condition.get('message') or condition.get('reason') or '')[:500],
         }
 
         def mutate(entry):
-            identity = (item['kind'], item['namespace'], item['name'])
-            for existing in entry['resources']:
-                if (existing['kind'], existing['namespace'], existing['name']) == identity:
-                    changes = {k: v for k, v in item.items() if v is not None}
-                    if existing.get('status') in ('Succeeded', 'Failed', 'Cancelled') and status in (
-                        'Running',
-                        'Unknown',
-                    ):
-                        changes.pop('status', None)
-                    existing.update(changes)
+            runs = entry['pipelineRuns']
+            identity = (item['namespace'], item['name'])
+            for existing in runs:
+                if (existing['namespace'], existing['name']) == identity:
+                    if existing['status'] in ('Succeeded', 'Failed', 'Cancelled') and item['status'] == 'Running':
+                        return
+                    existing.update(item)
                     break
             else:
-                entry['resources'].append(item)
+                runs.append(item)
+            latest = max(runs, key=lambda run: run['attempt'])
+            entry['status'] = latest['status']
+            entry['reason'] = latest['reason']
 
         await self.reporter.update(self, mutate)
-
-    def observer(self, client, role, *, attempt=None, category=None, required=True):
-        async def observe(resource):
-            if not self.reporter.enabled:
-                return
-            try:
-                data = resource_dict(resource)
-                status = data.get('status') or {}
-                condition = next((c for c in status.get('conditions', []) if c.get('type') == 'Succeeded'), {})
-                reason = condition.get('message') or condition.get('reason', '')
-                await self.resource(
-                    data,
-                    resource_url(client, data),
-                    role=role,
-                    status=pipeline_status(data),
-                    attempt=attempt,
-                    reason=reason,
-                    started=status.get('startTime'),
-                    completed=status.get('completionTime'),
-                )
-                if category:
-                    await self.stage(role, pipeline_status(data), category=category, required=required, reason=reason)
-            except Exception as exc:
-                self.reporter._failed(exc)
-
-        return observe
-
-    @best_effort
-    async def release(self, resource, client, *, role='stage-release', required=True):
-        if not self.reporter.enabled:
-            return
-        data = resource_dict(resource)
-        status = data.get('status') or {}
-        released = next((c for c in status.get('conditions', []) if c.get('type') == 'Released'), {})
-        outcome = (
-            'Succeeded'
-            if released.get('status') == 'True'
-            else (
-                'Failed'
-                if released.get('reason') not in (None, 'Unknown', 'Progressing', 'NotFound', 'Not Found')
-                else 'Running'
-            )
-        )
-        await self.resource(
-            data, resource_url(client, data), role=role, status=outcome, reason=released.get("message", "")
-        )
-        await self.stage(role, outcome, category='release', required=required, reason=released.get('message', ''))
-        processing = [
-            ('managed-release', {**p, '_attempt': index + 1})
-            for index, p in enumerate(status.get('managedPipelineAttempts', []))
-        ]
-        processing.extend(
-            (label, status.get(field) or {})
-            for label, field in (
-                ('managed-release', 'managedProcessing'),
-                ('tenant-release', 'tenantProcessing'),
-                ('final-release', 'finalProcessing'),
-            )
-        )
-        collectors = status.get('collectorsProcessing') or {}
-        processing.extend(
-            (label, collectors.get(field) or {})
-            for label, field in (
-                ('managed-collector', 'managedCollectorsProcessing'),
-                ('tenant-collector', 'tenantCollectorsProcessing'),
-            )
-        )
-        app = (data.get('metadata', {}).get('labels') or {}).get('appstudio.openshift.io/application')
-        for label, info in processing:
-            namespace, sep, name = (info.get('pipelineRun') or '').partition('/')
-            if not sep or not namespace or not name:
-                continue
-            # Release PipelineRuns can be in a managed namespace. Use the same
-            # application and releaseName context as the Konflux release view.
-            url_data = {
-                'kind': 'PipelineRun',
-                'metadata': {
-                    'namespace': namespace,
-                    'name': name,
-                    'labels': {'appstudio.openshift.io/application': app} if app else {},
-                },
-            }
-            url = resource_url(client, url_data) + '?releaseName=' + quote(data['metadata']['name'], safe='')
-            observed_status = info.get('status')
-            if observed_status not in ('Succeeded', 'Failed', 'Running', 'Pending'):
-                observed_status = 'Unknown' if info.get('completionTime') else 'Running'
-            await self.resource(
-                url_data,
-                url,
-                role=label,
-                status=observed_status,
-                attempt=info.get('_attempt'),
-                reason=info.get("failureReason", ""),
-                started=info.get("startTime"),
-                completed=info.get("completionTime"),
-            )
-
-    @best_effort
-    async def integration_tests(self, snapshot, client, blocking):
-        if not self.reporter.enabled:
-            return
-        data = resource_dict(snapshot)
-        await self.resource(data, resource_url(client, data), role='integration-snapshot')
-        annotation = (data.get('metadata', {}).get('annotations') or {}).get('test.appstudio.openshift.io/status', '[]')
-        try:
-            entries = json.loads(annotation)
-        except (ValueError, TypeError):
-            return
-        for entry in entries:
-            name = entry.get('scenario')
-            if not name:
-                continue
-            native = entry.get('status')
-            status = (
-                'Succeeded'
-                if native in ('TestPassed', 'TestWarning')
-                else 'Running'
-                if native in (None, 'Pending', 'InProgress', 'BuildPLRInProgress')
-                else 'Failed'
-            )
-            await self.stage(
-                'ITS: ' + name, status, category='check', required=name in blocking, reason=entry.get('details', '')
-            )
-            run = entry.get('testPipelineRunName')
-            if run:
-                run_data = {
-                    'kind': 'PipelineRun',
-                    'metadata': {
-                        'name': run,
-                        'namespace': data['metadata'].get('namespace', ''),
-                        'labels': data['metadata'].get('labels', {}),
-                    },
-                }
-                await self.resource(run_data, resource_url(client, run_data), role='ITS: ' + name, status=status)
 
 
 def resource_url(client, data):

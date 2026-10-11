@@ -306,9 +306,6 @@ async def olm_bundle_konflux(
     failed_stage_nvrs = []
 
     # Trigger FBC builds for successful bundles only
-    await get_reporter().stage_all(
-        'bundle', 'stage-release', 'Skipped', category='release', reason='Not selected for stage release'
-    )
     if operator_nvrs:
         runtime.logger.info(f'Found operator NVRs: {operator_nvrs}')
 
@@ -318,9 +315,6 @@ async def olm_bundle_konflux(
         # Skip when no release plan is configured for this product/version.
         # When a plan exists, skip only if bundles were not rebuilt (unless --force-release is set).
         if not has_stage_release_plan:
-            await get_reporter().stage_all(
-                'bundle', 'stage-release', 'Skipped', category='release', reason='No stage release plan configured'
-            )
             runtime.logger.info(
                 "No stage release plan configured for product '%s' (%d.%d); skipping stage release",
                 product,
@@ -328,9 +322,6 @@ async def olm_bundle_konflux(
                 product_minor,
             )
         elif bundles_were_built or force_release:
-            await get_reporter().stage_all(
-                'bundle', 'stage-release', 'Pending', category='release', operator_nvrs=operator_nvrs
-            )
             failed_stage_nvrs = await _stage_release_related_images(
                 runtime=runtime,
                 doozer_base_cmd=doozer_base_cmd,
@@ -339,15 +330,6 @@ async def olm_bundle_konflux(
                 operator_nvrs=operator_nvrs,
             )
             if failed_stage_nvrs:
-                await get_reporter().stage_all(
-                    'bundle',
-                    'stage-release',
-                    'Failed',
-                    category='release',
-                    operator_nvrs=failed_stage_nvrs,
-                    fbcExcluded=True,
-                    reason='Stage release failed; excluded from FBC builds',
-                )
                 operator_nvrs = [nvr for nvr in operator_nvrs if nvr not in failed_stage_nvrs]
                 if not operator_nvrs:
                     raise RuntimeError(
@@ -358,13 +340,6 @@ async def olm_bundle_konflux(
                     f'continuing with: {operator_nvrs}'
                 )
         else:
-            await get_reporter().stage_all(
-                'bundle',
-                'stage-release',
-                'Skipped',
-                category='release',
-                reason='Existing bundles reused without --force-release',
-            )
             runtime.logger.info(
                 'Skipping stage release of related images — no new bundles were built (use --force-release to override)'
             )

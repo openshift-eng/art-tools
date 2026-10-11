@@ -1077,7 +1077,7 @@ class KonfluxOlmBundleBuilder:
         report = get_reporter().component(
             'bundle', metadata.distgit_key, display_name=metadata.get_olm_bundle_short_name(), dry_run=self.dry_run
         )
-        await report.stage('completion', 'Running', category='preparation')
+        await report.set_status('Pending')
         konflux_client = self._konflux_client
         bundle_dir = self.base_dir.joinpath(metadata.get_olm_bundle_short_name())
         df_path = bundle_dir.joinpath("Dockerfile")
@@ -1168,8 +1168,7 @@ class KonfluxOlmBundleBuilder:
                     git_auth_secret=git_auth_secret,
                 )
                 pipelinerun_name = pipelinerun_info.name
-                await report.stage('build', 'Running')
-                await report.observer(konflux_client, 'build', attempt=attempt + 1, category='build')(pipelinerun_info)
+                await report.observe(pipelinerun_info, konflux_client, attempt=attempt + 1)
                 record["task_id"] = pipelinerun_name
                 record["task_url"] = url
 
@@ -1192,7 +1191,7 @@ class KonfluxOlmBundleBuilder:
                 # Wait for the PipelineRun to complete
                 pipelinerun_info = await konflux_client.wait_for_pipelinerun(pipelinerun_name, self.konflux_namespace)
                 logger.info("PipelineRun %s completed", pipelinerun_name)
-                await report.observer(konflux_client, 'build', attempt=attempt + 1, category='build')(pipelinerun_info)
+                await report.observe(pipelinerun_info, konflux_client, attempt=attempt + 1)
 
                 pipelinerun_dict = pipelinerun_info.to_dict()
                 succeeded_condition = pipelinerun_info.find_condition('Succeeded')
@@ -1241,7 +1240,6 @@ class KonfluxOlmBundleBuilder:
                                 else constants.KONFLUX_DEFAULT_EC_POLICY_CONFIGURATION
                             )
 
-                        await report.stage('EC', 'Running', category='check')
                         ec_result = await konflux_client.verify_enterprise_contract(
                             namespace=self.konflux_namespace,
                             application_name=app_name,
@@ -1251,19 +1249,12 @@ class KonfluxOlmBundleBuilder:
                             commit_sha=bundle_build_repo.commit_hash,
                             ec_policy=ec_policy,
                             logger=logger,
-                            **(
-                                {"on_update": report.observer(konflux_client, "EC", category="check")}
-                                if report.reporter.enabled
-                                else {}
-                            ),
                         )
-                        await report.stage('EC', 'Failed' if ec_result.ec_failed else 'Succeeded', category='check')
                         ec_pipeline_url = ec_result.ec_pipeline_url
                         if ec_result.ec_failed:
                             outcome = KonfluxBuildOutcome.ITS_ERROR
                             ec_failed = True
                     elif outcome is KonfluxBuildOutcome.SUCCESS:
-                        await report.stage('EC', 'Skipped', category='check', reason='EC not enabled for this build')
                         if self.skip_ec_verify:
                             logger.info("Skipping EC verification for %s: skip_ec_verify is set", metadata.distgit_key)
                         elif not is_ocp_group:
@@ -1305,12 +1296,11 @@ class KonfluxOlmBundleBuilder:
                 record['message'] = str(error)
                 raise error
         except Exception as exc:
-            await report.stage('completion', 'Failed', category='preparation', reason=str(exc))
+            await report.failed(str(exc))
             raise
         finally:
             if self._record_logger:
                 self._record_logger.add_record("build_olm_bundle_konflux", **record)
-        await report.stage('completion', 'Succeeded', category='preparation', nvr=record.get('bundle_nvr'))
         return pipelinerun_name, pipelinerun_dict
 
     @staticmethod

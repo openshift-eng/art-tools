@@ -153,7 +153,7 @@ class KonfluxRebaseCli:
 
         async def rebase_one(meta):
             report = get_reporter().component('image', meta.distgit_key)
-            async with report.phase('rebase'):
+            async with report.preparing():
                 return await rebaser.rebase_to(
                     meta,
                     self.version,
@@ -489,20 +489,6 @@ class KonfluxBuildCli:
                 stage_release_metas = [m for m in successfully_built_metas if m.config.konflux.stage_release]
                 if stage_release_metas:
                     await self._trigger_standalone_stage_releases(stage_release_metas, build_nvrs)
-            elif successfully_built_metas:
-                for meta in successfully_built_metas:
-                    if meta.config.konflux.stage_release:
-                        await (
-                            get_reporter()
-                            .component('image', meta.distgit_key, dry_run=self.dry_run)
-                            .stage(
-                                'stage-release',
-                                'Skipped',
-                                category='release',
-                                required=False,
-                                reason='Stage releases apply only to stream assemblies',
-                            )
-                        )
 
         finally:
             refresh_task.cancel()
@@ -551,18 +537,6 @@ class KonfluxBuildCli:
 
         release_plan = resolve_konflux_fbc_stage_release_plan(runtime.product, product_major, product_minor)
         if not release_plan:
-            for meta in metas:
-                await (
-                    get_reporter()
-                    .component('image', meta.distgit_key, dry_run=self.dry_run)
-                    .stage(
-                        'stage-release',
-                        'Skipped',
-                        category='release',
-                        required=False,
-                        reason='No stage release plan configured',
-                    )
-                )
             LOGGER.info(
                 "No stage release plan configured for product '%s' (%d.%d); skipping standalone image stage releases",
                 runtime.product,
@@ -598,8 +572,6 @@ class KonfluxBuildCli:
         """
         runtime = self.runtime
         logger = LOGGER.getChild(f"[stage-release:{image_meta.distgit_key}]")
-        report = get_reporter().component('image', image_meta.distgit_key, dry_run=self.dry_run)
-        await report.stage('stage-release', 'Running', category='release', required=False)
 
         try:
             # Look up the build record by exact NVR from the build that just completed.
@@ -616,13 +588,6 @@ class KonfluxBuildCli:
                     image_meta.distgit_key,
                     nvr,
                 )
-                await report.stage(
-                    'stage-release',
-                    'Failed',
-                    category='release',
-                    required=False,
-                    reason='Stage release preparation failed; see ART logs',
-                )
                 return None
 
             application_name = util.konflux_application_name(runtime.group)
@@ -637,11 +602,6 @@ class KonfluxBuildCli:
                 namespace=self.konflux_namespace,
                 kubeconfig=self.konflux_kubeconfig,
                 context=self.konflux_context,
-                **(
-                    {'on_update': lambda resource, client: report.observe_release(resource, client, required=False)}
-                    if report.reporter.enabled
-                    else {}
-                ),
             )
 
             snapshot_input = BaseImageSnapshotInput(
@@ -660,13 +620,6 @@ class KonfluxBuildCli:
             )
             if not snapshot_name:
                 logger.error("Failed to create snapshot for %s", image_meta.distgit_key)
-                await report.stage(
-                    'stage-release',
-                    'Failed',
-                    category='release',
-                    required=False,
-                    reason='Stage release preparation failed; see ART logs',
-                )
                 return None
 
             result = await handler._create_release_from_snapshot(
@@ -677,13 +630,6 @@ class KonfluxBuildCli:
             )
             if not result:
                 logger.error("Failed to create release for %s", image_meta.distgit_key)
-                await report.stage(
-                    'stage-release',
-                    'Failed',
-                    category='release',
-                    required=False,
-                    reason='Stage release preparation failed; see ART logs',
-                )
                 return None
 
             release_name, release_url = result
@@ -693,12 +639,10 @@ class KonfluxBuildCli:
                     f"Stage release {release_name} for {image_meta.distgit_key} did not succeed. See {release_url}"
                 )
 
-            await report.stage('stage-release', 'Succeeded', category='release', required=False)
             logger.info("Standalone stage release succeeded for %s: %s", image_meta.distgit_key, release_url)
             return release_url
 
-        except Exception as exc:
-            await report.stage('stage-release', 'Failed', category='release', required=False, reason=str(exc))
+        except Exception:
             logger.exception(
                 "Standalone stage release failed for %s (non-fatal, build is not affected)",
                 image_meta.distgit_key,
@@ -928,7 +872,7 @@ class KonfluxBundleCli:
     ) -> str:
         logger = LOGGER.getChild(f"[{image_meta.distgit_key}]")
         report = get_reporter().component('bundle', image_meta.distgit_key, dry_run=self.dry_run)
-        async with report.phase('preparation', operatorNvr=operator_build.nvr):
+        async with report.preparing():
             input_release = self.release
             if not self.force or not input_release:
                 logger.info("Checking if a previous bundle build exists...")
@@ -937,13 +881,7 @@ class KonfluxBundleCli:
                     logger.info(f"A previous bundle build already exists: {bundle_build.nvr}")
                     if not self.force:
                         logger.info("Skipping because --force is not set")
-                        await report.stage(
-                            'build',
-                            'Reused',
-                            reason='Existing successful bundle reused',
-                            nvr=bundle_build.nvr,
-                            operatorNvr=operator_build.nvr,
-                        )
+                        await report.set_status('Reused', reason='Existing successful bundle reused')
                         return bundle_build.nvr
                     input_release = str(int(bundle_build.release) + 1)
                     logger.info(
@@ -1218,14 +1156,6 @@ class BundleStageReleaseRelatedImagesCli:
         assembly = runtime.assembly
 
         if assembly != "stream":
-            await get_reporter().stage_all(
-                'bundle',
-                'stage-release',
-                'Skipped',
-                category='release',
-                operator_nvrs=self.operator_nvrs,
-                reason='Stage releases apply only to stream assemblies',
-            )
             self._logger.info("Assembly is '%s' (not 'stream'); skipping stage release of related images", assembly)
             return
 
@@ -1260,14 +1190,6 @@ class BundleStageReleaseRelatedImagesCli:
                 runtime.product,
                 product_major,
                 product_minor,
-            )
-            await get_reporter().stage_all(
-                'bundle',
-                'stage-release',
-                'Skipped',
-                category='release',
-                operator_nvrs=self.operator_nvrs,
-                reason='No stage release plan configured',
             )
             return
 
@@ -1309,8 +1231,6 @@ class BundleStageReleaseRelatedImagesCli:
 
         async def _release_one(nvr: str, record: KonfluxBuildRecord) -> None:
             """Stage-release a single operator, logging failures without propagating."""
-            report = get_reporter().component('bundle', record.name, dry_run=self.dry_run)
-            await report.stage('stage-release', 'Running', category='release', operatorNvr=nvr)
             try:
                 release_url = await self._stage_release_operator(
                     konflux_client=konflux_client,
@@ -1326,11 +1246,9 @@ class BundleStageReleaseRelatedImagesCli:
                     e,
                     ''.join(traceback.TracebackException.from_exception(e).format()),
                 )
-                await report.stage('stage-release', 'Failed', category='release', reason=str(e), fbcExcluded=True)
                 self._add_record(nvr, operator=record.name, error=str(e))
                 failed_nvrs.append(nvr)
             else:
-                await report.stage('stage-release', 'Succeeded', category='release')
                 self._add_record(nvr, operator=record.name, release_url=release_url)
 
         await asyncio.gather(*[_release_one(nvr, record) for nvr, record in resolved])
@@ -1423,16 +1341,6 @@ class BundleStageReleaseRelatedImagesCli:
             record.nvr,
             release_plan_name,
         )
-        await (
-            get_reporter()
-            .component('bundle', operator_name)
-            .stage(
-                'stage-release',
-                'Running',
-                category='release',
-                members=sorted(components.values(), key=lambda c: c['name']),
-            )
-        )
         release_url = await self._stage_release(
             konflux_client=konflux_client,
             components=sorted(components.values(), key=lambda c: c["name"]),
@@ -1493,9 +1401,7 @@ class BundleStageReleaseRelatedImagesCli:
             },
             "spec": {"application": application_name, "components": components},
         }
-        report = get_reporter().component('bundle', operator_name, dry_run=self.dry_run)
         result_snapshot = await konflux_client._create(snapshot_obj)
-        await report.observe_release(result_snapshot, konflux_client)
         snapshot_name = result_snapshot.metadata.name
         snapshot_url = konflux_client.resource_url(result_snapshot)
         self._logger.info("Created Snapshot %s (%s)", snapshot_name, snapshot_url)
@@ -1544,21 +1450,11 @@ class BundleStageReleaseRelatedImagesCli:
             "spec": {"releasePlan": release_plan_name, "snapshot": snapshot_name},
         }
         created_release = await konflux_client._create(release_obj)
-        await report.release(created_release, konflux_client)
         release_name = created_release.metadata.name
         release_url = konflux_client.resource_url(created_release)
         self._logger.info("Created Release %s for Snapshot %s (%s)", release_name, snapshot_name, release_url)
 
-        completed_release = await konflux_client.wait_for_release(
-            release_name,
-            **(
-                {'on_update': lambda resource: report.release(resource, konflux_client)}
-                if report.reporter.enabled
-                else {}
-            ),
-        )
-        await report.release(completed_release, konflux_client)
-        released = KubeCondition.find_condition(completed_release, 'Released')
+        released = KubeCondition.find_condition(await konflux_client.wait_for_release(release_name), 'Released')
         if not released or released.status != "True" or released.reason != "Succeeded":
             raise RuntimeError(
                 f"Stage release {release_name} for {operator_nvr} did not succeed "

@@ -980,7 +980,6 @@ class TestVerifyEnterpriseContract(IsolatedAsyncioTestCase):
         from artcommonlib.util import KubeCondition
 
         client = MagicMock(spec=KonfluxClient)
-        client._logger = logging.getLogger("test")
         client.ensure_integration_test_scenario = AsyncMock()
 
         ec_plr_mock = MagicMock()
@@ -1001,46 +1000,6 @@ class TestVerifyEnterpriseContract(IsolatedAsyncioTestCase):
         client.wait_for_pipelinerun = AsyncMock(return_value=waited_plr)
         client.resource_url = MagicMock(return_value="https://example.com/plr/test")
         return client
-
-    async def test_ec_observer_records_creation_before_wait_failure(self):
-        client = self._make_client_with_ec_result(is_success=True)
-        client._observe = lambda callback, resource: KonfluxClient._observe(client, callback, resource)
-        client.wait_for_pipelinerun.side_effect = RuntimeError("watch disconnected")
-        observer = AsyncMock()
-        result = await KonfluxClient.verify_enterprise_contract(
-            client,
-            namespace="tenant",
-            application_name="app",
-            component_name="component",
-            image_pullspec="quay.io/image@sha256:abc",
-            source_url="https://github.com/org/repo",
-            commit_sha="abc",
-            ec_policy="tenant/policy",
-            logger=logging.getLogger("test"),
-            on_update=observer,
-        )
-        observer.assert_awaited_once_with(client.start_ec_pipeline_run.return_value)
-        self.assertTrue(result.ec_failed)
-        self.assertEqual(result.ec_pipeline_url, "https://example.com/plr/test")
-
-    async def test_observer_failure_does_not_change_ec_outcome(self):
-        client = self._make_client_with_ec_result(is_success=True)
-        client._observe = lambda callback, resource: KonfluxClient._observe(client, callback, resource)
-        observer = AsyncMock(side_effect=RuntimeError("reporting unavailable"))
-        result = await KonfluxClient.verify_enterprise_contract(
-            client,
-            namespace="tenant",
-            application_name="app",
-            component_name="component",
-            image_pullspec="quay.io/image@sha256:abc",
-            source_url="https://github.com/org/repo",
-            commit_sha="abc",
-            ec_policy="tenant/policy",
-            logger=logging.getLogger("test"),
-            on_update=observer,
-        )
-        self.assertEqual(observer.await_count, 2)
-        self.assertFalse(result.ec_failed)
 
     async def test_ec_passed(self):
         client = self._make_client_with_ec_result(is_success=True)

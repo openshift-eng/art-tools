@@ -155,8 +155,10 @@ class KonfluxImageBuilder:
     async def build(self, metadata: ImageMetadata, git_auth_secret: Optional[str] = None):
         """Build a container image with Konflux."""
         logger = self._logger.getChild(f"[{metadata.distgit_key}]")
-        report = get_reporter().component('image', metadata.distgit_key, dry_run=self._config.dry_run)
-        await report.stage('completion', 'Running', category='preparation')
+        report = get_reporter().component(
+            'image', metadata.distgit_key, display_name=metadata.distgit_key, dry_run=self._config.dry_run
+        )
+        await report.set_status('Pending')
         metadata.build_status = False
         dest_dir = self._config.base_dir.joinpath(metadata.qualified_key)
         df_path = dest_dir.joinpath("Dockerfile")
@@ -311,10 +313,7 @@ class KonfluxImageBuilder:
                     git_auth_secret=git_auth_secret,
                 )
                 pipelinerun_name = pipelinerun_info.name
-                await report.stage('build', 'Running')
-                await report.observer(self._konflux_client, 'build', attempt=attempt + 1, category='build')(
-                    pipelinerun_info
-                )
+                await report.observe(pipelinerun_info, self._konflux_client, attempt=attempt + 1)
                 record["task_id"] = pipelinerun_name
                 record["task_url"] = self._konflux_client.resource_url(pipelinerun_info.to_dict())
                 record["build_pipeline_url"] = record["task_url"]  # Store build pipeline URL for failure tracking
@@ -333,9 +332,7 @@ class KonfluxImageBuilder:
                     pipelinerun_name, namespace=self._config.namespace
                 )
                 logger.info("PipelineRun %s completed", pipelinerun_name)
-                await report.observer(self._konflux_client, 'build', attempt=attempt + 1, category='build')(
-                    pipelinerun_info
-                )
+                await report.observe(pipelinerun_info, self._konflux_client, attempt=attempt + 1)
 
                 succeeded_condition = pipelinerun_info.find_condition('Succeeded')
                 outcome = KonfluxBuildOutcome.extract_from_pipelinerun_succeeded_condition(succeeded_condition)
@@ -357,20 +354,16 @@ class KonfluxImageBuilder:
                         # Validate SLSA attestation and source image signature
                         skip_validate_slsa = metadata.config.get("konflux", {}).get("skip_validate_slsa", False)
                         if metadata.runtime.variant is not BuildVariant.OKD and skip_validate_slsa is not True:
-                            await report.stage('attestation', 'Running', category='check')
                             try:
                                 # use image_digest here to be precise, image_pullspec can collide in case of golang-builder images
                                 await self._validate_build_attestation_and_signature(
                                     definitive_image_pullspec, metadata.distgit_key
                                 )
                             except Exception as e:
-                                await report.stage('attestation', 'Failed', category='check', reason=str(e))
                                 logger.error(
                                     f"Failed to get SLA attestation / source signature from konflux for image {definitive_image_pullspec}, marking build as {KonfluxBuildOutcome.BUILD_ERROR}. Error: {e}"
                                 )
                                 outcome = KonfluxBuildOutcome.BUILD_ERROR
-                            else:
-                                await report.stage('attestation', 'Succeeded', category='check')
                         elif metadata.runtime.variant is BuildVariant.OKD:
                             logger.info(
                                 "Skipping SLSA attestation validation for %s: OKD build variant in group '%s'",
@@ -411,7 +404,6 @@ class KonfluxImageBuilder:
                     source_url = artlib_util.convert_remote_git_to_https(build_repo.url)
                     konflux_component_name = metadata.get_konflux_component_name(app_name)
 
-                    await report.stage('EC', 'Running', category='check')
                     ec_result = await self._konflux_client.verify_enterprise_contract(
                         namespace=self._config.namespace,
                         application_name=app_name,
@@ -422,21 +414,14 @@ class KonfluxImageBuilder:
                         ec_policy=ec_policy,
                         logger=logger,
                         effective_time=self._config.effective_time,
-                        **(
-                            {"on_update": report.observer(self._konflux_client, "EC", category="check")}
-                            if report.reporter.enabled
-                            else {}
-                        ),
                     )
                     # Always save EC pipeline URL for tracking, regardless of pass/fail
-                    await report.stage('EC', 'Failed' if ec_result.ec_failed else 'Succeeded', category='check')
                     ec_pipeline_url = ec_result.ec_pipeline_url
                     record["ec_pipeline_url"] = ec_pipeline_url
                     if ec_result.ec_failed:
                         outcome = KonfluxBuildOutcome.ITS_ERROR
 
                 elif outcome is KonfluxBuildOutcome.SUCCESS:
-                    await report.stage('EC', 'Skipped', category='check', reason='EC not enabled for this build')
                     if metadata.runtime.variant is BuildVariant.OKD:
                         logger.info(
                             "Skipping EC verification for %s: OKD variant does not use RH EC workflow",
@@ -467,13 +452,6 @@ class KonfluxImageBuilder:
                 )
                 if should_run_custom_its:
                     app_name = util.konflux_application_name(self._config.group_name)
-                    for scenario in self._config.integration_test_scenarios:
-                        await report.stage(
-                            'ITS: ' + scenario,
-                            'Running',
-                            category='check',
-                            required=scenario in self._blocking_custom_integration_test_scenarios,
-                        )
                     custom_its_result = await self._konflux_client.run_integration_test_scenarios(
                         scenario_names=self._config.integration_test_scenarios,
                         application_name=app_name,
@@ -483,22 +461,6 @@ class KonfluxImageBuilder:
                         commit_sha=build_repo.commit_hash,
                         blocking_scenario_names=self._blocking_custom_integration_test_scenarios,
                         snapshot_annotations=self._config.integration_test_snapshot_annotations,
-                        **(
-                            {
-                                "on_update": lambda snapshot: report.integration_tests(
-                                    snapshot, self._konflux_client, self._blocking_custom_integration_test_scenarios
-                                ),
-                                "on_scenario_failure": lambda failure: report.stage(
-                                    'ITS: ' + failure['name'],
-                                    'Failed',
-                                    category='check',
-                                    required=failure['name'] in self._blocking_custom_integration_test_scenarios,
-                                    reason=failure['reason'],
-                                ),
-                            }
-                            if report.reporter.enabled
-                            else {}
-                        ),
                         namespace=self._config.namespace,
                     )
                     for pipeline_url in custom_its_result.pipeline_urls:
@@ -519,16 +481,6 @@ class KonfluxImageBuilder:
                         metadata.distgit_key,
                     )
 
-                if outcome is KonfluxBuildOutcome.SUCCESS and not should_run_custom_its:
-                    for scenario in self._config.integration_test_scenarios:
-                        await report.stage(
-                            'ITS: ' + scenario,
-                            'Skipped',
-                            category='check',
-                            required=scenario in self._blocking_custom_integration_test_scenarios,
-                            reason='Custom integration tests not enabled for this build',
-                        )
-
                 if self._config.dry_run:
                     logger.info("Dry run: Would have inserted build record in Konflux DB")
 
@@ -541,7 +493,6 @@ class KonfluxImageBuilder:
                         and metadata.should_trigger_base_image_release()
                         and definitive_image_pullspec is not None
                     ):
-                        await report.stage('base-release', 'Running', category='release')
                         release_result = await self._trigger_base_image_release(
                             metadata, nvr, definitive_image_pullspec, build_repo
                         )
@@ -559,9 +510,6 @@ class KonfluxImageBuilder:
                             record["base_image_release_failed"] = "true"
                             if release_result and release_result.release_pipeline:
                                 record["release_pipeline"] = release_result.release_pipeline
-                        await report.stage(
-                            'base-release', 'Succeeded' if release_succeeded else 'Failed', category='release'
-                        )
                         outcome = (
                             KonfluxBuildOutcome.SUCCESS if release_succeeded else KonfluxBuildOutcome.RELEASE_ERROR
                         )
@@ -623,7 +571,7 @@ class KonfluxImageBuilder:
                 raise error
 
         except Exception as exc:
-            await report.stage('completion', 'Failed', category='preparation', reason=str(exc))
+            await report.failed(str(exc))
             # Capture the actual error message for any exception that bypasses
             # the build loop's error handling (e.g., parent build failures,
             # NVR validation errors). Without this, record["message"] would
@@ -641,7 +589,6 @@ class KonfluxImageBuilder:
                     key = 'image_build_konflux'
                 self._record_logger.add_record(key, **record)
             metadata.build_event.set()
-        await report.stage('completion', 'Succeeded', category='preparation', nvr=record.get('nvrs'))
         return nvr, pipelinerun_name, pipelinerun_info.to_dict()
 
     @staticmethod
@@ -1649,17 +1596,6 @@ class KonfluxImageBuilder:
             handler = BaseImageHandler(
                 metadata.runtime,
                 dry_run=self._config.dry_run,
-                **(
-                    {
-                        "on_update": lambda resource, client: (
-                            get_reporter()
-                            .component('image', metadata.distgit_key)
-                            .observe_release(resource, client, role='base-release')
-                        )
-                    }
-                    if get_reporter().enabled
-                    else {}
-                ),
             )
             result = await handler.snapshot_release(snapshot_input)
             if result is None:

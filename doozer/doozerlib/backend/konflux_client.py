@@ -1179,13 +1179,6 @@ class KonfluxClient:
             raise ValueError(f"Snapshot {snapshot.metadata.name} has malformed integration test status annotation")
         return {entry.get("scenario"): entry for entry in status_entries if entry.get("scenario")}
 
-    async def _observe(self, callback, resource):
-        if callback is not None:
-            try:
-                await callback(resource)
-            except Exception:
-                self._logger.warning("Component reporting callback failed", exc_info=True)
-
     async def _trigger_integration_test_scenario(
         self,
         snapshot_name: str,
@@ -1193,7 +1186,6 @@ class KonfluxClient:
         namespace: str,
         timeout_seconds: int,
         poll_interval_seconds: int,
-        on_update=None,
     ) -> resource.ResourceInstance:
         """Request one scenario run and wait for Integration Service to record it."""
         await self._patch(
@@ -1212,7 +1204,6 @@ class KonfluxClient:
             snapshot = await self._get(API_VERSION, KIND_SNAPSHOT, snapshot_name, namespace=namespace, strict=False)
             if snapshot is None:
                 raise RuntimeError(f"Snapshot {snapshot_name} disappeared")
-            await self._observe(on_update, snapshot)
             statuses = self._snapshot_test_statuses(snapshot)
             run_label = snapshot.to_dict().get("metadata", {}).get("labels", {}).get("test.appstudio.openshift.io/run")
             if scenario_name in statuses and run_label != scenario_name:
@@ -1249,8 +1240,6 @@ class KonfluxClient:
         trigger_timeout_seconds: int = 10 * 60,
         completion_timeout_seconds: int = 6 * 60 * 60,
         poll_interval_seconds: int = 10,
-        on_update=None,
-        on_scenario_failure=None,
     ) -> CustomIntegrationTestResult:
         """Create a Snapshot, explicitly trigger configured scenarios, and wait for completion."""
         namespace = namespace or self.default_namespace
@@ -1277,7 +1266,6 @@ class KonfluxClient:
                 annotations=snapshot_annotations or {},
             )
             snapshot = await self._create(snapshot_manifest)
-            await self._observe(on_update, snapshot)
             snapshot_name = snapshot.metadata.name
             self._logger.info("Created custom integration test Snapshot %s", snapshot_name)
 
@@ -1289,10 +1277,8 @@ class KonfluxClient:
                         namespace,
                         trigger_timeout_seconds,
                         poll_interval_seconds,
-                        **({"on_update": on_update} if on_update else {}),
                     )
-                except Exception as exc:
-                    await self._observe(on_scenario_failure, {"name": scenario_name, "reason": str(exc)})
+                except Exception:
                     trigger_failed_scenarios.add(scenario_name)
                     if scenario_name in blocking_scenario_names:
                         self._logger.exception(
@@ -1315,7 +1301,6 @@ class KonfluxClient:
                         exc_info=True,
                     )
                     continue
-                await self._observe(on_update, snapshot)
                 statuses_by_scenario = self._snapshot_test_statuses(snapshot)
 
             monitored_scenario_names = tuple(name for name in scenario_names if name not in trigger_failed_scenarios)
@@ -1387,8 +1372,6 @@ class KonfluxClient:
                             )
                     return CustomIntegrationTestResult(False, "", pipeline_urls)
                 if time.monotonic() >= completion_deadline:
-                    for name in pending_scenario_names:
-                        await self._observe(on_scenario_failure, {"name": name, "reason": "Integration test timed out"})
                     blocking_pending_name = next(
                         (name for name in pending_scenario_names if name in blocking_scenario_names),
                         None,
@@ -1417,15 +1400,11 @@ class KonfluxClient:
                 snapshot = await self._get(API_VERSION, KIND_SNAPSHOT, snapshot_name, namespace=namespace, strict=False)
                 if snapshot is None:
                     raise RuntimeError(f"Snapshot {snapshot_name} disappeared")
-                await self._observe(on_update, snapshot)
                 all_statuses = self._snapshot_test_statuses(snapshot)
                 statuses_by_scenario = {
                     name: all_statuses[name] for name in monitored_scenario_names if name in all_statuses
                 }
-        except Exception as exc:
-            for name in scenario_names:
-                if statuses_by_scenario.get(name, {}).get("status") not in {"TestPassed", "TestWarning"}:
-                    await self._observe(on_scenario_failure, {"name": name, "reason": str(exc)})
+        except Exception:
             passed_blocking_scenario_names = {
                 name
                 for name in blocking_scenario_names
@@ -1619,7 +1598,6 @@ class KonfluxClient:
         ec_policy: str,
         logger: logging.Logger,
         effective_time: str = "now",
-        on_update=None,
     ) -> ECVerificationResult:
         """Run enterprise-contract verification for a built image.
 
@@ -1656,13 +1634,10 @@ class KonfluxClient:
                 effective_time=effective_time,
             )
             ec_plr_name = ec_plr_info.name
-            ec_pipeline_url = self.resource_url(ec_plr_info.to_dict())
-            await self._observe(on_update, ec_plr_info)
 
             logger.info("Waiting for EC PipelineRun %s to complete...", ec_plr_name)
             ec_plr_info = await self.wait_for_pipelinerun(ec_plr_name, namespace=namespace)
 
-            await self._observe(on_update, ec_plr_info)
             ec_pipeline_url = self.resource_url(ec_plr_info.to_dict())
             ec_condition = ec_plr_info.find_condition('Succeeded')
             ec_outcome = KonfluxBuildOutcome.extract_from_pipelinerun_succeeded_condition(ec_condition)
@@ -2138,7 +2113,6 @@ class KonfluxClient:
         release_name: str,
         namespace: Optional[str] = None,
         overall_timeout_timedelta: Optional[datetime.timedelta] = None,
-        on_update=None,
     ) -> resource.ResourceInstance:
         f"""
         Wait for a Release to complete.
@@ -2170,9 +2144,6 @@ class KonfluxClient:
         url = self.resource_url(release_obj.to_dict())
         self._logger.info("Found release at %s", url)
 
-        await self._observe(on_update, release_obj)
-        loop = asyncio.get_running_loop()
-
         def _inner():
             watcher = watch.Watch()
             released_status = "Not Found"
@@ -2193,8 +2164,6 @@ class KonfluxClient:
                     for event in release_obj:
                         assert isinstance(event, Dict)
                         obj = resource.ResourceInstance(api, event["object"])
-                        if on_update is not None:
-                            asyncio.run_coroutine_threadsafe(self._observe(on_update, obj), loop).result()
                         # status takes some time to appear
                         try:
                             released_condition = art_util.KubeCondition.find_condition(obj, 'Released')

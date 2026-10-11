@@ -662,14 +662,12 @@ class FbcRebaseAndBuildCli:
         :return: Tuple of (NVR, pullspec) of the FBC build
         """
         report = get_reporter().component('fbc', operator_meta.distgit_key, dry_run=self.dry_run)
-        async with report.phase('preparation', operatorNvr=bundle_build.operator_nvr):
+        async with report.preparing():
             existing_fbc_build = await self._check_existing_fbc_build(operator_meta, bundle_build)
             if existing_fbc_build:
                 self._logger.info(f"Found existing FBC build: {existing_fbc_build.nvr}")
                 if not self.force:
-                    await report.stage(
-                        'build', 'Reused', reason='Existing successful FBC reused', nvr=existing_fbc_build.nvr
-                    )
+                    await report.set_status('Reused', reason='Existing successful FBC reused')
                     return existing_fbc_build.nvr, existing_fbc_build.image_pullspec or ""
                 self._logger.info("Force flag is set, rebuilding FBC")
 
@@ -713,7 +711,7 @@ class FbcRebaseAndBuildCli:
                 await (
                     get_reporter()
                     .component('fbc', dgk)
-                    .stage('build', 'Skipped', reason='No successful bundle build found')
+                    .set_status('Skipped', reason='No successful bundle build found')
                 )
                 self._logger.warning(f"Bundle build not found for {dgk_operator_builds[dgk].nvr}. Will skip it.")
         dgk_bundle_builds = {

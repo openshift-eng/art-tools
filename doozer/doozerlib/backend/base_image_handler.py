@@ -90,9 +90,7 @@ class BaseImageHandler:
         namespace: Optional[str] = None,
         kubeconfig: Optional[str] = None,
         context: Optional[str] = None,
-        on_update=None,
     ):
-        self.on_update = on_update
         self.runtime = runtime
         self.dry_run = dry_run
         self.logger = logutil.EntityLoggingAdapter(self.runtime.logger, extra={'entity': 'base-image'})
@@ -309,18 +307,10 @@ class BaseImageHandler:
             self.logger.error(f"Failed to create snapshot ({type(e).__name__}: {e})")
             return None
 
-    async def _observe(self, resource):
-        if self.on_update is not None:
-            try:
-                await self.on_update(resource, self.konflux_client)
-            except Exception:
-                self.logger.warning("Component reporting callback failed", exc_info=True)
-
     async def _create_snapshot_object(self, snapshot_obj) -> Optional[str]:
         """Create snapshot resource with unique timestamped name."""
         try:
             result_snapshot = await self.konflux_client._create(snapshot_obj)
-            await self._observe(result_snapshot)
             snapshot_url = self.konflux_client.resource_url(result_snapshot)
             name = result_snapshot.metadata.name
             self.logger.info(f"Created snapshot {name} ({snapshot_url})")
@@ -410,7 +400,6 @@ class BaseImageHandler:
                 return f"dry-run-release-{snapshot_name}", "https://dry-run.invalid"
 
             created_release = await self.konflux_client._create(release_obj)
-            await self._observe(created_release)
             release_name = created_release.metadata.name
             release_url = self.konflux_client.resource_url(created_release)
 
@@ -434,7 +423,6 @@ class BaseImageHandler:
             while elapsed < timeout_seconds:
                 try:
                     release_obj = await self.konflux_client._get(API_VERSION, KIND_RELEASE, release_name)
-                    await self._observe(release_obj)
                     release_status = release_obj.get("status", {})
                     conditions = release_status.get("conditions", [])
 
