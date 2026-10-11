@@ -16,6 +16,8 @@ spec:
     metadata:
       labels:
         app: art-pipelines-ui
+      annotations:
+        checksum/pipeline-namespaces: "f6f73b1f18212052057a051331bf1cf28faf5d17cf28de03550bf6f2aa9f328e"
     spec:
       serviceAccountName: art-pipelines-ui
       automountServiceAccountToken: false
