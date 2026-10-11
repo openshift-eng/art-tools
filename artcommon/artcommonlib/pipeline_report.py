@@ -29,6 +29,7 @@ def _now():
 
 
 def component_annotation(artifact_type: str, name: str) -> str:
+    """Return the stable annotation key for one component and artifact type."""
     identity = f'{artifact_type}:{name}'.encode()
     return COMPONENT_PREFIX + hashlib.sha256(identity).hexdigest()[:20]
 
@@ -38,6 +39,8 @@ def resource_dict(resource):
 
 
 class PipelineReporter:
+    """Publish component results without changing the invoking tool's outcome."""
+
     def __init__(self, namespace: str = '', name: str = '', uid: str = ''):
         self.namespace = namespace
         self.name = name
@@ -51,6 +54,7 @@ class PipelineReporter:
         self._retry_after = 0
 
     async def _command(self, args):
+        """Run an ART cluster command with a bounded lifetime."""
         process = await asyncio.create_subprocess_exec(
             'oc', *args, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE
         )
@@ -66,6 +70,7 @@ class PipelineReporter:
         return stdout.decode()
 
     async def _load(self):
+        """Load existing reports and verify the parent PipelineRun identity."""
         if self._loaded:
             return
         run = json.loads(await self._command(['get', 'pipelinerun', self.name, '-n', self.namespace, '-o', 'json']))
@@ -95,6 +100,7 @@ class PipelineReporter:
         self._loaded = True
 
     async def _patch(self, annotations):
+        """Merge only the supplied annotations into the verified parent run."""
         patch = {'metadata': {'uid': self.uid, 'annotations': annotations}}
         await self._command(
             [
@@ -111,18 +117,25 @@ class PipelineReporter:
         self._annotations.update(annotations)
 
     async def note(self, reason: str, *, state="pending"):
+        """Publish selection progress while retaining any reporting limitation."""
         if not self.enabled:
             return
         async with self._lock:
             try:
                 await self._load()
+                marker = json.loads(self._annotations.get(REPORT_ANNOTATION, '{}'))
+                if not isinstance(marker, dict):
+                    marker = {}
                 await self._patch(
                     {
                         REPORT_ANNOTATION: json.dumps(
                             {
+                                **marker,
                                 'version': 1,
                                 'partial': self._partial,
-                                'reason': reason[:500],
+                                'reason': marker.get('reason')
+                                if self._partial and marker.get('reason')
+                                else reason[:500],
                                 'state': state,
                             }
                         )
@@ -132,15 +145,25 @@ class PipelineReporter:
                 self._failed(exc)
 
     def _failed(self, error):
+        """Mark reporting partial and log only a safe failure category."""
         if not self._partial:
-            LOGGER.warning('Component reporting is incomplete for %s/%s: %s', self.namespace, self.name, error)
+            category = (
+                'timeout'
+                if isinstance(error, TimeoutError)
+                else 'command'
+                if isinstance(error, RuntimeError)
+                else 'reporting'
+            )
+            LOGGER.warning('Component reporting is incomplete (%s)', category)
         self._partial = True
         self._retry_after = time.monotonic() + 30
 
     def component(self, artifact_type: str, name: str, *, display_name: str = '', dry_run: bool = False):
+        """Create a reporting handle for a component operation."""
         return ComponentReport(self, artifact_type, name, display_name, dry_run)
 
     async def update(self, component, mutate):
+        """Serialize a component mutation and publish it within annotation limits."""
         if not self.enabled or time.monotonic() < self._retry_after:
             return
         async with self._lock:
@@ -173,8 +196,9 @@ class PipelineReporter:
                     return
                 entry['updatedAt'] = _now()
                 encoded = json.dumps(entry, separators=(',', ':'), ensure_ascii=False)
-                marker = json.dumps({'version': 1, 'partial': self._partial})
-                annotations = {**self._annotations, key: encoded, REPORT_ANNOTATION: marker}
+                marker.update(version=1, partial=self._partial)
+                encoded_marker = json.dumps(marker)
+                annotations = {**self._annotations, key: encoded, REPORT_ANNOTATION: encoded_marker}
 
                 def size(values):
                     return sum(len(k.encode()) + len(v.encode()) for k, v in values.items())
@@ -186,6 +210,7 @@ class PipelineReporter:
                         {
                             REPORT_ANNOTATION: json.dumps(
                                 {
+                                    **marker,
                                     'version': 1,
                                     'partial': True,
                                     'reason': 'Component reporting exceeded annotation capacity',
@@ -194,12 +219,14 @@ class PipelineReporter:
                         }
                     )
                     return
-                await self._patch({key: encoded, REPORT_ANNOTATION: marker})
+                await self._patch({key: encoded, REPORT_ANNOTATION: encoded_marker})
             except Exception as exc:
                 self._failed(exc)
 
 
 def best_effort(method):
+    """Keep reporting errors from escaping into build execution."""
+
     @wraps(method)
     async def report(self, *args, **kwargs):
         try:
@@ -211,15 +238,22 @@ def best_effort(method):
 
 
 class ComponentReport:
+    """Track one operation while retaining earlier native build attempts."""
+
     def __init__(self, reporter, artifact_type, name, display_name='', dry_run=False):
         self.reporter = reporter
         self.artifact_type = artifact_type
         self.name = name
         self.display_name = display_name
         self.dry_run = dry_run
+        self._previous_runs = None
 
     async def set_status(self, status, *, reason=''):
+        """Set an operation result, capturing earlier runs when starting work."""
+
         def mutate(entry):
+            if status == 'Pending':
+                self._previous_runs = {(run['namespace'], run['name']) for run in entry['pipelineRuns']}
             entry['status'] = 'DryRun' if self.dry_run else status
             entry['reason'] = str(reason)[:500]
 
@@ -229,8 +263,13 @@ class ComponentReport:
         """Record preparation errors without overriding a native build result."""
 
         def mutate(entry):
-            runs = entry['pipelineRuns']
-            if runs and runs[-1]['status'] in ('Succeeded', 'Failed', 'Cancelled'):
+            runs = [
+                run
+                for run in entry['pipelineRuns']
+                if self._previous_runs is not None and (run['namespace'], run['name']) not in self._previous_runs
+            ]
+            latest = max(runs, key=lambda run: run['attempt']) if runs else None
+            if latest and latest['status'] in ('Succeeded', 'Failed', 'Cancelled'):
                 return
             entry['status'] = 'DryRun' if self.dry_run else 'Unknown' if runs else 'Failed'
             entry['reason'] = str(reason)[:500]
@@ -239,6 +278,7 @@ class ComponentReport:
 
     @asynccontextmanager
     async def preparing(self):
+        """Report preparation errors and propagate the original exception."""
         await self.set_status('Pending')
         try:
             yield self
@@ -248,6 +288,7 @@ class ComponentReport:
 
     @best_effort
     async def observe(self, resource, client, *, attempt):
+        """Record a native build with attempt numbers increasing across invocations."""
         if not self.reporter.enabled or self.dry_run:
             return
         data = resource_dict(resource)
@@ -268,13 +309,16 @@ class ComponentReport:
         def mutate(entry):
             runs = entry['pipelineRuns']
             identity = (item['namespace'], item['name'])
+            if self._previous_runs is None:
+                self._previous_runs = {(run['namespace'], run['name']) for run in runs} - {identity}
             for existing in runs:
                 if (existing['namespace'], existing['name']) == identity:
                     if existing['status'] in ('Succeeded', 'Failed', 'Cancelled') and item['status'] == 'Running':
                         return
-                    existing.update(item)
+                    existing.update({**item, 'attempt': existing['attempt']})
                     break
             else:
+                item['attempt'] = max(attempt, max((run['attempt'] for run in runs), default=0) + 1)
                 runs.append(item)
             latest = max(runs, key=lambda run: run['attempt'])
             entry['status'] = latest['status']
@@ -284,6 +328,7 @@ class ComponentReport:
 
 
 def resource_url(client, data):
+    """Return a build link without an unavailable application segment."""
     url = client.resource_url(data)
     if '/applications/unknown-application/' in url:
         return url.replace('/applications/unknown-application', '')
@@ -291,6 +336,7 @@ def resource_url(client, data):
 
 
 def pipeline_status(resource):
+    """Translate the native Tekton condition into a build result."""
     data = resource_dict(resource)
     condition = next((c for c in (data.get('status') or {}).get('conditions', []) if c.get('type') == 'Succeeded'), {})
     status = {'True': 'Succeeded', 'False': 'Failed', 'Unknown': 'Running'}.get(condition.get('status'), 'Running')
