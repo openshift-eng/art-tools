@@ -103,8 +103,6 @@ button { cursor: pointer; }
 .run-state-bar.blue { background: #4b9ed3; }
 .run-state-bar.red { background: #d7504c; }
 .run-state-bar.orange { background: #db9d34; }
-.source { display: inline-block; font-size: 12.5px; font-weight: 700; color: var(--ui-blue-text); background: var(--ui-blue-bg); border-radius: 4px; padding: 4px 7px; white-space: nowrap; }
-.source.archived { color: var(--ui-purple-text); background: var(--ui-purple-bg); }
 .pagination { display: flex; gap: 8px; justify-content: flex-end; align-items: center; color: var(--ui-muted); font-size: 13.75px; margin-top: 17px; }
 .pagination span { margin-right: 9px; }
 .loading { display: flex; align-items: center; justify-content: center; min-height: 220px; }
