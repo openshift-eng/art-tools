@@ -4,7 +4,8 @@ import { componentCounts, filterComponents } from '../src/componentResults.js';
 import { parseHash, viewHref } from '../src/navigation.js';
 
 const components = [
-  { name: 'first', displayName: 'first-bundle', status: 'Succeeded' },
+  { name: 'first', displayName: 'first-bundle', status: 'Succeeded',
+    pipelineRuns: [{ status: 'Failed' }, { status: 'Succeeded' }] },
   { name: 'second', status: 'Succeeded' },
   { name: 'third', status: 'Failed' },
 ];
@@ -22,6 +23,13 @@ test('search matches component and display names case insensitively', () => {
   assert.equal(filterComponents(components, ' FIRST-BUNDLE ', '')[0].name, 'first');
   assert.equal(filterComponents(components, 'third', 'Failed')[0].name, 'third');
   assert.equal(filterComponents(components, 'first', 'Failed').length, 0);
+});
+
+test('failed-attempt filter includes recovered retries and final failures', () => {
+  assert.deepEqual(filterComponents(components, '', 'Has failed attempts').map((c) => c.name), ['first', 'third']);
+  assert.deepEqual(filterComponents(components, 'BUNDLE', 'Has failed attempts').map((c) => c.name), ['first']);
+  assert.equal(filterComponents(components, 'second', 'Has failed attempts').length, 0);
+  assert.deepEqual(componentCounts(components), { Succeeded: 2, Failed: 1 });
 });
 
 test('component tab deep links preserve archived UID and tenant', () => {

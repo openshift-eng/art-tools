@@ -18,6 +18,7 @@ export default function Components({ run, Status }) {
         <div className="toolbar"><input aria-label="Search components" placeholder="Search component names" value={search} onChange={(event) => setSearch(event.target.value)} />
           <select aria-label="Filter build results" value={result} onChange={(event) => setResult(event.target.value)}>
             <option value="">All build results</option>
+            <option value="Has failed attempts">Has failed attempts</option>
             {Object.keys(counts).map((status) => <option key={status} value={status}>{status}</option>)}
           </select>
         </div>
@@ -27,7 +28,7 @@ export default function Components({ run, Status }) {
             <td><Status value={component.status} />{component.reason && component.status !== 'Succeeded' && <small className="component-reason">{component.reason}</small>}</td>
             <td>{component.pipelineRuns.length ? <ul className="component-build-links">{component.pipelineRuns.map((build) => <li key={`${build.namespace}/${build.name}`}>
               {build.url ? <a href={build.url} target="_blank" rel="noopener noreferrer">{build.name}</a> : <span>{build.name}</span>}
-              {build.attempt && <small>Attempt {build.attempt}</small>} <Status value={build.status} />
+              {build.attempt != null && <small>Attempt {build.attempt}</small>} <Status value={build.status} />
             </li>)}</ul> : <span className="muted">No build PipelineRun triggered</span>}</td>
           </tr>)}
         </tbody></table></div>{!visible.length && <p className="muted">No components match these filters.</p>}

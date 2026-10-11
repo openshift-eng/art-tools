@@ -10,6 +10,7 @@ ACTIVE = {"Pending", "Running"}
 
 
 def _json(value):
+    """Decode an annotation without letting invalid JSON break run details."""
     try:
         return json.loads(value)
     except (ValueError, TypeError):
@@ -17,11 +18,13 @@ def _json(value):
 
 
 def _status(value, terminal):
+    """Normalize build outcomes and mark unfinished terminal-run reports unknown."""
     result = value if isinstance(value, str) and value in STATUSES else "Unknown"
     return "Unknown" if terminal and result in ACTIVE else result
 
 
 def _url(value):
+    """Return only HTTPS links suitable for opening from the component table."""
     try:
         parsed = urlsplit(value) if isinstance(value, str) else None
         return value if parsed and parsed.scheme == "https" and parsed.netloc else None
@@ -30,6 +33,7 @@ def _url(value):
 
 
 def component_details(run):
+    """Read versioned component reports from a live or archived ART run."""
     annotations = run.get("metadata", {}).get("annotations") or {}
     marker = _json(annotations.get(REPORT))
     status = run.get("status") or {}
