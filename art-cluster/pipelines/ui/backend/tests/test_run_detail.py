@@ -60,8 +60,8 @@ class RunDetailTests(unittest.IsolatedAsyncioTestCase):
                         "version": 1,
                         "type": "image",
                         "name": "operator",
-                        "resources": [],
-                        "stages": {"build": {"category": "build", "required": True, "status": "Succeeded"}},
+                        "pipelineRuns": [],
+                        "status": "Succeeded",
                     }
                 ),
             }
