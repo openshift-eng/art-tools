@@ -1,5 +1,5 @@
 export const pipelineTabs = ['details', 'runs'];
-export const runTabs = ['details', 'logs', 'events', 'parameters', 'tasks'];
+export const runTabs = ['details', 'components', 'logs', 'events', 'parameters', 'tasks'];
 
 export function parseHash(hash = window.location.hash) {
   const [path, search] = hash.replace(/^#\/?/, '').split('?');

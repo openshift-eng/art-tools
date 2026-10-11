@@ -1,3 +1,4 @@
+import json
 import unittest
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -49,6 +50,29 @@ class RunDetailTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(response.status_code, 200)
         self.assertIsNone(response.json()["rebuiltFrom"])
+
+    async def test_components_available_for_live_and_archived_details(self):
+        self.run["metadata"]["annotations"].update(
+            {
+                "art.openshift.io/component-report": json.dumps({"version": 1, "partial": False}),
+                "art.openshift.io/component-build-123": json.dumps(
+                    {
+                        "version": 1,
+                        "type": "image",
+                        "name": "operator",
+                        "pipelineRuns": [],
+                        "status": "Succeeded",
+                    }
+                ),
+            }
+        )
+        for source in ("live", "archive"):
+            with patch.object(api, "find_run", new=AsyncMock(return_value=(self.run, source, None))):
+                response = await self.client.get(f"/api/runs/{NAMESPACE}/rebuilt-run?uid=rebuilt-uid")
+            self.assertEqual(response.status_code, 200)
+            self.assertEqual(response.json()["source"], source)
+            self.assertEqual(response.json()["components"][0]["status"], "Succeeded")
+            self.assertTrue(response.json()["componentReporting"]["available"])
 
 
 if __name__ == "__main__":
