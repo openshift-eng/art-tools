@@ -439,7 +439,7 @@ async def run_logs(request: Request, namespace: str, name: str, uid: str | None 
             logs, truncated = await gateway.archived_logs(record_name)
         except UpstreamError as error:
             if error.status in (404, 500):
-                return {"source": "archive", "text": "Archived logs are not available.", "truncated": False}
+                return {"source": "archive", "text": "Logs are not available.", "truncated": False}
             raise
     return {"source": "archive", "text": logs, "truncated": truncated}
 
