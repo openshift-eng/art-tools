@@ -27,6 +27,7 @@ from artcommonlib.konflux.konflux_build_record import (
     KonfluxFbcBuildRecord,
 )
 from artcommonlib.konflux.konflux_db import KonfluxDb
+from artcommonlib.pipeline_report import get_reporter
 from async_lru import alru_cache
 from dockerfile_parse import DockerfileParser
 from doozerlib import constants, opm, util
@@ -1860,6 +1861,8 @@ class KonfluxFbcBuilder:
     ):
         bundle_short_name = metadata.get_olm_bundle_short_name()
         logger = self._logger.getChild(f"[{bundle_short_name}]")
+        report = get_reporter().component('fbc', metadata.distgit_key, dry_run=self.dry_run)
+        await report.stage('completion', 'Running', category='preparation')
         logger.info("Building FBC for %s", metadata.distgit_key)
 
         record = {
@@ -1929,6 +1932,7 @@ class KonfluxFbcBuilder:
             if not nvr:
                 raise ValueError("FBC NVR not found in the catalog.Dockerfile. Did you rebase?")
             record["fbc_nvr"] = nvr
+            await report.stage('build', 'Pending', nvr=nvr, displayName=name)
             output_image = f"{self.image_repo}:{nvr}"
 
             try:
@@ -1949,6 +1953,10 @@ class KonfluxFbcBuilder:
                     git_auth_secret=git_auth_secret,
                 )
                 pipelinerun_name = pipelinerun_info.name
+                await report.stage('build', 'Running')
+                await report.observer(self._konflux_client, 'build', attempt=attempt + 1, category='build')(
+                    pipelinerun_info
+                )
                 record["task_id"] = pipelinerun_name
                 record["task_url"] = url
                 if not self.dry_run:
@@ -1963,6 +1971,9 @@ class KonfluxFbcBuilder:
                     pipelinerun_name, namespace=self.konflux_namespace
                 )
                 logger.info("PipelineRun %s completed", pipelinerun_name)
+                await report.observer(self._konflux_client, 'build', attempt=attempt + 1, category='build')(
+                    pipelinerun_info
+                )
 
                 pipelinerun_dict = pipelinerun_info.to_dict()
                 succeeded_condition = pipelinerun_info.find_condition('Succeeded')
@@ -2023,9 +2034,13 @@ class KonfluxFbcBuilder:
             if error:
                 record['message'] = str(error)
                 raise error
+        except Exception as exc:
+            await report.stage('completion', 'Failed', category='preparation', reason=str(exc))
+            raise
         finally:
             if self._record_logger:
                 self._record_logger.add_record("build_fbc_konflux", **record)
+        await report.stage('completion', 'Succeeded', category='preparation', nvr=record.get('fbc_nvr'))
         return pipelinerun_name, pipelinerun_dict
 
     async def _start_build(
