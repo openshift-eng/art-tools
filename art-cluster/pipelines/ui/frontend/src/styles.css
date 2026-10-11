@@ -293,3 +293,13 @@ button { cursor: pointer; }
   .nav { min-height: 39px; }
   .topbar-right { margin-left: auto; }
 }
+
+.component-counts, .component-links { display: flex; flex-wrap: wrap; gap: 0.75rem; margin: 0.75rem 0; }
+.components-table tbody tr { cursor: default; }
+.component-toggle { background: transparent; border: 0; color: inherit; font: inherit; font-weight: 600; cursor: pointer; text-align: left; padding: 0; }
+.component-expanded td { white-space: normal; }
+.component-expanded small, .components-table td > small { display: block; }
+.component-expanded li { margin-bottom: 0.75rem; overflow-wrap: anywhere; }
+.component-expanded code { display: block; overflow-wrap: anywhere; white-space: normal; }
+.component-stages { display: flex; flex-wrap: wrap; gap: 1.5rem; }
+.component-stages p { max-width: 40rem; overflow-wrap: anywhere; }

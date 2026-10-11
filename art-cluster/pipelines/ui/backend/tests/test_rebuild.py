@@ -35,6 +35,18 @@ PROMOTE_PIPELINE = {
 
 
 class RebuildTests(unittest.TestCase):
+    def test_rebuild_starts_without_source_component_reports(self):
+        source = deepcopy(OLD_RUN)
+        source["metadata"]["annotations"] = {
+            "art.openshift.io/component-report": '{"version":1,"partial":false}',
+            "art.openshift.io/component-build-123": '{"version":1}',
+        }
+        run = build_run(PIPELINE, {"new-required": []}, source_run=source)
+        self.assertNotIn("art.openshift.io/component-report", run["metadata"]["annotations"])
+        self.assertFalse(
+            any(key.startswith("art.openshift.io/component-build-") for key in run["metadata"]["annotations"])
+        )
+
     def test_form_merges_run_values_and_current_defaults(self):
         form = parameter_form(PIPELINE, OLD_RUN)
         values = {item["name"]: (item["value"], item["source"]) for item in form["parameters"]}

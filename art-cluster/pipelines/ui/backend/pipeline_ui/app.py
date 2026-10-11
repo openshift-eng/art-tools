@@ -13,6 +13,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
 from .cluster import Gateway, UpstreamError
+from .components import component_details
 from .health import build_health, health_run
 from .rebuild import (
     REBUILT_FROM_ANNOTATION,
@@ -364,6 +365,7 @@ async def run_detail(request: Request, namespace: str, name: str, uid: str | Non
     rebuilt_from_uid = annotations.get(REBUILT_FROM_ANNOTATION)
     return {
         **run_summary(run, source),
+        **component_details(run),
         "labels": labels,
         "annotations": annotations,
         "parentPipelineRun": labels.get("art.openshift.io/parent-pipelinerun"),
