@@ -668,6 +668,10 @@ class ConfigScanSources:
                 )
                 return
 
+            # Check if there has been a config change since last build
+            stage = 'config digest checks'
+            await self.scan_for_config_changes(image_meta)
+
             # Check if there's already a build from upstream latest commit
             stage = 'upstream commit checks'
             await self.scan_for_upstream_changes(image_meta)
@@ -693,9 +697,6 @@ class ConfigScanSources:
                 # Check for changes in the network mode (skip for OKD - it always uses open network)
                 stage = 'network mode checks'
                 await self.scan_network_mode_changes(image_meta)
-                # Check if there has been a config change since last build
-                stage = 'config digest checks'
-                await self.scan_for_config_changes(image_meta)
                 # Check for RPM changes
                 stage = 'rpm checks'
                 await self.scan_rpm_changes(image_meta)
