@@ -43,7 +43,10 @@ async def scan_and_trigger(runtime: Runtime):
         version = f"{parts[0]}.{parts[1]}"
 
         LOGGER.info("MR !%s — triggering verify-stage-testing for %s/%s", mr.iid, version, assembly)
-        jenkins.start_verify_stage_testing(version=version, assembly=assembly, block_until_building=True)
+        try:
+            jenkins.start_verify_stage_testing(version=version, assembly=assembly, block_until_building=True)
+        except Exception:
+            LOGGER.exception("MR !%s — failed to trigger verify-stage-testing for %s", mr.iid, assembly)
 
 
 @cli.command("schedule-stage-testing-scan", short_help="Scan shipment MRs and trigger stage testing")
