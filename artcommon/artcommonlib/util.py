@@ -192,9 +192,7 @@ def ensure_github_https_url(url: str) -> str:
     :return: HTTPS URL if the input points to github.com, otherwise the original URL
     """
     if not isinstance(url, str):
-        raise TypeError(
-            f"ensure_github_https_url expected a string URL, got {type(url).__name__}"
-        )
+        raise TypeError(f"ensure_github_https_url expected a string URL, got {type(url).__name__}")
     if _extract_git_hostname(url.strip()) != "github.com":
         return url
     return convert_remote_git_to_https(url)
