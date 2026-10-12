@@ -1134,7 +1134,8 @@ class PromotePipeline:
         response = requests.get(url, stream=True, timeout=120)
         response.raise_for_status()
         with open(dest_path, "wb") as f:
-            f.write(response.raw.read())
+            for chunk in response.iter_content(chunk_size=65536):
+                f.write(chunk)
 
     async def sigstore_sign(
         self,
