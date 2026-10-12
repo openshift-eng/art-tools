@@ -563,10 +563,11 @@ class TestKonfluxFbcRebaser(unittest.IsolatedAsyncioTestCase):
         metadata.get_olm_bundle_delivery_repo_name = MagicMock(return_value="openshift4/foo-bundle")
         build_repo = MagicMock()
         build_repo.local_dir = self.base_dir
+        bundle_digest = f"sha256:{'a' * 64}"
         bundle_build = MagicMock(
             spec=KonfluxBundleBuildRecord,
             nvr="foo-bundle-1.0.0-1",
-            image_pullspec="dev.example.com/foo-bundle@1",
+            image_pullspec=f"dev.example.com/foo-bundle@{bundle_digest}",
             image_tag="deadbeef",
             source_repo="https://example.com/foo-operator.git",
             commitish="beefdead",
@@ -683,6 +684,7 @@ class TestKonfluxFbcRebaser(unittest.IsolatedAsyncioTestCase):
         expected_labels = {
             "io.openshift.build.source-location": "https://example.com/foo-operator.git",
             "io.openshift.build.commit.id": "beefdead",
+            "com.redhat.art.bundle.pullspec": f"dev.example.com/foo-bundle@{bundle_digest}",
         }
         for k, v in expected_labels.items():
             self.assertIn(k, mock_dfp.labels)
@@ -715,6 +717,10 @@ class TestKonfluxFbcRebaser(unittest.IsolatedAsyncioTestCase):
             result_catalog_blobs["test-package"]["olm.bundle"].keys(),
             {"test-bundle-name.1.0.0", "test-bundle-name.1.2.3"},
         )
+        bundle_blob = result_catalog_blobs["test-package"]["olm.bundle"]["test-bundle-name.1.2.3"]
+        delivery_pullspec = f"registry.redhat.io/openshift4/foo-bundle@{bundle_digest}"
+        self.assertEqual(bundle_blob["image"], delivery_pullspec)
+        self.assertEqual(bundle_blob["relatedImages"][0]["image"], delivery_pullspec)
 
         images_mirror_set_file.seek(0)
         images_mirror_set = yaml.load(images_mirror_set_file)
@@ -728,6 +734,23 @@ class TestKonfluxFbcRebaser(unittest.IsolatedAsyncioTestCase):
             base_image='registry.redhat.io/openshift1/ose-operator-registry:v1.1',
             builder_image='registry.redhat.io/openshift1/ose-operator-registry:v1.1',
         )
+
+        with self.subTest("rebase with another bundle"):
+            bundle_build.nvr = "foo-bundle-1.0.0-2"
+            bundle_build.image_pullspec = f"dev.example.com/foo-bundle@sha256:{'b' * 64}"
+            result_catalog_file.seek(0)
+            rebuilt_catalog_file = StringIO()
+            mock_open.return_value.__enter__.side_effect = [
+                result_catalog_file,
+                rebuilt_catalog_file,
+                StringIO(),
+            ]
+            mock_get_referenced_images.return_value = []
+
+            await self.rebaser._rebase_dir(metadata, build_repo, bundle_build, version, release, logger)
+
+            self.assertEqual(mock_dfp.labels["com.redhat.art.bundle.pullspec"], bundle_build.image_pullspec)
+            self.assertEqual(mock_dfp.envs["__doozer_bundle_nvrs"], bundle_build.nvr)
 
     @patch("doozerlib.opm.generate_dockerfile")
     @patch("pathlib.Path.unlink")
