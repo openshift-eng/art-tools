@@ -86,30 +86,6 @@ def _is_test_shipment_mr(mr) -> bool:
     return title.startswith(_TEST_MR_TITLE_PREFIX) or _TEST_MR_DESCRIPTION_MARKER in description
 
 
-def _mark_shipment_mr_as_test(mr, dry_run: bool) -> None:
-    """Mark a shipment MR clearly as test-only without changing its draft state.
-
-    Args:
-        mr: GitLab merge request object to update.
-        dry_run: Update only the in-memory object without saving it remotely.
-    """
-    changed = False
-    title = getattr(mr, "title", "") or ""
-    draft_prefix = "Draft: " if title.startswith("Draft: ") else ""
-    title_without_draft = title.removeprefix("Draft: ")
-    if not title_without_draft.startswith(_TEST_MR_TITLE_PREFIX):
-        mr.title = f"{draft_prefix}{_TEST_MR_TITLE_PREFIX}{title_without_draft}"
-        changed = True
-
-    description = getattr(mr, "description", "") or ""
-    if _TEST_MR_DESCRIPTION_MARKER not in description:
-        mr.description = f"{_TEST_MR_DESCRIPTION_WARNING}\n\n{description}".rstrip()
-        changed = True
-
-    if changed and not dry_run:
-        mr.save()
-
-
 def _normalize_release_date(date_str: str) -> str:
     """Normalize a release date string to YYYY-Mon-DD format (e.g. 2026-Mar-31).
 
@@ -1185,6 +1161,9 @@ class ReleaseFromFbcPipeline:
 
         This is best-effort; failures are logged but do not raise.
         """
+        if self.test_mode:
+            self.logger.info("Test mode enabled; leaving the release JIRA unchanged")
+            return
         if not self.release_jira:
             return
 
@@ -1324,7 +1303,7 @@ class ReleaseFromFbcPipeline:
 
         existing_mr = None
         force_previous_mr = None
-        if self.create_mr and not self.ocp_optional:
+        if self.create_mr and not self.ocp_optional and not self.test_mode:
             configured_mr_url = self._load_layered_product_shipment_mr()
             if configured_mr_url:
                 try:
@@ -1348,12 +1327,11 @@ class ReleaseFromFbcPipeline:
                                 "; ".join(ci_state.active_stage),
                             )
                     else:
-                        if not self.test_mode and _is_test_shipment_mr(candidate_mr):
+                        if _is_test_shipment_mr(candidate_mr):
                             raise ShipmentMRValidationError(
                                 f"Shipment MR {configured_mr_url} is marked for testing and will not be promoted "
-                                "automatically. Run again with --test to keep debugging, use --force to create a "
-                                "replacement release MR, or deliberately remove the test title and warning before "
-                                "release."
+                                "automatically. Use --force to create a replacement release MR, or deliberately "
+                                "remove the test title and warning before release."
                             )
                         existing_mr = candidate_mr
                         self.logger.info("Will reuse shipment MR: %s", configured_mr_url)
@@ -1536,8 +1514,6 @@ class ReleaseFromFbcPipeline:
                     )
                     await self._verify_layered_product_shipment_mr()
                     set_shipment_mr_draft(existing_mr, self.dry_run)
-                    if self.test_mode:
-                        _mark_shipment_mr_as_test(existing_mr, self.dry_run)
                     # Drafting mutates the MR; check again before replacing its shipment files.
                     await validate_shipment_mr_for_operation(
                         self._gitlab,
@@ -1595,7 +1571,10 @@ class ReleaseFromFbcPipeline:
                             allow_active_stage=True,
                         )
                     mr_url = await self.create_shipment_mr(shipments_by_kind, env="prod")
-                    await self._update_layered_product_shipment_mr(mr_url)
+                    if self.test_mode:
+                        self.logger.info("Test mode enabled; leaving the releases.yml shipment MR pointer unchanged")
+                    else:
+                        await self._update_layered_product_shipment_mr(mr_url)
                     if force_previous_mr:
                         add_superseded_mr_comment(
                             self._gitlab,
@@ -1667,8 +1646,9 @@ class ReleaseFromFbcPipeline:
     "test_mode",
     is_flag=True,
     help=(
-        "Mark the shipment MR as test/debug-only, keep it draft, and skip the explicit CI pipeline trigger. "
-        "An ART operator must review and mark it ready manually."
+        "Create an isolated test/debug MR, keep it draft, and skip the explicit CI pipeline trigger. Test mode "
+        "does not read or update the releases.yml shipment pointer, replace a release MR, or update the release "
+        "JIRA. An ART operator must review and mark it ready manually."
     ),
 )
 @click.option(
@@ -1782,6 +1762,8 @@ async def release_from_fbc(
         raise click.ClickException("--force requires --create-mr")
     if test_mode and not create_mr:
         raise click.ClickException("--test requires --create-mr")
+    if test_mode and force:
+        raise click.ClickException("--test cannot be combined with --force because test MRs never replace release MRs")
     if force and ocp_optional:
         raise click.ClickException("--force is only supported for layered-product releases, not --ocp-optional")
 
