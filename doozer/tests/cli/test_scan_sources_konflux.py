@@ -1608,7 +1608,10 @@ class TestOkdBaseChainUpstreamChanges(TestScanSourcesKonflux):
         scanner.latest_image_build_records_map = {base_meta.distgit_key: build_record}
 
         new_commit = 'brand_new_commit'
-        with patch.object(scanner, 'find_upstream_commit_hash', return_value=new_commit):
+        with (
+            patch.object(scanner, 'find_upstream_commit_hash', return_value=new_commit),
+            patch.object(scanner, 'scan_for_config_changes', new_callable=AsyncMock),
+        ):
             base_meta.get_latest_build = AsyncMock(return_value=None)
             self.runtime.group_config.scan_freshness.threshold_hours = 6
 
