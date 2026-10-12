@@ -84,6 +84,7 @@ class GenAssemblyTargetedPipeline:
         self._working_dir = self.runtime.working_dir.absolute()
         self._registry_config = None
         self._doozer_env_vars = os.environ.copy()
+        self._doozer_env_vars["DOOZER_WORKING_DIR"] = str(self._working_dir / "doozer-working")
 
     async def run(self):
         """
