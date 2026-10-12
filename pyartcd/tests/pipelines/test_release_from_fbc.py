@@ -98,6 +98,7 @@ class TestReleaseFromFbcPipeline(unittest.TestCase):
 
         self.assertEqual(result, ["quay.io/new:419", "quay.io/new:420"])
         kwargs = mock_build_fbc_catalogs.await_args.kwargs
+        self.assertEqual(kwargs["assembly"], "1.4.5")
         self.assertEqual(kwargs["operator_nvrs_by_target"], {"4.19": [operator_nvr], "4.20": [operator_nvr]})
         self.assertTrue(kwargs["force"])
         self.assertTrue(kwargs["reset_to_prod"])
