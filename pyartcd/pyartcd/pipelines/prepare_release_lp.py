@@ -48,7 +48,9 @@ from pyartcd.fbc_util import (
 )
 from pyartcd.git import GitRepository
 from pyartcd.lp_shipment import (
+    FbcRefreshRecord,
     ShipmentMRValidationError,
+    add_fbc_refresh_comment,
     add_superseded_mr_comment,
     close_superseded_shipment_mr,
     create_shipment_mr_with_retry,
@@ -151,6 +153,7 @@ class PrepareReleaseLPPipeline:
         self.job_url: Optional[str] = None
 
         self.product: Optional[str] = None
+        self._fbc_refresh_records: list[FbcRefreshRecord] = []
 
         shipment_data_pull_url = (
             shipment_data_repo_url
@@ -540,6 +543,10 @@ class PrepareReleaseLPPipeline:
         )
         fbc_nvrs = [nvr for result in results for nvr in result.nvrs]
         fbc_pullspecs = [pullspec for result in results for pullspec in result.pullspecs]
+        if self.refresh_fbcs:
+            self._fbc_refresh_records = [
+                FbcRefreshRecord(result.target_version, (), result.pullspecs) for result in results
+            ]
         self._logger.info("FBC builds produced %d NVRs", len(fbc_nvrs))
         return fbc_nvrs, fbc_pullspecs
 
@@ -1077,6 +1084,16 @@ class PrepareReleaseLPPipeline:
                                 operation="prepare-release-lp",
                                 run_url=self.job_url,
                             )
+                    if self.refresh_fbcs:
+                        add_fbc_refresh_comment(
+                            self._gitlab,
+                            mr_url,
+                            self.assembly,
+                            self._fbc_refresh_records,
+                            operation="prepare-release-lp",
+                            run_url=self.job_url,
+                            dry_run=self.dry_run,
+                        )
                     await self._set_shipment_mr_ready()
             else:
                 timestamp = datetime.now(timezone.utc).strftime('%Y%m%d%H%M%S')

@@ -14,7 +14,7 @@ from elliottlib.shipment_model import (
     SnapshotSpec,
 )
 from pyartcd.fbc_build import FbcBuildResult
-from pyartcd.lp_shipment import ShipmentMRActiveStageError, ShipmentMRValidationError
+from pyartcd.lp_shipment import FbcRefreshRecord, ShipmentMRActiveStageError, ShipmentMRValidationError
 from pyartcd.pipelines.release_from_fbc import (
     _TEST_MR_DESCRIPTION_MARKER,
     ReleaseFromFbcPipeline,
@@ -97,6 +97,13 @@ class TestReleaseFromFbcPipeline(unittest.TestCase):
         result = asyncio.run(pipeline._refresh_fbc_pullspecs(source_nvrs))
 
         self.assertEqual(result, ["quay.io/new:419", "quay.io/new:420"])
+        self.assertEqual(
+            pipeline._fbc_refresh_records,
+            [
+                FbcRefreshRecord("4.19", ("quay.io/test/fbc:4.19",), ("quay.io/new:419",)),
+                FbcRefreshRecord("4.20", ("quay.io/test/fbc:4.20",), ("quay.io/new:420",)),
+            ],
+        )
         kwargs = mock_build_fbc_catalogs.await_args.kwargs
         self.assertEqual(kwargs["assembly"], "1.4.5")
         self.assertEqual(kwargs["operator_nvrs_by_target"], {"4.19": [operator_nvr], "4.20": [operator_nvr]})

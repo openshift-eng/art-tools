@@ -4,7 +4,7 @@ import unittest
 from unittest.mock import AsyncMock, MagicMock, PropertyMock, patch
 
 from pyartcd.fbc_build import FbcBuildResult
-from pyartcd.lp_shipment import ShipmentMRActiveStageError
+from pyartcd.lp_shipment import FbcRefreshRecord, ShipmentMRActiveStageError
 from pyartcd.pipelines.prepare_release_lp import PrepareReleaseLPPipeline
 
 
@@ -296,7 +296,14 @@ class TestPrepareReleaseLPMultiFBC(unittest.TestCase):
     def test_trigger_fbc_build_refreshes_from_production(self, mock_build_fbc_catalogs, mock_target_versions):
         """Refresh mode should force builds after resetting to production content."""
         mock_target_versions.return_value = ["4.20"]
-        mock_build_fbc_catalogs.return_value = []
+        mock_build_fbc_catalogs.return_value = [
+            FbcBuildResult(
+                "4.20",
+                ("loki-rhel9-operator-container-6.4.1-1",),
+                ("loki-operator-fbc-6.4.1-2.ocp4.20",),
+                ("quay.io/new:420",),
+            )
+        ]
         pipeline = self._make_pipeline(dry_run=False, refresh_fbcs=True)
 
         asyncio.run(pipeline._trigger_fbc_build(["loki-rhel9-operator-container-6.4.1-1"]))
@@ -304,6 +311,10 @@ class TestPrepareReleaseLPMultiFBC(unittest.TestCase):
         kwargs = mock_build_fbc_catalogs.await_args.kwargs
         self.assertTrue(kwargs["force"])
         self.assertTrue(kwargs["reset_to_prod"])
+        self.assertEqual(
+            pipeline._fbc_refresh_records,
+            [FbcRefreshRecord("4.20", (), ("quay.io/new:420",))],
+        )
 
     @patch.object(PrepareReleaseLPPipeline, '_load_ocp_target_versions', new_callable=AsyncMock)
     def test_trigger_fbc_build_dry_run_with_target_versions(self, mock_target_versions):

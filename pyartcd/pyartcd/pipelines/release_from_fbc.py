@@ -49,7 +49,9 @@ from pyartcd.fbc_util import (
 from pyartcd.fbc_util import validate_fbc_related_images as _validate_fbc_related_images
 from pyartcd.git import GitRepository
 from pyartcd.lp_shipment import (
+    FbcRefreshRecord,
     ShipmentMRValidationError,
+    add_fbc_refresh_comment,
     add_superseded_mr_comment,
     close_superseded_shipment_mr,
     create_shipment_mr_with_retry,
@@ -194,6 +196,7 @@ class ReleaseFromFbcPipeline:
         self._fbc_operator_keys: list[str] = []
         self._fbc_operator_by_pullspec: dict[str, str] = {}
         self._fbc_related_nvrs_by_pullspec: dict[str, list[str]] = {}
+        self._fbc_refresh_records: list[FbcRefreshRecord] = []
 
         # OCP version per advisory kind (e.g. 'fbc01' -> '4.19') for LP FBC shipment file naming
         self._fbc_ocp_versions: Dict[str, str] = {}
@@ -1351,6 +1354,7 @@ class ReleaseFromFbcPipeline:
             return list(self.fbc_pullspecs)
 
         replacement_pullspecs = []
+        refresh_records = []
         for result in results:
             target = result.target_version or "default"
             sources = source_pullspecs_by_target.get(target, [])
@@ -1360,7 +1364,9 @@ class ReleaseFromFbcPipeline:
                 sources,
                 list(result.pullspecs),
             )
+            refresh_records.append(FbcRefreshRecord(result.target_version, tuple(sources), result.pullspecs))
             replacement_pullspecs.extend(result.pullspecs)
+        self._fbc_refresh_records = refresh_records
         return replacement_pullspecs
 
     async def run(self) -> None:
@@ -1713,6 +1719,16 @@ class ReleaseFromFbcPipeline:
                             run_url=self.job_url,
                         )
                 self.logger.info("Shipment MR: %s", mr_url)
+                if self.refresh_fbcs:
+                    add_fbc_refresh_comment(
+                        self._gitlab,
+                        mr_url,
+                        self.assembly,
+                        self._fbc_refresh_records,
+                        operation="release-from-fbc",
+                        run_url=self.job_url,
+                        dry_run=self.dry_run,
+                    )
                 self._update_jira_with_mr_link(mr_url)
                 await self.set_shipment_mr_ready()
 
