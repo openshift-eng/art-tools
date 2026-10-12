@@ -24,6 +24,7 @@ from artcommonlib.konflux.konflux_build_record import (
 )
 from artcommonlib.konflux.konflux_db import Engine, KonfluxDb
 from artcommonlib.model import Model
+from artcommonlib.pipeline_report import get_reporter
 from artcommonlib.util import sync_to_quay
 from dockerfile_parse import DockerfileParser
 from doozerlib import constants, util
@@ -1073,6 +1074,10 @@ class KonfluxOlmBundleBuilder:
     async def build(self, metadata: ImageMetadata, git_auth_secret: Optional[str] = None):
         """Build a bundle with Konflux."""
         logger = self._logger.getChild(f"[{metadata.distgit_key}]")
+        report = get_reporter().component(
+            'bundle', metadata.distgit_key, display_name=metadata.get_olm_bundle_short_name(), dry_run=self.dry_run
+        )
+        await report.set_status('Pending')
         konflux_client = self._konflux_client
         bundle_dir = self.base_dir.joinpath(metadata.get_olm_bundle_short_name())
         df_path = bundle_dir.joinpath("Dockerfile")
@@ -1163,6 +1168,7 @@ class KonfluxOlmBundleBuilder:
                     git_auth_secret=git_auth_secret,
                 )
                 pipelinerun_name = pipelinerun_info.name
+                await report.observe(pipelinerun_info, konflux_client, attempt=attempt + 1)
                 record["task_id"] = pipelinerun_name
                 record["task_url"] = url
 
@@ -1185,6 +1191,7 @@ class KonfluxOlmBundleBuilder:
                 # Wait for the PipelineRun to complete
                 pipelinerun_info = await konflux_client.wait_for_pipelinerun(pipelinerun_name, self.konflux_namespace)
                 logger.info("PipelineRun %s completed", pipelinerun_name)
+                await report.observe(pipelinerun_info, konflux_client, attempt=attempt + 1)
 
                 pipelinerun_dict = pipelinerun_info.to_dict()
                 succeeded_condition = pipelinerun_info.find_condition('Succeeded')
@@ -1288,6 +1295,9 @@ class KonfluxOlmBundleBuilder:
             if error:
                 record['message'] = str(error)
                 raise error
+        except Exception as exc:
+            await report.failed(str(exc))
+            raise
         finally:
             if self._record_logger:
                 self._record_logger.add_record("build_olm_bundle_konflux", **record)

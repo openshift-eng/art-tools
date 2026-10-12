@@ -6,6 +6,7 @@ from typing import List, Optional
 
 import click
 from artcommonlib import exectools
+from artcommonlib.pipeline_report import get_reporter
 from artcommonlib.product_catalog import get_kubeconfig_env_vars
 from artcommonlib.util import resolve_konflux_kubeconfig_by_product, resolve_konflux_namespace_by_product
 from artcommonlib.variants import BuildVariant, get_build_variant_for_product
@@ -117,6 +118,7 @@ class BuildFbcPipeline:
         return True
 
     async def run(self):
+        await get_reporter().note("Waiting for FBC selection")
         # Bind Slack channel based on product field from group config
         group = f"openshift-{self.version}" if not self.group else self.group
         group_config = await load_group_config(
@@ -134,6 +136,9 @@ class BuildFbcPipeline:
         # For new OCP versions (e.g. 5.0), neither the index image nor the base images are published yet,
         # which causes all Konflux FBC builds to fail. Exit silently rather than wasting time.
         if not await self._check_production_index_exists():
+            await get_reporter().note(
+                'Skipped FBC builds: production operator index image is not available', state='skipped'
+            )
             self._logger.info('Production operator index image not available yet. Skipping FBC build.')
             return
 

@@ -24,6 +24,7 @@ from artcommonlib.konflux.konflux_build_record import (
 )
 from artcommonlib.model import Missing
 from artcommonlib.oc_image_info import oc_image_info__cached_async
+from artcommonlib.pipeline_report import get_reporter
 from artcommonlib.release_util import SoftwareLifecyclePhase, isolate_el_version_in_release, split_el_suffix_in_release
 from artcommonlib.rpm_utils import compare_nvr, parse_nvr
 from artcommonlib.util import fetch_slsa_attestation, get_konflux_data
@@ -154,6 +155,10 @@ class KonfluxImageBuilder:
     async def build(self, metadata: ImageMetadata, git_auth_secret: Optional[str] = None):
         """Build a container image with Konflux."""
         logger = self._logger.getChild(f"[{metadata.distgit_key}]")
+        report = get_reporter().component(
+            'image', metadata.distgit_key, display_name=metadata.distgit_key, dry_run=self._config.dry_run
+        )
+        await report.set_status('Pending')
         metadata.build_status = False
         dest_dir = self._config.base_dir.joinpath(metadata.qualified_key)
         df_path = dest_dir.joinpath("Dockerfile")
@@ -308,6 +313,7 @@ class KonfluxImageBuilder:
                     git_auth_secret=git_auth_secret,
                 )
                 pipelinerun_name = pipelinerun_info.name
+                await report.observe(pipelinerun_info, self._konflux_client, attempt=attempt + 1)
                 record["task_id"] = pipelinerun_name
                 record["task_url"] = self._konflux_client.resource_url(pipelinerun_info.to_dict())
                 record["build_pipeline_url"] = record["task_url"]  # Store build pipeline URL for failure tracking
@@ -326,6 +332,7 @@ class KonfluxImageBuilder:
                     pipelinerun_name, namespace=self._config.namespace
                 )
                 logger.info("PipelineRun %s completed", pipelinerun_name)
+                await report.observe(pipelinerun_info, self._konflux_client, attempt=attempt + 1)
 
                 succeeded_condition = pipelinerun_info.find_condition('Succeeded')
                 outcome = KonfluxBuildOutcome.extract_from_pipelinerun_succeeded_condition(succeeded_condition)
@@ -564,6 +571,7 @@ class KonfluxImageBuilder:
                 raise error
 
         except Exception as exc:
+            await report.failed(str(exc))
             # Capture the actual error message for any exception that bypasses
             # the build loop's error handling (e.g., parent build failures,
             # NVR validation errors). Without this, record["message"] would

@@ -9,6 +9,7 @@ import click
 import yaml
 from artcommonlib import exectools
 from artcommonlib.build_visibility import is_nvr_embargoed
+from artcommonlib.pipeline_report import get_reporter
 from artcommonlib.product_catalog import get_kubeconfig_env_vars
 from artcommonlib.util import (
     product_version_from_group_name,
@@ -188,6 +189,7 @@ class BuildLayeredProductsPipeline:
 
     async def run(self):
         """Run the layered products rebase and build pipeline"""
+        await get_reporter().note("Waiting for image selection")
         # Load group config once for both version and product information
         group_config = await load_group_config(
             group=self.group,

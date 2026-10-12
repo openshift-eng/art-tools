@@ -18,6 +18,7 @@ from artcommonlib.konflux.konflux_build_record import (
 )
 from artcommonlib.konflux.konflux_db import KonfluxDb
 from artcommonlib.model import Missing
+from artcommonlib.pipeline_report import get_reporter
 from artcommonlib.util import (
     resolve_konflux_kubeconfig_by_product,
     resolve_konflux_namespace_by_product,
@@ -660,30 +661,33 @@ class FbcRebaseAndBuildCli:
         :param git_auth_secret: Name of the transient git-auth Secret for PipelineRuns
         :return: Tuple of (NVR, pullspec) of the FBC build
         """
-        existing_fbc_build = await self._check_existing_fbc_build(operator_meta, bundle_build)
-        if existing_fbc_build:
-            self._logger.info(f"Found existing FBC build: {existing_fbc_build.nvr}")
-            if not self.force:
-                return existing_fbc_build.nvr, existing_fbc_build.image_pullspec or ""
-            self._logger.info("Force flag is set, rebuilding FBC")
+        report = get_reporter().component('fbc', operator_meta.distgit_key, dry_run=self.dry_run)
+        async with report.preparing():
+            existing_fbc_build = await self._check_existing_fbc_build(operator_meta, bundle_build)
+            if existing_fbc_build:
+                self._logger.info(f"Found existing FBC build: {existing_fbc_build.nvr}")
+                if not self.force:
+                    await report.set_status('Reused', reason='Existing successful FBC reused')
+                    return existing_fbc_build.nvr, existing_fbc_build.image_pullspec or ""
+                self._logger.info("Force flag is set, rebuilding FBC")
 
-        if self.reset_to_prod:
-            self._logger.info(f"Resetting FBC source content to production index image for {operator_meta.name}...")
-            await importer.import_from_index_image(operator_meta, index_image=None, strict=False)
+            if self.reset_to_prod:
+                self._logger.info(f"Resetting FBC source content to production index image for {operator_meta.name}...")
+                await importer.import_from_index_image(operator_meta, index_image=None, strict=False)
 
-        self._logger.info(f"Rebasing fbc for {operator_meta.name}...")
-        nvr = await rebaser.rebase(operator_meta, bundle_build, self.version, self.release)
-        self._logger.info(f"Building fbc for {operator_meta.name}...")
-        _, pipelinerun_dict = await builder.build(
-            operator_meta, operator_nvr=bundle_build.operator_nvr, git_auth_secret=git_auth_secret
-        )
-        results = pipelinerun_dict.get('status', {}).get('results', [])
-        image_url = next((r['value'] for r in results if r['name'] == 'IMAGE_URL'), None)
-        image_digest = next((r['value'] for r in results if r['name'] == 'IMAGE_DIGEST'), None)
-        pullspec = f"{image_url.rsplit(':', 1)[0]}@{image_digest}" if image_url and image_digest else ""
-        if not pullspec:
-            LOGGER.warning("Could not extract pullspec from pipelinerun results for %s", nvr)
-        return nvr, pullspec
+            self._logger.info(f"Rebasing fbc for {operator_meta.name}...")
+            nvr = await rebaser.rebase(operator_meta, bundle_build, self.version, self.release)
+            self._logger.info(f"Building fbc for {operator_meta.name}...")
+            _, pipelinerun_dict = await builder.build(
+                operator_meta, operator_nvr=bundle_build.operator_nvr, git_auth_secret=git_auth_secret
+            )
+            results = pipelinerun_dict.get('status', {}).get('results', [])
+            image_url = next((r['value'] for r in results if r['name'] == 'IMAGE_URL'), None)
+            image_digest = next((r['value'] for r in results if r['name'] == 'IMAGE_DIGEST'), None)
+            pullspec = f"{image_url.rsplit(':', 1)[0]}@{image_digest}" if image_url and image_digest else ""
+            if not pullspec:
+                LOGGER.warning("Could not extract pullspec from pipelinerun results for %s", nvr)
+            return nvr, pullspec
 
     async def run(self):
         """Rebase and build fbc fragments for given operator NVRs or all latest operator NVRs for the group and assembly"""
@@ -704,6 +708,11 @@ class FbcRebaseAndBuildCli:
         dgk_not_found = [dgk for dgk, bundle_build in dgk_bundle_builds.items() if bundle_build is None]
         if dgk_not_found:
             for dgk in dgk_not_found:
+                await (
+                    get_reporter()
+                    .component('fbc', dgk)
+                    .set_status('Skipped', reason='No successful bundle build found')
+                )
                 self._logger.warning(f"Bundle build not found for {dgk_operator_builds[dgk].nvr}. Will skip it.")
         dgk_bundle_builds = {
             dgk: bundle_build for dgk, bundle_build in dgk_bundle_builds.items() if bundle_build is not None

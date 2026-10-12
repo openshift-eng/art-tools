@@ -4,6 +4,7 @@ from pathlib import Path
 
 import click
 from artcommonlib import exectools
+from artcommonlib.pipeline_report import get_reporter
 from artcommonlib.product_catalog import get_kubeconfig_env_vars
 from artcommonlib.util import (
     product_version_from_group_name,
@@ -149,6 +150,7 @@ async def olm_bundle_konflux(
     plr_template: str,
     group: str,
 ):
+    await get_reporter().note("Waiting for bundle selection")
     # If unspecified, assume it's for openshift
     if not group:
         group = f"openshift-{version}"

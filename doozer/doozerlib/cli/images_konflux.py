@@ -17,6 +17,7 @@ from artcommonlib.konflux.konflux_build_record import (
 )
 from artcommonlib.konflux.konflux_db import KonfluxDb
 from artcommonlib.model import Missing
+from artcommonlib.pipeline_report import get_reporter
 from artcommonlib.telemetry import start_as_current_span_async
 from artcommonlib.util import (
     KubeCondition,
@@ -150,20 +151,21 @@ class KonfluxRebaseCli:
         if art_internal_metas:
             await rebaser.rpm_lockfile_generator.ensure_repositories_loaded(art_internal_metas, base_dir)
 
+        async def rebase_one(meta):
+            report = get_reporter().component('image', meta.distgit_key)
+            async with report.preparing():
+                return await rebaser.rebase_to(
+                    meta,
+                    self.version,
+                    self.release,
+                    force_yum_updates=self.force_yum_updates,
+                    commit_message=self.message,
+                    push=self.push,
+                )
+
         tasks = []
         for image_meta in metas:
-            tasks.append(
-                asyncio.create_task(
-                    rebaser.rebase_to(
-                        image_meta,
-                        self.version,
-                        self.release,
-                        force_yum_updates=self.force_yum_updates,
-                        commit_message=self.message,
-                        push=self.push,
-                    )
-                )
-            )
+            tasks.append(asyncio.create_task(rebase_one(image_meta)))
         results = await asyncio.gather(*tasks, return_exceptions=True)
         failed_images = []
         skipped_due_to_parent = []
@@ -869,45 +871,50 @@ class KonfluxBundleCli:
         git_auth_secret: Optional[str] = None,
     ) -> str:
         logger = LOGGER.getChild(f"[{image_meta.distgit_key}]")
-        input_release = self.release
-        if not self.force or not input_release:
-            logger.info("Checking if a previous bundle build exists...")
-            bundle_build = await self._get_bundle_build_for(operator_build, strict=False)
-            if bundle_build is not None:
-                logger.info(f"A previous bundle build already exists: {bundle_build.nvr}")
-                if not self.force:
-                    logger.info("Skipping because --force is not set")
-                    return bundle_build.nvr
-                input_release = str(int(bundle_build.release) + 1)
-                logger.info("Force rebuild requested because --force is set; release string will be %s", input_release)
-            else:
-                input_release = "1"
-                logger.info(
-                    "No previous bundle build found; a new bundle build will be created with release string %s",
-                    input_release,
+        report = get_reporter().component('bundle', image_meta.distgit_key, dry_run=self.dry_run)
+        async with report.preparing():
+            input_release = self.release
+            if not self.force or not input_release:
+                logger.info("Checking if a previous bundle build exists...")
+                bundle_build = await self._get_bundle_build_for(operator_build, strict=False)
+                if bundle_build is not None:
+                    logger.info(f"A previous bundle build already exists: {bundle_build.nvr}")
+                    if not self.force:
+                        logger.info("Skipping because --force is not set")
+                        await report.set_status('Reused', reason='Existing successful bundle reused')
+                        return bundle_build.nvr
+                    input_release = str(int(bundle_build.release) + 1)
+                    logger.info(
+                        "Force rebuild requested because --force is set; release string will be %s", input_release
+                    )
+                else:
+                    input_release = "1"
+                    logger.info(
+                        "No previous bundle build found; a new bundle build will be created with release string %s",
+                        input_release,
+                    )
+
+            logger.info("Rebasing OLM bundle...")
+            nvr = await rebaser.rebase(image_meta, operator_build, input_release)
+
+            # The assembly-scoped lookup above determines whether this assembly already has a
+            # bundle for the operator. The resulting NVR, however, is derived from the operator's
+            # labels and can collide with a bundle recorded under another assembly. Check the exact
+            # NVR globally before starting a PipelineRun so a cross-assembly invocation cannot
+            # create two successful builds with the same NVR.
+            existing_build = await self._get_bundle_build_by_nvr(nvr)
+            if existing_build is not None:
+                raise ValueError(
+                    f"Successful bundle NVR {nvr} already exists in DB! "
+                    f"Existing build assembly: {existing_build.assembly}; "
+                    f"pullspec: {existing_build.image_pullspec}. "
+                    "To rebuild, use a different bundle release."
                 )
 
-        logger.info("Rebasing OLM bundle...")
-        nvr = await rebaser.rebase(image_meta, operator_build, input_release)
-
-        # The assembly-scoped lookup above determines whether this assembly already has a
-        # bundle for the operator. The resulting NVR, however, is derived from the operator's
-        # labels and can collide with a bundle recorded under another assembly. Check the exact
-        # NVR globally before starting a PipelineRun so a cross-assembly invocation cannot
-        # create two successful builds with the same NVR.
-        existing_build = await self._get_bundle_build_by_nvr(nvr)
-        if existing_build is not None:
-            raise ValueError(
-                f"Successful bundle NVR {nvr} already exists in DB! "
-                f"Existing build assembly: {existing_build.assembly}; "
-                f"pullspec: {existing_build.image_pullspec}. "
-                "To rebuild, use a different bundle release."
-            )
-
-        logger.info("Building OLM bundle...")
-        await builder.build(image_meta, git_auth_secret=git_auth_secret)
-        logger.info("Bundle build complete")
-        return nvr
+            logger.info("Building OLM bundle...")
+            await builder.build(image_meta, git_auth_secret=git_auth_secret)
+            logger.info("Bundle build complete")
+            return nvr
 
     @start_as_current_span_async(TRACER, "images:konflux:bundle")
     async def run(self):
