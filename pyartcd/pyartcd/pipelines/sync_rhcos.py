@@ -24,10 +24,10 @@ import aiohttp
 import click
 from artcommonlib.exectools import limit_concurrency
 
-from pyartcd import constants, util
+from pyartcd import util
 from pyartcd.cli import cli, click_coroutine, pass_runtime
 from pyartcd.runtime import Runtime
-from pyartcd.signatory import AsyncSignatory
+from pyartcd.signatory import create_signatory
 
 S3_BUCKET = "s3://art-srv-enterprise"
 
@@ -46,6 +46,7 @@ class SyncRhcosPipeline:
         synclist: str,
         no_latest: bool = False,
         signing_env: Optional[str] = None,
+        signing_transport: str = "umb",
     ):
         self.runtime = runtime
         self.arch = arch
@@ -56,6 +57,7 @@ class SyncRhcosPipeline:
         self.synclist = synclist
         self.no_latest = no_latest
         self.signing_env = signing_env
+        self.signing_transport = signing_transport
         self.logger = runtime.logger
 
         self.staging_dir = Path(runtime.working_dir) / f"staging-{version}"
@@ -219,21 +221,32 @@ class SyncRhcosPipeline:
         return h.hexdigest()
 
     async def _sign_sha256sum(self):
-        """GPG-sign sha256sum.txt via RADAS/UMB and write sha256sum.txt.gpg."""
-        cert_file = os.environ.get("SIGNING_CERT")
-        key_file = os.environ.get("SIGNING_KEY")
-        if not cert_file or not key_file:
-            self.logger.warning("SIGNING_CERT/SIGNING_KEY not set; skipping sha256sum.txt signing")
-            return
+        """GPG-sign sha256sum.txt and write sha256sum.txt.gpg.
 
-        uri = constants.UMB_BROKERS[self.signing_env]
-        sig_keyname = "redhatrelease2" if self.signing_env == "prod" else "beta2"
+        Uses either RADAS/UMB or Konflux generic-signing pipeline depending
+        on the configured signing_transport.
+        """
+        if self.signing_transport == "umb":
+            cert_file = os.environ.get("SIGNING_CERT")
+            key_file = os.environ.get("SIGNING_KEY")
+            if not cert_file or not key_file:
+                self.logger.warning("SIGNING_CERT/SIGNING_KEY not set; skipping sha256sum.txt signing")
+                return
+
         sha256sum_path = self.staging_dir / "sha256sum.txt"
         gpg_path = self.staging_dir / "sha256sum.txt.gpg"
 
-        self.logger.info("Signing sha256sum.txt with key %s via %s", sig_keyname, self.signing_env)
+        self.logger.info(
+            "Signing sha256sum.txt via %s transport (env=%s)",
+            self.signing_transport,
+            self.signing_env,
+        )
 
-        async with AsyncSignatory(uri, cert_file, key_file, sig_keyname=sig_keyname) as signatory:
+        signatory = create_signatory(
+            transport=self.signing_transport,
+            signing_env=self.signing_env,
+        )
+        async with signatory:
             with open(sha256sum_path, "rb") as in_file, open(gpg_path, "wb") as sig_file:
                 await signatory.sign_message_digest(
                     product="openshift",
@@ -328,6 +341,12 @@ class SyncRhcosPipeline:
     default=None,
     help="Signing environment for GPG-signing sha256sum.txt (omit to skip signing)",
 )
+@click.option(
+    "--signing-transport",
+    type=click.Choice(["umb", "konflux"]),
+    default="umb",
+    help="Signing transport: 'umb' (legacy RADAS/UMB) or 'konflux' (Konflux generic-signing pipeline)",
+)
 @pass_runtime
 @click_coroutine
 async def sync_rhcos(
@@ -340,6 +359,7 @@ async def sync_rhcos(
     synclist: str,
     no_latest: bool,
     signing_env: Optional[str],
+    signing_transport: str,
 ):
     pipeline = SyncRhcosPipeline(
         runtime=runtime,
@@ -351,5 +371,6 @@ async def sync_rhcos(
         synclist=synclist,
         no_latest=no_latest,
         signing_env=signing_env,
+        signing_transport=signing_transport,
     )
     await pipeline.run()

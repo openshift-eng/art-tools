@@ -221,46 +221,47 @@ class TestSyncRhcosPipeline(IsolatedAsyncioTestCase):
             delete=True,
         )
 
-    @patch("pyartcd.pipelines.sync_rhcos.AsyncSignatory")
-    async def test_sign_sha256sum(self, mock_signatory_cls):
+    @patch("pyartcd.pipelines.sync_rhcos.create_signatory")
+    async def test_sign_sha256sum(self, mock_create_signatory):
         pipeline = self._make_pipeline(signing_env="prod")
         pipeline.staging_dir.mkdir(parents=True, exist_ok=True)
         sha256_file = pipeline.staging_dir / "sha256sum.txt"
         sha256_file.write_text("abc123  file.bin\n")
 
         mock_signatory = AsyncMock()
-        mock_signatory_cls.return_value = mock_signatory
+        mock_create_signatory.return_value = mock_signatory
         mock_signatory.__aenter__ = AsyncMock(return_value=mock_signatory)
         mock_signatory.__aexit__ = AsyncMock(return_value=False)
 
         with patch.dict(os.environ, {"SIGNING_CERT": "/fake/cert", "SIGNING_KEY": "/fake/key"}):
             await pipeline._sign_sha256sum()
 
-        mock_signatory_cls.assert_called_once()
-        _, kwargs = mock_signatory_cls.call_args
-        self.assertEqual(kwargs["sig_keyname"], "redhatrelease2")
+        mock_create_signatory.assert_called_once()
+        call_kwargs = mock_create_signatory.call_args[1]
+        self.assertEqual(call_kwargs["transport"], "umb")
+        self.assertEqual(call_kwargs["signing_env"], "prod")
 
         mock_signatory.sign_message_digest.assert_awaited_once()
         call_kwargs = mock_signatory.sign_message_digest.call_args[1]
         self.assertEqual(call_kwargs["product"], "openshift")
         self.assertEqual(call_kwargs["release_name"], "4.19.0-ec.0")
 
-    @patch("pyartcd.pipelines.sync_rhcos.AsyncSignatory")
-    async def test_sign_sha256sum_stage(self, mock_signatory_cls):
+    @patch("pyartcd.pipelines.sync_rhcos.create_signatory")
+    async def test_sign_sha256sum_stage(self, mock_create_signatory):
         pipeline = self._make_pipeline(signing_env="stage")
         pipeline.staging_dir.mkdir(parents=True, exist_ok=True)
         (pipeline.staging_dir / "sha256sum.txt").write_text("abc123  file.bin\n")
 
         mock_signatory = AsyncMock()
-        mock_signatory_cls.return_value = mock_signatory
+        mock_create_signatory.return_value = mock_signatory
         mock_signatory.__aenter__ = AsyncMock(return_value=mock_signatory)
         mock_signatory.__aexit__ = AsyncMock(return_value=False)
 
         with patch.dict(os.environ, {"SIGNING_CERT": "/fake/cert", "SIGNING_KEY": "/fake/key"}):
             await pipeline._sign_sha256sum()
 
-        _, kwargs = mock_signatory_cls.call_args
-        self.assertEqual(kwargs["sig_keyname"], "beta2")
+        call_kwargs = mock_create_signatory.call_args[1]
+        self.assertEqual(call_kwargs["signing_env"], "stage")
 
     async def test_sign_sha256sum_skips_without_creds(self):
         pipeline = self._make_pipeline(signing_env="prod")

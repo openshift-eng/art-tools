@@ -1,6 +1,8 @@
 import asyncio
 import base64
 import json
+import os
+import tempfile
 from datetime import datetime, timedelta, timezone
 from io import BytesIO
 from unittest import IsolatedAsyncioTestCase
@@ -11,7 +13,15 @@ from cryptography.hazmat.primitives import hashes
 from cryptography.hazmat.primitives.asymmetric import rsa
 from cryptography.hazmat.primitives.serialization import Encoding
 from cryptography.x509.oid import NameOID
-from pyartcd.signatory import AsyncSignatory, SigstoreSignatory
+from pyartcd.exceptions import SignatoryServerError
+from pyartcd.signatory import (
+    PROD_SIGNING_KEY_NAME,
+    STAGE_SIGNING_KEY_NAME,
+    AsyncSignatory,
+    KonfluxSignatory,
+    SigstoreSignatory,
+    create_signatory,
+)
 
 
 class TestAsyncSignatory(IsolatedAsyncioTestCase):
@@ -521,3 +531,426 @@ class TestSigstoreSignatory(IsolatedAsyncioTestCase):
         err_msg = str(result[ps])
         self.assertIn("identity=", err_msg)
         self.assertIn("key=my-key-123", err_msg)
+
+
+class TestKonfluxSignatory(IsolatedAsyncioTestCase):
+    """Tests for the KonfluxSignatory class."""
+
+    def _create_signatory(self, **kwargs) -> KonfluxSignatory:
+        defaults = dict(
+            sig_keyname="redhatrelease2",
+            namespace="test-ns",
+            ta_registry="quay.io/test/ta",
+            on_behalf_of="test-user",
+            poll_interval=0.01,
+            timeout=5.0,
+        )
+        defaults.update(kwargs)
+        return KonfluxSignatory(**defaults)
+
+    def test_constructor_defaults(self):
+        """Constructor sets defaults from constants or hardcoded values."""
+        sig = KonfluxSignatory(sig_keyname="beta2")
+        self.assertEqual(sig.sig_keyname, "beta2")
+        self.assertEqual(sig.namespace, "art-release--signing")
+        self.assertEqual(sig.on_behalf_of, "jupierce@redhat.com")
+        self.assertEqual(sig.task_git_url, KonfluxSignatory.DEFAULT_TASK_GIT_URL)
+        self.assertEqual(sig.task_git_revision, KonfluxSignatory.DEFAULT_TASK_GIT_REVISION)
+
+    def test_constructor_env_overrides(self):
+        """Constructor reads from environment variables when provided."""
+        env = {
+            "KONFLUX_SIGNING_NAMESPACE": "custom-ns",
+            "KONFLUX_TA_REGISTRY": "registry.example.com/ta",
+        }
+        with patch.dict("os.environ", env):
+            sig = KonfluxSignatory(sig_keyname="redhatrelease2")
+        self.assertEqual(sig.namespace, "custom-ns")
+        self.assertEqual(sig.ta_registry, "registry.example.com/ta")
+        # on_behalf_of uses the module constant, not an env var
+        self.assertEqual(sig.on_behalf_of, "jupierce@redhat.com")
+
+    def test_rate_limit_labels(self):
+        """Rate-limiting labels match the signing infrastructure requirements."""
+        self.assertEqual(
+            KonfluxSignatory.RATE_LIMIT_LABELS,
+            {
+                "internal-services.appstudio.openshift.io/rate-limited": "true",
+                "internal-services.appstudio.openshift.io/rate-limiting-group": "signing-server",
+            },
+        )
+
+    @patch("pyartcd.signatory.KonfluxSignatory._sign_content", new_callable=AsyncMock)
+    async def test_sign_json_digest_constructs_claim(self, mock_sign_content):
+        """sign_json_digest builds the correct JSON claim and calls _sign_content."""
+        sig = self._create_signatory()
+        sig_file = BytesIO()
+
+        await sig.sign_json_digest(
+            product="openshift",
+            release_name="4.16.1",
+            pullspec="quay.io/ocp-release:4.16.1",
+            digest="sha256:abc123",
+            sig_file=sig_file,
+        )
+
+        mock_sign_content.assert_awaited_once()
+        call_args = mock_sign_content.call_args
+        content = call_args[0][0]
+        filename = call_args[0][1]
+
+        # Verify JSON claim structure
+        claim = json.loads(content)
+        self.assertEqual(claim["critical"]["image"]["docker-manifest-digest"], "sha256:abc123")
+        self.assertEqual(claim["critical"]["type"], "atomic container signature")
+        self.assertEqual(claim["critical"]["identity"]["docker-reference"], "quay.io/ocp-release:4.16.1")
+        self.assertEqual(claim["optional"]["creator"], "Red Hat OpenShift Signing Authority 0.0.1")
+
+        # Verify filename format
+        self.assertEqual(filename, "sha256=abc123.json")
+
+    @patch("pyartcd.signatory.KonfluxSignatory._sign_content", new_callable=AsyncMock)
+    async def test_sign_message_digest_reads_artifact(self, mock_sign_content):
+        """sign_message_digest reads artifact content and calls _sign_content."""
+        sig = self._create_signatory()
+        artifact = BytesIO(b"fake sha256sum content")
+        sig_file = BytesIO()
+
+        await sig.sign_message_digest(
+            product="openshift",
+            release_name="4.16.1",
+            artifact=artifact,
+            sig_file=sig_file,
+        )
+
+        mock_sign_content.assert_awaited_once()
+        call_args = mock_sign_content.call_args
+        content = call_args[0][0]
+        filename = call_args[0][1]
+
+        self.assertEqual(content, b"fake sha256sum content")
+        self.assertEqual(filename, "sha256sum.txt")
+
+    @patch("pyartcd.signatory.KonfluxSignatory._extract_signature", new_callable=AsyncMock)
+    @patch("pyartcd.signatory.KonfluxSignatory._pull_trusted_artifact", new_callable=AsyncMock)
+    @patch("pyartcd.signatory.KonfluxSignatory._wait_for_completion", new_callable=AsyncMock)
+    @patch("pyartcd.signatory.KonfluxSignatory._create_internal_request", new_callable=AsyncMock)
+    @patch("pyartcd.signatory.KonfluxSignatory._push_trusted_artifact", new_callable=AsyncMock)
+    async def test_sign_content_orchestrates_pipeline(
+        self, mock_push, mock_create_ir, mock_wait, mock_pull, mock_extract
+    ):
+        """_sign_content orchestrates the full push→IR→wait→pull→extract flow."""
+        sig = self._create_signatory()
+        sig._api = MagicMock()  # Skip k8s init
+
+        mock_push.return_value = "oci:quay.io/test/ta:art-input-test"
+        mock_create_ir.return_value = "art-sign-test123"
+        mock_wait.return_value = "oci:quay.io/test/ta:art-output-test"
+
+        sig_file = BytesIO()
+        await sig._sign_content(b"test content", "test.txt", sig_file)
+
+        # Verify the full orchestration sequence
+        mock_push.assert_awaited_once()
+        mock_create_ir.assert_awaited_once()
+        mock_wait.assert_awaited_once_with("art-sign-test123")
+        mock_pull.assert_awaited_once()
+        mock_extract.assert_awaited_once()
+
+    @patch("pyartcd.signatory.exectools.cmd_gather_async", new_callable=AsyncMock)
+    async def test_push_trusted_artifact_calls_oras(self, mock_cmd):
+        """_push_trusted_artifact invokes oras push with the correct arguments."""
+        mock_cmd.return_value = (0, "Pushed", "")
+        sig = self._create_signatory(ta_registry="quay.io/test/ta")
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            # Create a test file
+            test_file = os.path.join(tmpdir, "test.txt")
+            with open(test_file, "w") as f:
+                f.write("test content")
+
+            result = await sig._push_trusted_artifact(tmpdir, "req-123")
+
+        self.assertTrue(result.startswith("oci:"))
+        mock_cmd.assert_awaited_once()
+        cmd = mock_cmd.call_args[0][0]
+        self.assertEqual(cmd[0], "oras")
+        self.assertEqual(cmd[1], "push")
+        self.assertIn("quay.io/test/ta:art-input-req-123", cmd[2])
+
+    @patch("pyartcd.signatory.exectools.cmd_gather_async", new_callable=AsyncMock)
+    async def test_push_trusted_artifact_raises_on_failure(self, mock_cmd):
+        """_push_trusted_artifact raises SignatoryServerError on oras failure."""
+        mock_cmd.return_value = (1, "", "auth error")
+        sig = self._create_signatory()
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            test_file = os.path.join(tmpdir, "test.txt")
+            with open(test_file, "w") as f:
+                f.write("test")
+
+            with self.assertRaises(SignatoryServerError):
+                await sig._push_trusted_artifact(tmpdir, "req-fail")
+
+    async def test_create_internal_request_body(self):
+        """_create_internal_request builds correct CR with rate-limiting labels."""
+        sig = self._create_signatory(
+            sig_keyname="redhatrelease2",
+            namespace="test-ns",
+            on_behalf_of="test-user",
+            task_git_url="https://gitlab.example.com/signing/signing.git",
+            task_git_revision="v1.0",
+        )
+        mock_api = MagicMock()
+        sig._api = mock_api
+
+        # Run in executor calls the lambda, so mock run_in_executor to call it directly
+        loop = asyncio.get_event_loop()
+
+        async def fake_run_in_executor(executor, fn):
+            return fn()
+
+        with patch.object(loop, "run_in_executor", side_effect=fake_run_in_executor):
+            await sig._create_internal_request("art-sign-test", "oci:quay.io/test:input")
+
+        mock_api.create_namespaced_custom_object.assert_called_once()
+        call_kwargs = mock_api.create_namespaced_custom_object.call_args[1]
+
+        self.assertEqual(call_kwargs["group"], "appstudio.redhat.com")
+        self.assertEqual(call_kwargs["version"], "v1alpha1")
+        self.assertEqual(call_kwargs["namespace"], "test-ns")
+        self.assertEqual(call_kwargs["plural"], "internalrequests")
+
+        body = call_kwargs["body"]
+        self.assertEqual(body["metadata"]["name"], "art-sign-test")
+        self.assertEqual(body["metadata"]["namespace"], "test-ns")
+
+        # Verify rate-limiting labels
+        labels = body["metadata"]["labels"]
+        self.assertEqual(labels["internal-services.appstudio.openshift.io/rate-limited"], "true")
+        self.assertEqual(labels["internal-services.appstudio.openshift.io/rate-limiting-group"], "signing-server")
+        self.assertEqual(labels["art.openshift.io/signing-request"], "true")
+
+        # Verify params
+        params = body["spec"]["params"]
+        self.assertEqual(params["sourceDataArtifact"], "oci:quay.io/test:input")
+        self.assertEqual(params["keyname"], "redhatrelease2")
+        self.assertEqual(params["signMethod"], "gpgsign")
+        self.assertEqual(params["onbehalfof"], "test-user")
+        self.assertEqual(params["taskGitUrl"], "https://gitlab.example.com/signing/signing.git")
+        self.assertEqual(params["taskGitRevision"], "v1.0")
+
+    async def test_wait_for_completion_success(self):
+        """_wait_for_completion returns result URI on success."""
+        sig = self._create_signatory()
+        mock_api = MagicMock()
+        sig._api = mock_api
+
+        mock_api.get_namespaced_custom_object.return_value = {
+            "status": {
+                "conditions": [{"type": "Succeeded", "status": "True"}],
+                "results": {"sourceDataArtifact": "oci:quay.io/test:output"},
+            }
+        }
+
+        loop = asyncio.get_event_loop()
+
+        async def fake_run_in_executor(executor, fn):
+            return fn()
+
+        with patch.object(loop, "run_in_executor", side_effect=fake_run_in_executor):
+            result = await sig._wait_for_completion("test-ir")
+
+        self.assertEqual(result, "oci:quay.io/test:output")
+
+    async def test_wait_for_completion_failure(self):
+        """_wait_for_completion raises on failed InternalRequest."""
+        sig = self._create_signatory()
+        mock_api = MagicMock()
+        sig._api = mock_api
+
+        mock_api.get_namespaced_custom_object.return_value = {
+            "status": {
+                "conditions": [
+                    {
+                        "type": "Succeeded",
+                        "status": "False",
+                        "reason": "PipelineFailed",
+                        "message": "signing error details",
+                    }
+                ],
+            }
+        }
+
+        loop = asyncio.get_event_loop()
+
+        async def fake_run_in_executor(executor, fn):
+            return fn()
+
+        with patch.object(loop, "run_in_executor", side_effect=fake_run_in_executor):
+            with self.assertRaises(SignatoryServerError) as ctx:
+                await sig._wait_for_completion("test-ir")
+        self.assertIn("PipelineFailed", str(ctx.exception))
+        self.assertIn("signing error details", str(ctx.exception))
+
+    async def test_wait_for_completion_timeout(self):
+        """_wait_for_completion raises on timeout."""
+        sig = self._create_signatory(timeout=0.05, poll_interval=0.01)
+        mock_api = MagicMock()
+        sig._api = mock_api
+
+        # Always return "still running"
+        mock_api.get_namespaced_custom_object.return_value = {
+            "status": {
+                "conditions": [{"type": "Succeeded", "status": "Unknown"}],
+            }
+        }
+
+        loop = asyncio.get_event_loop()
+
+        async def fake_run_in_executor(executor, fn):
+            return fn()
+
+        with patch.object(loop, "run_in_executor", side_effect=fake_run_in_executor):
+            with self.assertRaises(SignatoryServerError) as ctx:
+                await sig._wait_for_completion("test-ir")
+        self.assertIn("timed out", str(ctx.exception))
+
+    async def test_extract_signature_success(self):
+        """_extract_signature reads results.json and writes the signature."""
+        sig = self._create_signatory()
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            # Create signatures directory and file
+            sig_dir = os.path.join(tmpdir, "signatures")
+            os.makedirs(sig_dir)
+            sig_content = b"-----BEGIN PGP SIGNATURE-----\nfake-signature\n-----END PGP SIGNATURE-----"
+            with open(os.path.join(sig_dir, "0_abc123.sig"), "wb") as f:
+                f.write(sig_content)
+
+            # Create results.json
+            results = {
+                "results": [
+                    {
+                        "file": "sha256sum.txt",
+                        "signature_file": "signatures/0_abc123.sig",
+                        "key": "redhatrelease2",
+                    }
+                ]
+            }
+            with open(os.path.join(tmpdir, "results.json"), "w") as f:
+                json.dump(results, f)
+
+            sig_file = BytesIO()
+            await sig._extract_signature(tmpdir, "sha256sum.txt", sig_file)
+
+        self.assertEqual(sig_file.getvalue(), sig_content)
+
+    async def test_extract_signature_missing_results_json(self):
+        """_extract_signature raises when results.json is missing."""
+        sig = self._create_signatory()
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            sig_file = BytesIO()
+            with self.assertRaises(SignatoryServerError) as ctx:
+                await sig._extract_signature(tmpdir, "sha256sum.txt", sig_file)
+            self.assertIn("results.json not found", str(ctx.exception))
+
+    async def test_extract_signature_no_matching_file(self):
+        """_extract_signature raises when no matching entry exists in results.json."""
+        sig = self._create_signatory()
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            results = {"results": [{"file": "other.txt", "signature_file": "signatures/0.sig", "key": "test"}]}
+            with open(os.path.join(tmpdir, "results.json"), "w") as f:
+                json.dump(results, f)
+
+            sig_file = BytesIO()
+            with self.assertRaises(SignatoryServerError) as ctx:
+                await sig._extract_signature(tmpdir, "sha256sum.txt", sig_file)
+            self.assertIn("No signature found", str(ctx.exception))
+
+    @patch("pyartcd.signatory.exectools.cmd_gather_async", new_callable=AsyncMock)
+    async def test_pull_trusted_artifact_strips_oci_prefix(self, mock_cmd):
+        """_pull_trusted_artifact strips oci: prefix and calls oras pull."""
+        mock_cmd.return_value = (0, "Pulled", "")
+        sig = self._create_signatory()
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            await sig._pull_trusted_artifact("oci:quay.io/test:output", tmpdir)
+
+        mock_cmd.assert_awaited_once()
+        cmd = mock_cmd.call_args[0][0]
+        self.assertEqual(cmd[0], "oras")
+        self.assertEqual(cmd[1], "pull")
+        self.assertEqual(cmd[2], "quay.io/test:output")
+
+    async def test_context_manager(self):
+        """KonfluxSignatory supports async context manager."""
+        sig = self._create_signatory()
+        with patch("pyartcd.signatory.KonfluxSignatory._ensure_k8s_client"):
+            async with sig as s:
+                self.assertIs(s, sig)
+
+
+class TestCreateSignatory(IsolatedAsyncioTestCase):
+    """Tests for the create_signatory factory function."""
+
+    @patch("pyartcd.signatory.AsyncUMBClient", autospec=True)
+    def test_create_umb_signatory_prod(self, _):
+        """create_signatory('umb', 'prod') creates AsyncSignatory with prod key."""
+        sig = create_signatory(
+            transport="umb",
+            signing_env="prod",
+            uri="stomp+ssl://umb.example.com:61612",
+            cert_file="/path/to/cert",
+            key_file="/path/to/key",
+        )
+        self.assertIsInstance(sig, AsyncSignatory)
+        self.assertEqual(sig.sig_keyname, PROD_SIGNING_KEY_NAME)
+
+    @patch("pyartcd.signatory.AsyncUMBClient", autospec=True)
+    def test_create_umb_signatory_stage(self, _):
+        """create_signatory('umb', 'stage') creates AsyncSignatory with stage key."""
+        sig = create_signatory(
+            transport="umb",
+            signing_env="stage",
+            uri="stomp+ssl://umb.stage.example.com:61612",
+            cert_file="/path/to/cert",
+            key_file="/path/to/key",
+        )
+        self.assertIsInstance(sig, AsyncSignatory)
+        self.assertEqual(sig.sig_keyname, STAGE_SIGNING_KEY_NAME)
+
+    def test_create_konflux_signatory_prod(self):
+        """create_signatory('konflux', 'prod') creates KonfluxSignatory with prod key."""
+        sig = create_signatory(
+            transport="konflux",
+            signing_env="prod",
+            namespace="test-ns",
+        )
+        self.assertIsInstance(sig, KonfluxSignatory)
+        self.assertEqual(sig.sig_keyname, PROD_SIGNING_KEY_NAME)
+
+    def test_create_konflux_signatory_stage(self):
+        """create_signatory('konflux', 'stage') creates KonfluxSignatory with stage key."""
+        sig = create_signatory(
+            transport="konflux",
+            signing_env="stage",
+            namespace="test-ns",
+        )
+        self.assertIsInstance(sig, KonfluxSignatory)
+        self.assertEqual(sig.sig_keyname, STAGE_SIGNING_KEY_NAME)
+
+    def test_create_signatory_invalid_transport(self):
+        """create_signatory raises ValueError for unknown transport."""
+        with self.assertRaises(ValueError) as ctx:
+            create_signatory(transport="invalid", signing_env="prod")
+        self.assertIn("Unknown signing transport", str(ctx.exception))
+
+    @patch("pyartcd.signatory.AsyncUMBClient", autospec=True)
+    @patch.dict("os.environ", {"SIGNING_CERT": "/env/cert.pem", "SIGNING_KEY": "/env/key.pem"})
+    def test_create_umb_signatory_uses_env_vars(self, _):
+        """create_signatory('umb') falls back to SIGNING_CERT/KEY env vars."""
+        sig = create_signatory(transport="umb", signing_env="prod")
+        self.assertIsInstance(sig, AsyncSignatory)

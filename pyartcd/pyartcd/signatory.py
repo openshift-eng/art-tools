@@ -6,12 +6,13 @@ import json
 import logging
 import os
 import shutil
+import tarfile
 import tempfile
 import uuid
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from random import uniform
-from typing import BinaryIO, Dict, Iterable, List, Optional, Set, Tuple, cast
+from typing import BinaryIO, Dict, Iterable, List, Optional, Protocol, Set, Tuple, cast, runtime_checkable
 
 import aiofiles
 import aiohttp
@@ -26,6 +27,93 @@ from pyartcd.oc import get_image_info, get_release_image_info
 from pyartcd.umb_client import AsyncUMBClient
 
 _LOGGER = logging.getLogger(__name__)
+
+# Signing key names used for production vs staging environments
+PROD_SIGNING_KEY_NAME = "redhatrelease2"
+STAGE_SIGNING_KEY_NAME = "beta2"
+
+# Human identity attached to signing requests for audit purposes
+ON_BEHALF_OF = "jupierce@redhat.com"
+
+
+@runtime_checkable
+class Signatory(Protocol):
+    """Protocol defining the interface for artifact signing implementations.
+
+    Any class implementing this protocol can sign OCP artifacts either via
+    UMB (AsyncSignatory) or via the Konflux generic-signing pipeline (KonfluxSignatory).
+    """
+
+    async def sign_json_digest(
+        self, product: str, release_name: str, pullspec: str, digest: str, sig_file: BinaryIO
+    ) -> None:
+        """Sign a JSON digest claim for a container image.
+
+        :param product: Product name (e.g. "openshift")
+        :param release_name: Release version (e.g. "4.16.1")
+        :param pullspec: Image pullspec
+        :param digest: Image digest (e.g. "sha256:...")
+        :param sig_file: Writable binary file to receive the signature
+        """
+        ...
+
+    async def sign_message_digest(
+        self, product: str, release_name: str, artifact: BinaryIO, sig_file: BinaryIO
+    ) -> None:
+        """Sign a message digest (e.g. sha256sum.txt).
+
+        :param product: Product name (e.g. "openshift")
+        :param release_name: Release version (e.g. "4.16.1")
+        :param artifact: Readable binary file containing the content to sign
+        :param sig_file: Writable binary file to receive the signature
+        """
+        ...
+
+
+def create_signatory(
+    transport: str,
+    signing_env: str,
+    **kwargs,
+) -> "AsyncSignatory | KonfluxSignatory":
+    """Factory function to create the appropriate Signatory implementation.
+
+    :param transport: Signing transport to use: "umb" for legacy UMB/RADAS,
+        "konflux" for the Konflux generic-signing pipeline via InternalRequest.
+    :param signing_env: Signing environment ("prod" or "stage"). Determines the
+        signing key (redhatrelease2 for prod, beta2 for stage).
+    :param kwargs: Additional keyword arguments passed to the signatory constructor.
+        For "umb": uri, cert_file, key_file, requestor, subscription_name.
+        For "konflux": namespace, kubeconfig, ta_registry, on_behalf_of,
+            task_git_url, task_git_revision.
+    :returns: A signatory instance implementing the Signatory protocol.
+    :raises ValueError: If transport is not "umb" or "konflux".
+    """
+    sig_keyname = PROD_SIGNING_KEY_NAME if signing_env == "prod" else STAGE_SIGNING_KEY_NAME
+
+    if transport == "umb":
+        from pyartcd import constants
+
+        uri = kwargs.pop("uri", None) or constants.UMB_BROKERS[signing_env]
+        cert_file = kwargs.pop("cert_file", None) or os.environ.get("SIGNING_CERT", "")
+        key_file = kwargs.pop("key_file", None) or os.environ.get("SIGNING_KEY", "")
+        requestor = kwargs.pop("requestor", "artcd")
+        subscription_name = kwargs.pop("subscription_name", "artcd")
+        return AsyncSignatory(
+            uri=uri,
+            cert_file=cert_file,
+            key_file=key_file,
+            sig_keyname=sig_keyname,
+            requestor=requestor,
+            subscription_name=subscription_name,
+        )
+
+    if transport == "konflux":
+        return KonfluxSignatory(
+            sig_keyname=sig_keyname,
+            **kwargs,
+        )
+
+    raise ValueError(f"Unknown signing transport: {transport!r}. Supported: 'umb', 'konflux'")
 
 
 class AsyncSignatory:
@@ -694,3 +782,407 @@ class SigstoreSignatory:
         if rc:
             raise RuntimeError(stderr)
         return stdout
+
+
+class KonfluxSignatory:
+    """Sign OCP artifacts using the Konflux ``generic-signing`` pipeline.
+
+    Instead of sending signing requests over UMB to RADAS (like
+    :class:`AsyncSignatory`), this class packages content as a Trusted
+    Artifact (OCI tarball), creates a Kubernetes ``InternalRequest`` custom
+    resource that triggers the ``generic-signing`` pipeline on the Konflux
+    common cluster, waits for completion, then extracts the resulting
+    binary GPG signature from the output Trusted Artifact.
+
+    Architecture overview (see ISV-7449 and
+    https://gitlab.cee.redhat.com/signing/signing for full details):
+
+    1. The file to sign is packaged into a tar.gz archive and pushed to an
+       OCI registry as a Trusted Artifact using ``oras push``.
+    2. An ``InternalRequest`` CR is created in the configured namespace with
+       rate-limiting labels required by the signing infrastructure::
+
+           internal-services.appstudio.openshift.io/rate-limited: "true"
+           internal-services.appstudio.openshift.io/rate-limiting-group: signing-server
+
+    3. The internal-services operator picks up the request and runs the
+       ``generic-signing`` pipeline on the common cluster.
+    4. On success the pipeline writes a result Trusted Artifact containing a
+       ``signatures/`` directory and a ``results.json`` manifest.
+    5. This class downloads the result TA, extracts the signature, and
+       writes it to the caller-supplied file handle.
+
+    The ``signMethod`` is always ``gpgsign`` (binary ``.gpg`` files) to
+    match the existing mirror format used by ART.
+
+    :param sig_keyname: Signing key name (e.g. ``redhatrelease2``, ``beta2``).
+    :param namespace: Kubernetes namespace for InternalRequest CRs.
+        Defaults to ``KONFLUX_SIGNING_NAMESPACE`` env var or
+        ``art-release--signing``.
+    :param kubeconfig: Path to kubeconfig file. ``None`` uses in-cluster
+        config or the ``KUBECONFIG`` env var.
+    :param ta_registry: OCI registry for Trusted Artifact storage.
+        Defaults to ``KONFLUX_TA_REGISTRY`` env var or
+        ``quay.io/konflux-ci/release-service-trusted-artifacts``.
+    :param on_behalf_of: Human identity for audit trail. Defaults to
+        ``ON_BEHALF_OF`` (``jupierce@redhat.com``).
+    :param task_git_url: Git URL of the signing repo. Defaults to
+        ``https://gitlab.cee.redhat.com/signing/signing.git``.
+    :param task_git_revision: Git revision of the signing repo. Defaults
+        to ``main``.
+    :param poll_interval: Seconds between InternalRequest status polls.
+    :param timeout: Maximum seconds to wait for a signing request.
+    """
+
+    # InternalRequest CRD coordinates
+    IR_GROUP = "appstudio.redhat.com"
+    IR_VERSION = "v1alpha1"
+    IR_PLURAL = "internalrequests"
+
+    # Rate-limiting labels required by the signing infrastructure
+    RATE_LIMIT_LABELS = {
+        "internal-services.appstudio.openshift.io/rate-limited": "true",
+        "internal-services.appstudio.openshift.io/rate-limiting-group": "signing-server",
+    }
+
+    # Default signing pipeline reference
+    DEFAULT_PIPELINE = "generic-signing"
+    DEFAULT_TASK_GIT_URL = "https://gitlab.cee.redhat.com/signing/signing.git"
+    DEFAULT_TASK_GIT_REVISION = "main"
+
+    def __init__(
+        self,
+        sig_keyname: str,
+        namespace: Optional[str] = None,
+        kubeconfig: Optional[str] = None,
+        ta_registry: Optional[str] = None,
+        on_behalf_of: Optional[str] = None,
+        task_git_url: Optional[str] = None,
+        task_git_revision: Optional[str] = None,
+        poll_interval: float = 10.0,
+        timeout: float = 600.0,
+    ):
+        self.sig_keyname = sig_keyname
+        self.namespace = namespace or os.environ.get("KONFLUX_SIGNING_NAMESPACE", "art-release--signing")
+        self.kubeconfig = kubeconfig
+        self.ta_registry = ta_registry or os.environ.get(
+            "KONFLUX_TA_REGISTRY",
+            "quay.io/konflux-ci/release-service-trusted-artifacts",
+        )
+        self.on_behalf_of = on_behalf_of or ON_BEHALF_OF
+        self.task_git_url = task_git_url or self.DEFAULT_TASK_GIT_URL
+        self.task_git_revision = task_git_revision or self.DEFAULT_TASK_GIT_REVISION
+        self.poll_interval = poll_interval
+        self.timeout = timeout
+
+        self._api = None  # Lazily initialized kubernetes.client.CustomObjectsApi
+
+    # -- Context manager support -----------------------------------------------
+
+    async def __aenter__(self):
+        self._ensure_k8s_client()
+        return self
+
+    async def __aexit__(self, exc_type, exc, tb):
+        pass
+
+    # -- Public signing interface (Signatory protocol) -------------------------
+
+    async def sign_json_digest(
+        self,
+        product: str,
+        release_name: str,
+        pullspec: str,
+        digest: str,
+        sig_file: BinaryIO,
+    ) -> None:
+        """Sign a JSON digest claim via the Konflux generic-signing pipeline.
+
+        Constructs the same JSON claim format as :class:`AsyncSignatory`,
+        packages it as a Trusted Artifact, and submits it for signing.
+        """
+        json_claim = {
+            "critical": {
+                "image": {"docker-manifest-digest": digest},
+                "type": "atomic container signature",
+                "identity": {"docker-reference": pullspec},
+            },
+            "optional": {
+                "creator": "Red Hat OpenShift Signing Authority 0.0.1",
+            },
+        }
+        content = json.dumps(json_claim).encode()
+        filename = f"{digest.replace(':', '=')}.json"
+
+        await self._sign_content(content, filename, sig_file)
+
+    async def sign_message_digest(
+        self,
+        product: str,
+        release_name: str,
+        artifact: BinaryIO,
+        sig_file: BinaryIO,
+    ) -> None:
+        """Sign a message digest file via the Konflux generic-signing pipeline.
+
+        Reads the artifact content and submits it for GPG signing.
+        """
+        content = artifact.read()
+        filename = "sha256sum.txt"
+
+        await self._sign_content(content, filename, sig_file)
+
+    # -- Internal implementation -----------------------------------------------
+
+    def _ensure_k8s_client(self):
+        """Lazily initialise the Kubernetes API client."""
+        if self._api is not None:
+            return
+        from kubernetes import client
+        from kubernetes import config as k8s_config
+
+        if self.kubeconfig:
+            k8s_config.load_kube_config(config_file=self.kubeconfig)
+        else:
+            try:
+                k8s_config.load_incluster_config()
+            except k8s_config.ConfigException:
+                k8s_config.load_kube_config()
+        self._api = client.CustomObjectsApi()
+
+    async def _sign_content(
+        self,
+        content: bytes,
+        filename: str,
+        sig_file: BinaryIO,
+    ) -> None:
+        """Core signing flow: package → push TA → create IR → poll → extract.
+
+        :param content: Raw bytes to sign.
+        :param filename: Filename inside the Trusted Artifact archive.
+        :param sig_file: Writable binary file to receive the binary GPG signature.
+        """
+        self._ensure_k8s_client()
+        request_id = f"art-sign-{uuid.uuid4().hex[:12]}"
+
+        with tempfile.TemporaryDirectory(prefix="konflux-sign-") as tmpdir:
+            # 1. Create the input archive for the Trusted Artifact
+            input_dir = os.path.join(tmpdir, "input")
+            os.makedirs(input_dir)
+            input_file = os.path.join(input_dir, filename)
+            with open(input_file, "wb") as f:
+                f.write(content)
+
+            # 2. Push the input as a Trusted Artifact via oras
+            ta_uri = await self._push_trusted_artifact(input_dir, request_id)
+
+            # 3. Create the InternalRequest CR
+            ir_name = await self._create_internal_request(request_id, ta_uri)
+
+            # 4. Wait for completion and get the result TA URI
+            result_ta_uri = await self._wait_for_completion(ir_name)
+
+            # 5. Pull the result TA and extract the signature
+            output_dir = os.path.join(tmpdir, "output")
+            os.makedirs(output_dir)
+            await self._pull_trusted_artifact(result_ta_uri, output_dir)
+            await self._extract_signature(output_dir, filename, sig_file)
+
+    async def _push_trusted_artifact(self, input_dir: str, request_id: str) -> str:
+        """Package the input directory and push it as a Trusted Artifact.
+
+        Uses ``oras push`` to upload a tar.gz archive to the OCI registry.
+
+        :param input_dir: Directory containing the file(s) to sign.
+        :param request_id: Unique request ID used as the tag.
+        :returns: The OCI URI of the pushed artifact (``oci:<ref>``).
+        """
+        tag = f"art-input-{request_id}"
+        ref = f"{self.ta_registry}:{tag}"
+
+        # Create a tar.gz from the input directory
+        archive_path = os.path.join(os.path.dirname(input_dir), "input.tar.gz")
+        with tarfile.open(archive_path, "w:gz") as tar:
+            for entry in os.listdir(input_dir):
+                tar.add(os.path.join(input_dir, entry), arcname=entry)
+
+        cmd = [
+            "oras",
+            "push",
+            ref,
+            f"{archive_path}:application/vnd.oci.image.layer.v1.tar+gzip",
+        ]
+        _LOGGER.info("Pushing Trusted Artifact to %s", ref)
+        rc, stdout, stderr = await exectools.cmd_gather_async(cmd, check=False)
+        if rc:
+            raise SignatoryServerError(f"Failed to push Trusted Artifact: {stderr}")
+
+        return f"oci:{ref}"
+
+    async def _create_internal_request(self, request_id: str, source_data_artifact: str) -> str:
+        """Create an InternalRequest CR to trigger the generic-signing pipeline.
+
+        :param request_id: Unique identifier for this signing request.
+        :param source_data_artifact: OCI URI of the input Trusted Artifact.
+        :returns: The name of the created InternalRequest resource.
+        """
+        ir_name = request_id
+        body = {
+            "apiVersion": f"{self.IR_GROUP}/{self.IR_VERSION}",
+            "kind": "InternalRequest",
+            "metadata": {
+                "name": ir_name,
+                "namespace": self.namespace,
+                "labels": {
+                    **self.RATE_LIMIT_LABELS,
+                    "art.openshift.io/signing-request": "true",
+                },
+            },
+            "spec": {
+                "request": self.DEFAULT_PIPELINE,
+                "params": {
+                    "sourceDataArtifact": source_data_artifact,
+                    "keyname": self.sig_keyname,
+                    "signMethod": "gpgsign",
+                    "onbehalfof": self.on_behalf_of,
+                    "taskGitUrl": self.task_git_url,
+                    "taskGitRevision": self.task_git_revision,
+                },
+            },
+        }
+
+        _LOGGER.info(
+            "Creating InternalRequest %s in namespace %s (key=%s)",
+            ir_name,
+            self.namespace,
+            self.sig_keyname,
+        )
+        await asyncio.get_event_loop().run_in_executor(
+            None,
+            lambda: self._api.create_namespaced_custom_object(
+                group=self.IR_GROUP,
+                version=self.IR_VERSION,
+                namespace=self.namespace,
+                plural=self.IR_PLURAL,
+                body=body,
+            ),
+        )
+        return ir_name
+
+    async def _wait_for_completion(self, ir_name: str) -> str:
+        """Poll the InternalRequest until it completes or times out.
+
+        :param ir_name: Name of the InternalRequest to monitor.
+        :returns: OCI URI of the result Trusted Artifact.
+        :raises SignatoryServerError: If the request fails or times out.
+        """
+        deadline = asyncio.get_event_loop().time() + self.timeout
+
+        while True:
+            ir = await asyncio.get_event_loop().run_in_executor(
+                None,
+                lambda: self._api.get_namespaced_custom_object(
+                    group=self.IR_GROUP,
+                    version=self.IR_VERSION,
+                    namespace=self.namespace,
+                    plural=self.IR_PLURAL,
+                    name=ir_name,
+                ),
+            )
+
+            status = ir.get("status", {})
+            conditions = status.get("conditions", [])
+
+            for condition in conditions:
+                if condition.get("type") == "Succeeded":
+                    cond_status = condition.get("status", "")
+                    if cond_status == "True":
+                        result_uri = status.get("results", {}).get("sourceDataArtifact", "")
+                        if not result_uri:
+                            raise SignatoryServerError(
+                                f"InternalRequest {ir_name} succeeded but has no sourceDataArtifact result"
+                            )
+                        _LOGGER.info(
+                            "InternalRequest %s completed successfully, result: %s",
+                            ir_name,
+                            result_uri,
+                        )
+                        return result_uri
+                    if cond_status == "False":
+                        reason = condition.get("reason", "Unknown")
+                        message = condition.get("message", "")
+                        raise SignatoryServerError(f"InternalRequest {ir_name} failed: {reason} - {message}")
+                    # status == "Unknown" → still running
+
+            if asyncio.get_event_loop().time() > deadline:
+                raise SignatoryServerError(f"InternalRequest {ir_name} timed out after {self.timeout}s")
+
+            _LOGGER.debug("InternalRequest %s still running, polling in %ss", ir_name, self.poll_interval)
+            await asyncio.sleep(self.poll_interval)
+
+    async def _pull_trusted_artifact(self, ta_uri: str, output_dir: str) -> None:
+        """Download and extract a Trusted Artifact.
+
+        :param ta_uri: OCI URI of the Trusted Artifact (``oci:<ref>``).
+        :param output_dir: Directory to extract the artifact contents into.
+        """
+        # Strip "oci:" prefix if present
+        ref = ta_uri.removeprefix("oci:")
+
+        cmd = ["oras", "pull", ref, "--output", output_dir]
+        _LOGGER.info("Pulling result Trusted Artifact from %s", ref)
+        rc, stdout, stderr = await exectools.cmd_gather_async(cmd, check=False)
+        if rc:
+            raise SignatoryServerError(f"Failed to pull result Trusted Artifact: {stderr}")
+
+        # If a tar.gz was pulled, extract it
+        for entry in os.listdir(output_dir):
+            path = os.path.join(output_dir, entry)
+            if entry.endswith(".tar.gz") or entry.endswith(".tgz"):
+                with tarfile.open(path, "r:gz") as tar:
+                    tar.extractall(path=output_dir)
+                os.remove(path)
+
+    async def _extract_signature(
+        self,
+        output_dir: str,
+        original_filename: str,
+        sig_file: BinaryIO,
+    ) -> None:
+        """Extract the binary GPG signature from the signing pipeline results.
+
+        The output TA contains a ``results.json`` with pointers into a
+        ``signatures/`` directory. This method reads the results, finds the
+        signature for the original input file, and writes it to *sig_file*.
+
+        :param output_dir: Directory containing the extracted result TA.
+        :param original_filename: Name of the original input file.
+        :param sig_file: Writable binary file to receive the signature.
+        :raises SignatoryServerError: If results.json is missing or the
+            signature for the input file cannot be found.
+        """
+        results_path = os.path.join(output_dir, "results.json")
+        if not os.path.exists(results_path):
+            raise SignatoryServerError(f"results.json not found in signing output (contents: {os.listdir(output_dir)})")
+
+        with open(results_path) as f:
+            results = json.load(f)
+
+        # Find the signature for our input file
+        for entry in results.get("results", []):
+            if entry.get("file", "").endswith(original_filename):
+                sig_path = os.path.join(output_dir, entry["signature_file"])
+                if not os.path.exists(sig_path):
+                    raise SignatoryServerError(
+                        f"Signature file {entry['signature_file']} referenced in results.json not found"
+                    )
+                with open(sig_path, "rb") as sf:
+                    sig_file.write(sf.read())
+                _LOGGER.info(
+                    "Extracted signature for %s (key: %s)",
+                    original_filename,
+                    entry.get("key", "unknown"),
+                )
+                return
+
+        raise SignatoryServerError(f"No signature found for {original_filename} in results.json: {results}")

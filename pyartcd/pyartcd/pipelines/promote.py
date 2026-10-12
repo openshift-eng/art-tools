@@ -82,7 +82,7 @@ from pyartcd.oc import (
 )
 from pyartcd.pipelines.advisory_drop import drop_advisory
 from pyartcd.runtime import GroupRuntime, Runtime
-from pyartcd.signatory import AsyncSignatory, SigstoreSignatory
+from pyartcd.signatory import SigstoreSignatory, create_signatory
 
 yaml = YAML(typ="safe")
 yaml.default_flow_style = False
@@ -131,6 +131,7 @@ class PromotePipeline:
         skip_mirror_binaries: bool = False,
         use_multi_hack: bool = False,
         signing_env: Optional[str] = None,
+        signing_transport: str = "umb",
     ) -> None:
         self.runtime = runtime
         self.group = group
@@ -157,6 +158,7 @@ class PromotePipeline:
         if not self.skip_sigstore and not signing_env:
             raise ValueError("--signing-env is required unless --skip-sigstore is set")
         self.signing_env = signing_env
+        self.signing_transport = signing_transport
 
         self._logger = self.runtime.logger
         self._slack_client = self.runtime.new_slack_client()
@@ -815,16 +817,27 @@ class PromotePipeline:
         """Signs artifacts and publishes signature files to mirror"""
         if not self.signing_env:
             raise ValueError("--signing-env is missing")
-        cert_file = os.environ["SIGNING_CERT"]
-        key_file = os.environ["SIGNING_KEY"]
-        uri = constants.UMB_BROKERS[self.signing_env]
-        sig_keyname = "redhatrelease2" if client_type == 'ocp' else "beta2"
-        self._logger.info("About to sign artifacts with key %s", sig_keyname)
+
+        # Determine signing key based on client type
+        signing_env_for_key = "prod" if client_type == "ocp" else "stage"
+        self._logger.info(
+            "About to sign artifacts via %s transport (env=%s, key_env=%s)",
+            self.signing_transport,
+            self.signing_env,
+            signing_env_for_key,
+        )
+
         json_digest_sig_dir = self._working_dir / "json_digests"
         message_digest_sig_dir = self._working_dir / "message_digests"
         base_to_mirror_dir = self._working_dir / "to_mirror/openshift-v4"
 
-        async with AsyncSignatory(uri, cert_file, key_file, sig_keyname=sig_keyname) as signatory:
+        signatory = create_signatory(
+            transport=self.signing_transport,
+            signing_env=signing_env_for_key,
+            cert_file=os.environ.get("SIGNING_CERT", ""),
+            key_file=os.environ.get("SIGNING_KEY", ""),
+        )
+        async with signatory:
             tasks = []
             json_digests = []
             for release_info in release_infos.values():
@@ -866,11 +879,9 @@ class PromotePipeline:
         else:
             self._logger.warning("[DRY RUN] Would have published signatures.")
 
-    async def _sign_json_digest(
-        self, signatory: AsyncSignatory, release_name: str, pullspec: str, digest: str, sig_path: Path
-    ):
+    async def _sign_json_digest(self, signatory, release_name: str, pullspec: str, digest: str, sig_path: Path):
         """Sign a JSON digest claim
-        :param signatory: Signatory
+        :param signatory: Signatory (AsyncSignatory or KonfluxSignatory)
         :param pullspec: Pullspec of the payload
         :param digest: SHA256 digest of the payload
         :param sig_path: Where to save the signature file
@@ -882,7 +893,7 @@ class PromotePipeline:
                 product="openshift", release_name=release_name, pullspec=pullspec, digest=digest, sig_file=sig_file
             )
 
-    async def _sign_message_digest(self, signatory: AsyncSignatory, release_name, input_path: Path, sig_path: Path):
+    async def _sign_message_digest(self, signatory, release_name, input_path: Path, sig_path: Path):
         """Sign a message digest
         :param signatory: Signatory
         :param input_path: Path to the message digest file
@@ -3077,6 +3088,12 @@ class PromotePipeline:
     "--use-multi-hack", is_flag=True, help="Add '-multi' to heterogeneous payload name to workaround a Cincinnati issue"
 )
 @click.option("--signing-env", type=click.Choice(("prod", "stage")), help="Signing server environment: prod or stage")
+@click.option(
+    "--signing-transport",
+    type=click.Choice(("umb", "konflux")),
+    default="umb",
+    help="Signing transport: 'umb' (legacy RADAS/UMB) or 'konflux' (Konflux generic-signing pipeline)",
+)
 @pass_runtime
 @click_coroutine
 async def promote(
@@ -3097,6 +3114,7 @@ async def promote(
     skip_mirror_binaries: bool,
     use_multi_hack: bool,
     signing_env: Optional[str],
+    signing_transport: str,
 ):
     pipeline = await PromotePipeline.create(
         runtime,
@@ -3116,5 +3134,6 @@ async def promote(
         skip_mirror_binaries,
         use_multi_hack,
         signing_env,
+        signing_transport,
     )
     await pipeline.run()
