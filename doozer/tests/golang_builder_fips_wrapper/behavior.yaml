@@ -1,5 +1,4 @@
-# Behavior specification for doozerlib/golang_builder_FIPS_wrapper.sh, as it
-# exists on `main` today.
+# Behavior specification for doozerlib/golang_builder_FIPS_wrapper.sh.
 #
 # This file *is* the spec: each entry states one requirement as a concrete
 # example -- given this environment and this command line, the shim must
@@ -7,61 +6,347 @@
 # it generically; read this file top to bottom to know how the shim
 # actually behaves, not the other way around.
 #
-# This version of the script has no Go-version awareness whatsoever -- it
-# never calls `go.real env GOVERSION`, only `go.real env GOHOSTARCH` (for
-# the cross-compile exemption check). PR #3435 adds built-in-FIPS-module
-# support gated on the detected Go version and __doozer_group; that feature,
-# and a handful of concerns it raises, are reviewed and tested separately
-# against that PR's branch. This spec is deliberately scoped to what's
-# actually running in production today.
-#
-# A few cases below are marked SUSPECT: they pin down what the script
-# currently does, not necessarily what it should do -- see each one's
-# description for why.
-#
 # Case schema:
-#   name:          short, unique, used as the pytest id
-#   description:   the requirement (or suspect behavior) this case pins down, in prose
-#   args:          argv the shim is invoked with (i.e. what `go ...` becomes)
-#   env:           environment variables a real caller would set (default: {})
-#   go_hostarch:   GOHOSTARCH the stubbed `go.real` reports (default: amd64)
-#   cwd_files:     relative paths to pre-create (empty) in a scratch cwd,
-#                  for cases that depend on files existing on disk
+#   name:             short, unique, used as the pytest id
+#   description:      the requirement this case pins down, in prose
+#   args:             argv the shim is invoked with (i.e. what `go ...` becomes)
+#   env:              environment variables a real caller would set (default: {})
+#   go_real_version:  what the *installed toolchain* reports via `go env
+#                     GOVERSION` (default: go1.24.0) -- the only version-like
+#                     input this script ever reads. See "What this spec does
+#                     NOT model" below before reaching for a go.mod/.go-version
+#                     knob that doesn't exist.
+#   go_hostarch:      GOHOSTARCH the stubbed `go.real` reports (default: amd64)
+#   cwd_files:        relative paths to pre-create (empty) in a scratch cwd,
+#                     for cases that depend on files existing on disk
 #   expect:
-#     invoked:            whether go.real's compiler branch was reached (default: true)
-#     exit_code:           the shim's exit code (default: 0 if invoked else 1)
-#     stderr_contains:     substring that must appear on stderr
-#     args:                exact final argv handed to the compiler
-#     args_contains:       elements that must be present in the final argv
-#     args_not_contains:   elements that must be absent from the final argv
-#     tags_include:        tags that must be present in the final -tags value
-#     tags_exclude:        tags that must be absent from the final -tags value
-#     no_tags:             true if the final command line must have no -tags at all
-#     env:                 {VAR: value} the compiler must see; value null means unset
+#     invoked:                   whether go.real's compiler branch was reached (default: true)
+#     exit_code:                  the shim's exit code (default: 0 if invoked else 1)
+#     stderr_contains:            substring that must appear on stderr
+#     args:                       exact final argv handed to the compiler
+#     args_contains:              elements that must be present in the final argv
+#     args_not_contains:          elements that must be absent from the final argv
+#     tags_include:               tags that must be present in the final -tags value
+#     tags_exclude:               tags that must be absent from the final -tags value
+#     no_tags:                    true if the final command line must have no -tags at all
+#     env:                        {VAR: value} the compiler must see; value null means unset
+#     probed_goversion_toolchain: GOTOOLCHAIN as seen at the moment the script
+#                                 probed `go.real env GOVERSION` -- before any
+#                                 later rewriting. null means GOTOOLCHAIN was
+#                                 unset at that point.
+#
+# What this spec does NOT model, on purpose:
+#
+#   go.mod's `go` directive and a repo's `.go-version` file. This script
+#   reads neither. Its only version input is go_real_version above (what
+#   `go.real env GOVERSION` reports), and in any ART/CI build it forces
+#   GOTOOLCHAIN=local *before* that probe runs (see
+#   probed_goversion_toolchain cases below) -- which is exactly what stops
+#   Go's own toolchain-switching machinery from letting go.mod change the
+#   answer. Nor does ART's own build pipeline read a repo's .go-version to
+#   decide which toolchain lands in the container: pyartcd's update_golang
+#   pipeline and streams.yml control that, independent of repo content. So a
+#   container can genuinely have go1.26 installed while the repo's own
+#   go.mod still says `go 1.24` and a stray .go-version says `1.24` too --
+#   that's not a misconfiguration, it's the designed steady state of an
+#   in-progress Go toolchain bump (see
+#   https://github.com/openshift/enhancements/pull/2077, which bumps the
+#   toolchain while deliberately leaving go.mod's `go` directive and GODEBUG
+#   alone). A case that wants to make this point does so without adding a
+#   go.mod/.go-version knob, because adding one would misrepresent the
+#   script as caring.
+
+# ---------------------------------------------------------------------------
+# Built-in FIPS module selection: Go >=1.26 ships a built-in, FIPS-validated
+# crypto module. Whether the shim selects it over the legacy libopenssl
+# backend depends on the compiler version and, for 1.26 specifically,
+# corroboration from __doozer_group that the OCP group being built is 5.1+.
+#
+# OPENSHIFT_CI=1 is used to force real enforcement in these cases without
+# relying on __doozer_group also happening to match "openshift-*" -- that
+# keeps this section purely about version/group *selection*, independent of
+# the overall exemption policy covered later in this file.
+# ---------------------------------------------------------------------------
+
+- name: go127_qualifies_on_its_own
+  description: >
+    Go 1.27 always gets the built-in FIPS module, regardless of OCP group.
+  args: [build, ./...]
+  env: {__doozer_group: openshift-4.20, OPENSHIFT_CI: "1"}
+  go_real_version: go1.27.0
+  expect:
+    env: {GOFIPS140: v1.26.0}
+    tags_include: [no_openssl]
+
+- name: go128_newer_minor_qualifies_on_its_own
+  description: >
+    A newer 1.x minor than 1.27 also always qualifies on its own.
+  args: [build, ./...]
+  env: {__doozer_group: openshift-4.20, OPENSHIFT_CI: "1"}
+  go_real_version: go1.28.0
+  expect:
+    env: {GOFIPS140: v1.26.0}
+    tags_include: [no_openssl]
+
+- name: go2_future_major_qualifies_on_its_own
+  description: >
+    A hypothetical future major version also qualifies on its own.
+  args: [build, ./...]
+  env: {__doozer_group: openshift-4.20, OPENSHIFT_CI: "1"}
+  go_real_version: go2.0.0
+  expect:
+    env: {GOFIPS140: v1.26.0}
+    tags_include: [no_openssl]
+
+- name: go126_with_ocp_5_1_qualifies
+  description: >
+    Go 1.26 qualifies when __doozer_group corroborates OCP 5.1.
+  args: [build, ./...]
+  env: {__doozer_group: openshift-5.1, OPENSHIFT_CI: "1"}
+  go_real_version: go1.26.0
+  expect:
+    env: {GOFIPS140: v1.26.0}
+    tags_include: [no_openssl]
+
+- name: go126_with_ocp_5_2_qualifies
+  description: >
+    Go 1.26 qualifies for any OCP minor at or after 5.1, not just 5.1 itself.
+  args: [build, ./...]
+  env: {__doozer_group: openshift-5.2, OPENSHIFT_CI: "1"}
+  go_real_version: go1.26.0
+  expect:
+    env: {GOFIPS140: v1.26.0}
+    tags_include: [no_openssl]
+
+- name: go126_with_ocp_6_0_qualifies
+  description: >
+    Go 1.26 qualifies for any OCP major after 5, not just minor 5.1+.
+  args: [build, ./...]
+  env: {__doozer_group: openshift-6.0, OPENSHIFT_CI: "1"}
+  go_real_version: go1.26.0
+  expect:
+    env: {GOFIPS140: v1.26.0}
+    tags_include: [no_openssl]
+
+- name: go126_with_ocp_5_0_falls_back
+  description: >
+    Go 1.26 on OCP 5.0 (just before the cutoff) stays on libopenssl.
+  args: [build, ./...]
+  env: {__doozer_group: openshift-5.0, OPENSHIFT_CI: "1"}
+  go_real_version: go1.26.0
+  expect:
+    env: {GOFIPS140: null}
+    tags_exclude: [no_openssl]
+
+- name: go126_with_ocp_4_19_falls_back
+  description: >
+    Go 1.26 on an older OCP major (4.x) stays on libopenssl.
+  args: [build, ./...]
+  env: {__doozer_group: openshift-4.19, OPENSHIFT_CI: "1"}
+  go_real_version: go1.26.0
+  expect:
+    env: {GOFIPS140: null}
+    tags_exclude: [no_openssl]
+
+- name: go126_building_golang_builder_image_itself_falls_back
+  description: >
+    __doozer_group=golang (set while building the golang builder image
+    itself, which carries no OCP version) cannot be parsed as an OCP group,
+    so it is treated conservatively as pre-5.1.
+  args: [build, ./...]
+  env: {__doozer_group: golang, OPENSHIFT_CI: "1"}
+  go_real_version: go1.26.0
+  expect:
+    env: {GOFIPS140: null}
+    tags_exclude: [no_openssl]
+
+- name: go126_with_no_doozer_group_falls_back
+  description: >
+    No __doozer_group at all can't be corroborated as OCP 5.1+, so 1.26
+    stays on libopenssl even though the toolchain has a built-in module.
+  args: [build, ./...]
+  env: {OPENSHIFT_CI: "1"}
+  go_real_version: go1.26.0
+  expect:
+    env: {GOFIPS140: null}
+
+- name: go125_has_no_builtin_module_regardless_of_group
+  description: >
+    Go 1.25 has no built-in module at all, even on a qualifying OCP group.
+  args: [build, ./...]
+  env: {__doozer_group: openshift-6.0, OPENSHIFT_CI: "1"}
+  go_real_version: go1.25.0
+  expect:
+    env: {GOFIPS140: null}
+
+- name: go124_well_below_1_26_falls_back
+  description: >
+    A much older Go release stays on libopenssl even on a qualifying group.
+  args: [build, ./...]
+  env: {__doozer_group: openshift-5.1, OPENSHIFT_CI: "1"}
+  go_real_version: go1.24.0
+  expect:
+    env: {GOFIPS140: null}
+
+- name: malformed_goversion_falls_back_to_openssl
+  description: >
+    A devel toolchain string with no parseable major.minor must not be
+    mistaken for a qualifying release -- the safe default is libopenssl,
+    the behavior every OCP release before this feature already used.
+  args: [build, ./...]
+  env: {__doozer_group: openshift-5.1}
+  go_real_version: "devel go1.28-deadbeef"
+  expect:
+    env: {GOFIPS140: null}
+
+- name: goversion_suffix_does_not_break_parsing
+  description: >
+    GOVERSION can carry a trailing build-tag annotation (e.g. from a
+    toolchain already built with strictfipsruntime); the version parse must
+    still find 1.26 underneath it.
+  args: [build, ./...]
+  env: {__doozer_group: openshift-5.1}
+  go_real_version: "go1.26.0 X:strictfipsruntime"
+  expect:
+    env: {GOFIPS140: v1.26.0}
+
+# ---------------------------------------------------------------------------
+# GO_COMPLIANCE_BUILTIN_FIPS_INCLUDE/EXCLUDE let a component override the
+# version/group default in either direction, but INCLUDE can only ever turn
+# on a module the toolchain actually has.
+# ---------------------------------------------------------------------------
+
+- name: builtin_include_opts_in_without_group_corroboration
+  description: >
+    A component built outside the ART product pipeline (no usable
+    __doozer_group) can still opt into the 1.26 built-in module by setting
+    GO_COMPLIANCE_BUILTIN_FIPS_INCLUDE itself.
+  args: [build, ./...]
+  env: {OPENSHIFT_CI: "1", GO_COMPLIANCE_BUILTIN_FIPS_INCLUDE: ".*"}
+  go_real_version: go1.26.0
+  expect:
+    env: {GOFIPS140: v1.26.0}
+
+- name: builtin_exclude_reverts_a_qualifying_build_to_openssl
+  description: >
+    GO_COMPLIANCE_BUILTIN_FIPS_EXCLUDE=.* is the documented escape hatch
+    that reverts to libopenssl everywhere, even on a toolchain that would
+    otherwise default to the built-in module.
+  args: [build, ./...]
+  env: {__doozer_group: openshift-5.1, GO_COMPLIANCE_BUILTIN_FIPS_EXCLUDE: ".*"}
+  go_real_version: go1.27.0
+  expect:
+    env: {GOFIPS140: null}
+    tags_exclude: [no_openssl]
+
+- name: builtin_include_cannot_opt_in_a_toolchain_with_no_module
+  description: >
+    GO_BUILTIN_FIPS_AVAILABLE gates INCLUDE: there is no built-in module to
+    opt into on a sub-1.26 toolchain, so explicitly setting INCLUDE must not
+    conjure one up.
+  args: [build, ./...]
+  env: {OPENSHIFT_CI: "1", GO_COMPLIANCE_BUILTIN_FIPS_INCLUDE: ".*"}
+  go_real_version: go1.25.0
+  expect:
+    env: {GOFIPS140: null}
+
+- name: builtin_include_matches_only_commands_matching_its_pattern
+  description: >
+    INCLUDE/EXCLUDE are matched against the full incoming command line, so a
+    component can scope the built-in module to specific build invocations.
+  args: [build, ./cmd/myservice]
+  env: {__doozer_group: openshift-5.0, GO_COMPLIANCE_BUILTIN_FIPS_INCLUDE: myservice}
+  go_real_version: go1.26.0
+  expect:
+    env: {GOFIPS140: v1.26.0}
+
+- name: builtin_include_does_not_match_an_unrelated_command
+  description: >
+    The same INCLUDE pattern must not affect a command line it doesn't match.
+  args: [build, ./cmd/othertool]
+  env: {__doozer_group: openshift-5.0, GO_COMPLIANCE_BUILTIN_FIPS_INCLUDE: myservice}
+  go_real_version: go1.26.0
+  expect:
+    env: {GOFIPS140: null}
+
+# ---------------------------------------------------------------------------
+# What selecting the built-in module actually changes: it's pure Go, so cgo
+# is only needed to reach libopenssl, and forced cgo is what breaks static
+# linking. The legacy libopenssl path still forces both.
+# ---------------------------------------------------------------------------
+
+- name: builtin_module_build_leaves_cgo_and_static_linking_alone
+  description: >
+    On the built-in-module path, cgo is never forced on and -extldflags
+    "-static" survives untouched, because the built-in module needs neither.
+  args: [build, -ldflags, '-extldflags "-static"', ./...]
+  env: {__doozer_group: openshift-5.1}
+  go_real_version: go1.26.0
+  expect:
+    env: {CGO_ENABLED: null, GOFIPS140: v1.26.0}
+    args_contains: ['-extldflags "-static"']
+
+- name: legacy_openssl_build_forces_cgo_and_rewrites_static
+  description: >
+    Regression pin for the pre-existing (pre-built-in-module) behavior:
+    libopenssl needs cgo, and forced cgo is incompatible with -static, so
+    the shim neutralizes -static into -lc.
+  args: [build, -ldflags, '-extldflags "-static"', ./...]
+  env: {__doozer_group: openshift-4.20}
+  go_real_version: go1.24.0
+  expect:
+    env: {CGO_ENABLED: "1", GOFIPS140: null}
+    args_contains: ['-extldflags "-lc"']
+    args_not_contains: ['-extldflags "-static"']
+
+- name: builtin_module_build_asserts_no_openssl_tag
+  description: >
+    GOFIPS140 alone doesn't select the built-in module -- its companion
+    build tag no_openssl has to be injected too, alongside the orthogonal,
+    backend-independent strictfipsruntime tag.
+  args: [build, ./...]
+  env: {__doozer_group: openshift-5.1}
+  go_real_version: go1.26.0
+  expect:
+    tags_include: [no_openssl, strictfipsruntime]
 
 # ---------------------------------------------------------------------------
 # no_openssl scrubbing: no_openssl disables the libopenssl backend, which
-# conflicts with FORCE_OPENSSL mandating it -- so the shim scrubs any
-# caller-supplied no_openssl tag, turning it into shim_prevented_no_openssl.
+# conflicts with forcing it -- so the legacy path scrubs any caller-supplied
+# no_openssl tag. The built-in-module path wants no_openssl, so it must not
+# scrub it.
 # ---------------------------------------------------------------------------
 
-- name: scrubs_caller_supplied_no_openssl_tag_two_argument_form
+- name: legacy_path_scrubs_caller_supplied_no_openssl_tag
   description: >
-    A caller-supplied no_openssl tag, passed as `-tags no_openssl` (the
-    two-argument form), is neutralized to shim_prevented_no_openssl.
+    A caller-supplied no_openssl tag is neutralized to
+    shim_prevented_no_openssl on the legacy libopenssl path.
   args: [build, -tags, no_openssl, ./...]
   env: {__doozer_group: openshift-4.20}
+  go_real_version: go1.24.0
   expect:
     tags_include: [shim_prevented_no_openssl]
     tags_exclude: [no_openssl]
 
-- name: scrubs_caller_supplied_no_openssl_tag_equals_form
+- name: builtin_path_does_not_scrub_no_openssl
+  description: >
+    On the built-in-module path, no_openssl is exactly what's wanted, so it
+    must survive un-scrubbed (the shim adds it itself as a SHIM_TAG).
+  args: [build, -tags, sometag, ./...]
+  env: {__doozer_group: openshift-5.1}
+  go_real_version: go1.26.0
+  expect:
+    tags_include: [no_openssl]
+    tags_exclude: [shim_prevented_no_openssl]
+
+- name: legacy_path_scrubs_caller_supplied_no_openssl_tag_equals_form
   description: >
     A caller-supplied no_openssl tag, passed as `-tags=no_openssl` (the
     equals form), is neutralized to shim_prevented_no_openssl, just like
     the two-argument form above.
   args: [build, "-tags=no_openssl,other", ./...]
   env: {__doozer_group: openshift-4.20}
+  go_real_version: go1.24.0
   expect:
     tags_include: [shim_prevented_no_openssl, other]
     tags_exclude: [no_openssl]
@@ -71,36 +356,52 @@
 # hard error instead of silently rewriting it.
 # ---------------------------------------------------------------------------
 
-- name: basic_strict_mode_rejects_static_linking
+- name: basic_strict_mode_rejects_static_linking_on_legacy_path
   description: >
-    Basic strict mode aborts rather than silently rewriting -static.
+    Basic strict mode aborts rather than silently rewriting -static on the
+    legacy libopenssl path.
   args: [build, -ldflags, '-extldflags "-static"', ./...]
   env: {__doozer_group: openshift-4.20, GO_COMPLIANCE_STRICT: basic}
+  go_real_version: go1.24.0
   expect:
     invoked: false
     exit_code: 1
     stderr_contains: "strict mode non-compliance"
 
-- name: basic_strict_mode_rejects_no_openssl_tag_two_argument_form
+- name: basic_strict_mode_rejects_no_openssl_tag_on_legacy_path
   description: >
     Basic strict mode aborts rather than silently scrubbing a no_openssl tag
-    passed as `-tags no_openssl`.
+    on the legacy libopenssl path.
   args: [build, -tags, no_openssl, ./...]
   env: {__doozer_group: openshift-4.20, GO_COMPLIANCE_STRICT: basic}
+  go_real_version: go1.24.0
   expect:
     invoked: false
     exit_code: 1
 
-- name: basic_strict_mode_rejects_no_openssl_tag_equals_form
+- name: basic_strict_mode_rejects_no_openssl_tag_equals_form_on_legacy_path
   description: >
     Basic strict mode aborts rather than silently scrubbing a no_openssl tag
     passed as `-tags=no_openssl` (the equals form), just like it does for the
     two-argument form above.
   args: [build, "-tags=no_openssl", ./...]
   env: {__doozer_group: openshift-4.20, GO_COMPLIANCE_STRICT: basic}
+  go_real_version: go1.24.0
   expect:
     invoked: false
     exit_code: 1
+
+- name: basic_strict_mode_passes_static_linking_on_builtin_path
+  description: >
+    The built-in module needs neither cgo nor its static-linking workaround,
+    so strict mode has nothing to object to here even though the same flags
+    trip it on the legacy path.
+  args: [build, -ldflags, '-extldflags "-static"', ./...]
+  env: {__doozer_group: openshift-5.1, GO_COMPLIANCE_STRICT: basic}
+  go_real_version: go1.26.0
+  expect:
+    invoked: true
+    exit_code: 0
 
 - name: full_strict_mode_rejects_build_without_preset_goexperiment
   description: >
@@ -109,6 +410,7 @@
     shim will not silently inject it under full mode.
   args: [build, ./...]
   env: {__doozer_group: openshift-4.20, GO_COMPLIANCE_STRICT: full}
+  go_real_version: go1.24.0
   expect:
     invoked: false
     exit_code: 1
@@ -119,18 +421,20 @@
     themselves.
   args: [build, ./...]
   env: {__doozer_group: openshift-4.20, GO_COMPLIANCE_STRICT: full, GOEXPERIMENT: strictfipsruntime}
+  go_real_version: go1.24.0
   expect:
     invoked: true
     exit_code: 0
     env: {GOEXPERIMENT: strictfipsruntime}
 
-- name: basic_strict_mode_rejects_preset_cgo_disabled
+- name: basic_strict_mode_rejects_preset_cgo_disabled_on_legacy_path
   description: >
-    CGO_ENABLED=0 set by the caller conflicts with the shim's need for cgo
-    to reach libopenssl; strict mode must reject rather than silently flip
-    it back on.
+    CGO_ENABLED=0 set by the caller conflicts with the legacy path's need
+    for cgo to reach libopenssl; strict mode must reject rather than
+    silently flip it back on.
   args: [build, ./...]
   env: {__doozer_group: openshift-4.20, GO_COMPLIANCE_STRICT: basic, CGO_ENABLED: "0"}
+  go_real_version: go1.24.0
   expect:
     invoked: false
     exit_code: 1
@@ -141,6 +445,7 @@
     silently corrects rather than rejects.
   args: [build, ./...]
   env: {__doozer_group: openshift-4.20, CGO_ENABLED: "0"}
+  go_real_version: go1.24.0
   expect:
     invoked: true
     exit_code: 0
@@ -157,11 +462,17 @@
     No __doozer_group and no OPENSHIFT_CI means GO_COMPLIANCE_POLICY
     defaults to exempt_all: nothing about the command line or environment
     is touched. This is the ordinary `go build` a developer runs locally.
+    GOTOOLCHAIN is also left alone (contrast with the ART-build cases below,
+    where it's forced to "local" before the version is even probed) --
+    Go's own toolchain-switching machinery is free to act here, for better
+    or worse, exactly as it would for any non-ART invocation of `go`.
   args: [build, -ldflags, '-extldflags "-static"', ./...]
   env: {}
+  go_real_version: go1.24.0
   expect:
     args: [build, -ldflags, '-extldflags "-static"', ./...]
     env: {CGO_ENABLED: null, GOEXPERIMENT: null}
+    probed_goversion_toolchain: null
 
 - name: darwin_target_is_exempt_in_art_build
   description: >
@@ -169,6 +480,7 @@
     inside an ART product build.
   args: [build, ./...]
   env: {__doozer_group: openshift-4.20, GOOS: darwin}
+  go_real_version: go1.24.0
   expect:
     args: [build, ./...]
     env: {CGO_ENABLED: null}
@@ -179,6 +491,7 @@
     inside an ART product build.
   args: [build, ./...]
   env: {__doozer_group: openshift-4.20, GOOS: windows}
+  go_real_version: go1.24.0
   expect:
     args: [build, ./...]
 
@@ -188,6 +501,7 @@
     a GOARCH that doesn't match it is a cross-compile, exempted by default.
   args: [build, ./...]
   env: {__doozer_group: openshift-4.20, GOARCH: arm64}
+  go_real_version: go1.24.0
   go_hostarch: amd64
   expect:
     args: [build, ./...]
@@ -198,6 +512,7 @@
     is not exempt.
   args: [build, ./...]
   env: {__doozer_group: openshift-4.20, GOARCH: amd64}
+  go_real_version: go1.24.0
   go_hostarch: amd64
   expect:
     env: {CGO_ENABLED: "1"}
@@ -208,6 +523,7 @@
     is exempt even inside an otherwise-enforced ART build.
   args: [build, ./cmd/excluded-tool]
   env: {__doozer_group: openshift-4.20, GO_COMPLIANCE_EXCLUDE: excluded-tool}
+  go_real_version: go1.24.0
   expect:
     args: [build, ./cmd/excluded-tool]
     env: {CGO_ENABLED: null}
@@ -220,6 +536,7 @@
     darwin).
   args: [build, ./...]
   env: {OPENSHIFT_CI: "1", GOOS: darwin}
+  go_real_version: go1.24.0
   expect:
     args: [build, ./...]
     env: {GOTOOLCHAIN: local}
@@ -235,6 +552,7 @@
     tags are injected.
   args: [build, ./...]
   env: {__doozer_group: openshift-4.20}
+  go_real_version: go1.24.0
   expect:
     env: {CGO_ENABLED: "1"}
     tags_include: [strictfipsruntime]
@@ -244,6 +562,7 @@
     `go install` is treated the same as `go build`.
   args: [install, ./...]
   env: {__doozer_group: openshift-4.20}
+  go_real_version: go1.24.0
   expect:
     env: {CGO_ENABLED: "1"}
     tags_include: [strictfipsruntime]
@@ -255,26 +574,28 @@
     "build" is literally one of its arguments.
   args: [run, build.go, build]
   env: {__doozer_group: openshift-4.20}
+  go_real_version: go1.24.0
   expect:
     args: [run, build.go, build]
     env: {CGO_ENABLED: null}
 
 - name: non_build_subcommand_gets_goexperiment_but_no_tags
   description: >
-    GOEXPERIMENT forcing is not gated on this being a build invocation --
-    only -tags injection and CGO_ENABLED forcing are. A plain `go version`
-    call in an ART build context still comes back with strictfipsruntime
-    set, but with its argv untouched.
+    GOEXPERIMENT/GOFIPS140 forcing is not gated on this being a build
+    invocation -- only -tags injection and CGO_ENABLED forcing are. A plain
+    `go version` call in an ART build context still comes back with
+    strictfipsruntime set, but with its argv untouched.
   args: [version]
   env: {__doozer_group: openshift-4.20}
+  go_real_version: go1.24.0
   expect:
     args: [version]
     env: {GOEXPERIMENT: strictfipsruntime, CGO_ENABLED: null}
 
 # ---------------------------------------------------------------------------
-# Tag injection mechanics: the shim's own strictfipsruntime tag is merged
-# into whatever -tags the caller already has, or a fresh -tags flag is
-# added if there was none.
+# Tag injection mechanics: the shim's own tags (strictfipsruntime, and
+# no_openssl on the built-in path) are merged into whatever -tags the
+# caller already has, or a fresh -tags flag is added if there was none.
 # ---------------------------------------------------------------------------
 
 - name: adds_fresh_tags_flag_when_none_supplied
@@ -283,23 +604,26 @@
     flag right after "build".
   args: [build, ./cmd/foo]
   env: {__doozer_group: openshift-4.20}
+  go_real_version: go1.24.0
   expect:
     args: [build, -tags, strictfipsruntime, ./cmd/foo]
 
 - name: merges_into_existing_two_argument_tags_flag
   description: >
     An existing two-argument -tags flag is merged with, not replaced by,
-    the shim's own tag.
+    the shim's own tags.
   args: [build, -tags, sometag, ./...]
   env: {__doozer_group: openshift-4.20}
+  go_real_version: go1.24.0
   expect:
     tags_include: [sometag, strictfipsruntime]
 
 - name: merges_into_existing_equals_form_tags_flag
   description: >
-    An existing -tags=<list> flag is also merged with the shim's own tag.
+    An existing -tags=<list> flag is also merged with the shim's own tags.
   args: [build, "-tags=sometag", ./...]
   env: {__doozer_group: openshift-4.20}
+  go_real_version: go1.24.0
   expect:
     tags_include: [sometag, strictfipsruntime]
 
@@ -307,9 +631,10 @@
   description: >
     Some build scripts pass a quoted tag list literally (observed with
     grafana's build tooling); the shim strips the quote characters before
-    appending its own tag.
+    appending its own tags.
   args: [build, -tags, '"sometag"', ./...]
   env: {__doozer_group: openshift-4.20}
+  go_real_version: go1.24.0
   expect:
     tags_include: [sometag]
     args_not_contains: ['"sometag"']
@@ -325,6 +650,7 @@
     invocation.
   args: [build, ./...]
   env: {__doozer_group: openshift-4.20, GO_COMPLIANCE_COVER: "1"}
+  go_real_version: go1.24.0
   expect:
     args_contains: ["-cover", "-covermode=atomic"]
 
@@ -333,6 +659,7 @@
     Without GO_COMPLIANCE_COVER, no coverage flags are added.
   args: [build, ./...]
   env: {__doozer_group: openshift-4.20}
+  go_real_version: go1.24.0
   expect:
     args_not_contains: ["-cover"]
 
@@ -342,6 +669,7 @@
     coverage_server.go is appended automatically if it exists on disk.
   args: [build, pkg/foo.go]
   env: {__doozer_group: openshift-4.20, GO_COMPLIANCE_COVER: "1"}
+  go_real_version: go1.24.0
   cwd_files: [pkg/coverage_server.go]
   expect:
     args: [build, -cover, -covermode=atomic, -tags, strictfipsruntime, pkg/foo.go, pkg/coverage_server.go]
@@ -352,6 +680,7 @@
     the package automatically, so nothing is appended explicitly.
   args: [build, ./pkg/...]
   env: {__doozer_group: openshift-4.20, GO_COMPLIANCE_COVER: "1"}
+  go_real_version: go1.24.0
   cwd_files: [pkg/coverage_server.go]
   expect:
     args_not_contains: [pkg/coverage_server.go]
@@ -362,6 +691,7 @@
     argument list.
   args: [build, pkg/coverage_server.go]
   env: {__doozer_group: openshift-4.20, GO_COMPLIANCE_COVER: "1"}
+  go_real_version: go1.24.0
   cwd_files: [pkg/coverage_server.go]
   expect:
     args: [build, -cover, -covermode=atomic, -tags, strictfipsruntime, pkg/coverage_server.go]
@@ -371,6 +701,7 @@
     When no sibling coverage_server.go exists on disk, nothing is appended.
   args: [build, pkg/foo.go]
   env: {__doozer_group: openshift-4.20, GO_COMPLIANCE_COVER: "1"}
+  go_real_version: go1.24.0
   cwd_files: [pkg/foo.go]
   expect:
     args_not_contains: [pkg/coverage_server.go]
@@ -387,6 +718,7 @@
     CGO_ENABLED=0 even in an otherwise-enforced build.
   args: [build, ./cmd/pure-go-tool]
   env: {__doozer_group: openshift-4.20, GO_COMPLIANCE_CGO_ENABLED_EXCLUDE: pure-go-tool, CGO_ENABLED: "0"}
+  go_real_version: go1.24.0
   expect:
     env: {CGO_ENABLED: "0"}
 
@@ -396,6 +728,7 @@
     -static even in an otherwise-enforced build.
   args: [build, -ldflags, '-extldflags "-static"', ./cmd/static-tool]
   env: {__doozer_group: openshift-4.20, GO_COMPLIANCE_DYNAMIC_LINKING_EXCLUDE: static-tool}
+  go_real_version: go1.24.0
   expect:
     args_contains: ['-extldflags "-static"']
 
@@ -406,6 +739,7 @@
     would have been injected).
   args: [build, ./cmd/unchecked-tool]
   env: {__doozer_group: openshift-4.20, GO_COMPLIANCE_FOD_MODE_EXCLUDE: unchecked-tool}
+  go_real_version: go1.24.0
   expect:
     env: {GOEXPERIMENT: null}
     no_tags: true
@@ -414,11 +748,10 @@
   description: >
     FORCE_OPENSSL gates the scrub of a caller-supplied no_openssl tag;
     GO_COMPLIANCE_OPENSSL_ENABLED_EXCLUDE lets a matching component keep its
-    own no_openssl tag choice (two-argument form -- see the SUSPECT cases
-    above for the equals-form gap, which makes this exclude redundant for
-    that spelling since nothing scrubs it there either way).
+    own no_openssl tag choice.
   args: [build, -tags, no_openssl, ./cmd/opts-out]
   env: {__doozer_group: openshift-4.20, GO_COMPLIANCE_OPENSSL_ENABLED_EXCLUDE: opts-out}
+  go_real_version: go1.24.0
   expect:
     tags_include: [no_openssl]
     tags_exclude: [shim_prevented_no_openssl]
@@ -433,6 +766,7 @@
     A non-zero exit code from the real compiler is forwarded unchanged.
   args: [build, ./...]
   env: {__doozer_group: openshift-4.20, FAKE_GO_EXIT_CODE: "7"}
+  go_real_version: go1.24.0
   expect:
     invoked: true
     exit_code: 7
@@ -442,6 +776,74 @@
     A successful compiler run is forwarded as a zero exit code.
   args: [build, ./...]
   env: {__doozer_group: openshift-4.20}
+  go_real_version: go1.24.0
   expect:
     invoked: true
     exit_code: 0
+
+# ---------------------------------------------------------------------------
+# Real-world scenario: the OCP Go toolchain bump process
+# (https://github.com/openshift/enhancements/pull/2077). That enhancement
+# bumps the Go *toolchain* (builder image, and .go-version where a repo has
+# one) on a release branch for CVE reasons, while deliberately leaving
+# go.mod's `go` directive unchanged (KEP-3744 / GODEBUG approach, matching
+# upstream Kubernetes). Separately, PR #3435 (this shim's built-in-FIPS-
+# module feature) only turns on the built-in module for a 1.26 toolchain
+# once __doozer_group corroborates OCP 5.1+. Those are two independent
+# rollouts that happen to both key off "toolchain is 1.26": a component can
+# run the bumped toolchain for a full release's lifetime before its group
+# ever reaches 5.1 and the built-in module switches on.
+# ---------------------------------------------------------------------------
+
+- name: go126_toolchain_bump_for_ocp_4_22_alone_does_not_enable_builtin_fips
+  description: >
+    The Go 1.26 bump lands on OCP 4.22 for CVE/security reasons (the
+    enhancement above), well before any group reaches 5.1. The installed
+    toolchain is already 1.26, but __doozer_group=openshift-4.22 doesn't
+    corroborate 5.1+, so the shim still selects libopenssl here -- bumping
+    the toolchain and adopting the built-in FIPS module are decoupled.
+  args: [build, ./...]
+  env: {__doozer_group: openshift-4.22}
+  go_real_version: go1.26.0
+  expect:
+    env: {GOFIPS140: null}
+    tags_exclude: [no_openssl]
+
+- name: go126_toolchain_qualifies_for_builtin_fips_once_group_reaches_5_1
+  description: >
+    The same bumped 1.26 toolchain, once __doozer_group finally reaches
+    openshift-5.1, switches to the built-in module -- nothing about the
+    toolchain changed between this case and the one above, only the group.
+    probed_goversion_toolchain confirms GOTOOLCHAIN was already forced to
+    "local" by the time the version was probed, in this ART build context.
+  args: [build, ./...]
+  env: {__doozer_group: openshift-5.1}
+  go_real_version: go1.26.0
+  expect:
+    env: {GOFIPS140: v1.26.0}
+    tags_include: [no_openssl]
+    probed_goversion_toolchain: local
+
+- name: stale_go_mod_directive_does_not_change_builtin_fips_selection
+  description: >
+    Per the enhancement, this repo's go.mod still declares `go 1.24` --
+    intentionally not bumped alongside the toolchain -- and may even have a
+    stale .go-version=1.24 left over too. Neither matters: the shim never
+    reads either file (see "What this spec does NOT model" at the top of
+    this file), and per go.dev/doc/security/fips140, GOFIPS140 module
+    availability is gated purely by the toolchain actually running the
+    build ("available in Go 1.26+"), not by go.mod's `go` directive the way
+    GODEBUG-gated runtime behavior is. So the outcome here is identical to
+    the qualifying case above: the built-in module follows the 1.26
+    toolchain, not the stale 1.24 declaration sitting in the repo. This
+    case is mechanically the same as
+    go126_toolchain_qualifies_for_builtin_fips_once_group_reaches_5_1; it
+    exists to make that equivalence an explicit, named claim rather than
+    something a reader has to infer.
+  args: [build, ./...]
+  env: {__doozer_group: openshift-5.1}
+  go_real_version: go1.26.0
+  expect:
+    env: {GOFIPS140: v1.26.0}
+    tags_include: [no_openssl]
+    probed_goversion_toolchain: local

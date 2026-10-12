@@ -1,6 +1,4 @@
-"""End-to-end behavior test for doozerlib/golang_builder_FIPS_wrapper.sh,
-as it exists on `main` today -- i.e. without the built-in-FIPS-module
-feature proposed in PR #3435, which is reviewed and tested separately.
+"""End-to-end behavior test for doozerlib/golang_builder_FIPS_wrapper.sh.
 
 This shim replaces `go` in the PATH of golang builder images. It inspects
 the compiler invocation it was handed and, when running an ART product
@@ -42,6 +40,7 @@ def test_shim_behavior(case, tmp_path):
         case["args"],
         env=case.get("env", {}),
         cwd=cwd,
+        go_real_version=case.get("go_real_version", "go1.24.0"),
         go_hostarch=case.get("go_hostarch", "amd64"),
     )
 
@@ -78,3 +77,6 @@ def test_shim_behavior(case, tmp_path):
 
     for name, value in expect.get("env", {}).items():
         assert result.final_env(name) == value, f"{description}: {name}"
+
+    if "probed_goversion_toolchain" in expect:
+        assert result.probed_goversion_toolchain == expect["probed_goversion_toolchain"], description
