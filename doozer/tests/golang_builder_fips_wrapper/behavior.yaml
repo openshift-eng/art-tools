@@ -1,0 +1,459 @@
+# Behavior specification for doozerlib/golang_builder_FIPS_wrapper.sh, as it
+# exists on `main` today.
+#
+# This file *is* the spec: each entry states one requirement as a concrete
+# example -- given this environment and this command line, the shim must
+# produce this outcome. test_golang_builder_fips_wrapper.py just interprets
+# it generically; read this file top to bottom to know how the shim
+# actually behaves, not the other way around.
+#
+# This version of the script has no Go-version awareness whatsoever -- it
+# never calls `go.real env GOVERSION`, only `go.real env GOHOSTARCH` (for
+# the cross-compile exemption check). PR #3435 adds built-in-FIPS-module
+# support gated on the detected Go version and __doozer_group; that feature,
+# and a handful of concerns it raises, are reviewed and tested separately
+# against that PR's branch. This spec is deliberately scoped to what's
+# actually running in production today.
+#
+# A few cases below are marked SUSPECT: they pin down what the script
+# currently does, not necessarily what it should do -- see each one's
+# description for why.
+#
+# Case schema:
+#   name:          short, unique, used as the pytest id
+#   description:   the requirement (or suspect behavior) this case pins down, in prose
+#   args:          argv the shim is invoked with (i.e. what `go ...` becomes)
+#   env:           environment variables a real caller would set (default: {})
+#   go_hostarch:   GOHOSTARCH the stubbed `go.real` reports (default: amd64)
+#   cwd_files:     relative paths to pre-create (empty) in a scratch cwd,
+#                  for cases that depend on files existing on disk
+#   expect:
+#     invoked:            whether go.real's compiler branch was reached (default: true)
+#     exit_code:           the shim's exit code (default: 0 if invoked else 1)
+#     stderr_contains:     substring that must appear on stderr
+#     args:                exact final argv handed to the compiler
+#     args_contains:       elements that must be present in the final argv
+#     args_not_contains:   elements that must be absent from the final argv
+#     tags_include:        tags that must be present in the final -tags value
+#     tags_exclude:        tags that must be absent from the final -tags value
+#     no_tags:             true if the final command line must have no -tags at all
+#     env:                 {VAR: value} the compiler must see; value null means unset
+
+# ---------------------------------------------------------------------------
+# no_openssl scrubbing: no_openssl disables the libopenssl backend, which
+# conflicts with FORCE_OPENSSL mandating it -- so the shim scrubs any
+# caller-supplied no_openssl tag, turning it into shim_prevented_no_openssl.
+# ---------------------------------------------------------------------------
+
+- name: scrubs_caller_supplied_no_openssl_tag_two_argument_form
+  description: >
+    A caller-supplied no_openssl tag, passed as `-tags no_openssl` (the
+    two-argument form), is neutralized to shim_prevented_no_openssl.
+  args: [build, -tags, no_openssl, ./...]
+  env: {__doozer_group: openshift-4.20}
+  expect:
+    tags_include: [shim_prevented_no_openssl]
+    tags_exclude: [no_openssl]
+
+- name: SUSPECT_does_not_scrub_no_openssl_passed_via_equals_form
+  description: >
+    SUSPECT: `-tags=no_openssl` (the equals form of the exact same flag) is
+    NOT scrubbed -- it survives untouched, letting a caller disable the
+    openssl backend FORCE_OPENSSL is supposed to mandate just by choosing
+    this spelling over `-tags no_openssl`. Only the two-argument form above
+    is covered by the sed-based scrub inline in the IN_TAGS state machine;
+    the `-tags=`/`--tags=` branch only appends strictfipsruntime, with no
+    equivalent scrub call. This looks like an oversight rather than a
+    deliberate choice -- there's no comment explaining why the two spellings
+    would be treated differently, and PR #3435's scrub_no_openssl() refactor
+    incidentally closes this exact gap (see that PR's own behavior spec)
+    without mentioning it as a fix.
+  args: [build, "-tags=no_openssl,other", ./...]
+  env: {__doozer_group: openshift-4.20}
+  expect:
+    tags_include: [no_openssl, other]
+    tags_exclude: [shim_prevented_no_openssl]
+
+# ---------------------------------------------------------------------------
+# Strict mode: GO_COMPLIANCE_STRICT=basic/full make non-compliant input a
+# hard error instead of silently rewriting it.
+# ---------------------------------------------------------------------------
+
+- name: basic_strict_mode_rejects_static_linking
+  description: >
+    Basic strict mode aborts rather than silently rewriting -static.
+  args: [build, -ldflags, '-extldflags "-static"', ./...]
+  env: {__doozer_group: openshift-4.20, GO_COMPLIANCE_STRICT: basic}
+  expect:
+    invoked: false
+    exit_code: 1
+    stderr_contains: "strict mode non-compliance"
+
+- name: basic_strict_mode_rejects_no_openssl_tag_two_argument_form
+  description: >
+    Basic strict mode aborts rather than silently scrubbing a no_openssl tag
+    passed as `-tags no_openssl`.
+  args: [build, -tags, no_openssl, ./...]
+  env: {__doozer_group: openshift-4.20, GO_COMPLIANCE_STRICT: basic}
+  expect:
+    invoked: false
+    exit_code: 1
+
+- name: SUSPECT_basic_strict_mode_does_not_catch_no_openssl_via_equals_form
+  description: >
+    SUSPECT: direct consequence of the equals-form gap above -- because
+    `-tags=no_openssl` is never scrubbed, basic strict mode never even sees
+    a violation to reject. A CI job relying on GO_COMPLIANCE_STRICT=basic to
+    catch non-compliant builds would silently let a `-tags=no_openssl`
+    component straight through, with no error, no log line, nothing --
+    exactly the class of problem strict mode exists to catch.
+  args: [build, "-tags=no_openssl", ./...]
+  env: {__doozer_group: openshift-4.20, GO_COMPLIANCE_STRICT: basic}
+  expect:
+    invoked: true
+    exit_code: 0
+    tags_include: [no_openssl]
+
+- name: full_strict_mode_rejects_build_without_preset_goexperiment
+  description: >
+    Full strict mode requires the caller to have already set
+    GOEXPERIMENT=strictfipsruntime themselves before invoking go build; the
+    shim will not silently inject it under full mode.
+  args: [build, ./...]
+  env: {__doozer_group: openshift-4.20, GO_COMPLIANCE_STRICT: full}
+  expect:
+    invoked: false
+    exit_code: 1
+
+- name: full_strict_mode_passes_with_preset_goexperiment
+  description: >
+    Full strict mode passes once the caller has pre-set GOEXPERIMENT
+    themselves.
+  args: [build, ./...]
+  env: {__doozer_group: openshift-4.20, GO_COMPLIANCE_STRICT: full, GOEXPERIMENT: strictfipsruntime}
+  expect:
+    invoked: true
+    exit_code: 0
+    env: {GOEXPERIMENT: strictfipsruntime}
+
+- name: basic_strict_mode_rejects_preset_cgo_disabled
+  description: >
+    CGO_ENABLED=0 set by the caller conflicts with the shim's need for cgo
+    to reach libopenssl; strict mode must reject rather than silently flip
+    it back on.
+  args: [build, ./...]
+  env: {__doozer_group: openshift-4.20, GO_COMPLIANCE_STRICT: basic, CGO_ENABLED: "0"}
+  expect:
+    invoked: false
+    exit_code: 1
+
+- name: non_strict_mode_silently_reenables_cgo_for_same_input
+  description: >
+    Without strict mode, the same CGO_ENABLED=0 input is a case the shim
+    silently corrects rather than rejects.
+  args: [build, ./...]
+  env: {__doozer_group: openshift-4.20, CGO_ENABLED: "0"}
+  expect:
+    invoked: true
+    exit_code: 0
+    env: {CGO_ENABLED: "1"}
+
+# ---------------------------------------------------------------------------
+# Exemption policy: forced compliance only applies to ART product builds (or
+# OpenShift CI); plain developer invocations and certain cross-compilation
+# scenarios are exempt and must pass through untouched.
+# ---------------------------------------------------------------------------
+
+- name: plain_developer_invocation_is_fully_exempt
+  description: >
+    No __doozer_group and no OPENSHIFT_CI means GO_COMPLIANCE_POLICY
+    defaults to exempt_all: nothing about the command line or environment
+    is touched. This is the ordinary `go build` a developer runs locally.
+  args: [build, -ldflags, '-extldflags "-static"', ./...]
+  env: {}
+  expect:
+    args: [build, -ldflags, '-extldflags "-static"', ./...]
+    env: {CGO_ENABLED: null, GOEXPERIMENT: null}
+
+- name: darwin_target_is_exempt_in_art_build
+  description: >
+    A darwin cross-compile target is exempt from forced compliance even
+    inside an ART product build.
+  args: [build, ./...]
+  env: {__doozer_group: openshift-4.20, GOOS: darwin}
+  expect:
+    args: [build, ./...]
+    env: {CGO_ENABLED: null}
+
+- name: windows_target_is_exempt_in_art_build
+  description: >
+    A windows cross-compile target is exempt from forced compliance even
+    inside an ART product build.
+  args: [build, ./...]
+  env: {__doozer_group: openshift-4.20, GOOS: windows}
+  expect:
+    args: [build, ./...]
+
+- name: cross_compile_to_different_arch_is_exempt
+  description: >
+    FOUND_HOST_ARCH comes from `go env GOHOSTARCH` (stubbed to amd64 here);
+    a GOARCH that doesn't match it is a cross-compile, exempted by default.
+  args: [build, ./...]
+  env: {__doozer_group: openshift-4.20, GOARCH: arm64}
+  go_hostarch: amd64
+  expect:
+    args: [build, ./...]
+
+- name: same_arch_build_is_not_exempt
+  description: >
+    A same-arch build (GOARCH matches the host) is not a cross-compile and
+    is not exempt.
+  args: [build, ./...]
+  env: {__doozer_group: openshift-4.20, GOARCH: amd64}
+  go_hostarch: amd64
+  expect:
+    env: {CGO_ENABLED: "1"}
+
+- name: go_compliance_exclude_forces_exemption_regardless_of_policy
+  description: >
+    GO_COMPLIANCE_EXCLUDE is a blanket override: a command line matching it
+    is exempt even inside an otherwise-enforced ART build.
+  args: [build, ./cmd/excluded-tool]
+  env: {__doozer_group: openshift-4.20, GO_COMPLIANCE_EXCLUDE: excluded-tool}
+  expect:
+    args: [build, ./cmd/excluded-tool]
+    env: {CGO_ENABLED: null}
+
+- name: openshift_ci_without_doozer_group_still_forces_gotoolchain_local
+  description: >
+    OPENSHIFT_CI alone (no __doozer_group) is enough to flip on the default
+    compliance policy and force GOTOOLCHAIN=local, independent of whether
+    this particular build ends up exempt for some other reason (here:
+    darwin).
+  args: [build, ./...]
+  env: {OPENSHIFT_CI: "1", GOOS: darwin}
+  expect:
+    args: [build, ./...]
+    env: {GOTOOLCHAIN: local}
+
+# ---------------------------------------------------------------------------
+# build/install/run detection: only `go build` and `go install` are build
+# invocations; a nested `go run build.go build` must not be mistaken for one.
+# ---------------------------------------------------------------------------
+
+- name: go_build_is_a_build_invocation
+  description: >
+    `go build` is treated as a build invocation: CGO_ENABLED is forced and
+    tags are injected.
+  args: [build, ./...]
+  env: {__doozer_group: openshift-4.20}
+  expect:
+    env: {CGO_ENABLED: "1"}
+    tags_include: [strictfipsruntime]
+
+- name: go_install_is_treated_same_as_build
+  description: >
+    `go install` is treated the same as `go build`.
+  args: [install, ./...]
+  env: {__doozer_group: openshift-4.20}
+  expect:
+    env: {CGO_ENABLED: "1"}
+    tags_include: [strictfipsruntime]
+
+- name: go_run_build_dot_go_build_is_not_a_build_invocation
+  description: >
+    A build script invoked via `go run build.go build` must pass through
+    unmodified: no -tags injection, no forced CGO_ENABLED, even though
+    "build" is literally one of its arguments.
+  args: [run, build.go, build]
+  env: {__doozer_group: openshift-4.20}
+  expect:
+    args: [run, build.go, build]
+    env: {CGO_ENABLED: null}
+
+- name: non_build_subcommand_gets_goexperiment_but_no_tags
+  description: >
+    GOEXPERIMENT forcing is not gated on this being a build invocation --
+    only -tags injection and CGO_ENABLED forcing are. A plain `go version`
+    call in an ART build context still comes back with strictfipsruntime
+    set, but with its argv untouched.
+  args: [version]
+  env: {__doozer_group: openshift-4.20}
+  expect:
+    args: [version]
+    env: {GOEXPERIMENT: strictfipsruntime, CGO_ENABLED: null}
+
+# ---------------------------------------------------------------------------
+# Tag injection mechanics: the shim's own strictfipsruntime tag is merged
+# into whatever -tags the caller already has, or a fresh -tags flag is
+# added if there was none.
+# ---------------------------------------------------------------------------
+
+- name: adds_fresh_tags_flag_when_none_supplied
+  description: >
+    When the caller passes no -tags at all, the shim adds a fresh -tags
+    flag right after "build".
+  args: [build, ./cmd/foo]
+  env: {__doozer_group: openshift-4.20}
+  expect:
+    args: [build, -tags, strictfipsruntime, ./cmd/foo]
+
+- name: merges_into_existing_two_argument_tags_flag
+  description: >
+    An existing two-argument -tags flag is merged with, not replaced by,
+    the shim's own tag.
+  args: [build, -tags, sometag, ./...]
+  env: {__doozer_group: openshift-4.20}
+  expect:
+    tags_include: [sometag, strictfipsruntime]
+
+- name: merges_into_existing_equals_form_tags_flag
+  description: >
+    An existing -tags=<list> flag is also merged with the shim's own tag.
+  args: [build, "-tags=sometag", ./...]
+  env: {__doozer_group: openshift-4.20}
+  expect:
+    tags_include: [sometag, strictfipsruntime]
+
+- name: quoted_tag_values_are_unquoted_before_merging
+  description: >
+    Some build scripts pass a quoted tag list literally (observed with
+    grafana's build tooling); the shim strips the quote characters before
+    appending its own tag.
+  args: [build, -tags, '"sometag"', ./...]
+  env: {__doozer_group: openshift-4.20}
+  expect:
+    tags_include: [sometag]
+    args_not_contains: ['"sometag"']
+
+# ---------------------------------------------------------------------------
+# Coverage instrumentation: GO_COMPLIANCE_COVER=1 turns on code coverage for
+# ART's health-report pipeline.
+# ---------------------------------------------------------------------------
+
+- name: cover_adds_cover_flags_to_build
+  description: >
+    GO_COMPLIANCE_COVER=1 adds -cover and -covermode=atomic to a build
+    invocation.
+  args: [build, ./...]
+  env: {__doozer_group: openshift-4.20, GO_COMPLIANCE_COVER: "1"}
+  expect:
+    args_contains: ["-cover", "-covermode=atomic"]
+
+- name: cover_is_disabled_by_default
+  description: >
+    Without GO_COMPLIANCE_COVER, no coverage flags are added.
+  args: [build, ./...]
+  env: {__doozer_group: openshift-4.20}
+  expect:
+    args_not_contains: ["-cover"]
+
+- name: cover_appends_sibling_coverage_server_go
+  description: >
+    When coverage is on and an explicit .go file is being built, a sibling
+    coverage_server.go is appended automatically if it exists on disk.
+  args: [build, pkg/foo.go]
+  env: {__doozer_group: openshift-4.20, GO_COMPLIANCE_COVER: "1"}
+  cwd_files: [pkg/coverage_server.go]
+  expect:
+    args: [build, -cover, -covermode=atomic, -tags, strictfipsruntime, pkg/foo.go, pkg/coverage_server.go]
+
+- name: cover_does_not_append_for_package_path_builds
+  description: >
+    Package-path builds (e.g. ./pkg/...) already pull in every .go file in
+    the package automatically, so nothing is appended explicitly.
+  args: [build, ./pkg/...]
+  env: {__doozer_group: openshift-4.20, GO_COMPLIANCE_COVER: "1"}
+  cwd_files: [pkg/coverage_server.go]
+  expect:
+    args_not_contains: [pkg/coverage_server.go]
+
+- name: cover_does_not_duplicate_coverage_server_go
+  description: >
+    Building coverage_server.go directly must not duplicate it in the final
+    argument list.
+  args: [build, pkg/coverage_server.go]
+  env: {__doozer_group: openshift-4.20, GO_COMPLIANCE_COVER: "1"}
+  cwd_files: [pkg/coverage_server.go]
+  expect:
+    args: [build, -cover, -covermode=atomic, -tags, strictfipsruntime, pkg/coverage_server.go]
+
+- name: cover_does_not_append_when_file_missing_on_disk
+  description: >
+    When no sibling coverage_server.go exists on disk, nothing is appended.
+  args: [build, pkg/foo.go]
+  env: {__doozer_group: openshift-4.20, GO_COMPLIANCE_COVER: "1"}
+  cwd_files: [pkg/foo.go]
+  expect:
+    args_not_contains: [pkg/coverage_server.go]
+
+# ---------------------------------------------------------------------------
+# Granular per-feature INCLUDE/EXCLUDE filters: cgo, dynamic linking,
+# openssl, and strictfipsruntime forcing can each be carved out individually
+# without losing the others.
+# ---------------------------------------------------------------------------
+
+- name: cgo_enabled_exclude_lets_component_keep_cgo_disabled
+  description: >
+    GO_COMPLIANCE_CGO_ENABLED_EXCLUDE lets a matching component keep
+    CGO_ENABLED=0 even in an otherwise-enforced build.
+  args: [build, ./cmd/pure-go-tool]
+  env: {__doozer_group: openshift-4.20, GO_COMPLIANCE_CGO_ENABLED_EXCLUDE: pure-go-tool, CGO_ENABLED: "0"}
+  expect:
+    env: {CGO_ENABLED: "0"}
+
+- name: dynamic_linking_exclude_leaves_static_linking_alone
+  description: >
+    GO_COMPLIANCE_DYNAMIC_LINKING_EXCLUDE lets a matching component keep
+    -static even in an otherwise-enforced build.
+  args: [build, -ldflags, '-extldflags "-static"', ./cmd/static-tool]
+  env: {__doozer_group: openshift-4.20, GO_COMPLIANCE_DYNAMIC_LINKING_EXCLUDE: static-tool}
+  expect:
+    args_contains: ['-extldflags "-static"']
+
+- name: fod_mode_exclude_prevents_strictfipsruntime
+  description: >
+    GO_COMPLIANCE_FOD_MODE_EXCLUDE prevents strictfipsruntime from being
+    added, and with it, any -tags flag at all (since it's the only tag that
+    would have been injected).
+  args: [build, ./cmd/unchecked-tool]
+  env: {__doozer_group: openshift-4.20, GO_COMPLIANCE_FOD_MODE_EXCLUDE: unchecked-tool}
+  expect:
+    env: {GOEXPERIMENT: null}
+    no_tags: true
+
+- name: openssl_enabled_exclude_stops_no_openssl_scrubbing
+  description: >
+    FORCE_OPENSSL gates the scrub of a caller-supplied no_openssl tag;
+    GO_COMPLIANCE_OPENSSL_ENABLED_EXCLUDE lets a matching component keep its
+    own no_openssl tag choice (two-argument form -- see the SUSPECT cases
+    above for the equals-form gap, which makes this exclude redundant for
+    that spelling since nothing scrubs it there either way).
+  args: [build, -tags, no_openssl, ./cmd/opts-out]
+  env: {__doozer_group: openshift-4.20, GO_COMPLIANCE_OPENSSL_ENABLED_EXCLUDE: opts-out}
+  expect:
+    tags_include: [no_openssl]
+    tags_exclude: [shim_prevented_no_openssl]
+
+# ---------------------------------------------------------------------------
+# Exit code propagation: the shim must faithfully forward the real
+# compiler's exit code once it has handed off the rewritten invocation.
+# ---------------------------------------------------------------------------
+
+- name: propagates_nonzero_exit_code_from_compiler
+  description: >
+    A non-zero exit code from the real compiler is forwarded unchanged.
+  args: [build, ./...]
+  env: {__doozer_group: openshift-4.20, FAKE_GO_EXIT_CODE: "7"}
+  expect:
+    invoked: true
+    exit_code: 7
+
+- name: propagates_success_from_compiler
+  description: >
+    A successful compiler run is forwarded as a zero exit code.
+  args: [build, ./...]
+  env: {__doozer_group: openshift-4.20}
+  expect:
+    invoked: true
+    exit_code: 0
