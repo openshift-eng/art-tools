@@ -720,9 +720,15 @@ class ConfigScanSources:
         """
         Get the upstream latest commit hash using git ls-remote
         """
+        source_git = meta.config.content.source.git
+        if source_git is Missing:
+            raise IOError(
+                f'{meta.distgit_key}: content.source.git is not defined in image config '
+                f'(possibly lost during Konflux config merge); cannot check upstream commits'
+            )
         use_source_fallback_branch = cast(str, self.runtime.group_config.use_source_fallback_branch or "yes")
         _, upstream_commit_hash = SourceResolver.detect_remote_source_branch(
-            meta.config.content.source.git, self.runtime.stage, use_source_fallback_branch
+            source_git, self.runtime.stage, use_source_fallback_branch
         )
         return upstream_commit_hash
 

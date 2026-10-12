@@ -703,6 +703,68 @@ class TestImageMetadata(unittest.TestCase):
         self.assertTrue(digest.startswith('sha256:'))
         self.assertEqual(len(digest), 71)  # 'sha256:' + 64 hex chars
 
+    def test_calculate_config_digest_does_not_corrupt_config(self):
+        """
+        Regression test for ART-24592: calculate_config_digest must NOT
+        mutate self.config.
+
+        The bug: copy(self.config).primitive() returns raw dict values
+        (never accessed via __getattr__) as *shared* references with the
+        original config.  The ignore_keys loop then does `del p[seg]` on
+        those shared dicts, corrupting self.config — specifically removing
+        content.source.git from the original.
+
+        The fix: use deepcopy(self.config.primitive()) so the ignore_keys
+        loop operates on a fully independent dict tree.
+        """
+        metadata = self._create_image_metadata('openshift/test_digest_corruption')
+
+        # Build a config whose 'content' subtree is a raw dict that has
+        # NEVER been accessed through Model.__getattr__.  This is the
+        # trigger: primitive() will return this raw dict by reference
+        # (not a copy) when using the old shallow-copy approach.
+        raw_config = {
+            'name': 'test-image',
+            'content': {
+                'source': {
+                    'git': {
+                        'url': 'https://github.com/openshift/test-repo.git',
+                        'branch': {
+                            'target': 'release-4.18',
+                        },
+                    },
+                    'ci_alignment': {
+                        'streams_prs': {'enabled': True},
+                    },
+                },
+            },
+            'enabled_repos': [],
+            'non_shipping_repos': [],
+        }
+        metadata.config = Model(raw_config)
+
+        group_config = Model({})
+        streams = Model({})
+
+        # Sanity: git subtree exists before the call (access raw dict directly
+        # to avoid triggering Model lazy-loading, which would mask the bug)
+        self.assertIn('git', raw_config['content']['source'])
+        self.assertIsNotNone(raw_config['content']['source']['git']['url'])
+
+        # Call calculate_config_digest — this must NOT corrupt self.config
+        digest = metadata.calculate_config_digest(group_config, streams)
+
+        # Verify digest is valid
+        self.assertTrue(digest.startswith('sha256:'))
+        self.assertEqual(len(digest), 71)
+
+        # THE KEY ASSERTION: content.source.git must still be intact
+        self.assertNotEqual(metadata.config.content.source.git, Missing)
+        self.assertEqual(
+            metadata.config.content.source.git.url,
+            'https://github.com/openshift/test-repo.git',
+        )
+
     @patch('doozerlib.image.SourceResolver')
     @patch('builtins.open', create=True)
     @patch('pathlib.Path.joinpath')
