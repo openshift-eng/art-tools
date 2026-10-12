@@ -1926,6 +1926,43 @@ class TestEnsureComponent(IsolatedAsyncioTestCase):
         client._create_or_replace.assert_called_once()
         self.assertIs(result, new_resource)
 
+    async def test_deletes_and_recreates_when_source_url_changes(self):
+        client = MagicMock(spec=KonfluxClient)
+        existing = _make_existing_component(source_url="https://github.com/org/old-repo")
+        # Add namespace to the existing component metadata for the delete call
+        existing.to_dict.return_value["metadata"]["namespace"] = "test-ns"
+        # 1st call: initial lookup returns the existing component.
+        # 2nd call: wait-loop poll — component still present (finalizer).
+        # 3rd call: wait-loop poll — component gone.
+        client.get_component = AsyncMock(side_effect=[existing, existing, None])
+        client._component_matches = KonfluxClient._component_matches
+        client._new_component = KonfluxClient._new_component
+        client.default_namespace = "test-ns"
+        client.dry_run = False
+        client._logger = logging.getLogger("test")
+        client._delete = AsyncMock()
+        new_resource = MagicMock()
+        client._create_or_replace = AsyncMock(return_value=new_resource)
+
+        with patch("asyncio.sleep", new_callable=AsyncMock):
+            result = await KonfluxClient.ensure_component(
+                client,
+                name="test-component",
+                application="test-app",
+                component_name="test-component",
+                image_repo="quay.io/test/image",
+                source_url="https://github.com/org/new-repo",
+                revision="main",
+            )
+
+        client._delete.assert_called_once_with(
+            "appstudio.redhat.com/v1alpha1", "Component", "test-component", "test-ns"
+        )
+        # 3 get_component calls: initial lookup + 2 wait-loop polls
+        self.assertEqual(client.get_component.call_count, 3)
+        client._create_or_replace.assert_called_once()
+        self.assertIs(result, new_resource)
+
 
 class TestRpmsSignatureScanMemoryOverride(IsolatedAsyncioTestCase):
     """Tests for rpms-signature-scan 2Gi memory override in _new_pipelinerun_for_image_build."""
