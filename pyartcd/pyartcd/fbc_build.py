@@ -226,7 +226,7 @@ async def build_fbc_catalogs(
             return FbcBuildResult(target_version, operator_nvrs, (), ())
 
         async def _run():
-            return_code, stdout, stderr = await exectools.cmd_gather_async(cmd, check=False)
+            return_code, stdout, stderr = await exectools.cmd_gather_async(cmd, check=False, stderr=None)
             return _validate_fbc_build_output(
                 target_version,
                 operator_nvrs,

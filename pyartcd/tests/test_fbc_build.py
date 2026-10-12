@@ -63,6 +63,10 @@ class TestFbcBuild(unittest.TestCase):
 
         self.assertEqual([result.target_version for result in results], ["4.19", "4.20"])
         self.assertEqual(mock_cmd.await_count, 2)
+        self.assertTrue(
+            all(call.kwargs == {"check": False, "stderr": None} for call in mock_cmd.await_args_list),
+            "Doozer stderr should stream to the parent process while stdout remains captured for JSON parsing",
+        )
         commands = [call.args[0] for call in mock_cmd.await_args_list]
         self.assertTrue(all("--force" in command for command in commands))
         self.assertTrue(all("--reset-to-prod" in command for command in commands))
