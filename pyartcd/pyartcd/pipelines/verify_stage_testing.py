@@ -48,10 +48,16 @@ class StageTestingPipeline:
     async def run(self) -> dict:
         """Check label, trigger if needed, and poll until completion."""
         label_result = await self._check_label()
+        state = label_result.get("state", "not_started")
 
         if label_result["passed"]:
             click.echo("[verify-stage-testing] Stage testing already passed — label found on MR", err=True)
             return {"passed": True, "state": "success", "already_passed": True}
+
+        if state == "fail":
+            click.echo("[verify-stage-testing] Previous run failed — re-triggering", err=True)
+        elif state == "triggered":
+            click.echo("[verify-stage-testing] Previous trigger found but no result — re-triggering", err=True)
 
         trigger_result = await self._trigger()
         job_id = trigger_result["job_id"]
@@ -171,10 +177,15 @@ async def verify_stage_testing_cli(
 ):
     """Trigger a stage testing Prow job and poll until completion.
 
-    Calls 'elliott verify-stage-testing --trigger' to trigger the job
-    (skips if the stage-testing-success label is already present),
-    then polls with 'elliott verify-stage-testing --job-id' until
+    Checks the stage-testing label on the shipment MR first. If
+    stage-testing-success is already present, exits immediately.
+    Otherwise triggers via 'elliott verify-stage-testing --trigger'
+    and polls with 'elliott verify-stage-testing --job-id' until
     the job reaches a terminal state.
+
+    Elliott manages all label transitions on the MR (triggered,
+    success, fail). Each label operation is an atomic swap so that
+    at most one stage-testing-* label is present at a time.
 
     Requires GANGWAY_TOKEN (Gangway) and GITLAB_TOKEN (label management)
     to be set in the environment.
@@ -205,7 +216,7 @@ async def verify_stage_testing_cli(
             if result.get("url"):
                 click.echo(f"  URL: {result['url']}")
             if result.get("label_added"):
-                click.echo("  Label 'stage-testing-success' added to MR")
+                click.echo("  Stage-testing label updated on MR")
 
     if not result.get("passed"):
         raise SystemExit(1)
