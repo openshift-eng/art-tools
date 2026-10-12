@@ -13,6 +13,7 @@ from elliottlib.shipment_model import (
     SnapshotComponent,
     SnapshotSpec,
 )
+from pyartcd.fbc_build import FbcBuildResult
 from pyartcd.lp_shipment import ShipmentMRActiveStageError, ShipmentMRValidationError
 from pyartcd.pipelines.release_from_fbc import (
     _TEST_MR_DESCRIPTION_MARKER,
@@ -39,14 +40,14 @@ def _make_snapshot(app="oadp-1-4"):
 
 
 class TestReleaseFromFbcPipeline(unittest.TestCase):
-    def _make_pipeline(self, jira_bugs=None):
+    def _make_pipeline(self, jira_bugs=None, **overrides):
         runtime = MagicMock()
         runtime.dry_run = False
         runtime.working_dir = MagicMock()
         runtime.working_dir.absolute.return_value = MagicMock()
         runtime.config = {}
 
-        pipeline = ReleaseFromFbcPipeline(
+        kwargs = dict(
             runtime=runtime,
             group="oadp-1.4",
             assembly="1.4.5",
@@ -54,6 +55,8 @@ class TestReleaseFromFbcPipeline(unittest.TestCase):
             create_mr=False,
             jira_bugs=jira_bugs,
         )
+        kwargs.update(overrides)
+        pipeline = ReleaseFromFbcPipeline(**kwargs)
         pipeline.product = "oadp"
         return pipeline
 
@@ -66,6 +69,54 @@ class TestReleaseFromFbcPipeline(unittest.TestCase):
         """jira_bugs defaults to None when not provided."""
         pipeline = self._make_pipeline()
         self.assertIsNone(pipeline.jira_bugs)
+
+    @patch("pyartcd.pipelines.release_from_fbc.build_fbc_catalogs", new_callable=AsyncMock)
+    @patch.object(ReleaseFromFbcPipeline, "_load_component_doozer_keys", new_callable=AsyncMock)
+    def test_refresh_fbc_pullspecs_uses_exact_operator_nvrs(self, mock_component_keys, mock_build_fbc_catalogs):
+        """Refresh should rebuild each target from the operator NVR embedded in its source FBC."""
+        source_pullspecs = ["quay.io/test/fbc:4.19", "quay.io/test/fbc:4.20"]
+        source_nvrs = [
+            "oadp-operator-fbc-1.4.5-202610110001.ocp4.19",
+            "oadp-operator-fbc-1.4.5-202610110002.ocp4.20",
+        ]
+        operator_nvr = "oadp-operator-container-1.4.5-1"
+        pipeline = self._make_pipeline(fbc_pullspecs=source_pullspecs, refresh_fbcs=True)
+        pipeline._fbc_operator_by_pullspec = {pullspec: "oadp-operator" for pullspec in source_pullspecs}
+        pipeline._fbc_related_nvrs_by_pullspec = {
+            pullspec: [operator_nvr, "velero-container-1.14.0-1"] for pullspec in source_pullspecs
+        }
+        mock_component_keys.return_value = {
+            "oadp-operator-container": "oadp-operator",
+            "velero-container": "velero",
+        }
+        mock_build_fbc_catalogs.return_value = [
+            FbcBuildResult("4.19", (operator_nvr,), ("oadp-operator-fbc-1.4.5-2.ocp4.19",), ("quay.io/new:419",)),
+            FbcBuildResult("4.20", (operator_nvr,), ("oadp-operator-fbc-1.4.5-2.ocp4.20",), ("quay.io/new:420",)),
+        ]
+
+        result = asyncio.run(pipeline._refresh_fbc_pullspecs(source_nvrs))
+
+        self.assertEqual(result, ["quay.io/new:419", "quay.io/new:420"])
+        kwargs = mock_build_fbc_catalogs.await_args.kwargs
+        self.assertEqual(kwargs["operator_nvrs_by_target"], {"4.19": [operator_nvr], "4.20": [operator_nvr]})
+        self.assertTrue(kwargs["force"])
+        self.assertTrue(kwargs["reset_to_prod"])
+
+    @patch("pyartcd.pipelines.release_from_fbc.build_fbc_catalogs", new_callable=AsyncMock)
+    @patch.object(ReleaseFromFbcPipeline, "_load_component_doozer_keys", new_callable=AsyncMock)
+    def test_refresh_fbc_pullspecs_rejects_ambiguous_operator(self, mock_component_keys, mock_build_fbc_catalogs):
+        """Refresh should fail before building if provenance does not identify one exact operator NVR."""
+        pipeline = self._make_pipeline(refresh_fbcs=True)
+        pipeline._fbc_operator_by_pullspec = {"quay.io/test/fbc:latest": "oadp-operator"}
+        pipeline._fbc_related_nvrs_by_pullspec = {
+            "quay.io/test/fbc:latest": ["oadp-operator-container-1.4.5-1", "oadp-operator-container-1.4.5-2"]
+        }
+        mock_component_keys.return_value = {"oadp-operator-container": "oadp-operator"}
+
+        with self.assertRaisesRegex(RuntimeError, "expected exactly one operator NVR"):
+            asyncio.run(pipeline._refresh_fbc_pullspecs(["oadp-operator-fbc-1.4.5-1.ocp4.20"]))
+
+        mock_build_fbc_catalogs.assert_not_awaited()
 
     def test_create_shipment_config_image_with_release_notes(self):
         """create_shipment_config should include release_notes in data for image kind."""
@@ -1051,6 +1102,20 @@ class TestCliValidation(unittest.TestCase):
         self.assertIsInstance(result.exception, click.ClickException)
         self.assertIn("only supported for layered-product", str(result.exception))
 
+    def test_refresh_requires_fbc_pullspecs(self):
+        """Refresh cannot infer provenance without source FBCs."""
+        result = self._invoke(["--extra-image-nvrs", "foo-container-1.0-1.el9", "--refresh-fbcs"])
+
+        self.assertIsInstance(result.exception, click.ClickException)
+        self.assertIn("--refresh-fbcs requires --fbc-pullspecs", str(result.exception))
+
+    def test_refresh_rejected_for_ocp_optional(self):
+        """Keep layered-product refresh behavior out of the OCP optional path."""
+        result = self._invoke(["--fbc-pullspecs", "quay.io/test/fbc:latest", "--refresh-fbcs", "--ocp-optional"])
+
+        self.assertIsInstance(result.exception, click.ClickException)
+        self.assertIn("only supported for layered-product", str(result.exception))
+
     def test_test_requires_create_mr(self):
         """Reject test mode when no shipment MR will be created or reused."""
         result = self._invoke(["--extra-image-nvrs", "foo-container-1.0-1.el9", "--test"])
@@ -1080,6 +1145,16 @@ class TestCliValidation(unittest.TestCase):
 
         self.assertIsNone(result.exception)
         self.assertTrue(pipeline_cls.call_args.kwargs["test_mode"])
+
+    @patch("pyartcd.pipelines.release_from_fbc.ReleaseFromFbcPipeline")
+    def test_refresh_option_is_passed_to_pipeline(self, pipeline_cls):
+        """Pass the refresh checkbox to the release pipeline."""
+        pipeline_cls.return_value.run = AsyncMock()
+
+        result = self._invoke(["--fbc-pullspecs", "quay.io/test/fbc:latest", "--refresh-fbcs"])
+
+        self.assertIsNone(result.exception)
+        self.assertTrue(pipeline_cls.call_args.kwargs["refresh_fbcs"])
 
     @patch("pyartcd.pipelines.release_from_fbc.locks.run_with_lock", new_callable=AsyncMock)
     @patch("pyartcd.pipelines.release_from_fbc.ReleaseFromFbcPipeline")
@@ -1830,6 +1905,38 @@ class TestOcpOptionalMode(unittest.TestCase):
         pipeline.create_shipment_mr.assert_awaited_once()
         pipeline._update_layered_product_shipment_mr.assert_not_awaited()
         pipeline.runtime.new_jira_client.assert_not_called()
+
+    @patch('pyartcd.pipelines.release_from_fbc.validate_shipment_mr_for_operation', new_callable=AsyncMock)
+    def test_refresh_failure_leaves_reused_mr_unchanged(self, mock_validate):
+        """A refresh failure should occur before snapshots or shipment MR mutations."""
+        existing_mr = MagicMock(state='opened', title='Shipment for oadp 1.5.8', description='')
+        mock_validate.return_value = (existing_mr, MagicMock(active_stage=(), prod_attempts=()))
+        pipeline = self._make_pipeline(ocp_optional=False, group="oadp-1.5", assembly="1.5.8")
+        pipeline.create_mr = True
+        pipeline.refresh_fbcs = True
+        pipeline.check_env_vars = MagicMock()
+        pipeline.setup_working_dir = MagicMock()
+        pipeline.setup_shipment_repo = AsyncMock()
+        pipeline._load_product_from_group_config = AsyncMock(return_value="oadp")
+        pipeline._load_layered_product_shipment_mr = MagicMock(
+            return_value="https://gitlab.example/project/-/merge_requests/42"
+        )
+        pipeline.extract_fbc_nvr = MagicMock(return_value="oadp-operator-fbc-1.5.8-1.ocp4.20")
+        pipeline._load_ignore_patch_version_from_group_config = AsyncMock(return_value=False)
+        pipeline.validate_fbc_related_images = AsyncMock(return_value=["oadp-operator-container-1.5.8-1"])
+        pipeline._refresh_fbc_pullspecs = AsyncMock(side_effect=RuntimeError("target build failed"))
+        pipeline.create_snapshot = AsyncMock()
+        pipeline.create_shipment_mr = AsyncMock()
+        pipeline.set_shipment_mr_ready = AsyncMock()
+        pipeline.__dict__['_gitlab'] = MagicMock()
+
+        with self.assertRaisesRegex(RuntimeError, "target build failed"):
+            asyncio.run(pipeline.run())
+
+        pipeline.create_snapshot.assert_not_awaited()
+        pipeline.create_shipment_mr.assert_not_awaited()
+        pipeline.set_shipment_mr_ready.assert_not_awaited()
+        existing_mr.save.assert_not_called()
 
     @patch('pyartcd.pipelines.release_from_fbc.validate_shipment_mr_for_operation', new_callable=AsyncMock)
     def test_force_closes_open_previous_mr_before_replacement(self, mock_validate):

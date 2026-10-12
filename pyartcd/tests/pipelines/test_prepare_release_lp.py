@@ -3,6 +3,7 @@ import json
 import unittest
 from unittest.mock import AsyncMock, MagicMock, PropertyMock, patch
 
+from pyartcd.fbc_build import FbcBuildResult
 from pyartcd.lp_shipment import ShipmentMRActiveStageError
 from pyartcd.pipelines.prepare_release_lp import PrepareReleaseLPPipeline
 
@@ -213,12 +214,13 @@ class TestPrepareReleaseLPPipeline(unittest.TestCase):
 
         result = CliRunner().invoke(
             prepare_release_lp,
-            ["--group", "acm-2.17", "--assembly", "2.17.3", "--create-mr"],
+            ["--group", "acm-2.17", "--assembly", "2.17.3", "--create-mr", "--refresh-fbcs"],
             obj=runtime,
             standalone_mode=False,
         )
 
         self.assertIsNone(result.exception)
+        self.assertTrue(pipeline_cls.call_args.kwargs["refresh_fbcs"])
         run_with_lock.assert_awaited_once()
         self.assertEqual(
             run_with_lock.await_args.kwargs["lock_name"],
@@ -247,102 +249,61 @@ class TestPrepareReleaseLPMultiFBC(unittest.TestCase):
         return PrepareReleaseLPPipeline(**kwargs)
 
     @patch.object(PrepareReleaseLPPipeline, '_load_ocp_target_versions', new_callable=AsyncMock)
-    @patch('pyartcd.pipelines.prepare_release_lp.exectools.cmd_gather_async', new_callable=AsyncMock)
-    def test_trigger_fbc_build_loops_over_ocp_versions(self, mock_cmd, mock_target_versions):
-        """_trigger_fbc_build should call doozer once per OCP target version with --major-minor."""
+    @patch('pyartcd.pipelines.prepare_release_lp.build_fbc_catalogs', new_callable=AsyncMock)
+    def test_trigger_fbc_build_uses_all_ocp_versions(self, mock_build_fbc_catalogs, mock_target_versions):
+        """_trigger_fbc_build should request one build for every OCP target version."""
         mock_target_versions.return_value = ["4.18", "4.19", "4.20"]
-        mock_cmd.side_effect = [
-            (
-                0,
-                json.dumps(
-                    {
-                        "nvrs": ["fbc-6.4.1-1.ocp4.18"],
-                        "pullspecs": ["quay.io/test/fbc@sha256:a18"],
-                        "errors": [],
-                        "failed_count": 0,
-                        "success_count": 1,
-                    }
-                ),
-                "",
-            ),
-            (
-                0,
-                json.dumps(
-                    {
-                        "nvrs": ["fbc-6.4.1-1.ocp4.19"],
-                        "pullspecs": ["quay.io/test/fbc@sha256:a19"],
-                        "errors": [],
-                        "failed_count": 0,
-                        "success_count": 1,
-                    }
-                ),
-                "",
-            ),
-            (
-                0,
-                json.dumps(
-                    {
-                        "nvrs": ["fbc-6.4.1-1.ocp4.20"],
-                        "pullspecs": ["quay.io/test/fbc@sha256:a20"],
-                        "errors": [],
-                        "failed_count": 0,
-                        "success_count": 1,
-                    }
-                ),
-                "",
-            ),
+        operator_nvrs = ["loki-rhel9-operator-container-6.4.1-1"]
+        mock_build_fbc_catalogs.return_value = [
+            FbcBuildResult("4.18", tuple(operator_nvrs), ("fbc-6.4.1-1.ocp4.18",), ("quay.io/fbc:a18",)),
+            FbcBuildResult("4.19", tuple(operator_nvrs), ("fbc-6.4.1-1.ocp4.19",), ("quay.io/fbc:a19",)),
+            FbcBuildResult("4.20", tuple(operator_nvrs), ("fbc-6.4.1-1.ocp4.20",), ("quay.io/fbc:a20",)),
         ]
 
         pipeline = self._make_pipeline(dry_run=False)
-        operator_nvrs = ["loki-rhel9-operator-container-6.4.1-1"]
         nvrs, pullspecs = asyncio.run(pipeline._trigger_fbc_build(operator_nvrs))
 
         self.assertEqual(len(nvrs), 3)
         self.assertEqual(len(pullspecs), 3)
-        self.assertEqual(mock_cmd.call_count, 3)
-        for call_args in mock_cmd.call_args_list:
-            cmd = call_args[0][0]
-            self.assertTrue(any('--major-minor=' in arg for arg in cmd))
-            self.assertIn('--output=json', cmd)
-            self.assertTrue(any('--version=' in arg for arg in cmd))
-            self.assertTrue(any('--release=' in arg for arg in cmd))
-            self.assertTrue(any('--message=' in arg for arg in cmd))
-            self.assertIn('--', cmd)
-            self.assertIn('loki-rhel9-operator-container-6.4.1-1', cmd)
+        mock_build_fbc_catalogs.assert_awaited_once()
+        kwargs = mock_build_fbc_catalogs.await_args.kwargs
+        self.assertEqual(
+            kwargs["operator_nvrs_by_target"],
+            {"4.18": operator_nvrs, "4.19": operator_nvrs, "4.20": operator_nvrs},
+        )
+        self.assertFalse(kwargs["force"])
+        self.assertTrue(kwargs["reset_to_prod"])
 
     @patch.object(PrepareReleaseLPPipeline, '_load_ocp_target_versions', new_callable=AsyncMock)
-    @patch('pyartcd.pipelines.prepare_release_lp.exectools.cmd_gather_async', new_callable=AsyncMock)
-    def test_trigger_fbc_build_fallback_no_target_versions(self, mock_cmd, mock_target_versions):
+    @patch('pyartcd.pipelines.prepare_release_lp.build_fbc_catalogs', new_callable=AsyncMock)
+    def test_trigger_fbc_build_fallback_no_target_versions(self, mock_build_fbc_catalogs, mock_target_versions):
         """Without OCP_TARGET_VERSIONS, should fall back to single FBC build."""
         mock_target_versions.return_value = []
-        mock_cmd.return_value = (
-            0,
-            json.dumps(
-                {
-                    "nvrs": ["fbc-6.4.1-1"],
-                    "pullspecs": ["quay.io/test/fbc@sha256:single"],
-                    "errors": [],
-                    "failed_count": 0,
-                    "success_count": 1,
-                }
-            ),
-            "",
-        )
+        operator_nvrs = ["loki-rhel9-operator-container-6.4.1-1"]
+        mock_build_fbc_catalogs.return_value = [
+            FbcBuildResult(None, tuple(operator_nvrs), ("fbc-6.4.1-1",), ("quay.io/test/fbc@sha256:single",))
+        ]
 
         pipeline = self._make_pipeline(dry_run=False)
-        operator_nvrs = ["loki-rhel9-operator-container-6.4.1-1"]
         nvrs, pullspecs = asyncio.run(pipeline._trigger_fbc_build(operator_nvrs))
 
         self.assertEqual(len(nvrs), 1)
         self.assertEqual(len(pullspecs), 1)
-        mock_cmd.assert_called_once()
-        cmd = mock_cmd.call_args[0][0]
-        self.assertFalse(any('--major-minor=' in arg for arg in cmd))
-        self.assertIn('--output=json', cmd)
-        self.assertTrue(any('--version=6.4.1' in arg for arg in cmd))
-        self.assertTrue(any('--release=' in arg for arg in cmd))
-        self.assertIn('--', cmd)
-        self.assertIn('loki-rhel9-operator-container-6.4.1-1', cmd)
+        self.assertEqual(mock_build_fbc_catalogs.await_args.kwargs["operator_nvrs_by_target"], {None: operator_nvrs})
+
+    @patch.object(PrepareReleaseLPPipeline, '_load_ocp_target_versions', new_callable=AsyncMock)
+    @patch('pyartcd.pipelines.prepare_release_lp.build_fbc_catalogs', new_callable=AsyncMock)
+    def test_trigger_fbc_build_refreshes_from_production(self, mock_build_fbc_catalogs, mock_target_versions):
+        """Refresh mode should force builds after resetting to production content."""
+        mock_target_versions.return_value = ["4.20"]
+        mock_build_fbc_catalogs.return_value = []
+        pipeline = self._make_pipeline(dry_run=False, refresh_fbcs=True)
+
+        asyncio.run(pipeline._trigger_fbc_build(["loki-rhel9-operator-container-6.4.1-1"]))
+
+        kwargs = mock_build_fbc_catalogs.await_args.kwargs
+        self.assertTrue(kwargs["force"])
+        self.assertTrue(kwargs["reset_to_prod"])
 
     @patch.object(PrepareReleaseLPPipeline, '_load_ocp_target_versions', new_callable=AsyncMock)
     def test_trigger_fbc_build_dry_run_with_target_versions(self, mock_target_versions):
@@ -350,7 +311,7 @@ class TestPrepareReleaseLPMultiFBC(unittest.TestCase):
         mock_target_versions.return_value = ["4.18", "4.19"]
 
         pipeline = self._make_pipeline(dry_run=True)
-        result = asyncio.run(pipeline._trigger_fbc_build())
+        result = asyncio.run(pipeline._trigger_fbc_build(["loki-rhel9-operator-container-6.4.1-1"]))
 
         self.assertEqual(result, ([], []))
 

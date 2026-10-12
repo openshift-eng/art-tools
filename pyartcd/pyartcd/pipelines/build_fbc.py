@@ -13,37 +13,12 @@ from artcommonlib.variants import BuildVariant, get_build_variant_for_product
 
 from pyartcd import constants, jenkins, locks
 from pyartcd.cli import cli, click_coroutine, pass_runtime
+from pyartcd.fbc_build import generate_fbc_lock_name
 from pyartcd.locks import Lock
 from pyartcd.record import parse_record_log
 from pyartcd.runtime import Runtime
 from pyartcd.slack import SlackClient
 from pyartcd.util import load_group_config
-
-
-def _generate_fbc_lock_name(
-    group: str,
-    major_minor: Optional[str] = None,
-) -> str:
-    """Generate FBC lock name with OCP version for non-OpenShift groups.
-
-    Args:
-        group: The doozer group name (e.g., "openshift-4.17", "oadp-1.4")
-        major_minor: Major.minor version (e.g., "4.17") - required for non-OpenShift groups
-
-    Returns:
-        Lock name following the pattern:
-        - For OpenShift: "lock:fbc-build:{group}"
-        - For non-OpenShift: "lock:fbc-build:{group}-ocp-{major_minor}"
-    """
-    if group.startswith('openshift-'):
-        # For OpenShift products, use the traditional lock naming
-        return f"lock:fbc-build:{group}"
-    else:
-        # For non-OpenShift products, include the target OCP version
-        if not major_minor:
-            raise ValueError(f"--major-minor is required for non-OpenShift group '{group}'")
-
-        return f"lock:fbc-build:{group}-ocp-{major_minor}"
 
 
 class BuildFbcPipeline:
@@ -422,9 +397,9 @@ async def build_fbc(
         await pipeline.run()
     else:
         # Generate appropriate lock name based on group type (includes OCP version for non-OpenShift groups)
-        lock_name = _generate_fbc_lock_name(
+        lock_name = generate_fbc_lock_name(
             group=group,
-            major_minor=major_minor,
+            target_version=major_minor,
         )
 
         await locks.run_with_lock(

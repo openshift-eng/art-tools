@@ -48,6 +48,10 @@ spec:
     name: force
     type: string
   - default: 'false'
+    description: Rebuild supplied FBCs from the latest production catalogs before creating shipment data
+    name: refresh-fbcs
+    type: string
+  - default: 'false'
     description: Mark the shipment MR as test/debug-only, keep it draft, and skip automatic Shipment CI staging. An ART operator must review and mark it ready manually
     name: test-mode
     type: string
@@ -155,6 +159,9 @@ spec:
 
         if "$(params.force)" == "true":
             cmd.append("--force")
+
+        if "$(params.refresh-fbcs)" == "true":
+            cmd.append("--refresh-fbcs")
 
         if "$(params.test-mode)" == "true":
             cmd.append("--test")

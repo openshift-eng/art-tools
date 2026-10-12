@@ -165,7 +165,11 @@ async def extract_fbc_labels(fbc_pullspec: str) -> Dict[str, Optional[str]]:
 
 
 async def validate_fbc_related_images(
-    fbc_pullspecs: List[str], product: str, operator_groups_out: Optional[Dict[str, List[str]]] = None
+    fbc_pullspecs: List[str],
+    product: str,
+    operator_groups_out: Optional[Dict[str, List[str]]] = None,
+    operator_by_fbc_out: Optional[Dict[str, str]] = None,
+    related_nvrs_by_fbc_out: Optional[Dict[str, List[str]]] = None,
 ) -> List[str]:
     """
     Validate that FBC pullspecs from the same operator have the same related images.
@@ -174,12 +178,23 @@ async def validate_fbc_related_images(
     multiple FBC builds for the *same* operator (targeting different OCP versions)
     must contain identical related-image NVR sets.
 
-    If `operator_groups_out` is provided, it is populated with the operator-to-pullspecs
-    grouping computed internally, so callers can reuse it (e.g. to resolve mr_approvers)
-    without re-extracting FBC labels.
+    Optional output mappings expose the resolved operator grouping and each
+    catalog's related NVRs so callers can reuse the inspected provenance
+    without rendering the FBC images again.
 
-    Returns the combined list of all unique related images across all operators.
-    Raises RuntimeError if any same-operator FBCs have mismatched related images.
+    Args:
+        fbc_pullspecs: FBC images to inspect.
+        product: Product name used by the FBC extraction helper.
+        operator_groups_out: Optional operator-to-pullspecs output mapping.
+        operator_by_fbc_out: Optional pullspec-to-operator output mapping.
+        related_nvrs_by_fbc_out: Optional pullspec-to-related-NVRs output mapping.
+
+    Returns:
+        The combined list of all unique related images across all operators.
+
+    Raises:
+        RuntimeError: If an operator cannot be identified or catalogs for the
+            same operator have inconsistent related images.
     """
     logger.info("Validating related images for %d FBC builds (grouped by operator)...", len(fbc_pullspecs))
 
@@ -236,6 +251,8 @@ async def validate_fbc_related_images(
 
     if operator_groups_out is not None:
         operator_groups_out.update(operator_groups)
+    if operator_by_fbc_out is not None:
+        operator_by_fbc_out.update(fbc_to_operator)
 
     # Step 4: Extract related images from each FBC sequentially to avoid temp directory conflicts
     logger.info("Extracting related images from all FBCs...")
@@ -243,6 +260,9 @@ async def validate_fbc_related_images(
     for fbc_pullspec in fbc_pullspecs:
         related_nvrs = await extract_nvrs_from_fbc(fbc_pullspec, product)
         fbc_related_images[fbc_pullspec] = sorted(related_nvrs)
+
+    if related_nvrs_by_fbc_out is not None:
+        related_nvrs_by_fbc_out.update(fbc_related_images)
 
     # Step 5: Validate related images within each operator group
     all_related_images = set()
