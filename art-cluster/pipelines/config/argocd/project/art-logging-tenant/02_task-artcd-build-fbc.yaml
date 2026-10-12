@@ -73,9 +73,9 @@ spec:
     - name: LOGGING_KONFLUX_SA_KUBECONFIG
       value: /tmp/konflux-kubeconfigs/logging
     - name: QUAY_AUTH_FILE
-      value: /tmp/konflux-art-images-auth/config.json
+      value: /tmp/quay-authfile/config.json
     - name: DOCKER_CONFIG
-      value: /tmp/konflux-art-images-auth
+      value: /tmp/quay-authfile
     image: quay.io/redhat-user-workloads/ocp-art-tenant/art-cd:latest
     name: invoke-artcd
     script: $(params.script)
@@ -97,8 +97,8 @@ spec:
     - mountPath: /tmp/github-app
       name: github-app-credentials
       readOnly: true
-    - mountPath: /tmp/konflux-art-images-auth
-      name: konflux-art-images-auth-file
+    - mountPath: /tmp/quay-authfile
+      name: quay-authfile
       readOnly: true
   volumes:
   - name: doozer-config
@@ -119,9 +119,9 @@ spec:
   - name: github-app-credentials
     secret:
       secretName: github-app-credentials
-  - name: konflux-art-images-auth-file
+  - name: quay-authfile
     secret:
       items:
       - key: auth.json
         path: config.json
-      secretName: konflux-art-images-auth-file
+      secretName: quay-authfile
