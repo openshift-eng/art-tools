@@ -3,6 +3,7 @@ kind: Group
 metadata:
   name: art-oap-team-members
 users:
-  - sbhor
   - amaurya
+  - nhegde
   - sayadas
+  - sbhor
