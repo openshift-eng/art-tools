@@ -12,7 +12,7 @@ from artcommonlib import util as art_util
 from artcommonlib.git_helper import git_clone
 from artcommonlib.github_auth import get_github_client_for_org, get_github_git_auth_env
 from artcommonlib.lock import get_named_semaphore
-from artcommonlib.model import ListModel, Missing, Model
+from artcommonlib.model import ListModel, Missing, MissingModel, Model
 from github import GithubException, UnknownObjectException
 
 from doozerlib.record_logger import RecordLogger
@@ -307,6 +307,12 @@ class SourceResolver:
         """
         if use_source_fallback_branch not in ["yes", "always", "never"]:
             raise ValueError(f"Invalid value for use_source_fallback_branch: {use_source_fallback_branch}")
+
+        if isinstance(source_details, MissingModel):
+            raise ValueError(
+                "source_details is a MissingModel sentinel; the metadata config "
+                "is missing content.source.git or the Model was corrupted during config merge"
+            )
 
         git_url = source_details.get("url_pull", source_details["url"])  # Use pull URL if available
         branches = source_details["branch"]

@@ -4,7 +4,7 @@ import json
 import pathlib
 import re
 from collections import OrderedDict
-from copy import copy
+from copy import deepcopy
 from multiprocessing import Event
 from typing import Any, Dict, List, Optional, Set, Tuple, cast
 
@@ -744,11 +744,16 @@ class ImageMetadata(Metadata):
             "external_scanners",
             "delivery",
         ]  # list of keys that shouldn't be involved in config digest calculation
-        image_config = copy(self.config)
+        # Use deepcopy to get a fully independent dict tree. Without this,
+        # Model.primitive() returns non-lazy-loaded raw dict values as shared
+        # references with self.config, and the `del p[seg]` loop below would
+        # corrupt the original config by deleting keys from shared dicts.
+        # See: https://redhat.atlassian.net/browse/ART-24592
+        image_config: Dict[str, Any] = deepcopy(self.config.primitive())
+
         # If there is a konflux stanza in the image config, merge it with the main config
-        if image_config.konflux is not Missing:
-            image_config = Model(deep_merge(image_config.primitive(), image_config.konflux.primitive()))
-        image_config: Dict[str, Any] = image_config.primitive()
+        if 'konflux' in image_config:
+            image_config = deep_merge(image_config, image_config['konflux'])
 
         group_config: Dict[str, Any] = group_config.primitive()
         streams: Dict[str, Any] = streams.primitive()
