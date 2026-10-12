@@ -14,6 +14,7 @@ spec:
     enum:
     - cert-manager-1.19
     - external-secrets-1.1
+    - zero-trust-1.0
     - zero-trust-1.1
     name: group
     type: string
@@ -132,7 +133,7 @@ spec:
         if not fbc_pullspecs and not extra_image_nvrs:
             raise ValueError("At least one of fbc-pullspecs or extra-image-nvrs must be provided")
 
-        ALLOWED_GROUPS = {"cert-manager-1.19", "external-secrets-1.1", "zero-trust-1.1"}
+        ALLOWED_GROUPS = {"cert-manager-1.19", "external-secrets-1.1", "zero-trust-1.0", "zero-trust-1.1"}
         ocp_optional = "$(params.ocp-optional)" == "true"
         group = "$(params.group)"
 

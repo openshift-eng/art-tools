@@ -48,6 +48,7 @@ spec:
             "schedule-layered-products-scan",
             "--group=cert-manager-1.19",
             "--group=external-secrets-1.1",
+            "--group=zero-trust-1.0",
             "--group=zero-trust-1.1",
         ]
 

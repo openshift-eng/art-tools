@@ -9,7 +9,7 @@ spec:
   description: Scan OAP operator images for source changes and trigger downstream builds if changes are detected.
   params:
   - default: cert-manager-1.19
-    description: The group to use with -g flag (e.g. cert-manager-1.19, external-secrets-1.1, zero-trust-1.1)
+    description: The group to use with -g flag (e.g. cert-manager-1.19, external-secrets-1.1, zero-trust-1.0, zero-trust-1.1)
     name: group
     type: string
   - default: stream
