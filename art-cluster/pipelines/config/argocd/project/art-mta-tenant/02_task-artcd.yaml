@@ -106,9 +106,9 @@ spec:
     - name: QUAY_KONFLUX_SA_KUBECONFIG
       value: /tmp/konflux-kubeconfigs/quay
     - name: QUAY_AUTH_FILE
-      value: /tmp/konflux-art-images-auth/config.json
+      value: /tmp/quay-authfile/config.json
     - name: DOCKER_CONFIG
-      value: /tmp/konflux-art-images-auth
+      value: /tmp/quay-authfile
     image: quay.io/redhat-user-workloads/ocp-art-tenant/art-cd:latest
     name: invoke-artcd
     script: $(params.script)
@@ -135,8 +135,8 @@ spec:
     - mountPath: /root/.ssh
       name: openshift-bot-ssh-key
       readOnly: true
-    - mountPath: /tmp/konflux-art-images-auth
-      name: konflux-art-images-auth-file
+    - mountPath: /tmp/quay-authfile
+      name: quay-authfile
       readOnly: true
   volumes:
   - name: doozer-config
@@ -161,9 +161,9 @@ spec:
     secret:
       defaultMode: 256
       secretName: openshift-bot-ssh-key
-  - name: konflux-art-images-auth-file
+  - name: quay-authfile
     secret:
       items:
       - key: auth.json
         path: config.json
-      secretName: konflux-art-images-auth-file
+      secretName: quay-authfile
