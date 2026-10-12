@@ -26,6 +26,18 @@ For acceptance in `art-acm-tenant`, confirm a failed image build is red despite 
 
 Navigation links and detail tabs open in the current tab with an ordinary click. Use Ctrl-click on Windows/Linux, Command-click on macOS, middle-click, or the link context menu to open a new tab. Pipeline and PipelineRun rows also support modified clicks outside their links. The selected tenant is preserved in navigation URLs, including when opening another tab. Pipeline tabs use `tab=details|runs`; PipelineRun tabs use `tab=details|components|logs|events|parameters|tasks`, preserving archived run UIDs.
 
+## Results fetching and autoscaling
+
+Results record requests use `RESULTS_PAGE_SIZE`, defaulting to 1,000 records per page. The value must be an integer between 1 and 10,000; invalid values prevent backend startup. The backend follows every continuation token and fetches fresh archive and live data on each request. PipelineHealth polls ten seconds after a response completes while work is active and thirty seconds otherwise, pausing requests while the tab is hidden.
+
+The Argo CD Deployment manifest sets `RESULTS_PAGE_SIZE=1000` in the app container's environment, so changing it rolls the pods. The app requests 100m CPU and 384Mi memory with a 1Gi memory limit. The OAuth proxy requests 50m CPU and 64Mi memory with a 256Mi memory limit. Four steady replicas reserve 600m CPU and 1.75Gi memory including the proxies; a rolling update can temporarily add one extra pod.
+
+The Argo CD HPA manifest manages one to four replicas using the `app` container's metrics. It targets 70% CPU utilization relative to the 100m request and 700Mi average memory usage. The largest replica recommendation from either metric wins. Scale-up has no stabilization delay and uses Kubernetes' default policies. Scale-down has a five-minute stabilization window and removes at most one pod per minute. Memory scaling uses an absolute value, independent of the memory request. The HPA responds to sustained average usage; individual request spikes and shared Results service latency still require monitoring.
+
+The Argo CD Application ignores the Deployment's `/spec/replicas` field and uses `RespectIgnoreDifferences=true` so syncs preserve HPA decisions. Sync the Application configuration before enabling the HPA. Keep the page size, resources, and HPA settings in the GitOps manifests. After merging backend changes, build the application from Git using the existing BuildConfig and let the ImageStream trigger roll out the new image.
+
+Testing plan: run the backend suite, including multi-page Results fetching, health, authentication, and live-over-archive deduplication. Validate the Deployment, HPA, and Application with server dry runs. After rollout, measure Quay and all-tenant loads, peak memory, and sustained traffic from multiple browser sessions. Confirm fresh run states arrive through periodic polling, HPA metrics are available, replicas scale within one to four, and scale-down occurs when both metrics fall below their targets. Verify OAuth sessions across replicas and confirm an Argo sync preserves the HPA's replica count. Monitor memory, restarts, and Results latency.
+
 ## Development
 
 The backend is in `backend/pipeline_ui`; install `backend/requirements.txt` and run `uvicorn pipeline_ui.app:app` from `backend`. The frontend is in `frontend`; run `npm ci` and `npm run build`. Browser requests need an OpenShift OAuth proxy in front of the backend.

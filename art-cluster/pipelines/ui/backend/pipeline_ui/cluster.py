@@ -15,6 +15,12 @@ RESULTS_API = os.getenv("RESULTS_API_URL", "https://tekton-results-api-service.o
 KUBE_CA = os.getenv("KUBE_CA_FILE", "/var/run/secrets/kubernetes.io/serviceaccount/ca.crt")
 RESULTS_CA = os.getenv("RESULTS_CA_FILE", "/var/run/secrets/service-ca/service-ca.crt")
 RESULTS_PREFIX = "/apis/results.tekton.dev/v1alpha2/parents"
+try:
+    RESULTS_PAGE_SIZE = int(os.getenv("RESULTS_PAGE_SIZE", "1000"))
+except ValueError as error:
+    raise ValueError("RESULTS_PAGE_SIZE must be an integer between 1 and 10000") from error
+if not 1 <= RESULTS_PAGE_SIZE <= 10000:
+    raise ValueError("RESULTS_PAGE_SIZE must be an integer between 1 and 10000")
 
 
 class UpstreamError(Exception):
@@ -116,7 +122,7 @@ class Gateway:
     async def list_records(self, namespace: str, *, filter_text: str):
         token = ""
         while True:
-            params = {"filter": filter_text, "page_size": 200, "order_by": "create_time desc"}
+            params = {"filter": filter_text, "page_size": RESULTS_PAGE_SIZE, "order_by": "create_time desc"}
             if token:
                 params["page_token"] = token
             data = await self.results_json(f"{RESULTS_PREFIX}/{quote(namespace)}/results/-/records", params=params)

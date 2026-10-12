@@ -19,6 +19,7 @@ spec:
       namespace: art-pipelines-ui
       jsonPointers:
         - /spec/template/spec/containers/0/image
+        - /spec/replicas
   syncPolicy:
     automated:
       enabled: true

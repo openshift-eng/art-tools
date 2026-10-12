@@ -37,13 +37,15 @@ spec:
               value: /var/run/secrets/kube-ca/ca.crt
             - name: PYTHONDONTWRITEBYTECODE
               value: "1"
+            - name: RESULTS_PAGE_SIZE
+              value: "1000"
           ports:
             - name: app
               containerPort: 8080
           resources:
             requests:
               cpu: 100m
-              memory: 256Mi
+              memory: 384Mi
             limits:
               memory: 1Gi
           readinessProbe:
