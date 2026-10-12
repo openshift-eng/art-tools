@@ -962,6 +962,32 @@ class KonfluxClient:
             existing, application, component_name, image_repo, source_url, revision
         ):
             return existing
+        # Konflux's admission webhook forbids changing spec.source.git.url via
+        # a PUT/replace.  When the source URL changed we must delete the old
+        # Component first so _create_or_replace creates a brand-new one.
+        if existing and source_url:
+            existing_url = existing.to_dict().get("spec", {}).get("source", {}).get("git", {}).get("url")
+            if existing_url != source_url:
+                existing_meta = existing.to_dict().get("metadata", {})
+                comp_name = existing_meta.get("name", name)
+                comp_ns = existing_meta.get("namespace", self.default_namespace)
+                self._logger.info(
+                    "Source URL changed for component %s (%s -> %s); deleting before recreate",
+                    comp_name,
+                    existing_url,
+                    source_url,
+                )
+                await self._delete(API_VERSION, KIND_COMPONENT, comp_name, comp_ns)
+                # Wait until the Component is fully removed; finalizers may
+                # keep it visible after the DELETE returns, causing
+                # _create_or_replace to select the _replace path.
+                if not self.dry_run:
+                    for _ in range(60):
+                        if await self.get_component(comp_name, strict=False) is None:
+                            break
+                        await asyncio.sleep(1)
+                    else:
+                        raise TimeoutError(f"Component {comp_ns}/{comp_name} still present 60 s after deletion")
         component = self._new_component(name, application, component_name, image_repo, source_url, revision)
         return await self._create_or_replace(component)
 
