@@ -15,6 +15,7 @@ from elliottlib.cli.konflux_release_validate_lp_prod_cli import (
     _CatalogRenderStats,
     _compact_catalog_blob,
     _iter_json_objects,
+    _memory_status,
     _render_catalog,
     _RenderedCatalog,
     find_pruned_entries,
@@ -375,7 +376,46 @@ def test_fbc_validation_logs_dynamic_package_index_summary(caplog):
         asyncio.run(validator._validate_fbc_fragments([config]))
 
     assert 'packages=[\'cluster-logging\']' in caplog.text
+    assert 'rendering fragment 1' in caplog.text
+    assert 'starting index 1/1' in caplog.text
+    assert 'ocp=4.20' in caplog.text
+    assert 'production_index=registry.redhat.io/redhat/redhat-operator-index:v4.20' in caplog.text
     assert 'result=PASS' in caplog.text
+
+
+def test_memory_status_is_best_effort():
+    with (
+        patch(
+            'elliottlib.cli.konflux_release_validate_lp_prod_cli.psutil.Process',
+            side_effect=RuntimeError('unavailable'),
+        ),
+        patch(
+            'elliottlib.cli.konflux_release_validate_lp_prod_cli.psutil.virtual_memory',
+            side_effect=RuntimeError('unavailable'),
+        ),
+    ):
+        assert _memory_status() == 'unavailable'
+
+
+def test_runtime_diagnostics_logs_opm_version_and_memory(caplog):
+    validator = ValidateLpProdCli(('unused',), 'https://gitlab.example/mr/1', '/tmp/auth.json')
+
+    with (
+        patch(
+            'elliottlib.cli.konflux_release_validate_lp_prod_cli.gather_opm',
+            new=AsyncMock(return_value=(0, 'Version: v1.74.0', '')),
+        ) as gather,
+        patch(
+            'elliottlib.cli.konflux_release_validate_lp_prod_cli._memory_status',
+            return_value='cgroup_available=3.50 GiB process_rss=0.10 GiB',
+        ),
+        caplog.at_level(logging.INFO),
+    ):
+        asyncio.run(validator._log_runtime_diagnostics())
+
+    gather.assert_awaited_once()
+    assert 'opm=Version: v1.74.0' in caplog.text
+    assert 'memory_before_render=cgroup_available=3.50 GiB process_rss=0.10 GiB' in caplog.text
 
 
 def test_fbc_validation_allows_new_package_absent_from_production(caplog):
