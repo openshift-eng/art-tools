@@ -1773,6 +1773,18 @@
           "$ref": "#/properties/konflux/properties/component"
         },
         "component-": {},
+        "plr_template_commitish": {
+          "description": "Git commit-ish (branch, tag, or SHA) for the Pipeline Run template repository",
+          "type": "string",
+          "minLength": 1
+        },
+        "plr_template_commitish!": {
+          "$ref": "#/properties/konflux/properties/plr_template_commitish"
+        },
+        "plr_template_commitish?": {
+          "$ref": "#/properties/konflux/properties/plr_template_commitish"
+        },
+        "plr_template_commitish-": {},
         "content": {
           "$ref": "image_content.base.schema.json"
         }
