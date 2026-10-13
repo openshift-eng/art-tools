@@ -1131,7 +1131,7 @@ class PromotePipeline:
     @retry(reraise=True, stop=stop_after_attempt(3), wait=wait_fixed(30))
     def _download_source_tarball(self, url: str, dest_path: str):
         self._logger.info("Downloading source tarball from %s", url)
-        response = requests.get(url, stream=True, timeout=120)
+        response = requests.get(url, stream=True, timeout=(30, 300))
         response.raise_for_status()
         with open(dest_path, "wb") as f:
             for chunk in response.iter_content(chunk_size=65536):
