@@ -60,7 +60,7 @@ from elliottlib.shipment_utils import (
 )
 from tenacity import retry, stop_after_attempt, wait_fixed
 
-from pyartcd import constants
+from pyartcd import constants, jenkins
 from pyartcd.cli import cli, click_coroutine, pass_runtime
 from pyartcd.git import GitRepository
 from pyartcd.jira_client import JIRAClient
@@ -321,6 +321,8 @@ class PrepareReleaseKonfluxPipeline:
 
         await self.verify_payload()
         await self.set_shipment_mr_ready()
+
+        self.trigger_verify_cdn_push()
 
         # Check for deferred bundle/FBC build errors and exit with code 2 for UNSTABLE status
         deferred_build_errors = self._deferred_build_errors()
@@ -1498,6 +1500,21 @@ class PrepareReleaseKonfluxPipeline:
                     )
             except Exception as e:
                 self.logger.warning(f"Failed to trigger CI MR pipeline for branch {mr.source_branch}: {e}")
+
+    def trigger_verify_cdn_push(self):
+        """Trigger verify-cdn-push Jenkins job (non-blocking) to poll until CDN staging pushes complete."""
+        if self.dry_run:
+            self.logger.info("[DRY-RUN] Would have triggered verify-cdn-push for %s/%s", self.version, self.assembly)
+            return
+        try:
+            jenkins.start_verify_cdn_push(
+                version=self.version,
+                assembly=self.assembly,
+                block_until_building=False,
+            )
+            self.logger.info("Triggered verify-cdn-push job for %s/%s", self.version, self.assembly)
+        except Exception as ex:
+            self.logger.warning("Failed to trigger verify-cdn-push: %s", ex)
 
     async def update_shipment_data(
         self, shipments_by_kind: Dict[str, ShipmentConfig], env: str, commit_message: str, branch: str
