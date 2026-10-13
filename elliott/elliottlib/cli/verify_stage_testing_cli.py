@@ -376,7 +376,10 @@ def _handle_trigger(runtime, output):
         )
 
     job_id, job_name = trigger_prow_job(version, assembly)
-    _set_mr_label(mr_url, STAGE_TESTING_TRIGGERED_LABEL)
+    try:
+        _set_mr_label(mr_url, STAGE_TESTING_TRIGGERED_LABEL)
+    except Exception as exc:
+        LOGGER.error("Failed to set triggered label: %s", exc)
     result = TriggerResult(job_id=job_id, job_name=job_name)
     handle_verify_result(result, output)
 

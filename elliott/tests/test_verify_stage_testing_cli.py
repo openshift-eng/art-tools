@@ -7,6 +7,7 @@ from elliottlib.cli.verify_stage_testing_cli import (
     StageTestingResult,
     TriggerResult,
     _get_mr_labels,
+    _handle_trigger,
     _parse_gitlab_mr_url,
     _set_mr_label,
     get_job_status,
@@ -333,3 +334,29 @@ class TestTriggerProwJob(TestCase):
 
         with self.assertRaises(ClickException):
             trigger_prow_job("4.22", "4.22.9")
+
+
+class TestHandleTrigger(TestCase):
+    @patch("elliottlib.cli.verify_stage_testing_cli.handle_verify_result")
+    @patch("elliottlib.cli.verify_stage_testing_cli._set_mr_label", side_effect=Exception("GitLab timeout"))
+    @patch(
+        "elliottlib.cli.verify_stage_testing_cli.trigger_prow_job", return_value=("job-789", "periodic-stage-testing")
+    )
+    @patch("elliottlib.cli.verify_stage_testing_cli._get_mr_labels", return_value=["stage-release-success"])
+    @patch(
+        "elliottlib.cli.verify_stage_testing_cli.get_assembly_shipment_url",
+        return_value="https://gitlab.example.com/project/-/merge_requests/1",
+    )
+    def test_label_failure_still_returns_trigger_result(
+        self, mock_shipment_url, mock_labels, mock_trigger, mock_set_label, mock_handle
+    ):
+        runtime = MagicMock()
+        runtime.group = "openshift-4.22"
+        runtime.assembly = "4.22.9"
+
+        _handle_trigger(runtime, "json")
+
+        mock_trigger.assert_called_once_with("4.22", "4.22.9")
+        result = mock_handle.call_args[0][0]
+        self.assertIsInstance(result, TriggerResult)
+        self.assertEqual(result.job_id, "job-789")
