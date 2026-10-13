@@ -1305,16 +1305,18 @@ class ReleaseFromFbcPipeline:
                 ``self.fbc_pullspecs``.
 
         Returns:
-            Replacement FBC pullspecs after every target build succeeds.
+            Replacement FBC pullspecs after every target build succeeds,
+                ordered by their source operator identities.
 
         Raises:
             RuntimeError: If an FBC cannot be mapped unambiguously to one
                 operator NVR and target version, or if two source FBCs resolve
-                to the same operator NVR and target.
+                to the same operator NVR and target, or if refreshed catalogs
+                cannot be associated one-to-one with their sources.
         """
         component_keys = await self._load_component_doozer_keys()
         operator_nvrs_by_target: dict[str, list[str]] = {}
-        source_pullspecs_by_target: dict[str, list[str]] = {}
+        source_fbcs_by_target: dict[str, list[tuple[str, str]]] = {}
         source_by_identity: dict[tuple[str, str], str] = {}
 
         for pullspec, fbc_nvr in zip(self.fbc_pullspecs, source_fbc_nvrs):
@@ -1346,7 +1348,10 @@ class ReleaseFromFbcPipeline:
                 )
             source_by_identity[identity] = fbc_nvr
             operator_nvrs_by_target.setdefault(target_version, []).append(candidates[0])
-            source_pullspecs_by_target.setdefault(target_version, []).append(pullspec)
+            source_operator, separator, _ = fbc_nvr.partition("-fbc-")
+            if not separator:
+                raise RuntimeError(f"Cannot refresh FBC '{fbc_nvr}': operator identity is missing from the NVR")
+            source_fbcs_by_target.setdefault(target_version, []).append((source_operator, pullspec))
 
         results = await build_fbc_catalogs(
             runtime=self.runtime,
@@ -1367,15 +1372,45 @@ class ReleaseFromFbcPipeline:
         refresh_records = []
         for result in results:
             target = result.target_version or "default"
-            sources = source_pullspecs_by_target.get(target, [])
+            source_fbcs = source_fbcs_by_target.get(target, [])
+            refreshed_by_operator: dict[str, str] = {}
+            for refreshed_nvr, refreshed_pullspec in zip(result.nvrs, result.pullspecs):
+                refreshed_operator, separator, _ = refreshed_nvr.partition("-fbc-")
+                if not separator:
+                    raise RuntimeError(
+                        f"Cannot associate refreshed FBC '{refreshed_nvr}' with a source: "
+                        "operator identity is missing from the NVR"
+                    )
+                if refreshed_operator in refreshed_by_operator:
+                    raise RuntimeError(
+                        f"FBC refresh for OCP {target} returned multiple catalogs for operator '{refreshed_operator}'"
+                    )
+                refreshed_by_operator[refreshed_operator] = refreshed_pullspec
+
+            sources: list[str] = []
+            refreshed_pullspecs: list[str] = []
+            for source_operator, source_pullspec in source_fbcs:
+                refreshed_pullspec = refreshed_by_operator.pop(source_operator, None)
+                if not refreshed_pullspec:
+                    raise RuntimeError(
+                        f"FBC refresh for OCP {target} did not return a catalog for operator '{source_operator}'"
+                    )
+                sources.append(source_pullspec)
+                refreshed_pullspecs.append(refreshed_pullspec)
+            if refreshed_by_operator:
+                raise RuntimeError(
+                    f"FBC refresh for OCP {target} returned catalogs for unexpected operators: "
+                    f"{sorted(refreshed_by_operator)}"
+                )
+
             self.logger.info(
                 "Refreshed FBCs for OCP %s: %s -> %s",
                 target,
                 sources,
-                list(result.pullspecs),
+                refreshed_pullspecs,
             )
-            refresh_records.append(FbcRefreshRecord(result.target_version, tuple(sources), result.pullspecs))
-            replacement_pullspecs.extend(result.pullspecs)
+            refresh_records.append(FbcRefreshRecord(result.target_version, tuple(sources), tuple(refreshed_pullspecs)))
+            replacement_pullspecs.extend(refreshed_pullspecs)
         self._fbc_refresh_records = refresh_records
         return replacement_pullspecs
 

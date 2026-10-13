@@ -112,6 +112,72 @@ class TestReleaseFromFbcPipeline(unittest.TestCase):
 
     @patch("pyartcd.pipelines.release_from_fbc.build_fbc_catalogs", new_callable=AsyncMock)
     @patch.object(ReleaseFromFbcPipeline, "_load_component_doozer_keys", new_callable=AsyncMock)
+    def test_refresh_fbc_pullspecs_maps_multiple_operators_by_identity(
+        self, mock_component_keys, mock_build_fbc_catalogs
+    ):
+        """Multiple operators should retain correct source mappings when Doozer returns them out of order."""
+        source_pullspecs = [
+            "quay.io/test/quay-operator:old",
+            "quay.io/test/container-security-operator:old",
+            "quay.io/test/quay-bridge-operator:old",
+        ]
+        source_nvrs = [
+            "quay-operator-fbc-3.18.1-1.ocp4.20",
+            "container-security-operator-fbc-3.18.1-1.ocp4.20",
+            "quay-bridge-operator-fbc-3.18.1-1.ocp4.20",
+        ]
+        operator_nvrs = [
+            "quay-operator-container-3.18.1-1",
+            "container-security-operator-container-3.18.1-1",
+            "quay-bridge-operator-container-3.18.1-1",
+        ]
+        operator_keys = ["quay-operator", "container-security-operator", "quay-bridge-operator"]
+        pipeline = self._make_pipeline(fbc_pullspecs=source_pullspecs, refresh_fbcs=True)
+        pipeline._fbc_operator_by_pullspec = dict(zip(source_pullspecs, operator_keys))
+        pipeline._fbc_related_nvrs_by_pullspec = {
+            pullspec: [operator_nvr] for pullspec, operator_nvr in zip(source_pullspecs, operator_nvrs)
+        }
+        mock_component_keys.return_value = {
+            "quay-operator-container": "quay-operator",
+            "container-security-operator-container": "container-security-operator",
+            "quay-bridge-operator-container": "quay-bridge-operator",
+        }
+        mock_build_fbc_catalogs.return_value = [
+            FbcBuildResult(
+                "4.20",
+                tuple(operator_nvrs),
+                (
+                    "quay-bridge-operator-fbc-3.18.1-2.ocp4.20",
+                    "quay-operator-fbc-3.18.1-2.ocp4.20",
+                    "container-security-operator-fbc-3.18.1-2.ocp4.20",
+                ),
+                (
+                    "quay.io/new/quay-bridge-operator:420",
+                    "quay.io/new/quay-operator:420",
+                    "quay.io/new/container-security-operator:420",
+                ),
+            )
+        ]
+
+        result = asyncio.run(pipeline._refresh_fbc_pullspecs(source_nvrs))
+
+        expected_pullspecs = [
+            "quay.io/new/quay-operator:420",
+            "quay.io/new/container-security-operator:420",
+            "quay.io/new/quay-bridge-operator:420",
+        ]
+        self.assertEqual(result, expected_pullspecs)
+        self.assertEqual(
+            pipeline._fbc_refresh_records,
+            [FbcRefreshRecord("4.20", tuple(source_pullspecs), tuple(expected_pullspecs))],
+        )
+        self.assertEqual(
+            mock_build_fbc_catalogs.await_args.kwargs["operator_nvrs_by_target"],
+            {"4.20": operator_nvrs},
+        )
+
+    @patch("pyartcd.pipelines.release_from_fbc.build_fbc_catalogs", new_callable=AsyncMock)
+    @patch.object(ReleaseFromFbcPipeline, "_load_component_doozer_keys", new_callable=AsyncMock)
     def test_refresh_fbc_pullspecs_rejects_ambiguous_operator(self, mock_component_keys, mock_build_fbc_catalogs):
         """Refresh should fail before building if provenance does not identify one exact operator NVR."""
         pipeline = self._make_pipeline(refresh_fbcs=True)
