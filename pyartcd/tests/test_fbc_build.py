@@ -114,6 +114,54 @@ class TestFbcBuild(unittest.TestCase):
     @patch("pyartcd.fbc_build.jenkins.get_build_path_or_random", return_value="job/build/1")
     @patch("pyartcd.fbc_build.locks.run_with_lock", new_callable=AsyncMock)
     @patch("pyartcd.fbc_build.exectools.cmd_gather_async", new_callable=AsyncMock)
+    def test_allows_partial_results_for_normal_prepare_release(self, mock_cmd, mock_lock, _mock_lock_id):
+        """Fail-open callers should retain successful catalogs and receive failure details."""
+
+        async def await_build(coro, **_kwargs):
+            return await coro
+
+        mock_lock.side_effect = await_build
+        mock_cmd.return_value = (
+            1,
+            json.dumps(
+                {
+                    "nvrs": ["operator-a-fbc-1.8.18-1.ocp4.20"],
+                    "pullspecs": ["quay.io/example/fbc@sha256:operator-a"],
+                    "errors": [{"operator": "operator-b", "error": "build failed"}],
+                    "failed_count": 1,
+                    "success_count": 1,
+                }
+            ),
+            "",
+        )
+        failures = []
+        runtime = MagicMock(dry_run=False)
+        with tempfile.TemporaryDirectory() as temp_dir:
+            runtime.working_dir = Path(temp_dir)
+            results = asyncio.run(
+                build_fbc_catalogs(
+                    runtime=runtime,
+                    group="mtc-1.8",
+                    assembly="1.8.18",
+                    version="1.8.18",
+                    product="rhmtc",
+                    operator_nvrs_by_target={
+                        "4.20": ["operator-a-container-1.8.18-1", "operator-b-container-1.8.18-1"]
+                    },
+                    reset_to_prod=True,
+                    allow_partial=True,
+                    failures_out=failures,
+                )
+            )
+
+        self.assertEqual(results[0].nvrs, ("operator-a-fbc-1.8.18-1.ocp4.20",))
+        self.assertEqual(len(failures), 2)
+        self.assertTrue(any("operator-b" in failure for failure in failures))
+        self.assertTrue(any("returned 1 NVRs and 1 pullspecs for 2 operators" in failure for failure in failures))
+
+    @patch("pyartcd.fbc_build.jenkins.get_build_path_or_random", return_value="job/build/1")
+    @patch("pyartcd.fbc_build.locks.run_with_lock", new_callable=AsyncMock)
+    @patch("pyartcd.fbc_build.exectools.cmd_gather_async", new_callable=AsyncMock)
     def test_waits_for_all_targets_before_raising(self, mock_cmd, mock_lock, _mock_lock_id):
         """A failed target should not stop the coordinator from awaiting its peers."""
 

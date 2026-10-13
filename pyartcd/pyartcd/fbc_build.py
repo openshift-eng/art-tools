@@ -29,12 +29,14 @@ class FbcBuildResult:
         operator_nvrs: Exact operator NVRs supplied to Doozer.
         nvrs: FBC NVRs produced by Doozer.
         pullspecs: FBC pullspecs produced by Doozer.
+        failures: Build failures reported while producing partial results.
     """
 
     target_version: Optional[str]
     operator_nvrs: tuple[str, ...]
     nvrs: tuple[str, ...]
     pullspecs: tuple[str, ...]
+    failures: tuple[str, ...] = ()
 
 
 def generate_fbc_lock_name(
@@ -68,7 +70,12 @@ def generate_fbc_lock_name(
 
 
 def _validate_fbc_build_output(
-    target_version: Optional[str], operator_nvrs: Sequence[str], return_code: int, stdout: str, stderr: str
+    target_version: Optional[str],
+    operator_nvrs: Sequence[str],
+    return_code: int,
+    stdout: str,
+    stderr: str,
+    allow_partial: bool = False,
 ) -> FbcBuildResult:
     """Parse and validate one Doozer JSON result.
 
@@ -78,6 +85,8 @@ def _validate_fbc_build_output(
         return_code: Doozer process return code.
         stdout: Doozer standard output containing JSON.
         stderr: Doozer standard error for diagnostics.
+        allow_partial: Return successful build records alongside reported
+            failures instead of rejecting the complete target result.
 
     Returns:
         A complete target-specific build result.
@@ -103,15 +112,6 @@ def _validate_fbc_build_output(
     pullspecs = output.get("pullspecs", [])
     expected_count = len(set(operator_nvrs))
 
-    if return_code != 0 or errors or failed_count:
-        raise RuntimeError(
-            f"FBC build for OCP {target} failed: rc={return_code}, failed_count={failed_count}, errors={errors}"
-        )
-    if len(nvrs) != expected_count or len(pullspecs) != expected_count:
-        raise RuntimeError(
-            f"FBC build for OCP {target} returned {len(nvrs)} NVRs and {len(pullspecs)} pullspecs for "
-            f"{expected_count} operators"
-        )
     if len(nvrs) != len(pullspecs):
         raise RuntimeError(
             f"FBC build for OCP {target} returned mismatched NVR and pullspec counts: {len(nvrs)} != {len(pullspecs)}"
@@ -123,11 +123,25 @@ def _validate_fbc_build_output(
                 f"FBC build for OCP {target_version} returned NVRs for another target: {unexpected_targets}"
             )
 
+    failures = []
+    if return_code != 0 or errors or failed_count:
+        failures.append(
+            f"FBC build for OCP {target} failed: rc={return_code}, failed_count={failed_count}, errors={errors}"
+        )
+    if len(nvrs) != expected_count or len(pullspecs) != expected_count:
+        failures.append(
+            f"FBC build for OCP {target} returned {len(nvrs)} NVRs and {len(pullspecs)} pullspecs for "
+            f"{expected_count} operators"
+        )
+    if failures and not allow_partial:
+        raise RuntimeError("; ".join(failures))
+
     return FbcBuildResult(
         target_version=target_version,
         operator_nvrs=tuple(operator_nvrs),
         nvrs=tuple(nvrs),
         pullspecs=tuple(pullspecs),
+        failures=tuple(failures),
     )
 
 
@@ -142,6 +156,8 @@ async def build_fbc_catalogs(
     data_gitref: Optional[str] = None,
     force: bool = False,
     reset_to_prod: bool = False,
+    allow_partial: bool = False,
+    failures_out: Optional[list[str]] = None,
 ) -> list[FbcBuildResult]:
     """Build FBC catalogs and wait for every target to finish.
 
@@ -161,13 +177,18 @@ async def build_fbc_catalogs(
         data_gitref: Optional ocp-build-data Git ref.
         force: Force a new build even if equivalent FBC content exists.
         reset_to_prod: Import the latest production catalog before rebasing.
+        allow_partial: Preserve successful catalogs when other requested
+            catalogs fail. Malformed or unsafe target results are skipped.
+        failures_out: Optional list populated with reported and structural
+            failures when partial results are allowed.
 
     Returns:
-        Results in the same order as ``operator_nvrs_by_target``.
+        Successful results in the same order as ``operator_nvrs_by_target``.
 
     Raises:
         ValueError: If a build request has no operator NVRs.
-        RuntimeError: If any target fails or returns an incomplete result.
+        RuntimeError: If strict validation is enabled and any target fails or
+            returns an incomplete result.
     """
     release = datetime.now(timezone.utc).strftime("%Y%m%d%H%M%S")
     message = f"Rebase FBC segment with release {release}"
@@ -233,6 +254,7 @@ async def build_fbc_catalogs(
                 return_code,
                 stdout,
                 stderr,
+                allow_partial=allow_partial,
             )
 
         lock_name = generate_fbc_lock_name(group, target_version, allow_missing_target=True)
@@ -251,10 +273,19 @@ async def build_fbc_catalogs(
         return_exceptions=True,
     )
     failures = [result for result in results if isinstance(result, Exception)]
-    if failures:
+    if failures and not allow_partial:
         if len(failures) == 1:
             raise failures[0]
         raise RuntimeError(
             f"{len(failures)} FBC target builds failed: {'; '.join(str(failure) for failure in failures)}"
         )
-    return [result for result in results if isinstance(result, FbcBuildResult)]
+
+    successful_results = [result for result in results if isinstance(result, FbcBuildResult)]
+    partial_failures = [str(failure) for failure in failures]
+    partial_failures.extend(failure for result in successful_results for failure in result.failures)
+    if partial_failures:
+        for failure in partial_failures:
+            LOGGER.warning("FBC build failure retained for reporting: %s", failure)
+        if failures_out is not None:
+            failures_out.extend(partial_failures)
+    return successful_results

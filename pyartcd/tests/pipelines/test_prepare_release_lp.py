@@ -321,6 +321,8 @@ class TestPrepareReleaseLPMultiFBC(unittest.TestCase):
         )
         self.assertFalse(kwargs["force"])
         self.assertTrue(kwargs["reset_to_prod"])
+        self.assertTrue(kwargs["allow_partial"])
+        self.assertIs(kwargs["failures_out"], pipeline._fbc_build_failures)
 
     @patch.object(PrepareReleaseLPPipeline, '_load_ocp_target_versions', new_callable=AsyncMock)
     @patch('pyartcd.pipelines.prepare_release_lp.build_fbc_catalogs', new_callable=AsyncMock)
@@ -359,10 +361,49 @@ class TestPrepareReleaseLPMultiFBC(unittest.TestCase):
         kwargs = mock_build_fbc_catalogs.await_args.kwargs
         self.assertTrue(kwargs["force"])
         self.assertTrue(kwargs["reset_to_prod"])
+        self.assertFalse(kwargs["allow_partial"])
         self.assertEqual(
             pipeline._fbc_refresh_records,
             [FbcRefreshRecord("4.20", (), ("quay.io/new:420",))],
         )
+
+    @patch.object(PrepareReleaseLPPipeline, '_load_ocp_target_versions', new_callable=AsyncMock)
+    @patch('pyartcd.pipelines.prepare_release_lp.build_fbc_catalogs', new_callable=AsyncMock)
+    def test_trigger_fbc_build_retains_partial_successes(self, mock_build_fbc_catalogs, mock_target_versions):
+        """Normal preparation should retain successful FBCs and defer failures."""
+        mock_target_versions.return_value = ["4.20"]
+
+        async def partial_build(**kwargs):
+            kwargs["failures_out"].append("FBC build for OCP 4.20 failed for operator-b")
+            return [
+                FbcBuildResult(
+                    "4.20",
+                    ("operator-a-container-1", "operator-b-container-1"),
+                    ("operator-a-fbc-1.ocp4.20",),
+                    ("quay.io/new:operator-a",),
+                )
+            ]
+
+        mock_build_fbc_catalogs.side_effect = partial_build
+        pipeline = self._make_pipeline(dry_run=False)
+
+        nvrs, pullspecs = asyncio.run(pipeline._trigger_fbc_build(["operator-a-container-1", "operator-b-container-1"]))
+
+        self.assertEqual(nvrs, ["operator-a-fbc-1.ocp4.20"])
+        self.assertEqual(pullspecs, ["quay.io/new:operator-a"])
+        self.assertEqual(pipeline._fbc_build_failures, ["FBC build for OCP 4.20 failed for operator-b"])
+
+    def test_report_deferred_fbc_build_failures_exits_unstable(self):
+        """Deferred normal-mode failures should be reported with the Jenkins unstable exit code."""
+        pipeline = self._make_pipeline(dry_run=False)
+        pipeline._fbc_build_failures = ["FBC build for OCP 4.20 failed for operator-b"]
+
+        with self.assertLogs("pyartcd.pipelines.prepare_release_lp", level="WARNING") as logs:
+            with self.assertRaises(SystemExit) as raised:
+                pipeline._report_deferred_fbc_build_failures()
+
+        self.assertEqual(raised.exception.code, 2)
+        self.assertIn("successful builds were retained", "\n".join(logs.output))
 
     @patch.object(PrepareReleaseLPPipeline, '_load_ocp_target_versions', new_callable=AsyncMock)
     def test_trigger_fbc_build_dry_run_with_target_versions(self, mock_target_versions):

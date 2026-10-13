@@ -3,6 +3,7 @@ import json
 import logging
 import os
 import shutil
+import sys
 import tempfile
 from datetime import datetime, timezone
 from functools import cached_property
@@ -155,6 +156,7 @@ class PrepareReleaseLPPipeline:
         self.product: Optional[str] = None
         self._releases_config: Optional[Dict] = None
         self._fbc_refresh_records: list[FbcRefreshRecord] = []
+        self._fbc_build_failures: list[str] = []
 
         shipment_data_pull_url = (
             shipment_data_repo_url
@@ -571,6 +573,8 @@ class PrepareReleaseLPPipeline:
             # This preserves prepare-release-lp's existing behavior. Doozer's
             # rebase-and-build command resets to production by default.
             reset_to_prod=True,
+            allow_partial=not self.refresh_fbcs,
+            failures_out=self._fbc_build_failures,
         )
         fbc_nvrs = [nvr for result in results for nvr in result.nvrs]
         fbc_pullspecs = [pullspec for result in results for pullspec in result.pullspecs]
@@ -580,6 +584,23 @@ class PrepareReleaseLPPipeline:
             ]
         self._logger.info("FBC builds produced %d NVRs", len(fbc_nvrs))
         return fbc_nvrs, fbc_pullspecs
+
+    def _report_deferred_fbc_build_failures(self) -> None:
+        """Report tolerated FBC failures after successful release preparation.
+
+        Raises:
+            SystemExit: With code 2 so Jenkins marks the otherwise completed
+                prepare-release job as unstable.
+        """
+        if not self._fbc_build_failures:
+            return
+        self._logger.warning(
+            "prepare-release-lp completed with %d deferred FBC build failure(s); "
+            "successful builds were retained and the job will be marked UNSTABLE:\n%s",
+            len(self._fbc_build_failures),
+            "\n".join(f"  - {failure}" for failure in self._fbc_build_failures),
+        )
+        sys.exit(2)
 
     async def _create_snapshot(self, builds: List[str]) -> List[Snapshot]:
         """Create Konflux snapshot(s) from a list of build NVRs using elliott.
@@ -1138,6 +1159,7 @@ class PrepareReleaseLPPipeline:
             self.assembly,
             len(shipments_by_kind),
         )
+        self._report_deferred_fbc_build_failures()
 
 
 @cli.command("prepare-release-lp")
