@@ -107,8 +107,9 @@ class StageTestingPipeline:
             if result["terminal"]:
                 return result
 
+            url_info = f" url: {result['url']}" if result.get("url") else ""
             click.echo(
-                f"[verify-stage-testing] Job {job_id} state: {result['state']} "
+                f"[verify-stage-testing] Job {job_id} state: {result['state']}{url_info} "
                 f"— polling again in {self.poll_interval}s ({elapsed}s/{self.timeout}s elapsed)",
                 err=True,
             )
