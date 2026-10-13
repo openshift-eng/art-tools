@@ -8,6 +8,8 @@ from jsonschema import RefResolver, ValidationError
 from jsonschema.validators import validator_for
 from ruamel.yaml import YAML
 
+from .go_versions import validate_go_versions
+
 
 def _get_valid_repos(ocp_build_data_dir: str) -> Set[str]:
     """
@@ -173,5 +175,8 @@ def validate(file, data, images_dir=None):
                         f"content.source.git.branch.target: LSO image '{image_name}' in OCP {major}.{minor} "
                         f"should not use hardcoded 'release-4.18'. Use 'release-{{MAJOR}}.{{MINOR}}' instead."
                     )
+
+        if not errors:
+            errors.extend(validate_go_versions(file, data, images_dir))
 
     return '\n'.join(errors) if errors else None
