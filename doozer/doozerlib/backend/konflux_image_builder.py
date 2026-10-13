@@ -948,15 +948,16 @@ class KonfluxImageBuilder:
         prefetch_mode = (
             str(cachi2_config.get("prefetch_mode")) if cachi2_config and cachi2_config.get("prefetch_mode") else None
         )
-        if not self._config.plr_template:
-            plr_template_commit_override = _get_konflux_config(metadata, "plr_template_commitish")
-            if plr_template_commit_override:
-                plr_template_owner, plr_template_branch = plr_template_commit_override.split("@")
-                self._config.plr_template = pyartcd_constants.KONFLUX_IMAGE_BUILD_PLR_TEMPLATE_URL_FORMAT.format(
-                    owner=plr_template_owner, branch_name=plr_template_branch
-                )
-            else:
-                self._config.plr_template = constants.KONFLUX_DEFAULT_IMAGE_BUILD_PLR_TEMPLATE_URL
+        plr_template_commit_override = _get_konflux_config(metadata, "plr_template_commitish")
+        if plr_template_commit_override:
+            plr_template_owner, plr_template_branch = plr_template_commit_override.split("@")
+            plr_template = pyartcd_constants.KONFLUX_IMAGE_BUILD_PLR_TEMPLATE_URL_FORMAT.format(
+                owner=plr_template_owner, branch_name=plr_template_branch
+            )
+        elif self._config.plr_template:
+            plr_template = self._config.plr_template
+        else:
+            plr_template = constants.KONFLUX_DEFAULT_IMAGE_BUILD_PLR_TEMPLATE_URL
 
         build_params = ImageBuildParams(
             hermetic=hermetic,
@@ -990,7 +991,7 @@ class KonfluxImageBuilder:
             target_branch=git_branch,
             output_image=output_image,
             building_arches=building_arches,
-            pipelinerun_template_url=self._config.plr_template,
+            pipelinerun_template_url=plr_template,
             build_params=build_params,
         )
         if git_auth_secret:
