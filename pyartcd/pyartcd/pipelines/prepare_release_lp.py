@@ -153,6 +153,7 @@ class PrepareReleaseLPPipeline:
         self.job_url: Optional[str] = None
 
         self.product: Optional[str] = None
+        self._releases_config: Optional[Dict] = None
         self._fbc_refresh_records: list[FbcRefreshRecord] = []
 
         shipment_data_pull_url = (
@@ -268,27 +269,57 @@ class PrepareReleaseLPPipeline:
         if assembly is None:
             raise click.ClickException(f"Assembly '{self.assembly}' not found in releases.yml")
 
+        self._releases_config = releases_config
         self._configured_shipment_mr_url = get_shipment_mr_url(releases_config, self.assembly)
         return assembly
 
     def _extract_operand_nvrs(self, assembly_config: Dict) -> List[str]:
         """Extract pinned operand NVRs from the assembly definition.
 
-        Walks the members.images list and collects NVRs from is.nvr or is.nvr! entries.
+        Resolve the assembly's basis chain and collect the effective NVR for
+        every image member. Child ``nvr!`` entries replace inherited NVRs.
 
-        NOTE: For inherited (delta) assemblies, only NVRs explicitly listed
-        in this assembly's members.images are returned. Parent chain
-        resolution is not performed -- doozer/elliott commands handle
-        inheritance internally via --assembly.
+        Args:
+            assembly_config: Direct configuration for ``self.assembly``.
+
+        Returns:
+            Effective operand NVRs in assembly order.
+
+        Raises:
+            ValueError: If the assembly basis chain contains a cycle.
         """
-        members_images = assembly_config.get('assembly', {}).get('members', {}).get('images', [])
-        nvrs = []
-        for entry in members_images:
-            is_spec = entry.get('metadata', {}).get('is', {})
-            nvr = is_spec.get('nvr') or is_spec.get('nvr!')
-            if nvr:
-                nvrs.append(nvr)
-        return nvrs
+        releases = (self._releases_config or {}).get('releases', {})
+
+        def _resolve(current_assembly: str, current_config: Dict, ancestors: set[str]) -> Dict[str, str]:
+            if current_assembly in ancestors:
+                raise ValueError(f"Assembly inheritance cycle detected at '{current_assembly}'")
+            ancestors = {*ancestors, current_assembly}
+            assembly = current_config.get('assembly', {})
+            basis_assembly = assembly.get('basis', {}).get('assembly') if releases else None
+            if basis_assembly:
+                basis_config = releases.get(basis_assembly)
+                if basis_config is None:
+                    raise ValueError(f"Assembly '{current_assembly}' inherits from missing assembly '{basis_assembly}'")
+                nvrs_by_key = _resolve(basis_assembly, basis_config, ancestors)
+            else:
+                nvrs_by_key = {}
+
+            members_images = assembly.get('members', {}).get('images', [])
+            for entry in members_images:
+                distgit_key = entry.get('distgit_key')
+                if not distgit_key or distgit_key == '*':
+                    continue
+                is_spec = entry.get('metadata', {}).get('is', {})
+                if 'nvr-' in is_spec:
+                    nvrs_by_key.pop(distgit_key, None)
+                    continue
+                nvr = is_spec.get('nvr') or is_spec.get('nvr!')
+                if nvr:
+                    nvrs_by_key[distgit_key] = nvr
+            return nvrs_by_key
+
+        effective_nvrs = _resolve(self.assembly, assembly_config, set())
+        return list(effective_nvrs.values())
 
     async def _find_existing_bundles(self) -> Dict[str, List[str]]:
         """Check for existing bundle builds that match the assembly's pinned operands.

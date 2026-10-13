@@ -126,6 +126,28 @@ class TestReleaseFromFbcPipeline(unittest.TestCase):
 
         mock_build_fbc_catalogs.assert_not_awaited()
 
+    @patch("pyartcd.pipelines.release_from_fbc.build_fbc_catalogs", new_callable=AsyncMock)
+    @patch.object(ReleaseFromFbcPipeline, "_load_component_doozer_keys", new_callable=AsyncMock)
+    def test_refresh_fbc_pullspecs_rejects_duplicate_source_identity(
+        self, mock_component_keys, mock_build_fbc_catalogs
+    ):
+        """Two source FBCs for one operator and target should be rejected instead of collapsed."""
+        source_pullspecs = ["quay.io/test/fbc:first", "quay.io/test/fbc:second"]
+        source_nvrs = [
+            "oadp-operator-fbc-1.4.5-1.ocp4.20",
+            "oadp-operator-fbc-1.4.5-2.ocp4.20",
+        ]
+        operator_nvr = "oadp-operator-container-1.4.5-1"
+        pipeline = self._make_pipeline(fbc_pullspecs=source_pullspecs, refresh_fbcs=True)
+        pipeline._fbc_operator_by_pullspec = {pullspec: "oadp-operator" for pullspec in source_pullspecs}
+        pipeline._fbc_related_nvrs_by_pullspec = {pullspec: [operator_nvr] for pullspec in source_pullspecs}
+        mock_component_keys.return_value = {"oadp-operator-container": "oadp-operator"}
+
+        with self.assertRaisesRegex(RuntimeError, "duplicates source FBC.*operator NVR.*OCP 4.20"):
+            asyncio.run(pipeline._refresh_fbc_pullspecs(source_nvrs))
+
+        mock_build_fbc_catalogs.assert_not_awaited()
+
     def test_create_shipment_config_image_with_release_notes(self):
         """create_shipment_config should include release_notes in data for image kind."""
         pipeline = self._make_pipeline()
@@ -1939,6 +1961,48 @@ class TestOcpOptionalMode(unittest.TestCase):
         pipeline.__dict__['_gitlab'] = MagicMock()
 
         with self.assertRaisesRegex(RuntimeError, "target build failed"):
+            asyncio.run(pipeline.run())
+
+        pipeline.create_snapshot.assert_not_awaited()
+        pipeline.create_shipment_mr.assert_not_awaited()
+        pipeline.set_shipment_mr_ready.assert_not_awaited()
+        existing_mr.save.assert_not_called()
+
+    @patch('pyartcd.pipelines.release_from_fbc.validate_shipment_mr_for_operation', new_callable=AsyncMock)
+    def test_refreshed_fbc_validation_failure_leaves_reused_mr_unchanged(self, mock_validate):
+        """Refreshed FBC validation should fail before snapshots or shipment MR mutations."""
+        existing_mr = MagicMock(state='opened', title='Shipment for oadp 1.5.8', description='')
+        mock_validate.return_value = (existing_mr, MagicMock(active_stage=(), prod_attempts=()))
+        pipeline = self._make_pipeline(ocp_optional=False, group="oadp-1.5", assembly="1.5.8")
+        pipeline.create_mr = True
+        pipeline.refresh_fbcs = True
+        pipeline.check_env_vars = MagicMock()
+        pipeline.setup_working_dir = MagicMock()
+        pipeline.setup_shipment_repo = AsyncMock()
+        pipeline._load_product_from_group_config = AsyncMock(return_value="oadp")
+        pipeline._load_layered_product_shipment_mr = MagicMock(
+            return_value="https://gitlab.example/project/-/merge_requests/42"
+        )
+        pipeline.extract_fbc_nvr = MagicMock(
+            side_effect=[
+                "oadp-operator-fbc-1.5.8-1.ocp4.20",
+                "oadp-operator-fbc-1.5.8-2.ocp4.20",
+            ]
+        )
+        pipeline._load_ignore_patch_version_from_group_config = AsyncMock(return_value=False)
+        pipeline.validate_fbc_related_images = AsyncMock(
+            side_effect=[
+                ["oadp-operator-container-1.5.8-1"],
+                RuntimeError("replacement related-image validation failed"),
+            ]
+        )
+        pipeline._refresh_fbc_pullspecs = AsyncMock(return_value=["quay.io/test/fbc:replacement"])
+        pipeline.create_snapshot = AsyncMock()
+        pipeline.create_shipment_mr = AsyncMock()
+        pipeline.set_shipment_mr_ready = AsyncMock()
+        pipeline.__dict__['_gitlab'] = MagicMock()
+
+        with self.assertRaisesRegex(RuntimeError, "replacement related-image validation failed"):
             asyncio.run(pipeline.run())
 
         pipeline.create_snapshot.assert_not_awaited()

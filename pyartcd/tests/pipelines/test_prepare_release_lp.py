@@ -139,6 +139,54 @@ class TestPrepareReleaseLPPipeline(unittest.TestCase):
         self.assertEqual(len(nvrs), 1)
         self.assertIn('search-v2-api-container-2.17.3-2', nvrs)
 
+    def test_extract_operand_nvrs_resolves_inherited_operators(self):
+        """Inherited operators should be included when a delta assembly only overrides another image."""
+        pipeline = self._make_pipeline()
+        pipeline._releases_config = {
+            'releases': {
+                '2.17.2': {
+                    'assembly': {
+                        'members': {
+                            'images': [
+                                {
+                                    'distgit_key': 'search-operator',
+                                    'metadata': {'is': {'nvr': 'search-operator-container-2.17.2-1'}},
+                                },
+                                {
+                                    'distgit_key': 'search-api',
+                                    'metadata': {'is': {'nvr': 'search-api-container-2.17.2-1'}},
+                                },
+                            ],
+                        },
+                    },
+                },
+                '2.17.3': {
+                    'assembly': {
+                        'basis': {'assembly': '2.17.2'},
+                        'members': {
+                            'images': [
+                                {
+                                    'distgit_key': 'search-api',
+                                    'metadata': {'is': {'nvr!': 'search-api-container-2.17.3-1'}},
+                                },
+                            ],
+                        },
+                    },
+                },
+            },
+        }
+        assembly_config = pipeline._releases_config['releases']['2.17.3']
+
+        nvrs = pipeline._extract_operand_nvrs(assembly_config)
+
+        self.assertEqual(
+            nvrs,
+            [
+                'search-operator-container-2.17.2-1',
+                'search-api-container-2.17.3-1',
+            ],
+        )
+
     def test_extract_operand_nvrs_empty_assembly(self):
         """Should return empty list for assembly with no members."""
         pipeline = self._make_pipeline()

@@ -1309,11 +1309,13 @@ class ReleaseFromFbcPipeline:
 
         Raises:
             RuntimeError: If an FBC cannot be mapped unambiguously to one
-                operator NVR and target version.
+                operator NVR and target version, or if two source FBCs resolve
+                to the same operator NVR and target.
         """
         component_keys = await self._load_component_doozer_keys()
         operator_nvrs_by_target: dict[str, list[str]] = {}
         source_pullspecs_by_target: dict[str, list[str]] = {}
+        source_by_identity: dict[tuple[str, str], str] = {}
 
         for pullspec, fbc_nvr in zip(self.fbc_pullspecs, source_fbc_nvrs):
             operator_key = self._fbc_operator_by_pullspec.get(pullspec)
@@ -1335,6 +1337,14 @@ class ReleaseFromFbcPipeline:
             target_version = extract_ocp_version_from_nvr(fbc_nvr)
             if not target_version:
                 raise RuntimeError(f"Cannot refresh FBC '{fbc_nvr}': target OCP version is missing from the NVR")
+            identity = (target_version, candidates[0])
+            duplicate_source = source_by_identity.get(identity)
+            if duplicate_source:
+                raise RuntimeError(
+                    f"Cannot refresh FBC '{fbc_nvr}': it duplicates source FBC '{duplicate_source}' for "
+                    f"operator NVR '{candidates[0]}' and OCP {target_version}"
+                )
+            source_by_identity[identity] = fbc_nvr
             operator_nvrs_by_target.setdefault(target_version, []).append(candidates[0])
             source_pullspecs_by_target.setdefault(target_version, []).append(pullspec)
 
