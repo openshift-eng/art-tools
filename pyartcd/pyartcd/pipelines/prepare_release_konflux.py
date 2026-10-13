@@ -1503,16 +1503,18 @@ class PrepareReleaseKonfluxPipeline:
 
     def trigger_verify_cdn_push(self):
         """Trigger verify-cdn-push Jenkins job (non-blocking) to poll until CDN staging pushes complete."""
+        major, minor = self.release_name.split('.')[:2]
+        version = f"{major}.{minor}"
         if self.dry_run:
-            self.logger.info("[DRY-RUN] Would have triggered verify-cdn-push for %s/%s", self.version, self.assembly)
+            self.logger.info("[DRY-RUN] Would have triggered verify-cdn-push for %s/%s", version, self.assembly)
             return
         try:
             jenkins.start_verify_cdn_push(
-                version=self.version,
+                version=version,
                 assembly=self.assembly,
                 block_until_building=False,
             )
-            self.logger.info("Triggered verify-cdn-push job for %s/%s", self.version, self.assembly)
+            self.logger.info("Triggered verify-cdn-push job for %s/%s", version, self.assembly)
         except Exception as ex:
             self.logger.warning("Failed to trigger verify-cdn-push: %s", ex)
 
