@@ -38,7 +38,7 @@ metadata:
 subjects:
   - kind: Group
     apiGroup: rbac.authorization.k8s.io
-    name: art-member
+    name: art-members
 roleRef:
   apiGroup: rbac.authorization.k8s.io
   kind: ClusterRole

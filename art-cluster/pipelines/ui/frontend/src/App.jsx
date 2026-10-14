@@ -4,6 +4,7 @@ import { AuthenticationError, createApi } from './api';
 import PipelineHealth from './PipelineHealth';
 import Components from './Components';
 import Incidents from './Incidents';
+import IncidentBanner from './IncidentBanner';
 import { isPlainClick, navigateRow, parseHash, pipelineTabs, runTabs, viewHref } from './navigation';
 
 const api = createApi();
@@ -141,7 +142,7 @@ function App() {
   const [authenticationError, setAuthenticationError] = useState(null);
   const [theme, setTheme] = useState(() => document.documentElement.dataset.theme || 'light');
   const [incidentFeed, setIncidentFeed] = useState({ incidents: [], canManage: false, error: '' });
-  const activeIncidents = incidentFeed.incidents.filter((incident) => incident.status !== 'resolved');
+  const activeIncidents = incidentFeed.incidents.filter((incident) => !['resolved', 'deleted'].includes(incident.status));
 
   useEffect(() => {
     let active = true;
@@ -170,6 +171,7 @@ function App() {
   }, []);
 
   return <div className="app-shell">
+    <IncidentBanner incidents={incidentFeed.incidents} error={incidentFeed.error} />
     <header className="topbar">
       <a className="brand" href={viewHref({ kind: 'pipelines', filterNamespace: namespace })}>
         <span className="brand-mark">ART</span><span>Pipelines</span><span className="beta-badge">Beta</span>
@@ -195,10 +197,6 @@ function App() {
       </div>
     </header>
     <main className="content">
-      {activeIncidents.map((incident) => <Alert key={incident.id} variant={incident.severity} title={incident.title} className="notice incident-banner">
-        <span>{incident.message}</span>{incident.links?.map((link) => <React.Fragment key={`${incident.id}-${link.label}`}> · <a href={link.url} target="_blank" rel="noopener noreferrer">{link.label}</a></React.Fragment>)}
-      </Alert>)}
-      {incidentFeed.error && <Alert variant="warning" title="Incident information is temporarily unavailable" className="notice incident-banner" />}
       {authenticationError ? (
         <Alert variant="danger" title={authenticationError.message} className="notice" actionLinks={<Button variant="link" onClick={api.signIn}>Sign in again</Button>} />
       ) : <>
@@ -212,6 +210,7 @@ function App() {
           csrfToken={session?.csrfToken}
           error={incidentFeed.error}
           onChange={(data) => setIncidentFeed({ incidents: data.incidents || [], canManage: data.canManage === true, error: '' })}
+          request={request}
         />}
         {view.kind === 'pipeline' && <PipelineDetail view={view} csrfToken={session?.csrfToken} />}
         {view.kind === 'run' && <RunDetail view={view} csrfToken={session?.csrfToken} />}

@@ -14,7 +14,7 @@ import httpx
 from fastapi import FastAPI, HTTPException, Query, Request, Response
 from fastapi.responses import JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
-from pydantic import AnyHttpUrl, BaseModel, Field, ValidationError
+from pydantic import AnyHttpUrl, BaseModel, Field, ValidationError, field_validator, model_validator
 
 from .cluster import Gateway, UpstreamError
 from .components import component_details
@@ -44,6 +44,7 @@ PIPELINE_PRIORITY = {name: priority for priority, names in enumerate(PIPELINE_OR
 CSRF_COOKIE = "__Host-art-pipelines-csrf"
 INCIDENTS_FILE = Path(os.getenv("INCIDENTS_FILE", "/etc/incidents/incidents.json"))
 MAX_INCIDENTS = 20
+MAX_INCIDENT_HISTORY_ENTRIES = 50
 MAX_INCIDENTS_JSON_BYTES = 900 * 1024
 logger = logging.getLogger(__name__)
 app = FastAPI(title="ART Pipelines UI", docs_url=None, redoc_url=None, openapi_url=None)
@@ -68,17 +69,46 @@ class IncidentLink(BaseModel):
     url: AnyHttpUrl
 
 
+class IncidentHistoryEntry(BaseModel):
+    timestamp: str = ""
+    note: str = Field(min_length=1, max_length=500)
+
+
 class Incident(BaseModel):
     id: str = Field(min_length=1, max_length=100)
     title: str = Field(min_length=1, max_length=160)
     message: str = Field(min_length=1, max_length=240)
     severity: Literal["info", "warning", "danger"] = "warning"
-    status: Literal["investigating", "identified", "monitoring", "resolved"]
+    status: Literal["investigating", "identified", "monitoring", "resolved", "deleted"]
     started: str | None = None
     updated: str | None = None
     resolvedAt: str | None = None
+    deletedAt: str | None = None
     description: str = Field(default="", max_length=4000)
     links: list[IncidentLink] = Field(default_factory=list, max_length=10)
+    showOnBanner: bool = True
+    history: list[IncidentHistoryEntry] = Field(default_factory=list, max_length=MAX_INCIDENT_HISTORY_ENTRIES)
+
+    @model_validator(mode="before")
+    @classmethod
+    def normalize_legacy_record(cls, value):
+        if not isinstance(value, dict):
+            return value
+        normalized = dict(value)
+        normalized.setdefault("showOnBanner", True)
+        if "history" not in normalized:
+            normalized["history"] = [
+                {
+                    "timestamp": normalized.get("started") or normalized.get("updated") or "",
+                    "note": "Incident created.",
+                }
+            ]
+        return normalized
+
+    @field_validator("history", mode="before")
+    @classmethod
+    def retain_recent_history(cls, value):
+        return value[-MAX_INCIDENT_HISTORY_ENTRIES:] if isinstance(value, list) else value
 
 
 class IncidentCreate(BaseModel):
@@ -88,6 +118,7 @@ class IncidentCreate(BaseModel):
     status: Literal["investigating", "identified", "monitoring"] = "investigating"
     description: str = Field(default="", max_length=4000)
     links: list[IncidentLink] = Field(default_factory=list, max_length=10)
+    showOnBanner: bool = True
 
 
 class IncidentUpdate(BaseModel):
@@ -97,6 +128,13 @@ class IncidentUpdate(BaseModel):
     status: Literal["investigating", "identified", "monitoring"] = "investigating"
     description: str = Field(default="", max_length=4000)
     links: list[IncidentLink] = Field(default_factory=list, max_length=10)
+    showOnBanner: bool | None = None
+    updateNote: str = Field(min_length=1, max_length=500)
+
+    @field_validator("updateNote", mode="before")
+    @classmethod
+    def trim_update_note(cls, value):
+        return value.strip() if isinstance(value, str) else value
 
 
 @app.exception_handler(UpstreamError)
@@ -297,6 +335,10 @@ def incident_timestamp() -> str:
     return datetime.now(timezone.utc).isoformat(timespec="seconds").replace("+00:00", "Z")
 
 
+def append_incident_history(history: list[IncidentHistoryEntry], entry: IncidentHistoryEntry):
+    return [*history, entry][-MAX_INCIDENT_HISTORY_ENTRIES:]
+
+
 async def can_manage_incidents(gateway: Gateway) -> bool:
     try:
         review = await gateway.kube_json(
@@ -331,23 +373,26 @@ async def read_incident_configmap(gateway: Gateway):
         items = [Incident.model_validate(item) for item in content["incidents"]]
     except (json.JSONDecodeError, TypeError, ValueError, ValidationError) as error:
         logger.warning("Cannot update malformed incident ConfigMap: %s", error)
-        raise HTTPException(status_code=503, detail="Incident data must be corrected before it can be edited") from error
+        raise HTTPException(
+            status_code=503, detail="Incident data must be corrected before it can be edited"
+        ) from error
     return configmap, items
 
 
 async def write_incident_configmap(gateway: Gateway, configmap: dict, items: list[Incident]):
     while len(items) > MAX_INCIDENTS:
-        resolved = [
-            (index, item.resolvedAt or item.updated or item.started or "")
+        removable = [
+            (index, item.deletedAt or item.resolvedAt or item.updated or item.started or "")
             for index, item in enumerate(items)
-            if item.status == "resolved"
+            if item.status in ("deleted", "resolved")
         ]
-        if not resolved:
+        if not removable:
             raise HTTPException(
                 status_code=409,
                 detail=f"There are already {MAX_INCIDENTS} active incidents. Resolve an incident before creating another.",
             )
-        oldest_index = min(resolved, key=lambda entry: entry[1])[0]
+        deleted_items = [entry for entry in removable if items[entry[0]].status == "deleted"]
+        oldest_index = min(deleted_items or removable, key=lambda entry: entry[1])[0]
         items.pop(oldest_index)
 
     serialized = [item.model_dump(mode="json") for item in items]
@@ -375,7 +420,15 @@ async def create_incident(request: Request, body: IncidentCreate):
     async with Gateway(user_token(request)) as gateway:
         configmap, items = await read_incident_configmap(gateway)
         now = incident_timestamp()
-        items.append(Incident(id=str(uuid4()), started=now, updated=now, **body.model_dump()))
+        items.append(
+            Incident(
+                id=str(uuid4()),
+                started=now,
+                updated=now,
+                history=[IncidentHistoryEntry(timestamp=now, note="Incident created.")],
+                **body.model_dump(),
+            )
+        )
         return await write_incident_configmap(gateway, configmap, items)
 
 
@@ -387,9 +440,19 @@ async def update_incident(request: Request, incident_id: str, body: IncidentUpda
         for index, incident in enumerate(items):
             if incident.id == incident_id:
                 now = incident_timestamp()
-                updated = incident.model_copy(
-                    update={**body.model_dump(), "updated": now, "resolvedAt": None}
+                changes = body.model_dump(exclude={"showOnBanner", "updateNote"})
+                changes["links"] = body.links
+                changes.update(
+                    {
+                        "showOnBanner": incident.showOnBanner if body.showOnBanner is None else body.showOnBanner,
+                        "history": append_incident_history(
+                            incident.history, IncidentHistoryEntry(timestamp=now, note=body.updateNote)
+                        ),
+                        "updated": now,
+                        "resolvedAt": None,
+                    }
                 )
+                updated = incident.model_copy(update=changes)
                 items[index] = updated
                 return await write_incident_configmap(gateway, configmap, items)
     raise HTTPException(status_code=404, detail="Incident was not found")
@@ -405,7 +468,37 @@ async def close_incident(request: Request, incident_id: str):
                 if incident.status != "resolved":
                     now = incident_timestamp()
                     items[index] = incident.model_copy(
-                        update={"status": "resolved", "updated": now, "resolvedAt": now}
+                        update={
+                            "status": "resolved",
+                            "updated": now,
+                            "resolvedAt": now,
+                            "history": append_incident_history(
+                                incident.history, IncidentHistoryEntry(timestamp=now, note="Incident closed.")
+                            ),
+                        }
+                    )
+                return await write_incident_configmap(gateway, configmap, items)
+    raise HTTPException(status_code=404, detail="Incident was not found")
+
+
+@app.delete("/api/incidents/{incident_id}")
+async def delete_incident(request: Request, incident_id: str):
+    check_csrf(request)
+    async with Gateway(user_token(request)) as gateway:
+        configmap, items = await read_incident_configmap(gateway)
+        for index, incident in enumerate(items):
+            if incident.id == incident_id:
+                if incident.status != "deleted":
+                    now = incident_timestamp()
+                    items[index] = incident.model_copy(
+                        update={
+                            "status": "deleted",
+                            "updated": now,
+                            "deletedAt": now,
+                            "history": append_incident_history(
+                                incident.history, IncidentHistoryEntry(timestamp=now, note="Incident marked deleted.")
+                            ),
+                        }
                     )
                 return await write_incident_configmap(gateway, configmap, items)
     raise HTTPException(status_code=404, detail="Incident was not found")

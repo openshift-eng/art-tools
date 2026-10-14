@@ -6,10 +6,17 @@ const statusLabels = {
   identified: 'Identified',
   monitoring: 'Monitoring',
   resolved: 'Resolved',
+  deleted: 'Deleted',
 };
 
 const severityColors = { danger: 'red', warning: 'orange', info: 'blue' };
-const emptyForm = { title: '', message: '', severity: 'warning', status: 'investigating', description: '', links: [] };
+const emptyForm = { title: '', message: '', severity: 'warning', status: 'investigating', description: '', links: [], showOnBanner: true, updateNote: '' };
+
+export function buildIncidentPayload(form, isUpdate) {
+  const payload = { ...form, updateNote: form.updateNote.trim() };
+  if (!isUpdate) delete payload.updateNote;
+  return payload;
+}
 
 function formatDate(value) {
   if (!value) return null;
@@ -19,31 +26,46 @@ function formatDate(value) {
   });
 }
 
-function IncidentCard({ incident, canManage, onEdit, onClose, closing }) {
+function IncidentCard({ incident, canManage, onEdit, onClose, onDelete, busy }) {
   const started = formatDate(incident.started);
   const updated = formatDate(incident.updated);
   const resolved = formatDate(incident.resolvedAt);
-  const active = incident.status !== 'resolved';
+  const deleted = formatDate(incident.deletedAt);
+  const actionable = !['resolved', 'deleted'].includes(incident.status);
+  const history = [...(incident.history || [])].sort((left, right) => {
+    const leftTime = Date.parse(left.timestamp) || 0;
+    const rightTime = Date.parse(right.timestamp) || 0;
+    return leftTime - rightTime;
+  });
   return <Alert variant={incident.severity} title={incident.title} isInline className="incident-item">
     <div className="incident-meta">
       <Label color={severityColors[incident.severity] || 'grey'}>{statusLabels[incident.status] || incident.status}</Label>
       {started && <span>Started <time dateTime={incident.started}>{started}</time></span>}
       {updated && <span>Last updated <time dateTime={incident.updated}>{updated}</time></span>}
       {resolved && <span>Closed <time dateTime={incident.resolvedAt}>{resolved}</time></span>}
+      {deleted && <span>Deleted <time dateTime={incident.deletedAt}>{deleted}</time></span>}
     </div>
     <p className="incident-message">{incident.message}</p>
     {incident.description && <p>{incident.description}</p>}
     {incident.links?.length > 0 && <div className="incident-links">{incident.links.map((link) =>
       <a key={`${link.label}-${link.url}`} href={link.url} target="_blank" rel="noopener noreferrer">{link.label}</a>
     )}</div>}
-    {canManage && active && <div className="incident-actions">
-      <Button variant="secondary" onClick={() => onEdit(incident)}>Edit</Button>
-      <Button variant="secondary" isDisabled={closing} onClick={() => onClose(incident)}>{closing ? 'Closing…' : 'Close incident'}</Button>
+    {history.length > 0 && <details className="incident-history">
+      <summary><span>Incident history</span><span className="incident-history-count">{history.length} {history.length === 1 ? 'update' : 'updates'}</span></summary>
+      <ol>{history.map((entry, index) => <li key={`${entry.timestamp}-${index}`}>
+        <time dateTime={entry.timestamp || undefined}>{formatDate(entry.timestamp) || 'Time unavailable'}</time>
+        <p>{entry.note}</p>
+      </li>)}</ol>
+    </details>}
+    {canManage && incident.status !== 'deleted' && <div className="incident-actions">
+      {actionable && <Button variant="secondary" onClick={() => onEdit(incident)}>Edit</Button>}
+      {actionable && <Button variant="secondary" isDisabled={busy} onClick={() => onClose(incident)}>{busy ? 'Closing…' : 'Close incident'}</Button>}
+      <Button variant="secondary" isDisabled={busy} onClick={() => onDelete(incident)}>{busy ? 'Updating…' : 'Delete incident'}</Button>
     </div>}
   </Alert>;
 }
 
-function IncidentEditor({ incident, csrfToken, request, onChange, onClose }) {
+export function IncidentEditor({ incident, csrfToken, request, onChange, onClose }) {
   const [form, setForm] = useState(() => incident ? {
     title: incident.title,
     message: incident.message,
@@ -51,6 +73,8 @@ function IncidentEditor({ incident, csrfToken, request, onChange, onClose }) {
     status: incident.status === 'resolved' ? 'investigating' : incident.status,
     description: incident.description || '',
     links: incident.links || [],
+    showOnBanner: incident.showOnBanner !== false,
+    updateNote: '',
   } : { ...emptyForm, links: [] });
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
@@ -69,13 +93,18 @@ function IncidentEditor({ incident, csrfToken, request, onChange, onClose }) {
       setError('Add both a label and URL for each incident link.');
       return;
     }
+    if (incident && !form.updateNote.trim()) {
+      setError('Add a short update note before saving.');
+      return;
+    }
     setSaving(true);
     try {
       const url = incident ? `/api/incidents/${encodeURIComponent(incident.id)}` : '/api/incidents';
+      const payload = buildIncidentPayload({ ...form, links }, Boolean(incident));
       const result = await request(url, {
         method: incident ? 'PUT' : 'POST',
         headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': csrfToken },
-        body: JSON.stringify({ ...form, links }),
+        body: JSON.stringify(payload),
       });
       onChange(result);
       onClose();
@@ -96,11 +125,13 @@ function IncidentEditor({ incident, csrfToken, request, onChange, onClose }) {
         <div className="modal-body">
           <label className="field"><span className="field-label">Title</span><input maxLength={160} required value={form.title} onChange={(event) => update('title', event.target.value)} /></label>
           <label className="field"><span className="field-label">Banner message</span><input maxLength={240} required value={form.message} onChange={(event) => update('message', event.target.value)} /></label>
+          <label className="incident-banner-toggle"><input type="checkbox" checked={form.showOnBanner} onChange={(event) => update('showOnBanner', event.target.checked)} /><span><strong>Show in banner</strong><small>Turn this off to keep the incident in the Incidents tab without showing it across pages.</small></span></label>
           <div className="incident-form-row">
             <label className="field"><span className="field-label">Severity</span><select value={form.severity} onChange={(event) => update('severity', event.target.value)}><option value="info">Information</option><option value="warning">Warning</option><option value="danger">Critical</option></select></label>
             <label className="field"><span className="field-label">Status</span><select value={form.status} onChange={(event) => update('status', event.target.value)}><option value="investigating">Investigating</option><option value="identified">Identified</option><option value="monitoring">Monitoring</option></select></label>
           </div>
           <label className="field"><span className="field-label">Details</span><textarea rows={4} maxLength={4000} value={form.description} onChange={(event) => update('description', event.target.value)} /></label>
+          {incident && <label className="field"><span className="field-label">Short update note</span><textarea rows={2} maxLength={500} required value={form.updateNote} onChange={(event) => update('updateNote', event.target.value)} placeholder="What changed?" /></label>}
           <div className="field">
             <span className="field-label">Slack or ticket links</span>
             {form.links.map((link, index) => <div className="incident-link-form" key={index}>
@@ -119,15 +150,16 @@ function IncidentEditor({ incident, csrfToken, request, onChange, onClose }) {
 }
 
 export default function Incidents({ incidents = [], canManage = false, csrfToken, error, onChange, request }) {
-  const active = incidents.filter((incident) => incident.status !== 'resolved');
+  const active = incidents.filter((incident) => !['resolved', 'deleted'].includes(incident.status));
   const resolved = incidents.filter((incident) => incident.status === 'resolved');
+  const deleted = incidents.filter((incident) => incident.status === 'deleted');
   const [editor, setEditor] = useState(null);
-  const [closingId, setClosingId] = useState('');
+  const [busyId, setBusyId] = useState('');
   const [actionError, setActionError] = useState('');
 
   const closeIncident = async (incident) => {
     setActionError('');
-    setClosingId(incident.id);
+    setBusyId(incident.id);
     try {
       const result = await request(`/api/incidents/${encodeURIComponent(incident.id)}/close`, {
         method: 'POST', headers: { 'X-CSRF-Token': csrfToken },
@@ -136,7 +168,22 @@ export default function Incidents({ incidents = [], canManage = false, csrfToken
     } catch (cause) {
       setActionError(cause.message);
     } finally {
-      setClosingId('');
+      setBusyId('');
+    }
+  };
+
+  const deleteIncident = async (incident) => {
+    setActionError('');
+    setBusyId(incident.id);
+    try {
+      const result = await request(`/api/incidents/${encodeURIComponent(incident.id)}`, {
+        method: 'DELETE', headers: { 'X-CSRF-Token': csrfToken },
+      });
+      onChange(result);
+    } catch (cause) {
+      setActionError(cause.message);
+    } finally {
+      setBusyId('');
     }
   };
 
@@ -147,10 +194,15 @@ export default function Incidents({ incidents = [], canManage = false, csrfToken
     </div>
     {(error || actionError) && <Alert variant="danger" title={error ? 'Incident information could not be loaded' : 'Incident update failed'} className="notice">{error || actionError}</Alert>}
     {!error && active.length === 0 && <section className="panel incident-empty"><h2>No active incidents</h2><p>There are no reported issues right now.</p></section>}
-    {active.map((incident) => <IncidentCard key={incident.id} incident={incident} canManage={canManage} onEdit={setEditor} onClose={closeIncident} closing={closingId === incident.id} />)}
+    {active.map((incident) => <IncidentCard key={incident.id} incident={incident} canManage={canManage} onEdit={setEditor} onClose={closeIncident} onDelete={deleteIncident} busy={busyId === incident.id} />)}
     {resolved.length > 0 && <section className="resolved-incidents">
       <h2>Resolved</h2>
-      {resolved.map((incident) => <IncidentCard key={incident.id} incident={incident} />)}
+      {resolved.map((incident) => <IncidentCard key={incident.id} incident={incident} canManage={canManage} onDelete={deleteIncident} busy={busyId === incident.id} />)}
+    </section>}
+    {deleted.length > 0 && <section className="resolved-incidents">
+      <h2>Deleted from active incidents</h2>
+      <p>These incidents remain in history until removed by the retention limits.</p>
+      {deleted.map((incident) => <IncidentCard key={incident.id} incident={incident} />)}
     </section>}
     {editor && <IncidentEditor incident={editor.id ? editor : null} csrfToken={csrfToken} request={request} onChange={onChange} onClose={() => setEditor(null)} />}
   </>;
