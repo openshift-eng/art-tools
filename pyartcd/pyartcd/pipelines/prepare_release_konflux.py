@@ -562,7 +562,10 @@ class PrepareReleaseKonfluxPipeline:
 
             # push to CDN stage
             try:
-                push_cdn_stage(advisory_num)
+                if not self.runtime.dry_run:
+                    push_cdn_stage(advisory_num)
+                else:
+                    self.logger.warning('[DRY RUN] Would push advisory %s to CDN stage', advisory_num)
             except Exception as ex:
                 self.logger.warning(f"Unable to trigger push rpm advisory {advisory_num} to CDN stage: {ex}")
                 await self._slack_client.say_in_thread(
