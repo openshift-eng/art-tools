@@ -1362,10 +1362,10 @@ class KonfluxFbcRebaser:
                 else:
                     # For an operator bundle that uses replaces -- such as OADP.
                     # Default (tip-of-channel): new bundle replaces the current head.
-                    # Opt-in mid-stream exception (LP only, FBC_ENABLE_MID_STREAM_REWIRE):
-                    # if the new CSV version is older than the head (e.g. 1.0.3 while head
-                    # is 1.1.2 in a shared channel), insert by version order and rebuild
-                    # the replaces chain instead. Unset/false keeps historical HEAD-append.
+                    # Mid-stream (new CSV older than head, e.g. 1.0.3 while head is 1.1.2):
+                    # refuse replaces:HEAD (invalid downgrade edge). With
+                    # FBC_ENABLE_MID_STREAM_REWIRE, sort/rewire instead; otherwise fail closed.
+                    # --insert-missing-entry is a separate branch above and is unaffected.
                     replaces = None
                     mid_stream_rewire = False
                     current_head_name = None
@@ -1385,7 +1385,19 @@ class KonfluxFbcRebaser:
                             try:
                                 new_ver = self._extract_version_from_bundle_name(olm_bundle_name)
                                 head_ver = self._extract_version_from_bundle_name(current_head_name)
-                                if enable_mid_stream_rewire and new_ver < head_ver:
+                                if new_ver < head_ver:
+                                    if not enable_mid_stream_rewire:
+                                        raise IOError(
+                                            f"Refusing to add {olm_bundle_name} to channel "
+                                            f"{channel['name']} with replaces:{current_head_name}: "
+                                            f"new CSV version ({new_ver}) is older than the current "
+                                            f"channel head ({head_ver}), which would create an "
+                                            f"invalid downgrade edge. Set "
+                                            f"FBC_ENABLE_MID_STREAM_REWIRE: true in group.yml vars "
+                                            f"to insert by semver and rebuild the replaces chain "
+                                            f"for shared OLM channels, or use --insert-missing-entry "
+                                            f"to fill a hole in version order."
+                                        )
                                     # Sort/rewire parses every channel entry; refuse mid-stream
                                     # if any name is unparseable rather than crashing later.
                                     for it in all_entries:
@@ -1394,18 +1406,15 @@ class KonfluxFbcRebaser:
                                 else:
                                     replaces = current_head_name
                             except ValueError as e:
-                                # Unparseable versions: fall back to tip-of-channel behavior
-                                replaces = current_head_name
                                 if enable_mid_stream_rewire:
-                                    logger.warning(
-                                        "FBC_ENABLE_MID_STREAM_REWIRE is set but cannot mid-stream "
-                                        "insert %s into channel %s (head %s); falling back to "
-                                        "replaces:HEAD. Reason: %s",
-                                        olm_bundle_name,
-                                        channel['name'],
-                                        current_head_name,
-                                        e,
-                                    )
+                                    raise IOError(
+                                        f"FBC_ENABLE_MID_STREAM_REWIRE is set but cannot mid-stream "
+                                        f"insert {olm_bundle_name} into channel {channel['name']} "
+                                        f"(head {current_head_name}): {e}. Refusing replaces:HEAD "
+                                        f"to avoid an invalid upgrade graph."
+                                    ) from e
+                                # Tip path with unparseable names: keep historical HEAD-append
+                                replaces = current_head_name
 
                     channel['entries'].append(entry)
                     if mid_stream_rewire:

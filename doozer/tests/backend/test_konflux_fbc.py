@@ -1735,7 +1735,7 @@ class TestKonfluxFbcRebaser(unittest.IsolatedAsyncioTestCase):
     @patch("pathlib.Path.open")
     @patch("doozerlib.backend.konflux_fbc.KonfluxFbcRebaser._fetch_olm_bundle_image_info", new_callable=AsyncMock)
     @patch("doozerlib.backend.konflux_fbc.KonfluxFbcRebaser._fetch_olm_bundle_blob", new_callable=AsyncMock)
-    async def test_rebase_mid_stream_unparseable_entry_falls_back_with_warning(
+    async def test_rebase_mid_stream_unparseable_entry_fails_closed(
         self,
         mock_fetch_olm_bundle_blob,
         mock_fetch_olm_bundle_image_info,
@@ -1748,7 +1748,7 @@ class TestKonfluxFbcRebaser(unittest.IsolatedAsyncioTestCase):
         mock_path_unlink,
         mock_generate_dockerfile,
     ):
-        """With mid-stream enabled, unparseable channel entry falls back to HEAD with a warning."""
+        """With mid-stream enabled, unparseable channel entry fails closed (no downgrade edge)."""
         rebaser = KonfluxFbcRebaser(
             base_dir=self.base_dir,
             group="zero-trust-1.0",
@@ -1859,23 +1859,11 @@ class TestKonfluxFbcRebaser(unittest.IsolatedAsyncioTestCase):
         mock_generate_dockerfile.return_value = None
 
         logger = MagicMock()
-        await rebaser._rebase_dir(metadata, build_repo, bundle_build, "1.0.3", "1", logger)
+        with self.assertRaises(IOError) as cm:
+            await rebaser._rebase_dir(metadata, build_repo, bundle_build, "1.0.3", "1", logger)
 
-        result_catalog_file.seek(0)
-        result_catalog_blobs = rebaser._catagorize_catalog_blobs(list(yaml.load_all(result_catalog_file)))
-        entries = result_catalog_blobs["openshift-zt"]["olm.channel"]["stable-v1"]["entries"]
-        by_name = {e["name"]: e for e in entries}
-
-        self.assertEqual(
-            by_name["zero-trust-workload-identity-manager.v1.0.3"]["replaces"],
-            "zero-trust-workload-identity-manager.v1.1.2",
-        )
-        mid_stream_logs = [c for c in logger.info.call_args_list if c.args and "Mid-stream insert" in str(c.args[0])]
-        self.assertEqual(mid_stream_logs, [])
-        warning_logs = [
-            c for c in logger.warning.call_args_list if c.args and "falling back to replaces:HEAD" in str(c.args[0])
-        ]
-        self.assertEqual(len(warning_logs), 1)
+        self.assertIn("cannot mid-stream insert", str(cm.exception))
+        self.assertIn("Refusing replaces:HEAD", str(cm.exception))
 
     @patch("doozerlib.opm.generate_dockerfile")
     @patch("pathlib.Path.unlink")
@@ -1887,7 +1875,7 @@ class TestKonfluxFbcRebaser(unittest.IsolatedAsyncioTestCase):
     @patch("pathlib.Path.open")
     @patch("doozerlib.backend.konflux_fbc.KonfluxFbcRebaser._fetch_olm_bundle_image_info", new_callable=AsyncMock)
     @patch("doozerlib.backend.konflux_fbc.KonfluxFbcRebaser._fetch_olm_bundle_blob", new_callable=AsyncMock)
-    async def test_rebase_mid_stream_without_flag_keeps_replaces_head(
+    async def test_rebase_mid_stream_without_flag_fails_closed(
         self,
         mock_fetch_olm_bundle_blob,
         mock_fetch_olm_bundle_image_info,
@@ -1900,7 +1888,7 @@ class TestKonfluxFbcRebaser(unittest.IsolatedAsyncioTestCase):
         mock_path_unlink,
         mock_generate_dockerfile,
     ):
-        """Without FBC_ENABLE_MID_STREAM_REWIRE, mid-stream adds still use replaces: HEAD."""
+        """Without FBC_ENABLE_MID_STREAM_REWIRE, mid-stream adds fail closed (no downgrade edge)."""
         rebaser = KonfluxFbcRebaser(
             base_dir=self.base_dir,
             group="zero-trust-1.0",
@@ -2010,24 +1998,12 @@ class TestKonfluxFbcRebaser(unittest.IsolatedAsyncioTestCase):
         mock_generate_dockerfile.return_value = None
 
         logger = MagicMock()
-        await rebaser._rebase_dir(metadata, build_repo, bundle_build, "1.0.3", "1", logger)
+        with self.assertRaises(IOError) as cm:
+            await rebaser._rebase_dir(metadata, build_repo, bundle_build, "1.0.3", "1", logger)
 
-        result_catalog_file.seek(0)
-        result_catalog_blobs = rebaser._catagorize_catalog_blobs(list(yaml.load_all(result_catalog_file)))
-        entries = result_catalog_blobs["openshift-zt"]["olm.channel"]["stable-v1"]["entries"]
-        by_name = {e["name"]: e for e in entries}
-
-        # Historical HEAD-append: older CSV still replaces current head
-        self.assertEqual(
-            by_name["zero-trust-workload-identity-manager.v1.0.3"]["replaces"],
-            "zero-trust-workload-identity-manager.v1.1.2",
-        )
-        self.assertEqual(
-            by_name["zero-trust-workload-identity-manager.v1.1.0"]["replaces"],
-            "zero-trust-workload-identity-manager.v1.0.2",
-        )
-        mid_stream_logs = [c for c in logger.info.call_args_list if c.args and "Mid-stream insert" in str(c.args[0])]
-        self.assertEqual(mid_stream_logs, [])
+        self.assertIn("invalid downgrade edge", str(cm.exception))
+        self.assertIn("FBC_ENABLE_MID_STREAM_REWIRE", str(cm.exception))
+        self.assertIn("--insert-missing-entry", str(cm.exception))
 
     @patch("doozerlib.opm.generate_dockerfile")
     @patch("pathlib.Path.unlink")
