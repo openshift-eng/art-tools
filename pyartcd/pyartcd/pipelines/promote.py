@@ -779,6 +779,8 @@ class PromotePipeline:
         logger = self._logger
         registry_config = self._registry_config
         base_to_mirror_dir = f"{self._working_dir}/to_mirror/openshift-v4"
+        tarball_cache_dir = f"{self._working_dir}/tarball_cache"
+        os.makedirs(tarball_cache_dir, exist_ok=True)
         message_digests = []
         for arch, release_info in release_infos.items():
             logger.info("Extracting client binaries for %s", arch)
@@ -806,6 +808,7 @@ class PromotePipeline:
                     arch,
                     client_type,
                     registry_config=registry_config,
+                    tarball_cache_dir=tarball_cache_dir,
                 )
             message_digests.append(message_digest)
         return message_digests
