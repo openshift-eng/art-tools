@@ -57,7 +57,7 @@ class Jobs(Enum):
     SYNC_CI_IMAGES = 'aos-cd-builds/build%2Fsync-ci-images'
     OPEN_RECONCILIATION_PRS = 'aos-cd-builds/build%2Fopen-reconciliation-prs'
     OPEN_RECONCILIATION_PRS_LAYERED = 'aos-cd-builds/build%2Fopen-reconciliation-prs-layered-products'
-    VERIFY_STAGE_TESTING = 'aos-cd-builds/verify%2Fverify-stage-testing'
+    VERIFY_STAGE_TESTING = 'verify%2Fverify-stage-testing'
 
 
 def get_jenkins_url():
