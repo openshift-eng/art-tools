@@ -3,6 +3,7 @@ import { Alert, Button, Label, Spinner, Title } from '@patternfly/react-core';
 import { AuthenticationError, createApi } from './api';
 import PipelineHealth from './PipelineHealth';
 import Components from './Components';
+import Incidents from './Incidents';
 import { isPlainClick, navigateRow, parseHash, pipelineTabs, runTabs, viewHref } from './navigation';
 
 const api = createApi();
@@ -146,6 +147,9 @@ function App() {
     try { window.localStorage.setItem('art-pipelines-theme', theme); } catch { /* Browser storage may be unavailable. */ }
   }, [theme]);
 
+  const [incidents, setIncidents] = useState([]);
+  const activeIncidents = incidents.filter((item) => item.status !== 'resolved');
+
   useEffect(() => {
     const unsubscribe = api.subscribeAuthentication(setAuthenticationError);
     const onHashChange = () => setView(parseHash());
@@ -154,6 +158,18 @@ function App() {
       .then(([identity, result]) => { setSession(identity); setNamespaces(result.namespaces); })
       .catch((cause) => setError(cause.message));
     return () => { unsubscribe(); window.removeEventListener('hashchange', onHashChange); };
+  }, []);
+
+  useEffect(() => {
+    let active = true;
+    const fetchIncidents = () => {
+      request('/api/incidents')
+        .then((data) => { if (active) setIncidents(data.incidents || []); })
+        .catch(() => {});
+    };
+    fetchIncidents();
+    const interval = window.setInterval(fetchIncidents, 60000);
+    return () => { active = false; window.clearInterval(interval); };
   }, []);
 
   return <div className="app-shell">
@@ -165,6 +181,7 @@ function App() {
         <a className={view.kind === 'pipelines' || view.kind === 'pipeline' ? 'nav active' : 'nav'} href={viewHref({ kind: 'pipelines', filterNamespace: namespace })}>Pipelines</a>
         <a className={view.kind === 'runs' || view.kind === 'run' ? 'nav active' : 'nav'} href={viewHref({ kind: 'runs', filterNamespace: namespace })}>PipelineRuns</a>
         <a className={view.kind === 'health' ? 'nav active' : 'nav'} href={viewHref({ kind: 'health', filterNamespace: namespace })}>PipelineHealth</a>
+        <a className={view.kind === 'incidents' ? 'nav active' : 'nav'} href={viewHref({ kind: 'incidents', filterNamespace: namespace })}>Incidents{activeIncidents.length > 0 && <Label className="nav-badge" color="orange">{activeIncidents.length}</Label>}</a>
       </nav>
       <div className="topbar-right">
         <select className="namespace-select" value={namespace} onChange={(event) => {
@@ -180,6 +197,13 @@ function App() {
         <span className="user-name">{session?.user || 'OpenShift user'}</span>
       </div>
     </header>
+    {activeIncidents.length > 0 && <div className="incident-banner">{activeIncidents.map((incident) =>
+      <Alert key={incident.id} variant={incident.severity === 'danger' ? 'danger' : incident.severity === 'info' ? 'info' : 'warning'} title={incident.title} isInline>
+        {incident.links?.filter((link) => typeof link.url === 'string' && (link.url.startsWith('http://') || link.url.startsWith('https://'))).map((link, index) =>
+          <a key={index} href={link.url} target="_blank" rel="noopener noreferrer">{link.label || link.url}</a>
+        )}
+      </Alert>
+    )}</div>}
     <main className="content">
       {authenticationError ? (
         <Alert variant="danger" title={authenticationError.message} className="notice" actionLinks={<Button variant="link" onClick={api.signIn}>Sign in again</Button>} />
@@ -188,6 +212,7 @@ function App() {
         {view.kind === 'pipelines' && <Pipelines namespace={namespace} />}
         {view.kind === 'runs' && <Runs namespace={namespace} />}
         {view.kind === 'health' && <PipelineHealth namespace={namespace} request={request} />}
+        {view.kind === 'incidents' && <Incidents incidents={incidents} />}
         {view.kind === 'pipeline' && <PipelineDetail view={view} csrfToken={session?.csrfToken} />}
         {view.kind === 'run' && <RunDetail view={view} csrfToken={session?.csrfToken} />}
       </>}

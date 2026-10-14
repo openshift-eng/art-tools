@@ -109,6 +109,19 @@ button { cursor: pointer; }
 .empty { padding: 70px 20px; text-align: center; color: var(--ui-muted); background: var(--ui-surface); border: 1px dashed var(--ui-line); border-radius: 7px; }
 .notice { margin: 10px 0 20px; }
 
+.incident-banner { padding: 0 28px; background: var(--ui-warning-bg); border-bottom: 1px solid var(--ui-line); }
+.incident-banner .pf-v6-c-alert { margin: 8px 0; }
+.incident-banner a { color: var(--ui-link); text-decoration: underline; text-underline-offset: 2px; margin-right: 12px; font-size: 13.75px; }
+.incident-banner a:hover { color: var(--ui-link-hover); }
+.nav-badge { margin-left: 7px; font-size: 11.5px; vertical-align: middle; }
+.incidents-list { display: flex; flex-direction: column; gap: 14px; }
+.incident-card { margin: 0; }
+.incident-meta { display: flex; align-items: center; gap: 12px; margin: 8px 0; color: var(--ui-muted); font-size: 13.75px; flex-wrap: wrap; }
+.incident-description { color: var(--ui-body); font-size: 15px; margin: 8px 0; line-height: 1.6; }
+.incident-links { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 6px; }
+.incident-links a { color: var(--ui-link); text-decoration: underline; text-underline-offset: 2px; font-size: 13.75px; }
+.incident-links a:hover { color: var(--ui-link-hover); }
+
 .pf-v6-c-button.pf-m-primary { background: var(--ui-red); border-color: var(--ui-red); }
 .pf-v6-c-button.pf-m-primary:hover { background: var(--ui-red-hover); border-color: var(--ui-red-hover); }
 .pf-v6-c-button.pf-m-link { color: var(--ui-link); }

@@ -2,6 +2,7 @@
 
 import asyncio
 import json
+import logging
 import os
 import secrets
 from pathlib import Path
@@ -38,6 +39,9 @@ PIPELINE_ORDER = (
 )
 PIPELINE_PRIORITY = {name: priority for priority, names in enumerate(PIPELINE_ORDER) for name in names}
 CSRF_COOKIE = "__Host-art-pipelines-csrf"
+INCIDENTS_FILE = os.getenv("INCIDENTS_FILE", "/etc/incidents/incidents.json")
+INCIDENT_REQUIRED_FIELDS = {"id", "title", "severity", "status", "started", "updated", "description", "links"}
+logger = logging.getLogger("pipeline_ui")
 app = FastAPI(title="ART Pipelines UI", docs_url=None, redoc_url=None, openapi_url=None)
 
 
@@ -215,6 +219,47 @@ async def find_run(gateway: Gateway, namespace: str, name: str, uid: str | None 
 @app.get("/api/health")
 async def health():
     return {"ready": True}
+
+
+def _validate_incident_link(link: object) -> bool:
+    if not isinstance(link, dict):
+        return False
+    url = link.get("url", "")
+    return isinstance(url, str) and (url.startswith("http://") or url.startswith("https://"))
+
+
+def _validate_incident(entry: object) -> bool:
+    if not isinstance(entry, dict):
+        return False
+    if not INCIDENT_REQUIRED_FIELDS.issubset(entry.keys()):
+        return False
+    if not isinstance(entry.get("links"), list):
+        return False
+    for link in entry["links"]:
+        if not _validate_incident_link(link):
+            return False
+    return True
+
+
+@app.get("/api/incidents")
+async def incidents():
+    path = Path(INCIDENTS_FILE)
+    if not path.is_file():
+        return {"incidents": []}
+    try:
+        raw = path.read_text(encoding="utf-8")
+        data = json.loads(raw)
+    except (OSError, json.JSONDecodeError) as error:
+        logger.warning("Failed to read incidents file %s: %s", INCIDENTS_FILE, error)
+        return {"incidents": []}
+    entries = data if isinstance(data, list) else data.get("incidents", [])
+    valid = []
+    for entry in entries:
+        if _validate_incident(entry):
+            valid.append(entry)
+        else:
+            logger.warning("Skipping invalid incident entry: %s", entry)
+    return {"incidents": valid}
 
 
 @app.get("/api/session")

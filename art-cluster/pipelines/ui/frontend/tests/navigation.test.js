@@ -3,7 +3,7 @@ import test from 'node:test';
 import { isPlainClick, navigateRow, parseHash, pipelineTabs, runTabs, viewHref } from '../src/navigation.js';
 
 test('list routes preserve the tenant and accept existing URLs', () => {
-  for (const kind of ['pipelines', 'runs', 'health']) {
+  for (const kind of ['pipelines', 'runs', 'health', 'incidents']) {
     for (const filterNamespace of ['', 'art-acm-tenant']) {
       assert.deepEqual(parseHash(viewHref({ kind, filterNamespace })), { kind, filterNamespace });
     }
