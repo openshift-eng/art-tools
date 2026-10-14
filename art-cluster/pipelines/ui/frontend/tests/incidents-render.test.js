@@ -36,13 +36,16 @@ test('incident page shows timestamps, references, and controls to admins', async
     showOnBanner: true,
     history: [
       { timestamp: '2026-10-14T08:00:00Z', note: 'Incident created.' },
-      { timestamp: '2026-10-14T09:00:00Z', note: 'Kerberos renewal is still intermittent.' },
+      { timestamp: '2026-10-14T09:00:00Z', note: 'Kerberos renewal is still intermittent.', details: 'See https://issues.example/ART-2 for investigation details.' },
     ],
     description: 'Token renewal is intermittent.',
     links: [{ label: 'Slack thread', url: 'https://slack.example/thread/1' }],
   };
+  const olderIncident = {
+    ...incident, id: 'older', title: 'Older incident', updated: '2026-10-14T08:30:00Z', started: '2026-10-13T08:00:00Z',
+  };
   const render = (canManage) => renderToStaticMarkup(createElement(Incidents, {
-    incidents: [incident], canManage, csrfToken: 'csrf', request: async () => ({}), onChange() {},
+    incidents: [olderIncident, incident], canManage, csrfToken: 'csrf', request: async () => ({}), onChange() {},
   }));
 
   const adminPage = render(true);
@@ -59,6 +62,9 @@ test('incident page shows timestamps, references, and controls to admins', async
   assert.match(adminPage, /Incident history/);
   assert.match(adminPage, /2 updates/);
   assert.match(adminPage, /Kerberos renewal is still intermittent/);
+  assert.ok(adminPage.indexOf('Kerberos issue') < adminPage.indexOf('Older incident'));
+  assert.match(adminPage, /href="https:\/\/issues\.example\/ART-2"/);
+  assert.match(adminPage, /See <a href="https:\/\/issues\.example\/ART-2"/);
 
   const readerPage = render(false);
   assert.doesNotMatch(readerPage, /Create incident|Close incident|Delete incident/);
@@ -103,8 +109,9 @@ test('incident editor exposes banner visibility and edit notes', async () => {
     incident: { id: 'i-1', ...empty, showOnBanner: false },
     csrfToken: 'csrf', request: async () => ({}), onChange() {}, onClose() {},
   }));
-  assert.match(editMarkup, /Short update note/);
+  assert.match(editMarkup, /Update note/);
   assert.match(editMarkup, /required/);
+  assert.ok(editMarkup.indexOf('Update note') < editMarkup.indexOf('Update details'));
   assert.doesNotMatch(editMarkup, /type="checkbox" checked/);
   assert.deepEqual(buildIncidentPayload({ ...empty, updateNote: '  status update  ' }, true), {
     ...empty, updateNote: 'status update',
@@ -114,7 +121,7 @@ test('incident editor exposes banner visibility and edit notes', async () => {
   });
 });
 
-test('resolved incidents display their close time without active controls', async () => {
+test('resolved incidents display their close time and can be reopened by admins', async () => {
   const bundle = await build({
     configFile: false,
     logLevel: 'silent',
@@ -154,7 +161,8 @@ test('resolved incidents display their close time without active controls', asyn
   }));
 
   assert.match(markup, /Closed <time dateTime="2026-10-14T10:00:00Z">/);
-  assert.doesNotMatch(markup, /Close incident|>Edit</);
+  assert.match(markup, /Reopen incident/);
+  assert.doesNotMatch(markup, /Close incident/);
   assert.match(markup, /Resolved issue/);
   assert.match(markup, /Deleted from active incidents/);
   assert.match(markup, /Deleted <time dateTime="2026-10-14T11:00:00Z">/);

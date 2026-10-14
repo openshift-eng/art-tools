@@ -28,14 +28,14 @@ test('global incident banner filters inactive and opted-out incidents and cycles
   const code = bundle.output.find((output) => output.type === 'chunk').code;
   const { default: IncidentBanner, activeBannerIncidents, nextBannerIndex, startBannerCycle, INCIDENT_BANNER_CYCLE_MS } = await import(`data:text/javascript;base64,${Buffer.from(code).toString('base64')}`);
   const incidents = [
-    { id: 'one', message: 'Kerberos scans may fail.', status: 'investigating', links: [{ label: 'Ticket', url: 'https://issues.example/1' }] },
+    { id: 'one', message: 'Kerberos scans may fail.', status: 'investigating', updated: '2026-10-14T08:00:00Z', severity: 'warning', links: [{ label: 'Ticket', url: 'https://issues.example/1' }] },
     { id: 'off', message: 'Do not announce this.', status: 'investigating', showOnBanner: false },
     { id: 'closed', message: 'Already resolved.', status: 'resolved' },
     { id: 'deleted', message: 'Removed.', status: 'deleted' },
-    { id: 'two', message: 'Another service issue.', status: 'monitoring', showOnBanner: true },
+    { id: 'two', message: 'Another service issue.', status: 'monitoring', showOnBanner: true, updated: '2026-10-14T09:00:00Z', severity: 'danger', links: [{ label: 'Ticket', url: 'https://issues.example/2' }] },
   ];
   const candidates = activeBannerIncidents(incidents);
-  assert.deepEqual(candidates.map(({ id }) => id), ['one', 'two']);
+  assert.deepEqual(candidates.map(({ id }) => id), ['two', 'one']);
   assert.equal(INCIDENT_BANNER_CYCLE_MS, 8000);
   assert.equal(nextBannerIndex(1, 2), 0);
   let intervalMs = 0;
@@ -49,8 +49,8 @@ test('global incident banner filters inactive and opted-out incidents and cycles
   assert.equal(clearedTimer, 42);
 
   const markup = renderToStaticMarkup(createElement(IncidentBanner, { incidents }));
-  assert.match(markup, /class="incident-announcement"/);
-  assert.match(markup, /Kerberos scans may fail\./);
+  assert.match(markup, /class="incident-announcement severity-danger"/);
+  assert.match(markup, /Another service issue\./);
   assert.match(markup, /Ticket/);
   assert.match(markup, /Previous incident/);
   assert.match(markup, /Next incident/);
