@@ -108,7 +108,18 @@ class StageTestingPipeline:
         elapsed = 0
 
         while elapsed < self.timeout:
-            result = await self._check_job(job_id)
+            try:
+                result = await self._check_job(job_id)
+            except RuntimeError as exc:
+                error_summary = str(exc).splitlines()[-1] if str(exc) else "unknown error"
+                click.echo(
+                    f"[verify-stage-testing] Unable to check job {job_id}: {error_summary} "
+                    f"— retrying in {self.poll_interval}s ({elapsed}s/{self.timeout}s elapsed)",
+                    err=True,
+                )
+                await asyncio.sleep(self.poll_interval)
+                elapsed += self.poll_interval
+                continue
 
             if result["terminal"]:
                 return result
