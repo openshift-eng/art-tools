@@ -774,6 +774,9 @@ class OcpPipeline:
         jenkins.update_description(f'<hr />Build results:<br/><br/>{timing_report}<br/>')
 
     async def _request_mass_rebuild(self):
+        if self.runtime.dry_run:
+            self.runtime.logger.warning('[DRY RUN] Would enqueue mass rebuild for %s', self.version)
+            return
         queue = locks.Keys.BREW_MASS_REBUILD_QUEUE.value
         mapping = {self.version: mass_rebuild_score(self.version)}
 
