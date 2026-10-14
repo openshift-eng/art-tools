@@ -42,9 +42,10 @@ async def scan_and_trigger(runtime: Runtime):
         parts = assembly.split(".")
         version = f"{parts[0]}.{parts[1]}"
 
-        LOGGER.info("MR !%s — triggering verify-stage-testing for %s/%s", mr.iid, version, assembly)
+        LOGGER.info("MR !%s — queueing verify-stage-testing for %s/%s", mr.iid, version, assembly)
         try:
-            jenkins.start_verify_stage_testing(version=version, assembly=assembly, block_until_building=True)
+            # The verify job waits for Prow and runs serially, so this scan must not wait for it to start.
+            jenkins.start_verify_stage_testing(version=version, assembly=assembly, block_until_building=False)
         except Exception:
             LOGGER.exception("MR !%s — failed to trigger verify-stage-testing for %s", mr.iid, assembly)
 
