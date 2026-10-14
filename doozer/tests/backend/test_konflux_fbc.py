@@ -1569,6 +1569,472 @@ class TestKonfluxFbcRebaser(unittest.IsolatedAsyncioTestCase):
     @patch("pathlib.Path.open")
     @patch("doozerlib.backend.konflux_fbc.KonfluxFbcRebaser._fetch_olm_bundle_image_info", new_callable=AsyncMock)
     @patch("doozerlib.backend.konflux_fbc.KonfluxFbcRebaser._fetch_olm_bundle_blob", new_callable=AsyncMock)
+    async def test_rebase_mid_stream_rewires_replaces_chain(
+        self,
+        mock_fetch_olm_bundle_blob,
+        mock_fetch_olm_bundle_image_info,
+        mock_open,
+        mock_is_file,
+        mock_mkdir,
+        MockDockerfileParser,
+        mock_get_referenced_images,
+        mock_load_csv_from_bundle,
+        mock_path_unlink,
+        mock_generate_dockerfile,
+    ):
+        """LP mid-stream insert (new CSV older than channel head) rebuilds replaces chain.
+
+        Shared-channel case: catalog already has 1.0.2 -> 1.1.0 -> 1.1.2. Adding 1.0.3
+        must insert by version order (not replaces: HEAD) and rewire:
+        1.0.2 -> 1.0.3 -> 1.1.0 -> 1.1.2.
+        """
+        rebaser = KonfluxFbcRebaser(
+            base_dir=self.base_dir,
+            group="zero-trust-1.0",
+            assembly=self.assembly,
+            version="1.0.3",
+            release="1",
+            commit_message="test",
+            push=False,
+            fbc_repo="https://example.com/fbc.git",
+            upcycle=False,
+        )
+
+        metadata = MagicMock(spec=ImageMetadata)
+        metadata.distgit_key = "zero-trust-workload-identity-manager"
+        metadata.runtime = MagicMock()
+        metadata.runtime.group_config = MagicMock()
+        metadata.runtime.group_config.vars = MagicMock()
+        metadata.runtime.group_config.vars.MAJOR = "4"
+        metadata.runtime.group_config.vars.MINOR = "21"
+        metadata.runtime.group_config.vars.FBC_DISABLE_CHANNEL_SKIPS = False
+        metadata.runtime.konflux_db = MagicMock()
+        metadata.config = MagicMock()
+        metadata.config.delivery = MagicMock()
+        metadata.config.delivery.delivery_repo_names = ["zt-repo"]
+        metadata.get_olm_bundle_delivery_repo_name.return_value = "zt-repo"
+
+        build_repo = MagicMock()
+        build_repo.local_dir = self.base_dir
+
+        bundle_build = MagicMock(
+            spec=KonfluxBundleBuildRecord,
+            nvr="zt-operator-bundle-1.0.3-1",
+            operator_nvr="zt-operator-1.0.3-1",
+            operand_nvrs=[],
+            image_pullspec="example.com/zt-bundle@sha256:abc",
+            image_tag="abc123",
+            source_repo="https://example.com/zt-operator.git",
+            commitish="abc123def",
+        )
+
+        mock_fetch_olm_bundle_image_info.return_value = {
+            "config": {
+                "config": {
+                    "Labels": {
+                        "name": "zt-operator",
+                        "operators.operatorframework.io.bundle.channels.v1": "stable-v1",
+                        "operators.operatorframework.io.bundle.channel.default.v1": "stable-v1",
+                        "operators.operatorframework.io.bundle.package.v1": "openshift-zt",
+                        "operators.operatorframework.io.bundle.manifests.v1": "manifests/",
+                    },
+                },
+            },
+        }
+        mock_fetch_olm_bundle_blob.return_value = (
+            "zero-trust-workload-identity-manager.v1.0.3",
+            "openshift-zt",
+            {
+                "schema": "olm.bundle",
+                "name": "zero-trust-workload-identity-manager.v1.0.3",
+                "package": "openshift-zt",
+                "properties": [],
+                "relatedImages": [{"name": "", "image": "example.com/zt-bundle@sha256:abc"}],
+            },
+        )
+
+        org_catalog_blobs = [
+            {"schema": "olm.package", "name": "openshift-zt", "defaultChannel": "stable-v1"},
+            {
+                "schema": "olm.channel",
+                "name": "stable-v1",
+                "package": "openshift-zt",
+                "entries": [
+                    {"name": "zero-trust-workload-identity-manager.v1.0.2"},
+                    {
+                        "name": "zero-trust-workload-identity-manager.v1.1.0",
+                        "replaces": "zero-trust-workload-identity-manager.v1.0.2",
+                    },
+                    {
+                        "name": "zero-trust-workload-identity-manager.v1.1.2",
+                        "replaces": "zero-trust-workload-identity-manager.v1.1.0",
+                    },
+                ],
+            },
+            {
+                "schema": "olm.bundle",
+                "name": "zero-trust-workload-identity-manager.v1.0.2",
+                "package": "openshift-zt",
+                "properties": [],
+                "relatedImages": [],
+            },
+        ]
+
+        org_catalog_file = StringIO()
+        yaml.dump_all(org_catalog_blobs, org_catalog_file)
+        org_catalog_file.seek(0)
+        result_catalog_file = StringIO()
+        images_mirror_set_file = StringIO()
+        mock_open.return_value.__enter__.side_effect = [org_catalog_file, result_catalog_file, images_mirror_set_file]
+        mock_get_referenced_images.return_value = []
+        mock_load_csv_from_bundle.return_value = {
+            "metadata": {"name": "zero-trust-workload-identity-manager", "annotations": {}},
+            "spec": {"icon": []},
+        }
+        MockDockerfileParser.return_value.envs = {}
+        MockDockerfileParser.return_value.labels = {}
+        mock_generate_dockerfile.return_value = None
+
+        logger = MagicMock()
+        await rebaser._rebase_dir(metadata, build_repo, bundle_build, "1.0.3", "1", logger)
+
+        result_catalog_file.seek(0)
+        result_catalog_blobs = rebaser._catagorize_catalog_blobs(list(yaml.load_all(result_catalog_file)))
+        entries = result_catalog_blobs["openshift-zt"]["olm.channel"]["stable-v1"]["entries"]
+
+        self.assertEqual(
+            [e["name"] for e in entries],
+            [
+                "zero-trust-workload-identity-manager.v1.0.2",
+                "zero-trust-workload-identity-manager.v1.0.3",
+                "zero-trust-workload-identity-manager.v1.1.0",
+                "zero-trust-workload-identity-manager.v1.1.2",
+            ],
+        )
+        self.assertNotIn("replaces", entries[0])
+        self.assertEqual(entries[1]["replaces"], "zero-trust-workload-identity-manager.v1.0.2")
+        self.assertEqual(entries[2]["replaces"], "zero-trust-workload-identity-manager.v1.0.3")
+        self.assertEqual(entries[3]["replaces"], "zero-trust-workload-identity-manager.v1.1.0")
+        logger.info.assert_any_call(
+            "Mid-stream insert for %s in channel %s "
+            "(new version older than head %s); "
+            "sorting entries and rebuilding replaces chain",
+            "zero-trust-workload-identity-manager.v1.0.3",
+            "stable-v1",
+            "zero-trust-workload-identity-manager.v1.1.2",
+        )
+
+    @patch("doozerlib.opm.generate_dockerfile")
+    @patch("pathlib.Path.unlink")
+    @patch("doozerlib.backend.konflux_fbc.KonfluxFbcRebaser._load_csv_from_bundle")
+    @patch("doozerlib.backend.konflux_fbc.KonfluxFbcRebaser._get_referenced_images")
+    @patch("doozerlib.backend.konflux_fbc.DockerfileParser")
+    @patch("pathlib.Path.mkdir")
+    @patch("pathlib.Path.is_file", return_value=True)
+    @patch("pathlib.Path.open")
+    @patch("doozerlib.backend.konflux_fbc.KonfluxFbcRebaser._fetch_olm_bundle_image_info", new_callable=AsyncMock)
+    @patch("doozerlib.backend.konflux_fbc.KonfluxFbcRebaser._fetch_olm_bundle_blob", new_callable=AsyncMock)
+    async def test_rebase_tip_of_channel_keeps_replaces_head(
+        self,
+        mock_fetch_olm_bundle_blob,
+        mock_fetch_olm_bundle_image_info,
+        mock_open,
+        mock_is_file,
+        mock_mkdir,
+        MockDockerfileParser,
+        mock_get_referenced_images,
+        mock_load_csv_from_bundle,
+        mock_path_unlink,
+        mock_generate_dockerfile,
+    ):
+        """LP tip-of-channel add still uses replaces: HEAD (no mid-stream rewire)."""
+        rebaser = KonfluxFbcRebaser(
+            base_dir=self.base_dir,
+            group="zero-trust-1.1",
+            assembly=self.assembly,
+            version="1.1.3",
+            release="1",
+            commit_message="test",
+            push=False,
+            fbc_repo="https://example.com/fbc.git",
+            upcycle=False,
+        )
+
+        metadata = MagicMock(spec=ImageMetadata)
+        metadata.distgit_key = "zero-trust-workload-identity-manager"
+        metadata.runtime = MagicMock()
+        metadata.runtime.group_config = MagicMock()
+        metadata.runtime.group_config.vars = MagicMock()
+        metadata.runtime.group_config.vars.MAJOR = "4"
+        metadata.runtime.group_config.vars.MINOR = "21"
+        metadata.runtime.group_config.vars.FBC_DISABLE_CHANNEL_SKIPS = False
+        metadata.runtime.konflux_db = MagicMock()
+        metadata.config = MagicMock()
+        metadata.config.delivery = MagicMock()
+        metadata.config.delivery.delivery_repo_names = ["zt-repo"]
+        metadata.get_olm_bundle_delivery_repo_name.return_value = "zt-repo"
+
+        build_repo = MagicMock()
+        build_repo.local_dir = self.base_dir
+
+        bundle_build = MagicMock(
+            spec=KonfluxBundleBuildRecord,
+            nvr="zt-operator-bundle-1.1.3-1",
+            operator_nvr="zt-operator-1.1.3-1",
+            operand_nvrs=[],
+            image_pullspec="example.com/zt-bundle@sha256:abc",
+            image_tag="abc123",
+            source_repo="https://example.com/zt-operator.git",
+            commitish="abc123def",
+        )
+
+        mock_fetch_olm_bundle_image_info.return_value = {
+            "config": {
+                "config": {
+                    "Labels": {
+                        "name": "zt-operator",
+                        "operators.operatorframework.io.bundle.channels.v1": "stable-v1",
+                        "operators.operatorframework.io.bundle.channel.default.v1": "stable-v1",
+                        "operators.operatorframework.io.bundle.package.v1": "openshift-zt",
+                        "operators.operatorframework.io.bundle.manifests.v1": "manifests/",
+                    },
+                },
+            },
+        }
+        mock_fetch_olm_bundle_blob.return_value = (
+            "zero-trust-workload-identity-manager.v1.1.3",
+            "openshift-zt",
+            {
+                "schema": "olm.bundle",
+                "name": "zero-trust-workload-identity-manager.v1.1.3",
+                "package": "openshift-zt",
+                "properties": [],
+                "relatedImages": [{"name": "", "image": "example.com/zt-bundle@sha256:abc"}],
+            },
+        )
+
+        org_catalog_blobs = [
+            {"schema": "olm.package", "name": "openshift-zt", "defaultChannel": "stable-v1"},
+            {
+                "schema": "olm.channel",
+                "name": "stable-v1",
+                "package": "openshift-zt",
+                "entries": [
+                    {"name": "zero-trust-workload-identity-manager.v1.0.2"},
+                    {
+                        "name": "zero-trust-workload-identity-manager.v1.1.0",
+                        "replaces": "zero-trust-workload-identity-manager.v1.0.2",
+                    },
+                    {
+                        "name": "zero-trust-workload-identity-manager.v1.1.2",
+                        "replaces": "zero-trust-workload-identity-manager.v1.1.0",
+                    },
+                ],
+            },
+            {
+                "schema": "olm.bundle",
+                "name": "zero-trust-workload-identity-manager.v1.0.2",
+                "package": "openshift-zt",
+                "properties": [],
+                "relatedImages": [],
+            },
+        ]
+
+        org_catalog_file = StringIO()
+        yaml.dump_all(org_catalog_blobs, org_catalog_file)
+        org_catalog_file.seek(0)
+        result_catalog_file = StringIO()
+        images_mirror_set_file = StringIO()
+        mock_open.return_value.__enter__.side_effect = [org_catalog_file, result_catalog_file, images_mirror_set_file]
+        mock_get_referenced_images.return_value = []
+        mock_load_csv_from_bundle.return_value = {
+            "metadata": {"name": "zero-trust-workload-identity-manager", "annotations": {}},
+            "spec": {"icon": []},
+        }
+        MockDockerfileParser.return_value.envs = {}
+        MockDockerfileParser.return_value.labels = {}
+        mock_generate_dockerfile.return_value = None
+
+        logger = MagicMock()
+        await rebaser._rebase_dir(metadata, build_repo, bundle_build, "1.1.3", "1", logger)
+
+        result_catalog_file.seek(0)
+        result_catalog_blobs = rebaser._catagorize_catalog_blobs(list(yaml.load_all(result_catalog_file)))
+        entries = result_catalog_blobs["openshift-zt"]["olm.channel"]["stable-v1"]["entries"]
+        by_name = {e["name"]: e for e in entries}
+
+        # Tip append: new entry replaces head; older edges unchanged (not rewired)
+        self.assertEqual(
+            by_name["zero-trust-workload-identity-manager.v1.1.3"]["replaces"],
+            "zero-trust-workload-identity-manager.v1.1.2",
+        )
+        self.assertEqual(
+            by_name["zero-trust-workload-identity-manager.v1.1.0"]["replaces"],
+            "zero-trust-workload-identity-manager.v1.0.2",
+        )
+        self.assertEqual(
+            by_name["zero-trust-workload-identity-manager.v1.1.2"]["replaces"],
+            "zero-trust-workload-identity-manager.v1.1.0",
+        )
+        mid_stream_logs = [
+            c for c in logger.info.call_args_list if c.args and "Mid-stream insert" in str(c.args[0])
+        ]
+        self.assertEqual(mid_stream_logs, [])
+
+    @patch("doozerlib.opm.generate_dockerfile")
+    @patch("pathlib.Path.unlink")
+    @patch("doozerlib.backend.konflux_fbc.KonfluxFbcRebaser._load_csv_from_bundle")
+    @patch("doozerlib.backend.konflux_fbc.KonfluxFbcRebaser._get_referenced_images")
+    @patch("doozerlib.backend.konflux_fbc.DockerfileParser")
+    @patch("pathlib.Path.mkdir")
+    @patch("pathlib.Path.is_file", return_value=True)
+    @patch("pathlib.Path.open")
+    @patch("doozerlib.backend.konflux_fbc.KonfluxFbcRebaser._fetch_olm_bundle_image_info", new_callable=AsyncMock)
+    @patch("doozerlib.backend.konflux_fbc.KonfluxFbcRebaser._fetch_olm_bundle_blob", new_callable=AsyncMock)
+    async def test_rebase_openshift_group_skips_mid_stream_replaces_rewire(
+        self,
+        mock_fetch_olm_bundle_blob,
+        mock_fetch_olm_bundle_image_info,
+        mock_open,
+        mock_is_file,
+        mock_mkdir,
+        MockDockerfileParser,
+        mock_get_referenced_images,
+        mock_load_csv_from_bundle,
+        mock_path_unlink,
+        mock_generate_dockerfile,
+    ):
+        """OpenShift groups must not get LP replaces:HEAD or mid-stream rewire logic."""
+        rebaser = KonfluxFbcRebaser(
+            base_dir=self.base_dir,
+            group="openshift-4.21",
+            assembly=self.assembly,
+            version="4.21.0",
+            release="1",
+            commit_message="test",
+            push=False,
+            fbc_repo="https://example.com/fbc.git",
+            upcycle=False,
+        )
+
+        metadata = MagicMock(spec=ImageMetadata)
+        metadata.distgit_key = "cluster-logging-operator"
+        metadata.runtime = MagicMock()
+        metadata.runtime.group_config = MagicMock()
+        metadata.runtime.group_config.vars = MagicMock()
+        metadata.runtime.group_config.vars.MAJOR = "4"
+        metadata.runtime.group_config.vars.MINOR = "21"
+        metadata.runtime.group_config.vars.FBC_DISABLE_CHANNEL_SKIPS = False
+        metadata.runtime.konflux_db = MagicMock()
+        metadata.config = MagicMock()
+        metadata.config.delivery = MagicMock()
+        metadata.config.delivery.delivery_repo_names = ["clo-repo"]
+        metadata.get_olm_bundle_delivery_repo_name.return_value = "clo-repo"
+
+        build_repo = MagicMock()
+        build_repo.local_dir = self.base_dir
+
+        bundle_build = MagicMock(
+            spec=KonfluxBundleBuildRecord,
+            nvr="clo-bundle-4.21.0-1",
+            operator_nvr="clo-4.21.0-1",
+            operand_nvrs=[],
+            image_pullspec="example.com/clo-bundle@sha256:abc",
+            image_tag="abc123",
+            source_repo="https://example.com/clo.git",
+            commitish="abc123def",
+        )
+
+        mock_fetch_olm_bundle_image_info.return_value = {
+            "config": {
+                "config": {
+                    "Labels": {
+                        "name": "clo",
+                        "operators.operatorframework.io.bundle.channels.v1": "stable",
+                        "operators.operatorframework.io.bundle.channel.default.v1": "stable",
+                        "operators.operatorframework.io.bundle.package.v1": "cluster-logging",
+                        "operators.operatorframework.io.bundle.manifests.v1": "manifests/",
+                    },
+                },
+            },
+        }
+        # Semver older than an existing entry — would trigger mid-stream rewire for LP
+        mock_fetch_olm_bundle_blob.return_value = (
+            "cluster-logging.v4.21.0-202601010000",
+            "cluster-logging",
+            {
+                "schema": "olm.bundle",
+                "name": "cluster-logging.v4.21.0-202601010000",
+                "package": "cluster-logging",
+                "properties": [],
+                "relatedImages": [{"name": "", "image": "example.com/clo-bundle@sha256:abc"}],
+            },
+        )
+
+        org_catalog_blobs = [
+            {"schema": "olm.package", "name": "cluster-logging", "defaultChannel": "stable"},
+            {
+                "schema": "olm.channel",
+                "name": "stable",
+                "package": "cluster-logging",
+                "entries": [
+                    {
+                        "name": "cluster-logging.v4.21.0-202602010000",
+                        "skipRange": ">=4.3.0 <4.21.0-202602010000",
+                    },
+                ],
+            },
+            {
+                "schema": "olm.bundle",
+                "name": "cluster-logging.v4.21.0-202602010000",
+                "package": "cluster-logging",
+                "properties": [],
+                "relatedImages": [],
+            },
+        ]
+
+        org_catalog_file = StringIO()
+        yaml.dump_all(org_catalog_blobs, org_catalog_file)
+        org_catalog_file.seek(0)
+        result_catalog_file = StringIO()
+        images_mirror_set_file = StringIO()
+        mock_open.return_value.__enter__.side_effect = [org_catalog_file, result_catalog_file, images_mirror_set_file]
+        mock_get_referenced_images.return_value = []
+        mock_load_csv_from_bundle.return_value = {
+            "metadata": {
+                "name": "cluster-logging",
+                "annotations": {"olm.skipRange": ">=4.3.0 <4.21.0-202601010000"},
+            },
+            "spec": {"icon": []},
+        }
+        MockDockerfileParser.return_value.envs = {}
+        MockDockerfileParser.return_value.labels = {}
+        mock_generate_dockerfile.return_value = None
+
+        logger = MagicMock()
+        await rebaser._rebase_dir(metadata, build_repo, bundle_build, "4.21.0", "1", logger)
+
+        result_catalog_file.seek(0)
+        result_catalog_blobs = rebaser._catagorize_catalog_blobs(list(yaml.load_all(result_catalog_file)))
+        entries = result_catalog_blobs["cluster-logging"]["olm.channel"]["stable"]["entries"]
+        new_entry = next(e for e in entries if e["name"] == "cluster-logging.v4.21.0-202601010000")
+
+        self.assertNotIn("replaces", new_entry)
+        mid_stream_logs = [
+            c for c in logger.info.call_args_list if c.args and "Mid-stream insert" in str(c.args[0])
+        ]
+        self.assertEqual(mid_stream_logs, [])
+
+    @patch("doozerlib.opm.generate_dockerfile")
+    @patch("pathlib.Path.unlink")
+    @patch("doozerlib.backend.konflux_fbc.KonfluxFbcRebaser._load_csv_from_bundle")
+    @patch("doozerlib.backend.konflux_fbc.KonfluxFbcRebaser._get_referenced_images")
+    @patch("doozerlib.backend.konflux_fbc.DockerfileParser")
+    @patch("pathlib.Path.mkdir")
+    @patch("pathlib.Path.is_file", return_value=True)
+    @patch("pathlib.Path.open")
+    @patch("doozerlib.backend.konflux_fbc.KonfluxFbcRebaser._fetch_olm_bundle_image_info", new_callable=AsyncMock)
+    @patch("doozerlib.backend.konflux_fbc.KonfluxFbcRebaser._fetch_olm_bundle_blob", new_callable=AsyncMock)
     async def test_rebase_dir_resolves_highest_default_channel(
         self,
         mock_fetch_olm_bundle_blob,

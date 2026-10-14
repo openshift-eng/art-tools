@@ -1360,9 +1360,14 @@ class KonfluxFbcRebaser:
                         logger.info("Rebuilding replaces chain after version sorting")
                         self._rebuild_replaces_chain(channel['entries'])
                 else:
-                    # For an operator bundle that uses replaces -- such as OADP
-                    # Calculate replaces based on current head before appending
+                    # For an operator bundle that uses replaces -- such as OADP.
+                    # Default (tip-of-channel): new bundle replaces the current head.
+                    # Mid-stream exception (LP only): if the new CSV version is older than
+                    # the head (e.g. 1.0.3 while head is 1.1.2 in a shared channel), insert
+                    # by version order and rebuild the replaces chain instead.
                     replaces = None
+                    mid_stream_rewire = False
+                    current_head_name = None
                     if not self.group.startswith('openshift-'):
                         # Find the current head - the entry not superseded
                         # (not replaced or skipped) by any other entry
@@ -1372,11 +1377,31 @@ class KonfluxFbcRebaser:
                             superseded_names.update(it.get('skips', []))
                         current_head = next((it for it in all_entries if it['name'] not in superseded_names), None)
                         if current_head:
-                            # The new bundle should replace the current head
-                            replaces = current_head['name']
+                            current_head_name = current_head['name']
+                            try:
+                                new_ver = self._extract_version_from_bundle_name(olm_bundle_name)
+                                head_ver = self._extract_version_from_bundle_name(current_head_name)
+                                if new_ver < head_ver:
+                                    mid_stream_rewire = True
+                                else:
+                                    replaces = current_head_name
+                            except ValueError:
+                                # Unparseable versions: fall back to tip-of-channel behavior
+                                replaces = current_head_name
 
                     channel['entries'].append(entry)
-                    if replaces:
+                    if mid_stream_rewire:
+                        logger.info(
+                            "Mid-stream insert for %s in channel %s "
+                            "(new version older than head %s); "
+                            "sorting entries and rebuilding replaces chain",
+                            olm_bundle_name,
+                            channel['name'],
+                            current_head_name,
+                        )
+                        channel['entries'].sort(key=lambda e: self._extract_version_from_bundle_name(e['name']))
+                        self._rebuild_replaces_chain(channel['entries'])
+                    elif replaces:
                         entry["replaces"] = replaces
             else:
                 logger.warning("Bundle %s already exists in channel %s. Replacing...", olm_bundle_name, channel['name'])
