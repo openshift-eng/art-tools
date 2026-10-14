@@ -1,3 +1,4 @@
+import json
 import unittest
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -37,6 +38,56 @@ class TestRhcosNodeImagePostBuildPipeline(unittest.IsolatedAsyncioTestCase):
             }
         }
 
+    # ---- _extract_timestamp_from_nvr ----
+
+    @patch('pyartcd.pipelines.rhcos_node_image_post_build.cmd_gather_async', new_callable=AsyncMock)
+    async def test_extract_timestamp_from_nvr_success(self, mock_cmd_gather):
+        pipeline = _make_pipeline()
+        oc_image_info_output = json.dumps(
+            {'config': {'config': {'Labels': {'release': '202610141234.p0.g1234abc.assembly.stream.el9'}}}}
+        )
+        mock_cmd_gather.return_value = (0, oc_image_info_output, '')
+
+        result = await pipeline._extract_timestamp_from_nvr(
+            f'{RHCOS_IMAGE_REPO}@sha256:{"a" * 64}',
+            '/fake/auth.json',
+        )
+
+        self.assertEqual(result, '202610141234')
+        cmd = mock_cmd_gather.call_args.args[0]
+        self.assertIn('oc', cmd)
+        self.assertIn('image', cmd)
+        self.assertIn('info', cmd)
+        self.assertIn(f'{RHCOS_IMAGE_REPO}@sha256:{"a" * 64}', cmd)
+        self.assertIn('--filter-by-os=linux/amd64', cmd)
+        self.assertIn('--registry-config=/fake/auth.json', cmd)
+
+    @patch('pyartcd.pipelines.rhcos_node_image_post_build.cmd_gather_async', new_callable=AsyncMock)
+    async def test_extract_timestamp_from_nvr_no_release_label(self, mock_cmd_gather):
+        pipeline = _make_pipeline()
+        oc_image_info_output = json.dumps({'config': {'config': {'Labels': {}}}})
+        mock_cmd_gather.return_value = (0, oc_image_info_output, '')
+
+        with self.assertRaisesRegex(RuntimeError, 'has no release label'):
+            await pipeline._extract_timestamp_from_nvr(
+                f'{RHCOS_IMAGE_REPO}@sha256:{"a" * 64}',
+                '/fake/auth.json',
+            )
+
+    @patch('pyartcd.pipelines.rhcos_node_image_post_build.cmd_gather_async', new_callable=AsyncMock)
+    async def test_extract_timestamp_from_nvr_bad_release_label(self, mock_cmd_gather):
+        pipeline = _make_pipeline()
+        oc_image_info_output = json.dumps({'config': {'config': {'Labels': {'release': 'not-a-timestamp'}}}})
+        mock_cmd_gather.return_value = (0, oc_image_info_output, '')
+
+        with self.assertRaisesRegex(RuntimeError, 'Could not extract timestamp'):
+            await pipeline._extract_timestamp_from_nvr(
+                f'{RHCOS_IMAGE_REPO}@sha256:{"a" * 64}',
+                '/fake/auth.json',
+            )
+
+    # ---- full pipeline integration test ----
+
     @patch.dict(
         'os.environ',
         {
@@ -46,6 +97,7 @@ class TestRhcosNodeImagePostBuildPipeline(unittest.IsolatedAsyncioTestCase):
         clear=True,
     )
     @patch('pyartcd.pipelines.rhcos_node_image_post_build.RegistryConfig')
+    @patch('pyartcd.pipelines.rhcos_node_image_post_build.cmd_gather_async', new_callable=AsyncMock)
     @patch('pyartcd.pipelines.rhcos_node_image_post_build.sync_to_quay', new_callable=AsyncMock)
     @patch('pyartcd.pipelines.rhcos_node_image_post_build.load_group_config', new_callable=AsyncMock)
     @patch('pyartcd.pipelines.rhcos_node_image_post_build.jenkins.init_jenkins')
@@ -58,6 +110,7 @@ class TestRhcosNodeImagePostBuildPipeline(unittest.IsolatedAsyncioTestCase):
         mock_init_jenkins,
         mock_load_group_config,
         mock_sync,
+        mock_cmd_gather,
         mock_registry_config,
     ):
         mock_load_group_config.return_value = self.group_config
@@ -68,9 +121,27 @@ class TestRhcosNodeImagePostBuildPipeline(unittest.IsolatedAsyncioTestCase):
             'url': 'https://jenkins.example.com/job/build-node-image/46173/',
         }
         mock_registry_config.return_value.__enter__.return_value = '/tmp/merged-auth.json'
+
+        # oc image append returns success; oc image info returns a digest for the labeled image
+        labeled_digest = 'sha256:' + 'c' * 64
+        mock_cmd_gather.side_effect = [
+            (0, '', ''),  # oc image append
+            (0, json.dumps({'digest': labeled_digest}), ''),  # oc image info
+        ]
+
         pipeline = _make_pipeline()
 
-        await pipeline.run()
+        # Mock _extract_timestamp_from_nvr to return a known timestamp
+        with patch.object(
+            pipeline, '_extract_timestamp_from_nvr', new_callable=AsyncMock, return_value='202610141234'
+        ) as mock_extract:
+            await pipeline.run()
+
+            # Verify the NVR timestamp was extracted from the node image digest
+            mock_extract.assert_awaited_once_with(
+                f'{RHCOS_IMAGE_REPO}@sha256:{"a" * 64}',
+                '/tmp/merged-auth.json',
+            )
 
         mock_client.trigger_build.assert_called_once_with(
             'build-node-image',
@@ -81,16 +152,35 @@ class TestRhcosNodeImagePostBuildPipeline(unittest.IsolatedAsyncioTestCase):
             },
         )
         mock_client.wait_for_build.assert_called_once_with('build-node-image', 46173, timeout=90 * 60)
-        mock_sync.assert_any_await(
-            f'{RHCOS_IMAGE_REPO}@sha256:{"a" * 64}',
-            KONFLUX_DEFAULT_IMAGE_REPO,
-            ['5.0-9.8-node-image'],
-        )
-        mock_sync.assert_any_await(
-            f'{RHCOS_IMAGE_REPO}@sha256:{"b" * 64}',
-            KONFLUX_DEFAULT_IMAGE_REPO,
-            ['5.0-9.8-node-image-extensions'],
-        )
+
+        # Verify oc image append was called with the label
+        append_call = mock_cmd_gather.call_args_list[0]
+        append_cmd = append_call.args[0]
+        self.assertIn('append', append_cmd)
+        label_arg = [arg for arg in append_cmd if arg.startswith('--label=')]
+        self.assertEqual(len(label_arg), 1)
+        self.assertIn('coreos.build.manifest-list-tag=5.0-9.8-202610141234-node-image', label_arg[0])
+
+        # The labeled digest should be used as source for node image sync
+        labeled_pullspec = f'{KONFLUX_DEFAULT_IMAGE_REPO}@{labeled_digest}'
+        node_sync_call = mock_sync.call_args_list[0]
+        self.assertEqual(node_sync_call.args[0], labeled_pullspec)
+        self.assertEqual(node_sync_call.args[1], KONFLUX_DEFAULT_IMAGE_REPO)
+        # Tags should include both the floating tag and the timestamped tag
+        node_tags = node_sync_call.args[2]
+        self.assertEqual(len(node_tags), 2)
+        self.assertEqual(node_tags[0], '5.0-9.8-node-image')
+        self.assertEqual(node_tags[1], '5.0-9.8-202610141234-node-image')
+
+        # Extensions image should be synced directly (no label) with both tags
+        ext_sync_call = mock_sync.call_args_list[1]
+        self.assertEqual(ext_sync_call.args[0], f'{RHCOS_IMAGE_REPO}@sha256:{"b" * 64}')
+        self.assertEqual(ext_sync_call.args[1], KONFLUX_DEFAULT_IMAGE_REPO)
+        ext_tags = ext_sync_call.args[2]
+        self.assertEqual(len(ext_tags), 2)
+        self.assertEqual(ext_tags[0], '5.0-9.8-node-image-extensions')
+        self.assertEqual(ext_tags[1], '5.0-9.8-202610141234-node-image-extensions')
+
         self.assertEqual(mock_sync.await_count, 2)
         mock_init_jenkins.assert_called_once()
         mock_update_description.assert_called_once()
