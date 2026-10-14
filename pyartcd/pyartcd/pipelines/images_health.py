@@ -386,11 +386,16 @@ class ImagesHealthPipeline:
                     group = label[len("art:group:") :]
             if image_name and group:
                 ticket_index[(image_name, group)] = ticket
+                if (image_name, group) in current_failures:
+                    self.jira_tickets[(image_name, group)] = ticket.key
+
+        if self.runtime.dry_run:
+            _LOGGER.warning('[DRY RUN] Would sync Jira tickets for %s', failure_label)
+            return
 
         for (image_name, group), failure_data in current_failures.items():
             if (image_name, group) in ticket_index:
                 ticket = ticket_index[(image_name, group)]
-                self.jira_tickets[(image_name, group)] = ticket.key
                 _LOGGER.info("Ticket already exists for %s (%s): %s — updating", image_name, group, ticket.key)
                 if updater:
                     updater(ticket, failure_data)
@@ -491,6 +496,9 @@ class ImagesHealthPipeline:
         labels = [label for label in ticket.fields.labels if not label.startswith("art:fail-count:")]
         if new_label not in labels:
             labels.append(new_label)
+        if self.runtime.dry_run:
+            _LOGGER.warning('[DRY RUN] Would update build failure ticket %s', ticket.key)
+            return
         ticket.update(fields={"labels": labels, "description": self._build_description(concern)})
 
     def _build_description(self, concern: dict) -> str:
