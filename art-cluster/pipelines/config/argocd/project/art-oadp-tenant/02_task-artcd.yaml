@@ -107,8 +107,6 @@ spec:
     volumeMounts:
     - mountPath: /root/.config/doozer
       name: doozer-config
-    - mountPath: /tmp/keytab
-      name: kerberos-keytab
     - mountPath: /root/.config/art-bot
       name: art-bot-docker-config
     - mountPath: /tmp/gcp-sa
@@ -130,9 +128,6 @@ spec:
   - name: doozer-config
     secret:
       secretName: doozer-config
-  - name: kerberos-keytab
-    secret:
-      secretName: synced-exd-ocp-buildvm-bot-prod-keytab
   - name: art-bot-docker-config
     secret:
       secretName: art-bot-docker-config
