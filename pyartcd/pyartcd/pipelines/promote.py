@@ -796,6 +796,7 @@ class PromotePipeline:
                     manifest_arches,
                     client_type,
                     registry_config=registry_config,
+                    tarball_cache_dir=tarball_cache_dir,
                 )
             else:
                 message_digest = await self.publish_client(
@@ -1027,6 +1028,7 @@ class PromotePipeline:
         build_arch,
         client_type,
         registry_config: Optional[str] = None,
+        tarball_cache_dir: Optional[str] = None,
     ):
         # Anything under this directory will be sync'd to the mirror
         shutil.rmtree(f"{base_to_mirror_dir}/{build_arch}", ignore_errors=True)
@@ -1054,7 +1056,7 @@ class PromotePipeline:
                 # URL to download the tarball for a specific commit
                 tarball_url = f"{source_url}/archive/{commit}.tar.gz"
                 tarball_path = f"{client_mirror_dir}/{source_name}-src-{release_name}-{build_arch}.tar.gz"
-                self._download_source_tarball(tarball_url, tarball_path)
+                self._download_source_tarball(tarball_url, tarball_path, tarball_cache_dir=tarball_cache_dir)
             else:
                 self._logger.error(f"Error get {release_component_tag_name} image from release pullspec")
 
@@ -1129,13 +1131,27 @@ class PromotePipeline:
         return f"{build_arch}/clients/{client_type}/{release_name}/sha256sum.txt"
 
     @retry(reraise=True, stop=stop_after_attempt(3), wait=wait_fixed(30))
-    def _download_source_tarball(self, url: str, dest_path: str):
+    def _download_source_tarball(self, url: str, dest_path: str, tarball_cache_dir: Optional[str] = None):
+        # Check cache first — same tarball is downloaded per-arch
+        if tarball_cache_dir:
+            cache_key = os.path.basename(url)  # e.g. "de6c46c003a6...tar.gz"
+            cached_path = os.path.join(tarball_cache_dir, cache_key)
+            if os.path.exists(cached_path):
+                self._logger.info("Using cached tarball for %s", url)
+                shutil.copy2(cached_path, dest_path)
+                return
+
         self._logger.info("Downloading source tarball from %s", url)
-        response = requests.get(url, stream=True, timeout=(30, 300))
+        response = requests.get(url, stream=True, timeout=(30, 600))
         response.raise_for_status()
         with open(dest_path, "wb") as f:
             for chunk in response.iter_content(chunk_size=65536):
                 f.write(chunk)
+
+        # Cache for subsequent architectures
+        if tarball_cache_dir:
+            shutil.copy2(dest_path, cached_path)
+            self._logger.info("Cached tarball at %s", cached_path)
 
     async def sigstore_sign(
         self,
