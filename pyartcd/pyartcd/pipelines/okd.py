@@ -299,9 +299,12 @@ class KonfluxOkdPipeline:
             increment_counter=increment_fail_counter,
             failed_images=self.rebase_failures,
         )
-        await update_rebase_fail_counters(
-            context=rebase_counter_context,
-        )
+        if not self.runtime.dry_run:
+            await update_rebase_fail_counters(
+                context=rebase_counter_context,
+            )
+        else:
+            self.logger.warning('[DRY RUN] Would update OKD rebase failure counters')
 
         # Exclude images that were skipped or failed during rebase from the build step
         if self.build_plan.image_build_strategy == BuildStrategy.ALL:
@@ -440,20 +443,23 @@ class KonfluxOkdPipeline:
         failed_entries = {
             entry['name']: entry for entry in record_log.get('image_build_okd', []) if int(entry['status'])
         }
-        await update_build_fail_counters(
-            context=BuildFailCounterContext(
-                group=f"okd-{self.version}",
-                assembly=self.assembly,
-                build_variant=BuildVariant.OKD,
-                jenkins_url=os.getenv("BUILD_URL"),
-                built_images=[image['name'] for image in self.built_images],
-                failed_images=failed_images,
-                failed_entries=failed_entries,
-                reset_counter=reset_fail_counter,
-                increment_counter=increment_fail_counter,
-                build_only=True,
+        if not self.runtime.dry_run:
+            await update_build_fail_counters(
+                context=BuildFailCounterContext(
+                    group=f"okd-{self.version}",
+                    assembly=self.assembly,
+                    build_variant=BuildVariant.OKD,
+                    jenkins_url=os.getenv("BUILD_URL"),
+                    built_images=[image['name'] for image in self.built_images],
+                    failed_images=failed_images,
+                    failed_entries=failed_entries,
+                    reset_counter=reset_fail_counter,
+                    increment_counter=increment_fail_counter,
+                    build_only=True,
+                )
             )
-        )
+        else:
+            self.logger.warning('[DRY RUN] Would update OKD build failure counters')
 
     async def detect_embargoed_builds(self):
         """
