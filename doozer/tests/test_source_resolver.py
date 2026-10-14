@@ -398,10 +398,7 @@ class SourceResolverTestCase(TestCase):
         # setup_and_fetch_public_upstream_source must NOT be called
         flexmock(SourceResolver).should_receive("setup_and_fetch_public_upstream_source").never()
         flexmock(exectools).should_receive("cmd_assert").with_args(
-            "git remote set-url origin https://github.com/openshift-priv/test-repo"
-        ).and_return(("", ""))
-        flexmock(exectools).should_receive("cmd_assert").with_args(
-            "git remote add pull https://github.com/myuser/test-repo-fork"
+            "git remote set-url --push origin https://github.com/openshift-priv/test-repo"
         ).and_return(("", ""))
         flexmock(sr).should_receive("register_source_alias").replace_with(fake_register)
 

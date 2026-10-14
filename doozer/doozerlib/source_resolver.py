@@ -250,6 +250,11 @@ class SourceResolver:
                 else:
                     gitargs = ['--branch', clone_branch]
 
+                # Use blobless clone to reduce transfer size for large repos (e.g. kubernetes,
+                # installer). All commits and trees are fetched, but file contents (blobs) are
+                # downloaded on demand when checkout materializes the working tree.
+                gitargs.append('--filter=blob:none')
+
                 git_clone(
                     clone_url,
                     source_dir,
@@ -258,11 +263,14 @@ class SourceResolver:
                     git_cache_dir=self.cache_dir,
                 )
 
-                # If we used pull_url for cloning, we need to set up the push remote
+                # If we used pull_url for cloning, configure a separate push URL on
+                # origin so that fetch still points at the clone source.  This keeps
+                # the blobless-clone promisor remote intact — git can lazily fetch
+                # blobs from the original fetch URL when needed.
                 if pull_url and pull_url != url:
                     with exectools.Dir(source_dir):
-                        exectools.cmd_assert(f'git remote set-url origin {url}')  # Set origin to push URL
-                        exectools.cmd_assert(f'git remote add pull {pull_url}')  # Add pull remote
+                        # Set push URL only; keep fetch URL at clone source for blobless blob fetches
+                        exectools.cmd_assert(f'git remote set-url --push origin {url}')
 
                 if self.is_branch_commit_hash(branch=clone_branch):
                     with exectools.Dir(source_dir):
@@ -462,17 +470,24 @@ class SourceResolver:
         with exectools.Dir(path):
             url = None
             origin_url = "?"
+            # When a separate push URL is configured (via set-url --push),
+            # remote.origin.pushurl holds the push destination while
+            # remote.origin.url holds the fetch (clone) source.
+            rc_push, out_push, _ = exectools.cmd_gather(["git", "config", "--get", "remote.origin.pushurl"])
             rc1, out_origin, err_origin = exectools.cmd_gather(["git", "config", "--get", "remote.origin.url"])
-            if rc1 == 0:
+            if rc_push == 0:
+                url = out_push.strip()
+            elif rc1 == 0:
                 url = out_origin.strip()
+            else:
+                LOGGER.error("Failed acquiring origin url for source alias %s: %s" % (alias, err_origin))
+            if url:
                 # Usually something like "git@github.com:openshift/origin.git"
                 # But we want an https hyperlink like http://github.com/openshift/origin
                 if url.startswith("git@"):
                     origin_url = art_util.convert_remote_git_to_https(url)
                 else:
                     origin_url = url
-            else:
-                LOGGER.error("Failed acquiring origin url for source alias %s: %s" % (alias, err_origin))
 
             branch = None
             rc2, out_branch, err_branch = exectools.cmd_gather(["git", "rev-parse", "--abbrev-ref", "HEAD"])
@@ -484,11 +499,18 @@ class SourceResolver:
             if not url or not branch:
                 raise IOError(f"Couldn't detect source URL or branch for local source {path}. Is it a valid Git repo?")
 
-            # Check if pull remote exists
+            # Detect pull URL: if a separate pushurl is configured, the fetch
+            # URL (remote.origin.url) is the pull source.  Also check for a
+            # legacy 'pull' remote from older clones.
             pull_url = None
-            rc_pull, out_pull, _ = exectools.cmd_gather(["git", "config", "--get", "remote.pull.url"])
-            if rc_pull == 0:
-                pull_url = out_pull.strip()
+            if rc_push == 0 and rc1 == 0:
+                fetch_url = out_origin.strip()
+                if fetch_url != url:
+                    pull_url = fetch_url
+            else:
+                rc_pull, out_pull, _ = exectools.cmd_gather(["git", "config", "--get", "remote.pull.url"])
+                if rc_pull == 0:
+                    pull_url = out_pull.strip()
 
             out, _ = exectools.cmd_assert(["git", "rev-parse", "HEAD"])
             commit_hash = out.strip()
