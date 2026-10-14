@@ -43,6 +43,8 @@ PIPELINE_ORDER = (
 PIPELINE_PRIORITY = {name: priority for priority, names in enumerate(PIPELINE_ORDER) for name in names}
 CSRF_COOKIE = "__Host-art-pipelines-csrf"
 INCIDENTS_FILE = Path(os.getenv("INCIDENTS_FILE", "/etc/incidents/incidents.json"))
+MAX_INCIDENTS = 20
+MAX_INCIDENTS_JSON_BYTES = 900 * 1024
 logger = logging.getLogger(__name__)
 app = FastAPI(title="ART Pipelines UI", docs_url=None, redoc_url=None, openapi_url=None)
 
@@ -334,14 +336,34 @@ async def read_incident_configmap(gateway: Gateway):
 
 
 async def write_incident_configmap(gateway: Gateway, configmap: dict, items: list[Incident]):
+    while len(items) > MAX_INCIDENTS:
+        resolved = [
+            (index, item.resolvedAt or item.updated or item.started or "")
+            for index, item in enumerate(items)
+            if item.status == "resolved"
+        ]
+        if not resolved:
+            raise HTTPException(
+                status_code=409,
+                detail=f"There are already {MAX_INCIDENTS} active incidents. Resolve an incident before creating another.",
+            )
+        oldest_index = min(resolved, key=lambda entry: entry[1])[0]
+        items.pop(oldest_index)
+
     serialized = [item.model_dump(mode="json") for item in items]
+    incidents_json = json.dumps({"incidents": serialized}, indent=2, ensure_ascii=False)
+    if len(incidents_json.encode("utf-8")) > MAX_INCIDENTS_JSON_BYTES:
+        raise HTTPException(
+            status_code=413,
+            detail="Incident history is too large to save. Remove old resolved incidents or shorten their details.",
+        )
     await gateway.kube_json(
         "PATCH",
         INCIDENT_CONFIGMAP_PATH,
         headers={"Content-Type": "application/merge-patch+json"},
         json={
             "metadata": {"resourceVersion": configmap["metadata"]["resourceVersion"]},
-            "data": {"incidents.json": json.dumps({"incidents": serialized}, indent=2)},
+            "data": {"incidents.json": incidents_json},
         },
     )
     return {"incidents": serialized, "canManage": True}

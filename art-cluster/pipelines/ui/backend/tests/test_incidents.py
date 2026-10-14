@@ -104,6 +104,76 @@ class IncidentApiTests(unittest.IsolatedAsyncioTestCase):
         patch_call = next(call for call in self.gateway.kube_json.await_args_list if call.args[0] == "PATCH")
         self.assertEqual(patch_call.kwargs["json"]["metadata"]["resourceVersion"], "12")
 
+    async def test_create_prunes_the_oldest_resolved_item_at_history_limit(self):
+        resolved = {
+            **INCIDENT,
+            "id": "old-resolved",
+            "status": "resolved",
+            "resolvedAt": "2026-01-01T00:00:00Z",
+            "updated": "2026-01-01T00:00:00Z",
+        }
+        current = [{**INCIDENT, "id": f"active-{index}"} for index in range(19)] + [resolved]
+        self.allow_admin()
+        self.gateway.kube_json.side_effect = None
+        self.gateway.kube_json = AsyncMock(side_effect=[{"metadata": {"resourceVersion": "12"}, "data": {"incidents.json": json.dumps({"incidents": current})}}, {"metadata": {"resourceVersion": "13"}}])
+        with patch.object(api.Path, "read_text", return_value='{"incidents":[]}'):
+            response = await self.client.post(
+                "/api/incidents",
+                headers={"x-csrf-token": "csrf-token"},
+                json={"title": "New issue", "message": "Scans may fail"},
+            )
+
+        self.assertEqual(response.status_code, 201)
+        incidents = response.json()["incidents"]
+        self.assertEqual(len(incidents), 20)
+        self.assertNotIn("old-resolved", {incident["id"] for incident in incidents})
+        self.assertEqual(incidents[-1]["title"], "New issue")
+
+    async def test_create_rejects_history_at_limit_when_every_incident_is_active(self):
+        current = [{**INCIDENT, "id": f"active-{index}"} for index in range(20)]
+        self.allow_admin()
+        calls = []
+
+        async def read_only_kube_json(method, _path, **_kwargs):
+            calls.append(method)
+            return {"metadata": {"resourceVersion": "12"}, "data": {"incidents.json": json.dumps({"incidents": current})}}
+
+        self.gateway.kube_json = AsyncMock(side_effect=read_only_kube_json)
+        with patch.object(api.Path, "read_text", return_value='{"incidents":[]}'):
+            response = await self.client.post(
+                "/api/incidents",
+                headers={"x-csrf-token": "csrf-token"},
+                json={"title": "New issue", "message": "Scans may fail"},
+            )
+
+        self.assertEqual(response.status_code, 409)
+        self.assertIn("Resolve an incident", response.json()["detail"])
+        self.assertEqual(calls, ["GET"])
+
+    async def test_create_rejects_data_that_exceeds_configmap_size_budget(self):
+        long_url = "https://example.com/" + "a" * 10000
+        current = [
+            {**INCIDENT, "id": f"large-{index}", "links": [{"label": "Ticket", "url": long_url}] * 10}
+            for index in range(10)
+        ]
+        calls = []
+
+        async def read_only_kube_json(method, _path, **_kwargs):
+            calls.append(method)
+            return {"metadata": {"resourceVersion": "12"}, "data": {"incidents.json": json.dumps({"incidents": current})}}
+
+        self.gateway.kube_json = AsyncMock(side_effect=read_only_kube_json)
+        with patch.object(api.Path, "read_text", return_value='{"incidents":[]}'):
+            response = await self.client.post(
+                "/api/incidents",
+                headers={"x-csrf-token": "csrf-token"},
+                json={"title": "New issue", "message": "Scans may fail"},
+            )
+
+        self.assertEqual(response.status_code, 413)
+        self.assertIn("history is too large", response.json()["detail"])
+        self.assertEqual(calls, ["GET"])
+
     async def test_update_records_new_update_time_without_resolving(self):
         self.allow_admin()
         with patch.object(api.Path, "read_text", return_value='{"incidents":[]}'):
@@ -149,6 +219,23 @@ class IncidentApiTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(response.status_code, 403)
         self.assertEqual(response.json(), {"detail": "Forbidden"})
+
+    async def test_stale_configmap_write_returns_conflict(self):
+        async def kube_json(method, _path, **_kwargs):
+            if method == "GET":
+                return CONFIGMAP
+            raise UpstreamError(409, "Incident data changed; refresh and try again")
+
+        self.gateway.kube_json = AsyncMock(side_effect=kube_json)
+        with patch.object(api.Path, "read_text", return_value='{"incidents":[]}'):
+            response = await self.client.post(
+                "/api/incidents",
+                headers={"x-csrf-token": "csrf-token"},
+                json={"title": "New issue", "message": "Scans may fail"},
+            )
+
+        self.assertEqual(response.status_code, 409)
+        self.assertEqual(response.json(), {"detail": "Incident data changed; refresh and try again"})
 
     async def test_invalid_incident_input_is_rejected(self):
         response = await self.client.post(
