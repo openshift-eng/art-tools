@@ -46,7 +46,6 @@ spec:
             "--working-dir=./artcd_working",
             "--config=/root/.config/artcd.toml",
             "schedule-layered-products-scan",
-            "--group=mta-8.1",
             "--group=mta-8.2",
             "--group=mta-8.3",
         ]
