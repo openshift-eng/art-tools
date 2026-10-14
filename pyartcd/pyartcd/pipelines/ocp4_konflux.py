@@ -1003,6 +1003,9 @@ class KonfluxOcpPipeline:
             return record_log
 
     async def request_mass_rebuild(self):
+        if self.runtime.dry_run:
+            self.runtime.logger.warning('[DRY RUN] Would enqueue mass rebuild for %s', self.version)
+            return await self.rebase_and_build_images()
         await self.slack_client.say(
             f':konflux: :loading-correct: Enqueuing mass rebuild for {self.version} :loading-correct:'
         )
