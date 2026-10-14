@@ -3,6 +3,7 @@ import json
 import logging
 import os
 import shutil
+import sys
 import tempfile
 from datetime import datetime, timezone
 from functools import cached_property
@@ -40,6 +41,7 @@ from github import GithubException
 
 from pyartcd import constants, locks
 from pyartcd.cli import cli, click_coroutine, pass_runtime
+from pyartcd.fbc_build import build_fbc_catalogs
 from pyartcd.fbc_util import (
     validate_fbc_related_images,
     validate_layered_product_fbc_nvrs,
@@ -47,7 +49,9 @@ from pyartcd.fbc_util import (
 )
 from pyartcd.git import GitRepository
 from pyartcd.lp_shipment import (
+    FbcRefreshRecord,
     ShipmentMRValidationError,
+    add_fbc_refresh_comment,
     add_superseded_mr_comment,
     close_superseded_shipment_mr,
     create_shipment_mr_with_retry,
@@ -108,6 +112,7 @@ class PrepareReleaseLPPipeline:
         shipment_data_repo_url: Optional[str] = None,
         create_mr: bool = False,
         force: bool = False,
+        refresh_fbcs: bool = False,
         jira_bugs: Optional[List[str]] = None,
         target_release_date: Optional[str] = None,
     ) -> None:
@@ -121,6 +126,7 @@ class PrepareReleaseLPPipeline:
             shipment_data_repo_url: Optional shipment-data repository override.
             create_mr: Create or reuse a shipment merge request.
             force: Replace the configured shipment MR instead of reusing it.
+            refresh_fbcs: Force FBC rebuilds from the latest production catalogs.
             jira_bugs: Jira issues to include in generated release notes.
             target_release_date: Optional normalized target ship date.
         """
@@ -130,6 +136,7 @@ class PrepareReleaseLPPipeline:
         self.assembly = assembly
         self.create_mr = create_mr
         self.force = force
+        self.refresh_fbcs = refresh_fbcs
         self.dry_run = self.runtime.dry_run
         self.jira_bugs = jira_bugs
         self.target_release_date = target_release_date
@@ -147,6 +154,9 @@ class PrepareReleaseLPPipeline:
         self.job_url: Optional[str] = None
 
         self.product: Optional[str] = None
+        self._releases_config: Optional[Dict] = None
+        self._fbc_refresh_records: list[FbcRefreshRecord] = []
+        self._fbc_build_failures: list[str] = []
 
         shipment_data_pull_url = (
             shipment_data_repo_url
@@ -261,27 +271,57 @@ class PrepareReleaseLPPipeline:
         if assembly is None:
             raise click.ClickException(f"Assembly '{self.assembly}' not found in releases.yml")
 
+        self._releases_config = releases_config
         self._configured_shipment_mr_url = get_shipment_mr_url(releases_config, self.assembly)
         return assembly
 
     def _extract_operand_nvrs(self, assembly_config: Dict) -> List[str]:
         """Extract pinned operand NVRs from the assembly definition.
 
-        Walks the members.images list and collects NVRs from is.nvr or is.nvr! entries.
+        Resolve the assembly's basis chain and collect the effective NVR for
+        every image member. Child ``nvr!`` entries replace inherited NVRs.
 
-        NOTE: For inherited (delta) assemblies, only NVRs explicitly listed
-        in this assembly's members.images are returned. Parent chain
-        resolution is not performed -- doozer/elliott commands handle
-        inheritance internally via --assembly.
+        Args:
+            assembly_config: Direct configuration for ``self.assembly``.
+
+        Returns:
+            Effective operand NVRs in assembly order.
+
+        Raises:
+            ValueError: If the assembly basis chain contains a cycle.
         """
-        members_images = assembly_config.get('assembly', {}).get('members', {}).get('images', [])
-        nvrs = []
-        for entry in members_images:
-            is_spec = entry.get('metadata', {}).get('is', {})
-            nvr = is_spec.get('nvr') or is_spec.get('nvr!')
-            if nvr:
-                nvrs.append(nvr)
-        return nvrs
+        releases = (self._releases_config or {}).get('releases', {})
+
+        def _resolve(current_assembly: str, current_config: Dict, ancestors: set[str]) -> Dict[str, str]:
+            if current_assembly in ancestors:
+                raise ValueError(f"Assembly inheritance cycle detected at '{current_assembly}'")
+            ancestors = {*ancestors, current_assembly}
+            assembly = current_config.get('assembly', {})
+            basis_assembly = assembly.get('basis', {}).get('assembly') if releases else None
+            if basis_assembly:
+                basis_config = releases.get(basis_assembly)
+                if basis_config is None:
+                    raise ValueError(f"Assembly '{current_assembly}' inherits from missing assembly '{basis_assembly}'")
+                nvrs_by_key = _resolve(basis_assembly, basis_config, ancestors)
+            else:
+                nvrs_by_key = {}
+
+            members_images = assembly.get('members', {}).get('images', [])
+            for entry in members_images:
+                distgit_key = entry.get('distgit_key')
+                if not distgit_key or distgit_key == '*':
+                    continue
+                is_spec = entry.get('metadata', {}).get('is', {})
+                if 'nvr-' in is_spec:
+                    nvrs_by_key.pop(distgit_key, None)
+                    continue
+                nvr = is_spec.get('nvr') or is_spec.get('nvr!')
+                if nvr:
+                    nvrs_by_key[distgit_key] = nvr
+            return nvrs_by_key
+
+        effective_nvrs = _resolve(self.assembly, assembly_config, set())
+        return list(effective_nvrs.values())
 
     async def _find_existing_bundles(self) -> Dict[str, List[str]]:
         """Check for existing bundle builds that match the assembly's pinned operands.
@@ -496,108 +536,71 @@ class PrepareReleaseLPPipeline:
         return []
 
     async def _trigger_fbc_build(self, operator_nvrs: Optional[List[str]] = None) -> Tuple[List[str], List[str]]:
-        """Trigger FBC builds for each OCP target version.
+        """Build FBCs for every configured OCP target version.
 
         For non-OpenShift groups, reads ``OCP_TARGET_VERSIONS`` from the
         group config and builds one FBC per version using ``--major-minor``.
         Falls back to a single build if no target versions are configured.
 
-        When *operator_nvrs* is provided, only the given operators are
-        processed (passed as positional args to ``doozer beta:fbc:rebase-and-build``).
+        Args:
+            operator_nvrs: Exact assembly-scoped operator NVRs.
 
-        Returns a tuple of (NVR list, pullspec list) produced across all versions.
+        Returns:
+            A tuple containing the complete FBC NVR and pullspec lists.
         """
         self._logger.info("Triggering FBC builds for assembly '%s'...", self.assembly)
-
-        version = self.assembly
-        release_str = datetime.now(timezone.utc).strftime("%Y%m%d%H%M%S")
-        message = f"Rebase FBC segment with release {release_str}"
-
         ocp_target_versions = await self._load_ocp_target_versions()
-
         if ocp_target_versions:
             self._logger.info(
                 "Building FBCs for %d OCP target versions: %s",
                 len(ocp_target_versions),
                 ocp_target_versions,
             )
-            all_fbc_nvrs: List[str] = []
-            all_fbc_pullspecs: List[str] = []
-            for target_version in ocp_target_versions:
-                self._logger.info("Building FBC for OCP %s...", target_version)
-                cmd = self._doozer_base_command + [
-                    'beta:fbc:rebase-and-build',
-                    *self._konflux_build_args(),
-                    f'--version={version}',
-                    f'--release={release_str}',
-                    f'--message={message}',
-                    f'--major-minor={target_version}',
-                    '--output=json',
-                ]
-                if operator_nvrs:
-                    cmd.extend(['--', *operator_nvrs])
+            requests = {target_version: operator_nvrs or [] for target_version in ocp_target_versions}
+        else:
+            self._logger.info("No OCP_TARGET_VERSIONS configured; building single FBC")
+            requests = {None: operator_nvrs or []}
 
-                if self.dry_run:
-                    self._logger.info("[DRY-RUN] Would run: %s", ' '.join(cmd))
-                    continue
-
-                rc, stdout, _ = await exectools.cmd_gather_async(cmd, check=False, stderr=None)
-                if rc != 0:
-                    self._logger.error("FBC build for OCP %s exited with rc=%s", target_version, rc)
-                try:
-                    output_data = json.loads(stdout)
-                except json.JSONDecodeError:
-                    raise RuntimeError(
-                        f"FBC build for OCP {target_version} failed (rc={rc}) and did not produce valid JSON output."
-                    )
-                nvrs = output_data.get("nvrs", [])
-                pullspecs = output_data.get("pullspecs", [])
-                errors = output_data.get("errors", [])
-                if errors:
-                    self._logger.warning(
-                        "FBC build for OCP %s had %d error(s): %s",
-                        target_version,
-                        len(errors),
-                        errors,
-                    )
-                all_fbc_nvrs.extend(nvrs)
-                all_fbc_pullspecs.extend(pullspecs)
-
-            self._logger.info(
-                "FBC builds produced %d total NVRs across %d OCP versions", len(all_fbc_nvrs), len(ocp_target_versions)
-            )
-            return all_fbc_nvrs, all_fbc_pullspecs
-
-        self._logger.info("No OCP_TARGET_VERSIONS configured; building single FBC")
-        cmd = self._doozer_base_command + [
-            'beta:fbc:rebase-and-build',
-            *self._konflux_build_args(),
-            f'--version={version}',
-            f'--release={release_str}',
-            f'--message={message}',
-            '--output=json',
-        ]
-        if operator_nvrs:
-            cmd.extend(['--', *operator_nvrs])
-
-        if self.dry_run:
-            self._logger.info("[DRY-RUN] Would run: %s", ' '.join(cmd))
-            return [], []
-
-        rc, stdout, _ = await exectools.cmd_gather_async(cmd, check=False, stderr=None)
-        if rc != 0:
-            self._logger.error("FBC build exited with rc=%s", rc)
-        try:
-            output_data = json.loads(stdout)
-        except json.JSONDecodeError:
-            raise RuntimeError(f"FBC build failed (rc={rc}) and did not produce valid JSON output.")
-        fbc_nvrs = output_data.get("nvrs", [])
-        fbc_pullspecs = output_data.get("pullspecs", [])
-        errors = output_data.get("errors", [])
-        if errors:
-            self._logger.warning("FBC build had %d error(s): %s", len(errors), errors)
+        results = await build_fbc_catalogs(
+            runtime=self.runtime,
+            group=self.group,
+            assembly=self.assembly,
+            version=self.assembly,
+            product=self.product or "ocp",
+            operator_nvrs_by_target=requests,
+            data_path=self.build_data_repo_url,
+            force=self.refresh_fbcs,
+            # This preserves prepare-release-lp's existing behavior. Doozer's
+            # rebase-and-build command resets to production by default.
+            reset_to_prod=True,
+            allow_partial=not self.refresh_fbcs,
+            failures_out=self._fbc_build_failures,
+        )
+        fbc_nvrs = [nvr for result in results for nvr in result.nvrs]
+        fbc_pullspecs = [pullspec for result in results for pullspec in result.pullspecs]
+        if self.refresh_fbcs:
+            self._fbc_refresh_records = [
+                FbcRefreshRecord(result.target_version, (), result.pullspecs) for result in results
+            ]
         self._logger.info("FBC builds produced %d NVRs", len(fbc_nvrs))
         return fbc_nvrs, fbc_pullspecs
+
+    def _report_deferred_fbc_build_failures(self) -> None:
+        """Report tolerated FBC failures after successful release preparation.
+
+        Raises:
+            SystemExit: With code 2 so Jenkins marks the otherwise completed
+                prepare-release job as unstable.
+        """
+        if not self._fbc_build_failures:
+            return
+        self._logger.warning(
+            "prepare-release-lp completed with %d deferred FBC build failure(s); "
+            "successful builds were retained and the job will be marked UNSTABLE:\n%s",
+            len(self._fbc_build_failures),
+            "\n".join(f"  - {failure}" for failure in self._fbc_build_failures),
+        )
+        sys.exit(2)
 
     async def _create_snapshot(self, builds: List[str]) -> List[Snapshot]:
         """Create Konflux snapshot(s) from a list of build NVRs using elliott.
@@ -1133,6 +1136,16 @@ class PrepareReleaseLPPipeline:
                                 operation="prepare-release-lp",
                                 run_url=self.job_url,
                             )
+                    if self.refresh_fbcs:
+                        add_fbc_refresh_comment(
+                            self._gitlab,
+                            mr_url,
+                            self.assembly,
+                            self._fbc_refresh_records,
+                            operation="prepare-release-lp",
+                            run_url=self.job_url,
+                            dry_run=self.dry_run,
+                        )
                     await self._set_shipment_mr_ready()
             else:
                 timestamp = datetime.now(timezone.utc).strftime('%Y%m%d%H%M%S')
@@ -1146,6 +1159,7 @@ class PrepareReleaseLPPipeline:
             self.assembly,
             len(shipments_by_kind),
         )
+        self._report_deferred_fbc_build_failures()
 
 
 @cli.command("prepare-release-lp")
@@ -1188,6 +1202,11 @@ class PrepareReleaseLPPipeline:
     ),
 )
 @click.option(
+    "--refresh-fbcs",
+    is_flag=True,
+    help="Force FBC rebuilds from the latest production catalogs before creating shipment data.",
+)
+@click.option(
     "--jira-bugs",
     default=None,
     help="Comma-separated JIRA issue IDs for release notes.",
@@ -1207,6 +1226,7 @@ async def prepare_release_lp(
     shipment_data_repo_url: Optional[str],
     create_mr: bool,
     force: bool,
+    refresh_fbcs: bool,
     jira_bugs: Optional[str],
     target_release_date: Optional[str],
 ):
@@ -1247,6 +1267,7 @@ async def prepare_release_lp(
         shipment_data_repo_url=shipment_data_repo_url,
         create_mr=create_mr,
         force=force,
+        refresh_fbcs=refresh_fbcs,
         jira_bugs=jira_bugs_list,
         target_release_date=normalized_date,
     )

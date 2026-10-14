@@ -10,11 +10,13 @@ from elliottlib.shipment_model import ShipmentConfig
 from gitlab.exceptions import GitlabCreateError
 from pyartcd.git import GitRepository
 from pyartcd.lp_shipment import (
+    FbcRefreshRecord,
     ShipmentMRActiveStageError,
     ShipmentMRProductionError,
     ShipmentMRScopeError,
     ShipmentMRValidationError,
     _identity,
+    add_fbc_refresh_comment,
     add_superseded_mr_comment,
     close_superseded_shipment_mr,
     create_shipment_mr_with_retry,
@@ -132,6 +134,64 @@ def test_add_superseded_mr_comment_failure_is_nonfatal(caplog):
     )
 
     assert "Failed to comment on superseded shipment MR" in caplog.text
+
+
+def test_add_fbc_refresh_comment_records_pullspec_mapping_and_run():
+    """Record each source-to-refreshed mapping without rewriting MR history."""
+    gitlab_client = MagicMock()
+    records = [
+        FbcRefreshRecord("4.19", ("quay.io/old:419",), ("quay.io/new:419",)),
+        FbcRefreshRecord("4.20", ("quay.io/old:420",), ("quay.io/new:420",)),
+    ]
+
+    add_fbc_refresh_comment(
+        gitlab_client,
+        "https://gitlab.example.com/group/project/-/merge_requests/42",
+        "1.8.18",
+        records,
+        operation="release-from-fbc",
+        run_url="https://jenkins.example.com/job/release/42/",
+    )
+
+    mr_url, body = gitlab_client.add_mr_comment.call_args.args
+    assert mr_url.endswith("/merge_requests/42")
+    assert "using assembly `1.8.18`" in body
+    assert "| 4.19 | `quay.io/old:419` | `quay.io/new:419` |" in body
+    assert "| 4.20 | `quay.io/old:420` | `quay.io/new:420` |" in body
+    assert "[release-from-fbc run](https://jenkins.example.com/job/release/42/)" in body
+
+
+def test_add_fbc_refresh_comment_supports_assembly_driven_builds():
+    """Describe prepare-release output without inventing a previous FBC."""
+    gitlab_client = MagicMock()
+
+    add_fbc_refresh_comment(
+        gitlab_client,
+        "https://gitlab.example.com/group/project/-/merge_requests/42",
+        "2.17.3",
+        [FbcRefreshRecord("4.20", (), ("quay.io/new:420",))],
+        operation="prepare-release-lp",
+    )
+
+    body = gitlab_client.add_mr_comment.call_args.args[1]
+    assert "| 4.20 | _assembly-driven build_ | `quay.io/new:420` |" in body
+    assert body.endswith("Initiated by `prepare-release-lp`.")
+
+
+def test_add_fbc_refresh_comment_failure_is_nonfatal(caplog):
+    """Keep a successful shipment update authoritative if commenting fails."""
+    gitlab_client = MagicMock()
+    gitlab_client.add_mr_comment.side_effect = RuntimeError("GitLab unavailable")
+
+    add_fbc_refresh_comment(
+        gitlab_client,
+        "https://gitlab.example.com/group/project/-/merge_requests/42",
+        "1.8.18",
+        [FbcRefreshRecord("4.20", ("quay.io/old:420",), ("quay.io/new:420",))],
+        operation="release-from-fbc",
+    )
+
+    assert "Failed to comment on refreshed FBCs" in caplog.text
 
 
 def test_close_superseded_shipment_mr_closes_open_mr():

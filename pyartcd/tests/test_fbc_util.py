@@ -90,15 +90,30 @@ class TestValidateFbcRelatedImages(unittest.TestCase):
             ["image-a-1.0-1", "image-b-1.0-1"],
             ["image-a-1.0-1", "image-b-1.0-1"],
         ]
+        operator_by_fbc = {}
+        related_nvrs_by_fbc = {}
 
         result = asyncio.run(
             validate_fbc_related_images(
                 ["quay.io/fbc:ocp4.18", "quay.io/fbc:ocp4.19"],
                 "my-product",
+                operator_by_fbc_out=operator_by_fbc,
+                related_nvrs_by_fbc_out=related_nvrs_by_fbc,
             )
         )
 
         self.assertEqual(sorted(result), ["image-a-1.0-1", "image-b-1.0-1"])
+        self.assertEqual(
+            operator_by_fbc,
+            {"quay.io/fbc:ocp4.18": "my-operator", "quay.io/fbc:ocp4.19": "my-operator"},
+        )
+        self.assertEqual(
+            related_nvrs_by_fbc,
+            {
+                "quay.io/fbc:ocp4.18": ["image-a-1.0-1", "image-b-1.0-1"],
+                "quay.io/fbc:ocp4.19": ["image-a-1.0-1", "image-b-1.0-1"],
+            },
+        )
 
     @patch('pyartcd.fbc_util.extract_nvrs_from_fbc', new_callable=AsyncMock)
     @patch('pyartcd.fbc_util.extract_fbc_labels', new_callable=AsyncMock)

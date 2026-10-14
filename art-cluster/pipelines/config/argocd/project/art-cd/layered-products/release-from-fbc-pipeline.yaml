@@ -26,6 +26,10 @@ spec:
     description: Take no action, just echo what the job would have done
     name: dry-run
     type: string
+  - default: "false"
+    description: Rebuild supplied FBCs from the latest production catalogs before creating shipment data
+    name: refresh-fbcs
+    type: string
   - default: ""
     description: '(Optional) Override art-tools version. Format: ghuser@branch (e.g.
       ashwindasr@my-feature)'
@@ -86,6 +90,9 @@ spec:
             "--fbc-pullspecs=$(params.fbc-pullspecs)",
             "--create-mr",
         ])
+
+        if "$(params.refresh-fbcs)" == "true":
+            cmd.append("--refresh-fbcs")
 
         print(f"Running {cmd}...")
         subprocess.run(cmd, check=True, env=os.environ.copy())

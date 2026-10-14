@@ -10,9 +10,10 @@ import asyncio
 import logging
 import re
 from collections import Counter
+from dataclasses import dataclass
 from io import StringIO
 from pathlib import Path
-from typing import Dict
+from typing import Dict, Sequence
 from urllib.parse import urlparse
 
 from artcommonlib import exectools
@@ -48,6 +49,23 @@ class ShipmentMRProductionError(ValueError):
 
 class ShipmentMRActiveStageError(ValueError):
     """Indicate that active stage work makes in-place MR reuse unsafe."""
+
+
+@dataclass(frozen=True)
+class FbcRefreshRecord:
+    """Describe refreshed FBC pullspecs for one OCP target.
+
+    Attributes:
+        target_version: Target OCP major/minor version, or ``None`` when the
+            group has no target-specific configuration.
+        source_pullspecs: FBC pullspecs supplied for refresh. This is empty for
+            assembly-driven workflows such as ``prepare-release-lp``.
+        refreshed_pullspecs: Replacement FBC pullspecs produced by the build.
+    """
+
+    target_version: str | None
+    source_pullspecs: tuple[str, ...]
+    refreshed_pullspecs: tuple[str, ...]
 
 
 async def create_shipment_mr_with_retry(source_project, attributes: dict, logger: logging.Logger) -> object:
@@ -90,6 +108,67 @@ async def create_shipment_mr_with_retry(source_project, attributes: dict, logger
             await asyncio.sleep(_MR_CREATION_RETRY_DELAY_SECONDS)
 
     raise AssertionError("Unreachable")
+
+
+def add_fbc_refresh_comment(
+    gitlab_client,
+    mr_url: str,
+    assembly: str,
+    records: Sequence[FbcRefreshRecord],
+    operation: str,
+    run_url: str | None = None,
+    dry_run: bool = False,
+) -> None:
+    """Append an audit comment describing a successful FBC refresh.
+
+    Args:
+        gitlab_client: Authenticated ART GitLab client.
+        mr_url: Shipment merge request receiving the comment.
+        assembly: Named release assembly used for the FBC builds.
+        records: Source and refreshed pullspecs grouped by OCP target.
+        operation: Release operation that performed the refresh.
+        run_url: Optional Jenkins build or Tekton PipelineRun URL.
+        dry_run: Log the comment instead of changing GitLab.
+    """
+    if not records:
+        return
+
+    lines = [
+        "### FBC refresh",
+        "",
+        f"FBC catalogs were rebuilt against the latest production content using assembly `{assembly}`.",
+        "",
+        "| OCP target | Previous FBC | Refreshed FBC |",
+        "| --- | --- | --- |",
+    ]
+    for record in records:
+        target = record.target_version or "default"
+        row_count = max(len(record.source_pullspecs), len(record.refreshed_pullspecs))
+        for index in range(row_count):
+            source = (
+                f"`{record.source_pullspecs[index]}`"
+                if index < len(record.source_pullspecs)
+                else "_assembly-driven build_"
+            )
+            refreshed = (
+                f"`{record.refreshed_pullspecs[index]}`"
+                if index < len(record.refreshed_pullspecs)
+                else "_not produced_"
+            )
+            lines.append(f"| {target} | {source} | {refreshed} |")
+    if run_url:
+        lines.extend(["", f"Initiated by the [{operation} run]({run_url})."])
+    else:
+        lines.extend(["", f"Initiated by `{operation}`."])
+    body = "\n".join(lines)
+
+    if dry_run:
+        LOGGER.info("[DRY-RUN] Would add FBC refresh comment to %s:\n%s", mr_url, body)
+        return
+    try:
+        gitlab_client.add_mr_comment(mr_url, body)
+    except Exception as exc:
+        LOGGER.warning("Failed to comment on refreshed FBCs in shipment MR %s: %s", mr_url, exc)
 
 
 def close_superseded_shipment_mr(mr, dry_run: bool) -> None:
