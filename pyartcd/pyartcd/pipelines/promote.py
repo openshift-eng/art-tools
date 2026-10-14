@@ -798,7 +798,6 @@ class PromotePipeline:
                     manifest_arches,
                     client_type,
                     registry_config=registry_config,
-                    tarball_cache_dir=tarball_cache_dir,
                 )
             else:
                 message_digest = await self.publish_client(
