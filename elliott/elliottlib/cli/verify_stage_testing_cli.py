@@ -28,7 +28,10 @@ JOB_NAME_TEMPLATE = "periodic-ci-openshift-openshift-tests-private-release-{vers
 PAYLOAD_TEMPLATE = "quay.io/openshift-release-dev/ocp-release:{assembly}-x86_64"
 
 STAGE_RELEASE_LABEL = "stage-release-success"
-STAGE_TESTING_LABEL = "stage-testing-success"
+STAGE_TESTING_SUCCESS_LABEL = "stage-testing-success"
+STAGE_TESTING_FAIL_LABEL = "stage-testing-fail"
+STAGE_TESTING_TRIGGERED_LABEL = "stage-testing-triggered"
+STAGE_TESTING_LABELS = {STAGE_TESTING_SUCCESS_LABEL, STAGE_TESTING_FAIL_LABEL, STAGE_TESTING_TRIGGERED_LABEL}
 TERMINAL_STATES = {"success", "failure", "aborted", "error"}
 REQUEST_TIMEOUT = 30
 
@@ -92,7 +95,13 @@ class StageTestingResult(VerifyResultBase):
         if self.completion_time:
             lines.append(f"  Completed: {self.completion_time}")
         if self.label_added:
-            lines.append(f"  Label '{STAGE_TESTING_LABEL}' added to MR")
+            if self.state == "success":
+                label = STAGE_TESTING_SUCCESS_LABEL
+            elif self.state in TERMINAL_STATES:
+                label = STAGE_TESTING_FAIL_LABEL
+            else:
+                label = STAGE_TESTING_TRIGGERED_LABEL
+            lines.append(f"  Label '{label}' set on MR")
         if self.label_error:
             lines.append(f"  Label update failed: {self.label_error}")
         return "\n".join(lines)
@@ -119,24 +128,29 @@ class TriggerResult(VerifyResultBase):
 
 @dataclass
 class LabelCheckResult(VerifyResultBase):
-    label_found: bool = False
+    state: str = "not_started"
     mr_url: str = ""
 
     @property
     def passed(self) -> bool:
-        return self.label_found
+        return self.state == "success"
 
     def to_dict(self) -> dict:
         return {
             "passed": self.passed,
-            "label": STAGE_TESTING_LABEL,
-            "label_found": self.label_found,
+            "state": self.state,
             "mr_url": self.mr_url,
         }
 
     def render_text(self) -> str:
-        status = "PASS" if self.label_found else "FAIL"
-        return f"Stage testing label check: {status}\n  Label: {STAGE_TESTING_LABEL}\n  MR: {self.mr_url}"
+        state_display = {
+            "success": "PASS",
+            "fail": "FAIL",
+            "triggered": "PENDING",
+            "not_started": "NOT STARTED",
+        }
+        status = state_display.get(self.state, self.state.upper())
+        return f"Stage testing: {status}\n  MR: {self.mr_url}"
 
 
 # ---------------------------------------------------------------------------
@@ -176,7 +190,7 @@ def _parse_gitlab_mr_url(mr_url: str) -> tuple[str, str, str]:
     return match.group(1), match.group(2), match.group(3)
 
 
-def _check_mr_label(mr_url: str, label: str = STAGE_TESTING_LABEL) -> bool:
+def _get_mr_labels(mr_url: str) -> list[str]:
     base_url, project_path, mr_iid = _parse_gitlab_mr_url(mr_url)
     encoded_project = requests.utils.quote(project_path, safe="")
     api_url = f"{base_url}/api/v4/projects/{encoded_project}/merge_requests/{mr_iid}"
@@ -190,25 +204,26 @@ def _check_mr_label(mr_url: str, label: str = STAGE_TESTING_LABEL) -> bool:
     if response.status_code != 200:
         raise click.ClickException(f"Failed to get MR info: HTTP {response.status_code} {response.reason}")
 
-    labels = response.json().get("labels", [])
-    return label in labels
+    return response.json().get("labels", [])
 
 
-def _add_mr_label(mr_url: str) -> None:
+def _set_mr_label(mr_url: str, label: str) -> None:
+    """Set a stage-testing label on the MR, removing any other stage-testing labels."""
     base_url, project_path, mr_iid = _parse_gitlab_mr_url(mr_url)
     encoded_project = requests.utils.quote(project_path, safe="")
     api_url = f"{base_url}/api/v4/projects/{encoded_project}/merge_requests/{mr_iid}"
 
+    remove = ",".join(STAGE_TESTING_LABELS - {label})
     response = _get_session().put(
         url=api_url,
         headers=_get_gitlab_headers(),
-        json={"add_labels": STAGE_TESTING_LABEL},
+        json={"add_labels": label, "remove_labels": remove},
         timeout=REQUEST_TIMEOUT,
         verify=ssl.get_default_verify_paths().openssl_cafile,
     )
     if response.status_code != 200:
-        raise click.ClickException(f"Failed to add label to MR: HTTP {response.status_code} {response.reason}")
-    LOGGER.info("Added label '%s' to MR", STAGE_TESTING_LABEL)
+        raise click.ClickException(f"Failed to update labels on MR: HTTP {response.status_code} {response.reason}")
+    LOGGER.info("Set label '%s' on MR (removed others)", label)
 
 
 # ---------------------------------------------------------------------------
@@ -289,7 +304,9 @@ def get_job_status(job_id: str) -> StageTestingResult:
 
 
 @cli.command("verify-stage-testing", short_help="Verify stage testing status")
-@click.option("--job-id", default=None, help="Check status of an existing Prow job. Adds label to MR on success.")
+@click.option(
+    "--job-id", default=None, help="Check status of an existing Prow job. Sets appropriate stage-testing label on MR."
+)
 @click.option(
     "--trigger",
     is_flag=True,
@@ -301,15 +318,19 @@ def get_job_status(job_id: str) -> StageTestingResult:
 def verify_stage_testing_cli(runtime, job_id, trigger, output):
     """Verify stage testing status for an assembly.
 
-    Without options, checks if the 'stage-testing-success' label exists
-    on the shipment MR (resolved from assembly config in releases.yml).
-
-    With --job-id, checks the Prow job status (public API, no auth needed).
-    If the job succeeded, adds the 'stage-testing-success' label to the
-    shipment MR.
+    Without options, checks the stage-testing label on the shipment MR
+    and reports the state: success, fail, triggered (pending), or
+    not started.
 
     With --trigger, triggers a new stage testing Prow job via Gangway
-    API and returns the job ID.
+    API and sets the 'stage-testing-triggered' label on the MR.
+
+    With --job-id, checks the Prow job status and sets the appropriate
+    label on the MR: 'stage-testing-success' or 'stage-testing-fail'
+    on terminal state, 'stage-testing-triggered' while still running.
+
+    Each label operation replaces any existing stage-testing-* label
+    so that at most one is present at a time.
 
     Requires GITLAB_TOKEN for MR label operations.
     Requires GANGWAY_TOKEN for --trigger (Gangway API).
@@ -346,13 +367,19 @@ def _handle_trigger(runtime, output):
     assembly = runtime.assembly
 
     mr_url = get_assembly_shipment_url(runtime, required=True)
-    if not _check_mr_label(mr_url, STAGE_RELEASE_LABEL):
+    labels = _get_mr_labels(mr_url)
+
+    if STAGE_RELEASE_LABEL not in labels:
         raise click.ClickException(
             f"Cannot trigger stage testing: '{STAGE_RELEASE_LABEL}' label not found on shipment MR. "
             "Stage release (payload + FBC merge) must complete first."
         )
 
     job_id, job_name = trigger_prow_job(version, assembly)
+    try:
+        _set_mr_label(mr_url, STAGE_TESTING_TRIGGERED_LABEL)
+    except Exception as exc:
+        LOGGER.error("Failed to set triggered label: %s", exc)
     result = TriggerResult(job_id=job_id, job_name=job_name)
     handle_verify_result(result, output)
 
@@ -360,14 +387,18 @@ def _handle_trigger(runtime, output):
 def _handle_job_check(runtime, job_id, output):
     result = get_job_status(job_id)
 
-    if result.state == "success":
-        try:
-            mr_url = get_assembly_shipment_url(runtime, required=True)
-            _add_mr_label(mr_url)
-            result.label_added = True
-        except Exception as exc:
-            result.label_error = str(exc)
-            LOGGER.error("Failed to add stage-testing label: %s", exc)
+    if result.terminal:
+        label = STAGE_TESTING_SUCCESS_LABEL if result.state == "success" else STAGE_TESTING_FAIL_LABEL
+    else:
+        label = STAGE_TESTING_TRIGGERED_LABEL
+
+    try:
+        mr_url = get_assembly_shipment_url(runtime, required=True)
+        _set_mr_label(mr_url, label)
+        result.label_added = True
+    except Exception as exc:
+        result.label_error = str(exc)
+        LOGGER.error("Failed to update stage-testing label: %s", exc)
 
     click.echo(render_verify_result(result, output))
 
@@ -378,6 +409,16 @@ def _handle_job_check(runtime, job_id, output):
 
 def _handle_label_check(runtime, output):
     mr_url = get_assembly_shipment_url(runtime, required=True)
-    label_found = _check_mr_label(mr_url)
-    result = LabelCheckResult(label_found=label_found, mr_url=mr_url)
+    labels = _get_mr_labels(mr_url)
+
+    if STAGE_TESTING_SUCCESS_LABEL in labels:
+        state = "success"
+    elif STAGE_TESTING_FAIL_LABEL in labels:
+        state = "fail"
+    elif STAGE_TESTING_TRIGGERED_LABEL in labels:
+        state = "triggered"
+    else:
+        state = "not_started"
+
+    result = LabelCheckResult(state=state, mr_url=mr_url)
     handle_verify_result(result, output)

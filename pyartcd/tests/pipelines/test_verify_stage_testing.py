@@ -16,8 +16,7 @@ class TestStageTestingPipeline(unittest.IsolatedAsyncioTestCase):
         label_result = json.dumps(
             {
                 "passed": True,
-                "label": "stage-testing-success",
-                "label_found": True,
+                "state": "success",
                 "mr_url": "https://example.com/mr/1",
             }
         )
@@ -32,9 +31,7 @@ class TestStageTestingPipeline(unittest.IsolatedAsyncioTestCase):
 
     @patch("pyartcd.pipelines.verify_stage_testing.exectools.cmd_gather_async", new_callable=AsyncMock)
     async def test_run_trigger_then_immediate_success(self, mock_gather):
-        label_result = json.dumps(
-            {"passed": False, "label": "stage-testing-success", "label_found": False, "mr_url": ""}
-        )
+        label_result = json.dumps({"passed": False, "state": "not_started", "mr_url": ""})
         trigger_result = json.dumps({"job_id": "job-123", "job_name": "test-job"})
         job_result = json.dumps(
             {
@@ -62,9 +59,7 @@ class TestStageTestingPipeline(unittest.IsolatedAsyncioTestCase):
     @patch("pyartcd.pipelines.verify_stage_testing.asyncio.sleep", new_callable=AsyncMock)
     @patch("pyartcd.pipelines.verify_stage_testing.exectools.cmd_gather_async", new_callable=AsyncMock)
     async def test_run_poll_then_success(self, mock_gather, mock_sleep):
-        label_result = json.dumps(
-            {"passed": False, "label": "stage-testing-success", "label_found": False, "mr_url": ""}
-        )
+        label_result = json.dumps({"passed": False, "state": "not_started", "mr_url": ""})
         trigger_result = json.dumps({"job_id": "job-123", "job_name": "test-job"})
         pending_result = json.dumps(
             {
@@ -100,9 +95,7 @@ class TestStageTestingPipeline(unittest.IsolatedAsyncioTestCase):
 
     @patch("pyartcd.pipelines.verify_stage_testing.exectools.cmd_gather_async", new_callable=AsyncMock)
     async def test_run_trigger_then_failure(self, mock_gather):
-        label_result = json.dumps(
-            {"passed": False, "label": "stage-testing-success", "label_found": False, "mr_url": ""}
-        )
+        label_result = json.dumps({"passed": False, "state": "not_started", "mr_url": ""})
         trigger_result = json.dumps({"job_id": "job-123", "job_name": "test-job"})
         job_result = json.dumps(
             {
@@ -128,9 +121,7 @@ class TestStageTestingPipeline(unittest.IsolatedAsyncioTestCase):
     @patch("pyartcd.pipelines.verify_stage_testing.asyncio.sleep", new_callable=AsyncMock)
     @patch("pyartcd.pipelines.verify_stage_testing.exectools.cmd_gather_async", new_callable=AsyncMock)
     async def test_run_timeout(self, mock_gather, mock_sleep):
-        label_result = json.dumps(
-            {"passed": False, "label": "stage-testing-success", "label_found": False, "mr_url": ""}
-        )
+        label_result = json.dumps({"passed": False, "state": "not_started", "mr_url": ""})
         trigger_result = json.dumps({"job_id": "job-123", "job_name": "test-job"})
         pending_result = json.dumps(
             {
@@ -158,9 +149,7 @@ class TestStageTestingPipeline(unittest.IsolatedAsyncioTestCase):
 
     @patch("pyartcd.pipelines.verify_stage_testing.exectools.cmd_gather_async", new_callable=AsyncMock)
     async def test_commands_built_correctly(self, mock_gather):
-        label_result = json.dumps(
-            {"passed": False, "label": "stage-testing-success", "label_found": False, "mr_url": ""}
-        )
+        label_result = json.dumps({"passed": False, "state": "not_started", "mr_url": ""})
         trigger_result = json.dumps({"job_id": "job-123", "job_name": "test-job"})
         job_result = json.dumps(
             {
@@ -191,6 +180,58 @@ class TestStageTestingPipeline(unittest.IsolatedAsyncioTestCase):
 
         check_cmd = mock_gather.call_args_list[2].args[0]
         self.assertIn("--job-id=job-123", check_cmd)
+
+    @patch("pyartcd.pipelines.verify_stage_testing.exectools.cmd_gather_async", new_callable=AsyncMock)
+    async def test_run_retrigger_after_fail(self, mock_gather):
+        label_result = json.dumps({"passed": False, "state": "fail", "mr_url": "https://example.com/mr/1"})
+        trigger_result = json.dumps({"job_id": "job-456", "job_name": "test-job"})
+        job_result = json.dumps(
+            {
+                "job_id": "job-456",
+                "job_name": "test-job",
+                "state": "success",
+                "passed": True,
+                "terminal": True,
+                "label_added": True,
+            }
+        )
+        mock_gather.side_effect = [
+            (1, label_result, ""),
+            (0, trigger_result, ""),
+            (0, job_result, ""),
+        ]
+
+        pipeline = StageTestingPipeline(runtime=self.runtime, version="4.22", assembly="4.22.9")
+        result = await pipeline.run()
+
+        self.assertTrue(result["passed"])
+        self.assertEqual(mock_gather.call_count, 3)
+
+    @patch("pyartcd.pipelines.verify_stage_testing.exectools.cmd_gather_async", new_callable=AsyncMock)
+    async def test_run_retrigger_after_triggered(self, mock_gather):
+        label_result = json.dumps({"passed": False, "state": "triggered", "mr_url": "https://example.com/mr/1"})
+        trigger_result = json.dumps({"job_id": "job-789", "job_name": "test-job"})
+        job_result = json.dumps(
+            {
+                "job_id": "job-789",
+                "job_name": "test-job",
+                "state": "success",
+                "passed": True,
+                "terminal": True,
+                "label_added": True,
+            }
+        )
+        mock_gather.side_effect = [
+            (1, label_result, ""),
+            (0, trigger_result, ""),
+            (0, job_result, ""),
+        ]
+
+        pipeline = StageTestingPipeline(runtime=self.runtime, version="4.22", assembly="4.22.9")
+        result = await pipeline.run()
+
+        self.assertTrue(result["passed"])
+        self.assertEqual(mock_gather.call_count, 3)
 
     @patch("pyartcd.pipelines.verify_stage_testing.exectools.cmd_gather_async", new_callable=AsyncMock)
     async def test_label_check_failure_raises(self, mock_gather):

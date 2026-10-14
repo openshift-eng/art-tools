@@ -6,9 +6,10 @@ from elliottlib.cli.verify_stage_testing_cli import (
     LabelCheckResult,
     StageTestingResult,
     TriggerResult,
-    _add_mr_label,
-    _check_mr_label,
+    _get_mr_labels,
+    _handle_trigger,
     _parse_gitlab_mr_url,
+    _set_mr_label,
     get_job_status,
     trigger_prow_job,
 )
@@ -83,6 +84,16 @@ class TestStageTestingResult(TestCase):
         text = r.render_text()
         self.assertIn("stage-testing-success", text)
 
+    def test_render_text_with_fail_label(self):
+        r = StageTestingResult(job_id="abc", job_name="test", state="failure", label_added=True)
+        text = r.render_text()
+        self.assertIn("stage-testing-fail", text)
+
+    def test_render_text_with_triggered_label(self):
+        r = StageTestingResult(job_id="abc", job_name="test", state="pending", label_added=True)
+        text = r.render_text()
+        self.assertIn("stage-testing-triggered", text)
+
     def test_label_error(self):
         r = StageTestingResult(job_id="abc", job_name="test", state="success", label_error="connection refused")
         self.assertFalse(r.passed)
@@ -96,24 +107,36 @@ class TestStageTestingResult(TestCase):
 
 
 class TestLabelCheckResult(TestCase):
-    def test_found(self):
-        r = LabelCheckResult(label_found=True, mr_url="https://gitlab/mr/1")
+    def test_success(self):
+        r = LabelCheckResult(state="success", mr_url="https://gitlab/mr/1")
         self.assertTrue(r.passed)
         self.assertFalse(r.failed)
         d = r.to_dict()
         self.assertTrue(d["passed"])
-        self.assertTrue(d["label_found"])
+        self.assertEqual(d["state"], "success")
 
-    def test_not_found(self):
-        r = LabelCheckResult(label_found=False, mr_url="https://gitlab/mr/1")
+    def test_fail(self):
+        r = LabelCheckResult(state="fail", mr_url="https://gitlab/mr/1")
         self.assertFalse(r.passed)
         self.assertTrue(r.failed)
+        self.assertIn("FAIL", r.render_text())
 
-    def test_render_text(self):
-        r = LabelCheckResult(label_found=True, mr_url="https://gitlab/mr/1")
+    def test_triggered(self):
+        r = LabelCheckResult(state="triggered", mr_url="https://gitlab/mr/1")
+        self.assertFalse(r.passed)
+        self.assertTrue(r.failed)
+        self.assertIn("PENDING", r.render_text())
+
+    def test_not_started(self):
+        r = LabelCheckResult(state="not_started", mr_url="https://gitlab/mr/1")
+        self.assertFalse(r.passed)
+        self.assertTrue(r.failed)
+        self.assertIn("NOT STARTED", r.render_text())
+
+    def test_render_text_success(self):
+        r = LabelCheckResult(state="success", mr_url="https://gitlab/mr/1")
         text = r.render_text()
         self.assertIn("PASS", text)
-        self.assertIn("stage-testing-success", text)
 
 
 class TestParseGitlabMrUrl(TestCase):
@@ -194,49 +217,54 @@ spec:
             get_job_status("job-123")
 
 
-class TestCheckMrLabel(TestCase):
+class TestGetMrLabels(TestCase):
     @patch("elliottlib.cli.verify_stage_testing_cli._get_gitlab_headers")
     @patch("elliottlib.cli.verify_stage_testing_cli._get_session")
-    def test_label_found(self, mock_session, mock_headers):
+    def test_returns_labels(self, mock_session, mock_headers):
         mock_headers.return_value = {"PRIVATE-TOKEN": "token"}
         mock_response = MagicMock()
         mock_response.status_code = 200
         mock_response.json.return_value = {"labels": ["stage-testing-success", "other"]}
         mock_session.return_value.get.return_value = mock_response
 
-        result = _check_mr_label("https://gitlab.cee.redhat.com/group/project/-/merge_requests/1")
-        self.assertTrue(result)
+        result = _get_mr_labels("https://gitlab.cee.redhat.com/group/project/-/merge_requests/1")
+        self.assertEqual(result, ["stage-testing-success", "other"])
 
     @patch("elliottlib.cli.verify_stage_testing_cli._get_gitlab_headers")
     @patch("elliottlib.cli.verify_stage_testing_cli._get_session")
-    def test_label_not_found(self, mock_session, mock_headers):
+    def test_empty_labels(self, mock_session, mock_headers):
         mock_headers.return_value = {"PRIVATE-TOKEN": "token"}
         mock_response = MagicMock()
         mock_response.status_code = 200
-        mock_response.json.return_value = {"labels": ["stage-release-success"]}
+        mock_response.json.return_value = {"labels": []}
         mock_session.return_value.get.return_value = mock_response
 
-        result = _check_mr_label("https://gitlab.cee.redhat.com/group/project/-/merge_requests/1")
-        self.assertFalse(result)
+        result = _get_mr_labels("https://gitlab.cee.redhat.com/group/project/-/merge_requests/1")
+        self.assertEqual(result, [])
 
 
-class TestAddMrLabel(TestCase):
+class TestSetMrLabel(TestCase):
     @patch("elliottlib.cli.verify_stage_testing_cli._get_gitlab_headers")
     @patch("elliottlib.cli.verify_stage_testing_cli._get_session")
-    def test_add_label_success(self, mock_session, mock_headers):
+    def test_set_success_label(self, mock_session, mock_headers):
         mock_headers.return_value = {"PRIVATE-TOKEN": "token"}
         mock_response = MagicMock()
         mock_response.status_code = 200
         mock_session.return_value.put.return_value = mock_response
 
-        _add_mr_label("https://gitlab.cee.redhat.com/group/project/-/merge_requests/1")
+        _set_mr_label("https://gitlab.cee.redhat.com/group/project/-/merge_requests/1", "stage-testing-success")
 
         call_kwargs = mock_session.return_value.put.call_args
-        self.assertEqual(call_kwargs.kwargs["json"], {"add_labels": "stage-testing-success"})
+        json_body = call_kwargs.kwargs["json"]
+        self.assertEqual(json_body["add_labels"], "stage-testing-success")
+        removed = set(json_body["remove_labels"].split(","))
+        self.assertIn("stage-testing-fail", removed)
+        self.assertIn("stage-testing-triggered", removed)
+        self.assertNotIn("stage-testing-success", removed)
 
     @patch("elliottlib.cli.verify_stage_testing_cli._get_gitlab_headers")
     @patch("elliottlib.cli.verify_stage_testing_cli._get_session")
-    def test_add_label_http_error(self, mock_session, mock_headers):
+    def test_set_label_http_error(self, mock_session, mock_headers):
         mock_headers.return_value = {"PRIVATE-TOKEN": "token"}
         mock_response = MagicMock()
         mock_response.status_code = 403
@@ -244,7 +272,7 @@ class TestAddMrLabel(TestCase):
         mock_session.return_value.put.return_value = mock_response
 
         with self.assertRaises(ClickException):
-            _add_mr_label("https://gitlab.cee.redhat.com/group/project/-/merge_requests/1")
+            _set_mr_label("https://gitlab.cee.redhat.com/group/project/-/merge_requests/1", "stage-testing-success")
 
 
 class TestTriggerResult(TestCase):
@@ -306,3 +334,29 @@ class TestTriggerProwJob(TestCase):
 
         with self.assertRaises(ClickException):
             trigger_prow_job("4.22", "4.22.9")
+
+
+class TestHandleTrigger(TestCase):
+    @patch("elliottlib.cli.verify_stage_testing_cli.handle_verify_result")
+    @patch("elliottlib.cli.verify_stage_testing_cli._set_mr_label", side_effect=Exception("GitLab timeout"))
+    @patch(
+        "elliottlib.cli.verify_stage_testing_cli.trigger_prow_job", return_value=("job-789", "periodic-stage-testing")
+    )
+    @patch("elliottlib.cli.verify_stage_testing_cli._get_mr_labels", return_value=["stage-release-success"])
+    @patch(
+        "elliottlib.cli.verify_stage_testing_cli.get_assembly_shipment_url",
+        return_value="https://gitlab.example.com/project/-/merge_requests/1",
+    )
+    def test_label_failure_still_returns_trigger_result(
+        self, mock_shipment_url, mock_labels, mock_trigger, mock_set_label, mock_handle
+    ):
+        runtime = MagicMock()
+        runtime.group = "openshift-4.22"
+        runtime.assembly = "4.22.9"
+
+        _handle_trigger(runtime, "json")
+
+        mock_trigger.assert_called_once_with("4.22", "4.22.9")
+        result = mock_handle.call_args[0][0]
+        self.assertIsInstance(result, TriggerResult)
+        self.assertEqual(result.job_id, "job-789")
