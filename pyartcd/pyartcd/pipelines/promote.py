@@ -1140,7 +1140,11 @@ class PromotePipeline:
             cached_path = os.path.join(tarball_cache_dir, cache_key)
             if os.path.exists(cached_path):
                 self._logger.info("Using cached tarball for %s", url)
-                shutil.copy2(cached_path, dest_path)
+                try:
+                    shutil.copy2(cached_path, dest_path)
+                    return
+                except OSError:
+                    self._logger.warning("Cached tarball at %s could not be read; downloading it", cached_path)
                 return
 
         self._logger.info("Downloading source tarball from %s", url)
@@ -1152,7 +1156,10 @@ class PromotePipeline:
 
         # Cache for subsequent architectures
         if tarball_cache_dir:
-            shutil.copy2(dest_path, cached_path)
+            try:
+                shutil.copy2(dest_path, cached_path)
+            except OSError as err:
+                self._logger.warning("Failed to cache tarball at %s: %s", cached_path, err)
             self._logger.info("Cached tarball at %s", cached_path)
 
     async def sigstore_sign(
