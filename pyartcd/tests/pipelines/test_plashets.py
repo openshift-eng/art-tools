@@ -6,6 +6,24 @@ from pyartcd.pipelines.build_plashets import BuildPlashetsPipeline
 
 class TestBuildCompose(unittest.IsolatedAsyncioTestCase):
     @patch('pyartcd.jenkins.init_jenkins')
+    @patch('pyartcd.jenkins.start_build')
+    @patch('pyartcd.pipelines.build_plashets.build_plashets', new_callable=AsyncMock, return_value={})
+    async def test_dry_run_prepares_plashets_without_launching_ci_sync(self, build_plashets, submit, _init):
+        pipeline = BuildPlashetsPipeline(
+            runtime=MagicMock(dry_run=True),
+            group='openshift-5.1',
+            release='test',
+            assembly='stream',
+        )
+        pipeline.is_compose_build_permitted = AsyncMock(return_value=True)
+
+        await pipeline.run()
+
+        build_plashets.assert_awaited_once()
+        self.assertTrue(build_plashets.await_args.kwargs['dry_run'])
+        submit.assert_not_called()
+
+    @patch('pyartcd.jenkins.init_jenkins')
     @patch('pyartcd.jenkins.update_title')
     @patch('pyartcd.locks.LockManager.from_lock', return_value=AsyncMock)
     @patch('pyartcd.pipelines.build_plashets.build_plashets', return_value=AsyncMock)

@@ -258,9 +258,10 @@ class KonfluxOcpPipeline:
 
         try:
             await exectools.cmd_assert_async(cmd)
-            await update_rebase_fail_counters(
-                context=rebase_counter_context,
-            )
+            if not self.runtime.dry_run:
+                await update_rebase_fail_counters(
+                    context=rebase_counter_context,
+                )
 
         except ChildProcessError:
             with open(f'{self.runtime.doozer_working}/state.yaml') as state_yaml:
@@ -284,7 +285,8 @@ class KonfluxOcpPipeline:
 
             rebase_counter_context.failed_images = failed_images
             rebase_counter_context.skipped_due_to_parent = skipped_due_to_parent
-            await update_rebase_fail_counters(context=rebase_counter_context)
+            if not self.runtime.dry_run:
+                await update_rebase_fail_counters(context=rebase_counter_context)
 
             # Exclude images that failed or were skipped due to parent from the build step
             if self.build_plan.image_build_strategy == BuildStrategy.ALL:
@@ -461,6 +463,14 @@ class KonfluxOcpPipeline:
         )
 
     async def mirror_streams_to_ci(self):
+        if self.runtime.dry_run:
+            LOGGER.info('Not mirroring streams to CI in dry run mode')
+            return
+
+        if self.assembly != 'stream':
+            LOGGER.info('Not mirroring streams to CI for %s assembly', self.assembly)
+            return
+
         # If the API server builds, we mirror out the streams to CI. If ART builds a bad golang builder image it will
         # break CI builds for most upstream components if we don't catch it before we push. So we use apiserver as
         # bellwether to make sure that the current builder image is good enough. We can still break CI (e.g. pushing a
@@ -703,6 +713,10 @@ class KonfluxOcpPipeline:
     def trigger_bundle_build(self):
         if self.skip_bundle_build:
             LOGGER.warning("Skipping bundle build step because --skip-bundle-build flag is set")
+            return
+
+        if self.runtime.dry_run:
+            LOGGER.info('Not triggering bundle builds in dry run mode')
             return
 
         record_log = self.parse_record_log()
@@ -1018,7 +1032,7 @@ class KonfluxOcpPipeline:
         # ART-14540: Notify component owners about missing branch protection.
         # Only notify for stream assembly; non-stream assemblies (z-streams, ECs, RCs)
         # build from specific pinned commits and don't need these notifications.
-        if self.assembly == "stream":
+        if self.assembly == "stream" and not self.runtime.dry_run:
             record_log_path = Path(self.runtime.doozer_working) / "record.log"
             if record_log_path.exists():
                 await util.notify_branch_protection_missing(

@@ -1,11 +1,14 @@
 #!/usr/bin/env python3
 
 import os
+import tempfile
 import unittest
-from unittest.mock import AsyncMock, patch
+from pathlib import Path
+from unittest.mock import AsyncMock, MagicMock, patch
 
 from artcommonlib.variants import BuildVariant
 from pyartcd.counter_models import BuildFailCounterContext
+from pyartcd.pipelines.ocp4_konflux import KonfluxOcpPipeline
 from pyartcd.util import update_build_fail_counters
 
 
@@ -147,6 +150,118 @@ class TestUpdateBuildFailCounters(unittest.IsolatedAsyncioTestCase):
         )
 
         self.assertEqual(mock_increment.call_args.kwargs["build_variant"], "ocp")
+
+
+class TestDryRunSideEffects(unittest.IsolatedAsyncioTestCase):
+    def setUp(self):
+        self.temp_dir = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temp_dir.cleanup)
+
+    def make_pipeline(self, dry_run, assembly='stream'):
+        runtime = MagicMock(dry_run=dry_run, doozer_working=self.temp_dir.name)
+        pipeline = KonfluxOcpPipeline(
+            runtime=runtime,
+            assembly=assembly,
+            version='5.1',
+            data_path='https://github.com/example/ocp-build-data',
+            image_build_strategy='only',
+            image_list='example',
+            rpm_build_strategy='none',
+            build_priority='auto',
+        )
+        pipeline.group_images = ['example']
+        pipeline.build_plan.images_included = ['example']
+        pipeline._registry_auth_file = '/tmp/registry-auth.json'
+        return pipeline
+
+    async def test_rebase_dry_run_does_not_reset_or_increment_failure_counters(self):
+        for dry_run in (True, False):
+            for failed in (False, True):
+                with self.subTest(dry_run=dry_run, failed=failed):
+                    pipeline = self.make_pipeline(dry_run)
+                    Path(self.temp_dir.name, 'state.yaml').write_text(
+                        'images:konflux:rebase:\n'
+                        f'  failed-images: {"[example]" if failed else "[]"}\n'
+                        '  images:\n'
+                        f'    example:\n      status: {"failed" if failed else "success"}\n'
+                    )
+                    with (
+                        patch(
+                            'pyartcd.pipelines.ocp4_konflux.exectools.cmd_assert_async',
+                            new_callable=AsyncMock,
+                            side_effect=ChildProcessError('rebase failed') if failed else None,
+                        ) as command,
+                        patch('pyartcd.pipelines.ocp4_konflux.reset_fail_counter', new_callable=AsyncMock) as reset,
+                        patch(
+                            'pyartcd.pipelines.ocp4_konflux.increment_fail_counter', new_callable=AsyncMock
+                        ) as increment,
+                    ):
+                        await pipeline.rebase_images('v5.1.0', 'test')
+
+                    self.assertEqual('--push' in command.await_args.args[0], not dry_run)
+                    self.assertEqual(reset.await_count, int(not dry_run and not failed))
+                    self.assertEqual(increment.await_count, int(not dry_run and failed))
+                    if failed:
+                        self.assertEqual(pipeline.rebase_failures, ['example'])
+
+    async def test_ci_mirroring_requires_live_stream_build(self):
+        for dry_run in (True, False):
+            for assembly in ('stream', 'test', 'ec.1'):
+                with self.subTest(dry_run=dry_run, assembly=assembly):
+                    pipeline = self.make_pipeline(dry_run, assembly)
+                    pipeline.parse_record_log = MagicMock(
+                        return_value={'image_build_konflux': [{'name': 'ose-openshift-apiserver', 'status': '0'}]}
+                    )
+                    with patch(
+                        'pyartcd.pipelines.ocp4_konflux.exectools.cmd_assert_async', new_callable=AsyncMock
+                    ) as cmd:
+                        await pipeline.mirror_streams_to_ci()
+
+                    should_mirror = not dry_run and assembly == 'stream'
+                    self.assertEqual(cmd.await_count, int(should_mirror))
+                    if should_mirror:
+                        self.assertEqual(
+                            cmd.await_args.args[0][-4:],
+                            ['images:streams', 'mirror', '--registry-auth', '/tmp/registry-auth.json'],
+                        )
+                    else:
+                        pipeline.parse_record_log.assert_not_called()
+
+    async def test_simulated_operator_success_does_not_launch_bundle_job(self):
+        for dry_run in (True, False):
+            with self.subTest(dry_run=dry_run):
+                pipeline = self.make_pipeline(dry_run, assembly='test')
+                pipeline.parse_record_log = MagicMock(
+                    return_value={
+                        'image_build_konflux': [
+                            {'has_olm_bundle': '1', 'status': '0', 'nvrs': 'example-operator-v5.1.0-test'}
+                        ]
+                    }
+                )
+                with patch('pyartcd.jenkins.start_build') as submit:
+                    pipeline.trigger_bundle_build()
+
+                self.assertEqual(submit.call_count, int(not dry_run))
+                if not dry_run:
+                    self.assertEqual(submit.call_args.kwargs['params']['OPERATOR_NVRS'], 'example-operator-v5.1.0-test')
+
+    async def test_branch_protection_notification_requires_live_stream_build(self):
+        Path(self.temp_dir.name, 'record.log').touch()
+        for dry_run in (True, False):
+            for assembly in ('stream', 'test'):
+                with self.subTest(dry_run=dry_run, assembly=assembly):
+                    pipeline = self.make_pipeline(dry_run, assembly)
+                    pipeline.rebase_images = AsyncMock()
+                    pipeline.build_images = AsyncMock()
+                    with patch(
+                        'pyartcd.pipelines.ocp4_konflux.util.notify_branch_protection_missing', new_callable=AsyncMock
+                    ) as notify:
+                        await pipeline.rebase_and_build_images()
+
+                    self.assertEqual(notify.await_count, int(not dry_run and assembly == 'stream'))
+                    self.assertEqual(pipeline.runtime.new_mail_client.call_count, notify.await_count)
+                    pipeline.rebase_images.assert_awaited_once()
+                    pipeline.build_images.assert_awaited_once()
 
 
 if __name__ == "__main__":
