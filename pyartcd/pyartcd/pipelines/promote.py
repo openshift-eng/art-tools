@@ -939,8 +939,14 @@ class PromotePipeline:
         self, release_name: str, client_type: str, release_infos: Dict, message_digests: List[str]
     ):
         """Signs artifacts and publishes signature files to mirror"""
-        if self.signing_transport == "direct" and self.runtime.dry_run:
-            self._logger.info("[DRY RUN] Skipping direct signing")
+        for release_info in release_infos.values():
+            for manifest in release_info.get("manifests", []):
+                if manifest["platform"]["os"] != "linux":
+                    raise ValueError(
+                        "Unsupported OS %s in manifest list %s", manifest["platform"]["os"], release_info["image"]
+                    )
+        if self.runtime.dry_run:
+            self._logger.warning('[DRY RUN] Would sign and publish artifacts for %s', release_name)
             return
         if not self.signing_env:
             raise ValueError("--signing-env is missing")
@@ -969,10 +975,6 @@ class PromotePipeline:
                 # if this payload is a manifest list, iterate through each manifest
                 manifests = release_info.get("manifests", [])
                 for manifest in manifests:
-                    if manifest["platform"]["os"] != "linux":
-                        raise ValueError(
-                            "Unsupported OS %s in manifest list %s", manifest["platform"]["os"], release_info["image"]
-                        )
                     json_digests.append((version, pullspec, manifest["digest"]))
 
             for version, pullspec, digest in json_digests:
