@@ -50,6 +50,11 @@ Validations
 
 -  Stream is supported (if declared, value must match one of the entries in ``streams.yml``)
 -  Member exists (if declared, member must be another existing declaration under ``images/``)
+-  Go major/minor versions selected by ``from.builder`` and
+   ``content.source.ci_alignment.streams_prs.ci_build_root`` match when both can
+   be inferred from metadata. Resolves group variables, stream aliases, and
+   member base-image chains; compares pinned builder images with CI upstream
+   image tags. No registry queries are made, and unversioned toolchains are skipped.
 
 Artifact lockfile resources
 ---------------------------
