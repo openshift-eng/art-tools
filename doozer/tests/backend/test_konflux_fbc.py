@@ -1874,9 +1874,7 @@ class TestKonfluxFbcRebaser(unittest.IsolatedAsyncioTestCase):
             by_name["zero-trust-workload-identity-manager.v1.1.0"]["replaces"],
             "zero-trust-workload-identity-manager.v1.0.2",
         )
-        mid_stream_logs = [
-            c for c in logger.info.call_args_list if c.args and "Mid-stream insert" in str(c.args[0])
-        ]
+        mid_stream_logs = [c for c in logger.info.call_args_list if c.args and "Mid-stream insert" in str(c.args[0])]
         self.assertEqual(mid_stream_logs, [])
 
     @patch("doozerlib.opm.generate_dockerfile")
@@ -2032,9 +2030,7 @@ class TestKonfluxFbcRebaser(unittest.IsolatedAsyncioTestCase):
             by_name["zero-trust-workload-identity-manager.v1.1.2"]["replaces"],
             "zero-trust-workload-identity-manager.v1.1.0",
         )
-        mid_stream_logs = [
-            c for c in logger.info.call_args_list if c.args and "Mid-stream insert" in str(c.args[0])
-        ]
+        mid_stream_logs = [c for c in logger.info.call_args_list if c.args and "Mid-stream insert" in str(c.args[0])]
         self.assertEqual(mid_stream_logs, [])
 
     @patch("doozerlib.opm.generate_dockerfile")
@@ -2176,9 +2172,7 @@ class TestKonfluxFbcRebaser(unittest.IsolatedAsyncioTestCase):
         new_entry = next(e for e in entries if e["name"] == "cluster-logging.v4.21.0-202601010000")
 
         self.assertNotIn("replaces", new_entry)
-        mid_stream_logs = [
-            c for c in logger.info.call_args_list if c.args and "Mid-stream insert" in str(c.args[0])
-        ]
+        mid_stream_logs = [c for c in logger.info.call_args_list if c.args and "Mid-stream insert" in str(c.args[0])]
         self.assertEqual(mid_stream_logs, [])
 
     @patch("doozerlib.opm.generate_dockerfile")
