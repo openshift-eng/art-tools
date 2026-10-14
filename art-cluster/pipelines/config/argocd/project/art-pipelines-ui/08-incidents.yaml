@@ -1,0 +1,45 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: art-pipelines-incidents
+  namespace: art-pipelines-ui
+data:
+  incidents.json: |
+    {
+      "incidents": [
+        {
+          "id": "krb-2026-10-14",
+          "title": "Kerberos authentication is intermittent",
+          "message": "Issues with Kerberos may cause intermittent scan failures for layered products.",
+          "severity": "warning",
+          "status": "investigating",
+          "started": "2026-10-14T08:00:00Z",
+          "updated": "2026-10-14T10:30:00Z",
+          "links": []
+        }
+      ]
+    }
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: art-pipelines-ui-scope-incidents-admin
+rules:
+  - apiGroups: [""]
+    resources: [configmaps]
+    resourceNames: [art-pipelines-incidents]
+    verbs: [get, patch, update]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: art-pipelines-incidents-admins
+  namespace: art-pipelines-ui
+subjects:
+  - kind: Group
+    apiGroup: rbac.authorization.k8s.io
+    name: art-member
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: art-pipelines-ui-scope-incidents-admin

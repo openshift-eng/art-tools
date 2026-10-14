@@ -108,6 +108,23 @@ button { cursor: pointer; }
 .loading { display: flex; align-items: center; justify-content: center; min-height: 220px; }
 .empty { padding: 70px 20px; text-align: center; color: var(--ui-muted); background: var(--ui-surface); border: 1px dashed var(--ui-line); border-radius: 7px; }
 .notice { margin: 10px 0 20px; }
+.incident-banner { margin-top: 16px; }
+.incident-count { margin-left: 7px; vertical-align: 1px; }
+.incident-item { margin: 0 0 14px; }
+.incident-item p { margin: 10px 0 0; }
+.incident-meta, .incident-links { display: flex; align-items: center; flex-wrap: wrap; gap: 12px; color: var(--ui-muted); font-size: 13.75px; }
+.incident-meta { margin-top: 8px; }
+.incident-links { margin-top: 12px; }
+.incident-actions, .incident-heading-actions { display: flex; align-items: center; flex-wrap: wrap; gap: 9px; }
+.incident-actions { margin-top: 14px; }
+.incident-form-row { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+.incident-link-form { display: grid; grid-template-columns: minmax(130px, .8fr) minmax(0, 1.5fr) auto; align-items: center; gap: 8px; margin: 0 0 8px; }
+.field input { width: 100%; height: 42px; border: 1px solid var(--ui-control); border-radius: 5px; padding: 0 11px; color: var(--ui-text); background: var(--ui-surface); font-size: 13.75px; }
+.incident-links a { color: var(--ui-link); text-decoration: underline; text-underline-offset: 2px; }
+.resolved-incidents { margin-top: 32px; }
+.resolved-incidents h2 { margin: 0 0 14px; font-size: 20px; }
+.incident-empty h2 { margin-bottom: 8px; }
+.incident-empty p { margin: 0; color: var(--ui-muted); }
 
 .pf-v6-c-button.pf-m-primary { background: var(--ui-red); border-color: var(--ui-red); }
 .pf-v6-c-button.pf-m-primary:hover { background: var(--ui-red-hover); border-color: var(--ui-red-hover); }
@@ -281,6 +298,7 @@ button { cursor: pointer; }
 @media (max-width: 480px) {
   .definition-list > div { grid-template-columns: 1fr; }
   .metadata-row { grid-template-columns: 1fr; gap: 4px; }
+  .incident-form-row, .incident-link-form { grid-template-columns: 1fr; }
 }
 
 @media (max-width: 1280px) {

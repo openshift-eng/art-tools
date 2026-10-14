@@ -15,3 +15,6 @@ rules:
   - apiGroups: [results.tekton.dev]
     resources: [results, records, logs]
     verbs: [get, list]
+  - apiGroups: [authorization.k8s.io]
+    resources: [selfsubjectaccessreviews]
+    verbs: [create]

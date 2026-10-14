@@ -13,6 +13,12 @@ spec:
     server: https://kubernetes.default.svc
     namespace: art-pipelines-ui
   ignoreDifferences:
+    - group: ""
+      kind: ConfigMap
+      name: art-pipelines-incidents
+      namespace: art-pipelines-ui
+      jsonPointers:
+        - /data/incidents.json
     - group: apps
       kind: Deployment
       name: art-pipelines-ui
