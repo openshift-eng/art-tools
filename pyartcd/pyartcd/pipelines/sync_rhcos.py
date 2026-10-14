@@ -249,13 +249,13 @@ class SyncRhcosPipeline:
 
     async def _sign_sha256sum(self):
         """Sign sha256sum.txt via the configured transport and write sha256sum.txt.gpg."""
-        if self.signing_transport == "direct" and self.runtime.dry_run:
-            self.logger.info("[DRY RUN] Skipping direct sha256sum.txt signing")
-            return
         cert_file = os.environ.get("SIGNING_CERT")
         key_file = os.environ.get("SIGNING_KEY")
         if self.signing_transport == "umb" and (not cert_file or not key_file):
             self.logger.warning("SIGNING_CERT/SIGNING_KEY not set; skipping sha256sum.txt signing")
+            return
+        if self.runtime.dry_run:
+            self.logger.warning('[DRY RUN] Would sign sha256sum.txt for %s', self.version)
             return
 
         sig_keyname = PROD_SIGNING_KEY_NAME if self.signing_env == "prod" else STAGE_SIGNING_KEY_NAME

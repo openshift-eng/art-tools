@@ -47,6 +47,8 @@ class StageTestingPipeline:
 
     async def run(self) -> dict:
         """Check label, trigger if needed, and poll until completion."""
+        if self.runtime.dry_run:
+            return await self._trigger()
         label_result = await self._check_label()
         state = label_result.get("state", "not_started")
 
@@ -89,6 +91,9 @@ class StageTestingPipeline:
 
     async def _trigger(self) -> dict:
         """Call elliott verify-stage-testing --trigger to trigger the Prow job."""
+        if self.runtime.dry_run:
+            LOGGER.warning('[DRY RUN] Would trigger stage testing and update MR labels for %s', self.assembly)
+            return {"passed": False, "state": "dry_run", "terminal": True, "job_id": None}
         cmd = self._elliott_base + [
             "verify-stage-testing",
             "--trigger",
@@ -137,6 +142,9 @@ class StageTestingPipeline:
 
     async def _check_job(self, job_id: str) -> dict:
         """Run elliott verify-stage-testing --job-id and parse JSON output."""
+        if self.runtime.dry_run:
+            LOGGER.warning('[DRY RUN] Would check stage testing job %s and update MR labels', job_id)
+            return {"passed": False, "state": "dry_run", "terminal": True, "job_id": job_id}
         cmd = self._elliott_base + [
             "verify-stage-testing",
             f"--job-id={job_id}",
@@ -230,5 +238,5 @@ async def verify_stage_testing_cli(
             if result.get("label_added"):
                 click.echo("  Stage-testing label updated on MR")
 
-    if not result.get("passed"):
+    if not result.get("passed") and not runtime.dry_run:
         raise SystemExit(1)
