@@ -45,7 +45,10 @@ async def scan_and_trigger(runtime: Runtime):
         LOGGER.info("MR !%s — queueing verify-stage-testing for %s/%s", mr.iid, version, assembly)
         try:
             # The verify job waits for Prow and runs serially, so this scan must not wait for it to start.
-            jenkins.start_verify_stage_testing(version=version, assembly=assembly, block_until_building=False)
+            if not runtime.dry_run:
+                jenkins.start_verify_stage_testing(version=version, assembly=assembly, block_until_building=False)
+            else:
+                LOGGER.warning('[DRY RUN] Would trigger %s job for %s', 'verify-stage-testing', version)
         except Exception:
             LOGGER.exception("MR !%s — failed to trigger verify-stage-testing for %s", mr.iid, assembly)
 

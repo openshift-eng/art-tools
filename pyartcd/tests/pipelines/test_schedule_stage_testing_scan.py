@@ -16,6 +16,7 @@ def _make_mr(iid, title, labels):
 class TestScheduleStageTestingScan(unittest.IsolatedAsyncioTestCase):
     def setUp(self):
         self.runtime = MagicMock()
+        self.runtime.dry_run = False
 
     @patch("pyartcd.pipelines.scheduled.schedule_stage_testing_scan.jenkins")
     @patch("pyartcd.pipelines.scheduled.schedule_stage_testing_scan.GitLabClient")

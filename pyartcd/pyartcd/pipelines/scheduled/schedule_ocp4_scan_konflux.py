@@ -43,6 +43,10 @@ async def run_for(version: str, runtime: Runtime, lock_manager: LockManager, ser
         return
 
     # Schedule scan
+    if runtime.dry_run:
+        runtime.logger.warning('[DRY RUN] Would trigger %s job for %s', 'ocp4-scan-konflux', version)
+        span.set_attribute("triggered", False)
+        return
     span.set_attribute("triggered", True)
     if serial:
         runtime.logger.info('[%s] Scheduling ocp4-scan-konflux (serial: waiting for completion)', version)
