@@ -1386,12 +1386,26 @@ class KonfluxFbcRebaser:
                                 new_ver = self._extract_version_from_bundle_name(olm_bundle_name)
                                 head_ver = self._extract_version_from_bundle_name(current_head_name)
                                 if enable_mid_stream_rewire and new_ver < head_ver:
+                                    # Sort/rewire parses every channel entry; refuse mid-stream
+                                    # if any name is unparseable rather than crashing later.
+                                    for it in all_entries:
+                                        self._extract_version_from_bundle_name(it['name'])
                                     mid_stream_rewire = True
                                 else:
                                     replaces = current_head_name
-                            except ValueError:
+                            except ValueError as e:
                                 # Unparseable versions: fall back to tip-of-channel behavior
                                 replaces = current_head_name
+                                if enable_mid_stream_rewire:
+                                    logger.warning(
+                                        "FBC_ENABLE_MID_STREAM_REWIRE is set but cannot mid-stream "
+                                        "insert %s into channel %s (head %s); falling back to "
+                                        "replaces:HEAD. Reason: %s",
+                                        olm_bundle_name,
+                                        channel['name'],
+                                        current_head_name,
+                                        e,
+                                    )
 
                     channel['entries'].append(entry)
                     if mid_stream_rewire:

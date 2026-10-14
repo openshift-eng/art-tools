@@ -1735,6 +1735,158 @@ class TestKonfluxFbcRebaser(unittest.IsolatedAsyncioTestCase):
     @patch("pathlib.Path.open")
     @patch("doozerlib.backend.konflux_fbc.KonfluxFbcRebaser._fetch_olm_bundle_image_info", new_callable=AsyncMock)
     @patch("doozerlib.backend.konflux_fbc.KonfluxFbcRebaser._fetch_olm_bundle_blob", new_callable=AsyncMock)
+    async def test_rebase_mid_stream_unparseable_entry_falls_back_with_warning(
+        self,
+        mock_fetch_olm_bundle_blob,
+        mock_fetch_olm_bundle_image_info,
+        mock_open,
+        mock_is_file,
+        mock_mkdir,
+        MockDockerfileParser,
+        mock_get_referenced_images,
+        mock_load_csv_from_bundle,
+        mock_path_unlink,
+        mock_generate_dockerfile,
+    ):
+        """With mid-stream enabled, unparseable channel entry falls back to HEAD with a warning."""
+        rebaser = KonfluxFbcRebaser(
+            base_dir=self.base_dir,
+            group="zero-trust-1.0",
+            assembly=self.assembly,
+            version="1.0.3",
+            release="1",
+            commit_message="test",
+            push=False,
+            fbc_repo="https://example.com/fbc.git",
+            upcycle=False,
+        )
+
+        metadata = MagicMock(spec=ImageMetadata)
+        metadata.distgit_key = "zero-trust-workload-identity-manager"
+        metadata.runtime = MagicMock()
+        metadata.runtime.group_config = MagicMock()
+        metadata.runtime.group_config.vars = MagicMock()
+        metadata.runtime.group_config.vars.MAJOR = "4"
+        metadata.runtime.group_config.vars.MINOR = "21"
+        metadata.runtime.group_config.vars.FBC_DISABLE_CHANNEL_SKIPS = False
+        metadata.runtime.group_config.vars.FBC_ENABLE_MID_STREAM_REWIRE = True
+        metadata.runtime.konflux_db = MagicMock()
+        metadata.config = MagicMock()
+        metadata.config.delivery = MagicMock()
+        metadata.config.delivery.delivery_repo_names = ["zt-repo"]
+        metadata.get_olm_bundle_delivery_repo_name.return_value = "zt-repo"
+
+        build_repo = MagicMock()
+        build_repo.local_dir = self.base_dir
+
+        bundle_build = MagicMock(
+            spec=KonfluxBundleBuildRecord,
+            nvr="zt-operator-bundle-1.0.3-1",
+            operator_nvr="zt-operator-1.0.3-1",
+            operand_nvrs=[],
+            image_pullspec="example.com/zt-bundle@sha256:abc",
+            image_tag="abc123",
+            source_repo="https://example.com/zt-operator.git",
+            commitish="abc123def",
+        )
+
+        mock_fetch_olm_bundle_image_info.return_value = {
+            "config": {
+                "config": {
+                    "Labels": {
+                        "name": "zt-operator",
+                        "operators.operatorframework.io.bundle.channels.v1": "stable-v1",
+                        "operators.operatorframework.io.bundle.channel.default.v1": "stable-v1",
+                        "operators.operatorframework.io.bundle.package.v1": "openshift-zt",
+                        "operators.operatorframework.io.bundle.manifests.v1": "manifests/",
+                    },
+                },
+            },
+        }
+        mock_fetch_olm_bundle_blob.return_value = (
+            "zero-trust-workload-identity-manager.v1.0.3",
+            "openshift-zt",
+            {
+                "schema": "olm.bundle",
+                "name": "zero-trust-workload-identity-manager.v1.0.3",
+                "package": "openshift-zt",
+                "properties": [],
+                "relatedImages": [{"name": "", "image": "example.com/zt-bundle@sha256:abc"}],
+            },
+        )
+
+        org_catalog_blobs = [
+            {"schema": "olm.package", "name": "openshift-zt", "defaultChannel": "stable-v1"},
+            {
+                "schema": "olm.channel",
+                "name": "stable-v1",
+                "package": "openshift-zt",
+                "entries": [
+                    {"name": "zero-trust-workload-identity-manager.v1.0.2"},
+                    {
+                        # Unparseable legacy name — would crash sort if mid-stream proceeded
+                        "name": "zero-trust-workload-identity-manager-legacy",
+                        "replaces": "zero-trust-workload-identity-manager.v1.0.2",
+                    },
+                    {
+                        "name": "zero-trust-workload-identity-manager.v1.1.2",
+                        "replaces": "zero-trust-workload-identity-manager-legacy",
+                    },
+                ],
+            },
+            {
+                "schema": "olm.bundle",
+                "name": "zero-trust-workload-identity-manager.v1.0.2",
+                "package": "openshift-zt",
+                "properties": [],
+                "relatedImages": [],
+            },
+        ]
+
+        org_catalog_file = StringIO()
+        yaml.dump_all(org_catalog_blobs, org_catalog_file)
+        org_catalog_file.seek(0)
+        result_catalog_file = StringIO()
+        images_mirror_set_file = StringIO()
+        mock_open.return_value.__enter__.side_effect = [org_catalog_file, result_catalog_file, images_mirror_set_file]
+        mock_get_referenced_images.return_value = []
+        mock_load_csv_from_bundle.return_value = {
+            "metadata": {"name": "zero-trust-workload-identity-manager", "annotations": {}},
+            "spec": {"icon": []},
+        }
+        MockDockerfileParser.return_value.envs = {}
+        MockDockerfileParser.return_value.labels = {}
+        mock_generate_dockerfile.return_value = None
+
+        logger = MagicMock()
+        await rebaser._rebase_dir(metadata, build_repo, bundle_build, "1.0.3", "1", logger)
+
+        result_catalog_file.seek(0)
+        result_catalog_blobs = rebaser._catagorize_catalog_blobs(list(yaml.load_all(result_catalog_file)))
+        entries = result_catalog_blobs["openshift-zt"]["olm.channel"]["stable-v1"]["entries"]
+        by_name = {e["name"]: e for e in entries}
+
+        self.assertEqual(
+            by_name["zero-trust-workload-identity-manager.v1.0.3"]["replaces"],
+            "zero-trust-workload-identity-manager.v1.1.2",
+        )
+        mid_stream_logs = [c for c in logger.info.call_args_list if c.args and "Mid-stream insert" in str(c.args[0])]
+        self.assertEqual(mid_stream_logs, [])
+        warning_logs = [
+            c for c in logger.warning.call_args_list if c.args and "falling back to replaces:HEAD" in str(c.args[0])
+        ]
+        self.assertEqual(len(warning_logs), 1)
+
+    @patch("doozerlib.opm.generate_dockerfile")
+    @patch("pathlib.Path.unlink")
+    @patch("doozerlib.backend.konflux_fbc.KonfluxFbcRebaser._load_csv_from_bundle")
+    @patch("doozerlib.backend.konflux_fbc.KonfluxFbcRebaser._get_referenced_images")
+    @patch("doozerlib.backend.konflux_fbc.DockerfileParser")
+    @patch("pathlib.Path.mkdir")
+    @patch("pathlib.Path.is_file", return_value=True)
+    @patch("pathlib.Path.open")
+    @patch("doozerlib.backend.konflux_fbc.KonfluxFbcRebaser._fetch_olm_bundle_image_info", new_callable=AsyncMock)
+    @patch("doozerlib.backend.konflux_fbc.KonfluxFbcRebaser._fetch_olm_bundle_blob", new_callable=AsyncMock)
     async def test_rebase_mid_stream_without_flag_keeps_replaces_head(
         self,
         mock_fetch_olm_bundle_blob,
