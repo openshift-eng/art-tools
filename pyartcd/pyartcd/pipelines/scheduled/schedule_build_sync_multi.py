@@ -28,6 +28,9 @@ async def run_for(version: str, runtime: Runtime, lock_manager: LockManager) -> 
 
     # Trigger build-sync-multi and wait for it to complete before returning
     runtime.logger.info('[%s] Starting build-sync-multi and waiting for completion', version)
+    if runtime.dry_run:
+        runtime.logger.warning('[DRY RUN] Would trigger %s job for %s', 'build-sync-multi', version)
+        return False
     result = jenkins.start_build_sync_multi(
         version=version,
         block_until_building=True,

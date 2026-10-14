@@ -64,6 +64,9 @@ async def run_for(group: str, runtime: Runtime, serial: bool = False):
 
     # Include both latest and corresponding so the latest build is a fallback when the corresponding build does not exist.
     # Duplicate entries are removed in build/build-conforma-verify.
+    if runtime.dry_run:
+        runtime.logger.warning('[DRY RUN] Would trigger %s job for %s', 'build-conforma-verify', group)
+        return
     if serial:
         result = jenkins.start_build_conforma_verify(
             group=group,

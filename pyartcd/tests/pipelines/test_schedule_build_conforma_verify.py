@@ -12,6 +12,7 @@ from pyartcd.pipelines.scheduled import schedule_build_conforma_verify as schedu
 
 def _runtime():
     runtime = MagicMock()
+    runtime.dry_run = False
     runtime.working_dir = MagicMock()
     runtime.logger = MagicMock()
     return runtime
