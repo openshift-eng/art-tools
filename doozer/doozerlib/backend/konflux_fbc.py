@@ -1362,9 +1362,10 @@ class KonfluxFbcRebaser:
                 else:
                     # For an operator bundle that uses replaces -- such as OADP.
                     # Default (tip-of-channel): new bundle replaces the current head.
-                    # Mid-stream exception (LP only): if the new CSV version is older than
-                    # the head (e.g. 1.0.3 while head is 1.1.2 in a shared channel), insert
-                    # by version order and rebuild the replaces chain instead.
+                    # Opt-in mid-stream exception (LP only, FBC_ENABLE_MID_STREAM_REWIRE):
+                    # if the new CSV version is older than the head (e.g. 1.0.3 while head
+                    # is 1.1.2 in a shared channel), insert by version order and rebuild
+                    # the replaces chain instead. Unset/false keeps historical HEAD-append.
                     replaces = None
                     mid_stream_rewire = False
                     current_head_name = None
@@ -1378,10 +1379,13 @@ class KonfluxFbcRebaser:
                         current_head = next((it for it in all_entries if it['name'] not in superseded_names), None)
                         if current_head:
                             current_head_name = current_head['name']
+                            enable_mid_stream_rewire = bool(
+                                getattr(group_config.vars, "FBC_ENABLE_MID_STREAM_REWIRE", False)
+                            )
                             try:
                                 new_ver = self._extract_version_from_bundle_name(olm_bundle_name)
                                 head_ver = self._extract_version_from_bundle_name(current_head_name)
-                                if new_ver < head_ver:
+                                if enable_mid_stream_rewire and new_ver < head_ver:
                                     mid_stream_rewire = True
                                 else:
                                     replaces = current_head_name
