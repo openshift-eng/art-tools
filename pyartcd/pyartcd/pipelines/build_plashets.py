@@ -56,6 +56,10 @@ class BuildPlashetsPipeline:
         # Build plashets
         await self.build()
 
+        if self.runtime.dry_run:
+            self.runtime.logger.info('Not triggering CI sync in dry run mode')
+            return
+
         if self.assembly != 'stream':
             return
 

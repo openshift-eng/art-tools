@@ -5,7 +5,6 @@ import os
 import pprint
 import re
 import traceback
-import uuid
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
@@ -1184,6 +1183,10 @@ class KonfluxImageBuilder:
         released_pullspec='',
     ) -> Optional[KonfluxBuildRecord]:
         logger = self._logger.getChild(f"[{metadata.distgit_key}]")
+        if self._config.dry_run:
+            logger.info('Dry run: Not writing %s build record to Konflux DB', outcome)
+            return None
+
         if not metadata.runtime.konflux_db:
             logger.warning('Konflux DB connection is not initialized, not writing build record to the Konflux DB.')
             return None
@@ -1205,11 +1208,7 @@ class KonfluxImageBuilder:
         pipelinerun_dict = pipelinerun_info.to_dict()
         pipelinerun_name = pipelinerun_info.name
         # Pipelinerun names will eventually repeat over time, so also gather the pipelinerun uid
-        if self._config.dry_run:
-            # Mock uid for dry-run mode with zero UUID
-            pipelinerun_uid = str(uuid.UUID(int=0))
-        else:
-            pipelinerun_uid = pipelinerun_dict['metadata']['uid']
+        pipelinerun_uid = pipelinerun_dict['metadata']['uid']
         build_pipeline_url = self._konflux_client.resource_url(pipelinerun_dict)
         build_component = pipelinerun_dict['metadata']['labels']['appstudio.openshift.io/component']
 

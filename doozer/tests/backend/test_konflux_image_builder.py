@@ -438,6 +438,39 @@ class TestKonfluxImageBuilder(unittest.IsolatedAsyncioTestCase):
         await asyncio.wait_for(next_task, timeout=2)
         self.assertFalse(self.builder._bigquery_write_semaphore.locked())
 
+    async def test_dry_run_skips_all_database_outcomes_and_taskrun_writes(self):
+        self.builder._config.dry_run = True
+        metadata = self._metadata()
+        build_repo = MagicMock(local_dir=Path(self.temp_dir.name))
+        pipelinerun = PipelineRunInfo(
+            {
+                'metadata': {
+                    'name': 'test-dry-run',
+                    'uid': 'test-uid',
+                    'labels': {'appstudio.openshift.io/component': 'test-component'},
+                }
+            },
+            {},
+        )
+        with (
+            patch('doozerlib.backend.konflux_image_builder.DockerfileParser') as parser,
+            patch.object(self.builder, 'extract_parent_image_nvrs', new=AsyncMock(return_value=[])) as parents,
+            patch.object(self.builder, '_run_bigquery_write', new=AsyncMock()) as write,
+            patch('doozerlib.backend.konflux_image_builder.bigquery.BigQueryClient') as taskrun_client,
+        ):
+            for outcome in (KonfluxBuildOutcome.PENDING, KonfluxBuildOutcome.SUCCESS, KonfluxBuildOutcome.FAILURE):
+                with self.subTest(outcome=outcome):
+                    result = await self.builder.update_konflux_db(
+                        metadata, build_repo, pipelinerun, outcome, ['x86_64'], '5'
+                    )
+                    self.assertIsNone(result)
+
+            metadata.runtime.konflux_db.add_build.assert_not_called()
+            write.assert_not_awaited()
+            taskrun_client.assert_not_called()
+            parser.assert_not_called()
+            parents.assert_not_awaited()
+
     async def test_update_konflux_db_keeps_event_loop_responsive_during_bigquery_writes(self):
         metadata = self._metadata()
         build_repo = MagicMock(
