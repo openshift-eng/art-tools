@@ -28,7 +28,7 @@ class TestScheduleStageTestingScan(unittest.IsolatedAsyncioTestCase):
         await scan_and_trigger(self.runtime)
 
         mock_jenkins.start_verify_stage_testing.assert_called_once_with(
-            version="4.22", assembly="4.22.9", block_until_building=True
+            version="4.22", assembly="4.22.9", block_until_building=False
         )
 
     @patch("pyartcd.pipelines.scheduled.schedule_stage_testing_scan.jenkins")
