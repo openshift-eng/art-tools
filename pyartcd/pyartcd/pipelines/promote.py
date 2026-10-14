@@ -1142,7 +1142,6 @@ class PromotePipeline:
                 self._logger.info("Using cached tarball for %s", url)
                 try:
                     shutil.copy2(cached_path, dest_path)
-                    return
                 except OSError:
                     self._logger.warning("Cached tarball at %s could not be read; downloading it", cached_path)
                 return
