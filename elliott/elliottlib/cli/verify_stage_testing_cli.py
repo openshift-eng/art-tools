@@ -8,6 +8,7 @@ from typing import Optional
 import click
 import requests
 import yaml
+from artcommonlib.util import get_release_name
 from requests.adapters import HTTPAdapter
 from urllib3.util import Retry
 
@@ -364,7 +365,7 @@ def verify_stage_testing_cli(runtime, job_id, trigger, output):
 
 def _handle_trigger(runtime, output):
     version = runtime.group.split("-")[-1]
-    assembly = runtime.assembly
+    release_name = get_release_name(runtime.assembly_type, runtime.group, runtime.assembly)
 
     mr_url = get_assembly_shipment_url(runtime, required=True)
     labels = _get_mr_labels(mr_url)
@@ -375,7 +376,7 @@ def _handle_trigger(runtime, output):
             "Stage release (payload + FBC merge) must complete first."
         )
 
-    job_id, job_name = trigger_prow_job(version, assembly)
+    job_id, job_name = trigger_prow_job(version, release_name)
     try:
         _set_mr_label(mr_url, STAGE_TESTING_TRIGGERED_LABEL)
     except Exception as exc:

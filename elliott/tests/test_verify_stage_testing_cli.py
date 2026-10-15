@@ -1,6 +1,7 @@
 from unittest import TestCase
 from unittest.mock import MagicMock, patch
 
+from artcommonlib.assembly import AssemblyTypes
 from click import ClickException
 from elliottlib.cli.verify_stage_testing_cli import (
     LabelCheckResult,
@@ -353,6 +354,7 @@ class TestHandleTrigger(TestCase):
         runtime = MagicMock()
         runtime.group = "openshift-4.22"
         runtime.assembly = "4.22.9"
+        runtime.assembly_type = AssemblyTypes.STANDARD
 
         _handle_trigger(runtime, "json")
 
