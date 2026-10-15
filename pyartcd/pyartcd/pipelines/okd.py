@@ -760,7 +760,7 @@ class KonfluxOkdPipeline:
             self.logger.warning('No images were successfully built; skipping CoreOS imagestream mirroring')
             return
 
-        if self.version != '4.23':
+        if self.version != '5.1':
             self.logger.info(
                 'Version %s CoreOS mirroring is handled by openshift/release postsubmits; skipping ART mirror',
                 self.version,
@@ -769,14 +769,11 @@ class KonfluxOkdPipeline:
 
         tags_to_mirror = ['stream-coreos', 'stream-coreos-extensions']
 
-        # 4.23 has no own scos-4.23 stream; it sources from scos-5.0.
-        source_version = '5.0'
-
         if self.runtime.dry_run:
             self.logger.info('[DRY RUN] Would mirror CoreOS imagestream tags')
             for tag in tags_to_mirror:
                 self.logger.info(
-                    f'[DRY RUN] From: {REGISTRY_QUAY_PROXY_CI}:{self.imagestream_namespace}_scos-{source_version}_{tag}'
+                    f'[DRY RUN] From: {REGISTRY_QUAY_PROXY_CI}:{self.imagestream_namespace}_scos-{self.version}_{tag}'
                 )
                 self.logger.info(f'[DRY RUN] To: {self.imagestream_namespace}/scos-{self.version}-art:{tag}')
             return
@@ -784,7 +781,7 @@ class KonfluxOkdPipeline:
         env = os.environ.copy()
 
         for tag in tags_to_mirror:
-            source_pullspec = f'{REGISTRY_QUAY_PROXY_CI}:{self.imagestream_namespace}_scos-{source_version}_{tag}'
+            source_pullspec = f'{REGISTRY_QUAY_PROXY_CI}:{self.imagestream_namespace}_scos-{self.version}_{tag}'
             target_tag = f'{self.imagestream_namespace}/scos-{self.version}-art:{tag}'
 
             self.logger.info('Mirroring CoreOS imagestream from %s to %s', source_pullspec, target_tag)
