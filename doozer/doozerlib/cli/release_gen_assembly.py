@@ -599,8 +599,17 @@ class GenAssemblyCli:
                         # When RHCOS 5.x images exist in their own repository, this should be updated to
                         # use the actual OCP major version: get_art_prod_image_repo_for_version(major, "dev")
                         art_repo = get_art_prod_image_repo_for_version(4, "dev")
+                        labels = amd64_rhcos_info['config']['config'].get('Labels') or {}
+                        manifest_list_tag = labels.get('coreos.build.manifest-list-tag')
+                        if not manifest_list_tag:
+                            self._exit_with_error(
+                                f'RHCOS image for {tag.name} (x86_64) is missing the '
+                                f'"coreos.build.manifest-list-tag" label. '
+                                f'This label is required to locate the manifest list for other architectures. '
+                                f'Pullspec: {self.rhcos_by_tag[tag.name]["x86_64"]}'
+                            )
                         rhcos_info = util.oc_image_info_for_arch(
-                            f"{art_repo}:{amd64_rhcos_info['config']['config']['Labels']['coreos.build.manifest-list-tag']}",
+                            f"{art_repo}:{manifest_list_tag}",
                             go_arch_for_brew_arch(arch),
                             registry_config=self.runtime.registry_config,
                         )
