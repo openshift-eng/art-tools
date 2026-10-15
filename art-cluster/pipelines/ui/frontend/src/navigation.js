@@ -14,12 +14,12 @@ export function parseHash(hash = window.location.hash) {
       tab: tabs.includes(params.get('tab')) ? params.get('tab') : 'details',
     };
   }
-  return { kind: ['runs', 'health'].includes(kind) ? kind : 'pipelines', filterNamespace };
+  return { kind: ['runs', 'health', 'incidents'].includes(kind) ? kind : 'pipelines', filterNamespace };
 }
 
 export function viewHref(view) {
   const params = new URLSearchParams();
-  let path = ['runs', 'health'].includes(view.kind) ? view.kind : 'pipelines';
+  let path = ['runs', 'health', 'incidents'].includes(view.kind) ? view.kind : 'pipelines';
   if (view.kind === 'pipeline' || view.kind === 'run') {
     path = `${view.kind}/${encodeURIComponent(view.namespace)}/${encodeURIComponent(view.name)}`;
     if (view.kind === 'run' && view.uid) params.set('uid', view.uid);

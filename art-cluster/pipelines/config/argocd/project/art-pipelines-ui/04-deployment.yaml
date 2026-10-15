@@ -39,6 +39,8 @@ spec:
               value: "1"
             - name: RESULTS_PAGE_SIZE
               value: "1000"
+            - name: INCIDENTS_FILE
+              value: /etc/incidents/incidents.json
           ports:
             - name: app
               containerPort: 8080
@@ -71,6 +73,9 @@ spec:
             - name: kube-ca
               mountPath: /var/run/secrets/kube-ca
               readOnly: true
+            - name: incidents
+              mountPath: /etc/incidents
+              readOnly: true
             - name: app-tmp
               mountPath: /tmp
         - name: oauth-proxy
@@ -91,9 +96,9 @@ spec:
             - --tls-cert=/etc/tls/private/tls.crt
             - --tls-key=/etc/tls/private/tls.key
             - --cookie-secret-file=/var/run/oauth-secrets/cookie-secret
-            - --cookie-name=_art_pipelines_ui_scoped
+            - --cookie-name=_art_pipelines_ui_scoped_incidents
             - --pass-access-token=true
-            - --scope=user:info role:art-pipelines-ui-scope:*
+            - --scope=user:info role:art-pipelines-ui-scope:* role:art-pipelines-ui-scope-incidents-admin:art-pipelines-ui
             - --skip-auth-regex=^/api/health$
             - --upstream-timeout=120s
           ports:
@@ -141,6 +146,12 @@ spec:
         - name: kube-ca
           configMap:
             name: kube-root-ca.crt
+        - name: incidents
+          configMap:
+            name: art-pipelines-incidents
+            items:
+              - key: incidents.json
+                path: incidents.json
         - name: app-tmp
           emptyDir: {}
         - name: proxy-tmp

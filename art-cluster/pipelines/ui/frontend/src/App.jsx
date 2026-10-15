@@ -3,6 +3,8 @@ import { Alert, Button, Label, Spinner, Title } from '@patternfly/react-core';
 import { AuthenticationError, createApi } from './api';
 import PipelineHealth from './PipelineHealth';
 import Components from './Components';
+import Incidents from './Incidents';
+import IncidentBanner from './IncidentBanner';
 import { isPlainClick, navigateRow, parseHash, pipelineTabs, runTabs, viewHref } from './navigation';
 
 const api = createApi();
@@ -139,6 +141,18 @@ function App() {
   const [error, setError] = useState('');
   const [authenticationError, setAuthenticationError] = useState(null);
   const [theme, setTheme] = useState(() => document.documentElement.dataset.theme || 'light');
+  const [incidentFeed, setIncidentFeed] = useState({ incidents: [], canManage: false, error: '' });
+  const activeIncidents = incidentFeed.incidents.filter((incident) => !['resolved', 'deleted'].includes(incident.status));
+
+  useEffect(() => {
+    let active = true;
+    const refreshIncidents = () => request('/api/incidents')
+      .then((data) => { if (active) setIncidentFeed({ incidents: data.incidents || [], canManage: data.canManage === true, error: '' }); })
+      .catch((cause) => { if (active) setIncidentFeed({ incidents: [], canManage: false, error: cause.message }); });
+    refreshIncidents();
+    const timer = window.setInterval(refreshIncidents, 30000);
+    return () => { active = false; window.clearInterval(timer); };
+  }, []);
 
   useEffect(() => {
     document.documentElement.dataset.theme = theme;
@@ -157,6 +171,7 @@ function App() {
   }, []);
 
   return <div className="app-shell">
+    <IncidentBanner incidents={incidentFeed.incidents} error={incidentFeed.error} />
     <header className="topbar">
       <a className="brand" href={viewHref({ kind: 'pipelines', filterNamespace: namespace })}>
         <span className="brand-mark">ART</span><span>Pipelines</span><span className="beta-badge">Beta</span>
@@ -165,6 +180,7 @@ function App() {
         <a className={view.kind === 'pipelines' || view.kind === 'pipeline' ? 'nav active' : 'nav'} href={viewHref({ kind: 'pipelines', filterNamespace: namespace })}>Pipelines</a>
         <a className={view.kind === 'runs' || view.kind === 'run' ? 'nav active' : 'nav'} href={viewHref({ kind: 'runs', filterNamespace: namespace })}>PipelineRuns</a>
         <a className={view.kind === 'health' ? 'nav active' : 'nav'} href={viewHref({ kind: 'health', filterNamespace: namespace })}>PipelineHealth</a>
+        <a className={view.kind === 'incidents' ? 'nav active' : 'nav'} href={viewHref({ kind: 'incidents', filterNamespace: namespace })}>Incidents{activeIncidents.length > 0 && <Label color="orange" className="incident-count">{activeIncidents.length}</Label>}</a>
       </nav>
       <div className="topbar-right">
         <select className="namespace-select" value={namespace} onChange={(event) => {
@@ -188,6 +204,14 @@ function App() {
         {view.kind === 'pipelines' && <Pipelines namespace={namespace} />}
         {view.kind === 'runs' && <Runs namespace={namespace} />}
         {view.kind === 'health' && <PipelineHealth namespace={namespace} request={request} />}
+        {view.kind === 'incidents' && <Incidents
+          incidents={incidentFeed.incidents}
+          canManage={incidentFeed.canManage}
+          csrfToken={session?.csrfToken}
+          error={incidentFeed.error}
+          onChange={(data) => setIncidentFeed({ incidents: data.incidents || [], canManage: data.canManage === true, error: '' })}
+          request={request}
+        />}
         {view.kind === 'pipeline' && <PipelineDetail view={view} csrfToken={session?.csrfToken} />}
         {view.kind === 'run' && <RunDetail view={view} csrfToken={session?.csrfToken} />}
       </>}
