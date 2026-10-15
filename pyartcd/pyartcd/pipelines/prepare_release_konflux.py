@@ -1509,12 +1509,12 @@ class PrepareReleaseKonfluxPipeline:
             self.logger.info("[DRY-RUN] Would have triggered verify-cdn-push for %s/%s", version, self.assembly)
             return
         try:
-            url = jenkins.start_verify_cdn_push(
+            jenkins.start_verify_cdn_push(
                 version=version,
                 assembly=self.assembly,
                 block_until_building=False,
             )
-            self.logger.info("Triggered verify-cdn-push job for %s/%s: %s", version, self.assembly, url)
+            self.logger.info("Triggered verify-cdn-push job for %s/%s", version, self.assembly)
         except Exception as ex:
             self.logger.warning("Failed to trigger verify-cdn-push: %s", ex)
 
