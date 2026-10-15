@@ -684,7 +684,7 @@ class TestKonfluxFbcRebaser(unittest.IsolatedAsyncioTestCase):
         expected_labels = {
             "io.openshift.build.source-location": "https://example.com/foo-operator.git",
             "io.openshift.build.commit.id": "beefdead",
-            "com.redhat.art.bundle.pullspec": f"dev.example.com/foo-bundle@{bundle_digest}",
+            "com.redhat.art.bundle.pullspec": f"registry.redhat.io/openshift4/foo-bundle@{bundle_digest}",
         }
         for k, v in expected_labels.items():
             self.assertIn(k, mock_dfp.labels)
@@ -720,6 +720,7 @@ class TestKonfluxFbcRebaser(unittest.IsolatedAsyncioTestCase):
         bundle_blob = result_catalog_blobs["test-package"]["olm.bundle"]["test-bundle-name.1.2.3"]
         delivery_pullspec = f"registry.redhat.io/openshift4/foo-bundle@{bundle_digest}"
         self.assertEqual(bundle_blob["image"], delivery_pullspec)
+        self.assertEqual(mock_dfp.labels["com.redhat.art.bundle.pullspec"], delivery_pullspec)
         self.assertEqual(bundle_blob["relatedImages"][0]["image"], delivery_pullspec)
 
         images_mirror_set_file.seek(0)
@@ -749,7 +750,10 @@ class TestKonfluxFbcRebaser(unittest.IsolatedAsyncioTestCase):
 
             await self.rebaser._rebase_dir(metadata, build_repo, bundle_build, version, release, logger)
 
-            self.assertEqual(mock_dfp.labels["com.redhat.art.bundle.pullspec"], bundle_build.image_pullspec)
+            self.assertEqual(
+                mock_dfp.labels["com.redhat.art.bundle.pullspec"],
+                f"registry.redhat.io/openshift4/foo-bundle@sha256:{'b' * 64}",
+            )
             self.assertEqual(mock_dfp.envs["__doozer_bundle_nvrs"], bundle_build.nvr)
 
     @patch("doozerlib.opm.generate_dockerfile")
