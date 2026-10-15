@@ -1,3 +1,4 @@
+import asyncio
 import json
 import logging
 from typing import Dict, List, Optional
@@ -9,6 +10,7 @@ from artcommonlib.model import Missing
 
 from elliottlib import Runtime
 from elliottlib.cli.common import cli, click_coroutine
+from elliottlib.cli.find_builds_cli import _is_image_released
 from elliottlib.constants import errata_url
 from elliottlib.errata import get_advisory_nvrs, get_brew_build, get_raw_erratum
 from elliottlib.shipment_utils import get_builds_from_mr
@@ -174,16 +176,72 @@ class VerifyPayloadPipeline:
 
         missing_in_errata = {}
         payload_doesnt_match_errata = {}
+        in_shipped_advisory = []
         results = {
             'missing_in_advisory': missing_in_errata,
             'payload_advisory_mismatch': payload_doesnt_match_errata,
+            'in_shipped_advisory': in_shipped_advisory,
         }
 
         self.logger.info("Analyzing %s images to consider from payload", len(self.all_payload_nvrs))
 
         self._populate_payload_match_errata(payload_doesnt_match_errata, missing_in_errata)
+        await self._populate_missing_in_shipped_konflux(missing_in_errata, in_shipped_advisory)
 
         return results
+
+    async def _populate_missing_in_shipped_konflux(self, missing_in_errata, in_shipped_advisory):
+        """
+        Check if missing Konflux images are already shipped on registry.redhat.io.
+        For each missing image, look up its delivery repos and check if the image
+        tag exists on registry.redhat.io. If found, remove from missing_in_errata
+        and add to in_shipped_advisory.
+        """
+
+        if not missing_in_errata:
+            return
+
+        # Build a mapping from component name (NVR name) to ImageMetadata
+        component_name_to_meta = {}
+        for meta in self.runtime.image_metas():
+            component_name_to_meta[meta.get_component_name()] = meta
+
+        semaphore = asyncio.Semaphore(30)
+
+        async def _check_with_limit(delivery_repo, version, release):
+            async with semaphore:
+                return await _is_image_released(
+                    delivery_repo, version, release, registry_config=self.runtime.registry_config
+                )
+
+        async def _check_image(name, nvr):
+            parsed = parse_nvr(nvr)
+            image_meta = component_name_to_meta.get(parsed['name'])
+            if not image_meta:
+                self.logger.warning(f"No image metadata found for component {parsed['name']}, skipping shipped check")
+                return None
+
+            delivery_repo_names = image_meta.config.delivery.delivery_repo_names
+            if delivery_repo_names is Missing or not delivery_repo_names:
+                self.logger.warning(f"No delivery_repo_names for {image_meta.distgit_key}, skipping shipped check")
+                return None
+
+            for repo in delivery_repo_names:
+                if await _check_with_limit(str(repo), parsed['version'], parsed['release']):
+                    return name, nvr, str(repo)
+            return None
+
+        results = await asyncio.gather(*(_check_image(n, v) for n, v in list(missing_in_errata.items())))
+        shipped_names = []
+        for result in results:
+            if result:
+                name, nvr, shipped_repo = result
+                self.logger.info(f"Missing build {nvr} is already shipped on registry.redhat.io ({shipped_repo})")
+                shipped_names.append(name)
+                in_shipped_advisory.append({"nvr": nvr, "delivery_repo": shipped_repo})
+
+        for name in shipped_names:
+            del missing_in_errata[name]
 
 
 @cli.command("verify-payload", short_help="Verify payload contents match advisory builds")
