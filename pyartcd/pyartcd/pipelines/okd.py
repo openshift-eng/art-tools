@@ -740,16 +740,15 @@ class KonfluxOkdPipeline:
 
     async def mirror_coreos_imagestreams(self):
         """
-        Mirror OKD CoreOS imagestream tags from RHCOS team's tags to ART's imagestreams.
+        Mirror OKD 5.1 CoreOS imagestream tags into ART's imagestreams.
 
-        Only version 4.23 still needs ART mirroring because it has no dedicated
-        scos-4.23 CoreOS stream (master builds 5.0) and must source CoreOS tags
-        from scos-5.0.  All other versions are handled by openshift/release
-        postsubmit jobs and no longer require ART-side mirroring.
+        The ci-operator postsubmit publishes the CoreOS tags to scos-5.1.
+        Mirror those tags into scos-5.1-art after successful ART image builds,
+        preserving the original image so the ImageStream imports it.
 
-        Mirrors (4.23 only):
-        - QCI proxy:<namespace>_scos-5.0_stream-coreos -> origin/scos-4.23-art:stream-coreos
-        - QCI proxy:<namespace>_scos-5.0_stream-coreos-extensions -> origin/scos-4.23-art:stream-coreos-extensions
+        Mirrors (5.1 only):
+        - QCI proxy:<namespace>_scos-5.1_stream-coreos -> origin/scos-5.1-art:stream-coreos
+        - QCI proxy:<namespace>_scos-5.1_stream-coreos-extensions -> origin/scos-5.1-art:stream-coreos-extensions
         """
 
         if self.assembly != 'stream':
