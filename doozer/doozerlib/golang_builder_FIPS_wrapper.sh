@@ -533,8 +533,17 @@ if [[ "${EXEMPT}" != "1" ]]; then
   # Companion of the no_openssl tag: together they select the built-in module.
   if [[ "${GO_BUILTIN_FIPS}" == "1" ]]; then
     export GOFIPS140="v1.26.0"
-    echoerr "setting GOFIPS140=${GOFIPS140}"
+  else
+    if [[ -n "${GOFIPS140}" && "${GOFIPS140}" != "off" ]]; then
+      echoerr "non-compliant: GOFIPS140=${GOFIPS140} is not compatible with openssl backend"
+      if [[ "${STRICT_MODE_BASIC}" == "1" ]]; then
+        stricterror
+        exit 1
+      fi
+    fi
+    export GOFIPS140="off"
   fi
+  echoerr "setting GOFIPS140=${GOFIPS140}"
 
 fi
 

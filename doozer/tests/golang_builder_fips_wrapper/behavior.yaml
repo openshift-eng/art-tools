@@ -238,6 +238,27 @@
   expect:
     env: {GOFIPS140: v1.0.0}
 
+- name: non_exempt_openssl_build_explicitly_forces_gofips140_off
+  description: >
+    Non-exempt builds using the openssl backend (not the built-in FIPS module)
+    explicitly set GOFIPS140=off, regardless of what the earlier default was.
+    This ensures openssl-mode builds clearly disable the built-in module.
+  args: [build, ./...]
+  env: {__doozer_group: openshift-4.20}
+  go_real_version: go1.24.0
+  expect:
+    env: {GOFIPS140: "off"}
+
+- name: non_exempt_builtin_build_overrides_default_to_v1_26_0
+  description: >
+    Non-exempt builds using the built-in FIPS module override the "off"
+    default to "v1.26.0", selecting the built-in module.
+  args: [build, ./...]
+  env: {__doozer_group: openshift-5.1}
+  go_real_version: go1.26.0
+  expect:
+    env: {GOFIPS140: v1.26.0}
+
 # ---------------------------------------------------------------------------
 # GO_COMPLIANCE_BUILTIN_FIPS_INCLUDE/EXCLUDE let a component override the
 # version/group default in either direction, but INCLUDE can only ever turn
@@ -583,6 +604,43 @@
     invoked: true
     exit_code: 0
     env: {CGO_ENABLED: "1"}
+
+- name: basic_strict_mode_rejects_incompatible_gofips140_on_openssl_backend
+  description: >
+    On the openssl backend (not using built-in FIPS), a user-set GOFIPS140
+    value other than "off" is non-compliant. Strict mode catches this and
+    aborts rather than silently correcting it.
+  args: [build, ./...]
+  env: {__doozer_group: openshift-4.20, GO_COMPLIANCE_STRICT: basic, GOFIPS140: v1.26.0}
+  go_real_version: go1.24.0
+  expect:
+    invoked: false
+    exit_code: 1
+    stderr_contains: "GOFIPS140=v1.26.0 is not compatible with openssl backend"
+
+- name: non_strict_mode_corrects_incompatible_gofips140_on_openssl_backend
+  description: >
+    Without strict mode, a user-set GOFIPS140 incompatible with the openssl
+    backend is silently corrected to "off".
+  args: [build, ./...]
+  env: {__doozer_group: openshift-4.20, GOFIPS140: certified}
+  go_real_version: go1.24.0
+  expect:
+    invoked: true
+    exit_code: 0
+    env: {GOFIPS140: "off"}
+
+- name: user_set_gofips140_off_passes_strict_mode_on_openssl_backend
+  description: >
+    A user explicitly setting GOFIPS140=off on the openssl backend is
+    compliant and passes strict mode without error.
+  args: [build, ./...]
+  env: {__doozer_group: openshift-4.20, GO_COMPLIANCE_STRICT: basic, GOFIPS140: "off"}
+  go_real_version: go1.24.0
+  expect:
+    invoked: true
+    exit_code: 0
+    env: {GOFIPS140: "off"}
 
 # ---------------------------------------------------------------------------
 # Exemption policy: forced compliance only applies to ART product builds (or
