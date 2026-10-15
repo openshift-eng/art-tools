@@ -33,6 +33,40 @@ scrub_no_openssl() {
   fi
 }
 
+# Remove the boringcrypto experiment from GOEXPERIMENT, which cannot be
+# combined with the built-in module that GOFIPS140 selects. Upstreams commonly
+# enable boringcrypto, since without a toolchain carrying the libopenssl
+# backend it is the only FIPS-capable crypto available to them -- so this is
+# the expected state of incoming code rather than a caller mistake, and the
+# rewrite is deliberately silent: unlike the shim's other rewrites of caller
+# input, it is not strict mode non-compliance. Only the built-in path strips
+# it: the libopenssl backend relies on boringcrypto being enabled too, but the
+# toolchain does that internally, so there is nothing to conflict with there.
+#
+# GOEXPERIMENT is a comma-separated list, and this filters it element-wise so
+# that a substring edit cannot mangle "noboringcrypto" (the explicit disable
+# form, which is harmless here and not ours to remove).
+strip_boringcrypto() {
+  local kept="" exp
+  local -a experiments
+  IFS=',' read -ra experiments <<< "${GOEXPERIMENT}"
+  for exp in "${experiments[@]}"; do
+    if [[ "${exp}" != "boringcrypto" ]]; then
+      kept="${kept:+${kept},}${exp}"
+    fi
+  done
+  if [[ "${kept}" != "${GOEXPERIMENT}" ]]; then
+    echoerr "eliminated boringcrypto from GOEXPERIMENT"
+    if [[ -n "${kept}" ]]; then
+      export GOEXPERIMENT="${kept}"
+    else
+      # Empty and unset mean the same thing to go, but unset keeps the
+      # compiler's environment identical to one that never asked for it.
+      unset GOEXPERIMENT
+    fi
+  fi
+}
+
 run_go() {
   if [[ "${SHIM_TEST}" == "1" ]]; then
     echoerr "running with SHIM_TEST=${SHIM_TEST}"
@@ -472,6 +506,10 @@ if [[ "${EXEMPT}" != "1" ]]; then
       fi
       export CGO_ENABLED="1"
       echoerr "setting CGO_ENABLED=${CGO_ENABLED}"
+  fi
+
+  if [[ "${GO_BUILTIN_FIPS}" == "1" ]]; then
+    strip_boringcrypto
   fi
 
   if [[ "${FORCE_FOD_MODE}" == "1" && "${GOEXPERIMENT}" != *"strictfipsruntime"* ]]; then

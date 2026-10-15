@@ -352,6 +352,111 @@
     tags_exclude: [no_openssl]
 
 # ---------------------------------------------------------------------------
+# boringcrypto stripping: the environment-side counterpart of the no_openssl
+# scrubbing above. Upstreams commonly set GOEXPERIMENT=boringcrypto, because
+# without a toolchain carrying the libopenssl backend it is the only
+# FIPS-capable crypto available to them. It cannot be combined with the
+# built-in module that GOFIPS140 selects, so the built-in path filters it out
+# -- element-wise, since GOEXPERIMENT is a comma-separated list.
+#
+# Two deliberate limits, both pinned by cases below. The strip happens only on
+# the built-in-module path: the libopenssl backend relies on boringcrypto
+# being enabled too, but the toolchain does that internally, so there is no
+# conflict and nothing to strip there. And it is silent -- unlike -static,
+# no_openssl and CGO_ENABLED=0, a caller-supplied boringcrypto is the expected
+# state of upstream code rather than a mistake, so it is not strict mode
+# non-compliance.
+# ---------------------------------------------------------------------------
+
+- name: builtin_path_strips_boringcrypto_from_goexperiment
+  description: >
+    On the built-in-module path, a caller-supplied GOEXPERIMENT=boringcrypto
+    is removed before the compiler sees it; what's left is the shim's own
+    strictfipsruntime.
+  args: [build, ./...]
+  env: {__doozer_group: openshift-5.1, GOEXPERIMENT: boringcrypto}
+  go_real_version: go1.26.0
+  expect:
+    env: {GOEXPERIMENT: strictfipsruntime, GOFIPS140: v1.26.0}
+
+- name: builtin_path_keeps_other_experiments_when_stripping_boringcrypto
+  description: >
+    Only the boringcrypto element is removed from the comma-separated list;
+    unrelated experiments the caller asked for survive.
+  args: [build, ./...]
+  env: {__doozer_group: openshift-5.1, GOEXPERIMENT: "boringcrypto,fieldtrack"}
+  go_real_version: go1.26.0
+  expect:
+    env: {GOEXPERIMENT: "strictfipsruntime,fieldtrack"}
+
+- name: builtin_path_does_not_strip_noboringcrypto
+  description: >
+    noboringcrypto is GOEXPERIMENT's explicit *disable* form -- already what
+    the built-in-module path wants -- so the element-wise filter must leave it
+    alone rather than mangling it the way a substring edit would.
+  args: [build, ./...]
+  env: {__doozer_group: openshift-5.1, GOEXPERIMENT: noboringcrypto}
+  go_real_version: go1.26.0
+  expect:
+    env: {GOEXPERIMENT: "strictfipsruntime,noboringcrypto"}
+
+- name: builtin_path_unsets_goexperiment_when_boringcrypto_was_its_only_value
+  description: >
+    With FOD mode excluded there is no strictfipsruntime to inject, so
+    stripping boringcrypto empties GOEXPERIMENT entirely. The compiler must
+    then see no GOEXPERIMENT at all -- not an empty one, and certainly not a
+    stray comma.
+  args: [build, ./...]
+  env:
+    __doozer_group: openshift-5.1
+    GOEXPERIMENT: boringcrypto
+    GO_COMPLIANCE_FOD_MODE_EXCLUDE: ".*"
+  go_real_version: go1.26.0
+  expect:
+    env: {GOEXPERIMENT: null}
+    tags_include: [no_openssl]
+
+- name: builtin_path_strips_boringcrypto_silently_under_strict_mode
+  description: >
+    Stripping boringcrypto is deliberately not treated as strict mode
+    non-compliance -- an upstream enabling it is doing the best it can without
+    our toolchain, not making a mistake -- so basic strict mode rewrites it
+    and carries on, rather than aborting the way it does for -static or a
+    no_openssl tag.
+  args: [build, ./...]
+  env: {__doozer_group: openshift-5.1, GO_COMPLIANCE_STRICT: basic, GOEXPERIMENT: boringcrypto}
+  go_real_version: go1.26.0
+  expect:
+    invoked: true
+    exit_code: 0
+    env: {GOEXPERIMENT: strictfipsruntime}
+
+- name: legacy_openssl_path_leaves_boringcrypto_alone
+  description: >
+    The strip is scoped to the built-in-module path, because that is the only
+    place boringcrypto conflicts with anything. The libopenssl backend relies
+    on boringcrypto being enabled too -- the toolchain just does it internally
+    rather than via GOEXPERIMENT -- so a caller asking for it there is asking
+    for what it is already getting, and it passes through untouched exactly as
+    it did before the built-in module existed.
+  args: [build, ./...]
+  env: {__doozer_group: openshift-4.20, GOEXPERIMENT: boringcrypto}
+  go_real_version: go1.24.0
+  expect:
+    env: {GOEXPERIMENT: "strictfipsruntime,boringcrypto", GOFIPS140: null}
+
+- name: exempt_build_leaves_boringcrypto_alone
+  description: >
+    An exempt build is untouched, as ever: a developer running `go build`
+    locally on a 1.26 toolchain keeps whatever GOEXPERIMENT they asked for.
+  args: [build, ./...]
+  env: {GOEXPERIMENT: boringcrypto}
+  go_real_version: go1.26.0
+  expect:
+    args: [build, ./...]
+    env: {GOEXPERIMENT: boringcrypto, GOFIPS140: null}
+
+# ---------------------------------------------------------------------------
 # Strict mode: GO_COMPLIANCE_STRICT=basic/full make non-compliant input a
 # hard error instead of silently rewriting it.
 # ---------------------------------------------------------------------------
