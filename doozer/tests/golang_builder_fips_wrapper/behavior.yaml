@@ -135,7 +135,7 @@
   env: {__doozer_group: openshift-5.0, OPENSHIFT_CI: "1"}
   go_real_version: go1.26.0
   expect:
-    env: {GOFIPS140: null}
+    env: {GOFIPS140: "off"}
     tags_exclude: [no_openssl]
 
 - name: go126_with_ocp_4_19_falls_back
@@ -145,7 +145,7 @@
   env: {__doozer_group: openshift-4.19, OPENSHIFT_CI: "1"}
   go_real_version: go1.26.0
   expect:
-    env: {GOFIPS140: null}
+    env: {GOFIPS140: "off"}
     tags_exclude: [no_openssl]
 
 - name: go126_building_golang_builder_image_itself_falls_back
@@ -157,7 +157,7 @@
   env: {__doozer_group: golang, OPENSHIFT_CI: "1"}
   go_real_version: go1.26.0
   expect:
-    env: {GOFIPS140: null}
+    env: {GOFIPS140: "off"}
     tags_exclude: [no_openssl]
 
 - name: go126_with_no_doozer_group_falls_back
@@ -168,7 +168,7 @@
   env: {OPENSHIFT_CI: "1"}
   go_real_version: go1.26.0
   expect:
-    env: {GOFIPS140: null}
+    env: {GOFIPS140: "off"}
 
 - name: go125_has_no_builtin_module_regardless_of_group
   description: >
@@ -177,7 +177,7 @@
   env: {__doozer_group: openshift-6.0, OPENSHIFT_CI: "1"}
   go_real_version: go1.25.0
   expect:
-    env: {GOFIPS140: null}
+    env: {GOFIPS140: "off"}
 
 - name: go124_well_below_1_26_falls_back
   description: >
@@ -186,7 +186,7 @@
   env: {__doozer_group: openshift-5.1, OPENSHIFT_CI: "1"}
   go_real_version: go1.24.0
   expect:
-    env: {GOFIPS140: null}
+    env: {GOFIPS140: "off"}
 
 - name: malformed_goversion_falls_back_to_openssl
   description: >
@@ -197,7 +197,7 @@
   env: {__doozer_group: openshift-5.1}
   go_real_version: "devel go1.28-deadbeef"
   expect:
-    env: {GOFIPS140: null}
+    env: {GOFIPS140: "off"}
 
 - name: goversion_suffix_does_not_break_parsing
   description: >
@@ -209,6 +209,34 @@
   go_real_version: "go1.26.0 X:strictfipsruntime"
   expect:
     env: {GOFIPS140: v1.26.0}
+
+# ---------------------------------------------------------------------------
+# GOFIPS140 global default: the golang-1.26.7-2 toolchain has a bug where
+# GOFIPS140 defaults to 'certified' instead of being unset. The shim sets
+# GOFIPS140="${GOFIPS140:-off}" early for all builds (exempt or not) to work
+# around this bug while respecting any user-set value.
+# ---------------------------------------------------------------------------
+
+- name: gofips140_defaults_to_off_for_all_builds
+  description: >
+    GOFIPS140 is defaulted to "off" early in the shim for all builds to work
+    around the golang-1.26.7-2 toolchain bug. This happens regardless of
+    whether the build is exempt, and before version detection occurs.
+  args: [build, ./...]
+  env: {}
+  go_real_version: go1.26.0
+  expect:
+    env: {GOFIPS140: "off"}
+
+- name: gofips140_default_respects_user_set_value
+  description: >
+    The GOFIPS140="${GOFIPS140:-off}" default uses bash parameter expansion,
+    so a value already set by the user is preserved.
+  args: [build, ./...]
+  env: {GOFIPS140: v1.0.0}
+  go_real_version: go1.26.0
+  expect:
+    env: {GOFIPS140: v1.0.0}
 
 # ---------------------------------------------------------------------------
 # GO_COMPLIANCE_BUILTIN_FIPS_INCLUDE/EXCLUDE let a component override the
@@ -236,7 +264,7 @@
   env: {__doozer_group: openshift-5.1, GO_COMPLIANCE_BUILTIN_FIPS_EXCLUDE: ".*"}
   go_real_version: go1.27.0
   expect:
-    env: {GOFIPS140: null}
+    env: {GOFIPS140: "off"}
     tags_exclude: [no_openssl]
 
 - name: builtin_include_cannot_opt_in_a_toolchain_with_no_module
@@ -248,7 +276,7 @@
   env: {OPENSHIFT_CI: "1", GO_COMPLIANCE_BUILTIN_FIPS_INCLUDE: ".*"}
   go_real_version: go1.25.0
   expect:
-    env: {GOFIPS140: null}
+    env: {GOFIPS140: "off"}
 
 - name: builtin_include_matches_only_commands_matching_its_pattern
   description: >
@@ -267,7 +295,7 @@
   env: {__doozer_group: openshift-5.0, GO_COMPLIANCE_BUILTIN_FIPS_INCLUDE: myservice}
   go_real_version: go1.26.0
   expect:
-    env: {GOFIPS140: null}
+    env: {GOFIPS140: "off"}
 
 # ---------------------------------------------------------------------------
 # What selecting the built-in module actually changes: it's pure Go, so cgo
@@ -295,7 +323,7 @@
   env: {__doozer_group: openshift-4.20}
   go_real_version: go1.24.0
   expect:
-    env: {CGO_ENABLED: "1", GOFIPS140: null}
+    env: {CGO_ENABLED: "1", GOFIPS140: "off"}
     args_contains: ['-extldflags "-lc"']
     args_not_contains: ['-extldflags "-static"']
 
@@ -443,7 +471,7 @@
   env: {__doozer_group: openshift-4.20, GOEXPERIMENT: boringcrypto}
   go_real_version: go1.24.0
   expect:
-    env: {GOEXPERIMENT: "strictfipsruntime,boringcrypto", GOFIPS140: null}
+    env: {GOEXPERIMENT: "strictfipsruntime,boringcrypto", GOFIPS140: "off"}
 
 - name: exempt_build_leaves_boringcrypto_alone
   description: >
@@ -454,7 +482,7 @@
   go_real_version: go1.26.0
   expect:
     args: [build, ./...]
-    env: {GOEXPERIMENT: boringcrypto, GOFIPS140: null}
+    env: {GOEXPERIMENT: boringcrypto, GOFIPS140: "off"}
 
 # ---------------------------------------------------------------------------
 # Strict mode: GO_COMPLIANCE_STRICT=basic/full make non-compliant input a
@@ -911,7 +939,7 @@
   env: {__doozer_group: openshift-4.22}
   go_real_version: go1.26.0
   expect:
-    env: {GOFIPS140: null}
+    env: {GOFIPS140: "off"}
     tags_exclude: [no_openssl]
 
 - name: go126_toolchain_qualifies_for_builtin_fips_once_group_reaches_5_1

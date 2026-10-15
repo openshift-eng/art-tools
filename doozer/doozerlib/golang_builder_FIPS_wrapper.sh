@@ -174,6 +174,15 @@ if [[ "${GO_COMPLIANCE_POLICY}" == *"exempt_windows"* ]]; then
   fi
 fi
 
+# Work around golang-1.26.7-2 toolchain bug where GOFIPS140 defaults to
+# 'certified' instead of being unset. When GOEXPERIMENT=boringcrypto is set
+# in the environment (common in upstream projects), Go 1.26+ rejects the
+# combination with GOFIPS140 enabled. Set GOFIPS140="${GOFIPS140:-off}" to
+# work around the bug for all builds (exempt or not), while respecting any
+# user-set value. For non-exempt builds using the built-in FIPS module, this
+# will be overridden to "v1.26.0" later in the script.
+export GOFIPS140="${GOFIPS140:-off}"
+
 if [[ "${SHIM_TEST}" == "1" ]]; then
   FOUND_HOST_ARCH="amd64"
   FOUND_GO_VERSION="${SHIM_TEST_GO_VERSION:-go1.24.0}"
