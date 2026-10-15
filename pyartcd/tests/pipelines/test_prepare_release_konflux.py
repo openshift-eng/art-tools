@@ -921,6 +921,7 @@ class TestPrepareReleaseKonfluxPipeline(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(errors[0]["error"], "build failed")
         mock_cmd_gather_async.assert_awaited_once()
 
+    @patch.object(PrepareReleaseKonfluxPipeline, 'trigger_verify_cdn_push')
     @patch.object(PrepareReleaseKonfluxPipeline, 'report_deferred_build_failures', new_callable=AsyncMock)
     @patch.object(PrepareReleaseKonfluxPipeline, 'verify_payload', new_callable=AsyncMock)
     @patch.object(PrepareReleaseKonfluxPipeline, 'set_shipment_mr_ready', new_callable=AsyncMock)
@@ -955,6 +956,7 @@ class TestPrepareReleaseKonfluxPipeline(unittest.IsolatedAsyncioTestCase):
         mock_set_shipment_mr_ready,
         mock_verify_payload,
         mock_report_deferred_build_failures,
+        mock_trigger_verify_cdn_push,
     ):
         mock_registry_config.return_value.__enter__ = Mock(return_value='/tmp/fake-auth.json')
         mock_registry_config.return_value.__exit__ = Mock(return_value=False)

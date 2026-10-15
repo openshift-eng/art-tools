@@ -58,6 +58,7 @@ class Jobs(Enum):
     OPEN_RECONCILIATION_PRS = 'aos-cd-builds/build%2Fopen-reconciliation-prs'
     OPEN_RECONCILIATION_PRS_LAYERED = 'aos-cd-builds/build%2Fopen-reconciliation-prs-layered-products'
     VERIFY_STAGE_TESTING = 'verify%2Fverify-stage-testing'
+    VERIFY_CDN_PUSH = 'verify%2Fverify-cdn-push'
 
 
 def get_jenkins_url():
@@ -1040,6 +1041,18 @@ def update_description(description: str, append: bool = True):
         description = current_description + description
 
     set_build_description(build, description)
+
+
+def start_verify_cdn_push(version: str, assembly: str, **kwargs) -> Optional[str]:
+    params = {
+        'BUILD_VERSION': version,
+        'ASSEMBLY': assembly,
+    }
+    return start_build(
+        job=Jobs.VERIFY_CDN_PUSH,
+        params=params,
+        **kwargs,
+    )
 
 
 def is_api_reachable() -> bool:
