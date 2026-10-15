@@ -455,31 +455,52 @@ class TestLoadIgnorePatchVersionFromGroupConfig(unittest.TestCase):
         self.assertIs(result, False)
 
     @patch("pyartcd.pipelines.release_from_fbc.exectools.cmd_gather_async")
+    def test_boolean_output_with_document_end_marker(self, mock_cmd):
+        for scalar, expected in (("true", True), ("false", False)):
+            for suffix in ("\n...\n", "\n...\n\n", "\n  ...  \n\n"):
+                with self.subTest(scalar=scalar, suffix=suffix):
+                    mock_cmd.return_value = (0, scalar + suffix, "")
+                    result = asyncio.run(self._make_pipeline()._load_ignore_patch_version_from_group_config())
+                    self.assertIs(result, expected)
+
+    @patch("pyartcd.pipelines.release_from_fbc.exectools.cmd_gather_async")
     def test_first_run_notice_does_not_break_boolean_output(self, mock_cmd):
         notice = (
             "It appears you may be using Doozer for the first time.\n"
             "Be sure to setup Doozer using the user config file:\n"
             "/root/.config/doozer/settings.yaml\n"
         )
-        for output, expected in (("false\n", False), ("true\n", True)):
-            with self.subTest(expected=expected):
-                mock_cmd.return_value = (0, notice + output, "")
-                result = asyncio.run(self._make_pipeline()._load_ignore_patch_version_from_group_config())
-                self.assertIs(result, expected)
+        for scalar, expected in (("false", False), ("true", True)):
+            for suffix in ("\n", "\n\n", "\n...\n\n"):
+                with self.subTest(scalar=scalar, suffix=suffix):
+                    mock_cmd.return_value = (0, notice + scalar + suffix, "")
+                    result = asyncio.run(self._make_pipeline()._load_ignore_patch_version_from_group_config())
+                    self.assertIs(result, expected)
 
     @patch("pyartcd.pipelines.release_from_fbc.exectools.cmd_gather_async")
     def test_yaml_parse_error_logs_group_and_core_error(self, mock_cmd):
-        mock_cmd.return_value = (0, "Doozer startup notice\nnot: [valid\n", "")
-        pipeline = self._make_pipeline()
-        with self.assertLogs("pyartcd.pipelines.release_from_fbc", level="ERROR") as logs:
-            with self.assertRaisesRegex(ValueError, "Failed to parse ignore_patch_version") as raised:
-                asyncio.run(pipeline._load_ignore_patch_version_from_group_config())
+        for suffix in ("\n", "\n...\n\n"):
+            with self.subTest(suffix=suffix):
+                mock_cmd.return_value = (0, "Doozer startup notice\nnot: [valid" + suffix, "")
+                pipeline = self._make_pipeline()
+                with self.assertLogs("pyartcd.pipelines.release_from_fbc", level="ERROR") as logs:
+                    with self.assertRaisesRegex(ValueError, "Failed to parse ignore_patch_version") as raised:
+                        asyncio.run(pipeline._load_ignore_patch_version_from_group_config())
 
-        log_output = "\n".join(logs.output)
-        self.assertIn("rhosdt-0.158", log_output)
-        self.assertIn("not: [valid", log_output)
-        self.assertIn("expected", log_output.lower())
-        self.assertIsNotNone(raised.exception.__cause__)
+                log_output = "\n".join(logs.output)
+                self.assertIn("rhosdt-0.158", log_output)
+                self.assertIn("not: [valid", log_output)
+                self.assertIn("expected", log_output.lower())
+                self.assertIsNotNone(raised.exception.__cause__)
+
+    @patch("pyartcd.pipelines.release_from_fbc.exectools.cmd_gather_async")
+    def test_empty_or_nonboolean_output_is_rejected(self, mock_cmd):
+        for output in ("", "\n\n", "...\n\n", '"true"\n...\n', '"false"\n...\n'):
+            with self.subTest(output=output):
+                mock_cmd.return_value = (0, output, "")
+                with self.assertLogs("pyartcd.pipelines.release_from_fbc", level="ERROR"):
+                    with self.assertRaisesRegex(ValueError, "ignore_patch_version must be a boolean"):
+                        asyncio.run(self._make_pipeline()._load_ignore_patch_version_from_group_config())
 
     @patch("pyartcd.pipelines.release_from_fbc.exectools.cmd_gather_async")
     def test_invalid_setting_fails_clearly(self, mock_cmd):
@@ -512,6 +533,27 @@ class TestLoadIgnorePatchVersionFromGroupConfig(unittest.TestCase):
         self.assertIn("rhosdt-0.158", log_output)
         self.assertIn("code 1", log_output)
         self.assertIn("group.yml could not be loaded", log_output)
+
+    @patch("pyartcd.pipelines.release_from_fbc.exectools.cmd_gather_async")
+    def test_rhosdt_release_accepts_patch_mismatch_with_doozer_yaml_output(self, mock_cmd):
+        mock_cmd.return_value = (0, "true\n...\n\n", "")
+        pipeline = self._make_pipeline()
+        pipeline.assembly = "0.158.3"
+        pipeline.check_env_vars = MagicMock()
+        pipeline.setup_working_dir = MagicMock()
+        pipeline._load_product_from_group_config = AsyncMock(return_value="openshift-opentelemetry-operator")
+        pipeline.extract_fbc_nvr = MagicMock(return_value="opentelemetry-operator-fbc-0.158.0-20261015135446.ocp4.12")
+        pipeline.validate_fbc_related_images = AsyncMock(side_effect=RuntimeError("reached related-image validation"))
+        pipeline.create_snapshot = AsyncMock()
+        pipeline.create_shipment_mr = AsyncMock()
+
+        with self.assertRaisesRegex(RuntimeError, "reached related-image validation"):
+            asyncio.run(pipeline.run())
+
+        mock_cmd.assert_awaited_once()
+        pipeline.validate_fbc_related_images.assert_awaited_once_with(pipeline.fbc_pullspecs)
+        pipeline.create_snapshot.assert_not_awaited()
+        pipeline.create_shipment_mr.assert_not_awaited()
 
 
 class TestCreateShipmentMrApprovalRules(unittest.TestCase):

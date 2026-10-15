@@ -571,6 +571,9 @@ class ReleaseFromFbcPipeline:
             return False
 
         output_lines = [line.strip() for line in (output or "").splitlines() if line.strip()]
+        # Doozer's YAML scalar output can end with a document-end marker.
+        while output_lines and output_lines[-1] == "...":
+            output_lines.pop()
         value_output = output_lines[-1] if output_lines else ""
         output_excerpt = (output or "")[-500:]
         try:
