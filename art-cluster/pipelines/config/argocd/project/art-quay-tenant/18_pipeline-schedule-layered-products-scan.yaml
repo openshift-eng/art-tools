@@ -50,9 +50,11 @@ spec:
             "--group=quay-3.10",
             "--group=quay-3.12",
             "--group=quay-3.14",
+            "--group=quay-3.15",
             "--group=quay-3.16",
             "--group=quay-3.17",
             "--group=quay-3.18",
+            "--group=quay-5.0",
         ]
 
         print(f"Running {cmd}...")
