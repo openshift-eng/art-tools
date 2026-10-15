@@ -16,6 +16,7 @@ import aiohttp
 import requests
 import requests_gssapi
 from artcommonlib import logutil
+from artcommonlib.assembly import AssemblyTypes
 from artcommonlib.constants import (
     GOLANG_BUILDER_IMAGE_NAME,
     KONFLUX_DEFAULT_IMAGE_REPO,
@@ -543,6 +544,42 @@ def isolate_major_minor_in_group(group_name: str) -> Tuple[Optional[int], Option
     if not match:
         return None, None
     return int(match[1]), int(match[2])
+
+
+def get_release_name(
+    assembly_type: AssemblyTypes,
+    group_name: str,
+    assembly_name: str,
+    release_offset: Optional[int] = None,
+) -> str:
+    """Derive the OCP release name from assembly metadata.
+
+    STANDARD  -> assembly name as-is  (e.g. "4.22.9")
+    CANDIDATE / PREVIEW -> {major}.{minor}.0-{assembly}  (e.g. "5.0.0-rc.5")
+    CUSTOM    -> {major}.{minor}.{offset}-assembly.{assembly}
+    """
+
+    major, minor = isolate_major_minor_in_group(group_name)
+
+    if assembly_type == AssemblyTypes.STANDARD:
+        if release_offset is not None:
+            raise ValueError("release_offset can't be set for a STANDARD release.")
+        return assembly_name
+
+    if major is None or minor is None:
+        raise ValueError(f"Cannot determine major.minor from group name: {group_name}")
+
+    if assembly_type == AssemblyTypes.CUSTOM:
+        if release_offset is None:
+            raise ValueError("release_offset is required for a CUSTOM release.")
+        return f"{major}.{minor}.{release_offset}-assembly.{assembly_name}"
+
+    if assembly_type in (AssemblyTypes.CANDIDATE, AssemblyTypes.PREVIEW):
+        if release_offset is not None:
+            raise ValueError(f"release_offset can't be set for a {assembly_type.value} release.")
+        return f"{major}.{minor}.0-{assembly_name}"
+
+    raise ValueError(f"Assembly type {assembly_type} is not supported.")
 
 
 def uses_konflux_imagestream_override(version: str) -> bool:

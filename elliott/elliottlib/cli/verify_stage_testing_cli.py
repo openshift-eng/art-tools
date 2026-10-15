@@ -8,7 +8,7 @@ from typing import Optional
 import click
 import requests
 import yaml
-from artcommonlib.assembly import AssemblyTypes
+from artcommonlib.util import get_release_name
 from requests.adapters import HTTPAdapter
 from urllib3.util import Retry
 
@@ -363,22 +363,9 @@ def verify_stage_testing_cli(runtime, job_id, trigger, output):
         _handle_label_check(runtime, output)
 
 
-def _get_release_name(runtime) -> str:
-    """Resolve the release name used for payload image tags.
-
-    For standard assemblies (e.g. 4.22.9), the assembly name IS the release name.
-    For candidate/preview assemblies (e.g. rc.5), the release name is {major}.{minor}.0-{assembly}
-    (same logic as doozerlib.util.get_release_name).
-    """
-    if runtime.assembly_type in (AssemblyTypes.CANDIDATE, AssemblyTypes.PREVIEW):
-        major, minor = runtime.get_major_minor()
-        return f"{major}.{minor}.0-{runtime.assembly}"
-    return runtime.assembly
-
-
 def _handle_trigger(runtime, output):
     version = runtime.group.split("-")[-1]
-    release_name = _get_release_name(runtime)
+    release_name = get_release_name(runtime.assembly_type, runtime.group, runtime.assembly)
 
     mr_url = get_assembly_shipment_url(runtime, required=True)
     labels = _get_mr_labels(mr_url)

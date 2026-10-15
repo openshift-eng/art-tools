@@ -24,7 +24,7 @@ from artcommonlib.format_util import red_print
 from artcommonlib.model import Missing, Model
 from artcommonlib.rpm_utils import parse_nvr
 from artcommonlib.util import (
-    isolate_major_minor_in_group,
+    get_release_name,
     oc_image_info,  # noqa: F401 - re-exported for backward compatibility
     oc_image_info_async,  # noqa: F401 - re-exported for backward compatibility
     oc_image_info_for_arch,  # noqa: F401 - re-exported for backward compatibility
@@ -412,35 +412,6 @@ async def find_manifest_list_sha(pullspec, registry_config: str = None):
     if 'listDigest' not in image_data:
         raise ValueError('Specified image is not a manifest-list.')
     return image_data['listDigest']
-
-
-def get_release_name(
-    assembly_type: artcommonlib.assembly.AssemblyTypes,
-    group_name: str,
-    assembly_name: str,
-    release_offset: Optional[int],
-):
-    major, minor = isolate_major_minor_in_group(group_name)
-
-    if assembly_type == AssemblyTypes.STANDARD:
-        if release_offset is not None:
-            raise ValueError("release_offset can't be set for a STANDARD release.")
-        return assembly_name
-
-    if major is None or minor is None:
-        raise ValueError(f"Cannot determine major.minor from group name: {group_name}")
-
-    if assembly_type == AssemblyTypes.CUSTOM:
-        if release_offset is None:
-            raise ValueError("release_offset is required for a CUSTOM release.")
-        release_name = f"{major}.{minor}.{release_offset}-assembly.{assembly_name}"
-    elif assembly_type in [AssemblyTypes.CANDIDATE, AssemblyTypes.PREVIEW]:
-        if release_offset is not None:
-            raise ValueError(f"release_offset can't be set for a {assembly_type.value} release.")
-        release_name = f"{major}.{minor}.0-{assembly_name}"
-    else:
-        raise ValueError(f"Assembly type {assembly_type} is not supported.")
-    return release_name
 
 
 def get_release_name_for_assembly(group_name: str, releases_config: Model, assembly_name: str):
