@@ -1500,7 +1500,7 @@ class KonfluxFbcRebaser:
         dfp.labels['com.redhat.art.name'] = name
         nvr = f'{name}-{version}-{release}'
         dfp.labels['com.redhat.art.nvr'] = nvr
-        dfp.labels['com.redhat.art.bundle.pullspec'] = bundle_build.image_pullspec
+        dfp.labels['com.redhat.art.bundle.pullspec'] = bundle_prod_pullspec
         return nvr
 
     @staticmethod
