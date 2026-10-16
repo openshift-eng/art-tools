@@ -5,7 +5,7 @@ from datetime import datetime
 from typing import Callable, Dict, Iterable, List, Tuple
 from urllib.parse import urlparse
 
-from artcommonlib.assembly import assembly_config_struct
+from artcommonlib.assembly import AssemblyTypes, assembly_config_struct, assembly_type
 from artcommonlib.constants import SHIPMENT_CONFIG_KINDS
 from artcommonlib.gitlab import GitLabClient
 from artcommonlib.jira_config import JIRA_DOMAIN_NAME
@@ -734,6 +734,15 @@ def get_bug_ids_from_open_shipment_mrs(
             if not _is_assembly_shipment_valid(releases_config, metadata.assembly, mr.web_url):
                 continue
             if metadata.fbc:
+                continue
+            mr_assembly_type = assembly_type(releases_config, metadata.assembly)
+            if mr_assembly_type in (AssemblyTypes.CANDIDATE, AssemblyTypes.PREVIEW):
+                logger.info(
+                    "Skipping %s assembly %s MR %s — pre-release bugs should not be filtered",
+                    mr_assembly_type.value,
+                    metadata.assembly,
+                    mr.web_url,
+                )
                 continue
             if not config.shipment.data or not config.shipment.data.releaseNotes:
                 continue
