@@ -121,7 +121,6 @@ class KonfluxOkdPipeline:
 
         await self.rebase_and_build_images()
         await self.update_imagestreams()
-        await self.mirror_coreos_imagestreams()
         self.finalize()
 
     async def initialize(self):
@@ -737,66 +736,6 @@ class KonfluxOkdPipeline:
             failure_msg = f'Imagestream update failures: {", ".join(failed_tags)}'
             jenkins.update_description(f'{failure_msg}<br>')
             self.logger.warning(failure_msg)
-
-    async def mirror_coreos_imagestreams(self):
-        """
-        Mirror OKD 5.1 CoreOS imagestream tags into ART's imagestreams.
-
-        The ci-operator postsubmit publishes the CoreOS tags to scos-5.1.
-        Mirror those tags into scos-5.1-art after successful ART image builds,
-        preserving the original image so the ImageStream imports it.
-
-        Mirrors (5.1 only):
-        - QCI proxy:<namespace>_scos-5.1_stream-coreos -> origin/scos-5.1-art:stream-coreos
-        - QCI proxy:<namespace>_scos-5.1_stream-coreos-extensions -> origin/scos-5.1-art:stream-coreos-extensions
-        """
-
-        if self.assembly != 'stream':
-            self.logger.info('Assembly is not "stream"; skipping CoreOS imagestream mirroring')
-            return
-
-        if not self.built_images:
-            self.logger.warning('No images were successfully built; skipping CoreOS imagestream mirroring')
-            return
-
-        if self.version != '5.1':
-            self.logger.info(
-                'Version %s CoreOS mirroring is handled by openshift/release postsubmits; skipping ART mirror',
-                self.version,
-            )
-            return
-
-        tags_to_mirror = ['stream-coreos', 'stream-coreos-extensions']
-
-        if self.runtime.dry_run:
-            self.logger.info('[DRY RUN] Would mirror CoreOS imagestream tags')
-            for tag in tags_to_mirror:
-                self.logger.info(
-                    f'[DRY RUN] From: {REGISTRY_QUAY_PROXY_CI}:{self.imagestream_namespace}_scos-{self.version}_{tag}'
-                )
-                self.logger.info(f'[DRY RUN] To: {self.imagestream_namespace}/scos-{self.version}-art:{tag}')
-            return
-
-        env = os.environ.copy()
-
-        for tag in tags_to_mirror:
-            source_pullspec = f'{REGISTRY_QUAY_PROXY_CI}:{self.imagestream_namespace}_scos-{self.version}_{tag}'
-            target_tag = f'{self.imagestream_namespace}/scos-{self.version}-art:{tag}'
-
-            self.logger.info('Mirroring CoreOS imagestream from %s to %s', source_pullspec, target_tag)
-
-            try:
-                await self._tag_image_to_stream(source_pullspec=source_pullspec, target_tag=target_tag, env=env)
-                success_msg = f'Mirrored CoreOS tag: {source_pullspec} -> {target_tag}'
-                jenkins.update_description(f'{success_msg}<br>')
-                self.logger.info(success_msg)
-
-            except Exception as e:
-                failure_msg = f'Failed to mirror CoreOS imagestream tag: {e}'
-                jenkins.update_description(f'{failure_msg}<br>')
-                self.logger.warning(failure_msg)
-                # Don't fail the entire pipeline if CoreOS mirroring fails
-                self.logger.warning('Continuing pipeline despite CoreOS mirroring failure')
 
     async def _tag_image_to_stream(self, source_pullspec: str, target_tag: str, env: dict):
         """
