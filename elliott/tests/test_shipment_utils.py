@@ -887,6 +887,101 @@ class TestGetBugIdsFromOpenShipmentMrs(unittest.TestCase):
         self.assertEqual(mock_get_configs.call_count, len(mr_urls))
         mock_gitlab_cls.from_url.assert_called_once_with(self.SHIPMENT_URL)
 
+    @staticmethod
+    def _make_typed_releases_config(assembly: str, mr_url: str, assembly_type: str) -> Model:
+        """
+        Build a releases_config Model with an assembly that has an explicit type
+        (e.g. "candidate", "preview", "standard") and a matching shipment URL.
+        """
+        return Model(
+            dict_to_model={
+                "releases": {
+                    assembly: {
+                        "assembly": {
+                            "type": assembly_type,
+                            "group": {"shipment": {"url": mr_url}},
+                        }
+                    }
+                }
+            }
+        )
+
+    @patch("elliottlib.shipment_utils.get_shipment_configs_from_mr")
+    @patch("elliottlib.shipment_utils.GitLabClient")
+    def test_skips_candidate_assembly_mrs(self, mock_gitlab_cls, mock_get_configs):
+        """RC/FC (candidate) assembly MRs should be skipped — their bugs should flow into GA."""
+        mock_client = Mock()
+        mock_gitlab_cls.from_url.return_value = mock_client
+
+        mr_url = "https://gitlab.example.com/project/-/merge_requests/10"
+        mock_mr = Mock()
+        mock_mr.web_url = mr_url
+        mock_client.list_merge_requests.return_value = [mock_mr]
+
+        mock_shipment = Mock()
+        mock_shipment.shipment.metadata.group = "openshift-4.18"
+        mock_shipment.shipment.metadata.assembly = "4.18.0-rc.1"
+        mock_shipment.shipment.metadata.fbc = False
+        mock_shipment.shipment.data.releaseNotes.issues.fixed = [
+            Mock(id="OCPBUGS-1100", source="issues.redhat.com"),
+            Mock(id="OCPBUGS-1200", source="issues.redhat.com"),
+        ]
+        mock_get_configs.return_value = {"image": mock_shipment}
+
+        releases_config = self._make_typed_releases_config("4.18.0-rc.1", mr_url, "candidate")
+        result = self._call(releases_config=releases_config)
+        self.assertEqual(result, set())
+
+    @patch("elliottlib.shipment_utils.get_shipment_configs_from_mr")
+    @patch("elliottlib.shipment_utils.GitLabClient")
+    def test_skips_preview_assembly_mrs(self, mock_gitlab_cls, mock_get_configs):
+        """EC (preview) assembly MRs should be skipped — their bugs should flow into GA."""
+        mock_client = Mock()
+        mock_gitlab_cls.from_url.return_value = mock_client
+
+        mr_url = "https://gitlab.example.com/project/-/merge_requests/11"
+        mock_mr = Mock()
+        mock_mr.web_url = mr_url
+        mock_client.list_merge_requests.return_value = [mock_mr]
+
+        mock_shipment = Mock()
+        mock_shipment.shipment.metadata.group = "openshift-4.18"
+        mock_shipment.shipment.metadata.assembly = "4.18.0-ec.3"
+        mock_shipment.shipment.metadata.fbc = False
+        mock_shipment.shipment.data.releaseNotes.issues.fixed = [
+            Mock(id="OCPBUGS-1300", source="issues.redhat.com"),
+        ]
+        mock_get_configs.return_value = {"image": mock_shipment}
+
+        releases_config = self._make_typed_releases_config("4.18.0-ec.3", mr_url, "preview")
+        result = self._call(releases_config=releases_config)
+        self.assertEqual(result, set())
+
+    @patch("elliottlib.shipment_utils.get_shipment_configs_from_mr")
+    @patch("elliottlib.shipment_utils.GitLabClient")
+    def test_standard_assembly_bugs_still_filtered(self, mock_gitlab_cls, mock_get_configs):
+        """Standard z-stream assembly MRs should still have their bugs filtered (existing behavior)."""
+        mock_client = Mock()
+        mock_gitlab_cls.from_url.return_value = mock_client
+
+        mr_url = "https://gitlab.example.com/project/-/merge_requests/12"
+        mock_mr = Mock()
+        mock_mr.web_url = mr_url
+        mock_client.list_merge_requests.return_value = [mock_mr]
+
+        mock_shipment = Mock()
+        mock_shipment.shipment.metadata.group = "openshift-4.18"
+        mock_shipment.shipment.metadata.assembly = "4.18.39"
+        mock_shipment.shipment.metadata.fbc = False
+        mock_shipment.shipment.data.releaseNotes.issues.fixed = [
+            Mock(id="OCPBUGS-1400", source="issues.redhat.com"),
+        ]
+        mock_get_configs.return_value = {"image": mock_shipment}
+
+        releases_config = self._make_typed_releases_config("4.18.39", mr_url, "standard")
+        result = self._call(releases_config=releases_config)
+        self.assertEqual(result, {"OCPBUGS-1400"})
+
 
 def _make_shipment_config(kind: str, **release_notes_kwargs) -> ShipmentConfig:
     """Build a minimal ShipmentConfig for a given kind, optionally with releaseNotes fields."""
