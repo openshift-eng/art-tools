@@ -52,6 +52,7 @@ spec:
             "--group=acm-2.16",
             "--group=acm-2.17",
             "--group=acm-5.0",
+            "--group=mce-2.6",
             "--group=mce-2.8",
             "--group=mce-2.9",
             "--group=mce-2.10",
