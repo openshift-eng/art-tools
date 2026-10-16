@@ -71,13 +71,14 @@ class TestOcp4ScanKonfluxPipeline(unittest.IsolatedAsyncioTestCase):
         pipeline.handle_bridge_bug_mirroring = AsyncMock()
         pipeline.handle_source_changes = Mock()
         pipeline.handle_rhcos_changes = AsyncMock()
+        pipeline._handle_scan_issues = AsyncMock()
 
-        with self.assertRaises(SystemExit) as ctx:
-            await pipeline.run()
+        # Reconciliation issues should NOT fail the job
+        await pipeline.run()
 
-        self.assertEqual(ctx.exception.code, 2)
         pipeline.handle_source_changes.assert_called_once()
         pipeline.handle_rhcos_changes.assert_awaited_once()
+        pipeline._handle_scan_issues.assert_awaited_once()
         mock_jenkins.update_description.assert_called_with('Scan failures: test-image<br/>')
 
     @patch.dict(os.environ, {'KUBECONFIG': '/path/to/kubeconfig'})
@@ -98,13 +99,14 @@ class TestOcp4ScanKonfluxPipeline(unittest.IsolatedAsyncioTestCase):
         pipeline.handle_bridge_bug_mirroring = AsyncMock()
         pipeline.handle_source_changes = Mock()
         pipeline.handle_rhcos_changes = AsyncMock()
+        pipeline._handle_scan_issues = AsyncMock()
 
-        with self.assertRaises(RuntimeError) as ctx:
-            await pipeline.run()
+        # Reconciliation issues alone should NOT fail the job
+        await pipeline.run()
 
-        self.assertIn('scan-sources reported issues but found no valid changes', str(ctx.exception))
         pipeline.handle_source_changes.assert_called_once()
         pipeline.handle_rhcos_changes.assert_awaited_once()
+        pipeline._handle_scan_issues.assert_awaited_once()
         mock_jenkins.update_description.assert_called_with('Scan failures: test-image<br/>')
 
     @patch.dict(os.environ, {'KUBECONFIG': '/path/to/kubeconfig'})
@@ -126,6 +128,7 @@ class TestOcp4ScanKonfluxPipeline(unittest.IsolatedAsyncioTestCase):
         pipeline.handle_bridge_bug_mirroring = AsyncMock()
         pipeline.handle_source_changes = Mock()
         pipeline.handle_rhcos_changes = AsyncMock()
+        pipeline._handle_scan_issues = AsyncMock()
 
         with self.assertRaises(RuntimeError) as ctx:
             await pipeline.run()
@@ -133,7 +136,63 @@ class TestOcp4ScanKonfluxPipeline(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(str(ctx.exception), 'scan-sources command failed with exit code 1')
         pipeline.handle_source_changes.assert_called_once()
         pipeline.handle_rhcos_changes.assert_awaited_once()
+        pipeline._handle_scan_issues.assert_awaited_once()
         mock_jenkins.update_description.assert_called_with('Scan failures: test-image<br/>')
+
+    async def test_handle_scan_issues_posts_slack_warning(self):
+        pipeline = self._make_pipeline()
+        pipeline.issues = [
+            {'name': 'image-a', 'issue': 'Could not rebase into -priv as it needs manual reconciliation'},
+            {'name': 'image-b', 'issue': 'git push to openshift-priv failed'},
+        ]
+
+        slack_client = AsyncMock()
+        slack_client.bind_channel = MagicMock()
+        slack_client.say = AsyncMock(return_value={'message': {'ts': '1234567890.123456'}})
+        self.runtime.new_slack_client.return_value = slack_client
+
+        await pipeline._handle_scan_issues()
+
+        slack_client.bind_channel.assert_called_once_with('4.21')
+        # First call: the warning header
+        first_call = slack_client.say.call_args_list[0]
+        self.assertIn(':warning:', first_call.args[0])
+        self.assertIn('4.21', first_call.args[0])
+        # Subsequent calls: one per issue, threaded
+        self.assertEqual(slack_client.say.call_count, 3)
+        second_call = slack_client.say.call_args_list[1]
+        self.assertIn('image-a', second_call.args[0])
+        self.assertEqual(second_call.args[1], '1234567890.123456')
+        third_call = slack_client.say.call_args_list[2]
+        self.assertIn('image-b', third_call.args[0])
+        self.assertEqual(third_call.args[1], '1234567890.123456')
+
+    async def test_handle_scan_issues_noop_when_no_issues(self):
+        pipeline = self._make_pipeline()
+        pipeline.issues = []
+        self.runtime.new_slack_client.return_value = AsyncMock()
+
+        await pipeline._handle_scan_issues()
+
+        # Should not create a Slack client at all
+        self.runtime.new_slack_client.assert_not_called()
+
+    async def test_handle_scan_issues_logs_slack_failure_without_crashing(self):
+        pipeline = self._make_pipeline()
+        pipeline.issues = [
+            {'name': 'image-a', 'issue': 'Could not rebase into -priv as it needs manual reconciliation'},
+        ]
+
+        slack_client = AsyncMock()
+        slack_client.bind_channel = MagicMock()
+        slack_client.say = AsyncMock(side_effect=RuntimeError('Slack API error'))
+        self.runtime.new_slack_client.return_value = slack_client
+
+        # Should NOT raise — Slack failures are caught and logged
+        await pipeline._handle_scan_issues()
+
+        slack_client.bind_channel.assert_called_once_with('4.21')
+        slack_client.say.assert_awaited_once()
 
 
 class TestBridgeBugMirroring(unittest.IsolatedAsyncioTestCase):

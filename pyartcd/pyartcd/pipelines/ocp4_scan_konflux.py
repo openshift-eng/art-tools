@@ -1,6 +1,5 @@
 import logging
 import os
-import sys
 
 import click
 import yaml
@@ -85,6 +84,7 @@ class Ocp4ScanPipeline:
         await self.handle_rhcos_changes()
 
         self._report_issues()
+        await self._handle_scan_issues()
         self._finalize()
 
     def check_params(self):
@@ -175,18 +175,39 @@ class Ocp4ScanPipeline:
         else:
             jenkins.update_description('Scan failures detected. Check scan-sources output<br/>')
 
+    async def _handle_scan_issues(self):
+        """
+        Post a warning to the version-specific Slack channel if scan-sources encountered issues.
+
+        Issues may include:
+        - a repo could not be rebased because it needs manual reconciliation
+        - git push to openshift-priv failed even after retries
+
+        In both cases, an alert is generated on Slack.
+        Failures are logged but do not fail the pipeline.
+        """
+
+        if not self.issues:
+            return  # all good
+
+        try:
+            slack_client = self.runtime.new_slack_client()
+            slack_client.bind_channel(self.version)
+            message = f":warning: Some issues have arisen during scan-sources for *{self.version}* :warning:"
+            slack_response = await slack_client.say(message)
+
+            slack_thread = slack_response["message"]["ts"]
+            for issue in self.issues:
+                await slack_client.say(f'\n- `{issue["name"]}`: {issue["issue"]}', slack_thread)
+        except Exception:
+            self.logger.exception('Failed to post scan issues to Slack for %s', self.version)
+
     def _finalize(self):
         if self.command_failed:
             raise RuntimeError(self.command_failure_message)
 
-        if not self.issues:
-            return
-
-        if self.changes:
-            self.logger.warning('scan-sources reported issues but also found valid changes; marking job unstable')
-            sys.exit(2)
-
-        raise RuntimeError('scan-sources reported issues but found no valid changes')
+        if self.issues:
+            self.logger.warning('scan-sources reported reconciliation issues; these are non-blocking warnings')
 
     @start_as_current_span_async(TRACER, "ocp4-scan-konflux.get-rhcos-inconsistencies")
     async def get_rhcos_inconsistencies(self):
