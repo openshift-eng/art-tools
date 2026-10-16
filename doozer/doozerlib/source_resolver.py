@@ -263,6 +263,15 @@ class SourceResolver:
                     git_cache_dir=self.cache_dir,
                 )
 
+                # Git may lazily fetch blobs while materializing a worktree from
+                # the blobless clone, so keep GitHub auth available for checkout.
+                git_checkout_env = constants.GIT_NO_PROMPTS
+                if self.is_branch_commit_hash(branch=clone_branch) or meta.commitish:
+                    git_checkout_env = {
+                        **constants.GIT_NO_PROMPTS,
+                        **get_github_git_auth_env(url=clone_url),
+                    }
+
                 # If we used pull_url for cloning, configure a separate push URL on
                 # origin so that fetch still points at the clone source.  This keeps
                 # the blobless-clone promisor remote intact — git can lazily fetch
@@ -274,15 +283,18 @@ class SourceResolver:
 
                 if self.is_branch_commit_hash(branch=clone_branch):
                     with exectools.Dir(source_dir):
-                        exectools.cmd_assert(f'git checkout {clone_branch}')
+                        exectools.cmd_assert(f'git checkout {clone_branch}', set_env=git_checkout_env)
 
                 if meta.commitish:
                     # With the alias registered, check out the commit we want
                     LOGGER.info(f"Determining if commit-ish {meta.commitish} exists")
                     cmd = ["git", "-C", source_dir, "branch", "--contains", meta.commitish]
-                    exectools.cmd_assert(cmd)
+                    exectools.cmd_assert(cmd, set_env=git_checkout_env)
                     LOGGER.info(f"Checking out commit-ish {meta.commitish}")
-                    exectools.cmd_assert(["git", "-C", source_dir, "reset", "--hard", meta.commitish])
+                    exectools.cmd_assert(
+                        ["git", "-C", source_dir, "reset", "--hard", meta.commitish],
+                        set_env=git_checkout_env,
+                    )
 
                 # fetch public upstream source (skip for fork builds — the fork's
                 # branch likely doesn't exist on the public upstream repo)
