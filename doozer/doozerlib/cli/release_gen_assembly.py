@@ -620,6 +620,11 @@ class GenAssemblyCli:
                             manifest_list_tag = (
                                 f'{major_minor}-{rhcos_el_major}.{rhcos_el_minor}-{timestamp}-node-image'
                             )
+                            # The timestamped tag lives in the art-images repo
+                            # (from rhcos_index_tag in the payload_tag config),
+                            # NOT in ocp-v4.0-art-dev.
+                            if tag.rhcos_index_tag is not Missing:
+                                art_repo = str(tag.rhcos_index_tag).split('@', 1)[0].rsplit(':', 1)[0]
                             self.logger.info(
                                 'Derived manifest-list tag %s from release label %s '
                                 '(coreos.build.manifest-list-tag label absent)',

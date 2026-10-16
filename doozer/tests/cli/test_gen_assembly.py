@@ -542,11 +542,15 @@ class TestGetRhcosContainerFallback(TestCase):
     @patch('doozerlib.cli.release_gen_assembly.util.oc_image_info_for_arch')
     @patch('doozerlib.cli.release_gen_assembly.get_art_prod_image_repo_for_version', return_value='quay.io/art-dev')
     def test_falls_back_to_release_label(self, mock_art_repo, mock_oc_info, mock_get_configs, mock_primary):
-        """When coreos.build.manifest-list-tag is absent, derive tag from release label (5.1+ path)."""
+        """When coreos.build.manifest-list-tag is absent, derive tag from release label (5.1+ path).
+        The timestamped tag only exists in the art-images repo (from rhcos_index_tag config),
+        not in ocp-v4.0-art-dev."""
+        art_images_repo = 'quay.io/redhat-user-workloads/ocp-art-tenant/art-images'
         gacli = self._make_gacli()
 
         tag_config = MagicMock()
         tag_config.name = 'rhel-coreos'
+        tag_config.rhcos_index_tag = f'{art_images_repo}:5.1-9.8-node-image'
         mock_get_configs.return_value = [tag_config]
 
         gacli.rhcos_by_tag = defaultdict(
@@ -574,14 +578,14 @@ class TestGetRhcosContainerFallback(TestCase):
 
         gacli._get_rhcos_container()
 
-        # Should derive the tag from the release label timestamp
+        # Should derive the tag from the release label timestamp and use art-images repo
         second_call = mock_oc_info.call_args_list[1]
-        self.assertEqual(second_call.args[0], 'quay.io/art-dev:5.1-9.8-202610160945-node-image')
+        self.assertEqual(second_call.args[0], f'{art_images_repo}:5.1-9.8-202610160945-node-image')
 
-        # aarch64 should be resolved
+        # aarch64 should be resolved using art-images repo
         self.assertEqual(
             gacli.rhcos_by_tag['rhel-coreos']['aarch64'],
-            'quay.io/art-dev@sha256:' + 'c' * 64,
+            f'{art_images_repo}@sha256:' + 'c' * 64,
         )
 
         # Should log the fallback
