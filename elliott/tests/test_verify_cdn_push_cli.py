@@ -401,7 +401,7 @@ class TestRenderResult(TestCase):
         self.assertTrue(data["passed"])
         self.assertEqual(len(data["advisories"]), 1)
         self.assertEqual(data["advisories"][0]["advisory_id"], 12345)
-        self.assertEqual(data["advisories"][0]["advisory_url"], f"{constants.errata_url}/12345")
+        self.assertEqual(data["advisories"][0]["advisory_url"], f"{constants.errata_url}/advisory/12345")
 
     def test_text_contains_advisory_url(self):
         r = VerifyCdnPushResult(
@@ -414,7 +414,7 @@ class TestRenderResult(TestCase):
             ]
         )
         text = render_verify_result(r, "text")
-        self.assertIn(f"{constants.errata_url}/12345", text)
+        self.assertIn(f"{constants.errata_url}/advisory/12345", text)
 
     def test_text_skipped(self):
         r = VerifyCdnPushResult(
