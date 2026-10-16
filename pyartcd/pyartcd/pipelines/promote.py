@@ -25,7 +25,7 @@ from artcommonlib.arch_util import (
     go_suffix_for_arch,
 )
 from artcommonlib.assembly import AssemblyTypes, assembly_config_struct, assembly_targeted_fixes_only
-from artcommonlib.constants import REGISTRY_CI_OPENSHIFT, REGISTRY_QUAY_OCP_RELEASE_DEV
+from artcommonlib.constants import REGISTRY_CI_OPENSHIFT, REGISTRY_QUAY_OCP_RELEASE_DEV, REGISTRY_REDHAT_IO
 from artcommonlib.exceptions import VerificationError
 from artcommonlib.exectools import manifest_tool, manifest_tool_auth_file, to_thread
 from artcommonlib.github_auth import get_github_client_for_org
@@ -227,6 +227,7 @@ class PromotePipeline:
             source_files=source_files,
             registries=[
                 REGISTRY_QUAY_OCP_RELEASE_DEV,
+                REGISTRY_REDHAT_IO,
                 REGISTRY_CI_OPENSHIFT,
             ],
         ) as global_auth_file:
