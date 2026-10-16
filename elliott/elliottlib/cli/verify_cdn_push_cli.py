@@ -83,6 +83,7 @@ class VerifyCdnPushResult(VerifyResultBase):
             "advisories": [
                 {
                     "advisory_id": a.advisory_id,
+                    "advisory_url": f"{constants.errata_url}/advisory/{a.advisory_id}",
                     "impetus": a.impetus,
                     "complete": a.complete,
                     "failed": a.failed,
@@ -107,7 +108,9 @@ class VerifyCdnPushResult(VerifyResultBase):
                 status = "FAIL"
             else:
                 status = "PENDING"
-            lines.append(f"  Advisory {a.advisory_id} ({a.impetus}): {status}")
+            lines.append(
+                f"  Advisory {a.advisory_id} ({a.impetus}): {status}  {constants.errata_url}/advisory/{a.advisory_id}"
+            )
             if a.push_triggered:
                 lines.append("    Push re-triggered")
             if a.error:

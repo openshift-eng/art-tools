@@ -224,7 +224,7 @@ def _set_mr_label(mr_url: str, label: str) -> None:
     )
     if response.status_code != 200:
         raise click.ClickException(f"Failed to update labels on MR: HTTP {response.status_code} {response.reason}")
-    LOGGER.info("Set label '%s' on MR (removed others)", label)
+    LOGGER.info("Set label '%s' on MR %s", label, mr_url)
 
 
 # ---------------------------------------------------------------------------
