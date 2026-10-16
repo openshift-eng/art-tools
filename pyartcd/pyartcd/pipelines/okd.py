@@ -121,7 +121,7 @@ class KonfluxOkdPipeline:
 
         await self.rebase_and_build_images()
         await self.update_imagestreams()
-        await self.mirror_coreos_imagestreams()
+        # await self.mirror_coreos_imagestreams()
         self.finalize()
 
     async def initialize(self):
