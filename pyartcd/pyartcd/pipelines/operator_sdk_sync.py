@@ -121,6 +121,9 @@ class OperatorSDKPipeline:
         self._sync_mirror(rarch)
 
     def _sync_mirror(self, arch):
+        if self.runtime.dry_run:
+            self._logger.warning('[DRY RUN] Would sync operator-sdk mirror to S3 and Cloudflare for %s', arch)
+            return
         extra_args = "--exclude '*' --include '*.tar.gz'"
         if self.prerelease:
             s3_path = f"/pub/openshift-v4/{arch}/clients/operator-sdk/pre-release/"

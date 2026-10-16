@@ -816,6 +816,9 @@ class PromotePipeline:
         self, release_name: str, client_type: str, release_infos: Dict, message_digests: List[str]
     ):
         """Signs artifacts and publishes signature files to mirror"""
+        if self.runtime.dry_run:
+            self._logger.warning('[DRY RUN] Would sign and publish artifacts for %s', release_name)
+            return
         if not self.signing_env:
             raise ValueError("--signing-env is missing")
         cert_file = os.environ["SIGNING_CERT"]
