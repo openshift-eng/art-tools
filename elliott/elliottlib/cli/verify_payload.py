@@ -277,5 +277,5 @@ async def verify_payload(runtime, payload_or_imagestream):
 
     """
 
-    runtime.initialize()
+    runtime.initialize(mode='images')
     await VerifyPayloadPipeline(runtime, payload_or_imagestream).run()
