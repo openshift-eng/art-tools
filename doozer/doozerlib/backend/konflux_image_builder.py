@@ -161,10 +161,17 @@ class KonfluxImageBuilder:
         metadata.build_status = False
         dest_dir = self._config.base_dir.joinpath(metadata.qualified_key)
         df_path = dest_dir.joinpath("Dockerfile")
+        delivery_repo_names = metadata.config.delivery.delivery_repo_names
+        if delivery_repo_names is Missing or delivery_repo_names is None:
+            delivery_repo_names = []
+
         record = {
             "dir": str(dest_dir.absolute()),
             "dockerfile": str(df_path.absolute()),
             "name": metadata.distgit_key,
+            "delivery_repo_name": (
+                str(delivery_repo_names[0]).rsplit("/", 1)[-1] if len(delivery_repo_names) > 0 else metadata.distgit_key
+            ),
             "nvrs": "n/a",
             "message": "Unknown failure",
             "task_id": "n/a",
