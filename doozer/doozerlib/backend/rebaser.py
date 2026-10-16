@@ -1219,6 +1219,22 @@ class KonfluxRebaser:
         return df_stages
 
     @staticmethod
+    def _is_scratch_stage(from_value: str) -> bool:
+        """Check if a FROM directive targets the scratch base image.
+
+        Args:
+            from_value: The value after FROM in a Dockerfile (e.g. 'scratch', 'golang:1.21 AS build')
+
+        Returns:
+            True if the base image is 'scratch'
+        """
+        # Extract image name, skipping FROM flags (e.g. --platform=$BUILDPLATFORM)
+        tokens = from_value.strip().split()
+        tokens = [t for t in tokens if not t.startswith('--')]
+        image = tokens[0] if tokens else ''
+        return image.lower() == 'scratch'
+
+    @staticmethod
     def _transform_stream_pullspec(pullspec: str) -> str:
         """
         Transform a stream image pullspec to the appropriate brew registry format.
@@ -1529,7 +1545,20 @@ class KonfluxRebaser:
         # Populating the repo file needs to happen after every FROM before the original Dockerfile can invoke yum/dnf.
         network_mode = metadata.get_konflux_network_mode()
 
-        konflux_lines = ["\n# Start Konflux-specific steps"]
+        # Determine no_shell behavior using Missing sentinel for proper override logic.
+        # - konflux.no_shell: true  → explicit: skip shell commands in ALL stages
+        # - konflux.no_shell: false → explicit: force shell commands in ALL stages
+        # - not set                 → auto-detect per stage from FROM directive (skip for FROM scratch)
+        no_shell_config = metadata.config.konflux.get("no_shell", Missing)
+        if no_shell_config is not Missing:
+            # Explicit config overrides auto-detection for ALL stages
+            no_shell_override: Optional[bool] = bool(no_shell_config)
+        else:
+            # Auto-detect per stage based on FROM directive
+            no_shell_override = None
+
+        # --- Build common lines (ENV vars, markers - safe for all stages including scratch) ---
+        common_lines = ["\n# Start Konflux-specific steps"]
 
         # Set ENV variables for cachi2 configuration
         # Ref policy doc: https://docs.google.com/document/d/1Ajc6MSNJz20b34L7QNwoPcWKxId7Fy-eRt7oqyaJl8c
@@ -1537,23 +1566,11 @@ class KonfluxRebaser:
         # ART_BUILD_DEPS_METHOD=cachito|cachi2
         # ART_BUILD_DEPS_MODE=default|cachito-emulation
         # ART_BUILD_NETWORK=hermetic|internal-only|open for konflux | ART_BUILD_NETWORK=internal-only for brew
-        konflux_lines += [
+        common_lines += [
             "ENV ART_BUILD_ENGINE=konflux",
             "ENV ART_BUILD_DEPS_METHOD=cachi2",
             f"ENV ART_BUILD_NETWORK={network_mode}",
         ]
-
-        # A current cachi2 issue allows cached go artifacts to persist through image build stages.
-        # This was detected when one builder stage was rhel8 and another rhel9, leaving rhel8
-        # files in the cache, and causing the rhel9 go build to make inappropriate decisions.
-        # As a temporary guard against this cache pollution, clean the cache after every stage.
-        # Use || true to prevent an error if this not a builder stage.
-        # Can be disabled via konflux.no_shell for build stages without /bin/sh.
-        # Also auto-disabled when the base image is 'scratch' (no shell available).
-        from_stream = metadata.config.get('from', {}).get('stream')
-        no_shell = metadata.config.konflux.get("no_shell", False) or from_stream == 'scratch'
-        if not no_shell:
-            konflux_lines.append("RUN go clean -cache || true")
 
         # Three modes for handling upstreams depending on old
         # cachito functionality
@@ -1569,6 +1586,7 @@ class KonfluxRebaser:
         else:
             raise IOError(f'Unexpected konflux.cachito.mode: {cachito_mode}')
 
+        cachito_curl_line: Optional[str] = None  # Set below if cachito emulation + non-hermetic
         if metadata.config.konflux.cachito.mode == 'emulation':
             # In cachito emulation mode, we make allowances for the upstream
             # Dockerfile to have references to cachito env vars that no longer
@@ -1675,7 +1693,7 @@ class KonfluxRebaser:
                     app_path.joinpath('.npmrc').touch(exist_ok=True)
                     app_path.joinpath('.yarnrc').touch(exist_ok=True)
 
-            konflux_lines += [
+            common_lines += [
                 f"ENV REMOTE_SOURCES={emulation_dir}",
                 f"ENV REMOTE_SOURCES_DIR={remote_source_dir_env}",
                 # Cachito makes application source code and dependencies available inside the app/ directory. We only make the
@@ -1684,55 +1702,88 @@ class KonfluxRebaser:
             ]
 
             if network_mode != "hermetic":
-                konflux_lines += [
-                    # Needed by s390x builds: https://redhat-internal.slack.com/archives/C04PZ7H0VA8/p1751464077655919
-                    "RUN curl https://certs.corp.redhat.com/certs/Current-IT-Root-CAs.pem",
+                # RUN curl requires a shell; it gets added to shell_lines below. ADD doesn't need a shell.
+                cachito_curl_line = "RUN curl https://certs.corp.redhat.com/certs/Current-IT-Root-CAs.pem"
+                common_lines += [
                     # Cachito also writes a pem file which some builds reference: https://github.com/openshift/console/blob/52510bcb417e44808c07970f09d448fc49787087/Dockerfile#L41 .
                     "ADD https://certs.corp.redhat.com/certs/Current-IT-Root-CAs.pem $REMOTE_SOURCES_DIR/cachito-gomod-with-deps/app/registry-ca.pem",
                 ]
 
-        konflux_lines += [
+        common_lines += [
             f"ENV ART_BUILD_DEPS_MODE={build_deps_mode}",
         ]
 
-        if not no_shell:
-            konflux_lines.append("USER 0")
+        if network_mode == "internal-only":
+            common_lines += [
+                "ENV NO_PROXY='localhost,127.0.0.1,::1,.redhat.com'",
+                "ENV HTTP_PROXY='http://127.0.0.1:9999'",
+                "ENV HTTPS_PROXY='http://127.0.0.1:9999'",
+            ]
 
-        if network_mode != "hermetic" and not no_shell:
+        common_lines += ["# End Konflux-specific steps\n\n"]
+
+        # --- Build shell lines (require shell - only for non-scratch stages) ---
+        # A current cachi2 issue allows cached go artifacts to persist through image build stages.
+        # This was detected when one builder stage was rhel8 and another rhel9, leaving rhel8
+        # files in the cache, and causing the rhel9 go build to make inappropriate decisions.
+        # As a temporary guard against this cache pollution, clean the cache after every stage.
+        # Use || true to prevent an error if this is not a builder stage.
+        shell_lines: List[str] = ["RUN go clean -cache || true"]
+        shell_lines.append("USER 0")
+
+        if network_mode != "hermetic":
             if self.variant is BuildVariant.OKD:
-                konflux_lines.append("RUN mkdir -p /tmp/art")
+                shell_lines.append("RUN mkdir -p /tmp/art")
 
             else:
-                konflux_lines.append(
+                shell_lines.append(
                     "RUN mkdir -p /tmp/art/yum_temp; mv /etc/yum.repos.d/*.repo /tmp/art/yum_temp/ || true"
                 )
 
-            konflux_lines += [
+            shell_lines += [
                 f"COPY .oit/art-{self.repo_type}.repo /etc/yum.repos.d/",
                 # Needed by s390x builds: https://redhat-internal.slack.com/archives/C04PZ7H0VA8/p1751464077655919
                 f"RUN curl {constants.KONFLUX_REPO_CA_BUNDLE_HOST}/{constants.KONFLUX_REPO_CA_BUNDLE_FILENAME}",
                 f"ADD {constants.KONFLUX_REPO_CA_BUNDLE_HOST}/{constants.KONFLUX_REPO_CA_BUNDLE_FILENAME} {constants.KONFLUX_REPO_CA_BUNDLE_TMP_PATH}",
             ]
 
-        if network_mode == "internal-only":
-            konflux_lines += [
-                "ENV NO_PROXY='localhost,127.0.0.1,::1,.redhat.com'",
-                "ENV HTTP_PROXY='http://127.0.0.1:9999'",
-                "ENV HTTPS_PROXY='http://127.0.0.1:9999'",
-            ]
+        # Add cachito RUN curl to shell_lines if it was deferred from the cachito emulation block
+        if cachito_curl_line:
+            shell_lines.append(cachito_curl_line)
 
-        module_enable_commands = self._get_module_enablement_commands(metadata, konflux_lines)
+        module_enable_commands = self._get_module_enablement_commands(metadata, shell_lines)
         if module_enable_commands:
-            konflux_lines.extend(module_enable_commands)
+            shell_lines.extend(module_enable_commands)
 
-        konflux_lines += ["# End Konflux-specific steps\n\n"]
+        # --- Inject lines into Dockerfile ---
+        # Use DockerfileParser's built-in skip_scratch to handle per-stage injection
+        # instead of fragile marker-based text parsing.
+        #
+        # Ordering: shell_lines are added FIRST, then common_lines SECOND.
+        # Because both use at_start=True (insert right after FROM), the second
+        # call's lines end up BEFORE the first call's lines in the output:
+        #   FROM builder → common_lines → shell_lines → original content
+        #   FROM scratch → common_lines → original content (shell skipped)
 
+        # Step 1: Add shell-requiring lines to non-scratch stages
+        if no_shell_override is not True and shell_lines:
+            skip_scratch = no_shell_override is None  # Auto-detect: skip scratch. Explicit False: don't skip.
+            dfp.add_lines(
+                *shell_lines,
+                at_start=True,
+                all_stages=True,
+                skip_scratch=skip_scratch,
+            )
+
+        # Step 2: Add common lines (ENV vars, markers) to ALL stages
+        # Inserted after FROM, pushing shell_lines down — so common appears first.
         dfp.add_lines(
-            *konflux_lines,
+            *common_lines,
             at_start=True,
             all_stages=True,
         )
 
+        # --- Final stage cleanup ---
         config_final_stage_user = (
             f"USER {metadata.config.final_stage_user}"
             if metadata.config.final_stage_user not in [None, Missing]
@@ -1740,10 +1791,19 @@ class KonfluxRebaser:
         )
         config_final_stage_user_set = False
 
-        # Just for last stage
-        if network_mode != "hermetic" and not no_shell:
-            last_stage = self.split_dockerfile_into_stages(dfp)[-1]
+        # Check if the final stage actually has a shell (based on its FROM directive)
+        stages = self.split_dockerfile_into_stages(dfp)
+        last_stage = stages[-1]
+        final_stage_from = last_stage[0].get('FROM', '') if last_stage else ''
+        final_stage_is_scratch = self._is_scratch_stage(final_stage_from)
 
+        if no_shell_override is not None:
+            final_stage_has_shell = not no_shell_override
+        else:
+            final_stage_has_shell = not final_stage_is_scratch
+
+        # Just for last stage
+        if network_mode != "hermetic" and final_stage_has_shell:
             # Find all the USERs in the last stage
             final_stage_user = None
             for line in last_stage:
