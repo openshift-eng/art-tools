@@ -534,7 +534,8 @@ def get_shipment_config_records(
                 source_project = source_project_loader()
             except GitlabGetError as exc:
                 raise ShipmentSourceProjectError(file_path, getattr(mr, 'source_project_id', None), exc) from exc
-        file_content = source_project.files.get(file_path, mr.source_branch)
+        ref = mr.merge_commit_sha if mr.state == 'merged' else mr.source_branch
+        file_content = source_project.files.get(file_path, ref)
         content = file_content.decode().decode('utf-8')
         yaml_data = Model(yaml.load(content)).primitive()
         shipment_config = ShipmentConfig(**yaml_data)
@@ -574,10 +575,13 @@ def get_shipment_config_records_from_mr(
     """
     gl = gitlab_client if gitlab_client is not None else GitLabClient.from_url(mr_url)
     mr = gl.get_mr_from_url(mr_url)
-    source_project = gl.get_project(mr.source_project_id)
+    if mr.state == 'merged':
+        project = gl.get_project(mr.target_project_id)
+    else:
+        project = gl.get_project(mr.source_project_id)
     return get_shipment_config_records(
         mr,
-        source_project,
+        project,
         kinds=kinds,
         group=group,
         product=product,

@@ -145,6 +145,68 @@ shipment:
         self.assertEqual(len(records), 1)
         source_project_loader.assert_called_once_with()
 
+    def test_get_shipment_config_records_uses_merge_commit_sha_for_merged_mr(self):
+        """When MR is merged, mr.merge_commit_sha is used instead of the deleted source branch."""
+        self.mock_mr.source_branch = "deleted-branch"
+        self.mock_mr.merge_commit_sha = "abc123mergecommit"
+        self.mock_mr.state = "merged"
+        self.mock_diff_info.id = "diff-id"
+        self.mock_mr.diffs.list.return_value = [self.mock_diff_info]
+        self.mock_mr.diffs.get.return_value = self.mock_diff
+        self.mock_diff.diffs = [
+            {
+                'new_path': 'shipment/test-product/test-group/fbc/prod/fbc.yaml',
+                'old_path': None,
+            }
+        ]
+        self.mock_file_content.decode.return_value.decode.return_value = self.sample_yaml_content
+        self.mock_source_project.files.get.return_value = self.mock_file_content
+
+        records = shipment_utils.get_shipment_config_records(
+            self.mock_mr,
+            self.mock_source_project,
+            kinds=None,
+            product='test-product',
+            environment='prod',
+        )
+
+        self.assertEqual(len(records), 1)
+        # Verify files.get was called with merge_commit_sha, not the source branch
+        self.mock_source_project.files.get.assert_called_once_with(
+            'shipment/test-product/test-group/fbc/prod/fbc.yaml', 'abc123mergecommit'
+        )
+
+    def test_get_shipment_config_records_uses_source_branch_for_open_mr(self):
+        """When MR is open, mr.source_branch is used as before."""
+        self.mock_mr.source_branch = "feature-branch"
+        self.mock_mr.merge_commit_sha = "somesha"
+        self.mock_mr.state = "opened"
+        self.mock_diff_info.id = "diff-id"
+        self.mock_mr.diffs.list.return_value = [self.mock_diff_info]
+        self.mock_mr.diffs.get.return_value = self.mock_diff
+        self.mock_diff.diffs = [
+            {
+                'new_path': 'shipment/test-product/test-group/fbc/prod/fbc.yaml',
+                'old_path': None,
+            }
+        ]
+        self.mock_file_content.decode.return_value.decode.return_value = self.sample_yaml_content
+        self.mock_source_project.files.get.return_value = self.mock_file_content
+
+        records = shipment_utils.get_shipment_config_records(
+            self.mock_mr,
+            self.mock_source_project,
+            kinds=None,
+            product='test-product',
+            environment='prod',
+        )
+
+        self.assertEqual(len(records), 1)
+        # Verify files.get was called with the source branch, not the SHA
+        self.mock_source_project.files.get.assert_called_once_with(
+            'shipment/test-product/test-group/fbc/prod/fbc.yaml', 'feature-branch'
+        )
+
     def test_get_shipment_config_records_reports_unavailable_source_project(self):
         """A matching file identifies the MR source-project lookup that failed."""
         self.mock_mr.source_branch = "test-branch"
@@ -193,6 +255,68 @@ shipment:
         mock_gitlab_client_class.from_url.assert_not_called()
         gitlab_client.get_mr_from_url.assert_called_once_with(self.test_mr_url)
         gitlab_client.get_project.assert_called_once_with("source-project-id")
+
+    @patch('artcommonlib.gitlab.gitlab.Gitlab')
+    @patch.dict(os.environ, {'GITLAB_TOKEN': 'test-token'})
+    def test_from_mr_merged_uses_target_project_and_merge_commit_sha(self, mock_gitlab_class):
+        """For merged MRs, get_shipment_configs_from_mr uses target_project_id and merge_commit_sha."""
+        mock_gitlab = mock_gitlab_class.return_value
+        mock_target_project = Mock()
+        # First projects.get call returns MR project, second returns target project
+        mock_gitlab.projects.get.side_effect = [self.mock_project, mock_target_project]
+
+        self.mock_project.mergerequests.get.return_value = self.mock_mr
+        self.mock_mr.source_project_id = "source-project-id"
+        self.mock_mr.target_project_id = "target-project-id"
+        self.mock_mr.source_branch = "deleted-branch"
+        self.mock_mr.merge_commit_sha = "abc123merged"
+        self.mock_mr.state = "merged"
+
+        self.mock_diff_info.id = "diff-id"
+        self.mock_mr.diffs.list.return_value = [self.mock_diff_info]
+        self.mock_mr.diffs.get.return_value = self.mock_diff
+        self.mock_diff.diffs = [{'new_path': 'rpm.yaml', 'old_path': None}]
+
+        self.mock_file_content.decode.return_value.decode.return_value = self.sample_yaml_content
+        mock_target_project.files.get.return_value = self.mock_file_content
+
+        result = shipment_utils.get_shipment_configs_from_mr(self.test_mr_url, ("rpm",))
+
+        self.assertEqual(len(result), 1)
+        # Verify target_project_id was used (not source_project_id)
+        mock_gitlab.projects.get.assert_any_call("target-project-id")
+        # Verify merge_commit_sha was used as ref
+        mock_target_project.files.get.assert_called_once_with('rpm.yaml', 'abc123merged')
+
+    @patch('artcommonlib.gitlab.gitlab.Gitlab')
+    @patch.dict(os.environ, {'GITLAB_TOKEN': 'test-token'})
+    def test_from_mr_open_uses_source_project_and_source_branch(self, mock_gitlab_class):
+        """For open MRs, get_shipment_configs_from_mr uses source_project_id and source_branch."""
+        mock_gitlab = mock_gitlab_class.return_value
+        mock_gitlab.projects.get.side_effect = [self.mock_project, self.mock_source_project]
+
+        self.mock_project.mergerequests.get.return_value = self.mock_mr
+        self.mock_mr.source_project_id = "source-project-id"
+        self.mock_mr.target_project_id = "target-project-id"
+        self.mock_mr.source_branch = "feature-branch"
+        self.mock_mr.merge_commit_sha = "somesha"
+        self.mock_mr.state = "opened"
+
+        self.mock_diff_info.id = "diff-id"
+        self.mock_mr.diffs.list.return_value = [self.mock_diff_info]
+        self.mock_mr.diffs.get.return_value = self.mock_diff
+        self.mock_diff.diffs = [{'new_path': 'rpm.yaml', 'old_path': None}]
+
+        self.mock_file_content.decode.return_value.decode.return_value = self.sample_yaml_content
+        self.mock_source_project.files.get.return_value = self.mock_file_content
+
+        result = shipment_utils.get_shipment_configs_from_mr(self.test_mr_url, ("rpm",))
+
+        self.assertEqual(len(result), 1)
+        # Verify source_project_id was used (not target_project_id)
+        mock_gitlab.projects.get.assert_any_call("source-project-id")
+        # Verify source_branch was used as ref
+        self.mock_source_project.files.get.assert_called_once_with('rpm.yaml', 'feature-branch')
 
     @patch('artcommonlib.gitlab.gitlab.Gitlab')
     @patch.dict(os.environ, {'GITLAB_TOKEN': 'test-token'})
