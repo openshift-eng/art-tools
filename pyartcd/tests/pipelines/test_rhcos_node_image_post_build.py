@@ -97,7 +97,6 @@ class TestRhcosNodeImagePostBuildPipeline(unittest.IsolatedAsyncioTestCase):
         clear=True,
     )
     @patch('pyartcd.pipelines.rhcos_node_image_post_build.RegistryConfig')
-    @patch('pyartcd.pipelines.rhcos_node_image_post_build.cmd_gather_async', new_callable=AsyncMock)
     @patch('pyartcd.pipelines.rhcos_node_image_post_build.sync_to_quay', new_callable=AsyncMock)
     @patch('pyartcd.pipelines.rhcos_node_image_post_build.load_group_config', new_callable=AsyncMock)
     @patch('pyartcd.pipelines.rhcos_node_image_post_build.jenkins.init_jenkins')
@@ -110,7 +109,6 @@ class TestRhcosNodeImagePostBuildPipeline(unittest.IsolatedAsyncioTestCase):
         mock_init_jenkins,
         mock_load_group_config,
         mock_sync,
-        mock_cmd_gather,
         mock_registry_config,
     ):
         mock_load_group_config.return_value = self.group_config
@@ -121,13 +119,6 @@ class TestRhcosNodeImagePostBuildPipeline(unittest.IsolatedAsyncioTestCase):
             'url': 'https://jenkins.example.com/job/build-node-image/46173/',
         }
         mock_registry_config.return_value.__enter__.return_value = '/tmp/merged-auth.json'
-
-        # oc image append returns success; oc image info returns a digest for the labeled image
-        labeled_digest = 'sha256:' + 'c' * 64
-        mock_cmd_gather.side_effect = [
-            (0, '', ''),  # oc image append
-            (0, json.dumps({'digest': labeled_digest}), ''),  # oc image info
-        ]
 
         pipeline = _make_pipeline()
 
@@ -153,26 +144,16 @@ class TestRhcosNodeImagePostBuildPipeline(unittest.IsolatedAsyncioTestCase):
         )
         mock_client.wait_for_build.assert_called_once_with('build-node-image', 46173, timeout=90 * 60)
 
-        # Verify oc image append was called with the label
-        append_call = mock_cmd_gather.call_args_list[0]
-        append_cmd = append_call.args[0]
-        self.assertIn('append', append_cmd)
-        label_arg = [arg for arg in append_cmd if arg.startswith('--label=')]
-        self.assertEqual(len(label_arg), 1)
-        self.assertIn('coreos.build.manifest-list-tag=5.0-9.8-202610141234-node-image', label_arg[0])
-
-        # The labeled digest should be used as source for node image sync
-        labeled_pullspec = f'{KONFLUX_DEFAULT_IMAGE_REPO}@{labeled_digest}'
+        # Node image should be synced directly (no label mutation) with both tags
         node_sync_call = mock_sync.call_args_list[0]
-        self.assertEqual(node_sync_call.args[0], labeled_pullspec)
+        self.assertEqual(node_sync_call.args[0], f'{RHCOS_IMAGE_REPO}@sha256:{"a" * 64}')
         self.assertEqual(node_sync_call.args[1], KONFLUX_DEFAULT_IMAGE_REPO)
-        # Tags should include both the floating tag and the timestamped tag
         node_tags = node_sync_call.args[2]
         self.assertEqual(len(node_tags), 2)
         self.assertEqual(node_tags[0], '5.0-9.8-node-image')
         self.assertEqual(node_tags[1], '5.0-9.8-202610141234-node-image')
 
-        # Extensions image should be synced directly (no label) with both tags
+        # Extensions image should be synced directly with both tags
         ext_sync_call = mock_sync.call_args_list[1]
         self.assertEqual(ext_sync_call.args[0], f'{RHCOS_IMAGE_REPO}@sha256:{"b" * 64}')
         self.assertEqual(ext_sync_call.args[1], KONFLUX_DEFAULT_IMAGE_REPO)

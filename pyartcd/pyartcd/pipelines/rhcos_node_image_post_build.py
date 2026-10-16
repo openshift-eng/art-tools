@@ -107,59 +107,6 @@ class RhcosNodeImagePostBuildPipeline:
         self.runtime.logger.info('Extracted timestamp %s from release label %s', timestamp, release_label)
         return timestamp
 
-    async def _apply_manifest_list_tag_label(
-        self,
-        source_pullspec: str,
-        dest_repo: str,
-        dest_tag: str,
-        label_value: str,
-        auth_file: str,
-    ) -> str:
-        """Apply the ``coreos.build.manifest-list-tag`` label to an image.
-
-        Uses ``oc image append`` to add an empty layer with the label. Returns
-        the digest of the newly created image in *dest_repo*.
-        """
-
-        dest = f'{dest_repo}:{dest_tag}'
-        cmd = [
-            'oc',
-            'image',
-            'append',
-            f'--image={source_pullspec}',
-            f'--to={dest}',
-            f'--label=coreos.build.manifest-list-tag={label_value}',
-            '--filter-by-os=*',
-            f'--registry-config={auth_file}',
-        ]
-        self.runtime.logger.info(
-            'Applying coreos.build.manifest-list-tag=%s label to %s -> %s',
-            label_value,
-            source_pullspec,
-            dest,
-        )
-        rc, stdout, stderr = await cmd_gather_async(cmd, check=True)
-
-        # Retrieve the digest of the newly labeled image
-        info_cmd = [
-            'oc',
-            'image',
-            'info',
-            dest,
-            '--output=json',
-            '--filter-by-os=*',
-            f'--registry-config={auth_file}',
-        ]
-        rc, info_stdout, info_stderr = await cmd_gather_async(info_cmd, check=True)
-        info = json.loads(info_stdout)
-        digest = info.get('digest', '')
-        if not digest:
-            raise RuntimeError(f'Failed to retrieve digest for labeled image {dest}')
-
-        labeled_pullspec = f'{dest_repo}@{digest}'
-        self.runtime.logger.info('Labeled image available at %s', labeled_pullspec)
-        return labeled_pullspec
-
     async def _promote(self, tags: Dict[str, str]):
         quay_auth_file = os.environ.get('QUAY_AUTH_FILE')
         rhcos_quay_auth_file = os.environ.get('RHCOS_QUAY_AUTH_FILE')
@@ -185,25 +132,10 @@ class RhcosNodeImagePostBuildPipeline:
                     extensions_timestamped_tag,
                 )
 
-                # Apply the coreos.build.manifest-list-tag label to the node image
-                # and push it to the timestamped tag in the destination repo.
-                # The label value is the node timestamped tag since that is what
-                # release_gen_assembly uses to locate the manifest list for other arches.
-                labeled_node_pullspec = await self._apply_manifest_list_tag_label(
-                    source_pullspec=self.node_image,
-                    dest_repo=KONFLUX_DEFAULT_IMAGE_REPO,
-                    dest_tag=node_timestamped_tag,
-                    label_value=node_timestamped_tag,
-                    auth_file=merged_auth_file,
-                )
+                # Sync the node image to art-images with both floating and timestamped tags
+                await sync_to_quay(self.node_image, KONFLUX_DEFAULT_IMAGE_REPO, [tags['node'], node_timestamped_tag])
 
-                # Sync the labeled node image (with the label baked in) to both
-                # the floating tag and the timestamped tag
-                await sync_to_quay(
-                    labeled_node_pullspec, KONFLUX_DEFAULT_IMAGE_REPO, [tags['node'], node_timestamped_tag]
-                )
-
-                # Sync the extensions image with both floating and timestamped tags
+                # Sync the extensions image to art-images with both floating and timestamped tags
                 await sync_to_quay(
                     self.extensions_image,
                     KONFLUX_DEFAULT_IMAGE_REPO,
