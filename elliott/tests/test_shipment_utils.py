@@ -1,7 +1,7 @@
 import os
 import unittest
 from datetime import datetime
-from unittest.mock import MagicMock, Mock, patch
+from unittest.mock import MagicMock, Mock, call, patch
 
 from artcommonlib.model import Model
 from elliottlib import shipment_utils
@@ -172,6 +172,27 @@ shipment:
 
         self.assertEqual(context.exception.file_path, 'shipment/test-product/test-group/fbc/prod/fbc.yaml')
         self.assertEqual(context.exception.source_project_id, 288573)
+
+    def test_get_shipment_configs_reuses_supplied_gitlab_client(self):
+        """Use a caller's authenticated GitLab client to fetch the MR config."""
+        gitlab_client = Mock()
+        mr = Mock()
+        mr.source_project_id = "source-project-id"
+        mr.diffs.list.return_value = []
+        gitlab_client.get_mr_from_url.return_value = mr
+
+        with patch("elliottlib.shipment_utils.GitLabClient") as mock_gitlab_client_class:
+            result = shipment_utils.get_shipment_configs_from_mr(
+                self.test_mr_url,
+                kinds=("image",),
+                group="openshift-4.18",
+                gitlab_client=gitlab_client,
+            )
+
+        self.assertEqual(result, {})
+        mock_gitlab_client_class.from_url.assert_not_called()
+        gitlab_client.get_mr_from_url.assert_called_once_with(self.test_mr_url)
+        gitlab_client.get_project.assert_called_once_with("source-project-id")
 
     @patch('artcommonlib.gitlab.gitlab.Gitlab')
     @patch.dict(os.environ, {'GITLAB_TOKEN': 'test-token'})
@@ -845,20 +866,26 @@ class TestGetBugIdsFromOpenShipmentMrs(unittest.TestCase):
 
     @patch("elliottlib.shipment_utils.get_shipment_configs_from_mr")
     @patch("elliottlib.shipment_utils.GitLabClient")
-    def test_passes_group_to_get_shipment_configs(self, mock_gitlab_cls, mock_get_configs):
-        """get_shipment_configs_from_mr should be called with group kwarg for pre-filtering."""
+    def test_reuses_gitlab_client_for_each_mr_and_passes_group(self, mock_gitlab_cls, mock_get_configs):
+        """Reuse one authenticated client for every MR config lookup."""
         mock_client = Mock()
         mock_gitlab_cls.from_url.return_value = mock_client
 
-        mr_url = "https://gitlab.example.com/project/-/merge_requests/1"
-        mock_mr = Mock()
-        mock_mr.web_url = mr_url
-        mock_client.list_merge_requests.return_value = [mock_mr]
+        mr_urls = [
+            "https://gitlab.example.com/project/-/merge_requests/1",
+            "https://gitlab.example.com/project/-/merge_requests/2",
+        ]
+        mock_mrs = [Mock(web_url=mr_url) for mr_url in mr_urls]
+        mock_client.list_merge_requests.return_value = mock_mrs
 
         mock_get_configs.return_value = {}
 
         self._call(group="openshift-4.18")
-        mock_get_configs.assert_called_once_with(mr_url, group="openshift-4.18")
+        mock_get_configs.assert_has_calls(
+            [call(mr_url, group="openshift-4.18", gitlab_client=mock_client) for mr_url in mr_urls]
+        )
+        self.assertEqual(mock_get_configs.call_count, len(mr_urls))
+        mock_gitlab_cls.from_url.assert_called_once_with(self.SHIPMENT_URL)
 
 
 def _make_shipment_config(kind: str, **release_notes_kwargs) -> ShipmentConfig:
