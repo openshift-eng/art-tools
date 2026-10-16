@@ -362,9 +362,12 @@ class ArtNotifyPipeline:
 
         else:
             self.logger.info('No messages matching attention emoji criteria and no failed jobs found')
-            self.app.client.chat_postMessage(
-                channel=self.channel, text=':check: no unresolved threads / job failures found'
-            )
+            if not self.runtime.dry_run:
+                self.app.client.chat_postMessage(
+                    channel=self.channel, text=':check: no unresolved threads / job failures found'
+                )
+            else:
+                self.logger.warning('[DRY RUN] Would post no unresolved threads / job failures notification')
 
 
 @cli.command('art-notify', help='Rebase and build FBC segments for OLM operators')
