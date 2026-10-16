@@ -1365,6 +1365,7 @@ class TestResolveKonfluxFbcStageReleasePlan(unittest.TestCase):
         expected_plans = {
             ("cert-manager", 1, 19): "cm-advisory-stage-auto-1-19",
             ("external-secrets-operator", 1, 1): "eso-advisory-stage-auto-1-1",
+            ("multicluster-engine", 2, 10): "mce-advisory-stage-auto-2-10",
             ("multicluster-engine", 2, 11): "mce-advisory-stage-auto-2-11",
             ("multicluster-engine", 2, 17): "mce-advisory-stage-auto-2-17",
             ("multicluster-engine", 5, 0): "mce-advisory-stage-auto-5-0",
