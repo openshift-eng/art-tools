@@ -1360,9 +1360,15 @@ class KonfluxFbcRebaser:
                         logger.info("Rebuilding replaces chain after version sorting")
                         self._rebuild_replaces_chain(channel['entries'])
                 else:
-                    # For an operator bundle that uses replaces -- such as OADP
-                    # Calculate replaces based on current head before appending
+                    # For an operator bundle that uses replaces -- such as OADP.
+                    # Default (tip-of-channel): new bundle replaces the current head.
+                    # Mid-stream (new CSV older than head, e.g. 1.0.3 while head is 1.1.2):
+                    # refuse replaces:HEAD (invalid downgrade edge). With
+                    # FBC_ENABLE_MID_STREAM_REWIRE, sort/rewire instead; otherwise fail closed.
+                    # --insert-missing-entry is a separate branch above and is unaffected.
                     replaces = None
+                    mid_stream_rewire = False
+                    current_head_name = None
                     if not self.group.startswith('openshift-'):
                         # Find the current head - the entry not superseded
                         # (not replaced or skipped) by any other entry
@@ -1372,11 +1378,57 @@ class KonfluxFbcRebaser:
                             superseded_names.update(it.get('skips', []))
                         current_head = next((it for it in all_entries if it['name'] not in superseded_names), None)
                         if current_head:
-                            # The new bundle should replace the current head
-                            replaces = current_head['name']
+                            current_head_name = current_head['name']
+                            enable_mid_stream_rewire = bool(
+                                getattr(group_config.vars, "FBC_ENABLE_MID_STREAM_REWIRE", False)
+                            )
+                            try:
+                                new_ver = self._extract_version_from_bundle_name(olm_bundle_name)
+                                head_ver = self._extract_version_from_bundle_name(current_head_name)
+                                if new_ver < head_ver:
+                                    if not enable_mid_stream_rewire:
+                                        raise IOError(
+                                            f"Refusing to add {olm_bundle_name} to channel "
+                                            f"{channel['name']} with replaces:{current_head_name}: "
+                                            f"new CSV version ({new_ver}) is older than the current "
+                                            f"channel head ({head_ver}), which would create an "
+                                            f"invalid downgrade edge. Set "
+                                            f"FBC_ENABLE_MID_STREAM_REWIRE: true in group.yml vars "
+                                            f"to insert by semver and rebuild the replaces chain "
+                                            f"for shared OLM channels, or use --insert-missing-entry "
+                                            f"to fill a hole in version order."
+                                        )
+                                    # Sort/rewire parses every channel entry; refuse mid-stream
+                                    # if any name is unparseable rather than crashing later.
+                                    for it in all_entries:
+                                        self._extract_version_from_bundle_name(it['name'])
+                                    mid_stream_rewire = True
+                                else:
+                                    replaces = current_head_name
+                            except ValueError as e:
+                                if enable_mid_stream_rewire:
+                                    raise IOError(
+                                        f"FBC_ENABLE_MID_STREAM_REWIRE is set but cannot mid-stream "
+                                        f"insert {olm_bundle_name} into channel {channel['name']} "
+                                        f"(head {current_head_name}): {e}. Refusing replaces:HEAD "
+                                        f"to avoid an invalid upgrade graph."
+                                    ) from e
+                                # Tip path with unparseable names: keep historical HEAD-append
+                                replaces = current_head_name
 
                     channel['entries'].append(entry)
-                    if replaces:
+                    if mid_stream_rewire:
+                        logger.info(
+                            "Mid-stream insert for %s in channel %s "
+                            "(new version older than head %s); "
+                            "sorting entries and rebuilding replaces chain",
+                            olm_bundle_name,
+                            channel['name'],
+                            current_head_name,
+                        )
+                        channel['entries'].sort(key=lambda e: self._extract_version_from_bundle_name(e['name']))
+                        self._rebuild_replaces_chain(channel['entries'])
+                    elif replaces:
                         entry["replaces"] = replaces
             else:
                 logger.warning("Bundle %s already exists in channel %s. Replacing...", olm_bundle_name, channel['name'])
