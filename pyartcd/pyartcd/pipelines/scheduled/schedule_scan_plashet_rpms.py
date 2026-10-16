@@ -25,7 +25,10 @@ async def run_for(group: str, assembly: str, runtime: Runtime, lock_manager: Loc
 
     # Schedule scan
     runtime.logger.info('[%s/%s] Scheduling plashet-rpms scan', group, assembly)
-    jenkins.start_scan_plashet_rpms(group=group, assembly=assembly, block_until_building=False)
+    if not runtime.dry_run:
+        jenkins.start_scan_plashet_rpms(group=group, assembly=assembly, block_until_building=False)
+    else:
+        runtime.logger.warning('[DRY RUN] Would trigger %s job for %s', 'scan-plashet-rpms', group)
 
 
 @cli.command('schedule-scan-plashet-rpms')

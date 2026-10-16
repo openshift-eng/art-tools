@@ -146,7 +146,9 @@ class BuildLayeredProductsPipeline:
             operator_nvrs = non_embargoed_nvrs
 
             if operator_nvrs:
-                if tekton.is_tekton_context():
+                if self.runtime.dry_run:
+                    self._logger.warning('[DRY RUN] Would trigger %s job for %s', 'olm-bundle-konflux', self.version)
+                elif tekton.is_tekton_context():
                     created_name = tekton.start_pipeline_run(
                         pipeline_name="olm-bundle-konflux",
                         params={
