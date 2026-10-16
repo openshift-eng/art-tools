@@ -602,11 +602,29 @@ class GenAssemblyCli:
                         labels = amd64_rhcos_info['config']['config'].get('Labels') or {}
                         manifest_list_tag = labels.get('coreos.build.manifest-list-tag')
                         if not manifest_list_tag:
-                            self._exit_with_error(
-                                f'RHCOS image for {tag.name} (x86_64) is missing the '
-                                f'"coreos.build.manifest-list-tag" label. '
-                                f'This label is required to locate the manifest list for other architectures. '
-                                f'Pullspec: {self.rhcos_by_tag[tag.name]["x86_64"]}'
+                            # For 5.1+ ART/Konflux-built RHCOS images that lack the
+                            # coreos.build.manifest-list-tag label, derive the timestamped
+                            # tag from the release label (e.g.
+                            # "202610160945.p2.g62965e8.assembly.stream.el9" -> "202610160945").
+                            release_label = labels.get('release', '')
+                            ts_match = re.match(r'^(\d{12})\.', release_label)
+                            if not ts_match:
+                                self._exit_with_error(
+                                    f'RHCOS image for {tag.name} (x86_64) is missing both '
+                                    f'"coreos.build.manifest-list-tag" and a parseable "release" label. '
+                                    f'Cannot determine the manifest-list tag for other architectures. '
+                                    f'Pullspec: {self.rhcos_by_tag[tag.name]["x86_64"]}'
+                                )
+                                continue  # _exit_with_error terminates; guard for test mocks
+                            timestamp = ts_match.group(1)
+                            manifest_list_tag = (
+                                f'{major_minor}-{rhcos_el_major}.{rhcos_el_minor}-{timestamp}-node-image'
+                            )
+                            self.logger.info(
+                                'Derived manifest-list tag %s from release label %s '
+                                '(coreos.build.manifest-list-tag label absent)',
+                                manifest_list_tag,
+                                release_label,
                             )
                         rhcos_info = util.oc_image_info_for_arch(
                             f"{art_repo}:{manifest_list_tag}",
