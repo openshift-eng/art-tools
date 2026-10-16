@@ -401,6 +401,20 @@ class TestRenderResult(TestCase):
         self.assertTrue(data["passed"])
         self.assertEqual(len(data["advisories"]), 1)
         self.assertEqual(data["advisories"][0]["advisory_id"], 12345)
+        self.assertEqual(data["advisories"][0]["advisory_url"], f"{constants.errata_url}/12345")
+
+    def test_text_contains_advisory_url(self):
+        r = VerifyCdnPushResult(
+            advisories=[
+                AdvisoryPushResult(
+                    advisory_id=12345,
+                    impetus="rpm",
+                    push_jobs=[PushJobInfo(target="cdn_stage", job_id=1, status="COMPLETE")],
+                ),
+            ]
+        )
+        text = render_verify_result(r, "text")
+        self.assertIn(f"{constants.errata_url}/12345", text)
 
     def test_text_skipped(self):
         r = VerifyCdnPushResult(
