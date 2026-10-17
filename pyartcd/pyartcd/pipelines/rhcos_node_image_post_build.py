@@ -72,12 +72,16 @@ class RhcosNodeImagePostBuildPipeline:
 
         return tags
 
-    async def _extract_timestamp_from_nvr(self, pullspec: str, auth_file: str) -> str:
+    async def _extract_timestamp_from_nvr(self, pullspec: str, auth_file: str) -> Optional[str]:
         """Extract the 12-digit build timestamp from the ``release`` label of a source image.
 
         Uses ``oc image info`` to read the image labels and parses the
         ``YYYYMMDDHHMI`` timestamp from the ``release`` label value
         (e.g. ``202610151443.p2.g62965e8.assembly.stream.el9``).
+
+        Returns ``None`` when the label is absent or its format is
+        unrecognised so that older groups whose images lack the label
+        can still be promoted with floating tags only.
         """
 
         cmd = [
@@ -97,11 +101,17 @@ class RhcosNodeImagePostBuildPipeline:
 
         release_label = info.get('config', {}).get('config', {}).get('Labels', {}).get('release', '')
         if not release_label:
-            raise RuntimeError(f'Image {pullspec} has no release label')
+            self.runtime.logger.warning('Image %s has no release label; skipping timestamped tags', pullspec)
+            return None
 
         match = self._RELEASE_LABEL_TIMESTAMP_PATTERN.match(release_label)
         if not match:
-            raise RuntimeError(f'Could not extract timestamp from release label {release_label!r} of image {pullspec}')
+            self.runtime.logger.warning(
+                'Could not extract timestamp from release label %r of image %s; skipping timestamped tags',
+                release_label,
+                pullspec,
+            )
+            return None
 
         timestamp = match.group(1)
         self.runtime.logger.info('Extracted timestamp %s from release label %s', timestamp, release_label)
@@ -120,27 +130,33 @@ class RhcosNodeImagePostBuildPipeline:
             previous_auth_file = os.environ.get('QUAY_AUTH_FILE')
             os.environ['QUAY_AUTH_FILE'] = merged_auth_file
             try:
-                # Extract the build timestamp from the NVR tag on the source node image
+                # Extract the build timestamp from the NVR tag on the source node image.
+                # Returns None when the release label is absent or has an unexpected
+                # format (e.g. older groups that predate the label convention).
                 timestamp = await self._extract_timestamp_from_nvr(self.node_image, merged_auth_file)
 
-                # Build timestamped tags from the release stream and extracted timestamp
-                node_timestamped_tag = f'{self.release}-{timestamp}-node-image'
-                extensions_timestamped_tag = f'{self.release}-{timestamp}-node-image-extensions'
-                self.runtime.logger.info(
-                    'Timestamped tags from NVR: node=%s, extensions=%s',
-                    node_timestamped_tag,
-                    extensions_timestamped_tag,
-                )
+                node_tags = [tags['node']]
+                extensions_tags = [tags['extensions']]
 
-                # Sync the node image to art-images with both floating and timestamped tags
-                await sync_to_quay(self.node_image, KONFLUX_DEFAULT_IMAGE_REPO, [tags['node'], node_timestamped_tag])
+                if timestamp:
+                    # Build timestamped tags from the release stream and extracted timestamp
+                    node_timestamped_tag = f'{self.release}-{timestamp}-node-image'
+                    extensions_timestamped_tag = f'{self.release}-{timestamp}-node-image-extensions'
+                    self.runtime.logger.info(
+                        'Timestamped tags from NVR: node=%s, extensions=%s',
+                        node_timestamped_tag,
+                        extensions_timestamped_tag,
+                    )
+                    node_tags.append(node_timestamped_tag)
+                    extensions_tags.append(extensions_timestamped_tag)
+                else:
+                    self.runtime.logger.info('No timestamp available; promoting with floating tags only')
 
-                # Sync the extensions image to art-images with both floating and timestamped tags
-                await sync_to_quay(
-                    self.extensions_image,
-                    KONFLUX_DEFAULT_IMAGE_REPO,
-                    [tags['extensions'], extensions_timestamped_tag],
-                )
+                # Sync the node image to art-images
+                await sync_to_quay(self.node_image, KONFLUX_DEFAULT_IMAGE_REPO, node_tags)
+
+                # Sync the extensions image to art-images
+                await sync_to_quay(self.extensions_image, KONFLUX_DEFAULT_IMAGE_REPO, extensions_tags)
             finally:
                 if previous_auth_file is None:
                     os.environ.pop('QUAY_AUTH_FILE', None)

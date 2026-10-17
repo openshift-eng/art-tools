@@ -68,11 +68,14 @@ class TestRhcosNodeImagePostBuildPipeline(unittest.IsolatedAsyncioTestCase):
         oc_image_info_output = json.dumps({'config': {'config': {'Labels': {}}}})
         mock_cmd_gather.return_value = (0, oc_image_info_output, '')
 
-        with self.assertRaisesRegex(RuntimeError, 'has no release label'):
-            await pipeline._extract_timestamp_from_nvr(
-                f'{RHCOS_IMAGE_REPO}@sha256:{"a" * 64}',
-                '/fake/auth.json',
-            )
+        result = await pipeline._extract_timestamp_from_nvr(
+            f'{RHCOS_IMAGE_REPO}@sha256:{"a" * 64}',
+            '/fake/auth.json',
+        )
+
+        self.assertIsNone(result)
+        pipeline.runtime.logger.warning.assert_called_once()
+        self.assertIn('no release label', pipeline.runtime.logger.warning.call_args.args[0])
 
     @patch('pyartcd.pipelines.rhcos_node_image_post_build.cmd_gather_async', new_callable=AsyncMock)
     async def test_extract_timestamp_from_nvr_bad_release_label(self, mock_cmd_gather):
@@ -80,11 +83,14 @@ class TestRhcosNodeImagePostBuildPipeline(unittest.IsolatedAsyncioTestCase):
         oc_image_info_output = json.dumps({'config': {'config': {'Labels': {'release': 'not-a-timestamp'}}}})
         mock_cmd_gather.return_value = (0, oc_image_info_output, '')
 
-        with self.assertRaisesRegex(RuntimeError, 'Could not extract timestamp'):
-            await pipeline._extract_timestamp_from_nvr(
-                f'{RHCOS_IMAGE_REPO}@sha256:{"a" * 64}',
-                '/fake/auth.json',
-            )
+        result = await pipeline._extract_timestamp_from_nvr(
+            f'{RHCOS_IMAGE_REPO}@sha256:{"a" * 64}',
+            '/fake/auth.json',
+        )
+
+        self.assertIsNone(result)
+        pipeline.runtime.logger.warning.assert_called_once()
+        self.assertIn('Could not extract timestamp', pipeline.runtime.logger.warning.call_args.args[0])
 
     # ---- full pipeline integration test ----
 
@@ -171,6 +177,64 @@ class TestRhcosNodeImagePostBuildPipeline(unittest.IsolatedAsyncioTestCase):
         self.assertIn(f'{KONFLUX_DEFAULT_IMAGE_REPO}:5.0-9.8-node-image-extensions', description)
         self.assertIn(f'{RHCOS_IMAGE_REPO}@sha256:{"a" * 64}', description)
         self.assertIn(f'{RHCOS_IMAGE_REPO}@sha256:{"b" * 64}', description)
+
+    @patch.dict(
+        'os.environ',
+        {
+            'QUAY_AUTH_FILE': '/tmp/quay-auth.json',
+            'RHCOS_QUAY_AUTH_FILE': '/tmp/rhcos-quay-auth.json',
+        },
+        clear=True,
+    )
+    @patch('pyartcd.pipelines.rhcos_node_image_post_build.RegistryConfig')
+    @patch('pyartcd.pipelines.rhcos_node_image_post_build.sync_to_quay', new_callable=AsyncMock)
+    @patch('pyartcd.pipelines.rhcos_node_image_post_build.load_group_config', new_callable=AsyncMock)
+    @patch('pyartcd.pipelines.rhcos_node_image_post_build.jenkins.init_jenkins')
+    @patch('pyartcd.pipelines.rhcos_node_image_post_build.jenkins.update_description')
+    @patch('pyartcd.pipelines.rhcos_node_image_post_build.RhcosJenkinsClient')
+    async def test_promotes_with_floating_tags_only_when_timestamp_missing(
+        self,
+        mock_client_type,
+        mock_update_description,
+        mock_init_jenkins,
+        mock_load_group_config,
+        mock_sync,
+        mock_registry_config,
+    ):
+        """When _extract_timestamp_from_nvr returns None (e.g. older groups without a
+        release label), promotion should still succeed using only floating tags."""
+
+        mock_load_group_config.return_value = self.group_config
+        mock_client = mock_client_type.return_value
+        mock_client.trigger_build.return_value = 46173
+        mock_client.wait_for_build.return_value = {
+            'result': 'SUCCESS',
+            'url': 'https://jenkins.example.com/job/build-node-image/46173/',
+        }
+        mock_registry_config.return_value.__enter__.return_value = '/tmp/merged-auth.json'
+
+        pipeline = _make_pipeline()
+
+        # Simulate a missing release label by returning None
+        with patch.object(pipeline, '_extract_timestamp_from_nvr', new_callable=AsyncMock, return_value=None):
+            await pipeline.run()
+
+        # Node image should be synced with only the floating tag (no timestamped tag)
+        node_sync_call = mock_sync.call_args_list[0]
+        self.assertEqual(node_sync_call.args[0], f'{RHCOS_IMAGE_REPO}@sha256:{"a" * 64}')
+        self.assertEqual(node_sync_call.args[1], KONFLUX_DEFAULT_IMAGE_REPO)
+        node_tags = node_sync_call.args[2]
+        self.assertEqual(node_tags, ['5.0-9.8-node-image'])
+
+        # Extensions image should be synced with only the floating tag
+        ext_sync_call = mock_sync.call_args_list[1]
+        self.assertEqual(ext_sync_call.args[0], f'{RHCOS_IMAGE_REPO}@sha256:{"b" * 64}')
+        self.assertEqual(ext_sync_call.args[1], KONFLUX_DEFAULT_IMAGE_REPO)
+        ext_tags = ext_sync_call.args[2]
+        self.assertEqual(ext_tags, ['5.0-9.8-node-image-extensions'])
+
+        self.assertEqual(mock_sync.await_count, 2)
+        pipeline.runtime.logger.info.assert_any_call('No timestamp available; promoting with floating tags only')
 
     @patch('pyartcd.pipelines.rhcos_node_image_post_build.sync_to_quay', new_callable=AsyncMock)
     @patch('pyartcd.pipelines.rhcos_node_image_post_build.RhcosJenkinsClient')
