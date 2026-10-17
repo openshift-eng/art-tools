@@ -1275,8 +1275,8 @@ class KonfluxRebaser:
         # Set the image name
         dfp.labels["name"] = metadata.config.name
 
-        # The vendor should always be Red Hat, Inc.
-        dfp.labels["vendor"] = "Red Hat, Inc."
+        # The vendor should always be Red Hat, LLC.
+        dfp.labels["vendor"] = "Red Hat, LLC"
 
         cpe_version = _get_cpe_version(self._runtime.group, version, self._runtime.group_config.vars.get("CPE_VERSION"))
         # "202509030239.p2.gfe588cb.assembly.stream.el9" -> "el9"
