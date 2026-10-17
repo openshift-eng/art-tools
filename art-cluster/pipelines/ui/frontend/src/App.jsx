@@ -288,10 +288,15 @@ function Runs({ namespace, pipeline = '', embedded = false, filterNamespace = na
   const [error, setError] = useState('');
   const [warnings, setWarnings] = useState([]);
   const [now, setNow] = useState(Date.now());
+  const [updated, setUpdated] = useState(null);
+  const [refreshKey, setRefreshKey] = useState(0);
   useEffect(() => {
     const interval = window.setInterval(() => setNow(Date.now()), 30000);
     return () => window.clearInterval(interval);
   }, []);
+  useEffect(() => {
+    setItems([]); setTotal(0); setWarnings([]); setError(''); setUpdated(null);
+  }, [namespace, pipeline, page, submitted]);
   useEffect(() => {
     const params = new URLSearchParams({ page: String(page), page_size: '50' });
     if (namespace) params.set('namespace', namespace);
@@ -300,11 +305,32 @@ function Runs({ namespace, pipeline = '', embedded = false, filterNamespace = na
     if (submitted.status) params.set('status', submitted.status);
     if (submitted.since) params.set('since', new Date(`${submitted.since}T00:00:00`).toISOString());
     if (submitted.until) params.set('until', new Date(`${submitted.until}T23:59:59`).toISOString());
-    setLoading(true);
-    request(`/api/runs?${params}`)
-      .then((data) => { setItems(data.items); setTotal(data.total); setWarnings(data.errors || []); setError(''); })
-      .catch((cause) => setError(cause.message)).finally(() => setLoading(false));
-  }, [namespace, pipeline, page, submitted]);
+    const controller = new AbortController();
+    let active = true;
+    let timer;
+    const load = async () => {
+      let delay = 30000;
+      setLoading(true);
+      try {
+        const data = await request(`/api/runs?${params}`, { signal: controller.signal, cache: 'no-store' });
+        if (!active) return;
+        setItems(data.items); setTotal(data.total); setWarnings(data.errors || []); setError('');
+        const timestamp = Date.now();
+        setUpdated(timestamp); setNow(timestamp);
+        if (data.items.some((item) => item.status === 'Running')) delay = 10000;
+      } catch (cause) {
+        if (active && !controller.signal.aborted) setError(cause.message);
+      } finally {
+        if (active) {
+          setLoading(false);
+          timer = window.setTimeout(() => document.hidden ? schedule() : load(), delay);
+        }
+      }
+    };
+    const schedule = () => { timer = window.setTimeout(() => document.hidden ? schedule() : load(), 30000); };
+    load();
+    return () => { active = false; controller.abort(); window.clearTimeout(timer); };
+  }, [namespace, pipeline, page, submitted, refreshKey]);
   const searchRuns = (event) => {
     event.preventDefault(); setPage(1); setSubmitted({ search, status, since, until });
   };
@@ -316,10 +342,12 @@ function Runs({ namespace, pipeline = '', embedded = false, filterNamespace = na
       <input type="date" value={since} onChange={(event) => setSince(event.target.value)} aria-label="From date" />
       <input type="date" value={until} onChange={(event) => setUntil(event.target.value)} aria-label="To date" />
       <Button type="submit" variant="primary">Search</Button>
+      <Button type="button" variant="secondary" isDisabled={loading} onClick={() => setRefreshKey((value) => value + 1)}>Refresh</Button>
+      {updated && <span className="count">Updated {new Date(updated).toLocaleTimeString()}</span>}
     </form>
     {error && <Alert variant="danger" title={error} className="notice" />}
     {warnings.length > 0 && <Alert variant="warning" title={`Some history could not be loaded (${warnings.map((item) => item.namespace).join(', ')})`} className="notice" />}
-    {loading ? <div className="loading"><Spinner size="lg" /></div> : items.length === 0 ? <div className="empty">No runs match these filters.</div> : <div className="table-wrap"><table className="data-table"><thead><tr><th>PipelineRun</th><th>Pipeline</th><th>Namespace</th><th>Status</th><th>Run state</th><th>Started</th><th>Duration</th></tr></thead><tbody>
+    {loading && !updated ? <div className="loading"><Spinner size="lg" /></div> : items.length === 0 ? <div className="empty">No runs match these filters.</div> : <div className="table-wrap"><table className="data-table"><thead><tr><th>PipelineRun</th><th>Pipeline</th><th>Namespace</th><th>Status</th><th>Run state</th><th>Started</th><th>Duration</th></tr></thead><tbody>
       {items.map((item) => {
         const href = viewHref({ kind: 'run', ...item, filterNamespace });
         const onNavigate = (event) => navigateRow(event, href);
