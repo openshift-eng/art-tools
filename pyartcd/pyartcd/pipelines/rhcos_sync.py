@@ -85,7 +85,7 @@ def resolve_pullspec(tag: str, arch: str, priv: bool) -> Tuple[str, str]:
       - If tag contains "/", treat the whole thing as a pullspec.
         The tag portion is extracted after the last ":".
       - If tag contains "nightly", build a registry.ci pullspec
-        using the arch/priv suffix convention.
+        using the release stream and arch/priv suffix convention.
       - Otherwise, use quay.io/openshift-release-dev/ocp-release.
 
     Args:
@@ -108,7 +108,9 @@ def resolve_pullspec(tag: str, arch: str, priv: bool) -> Tuple[str, str]:
     suffix = go_suffix_for_arch(arch, is_private=priv)
 
     if "nightly" in tag:
-        pullspec = f"registry.ci.openshift.org/ocp{suffix}/release{suffix}:{tag}"
+        major, _ = extract_major_minor(tag)
+        release_image = f"release-{major}" if major >= 5 else "release"
+        pullspec = f"{REGISTRY_CI_OPENSHIFT}/ocp{suffix}/{release_image}{suffix}:{tag}"
     else:
         pullspec = f"quay.io/openshift-release-dev/ocp-release:{tag}"
 
