@@ -284,6 +284,7 @@ class DirectSignatory:
     DEFAULT_CLIENT_COMMAND = ("rh-signing-client",)
     DEFAULT_TIMEOUT = 10 * 60
     ON_BEHALF_OF = "jupierce@redhat.com"
+    SIGNING_PROXY_URL = "http://172.30.59.70:3128"
 
     def __init__(
         self,
@@ -492,10 +493,19 @@ class DirectSignatory:
                 self.ON_BEHALF_OF,
             ]
 
+            signing_environment = self._environment.copy()
+            signing_environment.update(
+                {
+                    "HTTPS_PROXY": self.SIGNING_PROXY_URL,
+                    "https_proxy": self.SIGNING_PROXY_URL,
+                    "NO_PROXY": "",
+                    "no_proxy": "",
+                }
+            )
             rc, _, stderr = await self._command_runner(
                 command,
                 check=False,
-                env=self._environment,
+                env=signing_environment,
                 timeout=self.timeout,
             )
             if rc != 0:
