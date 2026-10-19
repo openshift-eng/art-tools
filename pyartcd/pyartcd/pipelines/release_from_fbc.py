@@ -1233,7 +1233,7 @@ class ReleaseFromFbcPipeline:
             operator_groups_out=operator_groups,
             operator_by_fbc_out=operator_by_fbc,
             related_nvrs_by_fbc_out=related_nvrs_by_fbc,
-            assembly=None if self.ocp_optional else self.assembly,
+            assembly=self.assembly,
         )
         self._fbc_operator_keys = sorted(operator_groups.keys())
         self._fbc_operator_by_pullspec = operator_by_fbc

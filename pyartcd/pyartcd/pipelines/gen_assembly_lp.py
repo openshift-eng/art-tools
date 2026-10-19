@@ -119,7 +119,7 @@ class GenAssemblyLPPipeline:
 
             all_related_nvrs = []
             for fbc_pullspec in self.fbc_pullspecs:
-                related_nvrs = await _extract(fbc_pullspec, self.product)
+                related_nvrs = await _extract(fbc_pullspec, self.product, assembly=self.assembly)
                 all_related_nvrs.extend(related_nvrs)
 
         all_related_nvrs = sorted(set(all_related_nvrs))

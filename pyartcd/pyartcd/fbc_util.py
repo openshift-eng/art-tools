@@ -205,6 +205,13 @@ async def validate_fbc_related_images(
     returned NVR union and provenance outputs. Without an assembly, all related
     images are compared.
 
+    Related images are taken via version-scoped rendered-catalog extraction
+    (:func:`elliottlib.util.extract_nvrs_from_fbc` →
+    ``extract_versioned_related_images_from_fbc``): assembly when it is a real
+    release version, otherwise the version parsed from the FBC NVR/tag.
+    ``assembly='stream'`` falls through to the FBC tag. This is *not* Konflux's
+    per-OCP ``related-images.json`` delta (that path is for OCP share sync).
+
     Optional output mappings expose the resolved operator grouping and each
     catalog's related NVRs so callers can reuse the inspected provenance
     without rendering the FBC images again.
@@ -215,7 +222,8 @@ async def validate_fbc_related_images(
         operator_groups_out: Optional operator-to-pullspecs output mapping.
         operator_by_fbc_out: Optional pullspec-to-operator output mapping.
         related_nvrs_by_fbc_out: Optional pullspec-to-related-NVRs output mapping.
-        assembly: Optional assembly version used to exclude external dependencies from comparison.
+        assembly: Optional assembly/release version used to select the olm.bundle.
+            Also excludes external dependencies from consistency comparison.
 
     Returns:
         The combined list of all unique related images across all operators.
@@ -287,7 +295,7 @@ async def validate_fbc_related_images(
     fbc_related_images = {}
     all_related_images = set()
     for fbc_pullspec in fbc_pullspecs:
-        related_nvrs = set(await extract_nvrs_from_fbc(fbc_pullspec, product))
+        related_nvrs = set(await extract_nvrs_from_fbc(fbc_pullspec, product, assembly=assembly))
         all_related_images.update(related_nvrs)
         if related_nvrs_by_fbc_out is not None:
             related_nvrs_by_fbc_out[fbc_pullspec] = sorted(related_nvrs)

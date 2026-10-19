@@ -21,7 +21,11 @@ from artcommonlib.konflux.konflux_build_record import KonfluxBuildOutcome, Konfl
 from artcommonlib.konflux.konflux_db import KonfluxDb
 from artcommonlib.logutil import get_logger
 from artcommonlib.oc_image_info import oc_image_info__cached_async
-from artcommonlib.util import extract_group_from_nvr, extract_related_images_from_fbc, is_ocp_delivery_repo
+from artcommonlib.util import (
+    extract_group_from_nvr,
+    extract_versioned_related_images_from_fbc,
+    is_ocp_delivery_repo,
+)
 from errata_tool import Erratum
 
 from elliottlib import brew, constants
@@ -844,15 +848,25 @@ def get_advisory_boilerplate(runtime, et_data, art_advisory_key, errata_type):
     return advisory_boilerplate
 
 
-async def extract_nvrs_from_fbc(fbc_pullspec: str, product: str) -> list[str]:
+async def extract_nvrs_from_fbc(fbc_pullspec: str, product: str, assembly: Optional[str] = None) -> list[str]:
     """
     Extract NVRs from FBC image using ORAS workflow.
     Reuses the logic from elliott snapshot CLI.
+
+    Uses version-scoped rendered-catalog extraction (layered-product shipping).
+    See :func:`artcommonlib.util.extract_versioned_related_images_from_fbc`.
+
+    Args:
+        fbc_pullspec: FBC image pullspec.
+        product: Product name for registry URL transformation.
+        assembly: Optional assembly/release version to select the olm.bundle
+            relatedImages (preferred over parsing the FBC tag). ``stream`` is
+            not treated as a version; the FBC tag/NVR is used instead.
     """
     logger = get_logger(__name__)
     logger.info(f"Extracting NVRs from FBC image: {fbc_pullspec}")
 
-    related_images = await extract_related_images_from_fbc(fbc_pullspec, product)
+    related_images = await extract_versioned_related_images_from_fbc(fbc_pullspec, product, assembly=assembly)
 
     # Transform image URLs and extract NVRs in parallel
     logger.info(f"Extracting NVRs from {len(related_images)} related images in parallel...")
