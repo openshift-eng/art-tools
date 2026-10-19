@@ -955,6 +955,7 @@ class TestDetermineStagePullspec(unittest.IsolatedAsyncioTestCase):
         gen.logger = MagicMock()
         gen._container = MagicMock()
         gen.downstream_parents = downstream_parents
+        gen.parent_source_dirs = {}
         return gen
 
     async def test_reachable_image_resolves_to_digest(self):
@@ -984,6 +985,26 @@ class TestDetermineStagePullspec(unittest.IsolatedAsyncioTestCase):
         gen = self._make_generator(["builder"])
         result = await gen._determine_stage_pullspec(0, "test-image")
         self.assertIsNone(result)
+
+    async def test_parent_rebased_same_run_returns_bare(self):
+        """When parent_source_dirs has an entry for the stage, return None (bare mode)."""
+        gen = self._make_generator(["registry.redhat.io/openshift/base@sha256:abc123"])
+        gen.parent_source_dirs = {0: Path("/some/parent/dir")}
+        gen._container.resolve_to_digest = AsyncMock(return_value="registry.redhat.io/openshift/base@sha256:abc123")
+
+        result = await gen._determine_stage_pullspec(0, "test-image")
+        self.assertIsNone(result)
+        gen.logger.info.assert_called()
+        gen._container.resolve_to_digest.assert_not_called()
+
+    async def test_parent_source_dirs_other_stage_does_not_affect(self):
+        """parent_source_dirs for a different stage should not trigger bare mode."""
+        gen = self._make_generator(["registry.redhat.io/openshift/base:v1.0"])
+        gen.parent_source_dirs = {1: Path("/some/parent/dir")}  # stage 1, not 0
+        gen._container.resolve_to_digest = AsyncMock(return_value="registry.redhat.io/openshift/base@sha256:abc123")
+
+        result = await gen._determine_stage_pullspec(0, "test-image")
+        self.assertEqual(result, "registry.redhat.io/openshift/base@sha256:abc123")
 
 
 class TestCrossArchReconciliation(unittest.IsolatedAsyncioTestCase):
@@ -1853,6 +1874,67 @@ class TestBareUpdateUpgradeResolution(unittest.TestCase):
             asyncio.run(generator.generate_lockfile(self._make_mock_image_meta(), dest_dir))
 
         self.assertTrue(generator.upgrades_dropped)
+
+    def test_bare_update_non_final_stage_uses_fallback_as_extra_packages(self):
+        """
+        When a non-final stage has a bare dnf update and the parent was rebased
+        in the same run (parent_source_dirs entry exists), _determine_stage_pullspec
+        returns None. Instead of dropping upgrades, fallback_installed data should
+        be used as extra_packages for resolution.
+        """
+        container = MagicMock(spec=ContainerImageHelper)
+        container.resolve_to_digest = AsyncMock(side_effect=lambda p: p + "@sha256:abc123")
+        container.get_installed_packages = AsyncMock(return_value=[])
+        container.read_file_from_image = AsyncMock(return_value="")
+
+        resolver = MagicMock(spec=RpmResolver)
+        resolver.resolve = AsyncMock(return_value=FAKE_LOCKFILE_DATA.model_copy(deep=True))
+
+        generator = RpmLockfilePrototypeGenerator(
+            repos=self._make_mock_repos(),
+            working_dir=Path(tempfile.mkdtemp()),
+            container_helper=container,
+            resolver=resolver,
+        )
+        generator.downstream_parents = [
+            "quay.io/test/builder:latest",
+            "quay.io/test/base:latest",
+        ]
+        # Stage 0 parent was rebased in the same run → bare mode
+        generator.parent_source_dirs = {0: Path("/some/parent/dir")}
+        generator.fallback_installed = {0: ["glibc", "openssl", "rpm"]}
+
+        captured_configs: list[RpmsInConfig] = []
+
+        async def capture_resolve(config, image_pullspec=None, **kwargs):
+            captured_configs.append(config)
+            return FAKE_LOCKFILE_DATA.model_copy(deep=True)
+
+        resolver.resolve = AsyncMock(side_effect=capture_resolve)
+
+        with TemporaryDirectory() as tmpdir:
+            dest_dir = Path(tmpdir)
+            (dest_dir / "Dockerfile").write_text(
+                "FROM builder AS build\n"
+                "RUN dnf -y update && yum clean all\n"
+                "RUN dnf install -y gcc\n"
+                "\n"
+                "FROM base\n"
+                "COPY --from=build /app /app\n"
+            )
+
+            asyncio.run(generator.generate_lockfile(self._make_mock_image_meta(), dest_dir))
+
+        # Stage 0 should NOT have upgrades_dropped — fallback data was available
+        self.assertFalse(generator.upgrades_dropped)
+
+        # Fallback packages should appear in extra packages for stage 0
+        self.assertGreaterEqual(len(captured_configs), 1)
+        stage0_config = captured_configs[0]
+        pkg_names = [p if isinstance(p, str) else p.name for p in stage0_config.packages]
+        self.assertIn("glibc", pkg_names)
+        self.assertIn("openssl", pkg_names)
+        self.assertIn("rpm", pkg_names)
 
     def test_base_image_package_uses_upgrade_not_reinstall(self):
         """

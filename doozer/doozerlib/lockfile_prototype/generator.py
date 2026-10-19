@@ -611,13 +611,19 @@ class RpmLockfilePrototypeGenerator:
 
             if stage_num in stages_with_bare_updates and not bare_context:
                 if not image_pullspec:
-                    # No base image to query (stage alias) — can't determine
-                    # upgrade targets, so mark dropped to strip the bare update
-                    self.upgrades_dropped = True
-                    self.logger.info(
-                        f"{distgit_key}: stage {stage_num}: bare update detected but no "
-                        "base image available, marking upgrades as dropped"
-                    )
+                    # Check fallback data before dropping upgrades
+                    bare_update_base = await self._get_base_image_packages(stage_num, None, distgit_key, arches)
+                    if bare_update_base:
+                        extra = [p for p in bare_update_base if p not in extra_packages]
+                        extra_packages.extend(extra)
+                    else:
+                        # No base image to query (stage alias) — can't determine
+                        # upgrade targets, so mark dropped to strip the bare update
+                        self.upgrades_dropped = True
+                        self.logger.info(
+                            f"{distgit_key}: stage {stage_num}: bare update detected but no "
+                            "base image or fallback package data available, marking upgrades as dropped"
+                        )
                 elif stage_num != final_stage_num and not upgrade_pkgs:
                     # Final stage already populated upgrade_pkgs from base image;
                     # only query again for non-final stages with bare updates.
@@ -731,6 +737,16 @@ class RpmLockfilePrototypeGenerator:
         if image_pullspec and "/" not in image_pullspec:
             image_pullspec = None
         if image_pullspec:
+            # If parent was rebased in the same run, its source directory is
+            # available locally and fallback_installed holds the package data.
+            # Skip the registry pull — the pinned digest may be x86-only and
+            # rpm-lockfile-prototype would fail for other architectures.
+            if stage_num in self.parent_source_dirs:
+                self.logger.info(
+                    f"{distgit_key}: stage {stage_num}: parent rebased in same run, "
+                    "resolving in bare mode to avoid stale parent digest"
+                )
+                return None
             resolved = await self._container.resolve_to_digest(image_pullspec)
             if resolved == image_pullspec and DIGEST_PREFIX not in image_pullspec:
                 self.logger.warning(
