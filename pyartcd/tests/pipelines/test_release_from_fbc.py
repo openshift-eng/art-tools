@@ -1815,6 +1815,34 @@ class TestOcpOptionalMode(unittest.TestCase):
         pipeline = self._make_pipeline()
         self.assertFalse(pipeline.ocp_optional)
 
+    @patch('pyartcd.pipelines.release_from_fbc._validate_fbc_related_images', new_callable=AsyncMock)
+    def test_ocp_optional_uses_unscoped_related_image_extraction(self, mock_validate):
+        """--ocp-optional must not use version-scoped bundle matching."""
+        mock_validate.return_value = ["sriov-network-operator-container-4.22.0-1"]
+        pipeline = self._make_pipeline(ocp_optional=True, assembly="4.22.0")
+
+        result = asyncio.run(pipeline.validate_fbc_related_images(pipeline.fbc_pullspecs))
+
+        self.assertEqual(result, ["sriov-network-operator-container-4.22.0-1"])
+        mock_validate.assert_awaited_once()
+        _, kwargs = mock_validate.await_args
+        self.assertFalse(kwargs.get('version_scoped', True))
+        self.assertIsNone(kwargs.get('assembly'))
+
+    @patch('pyartcd.pipelines.release_from_fbc._validate_fbc_related_images', new_callable=AsyncMock)
+    def test_lp_mode_uses_version_scoped_related_image_extraction(self, mock_validate):
+        mock_validate.return_value = ["op-container-6.4.1-1"]
+        pipeline = self._make_pipeline(ocp_optional=False, group="logging-6.4", assembly="6.4.1")
+        pipeline.product = "logging"
+
+        result = asyncio.run(pipeline.validate_fbc_related_images(pipeline.fbc_pullspecs))
+
+        self.assertEqual(result, ["op-container-6.4.1-1"])
+        mock_validate.assert_awaited_once()
+        _, kwargs = mock_validate.await_args
+        self.assertTrue(kwargs.get('version_scoped', False))
+        self.assertEqual(kwargs.get('assembly'), "6.4.1")
+
     def test_exclude_nvr_components_stored_as_set(self):
         pipeline = self._make_pipeline(
             ocp_optional=True,

@@ -23,6 +23,7 @@ from artcommonlib.logutil import get_logger
 from artcommonlib.oc_image_info import oc_image_info__cached_async
 from artcommonlib.util import (
     extract_group_from_nvr,
+    extract_related_images_from_fbc,
     extract_versioned_related_images_from_fbc,
     is_ocp_delivery_repo,
 )
@@ -848,13 +849,23 @@ def get_advisory_boilerplate(runtime, et_data, art_advisory_key, errata_type):
     return advisory_boilerplate
 
 
-async def extract_nvrs_from_fbc(fbc_pullspec: str, product: str, assembly: Optional[str] = None) -> list[str]:
+async def extract_nvrs_from_fbc(
+    fbc_pullspec: str,
+    product: str,
+    assembly: Optional[str] = None,
+    version_scoped: bool = True,
+) -> list[str]:
     """
     Extract NVRs from FBC image using ORAS workflow.
     Reuses the logic from elliott snapshot CLI.
 
-    Uses version-scoped rendered-catalog extraction (layered-product shipping).
-    See :func:`artcommonlib.util.extract_versioned_related_images_from_fbc`.
+    By default uses version-scoped rendered-catalog extraction (layered-product
+    shipping). See :func:`artcommonlib.util.extract_versioned_related_images_from_fbc`.
+
+    When ``version_scoped`` is false (OCP optional / share-style), uses
+    :func:`artcommonlib.util.extract_related_images_from_fbc` so build-suffixed
+    OCP bundle names (e.g. ``*.v4.22.0-202407221``) are not required to match
+    ``.v{assembly}`` exactly. ``assembly`` is ignored in that mode.
 
     Args:
         fbc_pullspec: FBC image pullspec.
@@ -862,11 +873,17 @@ async def extract_nvrs_from_fbc(fbc_pullspec: str, product: str, assembly: Optio
         assembly: Optional assembly/release version to select the olm.bundle
             relatedImages (preferred over parsing the FBC tag). ``stream`` is
             not treated as a version; the FBC tag/NVR is used instead.
+            Only used when ``version_scoped`` is true.
+        version_scoped: When true (default), select one release olm.bundle.
+            When false, use the unscoped OCP extractor.
     """
     logger = get_logger(__name__)
     logger.info(f"Extracting NVRs from FBC image: {fbc_pullspec}")
 
-    related_images = await extract_versioned_related_images_from_fbc(fbc_pullspec, product, assembly=assembly)
+    if version_scoped:
+        related_images = await extract_versioned_related_images_from_fbc(fbc_pullspec, product, assembly=assembly)
+    else:
+        related_images = await extract_related_images_from_fbc(fbc_pullspec, product)
 
     # Transform image URLs and extract NVRs in parallel
     logger.info(f"Extracting NVRs from {len(related_images)} related images in parallel...")
