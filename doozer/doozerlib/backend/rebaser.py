@@ -20,7 +20,8 @@ import semver
 import yaml
 from artcommonlib import exectools, release_util
 from artcommonlib.build_visibility import BuildVisibility, get_visibility_suffix, is_release_embargoed
-from artcommonlib.constants import GOLANG_NVR_ENV, GOLANG_NVR_LABEL
+from artcommonlib.constants import GIT_NO_PROMPTS, GOLANG_NVR_ENV, GOLANG_NVR_LABEL
+from artcommonlib.github_auth import get_github_git_auth_env
 from artcommonlib.konflux.konflux_build_record import Engine, KonfluxBuildRecord
 from artcommonlib.model import ListModel, Missing, Model
 from artcommonlib.product_catalog import find_product_config
@@ -916,14 +917,34 @@ class KonfluxRebaser:
             with exectools.Dir(source_dir) as curdir:
                 author_email = None
                 err = None
+                git_env = {
+                    **os.environ,
+                    **GIT_NO_PROMPTS,
+                    **get_github_git_auth_env(url=source.https_pull_url),
+                }
                 rc, sha, err = await exectools.cmd_gather_async(
                     # --no-merges because the merge bot is not the real author
                     # --diff-filter=a to omit the "first" commit in a shallow clone which may not be the author
                     #   (though this means when the only commit is the initial add, that is omitted)
-                    f'git -C {curdir} log --no-merges --diff-filter=a -n 1 --pretty=format:%H {dockerfile_name}',
+                    [
+                        "git",
+                        "-C",
+                        str(curdir),
+                        "log",
+                        "--no-merges",
+                        "--diff-filter=a",
+                        "-n",
+                        "1",
+                        "--pretty=format:%H",
+                        "--",
+                        dockerfile_name,
+                    ],
+                    env=git_env,
                 )
                 if rc == 0:
-                    rc, ae, err = await exectools.cmd_gather_async(f"git -C {curdir} show -s --pretty=format:%ae {sha}")
+                    rc, ae, err = await exectools.cmd_gather_async(
+                        ["git", "-C", str(curdir), "show", "-s", "--pretty=format:%ae", sha], env=git_env
+                    )
                     if rc == 0:
                         if ae.lower().endswith('@redhat.com'):
                             self._logger.info('Last Dockerfile committer: {}'.format(ae))

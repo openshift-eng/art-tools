@@ -301,7 +301,10 @@ class SourceResolver:
                 is_fork = pull_url is not None and pull_url != url
                 if has_public_upstream and not is_fork:
                     self.setup_and_fetch_public_upstream_source(
-                        meta.public_upstream_url, meta.public_upstream_branch or clone_branch, source_dir
+                        meta.public_upstream_url,
+                        meta.public_upstream_branch or clone_branch,
+                        source_dir,
+                        source_url=clone_url,
                     )
 
             except IOError as e:
@@ -632,13 +635,19 @@ class SourceResolver:
         return remote_https, None, False
 
     @staticmethod
-    def setup_and_fetch_public_upstream_source(public_source_url: str, public_upstream_branch: str, source_dir: str):
+    def setup_and_fetch_public_upstream_source(
+        public_source_url: str,
+        public_upstream_branch: str,
+        source_dir: str,
+        source_url: str | None = None,
+    ):
         """
         Fetch public upstream source for specified Git repository. Set up public_upstream remote if needed.
 
         :param public_source_url: HTTPS Git URL of the public upstream source
         :param public_upstream_branch: Git branch of the public upstream source
         :param source_dir: Path to the local Git repository
+        :param source_url: Git URL of the clone source, used for lazy object fetches
         """
         out, _ = exectools.cmd_assert(["git", "-C", source_dir, "remote"])
         if 'public_upstream' not in out.strip().split():
@@ -647,7 +656,10 @@ class SourceResolver:
             exectools.cmd_assert(
                 ["git", "-C", source_dir, "remote", "set-url", "--", "public_upstream", public_source_url]
             )
-        fetch_env = {**constants.GIT_NO_PROMPTS, **get_github_git_auth_env(url=public_source_url)}
+        # A blobless partial clone can lazily retrieve missing objects from the
+        # clone's promisor remote (origin), which may be private and require
+        # different credentials from the public upstream.
+        fetch_env = {**constants.GIT_NO_PROMPTS, **get_github_git_auth_env(url=source_url or public_source_url)}
         exectools.cmd_assert(
             ["git", "-C", source_dir, "fetch", "--", "public_upstream", public_upstream_branch],
             retries=3,
