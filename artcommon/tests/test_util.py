@@ -1289,9 +1289,7 @@ class TestExtractVersionedRelatedImagesFromFBC(unittest.TestCase):
 
     def test_parse_version_from_fbc_pullspec(self):
         self.assertEqual(
-            parse_version_from_fbc_pullspec(
-                "quay.io/x/art-fbc:quay-operator-fbc-3.18.2-20261016202302.ocp4.12"
-            ),
+            parse_version_from_fbc_pullspec("quay.io/x/art-fbc:quay-operator-fbc-3.18.2-20261016202302.ocp4.12"),
             "3.18.2",
         )
         self.assertEqual(
@@ -1318,7 +1316,9 @@ class TestExtractVersionedRelatedImagesFromFBC(unittest.TestCase):
         finally:
             os.unlink(path)
 
-    def _create_discover_response(self, include_related_images=False, include_rendered_catalog=True, use_manifests=False):
+    def _create_discover_response(
+        self, include_related_images=False, include_rendered_catalog=True, use_manifests=False
+    ):
         items = []
         if include_related_images:
             items.append(
@@ -1343,7 +1343,9 @@ class TestExtractVersionedRelatedImagesFromFBC(unittest.TestCase):
         key = 'manifests' if use_manifests else 'referrers'
         return json.dumps({key: items})
 
-    def _mock_catalog_extraction(self, mock_listdir, mock_exists, mock_open, mock_cmd, catalog_content, use_manifests=False):
+    def _mock_catalog_extraction(
+        self, mock_listdir, mock_exists, mock_open, mock_cmd, catalog_content, use_manifests=False
+    ):
         mock_cmd.side_effect = [
             (0, self._create_discover_response(include_rendered_catalog=True, use_manifests=use_manifests), ''),
             (0, 'Pulled artifact successfully', ''),
@@ -1409,9 +1411,7 @@ class TestExtractVersionedRelatedImagesFromFBC(unittest.TestCase):
             '',
         )
         with self.assertRaises(RuntimeError) as ctx:
-            asyncio.run(
-                extract_versioned_related_images_from_fbc(self.fbc_pullspec, self.product, assembly="1.0.0")
-            )
+            asyncio.run(extract_versioned_related_images_from_fbc(self.fbc_pullspec, self.product, assembly="1.0.0"))
         self.assertIn('rendered-catalog', str(ctx.exception))
 
     @patch('artcommonlib.util.cmd_gather_async', new_callable=AsyncMock)

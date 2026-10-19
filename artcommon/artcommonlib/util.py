@@ -1160,7 +1160,9 @@ def _extract_versioned_images_from_catalog_json(catalog_path: str, bundle_versio
     entries = _parse_catalog_json_entries(catalog_path)
     suffix = _bundle_version_suffix(bundle_version)
     matching_bundles = [
-        entry for entry in entries if entry.get('schema') == 'olm.bundle' and str(entry.get('name', '')).endswith(suffix)
+        entry
+        for entry in entries
+        if entry.get('schema') == 'olm.bundle' and str(entry.get('name', '')).endswith(suffix)
     ]
 
     total_bundles = sum(1 for entry in entries if entry.get('schema') == 'olm.bundle')
@@ -1178,9 +1180,7 @@ def _extract_versioned_images_from_catalog_json(catalog_path: str, bundle_versio
     unique_sets = {s for s in image_sets}
     if len(unique_sets) > 1:
         names = [b.get('name') for b in matching_bundles]
-        raise RuntimeError(
-            f"Multiple olm.bundle entries match '*{suffix}' with differing relatedImages: {names}"
-        )
+        raise RuntimeError(f"Multiple olm.bundle entries match '*{suffix}' with differing relatedImages: {names}")
 
     images = sorted(unique_sets.pop()) if unique_sets else []
     LOGGER.info(
@@ -1516,16 +1516,12 @@ async def extract_versioned_related_images_from_fbc(
 
         catalog_json_path = os.path.join(temp_dir, 'catalog.json')
         if not os.path.exists(catalog_json_path):
-            raise RuntimeError(
-                f"catalog.json not found in rendered-catalog artifact. Available files: {pulled_files}"
-            )
+            raise RuntimeError(f"catalog.json not found in rendered-catalog artifact. Available files: {pulled_files}")
 
         # stream is the OCP nightly assembly name, not a product release version
         assembly_for_match = None if not assembly or assembly == "stream" else assembly
         if assembly == "stream":
-            LOGGER.info(
-                "assembly='stream' is not a release version; selecting olm.bundle from FBC pullspec/NVR tag"
-            )
+            LOGGER.info("assembly='stream' is not a release version; selecting olm.bundle from FBC pullspec/NVR tag")
 
         raw_images: list[str] = []
         selected_version: Optional[str] = None
@@ -1586,7 +1582,6 @@ async def extract_versioned_related_images_from_fbc(
 
     LOGGER.info(f"Extracted {len(related_images)} image pullspecs from FBC")
     return related_images
-
 
 
 def validate_build_priority(build_priority):
