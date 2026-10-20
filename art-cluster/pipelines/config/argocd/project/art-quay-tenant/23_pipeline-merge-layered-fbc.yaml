@@ -1,0 +1,88 @@
+apiVersion: tekton.dev/v1
+kind: Pipeline
+metadata:
+  name: merge-layered-fbc
+  namespace: art-quay-tenant
+  labels:
+    app: artcd
+spec:
+  description: Merge explicit Quay operator FBC builds for one OCP target. Builds a fragment without creating a
+    shipment.
+  params:
+  - name: group
+    type: string
+    description: Existing Quay group used as the execution context
+  - name: ocp-target-version
+    type: string
+    description: One OCP MAJOR.MINOR target, e.g. 4.20 or 5.0
+  - name: fbc-builds
+    type: array
+    description: Explicit source FBC NVRs or pullspecs, one per array entry
+  - name: data-path
+    type: string
+    default: https://github.com/openshift-eng/ocp-build-data
+  - name: fbc-repo
+    type: string
+    default: ''
+  - name: image-repo
+    type: string
+    default: ''
+  - name: plr-template
+    type: string
+    default: ''
+    description: Optional full URL of the FBC PipelineRun template
+  - name: skip-checks
+    type: string
+    default: 'false'
+    enum:
+    - 'true'
+    - 'false'
+  - name: skip-tasks
+    type: string
+    default: ''
+    description: Optional comma-separated Konflux task names to skip
+  - name: dry-run
+    type: string
+    default: 'true'
+    enum:
+    - 'true'
+    - 'false'
+  results:
+  - name: merged-fbc-nvr
+    description: Merged FBC NVR (planned NVR in dry runs)
+    value: $(tasks.merge-fbc.results.merged-fbc-nvr)
+  - name: merged-fbc-pullspec
+    description: Immutable merged FBC image, empty in dry runs
+    value: $(tasks.merge-fbc.results.merged-fbc-pullspec)
+  - name: build-url
+    description: Konflux build URL, empty in dry runs
+    value: $(tasks.merge-fbc.results.build-url)
+  - name: provenance-url
+    description: Committed input and baseline provenance, empty in dry runs
+    value: $(tasks.merge-fbc.results.provenance-url)
+  tasks:
+  - name: merge-fbc
+    taskRef:
+      name: artcd-merge-layered-fbc
+    params:
+    - name: group
+      value: $(params.group)
+    - name: ocp-target-version
+      value: $(params.ocp-target-version)
+    - name: fbc-builds
+      value:
+      - $(params.fbc-builds[*])
+    - name: data-path
+      value: $(params.data-path)
+    - name: fbc-repo
+      value: $(params.fbc-repo)
+    - name: image-repo
+      value: $(params.image-repo)
+    - name: plr-template
+      value: $(params.plr-template)
+    - name: skip-checks
+      value: $(params.skip-checks)
+    - name: skip-tasks
+      value: $(params.skip-tasks)
+    - name: dry-run
+      value: $(params.dry-run)

@@ -1,0 +1,248 @@
+apiVersion: tekton.dev/v1
+kind: Task
+metadata:
+  labels:
+    app: artcd
+  name: artcd-merge-layered-fbc
+  namespace: art-quay-tenant
+spec:
+  params:
+  - name: group
+    type: string
+    description: Existing Quay group used as the execution context
+  - name: ocp-target-version
+    type: string
+    description: One OCP MAJOR.MINOR target, e.g. 4.20 or 5.0
+  - name: fbc-builds
+    type: array
+    description: Explicit source FBC NVRs or pullspecs, one per array entry
+  - name: data-path
+    type: string
+    default: https://github.com/openshift-eng/ocp-build-data
+  - name: fbc-repo
+    type: string
+    default: ''
+  - name: image-repo
+    type: string
+    default: ''
+  - name: plr-template
+    type: string
+    default: ''
+    description: Optional full URL of the FBC PipelineRun template
+  - name: skip-checks
+    type: string
+    default: 'false'
+    enum:
+    - 'true'
+    - 'false'
+  - name: skip-tasks
+    type: string
+    default: ''
+    description: Optional comma-separated Konflux task names to skip
+  - name: dry-run
+    type: string
+    default: 'true'
+    enum:
+    - 'true'
+    - 'false'
+  stepTemplate:
+    computeResources:
+      requests:
+        memory: 10Gi
+        cpu: '2'
+      limits:
+        memory: 12Gi
+        cpu: '4'
+    env:
+    - name: TASKRUN_NAMESPACE
+      value: $(context.taskRun.namespace)
+    - name: TASKRUN_NAME
+      value: $(context.taskRun.name)
+    - name: TASKRUN_UID
+      value: $(context.taskRun.uid)
+    - name: BUILD_URL
+      value: https://console-openshift-console.apps.artc2023.pc3z.p1.openshiftapps.com/k8s/ns/art-quay-tenant/tekton.dev~v1~TaskRun/$(context.taskRun.name)
+    - name: GOOGLE_APPLICATION_CREDENTIALS
+      value: /tmp/gcp-sa/sa.json
+    - name: GIT_AUTHOR_NAME
+      value: openshift-art-build-bot
+    - name: GIT_AUTHOR_EMAIL
+      value: openshift-dev-infra+github-openshift-art-build-bot@redhat.com
+    - name: GIT_COMMITTER_NAME
+      value: openshift-art-build-bot
+    - name: GIT_COMMITTER_EMAIL
+      value: openshift-dev-infra+github-openshift-art-build-bot@redhat.com
+  steps:
+  - args:
+    - $(params.fbc-builds[*])
+    computeResources:
+      requests:
+        memory: 10Gi
+        cpu: '2'
+      limits:
+        memory: 12Gi
+        cpu: '4'
+    env:
+    - name: SLACK_BOT_TOKEN
+      valueFrom:
+        secretKeyRef:
+          key: slack-api-token
+          name: art-bot-config
+    - name: REDIS_SERVER_PASSWORD
+      valueFrom:
+        secretKeyRef:
+          key: password
+          name: redis-server-password
+    - name: GITHUB_APP_ID
+      valueFrom:
+        secretKeyRef:
+          key: app-id
+          name: github-app-credentials
+    - name: GITHUB_APP_PRIVATE_KEY_PATH
+      value: /tmp/github-app/private-key.pem
+    - name: QUAY_KONFLUX_SA_KUBECONFIG
+      value: /tmp/konflux-kubeconfigs/quay
+    - name: QUAY_AUTH_FILE
+      value: /tmp/quay-authfile/config.json
+    - name: DOCKER_CONFIG
+      value: /tmp/quay-authfile
+    - name: MERGE_GROUP
+      value: $(params.group)
+    - name: MERGE_OCP_TARGET_VERSION
+      value: $(params.ocp-target-version)
+    - name: MERGE_DATA_PATH
+      value: $(params.data-path)
+    - name: MERGE_FBC_REPO
+      value: $(params.fbc-repo)
+    - name: MERGE_IMAGE_REPO
+      value: $(params.image-repo)
+    - name: MERGE_PLR_TEMPLATE
+      value: $(params.plr-template)
+    - name: MERGE_SKIP_CHECKS
+      value: $(params.skip-checks)
+    - name: MERGE_SKIP_TASKS
+      value: $(params.skip-tasks)
+    - name: MERGE_DRY_RUN
+      value: $(params.dry-run)
+    - name: MERGE_TASKRUN
+      value: $(context.taskRun.name)
+    - name: MERGE_RESULT_NVR
+      value: $(results.merged-fbc-nvr.path)
+    - name: MERGE_RESULT_PULLSPEC
+      value: $(results.merged-fbc-pullspec.path)
+    - name: MERGE_RESULT_BUILD_URL
+      value: $(results.build-url.path)
+    - name: MERGE_RESULT_PROVENANCE_URL
+      value: $(results.provenance-url.path)
+    image: quay.io/redhat-user-workloads/ocp-art-tenant/art-cd:latest
+    name: invoke-artcd
+    script: |
+      #!/usr/bin/env python3
+      import json
+      import os
+      import subprocess
+      import sys
+      from pathlib import Path
+
+      if not os.environ["MERGE_GROUP"].startswith("quay-"):
+          raise ValueError("An existing Quay execution group is required")
+      if not sys.argv[1:]:
+          raise ValueError("At least one FBC build is required")
+
+      subprocess.run(["kinit", "-f", "-k", "-t", "/tmp/keytab/keytab", "exd-ocp-buildvm-bot-prod@IPA.REDHAT.COM"], check=True)
+      Path("/root/.config").mkdir(parents=True, exist_ok=True)
+      Path("/root/.config/artcd.toml").touch(exist_ok=True)
+      Path("artcd-working").mkdir(exist_ok=True)
+      output = Path("artcd-working/merged-fbc.json").absolute()
+      os.environ["DOOZER_DB_NAME"] = "art_dash"
+      os.environ["TEKTON_TASKRUN_NAME"] = os.environ["MERGE_TASKRUN"]
+
+      cmd = ["artcd", "-v", "--working-dir=artcd-working", "--config=/root/.config/artcd.toml"]
+      if os.environ["MERGE_DRY_RUN"] == "true":
+          cmd.append("--dry-run")
+      cmd.extend([
+          "merge-layered-fbc",
+          "--group=" + os.environ["MERGE_GROUP"],
+          "--ocp-target-version=" + os.environ["MERGE_OCP_TARGET_VERSION"],
+          "--data-path=" + os.environ["MERGE_DATA_PATH"],
+          "--output-file=" + str(output),
+      ])
+      for build in sys.argv[1:]:
+          cmd.append("--fbc-build=" + build)
+      for option in ("fbc-repo", "image-repo", "plr-template"):
+          value = os.environ["MERGE_" + option.upper().replace("-", "_")]
+          if value:
+              cmd.append("--" + option + "=" + value)
+      if os.environ["MERGE_SKIP_CHECKS"] == "true":
+          cmd.append("--skip-checks")
+      for task_name in os.environ["MERGE_SKIP_TASKS"].split(","):
+          if task_name.strip():
+              cmd.append("--skip-task=" + task_name.strip())
+
+      print("Running:", cmd, flush=True)
+      subprocess.run(cmd, check=True)
+      result = json.loads(output.read_text())
+      for env, key in (
+          ("MERGE_RESULT_NVR", "nvr"),
+          ("MERGE_RESULT_PULLSPEC", "pullspec"),
+          ("MERGE_RESULT_BUILD_URL", "build_url"),
+          ("MERGE_RESULT_PROVENANCE_URL", "provenance_url"),
+      ):
+          Path(os.environ[env]).write_text(result.get(key) or "")
+      print(json.dumps(result, indent=2))
+    securityContext:
+      privileged: true
+      runAsGroup: 0
+      runAsUser: 0
+    volumeMounts:
+    - mountPath: /root/.config/doozer
+      name: doozer-config
+    - mountPath: /tmp/keytab
+      name: kerberos-keytab
+    - mountPath: /tmp/gcp-sa
+      name: gcp-sa-key
+      readOnly: true
+    - mountPath: /tmp/konflux-kubeconfigs
+      name: konflux-sa-kubeconfigs
+      readOnly: true
+    - mountPath: /tmp/github-app
+      name: github-app-credentials
+      readOnly: true
+    - mountPath: /tmp/quay-authfile
+      name: quay-authfile
+      readOnly: true
+  volumes:
+  - name: doozer-config
+    secret:
+      secretName: doozer-config
+  - name: kerberos-keytab
+    secret:
+      secretName: synced-exd-ocp-buildvm-bot-prod-keytab
+  - name: gcp-sa-key
+    secret:
+      secretName: gcp-sa-key
+  - name: konflux-sa-kubeconfigs
+    secret:
+      secretName: konflux-sa-kubeconfigs
+      items:
+      - key: quay
+        path: quay
+  - name: github-app-credentials
+    secret:
+      secretName: github-app-credentials
+  - name: quay-authfile
+    secret:
+      items:
+      - key: auth.json
+        path: config.json
+      secretName: quay-authfile
+  description: Build one unified Quay FBC fragment; creates no shipment or release.
+  results:
+  - name: merged-fbc-nvr
+    description: Merged FBC NVR (planned NVR in dry runs)
+  - name: merged-fbc-pullspec
+    description: Immutable merged FBC image, empty in dry runs
+  - name: build-url
+    description: Konflux build URL, empty in dry runs
+  - name: provenance-url
+    description: Committed input and baseline provenance, empty in dry runs
