@@ -70,6 +70,27 @@ class TestReleaseFromFbcPipeline(unittest.TestCase):
         pipeline = self._make_pipeline()
         self.assertIsNone(pipeline.jira_bugs)
 
+    @patch('pyartcd.pipelines.release_from_fbc._validate_fbc_related_images', new_callable=AsyncMock)
+    def test_related_image_validation_passes_assembly_only_for_layered_products(self, mock_validate):
+        for ocp_optional in [False, True]:
+            with self.subTest(ocp_optional=ocp_optional):
+                pipeline = self._make_pipeline(ocp_optional=ocp_optional)
+
+                def validate(fbcs, product, **kwargs):
+                    kwargs['operator_groups_out'].update({'operator': fbcs})
+                    kwargs['operator_by_fbc_out'].update({fbcs[0]: 'operator'})
+                    kwargs['related_nvrs_by_fbc_out'].update({fbcs[0]: ['image-1.4.5-1']})
+                    return ['image-1.4.5-1']
+
+                mock_validate.side_effect = validate
+                result = asyncio.run(pipeline.validate_fbc_related_images(pipeline.fbc_pullspecs))
+
+                self.assertEqual(mock_validate.call_args.kwargs['assembly'], None if ocp_optional else '1.4.5')
+                self.assertEqual(result, ['image-1.4.5-1'])
+                self.assertEqual(pipeline._fbc_operator_keys, ['operator'])
+                self.assertEqual(pipeline._fbc_operator_by_pullspec, {pipeline.fbc_pullspecs[0]: 'operator'})
+                self.assertEqual(pipeline._fbc_related_nvrs_by_pullspec, {pipeline.fbc_pullspecs[0]: result})
+
     @patch("pyartcd.pipelines.release_from_fbc.build_fbc_catalogs", new_callable=AsyncMock)
     @patch.object(ReleaseFromFbcPipeline, "_load_component_doozer_keys", new_callable=AsyncMock)
     def test_refresh_fbc_pullspecs_uses_exact_operator_nvrs(self, mock_component_keys, mock_build_fbc_catalogs):

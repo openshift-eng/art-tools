@@ -4,6 +4,7 @@ from unittest.mock import AsyncMock, patch
 
 from pyartcd.fbc_util import (
     extract_ocp_version_from_nvr,
+    is_nvr_from_assembly,
     validate_fbc_related_images,
     validate_layered_product_fbc_nvrs,
     validate_layered_product_group_assembly,
@@ -78,7 +79,96 @@ class TestValidateLayeredProductReleaseVersions(unittest.TestCase):
             validate_layered_product_fbc_nvrs("6.2.13", ["not-an-nvr"])
 
 
+class TestIsNvrFromAssembly(unittest.TestCase):
+    def test_version_classification(self):
+        cases = [
+            ("image-6.3.4-1", "6.3.3", True),
+            ("image-v6.3.4-1", "v6.3.3", True),
+            ("image-6.30.0-1", "6.3.3", False),
+            ("image-7.3.3-1", "6.3.3", False),
+            ("image-6.3.3-1", "6", True),
+            ("image-6-1", "6.3.3", False),
+            ("postgresql-15-container-1-1791974001", "3.18.2", False),
+            ("kube-rbac-proxy-container-v4.22.0-1", "3.18.2", False),
+            ("malformed", "3.18.2", True),
+        ]
+        for nvr, assembly, expected in cases:
+            with self.subTest(nvr=nvr, assembly=assembly):
+                self.assertEqual(is_nvr_from_assembly(nvr, assembly), expected)
+
+
 class TestValidateFbcRelatedImages(unittest.TestCase):
+    @patch('pyartcd.fbc_util.extract_nvrs_from_fbc', new_callable=AsyncMock)
+    @patch('pyartcd.fbc_util.extract_fbc_labels', new_callable=AsyncMock)
+    def test_external_differences_preserve_union_and_provenance(self, mock_labels, mock_extract):
+        """Reproduce the external-only Quay mismatches from Jenkins build #6."""
+        pullspecs = [f"quay.io/test/fbc:{i}" for i in range(5)]
+        operators = ["quay-operator", "quay-operator", "quay-bridge-operator", "quay-bridge-operator", "cso"]
+        mock_labels.side_effect = [{'doozer_key': operator} for operator in operators]
+        databases = [
+            "postgresql-13-container-1-1791973912",
+            "postgresql-15-container-1-1791974001",
+            "redis-7-container-1-1791974270",
+        ]
+        proxy = "kube-rbac-proxy-container-v4.22.0-202609291750.p2.gd12e274.assembly.stream.el9"
+        related = [
+            ["quay-quay-container-3.18.2-1"],
+            ["quay-quay-container-3.18.2-1", *databases],
+            ["quay-bridge-operator-container-3.18.2-1", proxy],
+            ["quay-bridge-operator-container-3.18.2-1"],
+            ["cso-container-3.18.2-1", "redis-7-container-1-older"],
+        ]
+        mock_extract.side_effect = related
+        groups, operator_by_fbc, related_by_fbc = {}, {}, {}
+
+        with self.assertLogs('pyartcd.fbc_util', level='INFO') as logs:
+            result = asyncio.run(
+                validate_fbc_related_images(
+                    pullspecs,
+                    "quay",
+                    operator_groups_out=groups,
+                    operator_by_fbc_out=operator_by_fbc,
+                    related_nvrs_by_fbc_out=related_by_fbc,
+                    assembly="3.18.2",
+                )
+            )
+
+        self.assertEqual(result, sorted({nvr for nvrs in related for nvr in nvrs}))
+        self.assertEqual(groups['quay-operator'], pullspecs[:2])
+        self.assertEqual(operator_by_fbc, dict(zip(pullspecs, operators)))
+        self.assertEqual(related_by_fbc, {fbc: sorted(nvrs) for fbc, nvrs in zip(pullspecs, related)})
+        for nvr in [*databases, proxy]:
+            self.assertTrue(any('Skipping' in line and nvr in line for line in logs.output))
+
+    @patch('pyartcd.fbc_util.extract_nvrs_from_fbc', new_callable=AsyncMock)
+    @patch('pyartcd.fbc_util.extract_fbc_labels', new_callable=AsyncMock)
+    def test_product_differences_and_malformed_nvrs_still_fail(self, mock_labels, mock_extract):
+        mock_labels.return_value = {'doozer_key': 'quay-operator'}
+        for differing in ["quay-quay-container-3.18.2-2", "quay-quay-container-3.18.3-1", "malformed", None]:
+            with self.subTest(differing=differing):
+                mock_extract.side_effect = [
+                    ["quay-quay-container-3.18.2-1", "postgresql-15-container-1-1791974001"],
+                    [differing] if differing else [],
+                ]
+                with self.assertRaisesRegex(RuntimeError, "quay-quay-container-3.18.2-1") as ctx:
+                    asyncio.run(
+                        validate_fbc_related_images(["quay.io/fbc:a", "quay.io/fbc:b"], "quay", assembly="3.18.2")
+                    )
+                self.assertNotIn("postgresql", str(ctx.exception))
+                if differing:
+                    self.assertIn(differing, str(ctx.exception))
+
+    @patch('pyartcd.fbc_util.extract_nvrs_from_fbc', new_callable=AsyncMock)
+    @patch('pyartcd.fbc_util.extract_fbc_labels', new_callable=AsyncMock)
+    def test_without_assembly_external_differences_still_fail(self, mock_labels, mock_extract):
+        mock_labels.return_value = {'doozer_key': 'quay-operator'}
+        mock_extract.side_effect = [
+            ["quay-quay-container-3.18.2-1"],
+            ["quay-quay-container-3.18.2-1", "postgresql-15-container-1-1791974001"],
+        ]
+        with self.assertRaisesRegex(RuntimeError, "postgresql-15-container"):
+            asyncio.run(validate_fbc_related_images(["quay.io/fbc:a", "quay.io/fbc:b"], "quay"))
+
     @patch('pyartcd.fbc_util.extract_nvrs_from_fbc', new_callable=AsyncMock)
     @patch('pyartcd.fbc_util.extract_fbc_labels', new_callable=AsyncMock)
     def test_passes_when_related_images_match(self, mock_labels, mock_extract):

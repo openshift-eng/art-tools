@@ -43,6 +43,7 @@ from pyartcd.fbc_build import build_fbc_catalogs
 from pyartcd.fbc_util import extract_fbc_labels as _extract_fbc_labels
 from pyartcd.fbc_util import (
     extract_ocp_version_from_nvr,
+    is_nvr_from_assembly,
     validate_layered_product_fbc_nvrs,
     validate_layered_product_group_assembly,
 )
@@ -778,40 +779,7 @@ class ReleaseFromFbcPipeline:
             Assembly "6.3.3" does NOT match NVR version "v4.20.0-202512150315..." -> False
             Assembly "6.3" does NOT match NVR version "6.30.0-..." -> False (prevents false positives)
         """
-        try:
-            nvr_dict = parse_nvr(nvr)
-            nvr_version = nvr_dict.get('version', '').lstrip('v')
-            assembly_version = self.assembly.lstrip('v')
-
-            # Split into version components
-            nvr_parts = nvr_version.split('.')
-            assembly_parts = assembly_version.split('.')
-
-            # Require at least major.minor for matching
-            if len(assembly_parts) < 2 or len(nvr_parts) < 2:
-                # If assembly has < 2 parts, fall back to startswith for compatibility
-                is_from_group = nvr_version.startswith(assembly_version)
-            else:
-                # Compare major.minor segments exactly (prevents "6.3" matching "6.30")
-                is_from_group = nvr_parts[0] == assembly_parts[0] and nvr_parts[1] == assembly_parts[1]
-
-            if not is_from_group:
-                self.logger.info(
-                    f"NVR {nvr} (version: {nvr_version}) does not match assembly {self.assembly} "
-                    f"- marking as external dependency"
-                )
-
-            return is_from_group
-
-        except ValueError as e:
-            # Fail-open: unparsable NVRs are treated as from current group
-            # to avoid accidentally excluding legitimate builds
-            self.logger.error(
-                f"Failed to parse NVR {nvr} for group checking: {e}. "
-                f"Treating as from current group to avoid excluding builds. "
-                f"INVESTIGATE THIS IF SEEN IN PRODUCTION."
-            )
-            return True
+        return is_nvr_from_assembly(nvr, self.assembly)
 
     def categorize_nvrs(self, nvrs: List[str]) -> Dict[str, List[str]]:
         """
@@ -1265,6 +1233,7 @@ class ReleaseFromFbcPipeline:
             operator_groups_out=operator_groups,
             operator_by_fbc_out=operator_by_fbc,
             related_nvrs_by_fbc_out=related_nvrs_by_fbc,
+            assembly=None if self.ocp_optional else self.assembly,
         )
         self._fbc_operator_keys = sorted(operator_groups.keys())
         self._fbc_operator_by_pullspec = operator_by_fbc

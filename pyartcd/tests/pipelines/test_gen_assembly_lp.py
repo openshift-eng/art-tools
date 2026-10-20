@@ -287,6 +287,7 @@ class TestGenAssemblyLPMultiFBC(unittest.TestCase):
         mock_validate.assert_called_once_with(
             ["quay.io/test/fbc@sha256:ocp418", "quay.io/test/fbc@sha256:ocp419"],
             "openshift-logging",
+            assembly="6.4.1",
         )
         self.assertIn("cluster-logging-operator", result)
 
