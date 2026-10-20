@@ -3,8 +3,9 @@
 The `merge-layered-fbc` Pipeline builds a single fragment from explicitly selected
 Quay operator FBC builds for one OCP version. It creates no shipment or release.
 
-Deploy after [the Doozer/ARTCD implementation](https://github.com/openshift-eng/art-tools/pull/3774)
-is available in `quay.io/redhat-user-workloads/ocp-art-tenant/art-cd:latest`.
+Use [the Doozer/ARTCD implementation](https://github.com/openshift-eng/art-tools/pull/3774)
+from `quay.io/redhat-user-workloads/ocp-art-tenant/art-cd:latest`, or set
+`art-tools-commit` to `ashwindasr@merge-layered-fbc-build` to use the PR branch.
 Argo discovers the Task and Pipeline from this application directory. Existing
 Quay credentials and service-account permissions are reused. The Quay team role
 and admission policy allow starting this pipeline.
@@ -41,7 +42,10 @@ then renders and validates local merged sources without remote writes. Set it to
 `false` to push the FBC source and build in Konflux.
 
 Optional parameters are `data-path`, `fbc-repo`, `image-repo`, `plr-template`
-(full template URL), `skip-checks`, and `skip-tasks` (comma-separated task names).
+(full template URL), `skip-checks`, `skip-tasks` (comma-separated task names), and
+`art-tools-commit` (`ghuser@branch`, empty by default). The latter clones and installs
+the selected ART tools branch before invoking ARTCD, using the same repository owner
+allowlist as `release-from-fbc`.
 Inputs are passed as array arguments or environment variables to the fixed task
 script; they are not substituted into Python source.
 
@@ -57,6 +61,8 @@ task log. Publishing a URL as the Tekton result keeps result sizes bounded when
 many operator builds are merged.
 
 Validate locally with `pytest -q pyartcd/tests/test_merge_layered_fbc_manifests.py`.
+Check both the default image and an `art-tools-commit` override, including rejection
+of an owner outside the allowlist.
 Before production use, run with real Quay inputs in dry-run mode, then perform a
 staging build and inspect the resulting catalog for both minor-version updates
 and retained production channels.

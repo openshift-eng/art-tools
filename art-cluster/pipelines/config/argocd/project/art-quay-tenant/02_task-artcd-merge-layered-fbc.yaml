@@ -13,6 +13,10 @@ spec:
   - name: fbc-builds
     type: array
     description: Explicit source FBC NVRs or pullspecs, one per array entry
+  - name: art-tools-commit
+    type: string
+    default: ''
+    description: '(Optional) Override art-tools version. Format: ghuser@branch (e.g. ashwindasr@my-feature)'
   - name: data-path
     type: string
     default: https://github.com/openshift-eng/ocp-build-data
@@ -105,6 +109,8 @@ spec:
       value: /tmp/quay-authfile
     - name: MERGE_OCP_TARGET_VERSION
       value: $(params.ocp-target-version)
+    - name: MERGE_ART_TOOLS_COMMIT
+      value: $(params.art-tools-commit)
     - name: MERGE_DATA_PATH
       value: $(params.data-path)
     - name: MERGE_FBC_REPO
@@ -141,6 +147,31 @@ spec:
 
       if not sys.argv[1:]:
           raise ValueError("At least one FBC build is required")
+
+      art_tools_commit = os.environ.get("MERGE_ART_TOOLS_COMMIT", "")
+      if art_tools_commit:
+          allowed_owners = {
+              "adobes1",
+              "ashwindasr",
+              "fbladilo",
+              "fgallott",
+              "joepvd",
+              "jupierce",
+              "lgarciaaco",
+              "locriandev",
+              "mbiarnes",
+              "pruan-rht",
+              "rayfordj",
+              "redhat-chai-bot",
+              "thegreyd",
+          }
+          owner, branch = art_tools_commit.split("@", 1)
+          owner = owner.lower()
+          if owner not in allowed_owners:
+              raise ValueError(f"art-tools repository owner '{owner}' is not allowed")
+          subprocess.run(["git", "clone", "-b", branch, f"https://github.com/{owner}/art-tools.git"], check=True)
+          subprocess.run(["pip", "install", "./art-tools"], check=True)
+          os.environ["ART_TOOLS_COMMIT"] = art_tools_commit
 
       subprocess.run(["kinit", "-f", "-k", "-t", "/tmp/keytab/keytab", "exd-ocp-buildvm-bot-prod@IPA.REDHAT.COM"], check=True)
       Path("/root/.config").mkdir(parents=True, exist_ok=True)

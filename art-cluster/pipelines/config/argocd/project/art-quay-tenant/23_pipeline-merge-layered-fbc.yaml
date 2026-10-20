@@ -15,6 +15,10 @@ spec:
   - name: fbc-builds
     type: array
     description: Explicit source FBC NVRs or pullspecs, one per array entry
+  - name: art-tools-commit
+    type: string
+    default: ''
+    description: '(Optional) Override art-tools version. Format: ghuser@branch (e.g. ashwindasr@my-feature)'
   - name: data-path
     type: string
     default: https://github.com/openshift-eng/ocp-build-data
@@ -67,6 +71,8 @@ spec:
     - name: fbc-builds
       value:
       - $(params.fbc-builds[*])
+    - name: art-tools-commit
+      value: $(params.art-tools-commit)
     - name: data-path
       value: $(params.data-path)
     - name: fbc-repo
