@@ -5,7 +5,10 @@ from typing import Dict, List, Optional, Tuple
 
 import click
 from artcommonlib import exectools
+from artcommonlib.assembly import assembly_image_pins
 from artcommonlib.github_auth import get_github_client_for_org
+from artcommonlib.metadata import MetadataBase
+from artcommonlib.model import Model
 from artcommonlib.rpm_utils import parse_nvr
 from artcommonlib.util import merge_objects, new_roundtrip_yaml_handler, split_git_url
 
@@ -60,6 +63,7 @@ class GenAssemblyLPPipeline:
         self._logger = logging.getLogger(__name__)
 
         self.product: Optional[str] = None
+        self._component_to_distgit_key: Optional[Dict[str, str]] = None
 
         if not self.fbc_pullspecs and not self.basis_assembly:
             raise ValueError("At least one of --fbc-pullspecs or --basis-assembly must be provided")
@@ -78,6 +82,42 @@ class GenAssemblyLPPipeline:
         if product == 'openshift':
             product = 'ocp'
         return product
+
+    async def _load_component_to_distgit_key(self) -> Dict[str, str]:
+        """Read canonical image keys and component overrides using Doozer's metadata rules."""
+        cmd = [
+            'doozer',
+            f'--group={self.group}',
+            '--assembly=stream',
+            '--build-system=konflux',
+            f'--data-path={self.data_path}',
+            '--load-disabled',
+            'config:print',
+            '--yaml',
+        ]
+        _, output, _ = await exectools.cmd_gather_async(cmd)
+        configs = yaml.load(output) or {}
+        images = configs.get('images')
+        if not isinstance(images, dict) or not images:
+            raise click.ClickException("Doozer returned no image configurations for canonical assembly keys")
+        result = {}
+        for key, config in images.items():
+            _, component = MetadataBase.extract_component_info('image', key, Model(config))
+            if component in result and result[component] != key:
+                raise click.ClickException(f"Component '{component}' maps to multiple Doozer image keys")
+            result[component] = key
+        return result
+
+    def _distgit_key_for_nvr(self, nvr: str) -> str:
+        component = parse_nvr(nvr)['name']
+        if self._component_to_distgit_key is None:
+            raise RuntimeError("Image metadata must be loaded before resolving assembly keys")
+        key = self._component_to_distgit_key.get(component)
+        if key is None:
+            raise click.ClickException(
+                f"No Doozer image configuration found for component '{component}' in {self.group}"
+            )
+        return key
 
     def _is_nvr_from_current_group(self, nvr: str) -> bool:
         """Filter out NVRs from other groups based on version matching."""
@@ -150,13 +190,11 @@ class GenAssemblyLPPipeline:
     def _nvrs_to_distgit_map(self, nvrs: List[str]) -> Dict[str, str]:
         """Convert a list of NVRs to a dict of distgit_key -> NVR.
 
-        Uses the component name (the 'name' field from parsing the NVR) as
-        the distgit_key.
+        Map NVR component names to actual image YAML keys, honoring distgit.component.
         """
         result: Dict[str, str] = {}
         for nvr in nvrs:
-            nvr_dict = parse_nvr(nvr)
-            distgit_key = nvr_dict['name']
+            distgit_key = self._distgit_key_for_nvr(nvr)
             if distgit_key in result:
                 self._logger.warning(
                     "Duplicate distgit_key '%s': keeping %s, discarding %s",
@@ -174,6 +212,10 @@ class GenAssemblyLPPipeline:
             if '=' not in include_spec:
                 raise click.ClickException(f"Invalid --include format: '{include_spec}'. Expected 'distgit_key=nvr'")
             distgit_key, nvr = include_spec.split('=', 1)
+            # Accept the old component-name selector, but always emit the YAML key.
+            distgit_key = (self._component_to_distgit_key or {}).get(distgit_key, distgit_key)
+            if self._distgit_key_for_nvr(nvr) != distgit_key:
+                raise click.ClickException(f"Include '{include_spec}' selects an NVR for a different image")
             if distgit_key not in operand_map:
                 raise click.ClickException(
                     f"Cannot swap '{distgit_key}': not found in the extracted operand set. "
@@ -194,8 +236,7 @@ class GenAssemblyLPPipeline:
                     f"which does not match assembly '{self.assembly}'. "
                     f"Only NVRs matching the group's major.minor version are allowed."
                 )
-            nvr_dict = parse_nvr(nvr)
-            distgit_key = nvr_dict['name']
+            distgit_key = self._distgit_key_for_nvr(nvr)
             if distgit_key in operand_map:
                 self._logger.info(
                     "Extra NVR overrides existing entry for %s: %s -> %s",
@@ -209,9 +250,7 @@ class GenAssemblyLPPipeline:
     async def _resolve_parent_operands(self) -> Dict[str, str]:
         """Resolve the full operand set from the parent (basis) assembly.
 
-        NOTE: Only resolves one level of inheritance. Multi-level chains
-        (A->B->C) are not supported; the basis assembly must list all
-        operands explicitly.
+        Resolve inherited pins and normalize legacy component-name member keys.
         """
         self._logger.info("Resolving operand set from basis assembly '%s'...", self.basis_assembly)
 
@@ -230,13 +269,8 @@ class GenAssemblyLPPipeline:
         if parent_assembly is None:
             raise click.ClickException(f"Basis assembly '{self.basis_assembly}' not found in releases.yml")
 
-        members_images = parent_assembly.get('assembly', {}).get('members', {}).get('images', [])
-        operand_map: Dict[str, str] = {}
-        for entry in members_images:
-            distgit_key = entry.get('distgit_key')
-            nvr = entry.get('metadata', {}).get('is', {}).get('nvr')
-            if distgit_key and nvr:
-                operand_map[distgit_key] = nvr
+        pins = assembly_image_pins(Model(releases_config), self.basis_assembly)
+        operand_map = self._nvrs_to_distgit_map(list(pins.values()))
 
         self._logger.info(
             "Resolved %d operands from basis assembly '%s'",
@@ -422,6 +456,7 @@ class GenAssemblyLPPipeline:
         self.product = await self._load_product_from_group_config()
         self._logger.info("Product: %s", self.product)
 
+        self._component_to_distgit_key = await self._load_component_to_distgit_key()
         parent_operand_map: Optional[Dict[str, str]] = None
 
         if self.basis_assembly:

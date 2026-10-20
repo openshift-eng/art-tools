@@ -883,16 +883,7 @@ class KonfluxBundleCli:
                         logger.info("Skipping because --force is not set")
                         await report.set_status('Reused', reason='Existing successful bundle reused')
                         return bundle_build.nvr
-                    input_release = str(int(bundle_build.release) + 1)
-                    logger.info(
-                        "Force rebuild requested because --force is set; release string will be %s", input_release
-                    )
-                else:
-                    input_release = "1"
-                    logger.info(
-                        "No previous bundle build found; a new bundle build will be created with release string %s",
-                        input_release,
-                    )
+                input_release = await self._next_bundle_release(image_meta, operator_build)
 
             logger.info("Rebasing OLM bundle...")
             nvr = await rebaser.rebase(image_meta, operator_build, input_release)
@@ -915,6 +906,17 @@ class KonfluxBundleCli:
             await builder.build(image_meta, git_auth_secret=git_auth_secret)
             logger.info("Bundle build complete")
             return nvr
+
+    async def _next_bundle_release(self, image_meta: ImageMetadata, operator_build: KonfluxBuildRecord) -> str:
+        """Allocate after all successful releases of this operator, across assemblies."""
+        where = {
+            "name": image_meta.get_olm_bundle_short_name(),
+            "group": self.runtime.group,
+            "operator_nvr": operator_build.nvr,
+            "outcome": str(KonfluxBuildOutcome.SUCCESS),
+        }
+        releases = [int(build.release) async for build in self._db_for_bundles.search_builds_by_fields(where=where)]
+        return str(max(releases, default=0) + 1)
 
     @start_as_current_span_async(TRACER, "images:konflux:bundle")
     async def run(self):

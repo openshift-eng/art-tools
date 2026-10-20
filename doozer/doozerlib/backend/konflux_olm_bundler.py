@@ -14,7 +14,7 @@ import aiofiles
 import yaml
 from artcommonlib import exectools
 from artcommonlib import util as artlib_util
-from artcommonlib.assembly import AssemblyTypes
+from artcommonlib.assembly import AssemblyTypes, assembly_image_pins, assembly_type
 from artcommonlib.build_visibility import is_nvr_embargoed
 from artcommonlib.constants import KONFLUX_DEFAULT_IMAGE_SHARE_REPO
 from artcommonlib.konflux.konflux_build_record import (
@@ -25,6 +25,7 @@ from artcommonlib.konflux.konflux_build_record import (
 from artcommonlib.konflux.konflux_db import Engine, KonfluxDb
 from artcommonlib.model import Model
 from artcommonlib.pipeline_report import get_reporter
+from artcommonlib.rpm_utils import parse_nvr
 from artcommonlib.util import sync_to_quay
 from dockerfile_parse import DockerfileParser
 from doozerlib import constants, util
@@ -575,6 +576,23 @@ class KonfluxOlmBundleRebaser:
                 component_to_meta.setdefault(other_meta.get_component_name(), other_meta)
         return component_to_meta
 
+    def _release_image_pins(self, metadata: ImageMetadata) -> dict[str, str]:
+        """Map LP release pins by component name, including generated assembly aliases."""
+        releases = metadata.runtime.get_releases_config()
+        if self.group.startswith('openshift-') or assembly_type(releases, self.assembly) == AssemblyTypes.STREAM:
+            return {}
+        # gen-assembly-lp uses component names as member keys, which can differ
+        # from image YAML filenames (e.g. quay-quay-container vs quay-quay).
+        pins = {}
+        for nvr in assembly_image_pins(releases, self.assembly).values():
+            component = parse_nvr(nvr)['name']
+            if component in pins and pins[component] != nvr:
+                raise KonfluxOlmBundleRebaseError(
+                    f"Conflicting assembly pins for {component}: {pins[component]} and {nvr}"
+                )
+            pins[component] = nvr
+        return pins
+
     async def _resolve_operands_from_db(
         self,
         metadata: ImageMetadata,
@@ -591,8 +609,8 @@ class KonfluxOlmBundleRebaser:
         (pipeline enforces: image rebase -> image build -> sync -> bundle rebase).
         So we query the DB for actual builds rather than trusting predicted tags.
 
-        Embargoed operand builds are automatically substituted with the latest
-        public build, since operator bundles must never ship embargoed content.
+        Explicit named-release pins are preserved, including private builds.
+        Unpinned embargoed operands are substituted with a public build.
 
         Arg(s):
             metadata: ImageMetadata of the operator whose bundle is being rebased.
@@ -604,6 +622,7 @@ class KonfluxOlmBundleRebaser:
         """
         logger = self._logger.getChild(f"[{metadata.distgit_key}]")
         csv_namespace = self._group_config.get("csv_namespace", "openshift")
+        pins = self._release_image_pins(metadata)
 
         # Phase 1a: Validate metadata and collect DB query coroutines
         entries_meta: list[tuple[str, str, ImageMetadata]] = []  # (name, spec, meta)
@@ -635,34 +654,42 @@ class KonfluxOlmBundleRebaser:
 
             entries_meta.append((name, spec, meta))
             el_target = f"el{meta.branch_el_target()}"
-            build_coros.append(
-                meta.get_latest_konflux_build(
-                    assembly=self.assembly,
-                    el_target=el_target,
-                    exclude_large_columns=True,
+            pin = pins.get(meta.get_component_name())
+            if pin:
+                build_coros.append(
+                    self._konflux_db.get_build_record_by_nvr(pin, strict=True, exclude_large_columns=True)
                 )
-            )
+            else:
+                build_coros.append(
+                    meta.get_latest_konflux_build(
+                        assembly=self.assembly,
+                        el_target=el_target,
+                        exclude_large_columns=True,
+                    )
+                )
 
         # Phase 1b: Fetch all builds concurrently, then check embargo status
         builds = await asyncio.gather(*build_coros)
 
-        operand_entries: list[tuple[str, str, str, ImageMetadata]] = []
+        operand_entries: list[tuple[str, str, Optional[str], ImageMetadata]] = []
         image_info_coros = []
         for (name, spec, meta), build in zip(entries_meta, builds, strict=True):
             if not build:
                 raise ValueError(f"Could not find latest Konflux build for {meta.distgit_key}")
 
-            if build.assembly != self.assembly:
+            pin = pins.get(meta.get_component_name())
+            if pin and build.nvr != pin:
+                raise KonfluxOlmBundleRebaseError(f"Expected assembly pin {pin}, resolved {build.nvr}")
+            if not pin and build.assembly != self.assembly:
                 raise KonfluxOlmBundleRebaseError(
                     f"Assembly mismatch: resolved operand {build.nvr} for operator "
                     f"{metadata.distgit_key} has assembly '{build.assembly}', "
                     f"expected '{self.assembly}'."
                 )
 
-            # Operator bundles must never reference embargoed operand images.
-            # If the latest build is embargoed, substitute with the latest public build.
+            # An explicit release pin takes precedence over automatic public selection.
             try:
-                embargoed = is_nvr_embargoed(build.nvr)
+                embargoed = not pin and is_nvr_embargoed(build.nvr)
             except ValueError as e:
                 raise KonfluxOlmBundleRebaseError(
                     f"Unable to determine embargo status for operand {build.nvr} referenced "
@@ -696,10 +723,14 @@ class KonfluxOlmBundleRebaser:
                 )
                 build = public_build
 
-            build_pullspec = f"{self.image_repo}:{meta.image_name_short}-{build.version}-{build.release}"
+            build_pullspec = (
+                build.image_pullspec
+                if pin
+                else f"{self.image_repo}:{meta.image_name_short}-{build.version}-{build.release}"
+            )
             logger.info(f"Resolved {name} -> {build.nvr} (pullspec: {build_pullspec})")
 
-            operand_entries.append((name, spec, build_pullspec, meta))
+            operand_entries.append((name, spec, build.nvr if pin else None, meta))
             image_info_coros.append(
                 util.oc_image_info_for_arch_async(
                     build_pullspec,
@@ -711,9 +742,13 @@ class KonfluxOlmBundleRebaser:
         image_infos = await asyncio.gather(*image_info_coros)
 
         resolved: dict[str, tuple[str, str, str]] = {}
-        for (_name, spec, _build_pullspec, meta), image_info in zip(operand_entries, image_infos, strict=True):
+        for (_name, spec, pinned_nvr, meta), image_info in zip(operand_entries, image_infos, strict=True):
             image_labels = image_info["config"]["config"]["Labels"]
             image_nvr = f"{image_labels['com.redhat.component']}-{image_labels['version']}-{image_labels['release']}"
+            if pinned_nvr and image_nvr != pinned_nvr:
+                raise KonfluxOlmBundleRebaseError(
+                    f"Expected assembly pin {pinned_nvr}, inspected image labels identify {image_nvr}"
+                )
 
             image_sha = (
                 image_info["contentDigest"]
@@ -800,18 +835,30 @@ class KonfluxOlmBundleRebaser:
 
         delivery_override_map, delivery_namespace_map = self._build_delivery_maps(metadata)
         _component_to_meta: Optional[Dict[str, "ImageMetadata"]] = None
+        pins_by_name = self._release_image_pins(metadata) if engine is Engine.KONFLUX else {}
 
         for pullspec, image_info in zip(art_references, image_infos, strict=True):
             image_labels = image_info['config']['config']['Labels']
             image_component_name = image_labels['com.redhat.component']
             image_nvr = f"{image_component_name}-{image_labels['version']}-{image_labels['release']}"
+            pin = pins_by_name.get(image_component_name)
+            if pin and image_nvr != pin:
+                build = await self._konflux_db.get_build_record_by_nvr(pin, strict=True, exclude_large_columns=True)
+                if build.nvr != pin:
+                    raise KonfluxOlmBundleRebaseError(f"Expected assembly pin {pin}, resolved {build.nvr}")
+                image_info = await util.oc_image_info_for_arch_async(
+                    build.image_pullspec, registry_config=os.getenv("QUAY_AUTH_FILE")
+                )
+                labels = image_info['config']['config']['Labels']
+                image_nvr = f"{labels['com.redhat.component']}-{labels['version']}-{labels['release']}"
+                if image_nvr != pin:
+                    raise KonfluxOlmBundleRebaseError(
+                        f"Expected assembly pin {pin}, inspected image labels identify {image_nvr}"
+                    )
 
-            # Operator bundles are only ever shipped publicly, so they must never reference an
-            # embargoed (private-fix) operand image. If the resolved operand build is embargoed,
-            # substitute it with the latest public (non-embargoed) build of that same component.
-            # If no public build exists, fail the rebase rather than shipping embargoed content.
+            # Preserve explicit release pins. Otherwise retain public-build substitution.
             try:
-                operand_is_embargoed = engine is Engine.KONFLUX and is_nvr_embargoed(image_nvr)
+                operand_is_embargoed = engine is Engine.KONFLUX and not pin and is_nvr_embargoed(image_nvr)
             except ValueError as e:
                 raise KonfluxOlmBundleRebaseError(
                     f"Unable to determine embargo status for operand image {image_nvr} referenced "

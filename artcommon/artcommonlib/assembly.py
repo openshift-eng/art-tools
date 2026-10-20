@@ -5,6 +5,7 @@ from datetime import datetime, timezone
 from enum import Enum
 
 from artcommonlib.model import ListModel, Missing, Model
+from artcommonlib.rpm_utils import parse_nvr
 
 
 class AssemblyTypes(Enum):
@@ -485,6 +486,56 @@ def assembly_metadata_config(
             config_dict = _merger(component_entry.metadata.primitive(), config_dict)
 
     return Model(dict_to_model=config_dict)
+
+
+def assembly_image_pins(releases_config: Model, assembly: typing.Optional[str]) -> dict[str, str]:
+    """Return effective explicit image pins, respecting inheritance and exclusions.
+
+    Image-file defaults are deliberately absent: only pins declared in releases.yml
+    are authoritative when preparing a named release.
+    """
+    if not assembly or not isinstance(releases_config, Model):
+        return {}
+    _check_recursion(releases_config.primitive(), assembly)
+    current = assembly
+    definitions = []
+    while current:
+        definition = releases_config.releases[current].assembly
+        if definition is Missing:
+            raise ValueError(f"Missing assembly '{current}' in basis chain for '{assembly}'")
+        definitions.append(definition)
+        current = definition.basis.assembly
+    keys = {
+        entry.distgit_key: depth
+        for depth, definition in enumerate(reversed(definitions))
+        for entry in definition.members.images
+        if entry.distgit_key and entry.distgit_key != '*'
+    }
+    excluded = assembly_excluded_components(releases_config, assembly, 'image')
+    pins = {}
+    components = {}
+    # Ancestor members retain their order; child overrides keep the same position.
+    for key in keys:
+        if key in excluded:
+            continue
+        config = assembly_metadata_config(releases_config, assembly, 'image', key, Model({'is': {'nvr': None}}))
+        nvr = config['is'].get('nvr') if config['is'] else None
+        if nvr:
+            # A canonical child key can replace a legacy component-name key in
+            # its parent. Resolve that as one pin rather than two image builds.
+            component = parse_nvr(nvr)['name']
+            previous = components.get(component)
+            if previous and pins[previous] != nvr:
+                if keys[previous] == keys[key]:
+                    raise ValueError(f"Conflicting assembly pins for {component}: {pins[previous]} and {nvr}")
+                if keys[previous] > keys[key]:
+                    continue
+                pins.pop(previous)
+            elif previous:
+                pins.pop(previous)
+            components[component] = key
+            pins[key] = nvr
+    return pins
 
 
 def _collect_assembly_keys(releases_config: dict, assembly: str) -> list[str]:

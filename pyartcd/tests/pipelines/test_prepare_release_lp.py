@@ -5,7 +5,7 @@ from unittest.mock import AsyncMock, MagicMock, PropertyMock, patch
 
 from elliottlib.shipment_model import Snapshot, SnapshotSpec
 from pyartcd.fbc_build import FbcBuildResult
-from pyartcd.lp_shipment import FbcRefreshRecord, ShipmentMRActiveStageError
+from pyartcd.lp_shipment import ShipmentMRActiveStageError
 from pyartcd.pipelines.prepare_release_lp import PrepareReleaseLPPipeline
 
 
@@ -336,8 +336,7 @@ class TestPrepareReleaseLPMultiFBC(unittest.TestCase):
         )
         self.assertFalse(kwargs["force"])
         self.assertTrue(kwargs["reset_to_prod"])
-        self.assertTrue(kwargs["allow_partial"])
-        self.assertIs(kwargs["failures_out"], pipeline._fbc_build_failures)
+        self.assertFalse(kwargs["allow_partial"])
 
     @patch.object(PrepareReleaseLPPipeline, '_load_ocp_target_versions', new_callable=AsyncMock)
     @patch('pyartcd.pipelines.prepare_release_lp.build_fbc_catalogs', new_callable=AsyncMock)
@@ -358,67 +357,13 @@ class TestPrepareReleaseLPMultiFBC(unittest.TestCase):
 
     @patch.object(PrepareReleaseLPPipeline, '_load_ocp_target_versions', new_callable=AsyncMock)
     @patch('pyartcd.pipelines.prepare_release_lp.build_fbc_catalogs', new_callable=AsyncMock)
-    def test_trigger_fbc_build_refreshes_from_production(self, mock_build_fbc_catalogs, mock_target_versions):
-        """Refresh mode should force builds after resetting to production content."""
-        mock_target_versions.return_value = ["4.20"]
-        mock_build_fbc_catalogs.return_value = [
-            FbcBuildResult(
-                "4.20",
-                ("loki-rhel9-operator-container-6.4.1-1",),
-                ("loki-operator-fbc-6.4.1-2.ocp4.20",),
-                ("quay.io/new:420",),
-            )
-        ]
-        pipeline = self._make_pipeline(dry_run=False, refresh_fbcs=True)
-
-        asyncio.run(pipeline._trigger_fbc_build(["loki-rhel9-operator-container-6.4.1-1"]))
-
-        kwargs = mock_build_fbc_catalogs.await_args.kwargs
-        self.assertTrue(kwargs["force"])
-        self.assertTrue(kwargs["reset_to_prod"])
-        self.assertFalse(kwargs["allow_partial"])
-        self.assertEqual(
-            pipeline._fbc_refresh_records,
-            [FbcRefreshRecord("4.20", (), ("quay.io/new:420",))],
-        )
-
-    @patch.object(PrepareReleaseLPPipeline, '_load_ocp_target_versions', new_callable=AsyncMock)
-    @patch('pyartcd.pipelines.prepare_release_lp.build_fbc_catalogs', new_callable=AsyncMock)
-    def test_trigger_fbc_build_retains_partial_successes(self, mock_build_fbc_catalogs, mock_target_versions):
-        """Normal preparation should retain successful FBCs and defer failures."""
-        mock_target_versions.return_value = ["4.20"]
-
-        async def partial_build(**kwargs):
-            kwargs["failures_out"].append("FBC build for OCP 4.20 failed for operator-b")
-            return [
-                FbcBuildResult(
-                    "4.20",
-                    ("operator-a-container-1", "operator-b-container-1"),
-                    ("operator-a-fbc-1.ocp4.20",),
-                    ("quay.io/new:operator-a",),
-                )
-            ]
-
-        mock_build_fbc_catalogs.side_effect = partial_build
+    def test_trigger_fbc_build_rejects_partial_results(self, mock_build, mock_versions):
+        mock_versions.return_value = ["4.20"]
+        mock_build.side_effect = RuntimeError("operator-b failed")
         pipeline = self._make_pipeline(dry_run=False)
-
-        nvrs, pullspecs = asyncio.run(pipeline._trigger_fbc_build(["operator-a-container-1", "operator-b-container-1"]))
-
-        self.assertEqual(nvrs, ["operator-a-fbc-1.ocp4.20"])
-        self.assertEqual(pullspecs, ["quay.io/new:operator-a"])
-        self.assertEqual(pipeline._fbc_build_failures, ["FBC build for OCP 4.20 failed for operator-b"])
-
-    def test_report_deferred_fbc_build_failures_exits_unstable(self):
-        """Deferred normal-mode failures should be reported with the Jenkins unstable exit code."""
-        pipeline = self._make_pipeline(dry_run=False)
-        pipeline._fbc_build_failures = ["FBC build for OCP 4.20 failed for operator-b"]
-
-        with self.assertLogs("pyartcd.pipelines.prepare_release_lp", level="WARNING") as logs:
-            with self.assertRaises(SystemExit) as raised:
-                pipeline._report_deferred_fbc_build_failures()
-
-        self.assertEqual(raised.exception.code, 2)
-        self.assertIn("successful builds were retained", "\n".join(logs.output))
+        with self.assertRaisesRegex(RuntimeError, "operator-b failed"):
+            asyncio.run(pipeline._trigger_fbc_build(["operator-a-container-1", "operator-b-container-1"]))
+        self.assertFalse(mock_build.await_args.kwargs["allow_partial"])
 
     @patch.object(PrepareReleaseLPPipeline, '_load_ocp_target_versions', new_callable=AsyncMock)
     def test_trigger_fbc_build_dry_run_with_target_versions(self, mock_target_versions):
@@ -483,13 +428,8 @@ class TestPrepareReleaseLPBundleScoping(unittest.TestCase):
 
     @patch.object(PrepareReleaseLPPipeline, '_find_existing_bundles', new_callable=AsyncMock)
     @patch('pyartcd.pipelines.prepare_release_lp.exectools.cmd_gather_async', new_callable=AsyncMock)
-    def test_matches_operators_by_name_not_full_nvr(self, mock_cmd, mock_find):
-        """Scoping should match by NVR name component, not full NVR string.
-
-        When a new build happens after assembly creation, the release timestamp
-        in the latest NVR differs from the assembly-pinned NVR. Name-based
-        matching ensures the operator is still recognised.
-        """
+    def test_operator_discovery_preserves_exact_pin(self, mock_cmd, mock_find):
+        """Identify the operator by name, then build the exact pinned NVR."""
         mock_find.return_value = {
             "metadata": [],
             "olm_builds_not_found": [
@@ -513,12 +453,9 @@ class TestPrepareReleaseLPBundleScoping(unittest.TestCase):
         bundle_nvrs, operator_nvrs = asyncio.run(pipeline._trigger_bundle_build(operand_nvrs))
 
         cmd = mock_cmd.call_args[0][0]
-        self.assertIn("loki-rhel9-operator-container-6.0.15-202606051158.p2.g3d09d2c.assembly.stream.el9", cmd)
-        self.assertNotIn("ose-cluster-logging-operator-container-6.0.15-202606051158.p2.assembly.stream.el9", cmd)
-        self.assertEqual(
-            operator_nvrs,
-            ["loki-rhel9-operator-container-6.0.15-202606051158.p2.g3d09d2c.assembly.stream.el9"],
-        )
+        self.assertIn(operand_nvrs[0], cmd)
+        self.assertNotIn("loki-rhel9-operator-container-6.0.15-202606051158.p2.g3d09d2c.assembly.stream.el9", cmd)
+        self.assertEqual(operator_nvrs, operand_nvrs)
 
     @patch.object(PrepareReleaseLPPipeline, '_find_existing_bundles', new_callable=AsyncMock)
     def test_all_operators_filtered_skips_build(self, mock_find):
@@ -537,7 +474,7 @@ class TestPrepareReleaseLPBundleScoping(unittest.TestCase):
         operand_nvrs = ["some-operand-container-6.0.15-1"]
         bundle_nvrs, operator_nvrs = asyncio.run(pipeline._trigger_bundle_build(operand_nvrs))
 
-        self.assertEqual(bundle_nvrs, ["existing-bundle-1"])
+        self.assertEqual(bundle_nvrs, [])
         self.assertEqual(operator_nvrs, [])
 
     @patch.object(PrepareReleaseLPPipeline, '_find_existing_bundles', new_callable=AsyncMock)
@@ -577,6 +514,7 @@ class TestPrepareReleaseLPBundleScoping(unittest.TestCase):
         # The stale bundle should have been removed and a rebuild triggered
         mock_cmd.assert_called_once()
         cmd = mock_cmd.call_args[0][0]
+        self.assertIn("--force", cmd)
         self.assertIn("loki-rhel9-operator-container-6.0.15-1.assembly.stream.el9", cmd)
         self.assertIn("loki-rhel9-operator-metadata-container-6.0.15-2", bundle_nvrs)
         # The old stale bundle should not be in the result
@@ -1241,6 +1179,140 @@ class TestCreateShipmentMrApprovalRules(unittest.TestCase):
         asyncio.run(pipeline._set_shipment_mr_ready())
 
         mock_gitlab.set_mr_ready.assert_not_awaited()
+
+
+class TestPinnedReleasePreparation(unittest.IsolatedAsyncioTestCase):
+    pin = 'quay-quay-container-3.18.2-202610201426.p3.g16cba93.assembly.stream.el9'
+
+    def setUp(self):
+        from pathlib import Path
+
+        runtime = MagicMock(dry_run=False, config={})
+        runtime.working_dir = Path('/tmp/prepare-release-pin-tests')
+        self.pipeline = PrepareReleaseLPPipeline(runtime, group='quay-3.18', assembly='3.18.3')
+
+    async def test_unverifiable_bundle_is_forcibly_rebuilt(self):
+        pipeline = self.pipeline
+        operator = 'quay-operator-container-3.18.2-1.p2'
+        pipeline._find_existing_bundles = AsyncMock(
+            return_value={
+                'metadata': ['old-bundle'],
+                'olm_operator_nvrs': [operator],
+                'olm_builds_not_found': [],
+                'olm_builds_detail': {'old-bundle': {'operator_nvr': operator, 'operand_nvrs': []}},
+            }
+        )
+        with patch('pyartcd.pipelines.prepare_release_lp.exectools.cmd_gather_async', new_callable=AsyncMock) as cmd:
+            cmd.return_value = (0, json.dumps({'nvrs': ['new-bundle'], 'errors': []}), '')
+            bundles, operators = await pipeline._trigger_bundle_build([operator, self.pin])
+        self.assertEqual(bundles, ['new-bundle'])
+        self.assertEqual(operators, [operator])
+        self.assertIn('--force', cmd.await_args.args[0])
+
+    async def test_bundle_partial_failure_aborts(self):
+        operator = 'quay-operator-container-3.18.2-1.p2'
+        self.pipeline._find_existing_bundles = AsyncMock(
+            return_value={
+                'metadata': [],
+                'olm_operator_nvrs': [operator],
+                'olm_builds_not_found': [operator],
+            }
+        )
+        for rc, output in (
+            (1, {'nvrs': ['bundle']}),
+            (0, {'nvrs': []}),
+            (0, {'nvrs': ['bundle'], 'errors': ['failed']}),
+            (0, {'nvrs': ['bundle'], 'failed_count': 1}),
+        ):
+            with self.subTest(rc=rc, output=output):
+                with patch(
+                    'pyartcd.pipelines.prepare_release_lp.exectools.cmd_gather_async', new_callable=AsyncMock
+                ) as cmd:
+                    cmd.return_value = (rc, json.dumps(output), '')
+                    with self.assertRaisesRegex(RuntimeError, 'Bundle build incomplete'):
+                        await self.pipeline._trigger_bundle_build([operator])
+
+    async def test_failed_discovery_aborts_instead_of_building_whole_group(self):
+        with patch(
+            'pyartcd.pipelines.prepare_release_lp.exectools.cmd_assert', side_effect=RuntimeError('lookup failed')
+        ) as cmd:
+            with self.assertRaisesRegex(RuntimeError, 'Cannot discover'):
+                await self.pipeline._find_existing_bundles()
+            self.assertIn('--include-shipped', cmd.call_args.args[0])
+
+    async def test_single_fbc_is_validated_before_any_snapshot_or_shipment(self):
+        pipeline = self.pipeline
+        pipeline._setup_working_dir = MagicMock()
+        pipeline._load_product_from_group_config = AsyncMock(return_value='quay')
+        pipeline._load_assembly = AsyncMock(
+            return_value={
+                'assembly': {
+                    'type': 'standard',
+                    'members': {
+                        'images': [
+                            {'distgit_key': 'quay-quay', 'metadata': {'is': {'nvr': self.pin}}},
+                        ]
+                    },
+                }
+            }
+        )
+        pipeline._trigger_bundle_build = AsyncMock(return_value=(['bundle'], ['operator']))
+        fbc = 'quay-operator-fbc-3.18.3-1.ocp4.18'
+        pipeline._trigger_fbc_build = AsyncMock(return_value=([fbc], ['quay.io/fbc@sha256:abc']))
+        pipeline._create_snapshot = AsyncMock(return_value=[])
+        pipeline._load_release_notes_template = MagicMock(return_value=None)
+        pipeline._write_shipment_file = AsyncMock()
+        catalog = MagicMock(nvr=fbc, bundle_nvrs=['bundle'])
+        bundle = MagicMock(
+            nvr='bundle',
+            operator_nvr='quay-operator-container-3.18.2-1.p2',
+            operand_nvrs=[self.pin.replace('.p3.', '.p2.')],
+        )
+        db = MagicMock()
+        db.get_build_records_by_nvrs = AsyncMock(side_effect=[[catalog], [bundle], [catalog], [bundle]])
+        with (
+            patch('pyartcd.pipelines.prepare_release_lp.KonfluxDb', return_value=db),
+            patch(
+                'pyartcd.pipelines.prepare_release_lp.validate_fbc_related_images', new_callable=AsyncMock
+            ) as validate,
+        ):
+            # Historical public entries in the catalog must not invalidate the selected private pin.
+            validate.return_value = [self.pin, self.pin.replace('.p3.', '.p2.')]
+            with self.assertRaisesRegex(ValueError, 'expected assembly pin'):
+                await pipeline.run()
+            pipeline._create_snapshot.assert_not_awaited()
+            pipeline._write_shipment_file.assert_not_awaited()
+            bundle.operand_nvrs = [self.pin]
+            await pipeline.run()
+            self.assertEqual(pipeline._create_snapshot.await_args_list[0].args[0], [self.pin])
+            self.assertEqual(pipeline._create_snapshot.await_args_list[1].args[0], [fbc])
+            self.assertEqual(validate.await_count, 1)
+
+    async def test_fbc_with_unapproved_bundle_is_rejected(self):
+        db = MagicMock()
+        db.get_build_records_by_nvrs = AsyncMock(return_value=[MagicMock(nvr='fbc', bundle_nvrs=['unapproved'])])
+        with patch('pyartcd.pipelines.prepare_release_lp.KonfluxDb', return_value=db):
+            with self.assertRaisesRegex(ValueError, 'differ from prepared bundles'):
+                await self.pipeline._validate_fbc_pins(['fbc'], ['approved'], [self.pin])
+
+    async def test_standalone_images_do_not_trigger_fbc_builds(self):
+        with patch('pyartcd.pipelines.prepare_release_lp.build_fbc_catalogs', new_callable=AsyncMock) as build:
+            self.assertEqual(await self.pipeline._trigger_fbc_build([]), ([], []))
+            build.assert_not_awaited()
+
+    async def test_missing_fbc_or_bundle_provenance_aborts(self):
+        for selected, operands in (([], [self.pin]), (['bundle'], [])):
+            db = MagicMock()
+            db.get_build_records_by_nvrs = AsyncMock(
+                side_effect=[
+                    [MagicMock(nvr='fbc', bundle_nvrs=selected)],
+                    [MagicMock(nvr='bundle', operator_nvr='operator-container-1-1.p2', operand_nvrs=operands)],
+                ]
+            )
+            with self.subTest(selected=selected, operands=operands):
+                with patch('pyartcd.pipelines.prepare_release_lp.KonfluxDb', return_value=db):
+                    with self.assertRaisesRegex(ValueError, 'provenance'):
+                        await self.pipeline._validate_fbc_pins(['fbc'], ['bundle'], [self.pin])
 
 
 if __name__ == '__main__':

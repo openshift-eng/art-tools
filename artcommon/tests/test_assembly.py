@@ -1120,3 +1120,102 @@ releases:
         releases_config = Model(dict_to_model=yaml.safe_load(releases_yml))
         with self.assertRaises(ValueError):
             assembly_validate_member_distgit_keys(releases_config, 'loop_assembly', 'image', {'some-image'})
+
+
+class TestAssemblyImagePins(TestCase):
+    def test_effective_pins_use_merge_rules_and_exclusions(self):
+        from artcommonlib.assembly import assembly_image_pins
+
+        releases = Model(
+            {
+                'releases': {
+                    'base': {
+                        'assembly': {
+                            'members': {
+                                'images': [
+                                    {
+                                        'distgit_key': 'operator',
+                                        'metadata': {'is': {'nvr': 'operator-container-1-1.p2'}},
+                                    },
+                                    {'distgit_key': 'operand', 'metadata': {'is': {'nvr': 'operand-container-1-1.p2'}}},
+                                    {'distgit_key': 'removed', 'metadata': {'is': {'nvr': 'removed-container-1-1.p2'}}},
+                                    {
+                                        'distgit_key': 'excluded',
+                                        'metadata': {'is': {'nvr': 'excluded-container-1-1.p2'}},
+                                    },
+                                ]
+                            }
+                        }
+                    },
+                    'release': {
+                        'assembly': {
+                            'type': 'standard',
+                            'basis': {'assembly': 'base'},
+                            'members': {
+                                'images': [
+                                    {
+                                        'distgit_key': 'operand',
+                                        'metadata': {'is': {'nvr!': 'operand-container-1-2.p3'}},
+                                    },
+                                    {'distgit_key': 'removed', 'metadata': {'is': {'nvr-': None}}},
+                                    {'distgit_key': 'excluded', 'exclude': True},
+                                    {'distgit_key': 'new', 'metadata': {'is': {'nvr': 'new-container-1-1.p2'}}},
+                                ]
+                            },
+                        }
+                    },
+                }
+            }
+        )
+        self.assertEqual(
+            assembly_image_pins(releases, 'release'),
+            {
+                'operator': 'operator-container-1-1.p2',
+                'operand': 'operand-container-1-2.p3',
+                'new': 'new-container-1-1.p2',
+            },
+        )
+        self.assertEqual(list(assembly_image_pins(releases, 'release')), ['operator', 'operand', 'new'])
+
+    def test_invalid_basis_chain_fails(self):
+        from artcommonlib.assembly import assembly_image_pins
+
+        for parent in ('missing', 'release'):
+            with self.subTest(parent=parent), self.assertRaises(ValueError):
+                assembly_image_pins(
+                    Model({'releases': {'release': {'assembly': {'basis': {'assembly': parent}}}}}), 'release'
+                )
+
+
+class TestLegacyAssemblyKeyInheritance(TestCase):
+    def test_canonical_child_pin_replaces_legacy_parent_alias(self):
+        from artcommonlib.assembly import assembly_image_pins
+
+        old = 'quay-quay-container-3.18.2-1.p2'
+        new = 'quay-quay-container-3.18.2-2.p3'
+        releases = Model(
+            {
+                'releases': {
+                    'base': {
+                        'assembly': {
+                            'members': {
+                                'images': [
+                                    {'distgit_key': 'quay-quay-container', 'metadata': {'is': {'nvr': old}}},
+                                ]
+                            }
+                        }
+                    },
+                    'release': {
+                        'assembly': {
+                            'basis': {'assembly': 'base'},
+                            'members': {
+                                'images': [
+                                    {'distgit_key': 'quay-quay', 'metadata': {'is': {'nvr!': new}}},
+                                ]
+                            },
+                        }
+                    },
+                }
+            }
+        )
+        self.assertEqual(assembly_image_pins(releases, 'release'), {'quay-quay': new})

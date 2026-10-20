@@ -23,6 +23,14 @@ class TestGenAssemblyLPPipeline(unittest.TestCase):
         kwargs.update(overrides)
         pipeline = GenAssemblyLPPipeline(**kwargs)
         pipeline.product = "rhacm2"
+        pipeline._component_to_distgit_key = {
+            name: name
+            for name in (
+                'search-v2-api-container',
+                'console-container',
+                'extra-operand-container',
+            )
+        }
         return pipeline
 
     def test_init_requires_fbc_or_basis(self):
@@ -271,6 +279,13 @@ class TestGenAssemblyLPMultiFBC(unittest.TestCase):
         kwargs.update(overrides)
         pipeline = GenAssemblyLPPipeline(**kwargs)
         pipeline.product = "openshift-logging"
+        pipeline._component_to_distgit_key = {
+            name: name
+            for name in (
+                'cluster-logging-operator',
+                'log-file-metric-exporter',
+            )
+        }
         return pipeline
 
     @patch('pyartcd.pipelines.gen_assembly_lp.validate_fbc_related_images', new_callable=AsyncMock)
@@ -361,7 +376,14 @@ class TestGenAssemblyLPRun(unittest.TestCase):
             fbc_pullspecs=["quay.io/test/acm-fbc@sha256:abc"],
         )
         kwargs.update(overrides)
-        return GenAssemblyLPPipeline(**kwargs)
+        pipeline = GenAssemblyLPPipeline(**kwargs)
+        pipeline._load_component_to_distgit_key = AsyncMock(
+            return_value={
+                'search-v2-api-container': 'search-v2-api-container',
+                'console-container': 'console-container',
+            }
+        )
+        return pipeline
 
     @patch.object(GenAssemblyLPPipeline, '_create_or_update_pull_request', new_callable=AsyncMock)
     @patch.object(GenAssemblyLPPipeline, '_build_fbc_pullspecs_map', new_callable=AsyncMock)
@@ -413,6 +435,77 @@ class TestGenAssemblyLPRun(unittest.TestCase):
             assembly['members']['images'][0]['metadata']['is']['nvr!'],
             'search-v2-api-container-2.17.3-1',
         )
+
+
+class TestCanonicalAssemblyKeys(unittest.IsolatedAsyncioTestCase):
+    pin = 'quay-quay-container-3.18.2-202610201426.p3.g16cba93.assembly.stream.el9'
+
+    def setUp(self):
+        from pathlib import Path
+
+        runtime = MagicMock(dry_run=True, config={})
+        runtime.working_dir = Path('/tmp/gen-assembly-canonical-key-tests')
+        self.pipeline = GenAssemblyLPPipeline(runtime, 'quay-3.18', '3.18.3', fbc_pullspecs=['quay.io/fbc'])
+
+    async def test_doozer_metadata_resolves_defaults_and_component_overrides(self):
+        configs = """images:
+  quay-quay:
+    distgit:
+      component: quay-quay-container
+  unusual-name:
+    distgit:
+      component: alternate-component
+  default-name: {}
+"""
+        with patch('pyartcd.pipelines.gen_assembly_lp.exectools.cmd_gather_async', new_callable=AsyncMock) as cmd:
+            cmd.return_value = (0, configs, '')
+            mapping = await self.pipeline._load_component_to_distgit_key()
+        self.assertEqual(
+            mapping,
+            {
+                'quay-quay-container': 'quay-quay',
+                'alternate-component': 'unusual-name',
+                'default-name-container': 'default-name',
+            },
+        )
+        self.assertIn('--data-path=https://github.com/openshift-eng/ocp-build-data', cmd.await_args.args[0])
+
+    async def test_generation_emits_canonical_key_and_keeps_exact_private_pin(self):
+        pipeline = self.pipeline
+        pipeline._load_product_from_group_config = AsyncMock(return_value='quay')
+        pipeline._load_component_to_distgit_key = AsyncMock(return_value={'quay-quay-container': 'quay-quay'})
+        pipeline._build_fbc_pullspecs_map = AsyncMock(return_value={})
+        pipeline._create_or_update_pull_request = AsyncMock()
+        pipeline.include = [f'quay-quay={self.pin}']
+        with patch('elliottlib.util.extract_nvrs_from_fbc', new_callable=AsyncMock, return_value=[self.pin]):
+            result = await pipeline.run()
+        self.assertEqual(
+            result['releases']['3.18.3']['assembly']['members']['images'],
+            [
+                {'distgit_key': 'quay-quay', 'metadata': {'is': {'nvr': self.pin}}},
+            ],
+        )
+
+    async def test_unknown_and_ambiguous_components_fail(self):
+        self.pipeline._component_to_distgit_key = {'quay-quay-container': 'quay-quay'}
+        with self.assertRaisesRegex(click.ClickException, 'No Doozer image configuration'):
+            self.pipeline._nvrs_to_distgit_map(['unknown-container-3.18.2-1'])
+        with patch('pyartcd.pipelines.gen_assembly_lp.exectools.cmd_gather_async', new_callable=AsyncMock) as cmd:
+            cmd.return_value = (
+                0,
+                'images: {a: {distgit: {component: duplicate}}, b: {distgit: {component: duplicate}}}',
+                '',
+            )
+            with self.assertRaisesRegex(click.ClickException, 'multiple Doozer image keys'):
+                await self.pipeline._load_component_to_distgit_key()
+
+    async def test_legacy_include_selector_and_extra_images_emit_canonical_keys(self):
+        self.pipeline._component_to_distgit_key = {'quay-quay-container': 'quay-quay'}
+        self.pipeline.include = [f'quay-quay-container={self.pin}']
+        result = self.pipeline._apply_includes({'quay-quay': self.pin.replace('.p3.', '.p2.')})
+        self.assertEqual(result, {'quay-quay': self.pin})
+        self.pipeline.extra_image_nvrs = [self.pin]
+        self.assertEqual(self.pipeline._apply_extra_image_nvrs({}), {'quay-quay': self.pin})
 
 
 if __name__ == '__main__':
