@@ -395,6 +395,8 @@ class PrepareReleaseLPPipeline:
             mismatches = [
                 nvr
                 for nvr in operands
+                # Digest-pinned external images have no ART NVR.
+                if nvr != 'external'
                 if parse_nvr(nvr)['name'] in pinned_by_name and pinned_by_name[parse_nvr(nvr)['name']] != nvr
             ]
             if mismatches:
@@ -575,6 +577,9 @@ class PrepareReleaseLPPipeline:
             if not bundle.operator_nvr or not bundle.operand_nvrs:
                 raise ValueError(f"Bundle {bundle.nvr} has incomplete operator/operand provenance")
             for nvr in [bundle.operator_nvr, *bundle.operand_nvrs]:
+                if nvr == 'external':
+                    # The bundle rebaser records this marker for external images.
+                    continue
                 expected = pins.get(parse_nvr(nvr)['name'])
                 if expected and nvr != expected:
                     raise ValueError(f"Bundle {bundle.nvr} references {nvr}, expected assembly pin {expected}")

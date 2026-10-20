@@ -479,7 +479,7 @@ class TestPrepareReleaseLPBundleScoping(unittest.TestCase):
 
     @patch.object(PrepareReleaseLPPipeline, '_find_existing_bundles', new_callable=AsyncMock)
     @patch('pyartcd.pipelines.prepare_release_lp.exectools.cmd_gather_async', new_callable=AsyncMock)
-    def test_stale_bundle_triggers_rebuild(self, mock_cmd, mock_find):
+    def test_stale_bundle_with_external_images_triggers_rebuild(self, mock_cmd, mock_find):
         """Bundles referencing old operand images must be rebuilt when the assembly pins a new version."""
         mock_find.return_value = {
             "metadata": [
@@ -493,6 +493,7 @@ class TestPrepareReleaseLPBundleScoping(unittest.TestCase):
                 "loki-rhel9-operator-metadata-container-6.0.15-1.assembly.stream.el9-1": {
                     "operator_nvr": "loki-rhel9-operator-container-6.0.15-1.assembly.stream.el9",
                     "operand_nvrs": [
+                        "external",
                         "logging-loki-rhel9-container-6.0.15-OLD.assembly.stream.el9",
                     ],
                 },
@@ -521,7 +522,7 @@ class TestPrepareReleaseLPBundleScoping(unittest.TestCase):
         self.assertNotIn("loki-rhel9-operator-metadata-container-6.0.15-1.assembly.stream.el9-1", bundle_nvrs)
 
     @patch.object(PrepareReleaseLPPipeline, '_find_existing_bundles', new_callable=AsyncMock)
-    def test_matching_operands_reuses_bundle(self, mock_find):
+    def test_matching_operands_with_external_images_reuses_bundle(self, mock_find):
         """Bundles whose operands match the assembly pins should be reused."""
         mock_find.return_value = {
             "metadata": [
@@ -535,6 +536,7 @@ class TestPrepareReleaseLPBundleScoping(unittest.TestCase):
                 "loki-rhel9-operator-metadata-container-6.0.15-1.assembly.stream.el9-1": {
                     "operator_nvr": "loki-rhel9-operator-container-6.0.15-1.assembly.stream.el9",
                     "operand_nvrs": [
+                        "external",
                         "logging-loki-rhel9-container-6.0.15-SAME.assembly.stream.el9",
                     ],
                 },
@@ -1313,6 +1315,28 @@ class TestPinnedReleasePreparation(unittest.IsolatedAsyncioTestCase):
                 with patch('pyartcd.pipelines.prepare_release_lp.KonfluxDb', return_value=db):
                     with self.assertRaisesRegex(ValueError, 'provenance'):
                         await self.pipeline._validate_fbc_pins(['fbc'], ['bundle'], [self.pin])
+
+    async def test_fbc_pin_validation_with_external_images(self):
+        operator = 'quay-operator-container-3.18.2-1.p2'
+        for operand, error in (
+            (self.pin, None),
+            (self.pin.replace('.p3.', '.p2.'), 'expected assembly pin'),
+            ('invalid', 'Invalid NVR'),
+        ):
+            db = MagicMock()
+            db.get_build_records_by_nvrs = AsyncMock(
+                side_effect=[
+                    [MagicMock(nvr='fbc', bundle_nvrs=['bundle'])],
+                    [MagicMock(nvr='bundle', operator_nvr=operator, operand_nvrs=['external', operand])],
+                ]
+            )
+            with self.subTest(operand=operand):
+                with patch('pyartcd.pipelines.prepare_release_lp.KonfluxDb', return_value=db):
+                    if error:
+                        with self.assertRaisesRegex(ValueError, error):
+                            await self.pipeline._validate_fbc_pins(['fbc'], ['bundle'], [operator, self.pin])
+                    else:
+                        await self.pipeline._validate_fbc_pins(['fbc'], ['bundle'], [operator, self.pin])
 
 
 if __name__ == '__main__':
