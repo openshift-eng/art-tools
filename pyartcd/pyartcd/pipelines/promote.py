@@ -540,6 +540,7 @@ class PromotePipeline:
                 message_digests = []
                 if not self.skip_mirror_binaries:
                     message_digests = await self.extract_and_publish_clients("ocp-dev-preview", release_infos)
+                    self._trigger_installer_cdn_release(release_name, "ocp-dev-preview")
                 if not self.skip_signing:
                     await self.sign_artifacts(release_name, "ocp-dev-preview", release_infos, message_digests)
             else:
@@ -608,6 +609,7 @@ class PromotePipeline:
                 message_digests = []
                 if not self.skip_mirror_binaries:
                     message_digests = await self.extract_and_publish_clients(client_type, release_infos)
+                    self._trigger_installer_cdn_release(release_name, client_type)
                 if not self.skip_signing:
                     if not self.runtime.dry_run:
                         lock = Lock.SIGNING
@@ -775,6 +777,28 @@ class PromotePipeline:
             raise ValueError("A justification is required to permit issue %s.", code)
         self._logger.warn("Issue %s is permitted with justification: %s", err, justification)
         return justification
+
+    def _trigger_installer_cdn_release(self, release_name: str, client_type: str):
+        """
+        Queue the installer-cdn-release job, which ships openshift-install through the Konflux CDN.
+
+        A failure here only logs a warning: the mirror.openshift.com publishing above is not affected.
+
+        :param release_name: Promoted release name, e.g. 4.22.18.
+        :param client_type: ocp or ocp-dev-preview, the same value used for the mirror clients.
+        """
+        major, minor = isolate_major_minor_in_group(self.group)
+        try:
+            jenkins.start_installer_cdn_release(
+                build_version=f"{major}.{minor}",
+                assembly=self.assembly,
+                release_name=release_name,
+                client_type=client_type,
+                dry_run=self.runtime.dry_run,
+                block_until_building=False,
+            )
+        except Exception as err:
+            self._logger.warning("Failed to start installer-cdn-release for %s: %s", release_name, err)
 
     async def extract_and_publish_clients(self, client_type: str, release_infos: Dict):
         logger = self._logger

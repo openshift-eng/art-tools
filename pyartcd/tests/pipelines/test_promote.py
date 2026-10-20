@@ -2861,3 +2861,33 @@ class TestFixDocsAfterAdvisoryDrop(IsolatedAsyncioTestCase):
             )
 
         mock_file.save.assert_not_called()
+
+
+class TestPromoteInstallerCdnTrigger(IsolatedAsyncioTestCase):
+    def _pipeline(self):
+        runtime = MagicMock(dry_run=True)
+        pipeline = PromotePipeline.__new__(PromotePipeline)
+        pipeline.runtime = runtime
+        pipeline.group = "openshift-4.22"
+        pipeline.assembly = "4.22.18"
+        pipeline._logger = MagicMock()
+        return pipeline
+
+    @patch("pyartcd.pipelines.promote.jenkins.start_installer_cdn_release")
+    def test_trigger_queues_job_without_blocking(self, start_installer_cdn_release):
+        pipeline = self._pipeline()
+        pipeline._trigger_installer_cdn_release("4.22.18", "ocp")
+        start_installer_cdn_release.assert_called_once_with(
+            build_version="4.22",
+            assembly="4.22.18",
+            release_name="4.22.18",
+            client_type="ocp",
+            dry_run=True,
+            block_until_building=False,
+        )
+
+    @patch("pyartcd.pipelines.promote.jenkins.start_installer_cdn_release", side_effect=RuntimeError("jenkins down"))
+    def test_trigger_failure_only_warns(self, _):
+        pipeline = self._pipeline()
+        pipeline._trigger_installer_cdn_release("4.23.0-ec.1", "ocp-dev-preview")
+        pipeline._logger.warning.assert_called_once()

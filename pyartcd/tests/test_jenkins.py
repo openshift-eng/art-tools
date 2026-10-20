@@ -372,6 +372,20 @@ class TestTektonJenkinsStartBuild(unittest.TestCase):
 
         self.client.get_job.assert_not_called()
 
+    def test_start_installer_cdn_release_parameters(self):
+        jenkins.start_installer_cdn_release('4.22', '4.22.18', '4.22.18', 'ocp', dry_run=False)
+        self.client.get_job.assert_called_once_with(Jobs.INSTALLER_CDN_RELEASE.value)
+        self.assertEqual(Jobs.INSTALLER_CDN_RELEASE.value, 'aos-cd-builds/build%2Finstaller-cdn-release')
+        self.job.invoke.assert_called_once_with(
+            build_params={
+                'BUILD_VERSION': '4.22',
+                'ASSEMBLY': '4.22.18',
+                'RELEASE_NAME': '4.22.18',
+                'CLIENT_TYPE': 'ocp',
+                'DRY_RUN': False,
+            }
+        )
+
     def test_promotion_helpers_preserve_parameters(self):
         jenkins.start_build_microshift('4.20', '4.20.42', dry_run=True)
         self.client.get_job.assert_called_once_with(Jobs.BUILD_MICROSHIFT.value)

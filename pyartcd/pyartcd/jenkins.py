@@ -47,6 +47,7 @@ class Jobs(Enum):
     MICROSHIFT_SYNC = 'aos-cd-builds/build%2Fmicroshift_sync'
     CINCINNATI_PRS = 'aos-cd-builds/build%2Fcincinnati-prs'
     RHCOS_SYNC = 'aos-cd-builds/build%2Frhcos_sync'
+    INSTALLER_CDN_RELEASE = 'aos-cd-builds/build%2Finstaller-cdn-release'
     BUILD_PLASHETS = 'aos-cd-builds/build%2Fbuild-plashets'
     BUILD_FBC = 'aos-cd-builds/build%2Fbuild-fbc'
     LAYERED_PRODUCTS = 'aos-cd-builds/build%2Flayered-products'
@@ -828,6 +829,31 @@ def start_build_microshift_bootc(
     return start_build(
         job=Jobs.BUILD_MICROSHIFT_BOOTC,
         params=params,
+        **kwargs,
+    )
+
+
+def start_installer_cdn_release(
+    build_version: str, assembly: str, release_name: str, client_type: str, dry_run: bool, **kwargs
+) -> Optional[str]:
+    """
+    Start the installer-cdn-release job for a promoted release.
+
+    :param build_version: OCP MAJOR.MINOR, e.g. 4.22.
+    :param assembly: Promoted assembly name.
+    :param release_name: Promoted release name.
+    :param client_type: ocp or ocp-dev-preview, as used for the mirror.openshift.com clients.
+    :param dry_run: Run the job in dry-run mode.
+    """
+    return start_build(
+        job=Jobs.INSTALLER_CDN_RELEASE,
+        params={
+            'BUILD_VERSION': build_version,
+            'ASSEMBLY': assembly,
+            'RELEASE_NAME': release_name,
+            'CLIENT_TYPE': client_type,
+            'DRY_RUN': dry_run,
+        },
         **kwargs,
     )
 
