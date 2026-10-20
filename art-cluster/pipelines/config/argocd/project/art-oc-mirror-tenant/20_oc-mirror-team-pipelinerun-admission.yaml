@@ -51,6 +51,7 @@ spec:
         has(object.spec.pipelineRef) &&
         has(object.spec.pipelineRef.name) &&
         object.spec.pipelineRef.name in [
+          "binary-release-konflux",
           "trigger-prod-release",
           "layered-products-scan",
           "schedule-layered-products-scan"
