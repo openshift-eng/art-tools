@@ -302,6 +302,21 @@ async def images_konflux_rebase(
     await cli.run()
 
 
+BUILD_ARG_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*=.*$", re.DOTALL)
+
+
+def validate_build_args(build_args: Sequence[str]) -> tuple[str, ...]:
+    """
+    Return build_args as a tuple after checking that every entry is KEY=VALUE.
+
+    :param build_args: Build arguments given on the command line.
+    """
+    invalid = [arg for arg in build_args if not BUILD_ARG_RE.match(arg)]
+    if invalid:
+        raise click.BadParameter(f"--build-arg must be KEY=VALUE, got: {', '.join(invalid)}")
+    return tuple(build_args)
+
+
 class KonfluxBuildCli:
     def __init__(
         self,
@@ -319,6 +334,7 @@ class KonfluxBuildCli:
         effective_time: str = "now",
         skip_custom_its: bool = False,
         skip_tasks: tuple[str, ...] = (),
+        extra_build_args: tuple[str, ...] = (),
     ):
         self.runtime = runtime
         self.konflux_kubeconfig = konflux_kubeconfig
@@ -334,6 +350,7 @@ class KonfluxBuildCli:
         self.skip_ec_verify = skip_ec_verify
         self.effective_time = effective_time
         self.skip_custom_its = skip_custom_its
+        self.extra_build_args = validate_build_args(extra_build_args)
 
         validate_build_priority(self.build_priority)
 
@@ -424,6 +441,7 @@ class KonfluxBuildCli:
             integration_test_scenarios=tuple(dict.fromkeys(integration_test_scenarios)),
             integration_test_snapshot_annotations=dict(integration_test_snapshot_annotations),
             skip_custom_its=self.skip_custom_its,
+            extra_build_args=self.extra_build_args,
         )
         builder = KonfluxImageBuilder(config=config, record_logger=runtime.record_logger)
         await builder.validate_custom_integration_test_scenarios()
@@ -710,6 +728,13 @@ class KonfluxBuildCli:
     is_flag=True,
     help='Skip custom IntegrationTestScenarios configured in group.yml.',
 )
+@click.option(
+    '--build-arg',
+    'build_args',
+    multiple=True,
+    metavar='KEY=VALUE',
+    help='Extra Konflux build argument, appended after konflux.build_args of every image built by this run. Repeatable.',
+)
 @pass_runtime
 @click_coroutine
 async def images_konflux_build(
@@ -727,6 +752,7 @@ async def images_konflux_build(
     skip_ec_verify: bool,
     effective_time: str,
     skip_custom_its: bool,
+    build_args: tuple,
 ):
     if network_mode:
         runtime.network_mode_override = network_mode
@@ -746,6 +772,7 @@ async def images_konflux_build(
         skip_ec_verify=skip_ec_verify,
         effective_time=effective_time,
         skip_custom_its=skip_custom_its,
+        extra_build_args=build_args,
     )
     await cli.run()
 
