@@ -35,7 +35,8 @@ example `quay-ocp-5-0-fbc-merged`. The FBC source branch is
 `art-quay-ocp-5.0-fbc-merged`. Successful builds receive a unique
 `quay-merged-fbc-5.0-<timestamp>.ocp5.0` NVR. Database records use the existing
 execution group and `stream` assembly, with all source bundle NVRs retained.
-The output image defaults to the product's Konflux namespace `art-fbc` repository.
+The output image defaults to `quay.io/redhat-user-workloads/ocp-art-tenant/art-fbc`,
+matching existing FBC builds. The Konflux execution namespace remains product-specific.
 
 The JSON result includes `nvr`, digest-pinned `pullspec`, `build_url`,
 `provenance_url`, `dry_run`, and the complete `provenance`. The source repository
