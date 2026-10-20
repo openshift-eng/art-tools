@@ -20,7 +20,9 @@ Reference Groovy lib:
   aos-cd-jobs/jobs/build/rhcos_sync/rhcoslib.groovy
 """
 
+import hashlib
 import json
+import logging
 import os
 import re
 import tempfile
@@ -39,6 +41,44 @@ from pyartcd.cli import cli, click_coroutine, pass_runtime
 from pyartcd.pipelines.sign_rhcos_containers import SignRhcosContainersPipeline
 from pyartcd.pipelines.sync_rhcos import SyncRhcosPipeline
 from pyartcd.runtime import Runtime
+
+_LOGGER = logging.getLogger(__name__)
+
+# AWS account IDs for ROSA AMI sync
+ROSA_STAGING_ACCOUNT_ID = "125666959065"
+
+# Azure marketplace VHD artifact coordinate map.
+# For OCP 4.9–4.21, the RHCOS stream JSON path is ``coreos/rhcos.json`` (or
+# ``rhcos-stream.json`` for 4.9).  Starting with 4.22 the installer ships
+# per-RHEL-version files (dual-stream RHCOS).
+_AZURE_ARTIFACT_COORDINATES: Dict[str, dict] = {
+    "4.9": {
+        "paths": ["data/data/rhcos-stream.json"],
+        "jq": [".architectures.x86_64.artifacts.azure.formats.\"vhd.gz\".disk"],
+    },
+    "4.10": {
+        "paths": ["data/data/coreos/rhcos.json"],
+        "jq": [".architectures.x86_64.artifacts.azure.formats.\"vhd.gz\".disk"],
+    },
+    "4.11": {
+        "paths": ["data/data/coreos/rhcos.json"],
+        "jq": [".architectures.x86_64.artifacts.azure.formats.\"vhd.gz\".disk"],
+    },
+}
+# 4.12 through 4.21 all use the same single-file coordinate
+for _v in range(12, 22):
+    _AZURE_ARTIFACT_COORDINATES[f"4.{_v}"] = {
+        "paths": ["data/data/coreos/rhcos.json"],
+        "jq": [".architectures.x86_64.artifacts.azure.formats.\"vhd.gz\".disk"],
+    }
+# 4.22+ default: dual-stream RHCOS with both x86_64 and aarch64
+_AZURE_DEFAULT_COORDINATE = {
+    "paths": ["data/data/coreos/coreos-rhel-10.json", "data/data/coreos/coreos-rhel-9.json"],
+    "jq": [
+        ".architectures.x86_64.artifacts.azure.formats.\"vhd.gz\".disk",
+        ".architectures.aarch64.artifacts.azure.formats.\"vhd.gz\".disk",
+    ],
+}
 
 # RHCOS artifacts that are synced (from rhcoslib.groovy).
 # The allowlist is not enforced by default; all images in meta.json are synced.
@@ -249,6 +289,8 @@ class RhcosSyncPipeline:
         self.extra_streams: Dict[str, dict] = {}
         # Registry auth file path, set by RegistryConfig in run()
         self._registry_auth_file: str = ""
+        # Path to the generated synclist, set by _generate_synclist()
+        self._synclist_path: Optional[Path] = None
 
     async def run(self):
         """Execute the full RHCOS sync pipeline."""
@@ -296,12 +338,38 @@ class RhcosSyncPipeline:
             self.ocp_version,
         )
 
-        # Step 4: Boot image sync (unless sign-only mode)
+        # Generate synclist and check needsHappening before any downstream
+        # stages so the gate applies to boot image sync, Slack, ROSA, and
+        # Azure — not just boot image sync.
+        needs_happening = True
         if not self.sign_only:
+            await self._generate_synclist()
+            needs_happening = await self._check_needs_happening()
+
+        # Step 4: Boot image sync (only if needs_happening, not sign-only)
+        if not self.sign_only and needs_happening:
             await self._sync_boot_images()
 
-        # Step 5: Sign RHCOS container images (for all streams)
+        # Step 5: Sign RHCOS container images (always runs)
         await self._sign_containers()
+
+        # Steps 6–8 only run when sync was actually needed (or forced)
+        if not self.sign_only and needs_happening:
+            # Step 6: Notify Slack about boot image sync success
+            await self._notify_slack(
+                f":white_check_mark: rhcos_sync ({self.mirror_prefix}) successful\n"
+                f"https://mirror.openshift.com{self.base_dir}/{self.mirror_prefix}/{self.name}/",
+            )
+
+            # Step 7: ROSA AMI sync (x86_64 only)
+            if self.arch == "x86_64":
+                await self._sync_rosa_ami()
+
+            # Step 8: Azure marketplace VHD publish (x86_64, stable only)
+            if self.arch == "x86_64":
+                await self._publish_azure_marketplace()
+        elif not self.sign_only:
+            self.logger.info("Sync is not needed (already on mirror). Skipping downstream stages.")
 
         self.logger.info("RHCOS sync pipeline completed successfully")
 
@@ -487,6 +555,7 @@ class RhcosSyncPipeline:
         synclist_path = Path(self.runtime.working_dir) / f"rhcos-synclist-{self.arch}.txt"
         synclist_path.write_text("\n".join(image_urls) + "\n")
 
+        self._synclist_path = synclist_path
         return synclist_path
 
     async def _check_needs_happening(self) -> bool:
@@ -528,22 +597,12 @@ class RhcosSyncPipeline:
         return True
 
     async def _sync_boot_images(self):
-        """Generate synclist, check if sync is needed, and run SyncRhcosPipeline.
+        """Run SyncRhcosPipeline to mirror boot images.
 
-        Orchestrates the "sync" portion of the Jenkinsfile:
-          1. Generate synclist from meta.json
-          2. Check needsHappening
-          3. Call SyncRhcosPipeline.run()
+        Called only when ``_run_pipeline()`` has already determined that the
+        sync is needed (needsHappening check passed) and the synclist has
+        been generated.
         """
-        # Generate the synclist
-        synclist_path = await self._generate_synclist()
-
-        # Check if sync is needed
-        needs_happening = await self._check_needs_happening()
-        if not needs_happening:
-            self.logger.info("Sync is not needed (already on mirror). Skipping boot image sync.")
-            return
-
         # Determine signing environment
         signing_env = self.signing_env
         if signing_env is None:
@@ -558,7 +617,7 @@ class RhcosSyncPipeline:
             version=self.name,
             mirror_prefix=self.mirror_prefix,
             base_dir=self.base_dir,
-            synclist=str(synclist_path),
+            synclist=str(self._synclist_path),
             no_latest=self.no_latest,
             signing_env=signing_env,
         )
@@ -622,6 +681,302 @@ class RhcosSyncPipeline:
 
         if extra_failures:
             raise RuntimeError(f"Signing failed for extra RHCOS streams: {', '.join(extra_failures)}")
+
+    async def _sync_rosa_ami(self):
+        """Copy the RHCOS AMI to ROSA staging and production AWS accounts.
+
+        Ported from ``build-scripts/rosa-sync/rosa_sync.sh`` in aos-cd-jobs.
+        Only runs for x86_64 architecture. Skips if AWS credentials are not
+        provided via environment variables.
+
+        Environment variables (read at call time):
+          - ``ROSA_STAGING_AWS_ACCESS_KEY_ID`` / ``ROSA_STAGING_AWS_SECRET_ACCESS_KEY``
+          - ``ROSA_PROD_AWS_ACCESS_KEY_ID`` / ``ROSA_PROD_AWS_SECRET_ACCESS_KEY``
+
+        The AMI is read from the RHCOS stream JSON that was extracted during
+        metadata extraction.  It is copied to us-east-1 in each target account
+        using the EC2 ``copy_image`` API — AWS Marketplace replicates to other
+        regions from there.  The copy is idempotent: if an AMI with the same
+        Name already exists in the target account the copy is skipped.
+        """
+        try:
+            import boto3  # noqa: F811
+        except ImportError:
+            self.logger.warning("boto3 is not installed — skipping ROSA AMI sync")
+            return
+
+        # Read credentials from environment variables — require both key and
+        # secret for each account to avoid mixing credentials across accounts.
+        accounts: List[Tuple[str, str, str]] = []
+
+        staging_key = os.environ.get("ROSA_STAGING_AWS_ACCESS_KEY_ID")
+        staging_secret = os.environ.get("ROSA_STAGING_AWS_SECRET_ACCESS_KEY")
+        if staging_key and staging_secret:
+            accounts.append(("staging", staging_key, staging_secret))
+        elif staging_key or staging_secret:
+            self.logger.warning("ROSA staging: only one of key/secret is set — skipping staging account")
+
+        prod_key = os.environ.get("ROSA_PROD_AWS_ACCESS_KEY_ID")
+        prod_secret = os.environ.get("ROSA_PROD_AWS_SECRET_ACCESS_KEY")
+        if prod_key and prod_secret:
+            accounts.append(("production", prod_key, prod_secret))
+        elif prod_key or prod_secret:
+            self.logger.warning("ROSA production: only one of key/secret is set — skipping production account")
+
+        if not accounts:
+            self.logger.info("No complete ROSA AWS credentials provided — skipping ROSA AMI sync")
+            return
+
+        # Extract the us-east-1 AMI ID from the primary stream data
+        try:
+            ami_id = self.rhcos_stream_data["architectures"]["x86_64"]["images"]["aws"]["regions"]["us-east-1"]["image"]
+        except KeyError:
+            self.logger.warning("No us-east-1 AMI found in RHCOS stream data — skipping ROSA AMI sync")
+            return
+
+        if not ami_id:
+            self.logger.warning("us-east-1 AMI ID is empty — skipping ROSA AMI sync")
+            return
+
+        self.logger.info("ROSA AMI sync: source AMI %s in us-east-1", ami_id)
+
+        # Describe the source AMI to get its name using the first available
+        # account's credentials (the AMI is publicly visible).
+        first_key, first_secret = accounts[0][1], accounts[0][2]
+        source_ec2 = boto3.client(
+            "ec2",
+            region_name="us-east-1",
+            aws_access_key_id=first_key,
+            aws_secret_access_key=first_secret,
+        )
+
+        if self.runtime.dry_run:
+            self.logger.info("[DRY RUN] Would describe AMI %s and copy to ROSA accounts", ami_id)
+        else:
+            resp = source_ec2.describe_images(ImageIds=[ami_id])
+            images = resp.get("Images", [])
+            if not images:
+                self.logger.error("AMI %s not found in us-east-1", ami_id)
+                return
+            ami_name = images[0].get("Name", ami_id)
+            self.logger.info("Source AMI name: %s", ami_name)
+
+        for label, access_key, secret_key in accounts:
+            self.logger.info("Copying AMI %s to ROSA %s account", ami_id, label)
+            if self.runtime.dry_run:
+                self.logger.info("[DRY RUN] Would copy AMI %s to %s account", ami_id, label)
+                continue
+
+            ec2 = boto3.client(
+                "ec2",
+                region_name="us-east-1",
+                aws_access_key_id=access_key,
+                aws_secret_access_key=secret_key,
+            )
+
+            # Idempotency: check if an AMI with the same Name already exists
+            # in this account — EC2 copy_image rejects duplicate Names.
+            existing = ec2.describe_images(Filters=[{"Name": "name", "Values": [ami_name]}], Owners=["self"])
+            if existing.get("Images"):
+                existing_id = existing["Images"][0].get("ImageId", "unknown")
+                self.logger.info(
+                    "AMI with name %s already exists in %s account (%s) — skipping copy", ami_name, label, existing_id
+                )
+                continue
+
+            try:
+                copy_resp = ec2.copy_image(
+                    Description=ami_name,
+                    Name=ami_name,
+                    SourceImageId=ami_id,
+                    SourceRegion="us-east-1",
+                )
+                new_ami = copy_resp.get("ImageId", "unknown")
+                self.logger.info("AMI copy to %s account succeeded: %s", label, new_ami)
+            except Exception as e:
+                self.logger.error("Failed to copy AMI to %s account: %s", label, e)
+                raise
+
+        # Slack notification for ROSA sync
+        await self._notify_slack(f":white_check_mark: rosa_sync ({self.name}) successful")
+
+    async def _publish_azure_marketplace(self):
+        """Download RHCOS VHD and upload to Azure storage for marketplace publishing.
+
+        Ported from ``jobs/build/publish_azure_marketplace/Jenkinsfile`` in
+        aos-cd-jobs.
+
+        Only runs for stable x86_64 releases (not nightlies, not pre-release).
+        Skips if the ``AZURE_STORAGE_CONNECTION_STRING`` environment variable
+        is not set.
+
+        The VHD download URL is read from the RHCOS stream JSON in the
+        openshift/installer repository.  The VHD.gz file and its sha256
+        checksum are uploaded to the ``rhcos`` container in the ``artupload``
+        Azure storage account.
+        """
+        try:
+            from azure.storage.blob import BlobServiceClient  # noqa: F811
+        except ImportError:
+            self.logger.warning("azure-storage-blob is not installed — skipping Azure marketplace publish")
+            return
+
+        azure_conn_str = os.environ.get("AZURE_STORAGE_CONNECTION_STRING")
+        if not azure_conn_str:
+            self.logger.info("AZURE_STORAGE_CONNECTION_STRING not set — skipping Azure marketplace publish")
+            return
+
+        # Only publish for stable releases (mirror_prefix is the OCP version, not "pre-release")
+        if self.mirror_prefix == "pre-release":
+            self.logger.info("Pre-release/nightly build — skipping Azure marketplace publish")
+            return
+
+        # Determine which RHCOS JSON files to fetch from the installer repo
+        coordinate = _AZURE_ARTIFACT_COORDINATES.get(self.ocp_version, _AZURE_DEFAULT_COORDINATE)
+        file_paths = coordinate["paths"]
+        jq_expressions = coordinate["jq"]
+
+        git_ref = f"release-{self.ocp_version}"
+        self.logger.info("Azure marketplace publish: installer ref=%s", git_ref)
+
+        blob_service = BlobServiceClient.from_connection_string(azure_conn_str)
+        container_client = blob_service.get_container_client("rhcos")
+
+        for file_path in file_paths:
+            rhcos_json_url = f"https://raw.githubusercontent.com/openshift/installer/{git_ref}/{file_path}"
+            self.logger.info("Fetching RHCOS stream JSON: %s", rhcos_json_url)
+
+            async with aiohttp.ClientSession() as session:
+                async with session.get(rhcos_json_url) as resp:
+                    if resp.status != 200:
+                        self.logger.warning(
+                            "Failed to fetch %s (HTTP %d) — skipping this file", rhcos_json_url, resp.status
+                        )
+                        continue
+                    rhcos_data = await resp.json(content_type=None)
+
+            for jq_expr in jq_expressions:
+                # Parse the jq-style path to extract VHD location and sha256.
+                # The jq expression is like:
+                #   .architectures.x86_64.artifacts.azure.formats."vhd.gz".disk
+                vhd_info = _resolve_jq_path(rhcos_data, jq_expr)
+                if not vhd_info:
+                    self.logger.info("No VHD info at %s in %s — skipping", jq_expr, file_path)
+                    continue
+
+                vhd_url = vhd_info.get("location")
+                vhd_sha = vhd_info.get("sha256")
+                if not vhd_url:
+                    self.logger.info("No VHD download URL found — skipping")
+                    continue
+
+                vhd_filename = vhd_url.rsplit("/", 1)[-1]
+                sha_filename = f"{vhd_filename}.sha256"
+                self.logger.info("VHD artifact: %s (sha256: %s)", vhd_filename, vhd_sha or "unknown")
+
+                if self.runtime.dry_run:
+                    self.logger.info("[DRY RUN] Would download %s and upload to Azure storage", vhd_url)
+                    continue
+
+                # Upload sha256 checksum (idempotent — skip if exists)
+                if vhd_sha:
+                    sha_blob = container_client.get_blob_client(sha_filename)
+                    if sha_blob.exists():
+                        self.logger.info("SHA256 blob %s already exists — skipping upload", sha_filename)
+                    else:
+                        self.logger.info("Uploading SHA256 checksum: %s", sha_filename)
+                        sha_blob.upload_blob(vhd_sha, overwrite=False)
+
+                # Upload VHD.gz (idempotent — skip if exists)
+                vhd_blob = container_client.get_blob_client(vhd_filename)
+                if vhd_blob.exists():
+                    self.logger.info("VHD blob %s already exists — skipping upload", vhd_filename)
+                    continue
+
+                self.logger.info("Downloading VHD: %s", vhd_url)
+                with tempfile.TemporaryDirectory(prefix="azure-vhd-") as tmp_dir:
+                    vhd_path = Path(tmp_dir) / vhd_filename
+                    # VHD files can be several GB; allow up to 1 hour for the download.
+                    dl_timeout = aiohttp.ClientTimeout(total=3600)
+                    async with aiohttp.ClientSession(timeout=dl_timeout) as session:
+                        async with session.get(vhd_url) as resp:
+                            if resp.status != 200:
+                                raise RuntimeError(f"Failed to download VHD from {vhd_url}: HTTP {resp.status}")
+                            sha256_hash = hashlib.sha256()
+                            with open(vhd_path, "wb") as f:
+                                async for chunk in resp.content.iter_chunked(8 * 1024 * 1024):
+                                    f.write(chunk)
+                                    sha256_hash.update(chunk)
+
+                    # Verify checksum if available
+                    if vhd_sha:
+                        computed = sha256_hash.hexdigest()
+                        if computed != vhd_sha:
+                            raise RuntimeError(
+                                f"SHA256 mismatch for {vhd_filename}: expected {vhd_sha}, got {computed}"
+                            )
+                        self.logger.info("SHA256 checksum verified for %s", vhd_filename)
+
+                    self.logger.info("Uploading VHD to Azure: %s (%d bytes)", vhd_filename, vhd_path.stat().st_size)
+                    with open(vhd_path, "rb") as data:
+                        vhd_blob.upload_blob(data, overwrite=False)
+                    self.logger.info("VHD upload complete: %s", vhd_filename)
+
+    async def _notify_slack(self, message: str):
+        """Send a notification message to the OCP version-specific Slack channel.
+
+        Skips silently when in dry-run mode (SlackClient handles this
+        internally) or when credentials are missing.
+        """
+        if self.runtime.dry_run:
+            self.logger.info("[DRY RUN] Would send Slack message: %s", message)
+            return
+
+        try:
+            slack_client = self.runtime.new_slack_client()
+        except (ValueError, KeyError) as e:
+            self.logger.warning("Cannot create Slack client (%s) — skipping notification", e)
+            return
+
+        slack_client.bind_channel(self.ocp_version)
+        await slack_client.say(message)
+        self.logger.info("Slack notification sent to %s channel", self.ocp_version)
+
+
+def _resolve_jq_path(data: dict, jq_expr: str) -> Optional[dict]:
+    """Resolve a simplified jq-style dotted path against a nested dict.
+
+    Handles paths like ``.architectures.x86_64.artifacts.azure.formats."vhd.gz".disk``
+    by splitting on ``'.'`` and stripping surrounding double-quotes from each
+    component.
+
+    Returns the resolved value or ``None`` if any key is missing.
+    """
+    # Remove leading dot
+    path = jq_expr.lstrip(".")
+    parts: List[str] = []
+    current = ""
+    in_quotes = False
+    for ch in path:
+        if ch == '"':
+            in_quotes = not in_quotes
+        elif ch == "." and not in_quotes:
+            if current:
+                parts.append(current)
+            current = ""
+        else:
+            current += ch
+    if current:
+        parts.append(current)
+
+    node = data
+    for part in parts:
+        if not isinstance(node, dict):
+            return None
+        node = node.get(part)
+        if node is None:
+            return None
+    return node
 
 
 @cli.command("rhcos-sync", help="Sync RHCOS boot images and sign containers for an OCP release")
