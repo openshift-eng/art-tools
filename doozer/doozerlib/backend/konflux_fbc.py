@@ -463,7 +463,6 @@ class KonfluxFbcFragmentMerger:
             major = int(self.group_config.get("vars", {}).get("MAJOR"))
             minor = int(self.group_config.get("vars", {}).get("MINOR"))
         logger = self._logger
-        konflux_client = self._konflux_client
 
         repo_dir = self.working_dir
         logger.info("Cloning FBC repo %s branch %s into %s", self.fbc_git_repo, self.fbc_git_branch, repo_dir)
@@ -486,20 +485,7 @@ class KonfluxFbcFragmentMerger:
             yaml.dump(target_idms, ims_file)
         logger.info("ImageDigestMirrorSet written to %s", idms_path)
 
-        # Render the FBC fragments
-        logger.info("Rendering FBC fragments...")
-        semaphore = asyncio.BoundedSemaphore(5)  # Limit concurrency to avoid OOM and overwhelming the registry
-
-        async def _render_fragment(fragment: str):
-            async with semaphore:
-                return await opm.render(
-                    fragment,
-                    output_format="yaml",
-                    auth=opm.OpmRegistryAuth(self.registry_auth) if self.registry_auth else None,
-                )
-
-        all_blobs = await asyncio.gather(*(map(_render_fragment, fragments)))
-        catalog_blobs = list(itertools.chain.from_iterable(all_blobs))
+        catalog_blobs = await self._render_catalog(fragments)
 
         # Write the rendered blobs to a file
         # Write catalog_blobs to catalog/catalog.yaml
@@ -521,6 +507,7 @@ class KonfluxFbcFragmentMerger:
         )
         base_image = base_image_format.format(major=major, minor=minor)
         await opm.generate_dockerfile(repo_dir, "catalog", base_image=base_image, builder_image=base_image)
+        await self._prepare_source(build_repo)
 
         # Validate the catalog
         logger.info("Validating the catalog")
@@ -537,8 +524,35 @@ class KonfluxFbcFragmentMerger:
         else:
             logger.info("Dry run enabled, not pushing changes.")
 
-        # Start the build
+        return await self._build(build_repo, target_index, git_auth_secret)
+
+    async def _render_catalog(self, fragments: Collection[str]) -> list[dict]:
+        self._logger.info("Rendering FBC fragments...")
+        semaphore = asyncio.BoundedSemaphore(5)
+
+        async def _render_fragment(fragment: str):
+            async with semaphore:
+                return await opm.render(
+                    fragment,
+                    output_format="yaml",
+                    auth=opm.OpmRegistryAuth(self.registry_auth) if self.registry_auth else None,
+                )
+
+        all_blobs = await asyncio.gather(*map(_render_fragment, fragments))
+        return list(itertools.chain.from_iterable(all_blobs))
+
+    async def _prepare_source(self, build_repo: BuildRepo):
+        """Allow release mergers to add build metadata before committing."""
+
+    async def _record_build(self, build_repo: BuildRepo, plr_info, outcome: KonfluxBuildOutcome):
+        """Allow release mergers to record each build attempt."""
+
+    async def _build(self, build_repo: BuildRepo, target_index: str, git_auth_secret: Optional[str]):
+        logger = self._logger
+        konflux_client = self._konflux_client
         build_attempts = self.group_config.get("konflux", {}).get("build_attempts", 3)
+        if build_attempts < 1:
+            raise ValueError("konflux.build_attempts must be at least one")
         for attempt in range(build_attempts):
             logger.info(f"Attempt {attempt + 1} of {build_attempts} to start the build...")
             error = None
@@ -550,6 +564,7 @@ class KonfluxFbcFragmentMerger:
             plr_name = created_plr.name
             plr_url = konflux_client.resource_url(created_plr.to_dict())
             logger.info(f"Created Pipelinerun {plr_name}: {plr_url}")
+            await self._record_build(build_repo, created_plr, KonfluxBuildOutcome.PENDING)
 
             # Wait for the Pipelinerun to complete
             logger.info(f"Waiting for Pipelinerun {plr_name} to complete...")
@@ -557,6 +572,7 @@ class KonfluxFbcFragmentMerger:
             plr = plr_info.to_dict()
             succeeded_condition = plr_info.find_condition('Succeeded')
             outcome = KonfluxBuildOutcome.extract_from_pipelinerun_succeeded_condition(succeeded_condition)
+            await self._record_build(build_repo, plr_info, outcome)
             logger.info(
                 "Pipelinerun %s completed with outcome: %s",
                 plr_name,
@@ -574,6 +590,7 @@ class KonfluxFbcFragmentMerger:
         if error:
             logger.error("Build failed after %d attempts: %s", build_attempts, error)
             raise error
+        return plr_info
 
     @staticmethod
     def get_application_name(group: str):
@@ -667,13 +684,13 @@ class KonfluxFbcFragmentMerger:
         assert commit_sha, "Commit SHA should not be empty; Doozer bug?"
 
         # Create application
-        app_name = KonfluxFbcFragmentMerger.get_application_name(self.group)
+        app_name = self.get_application_name(self.group)
 
         await konflux_client.ensure_application(app_name, app_name)
         logger.info(f"Created application {app_name}")
 
         # Create component
-        comp_name = KonfluxFbcFragmentMerger.get_component_name(self.group)
+        comp_name = self.get_component_name(self.group)
         target_index_split = output_image.rsplit(":", maxsplit=1)
         if len(target_index_split) < 2:
             raise ValueError(f"Invalid output_image format: {output_image}. Expected format is 'repo:tag'.")
