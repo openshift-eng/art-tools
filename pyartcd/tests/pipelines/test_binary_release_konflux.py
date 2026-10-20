@@ -357,7 +357,14 @@ class TestOcpGroupShipment(unittest.TestCase):
         return pipeline
 
     def test_openshift_group_requires_release_plan_key_and_kind(self):
-        for kwargs in ({}, {"release_plan_key": "openshift-4-22-cdn"}, {"shipment_kind": "cdn"}):
+        for kwargs in (
+            {},
+            {"release_plan_key": "openshift-4-22-cdn"},
+            {"shipment_kind": "cdn"},
+            {"release_plan_key": "openshift-4-22", "shipment_kind": "image"},
+            {"release_plan_key": "openshift-4-22", "shipment_kind": "cdn"},
+            {"release_plan_key": "openshift-4-22-cdn", "shipment_kind": "cdn-dev-preview"},
+        ):
             with self.assertRaises(ValueError):
                 BinaryReleaseKonfluxPipeline(
                     runtime=self._runtime(),
@@ -366,6 +373,29 @@ class TestOcpGroupShipment(unittest.TestCase):
                     nvrs=["openshift-install-delivery-container-v4.22.0-1.el9"],
                     **kwargs,
                 )
+
+    def test_shipment_kind_allow_list(self):
+        for kind in ("../x", "cdn/../../x", "rpm"):
+            with self.assertRaises(ValueError):
+                BinaryReleaseKonfluxPipeline(
+                    runtime=self._runtime(),
+                    group="oc-mirror-2.0",
+                    assembly="stream",
+                    nvrs=["oc-mirror-container-v2.0.0-1.el9"],
+                    shipment_kind=kind,
+                )
+
+    def test_openshift_group_accepts_matching_cdn_key_and_kind(self):
+        for key, kind in (("openshift-4-22-cdn", "cdn"), ("openshift-4-22-cdn-dev-preview", "cdn-dev-preview")):
+            pipeline = BinaryReleaseKonfluxPipeline(
+                runtime=self._runtime(),
+                group="openshift-4.22",
+                assembly="stream",
+                nvrs=["openshift-install-delivery-container-v4.22.0-1.el9"],
+                release_plan_key=key,
+                shipment_kind=kind,
+            )
+            self.assertEqual(pipeline.shipment_kind, kind)
 
     @patch("pyartcd.pipelines.binary_release_konflux.exectools.cmd_gather_async")
     def test_openshift_group_product_falls_back_to_ocp(self, mock_cmd_gather_async):

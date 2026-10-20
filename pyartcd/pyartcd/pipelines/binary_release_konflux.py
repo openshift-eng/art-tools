@@ -42,6 +42,10 @@ from pyartcd.runtime import Runtime
 yaml = new_roundtrip_yaml_handler()
 
 
+CDN_SHIPMENT_KINDS = ("cdn", "cdn-dev-preview")
+SUPPORTED_SHIPMENT_KINDS = ("image",) + CDN_SHIPMENT_KINDS
+
+
 class BinaryReleaseKonfluxPipeline:
     """
     Pipeline for shipping standalone CDN binary products (e.g. oc-mirror) built via Konflux.
@@ -79,11 +83,22 @@ class BinaryReleaseKonfluxPipeline:
         self.target_release_date = target_release_date
         self.release_plan_key = release_plan_key
         self.shipment_kind = shipment_kind
-        if group.startswith("openshift-") and not (release_plan_key and shipment_kind):
+        if shipment_kind is not None and shipment_kind not in SUPPORTED_SHIPMENT_KINDS:
             raise ValueError(
-                f"Group {group} is an OCP payload group: --release-plan-key and --shipment-kind are required so the "
-                "shipment does not use the OCP advisory ReleasePlans or the 'image' kind."
+                f"Unsupported --shipment-kind {shipment_kind!r}; supported: {', '.join(SUPPORTED_SHIPMENT_KINDS)}"
             )
+        if group.startswith("openshift-"):
+            if shipment_kind not in CDN_SHIPMENT_KINDS:
+                raise ValueError(
+                    f"Group {group} is an OCP payload group: --shipment-kind must be one of "
+                    f"{', '.join(CDN_SHIPMENT_KINDS)} so the shipment does not use the 'image' kind."
+                )
+            expected_key = f"{group.replace('.', '-')}-{shipment_kind}"
+            if release_plan_key != expected_key:
+                raise ValueError(
+                    f"Group {group} with --shipment-kind {shipment_kind} needs --release-plan-key {expected_key}, "
+                    f"not {release_plan_key!r}, so the shipment does not use the OCP advisory ReleasePlans."
+                )
 
         # Setup working directories
         self.working_dir = self.runtime.working_dir.absolute()
