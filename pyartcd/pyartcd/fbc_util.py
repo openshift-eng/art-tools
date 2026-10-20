@@ -26,6 +26,26 @@ _LP_GROUP_VERSION_RE = re.compile(r'-(\d+)\.(\d+)$')
 _LP_ASSEMBLY_VERSION_RE = re.compile(r'^v?(\d+)\.(\d+)(?:\.(\d+))?$')
 
 
+def is_nvr_from_assembly(nvr: str, assembly: str) -> bool:
+    """Match an NVR to an assembly's major/minor version for external classification.
+
+    Preserve prefix matching for versions without a minor component. Unparseable
+    NVRs remain included so they cannot silently bypass consistency checks.
+    """
+    try:
+        nvr_version = parse_nvr(nvr).get('version', '').lstrip('v')
+    except ValueError:
+        logger.error("Failed to parse NVR %s; treating it as belonging to assembly %s", nvr, assembly)
+        return True
+
+    assembly_version = assembly.lstrip('v')
+    nvr_parts = nvr_version.split('.')
+    assembly_parts = assembly_version.split('.')
+    if len(assembly_parts) < 2 or len(nvr_parts) < 2:
+        return nvr_version.startswith(assembly_version)
+    return nvr_parts[:2] == assembly_parts[:2]
+
+
 def extract_ocp_version_from_nvr(nvr: str) -> Optional[str]:
     """Extract the target OCP version from a layered-product FBC NVR.
 
@@ -170,6 +190,8 @@ async def validate_fbc_related_images(
     operator_groups_out: Optional[Dict[str, List[str]]] = None,
     operator_by_fbc_out: Optional[Dict[str, str]] = None,
     related_nvrs_by_fbc_out: Optional[Dict[str, List[str]]] = None,
+    *,
+    assembly: Optional[str] = None,
 ) -> List[str]:
     """
     Validate that FBC pullspecs from the same operator have the same related images.
@@ -177,6 +199,11 @@ async def validate_fbc_related_images(
     Different operators are allowed to have different related images, but
     multiple FBC builds for the *same* operator (targeting different OCP versions)
     must contain identical related-image NVR sets.
+
+    When `assembly` is supplied, external dependencies whose major/minor version
+    differs from the assembly are excluded from comparison, but retained in the
+    returned NVR union and provenance outputs. Without an assembly, all related
+    images are compared.
 
     Optional output mappings expose the resolved operator grouping and each
     catalog's related NVRs so callers can reuse the inspected provenance
@@ -188,6 +215,7 @@ async def validate_fbc_related_images(
         operator_groups_out: Optional operator-to-pullspecs output mapping.
         operator_by_fbc_out: Optional pullspec-to-operator output mapping.
         related_nvrs_by_fbc_out: Optional pullspec-to-related-NVRs output mapping.
+        assembly: Optional assembly version used to exclude external dependencies from comparison.
 
     Returns:
         The combined list of all unique related images across all operators.
@@ -257,21 +285,31 @@ async def validate_fbc_related_images(
     # Step 4: Extract related images from each FBC sequentially to avoid temp directory conflicts
     logger.info("Extracting related images from all FBCs...")
     fbc_related_images = {}
+    all_related_images = set()
     for fbc_pullspec in fbc_pullspecs:
-        related_nvrs = await extract_nvrs_from_fbc(fbc_pullspec, product)
+        related_nvrs = set(await extract_nvrs_from_fbc(fbc_pullspec, product))
+        all_related_images.update(related_nvrs)
+        if related_nvrs_by_fbc_out is not None:
+            related_nvrs_by_fbc_out[fbc_pullspec] = sorted(related_nvrs)
+        if assembly is not None:
+            external_nvrs = {nvr for nvr in related_nvrs if not is_nvr_from_assembly(nvr, assembly)}
+            if external_nvrs:
+                logger.info(
+                    "Skipping %d external NVRs in consistency comparison for FBC %s (assembly %s): %s",
+                    len(external_nvrs),
+                    fbc_pullspec,
+                    assembly,
+                    sorted(external_nvrs),
+                )
+            related_nvrs -= external_nvrs
         fbc_related_images[fbc_pullspec] = sorted(related_nvrs)
 
-    if related_nvrs_by_fbc_out is not None:
-        related_nvrs_by_fbc_out.update(fbc_related_images)
-
     # Step 5: Validate related images within each operator group
-    all_related_images = set()
     validation_errors = []
 
     for operator, fbcs_in_group in operator_groups.items():
         if len(fbcs_in_group) == 1:
             logger.info("Operator '%s': single FBC, no validation needed", operator)
-            all_related_images.update(fbc_related_images[fbcs_in_group[0]])
             continue
 
         logger.info("Validating %d FBCs for operator '%s'...", len(fbcs_in_group), operator)
@@ -309,7 +347,6 @@ async def validate_fbc_related_images(
                 len(fbcs_in_group),
                 len(reference_images),
             )
-            all_related_images.update(reference_images)
 
     # Step 6: Report validation results
     if validation_errors:

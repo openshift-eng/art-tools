@@ -1010,7 +1010,7 @@ class PrepareReleaseLPPipeline:
 
         if len(fbc_pullspecs) > 1:
             self._logger.info("Validating FBC consistency across OCP target versions...")
-            await validate_fbc_related_images(fbc_pullspecs, self.product)
+            await validate_fbc_related_images(fbc_pullspecs, self.product, assembly=self.assembly)
         elif len(fbc_nvrs) > 1 and not fbc_pullspecs:
             self._logger.warning("FBC pullspecs not available; skipping FBC consistency validation")
 

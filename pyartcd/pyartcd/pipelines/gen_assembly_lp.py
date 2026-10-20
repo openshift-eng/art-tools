@@ -14,6 +14,7 @@ from pyartcd.cli import cli, click_coroutine, pass_runtime
 from pyartcd.fbc_util import (
     extract_fbc_labels,
     extract_ocp_version_from_nvr,
+    is_nvr_from_assembly,
     validate_fbc_related_images,
 )
 from pyartcd.git import GitRepository
@@ -80,20 +81,7 @@ class GenAssemblyLPPipeline:
 
     def _is_nvr_from_current_group(self, nvr: str) -> bool:
         """Filter out NVRs from other groups based on version matching."""
-        try:
-            nvr_dict = parse_nvr(nvr)
-            nvr_version = nvr_dict.get('version', '').lstrip('v')
-            assembly_version = self.assembly.lstrip('v')
-
-            nvr_parts = nvr_version.split('.')
-            assembly_parts = assembly_version.split('.')
-
-            if len(assembly_parts) < 2 or len(nvr_parts) < 2:
-                return nvr_version.startswith(assembly_version)
-
-            return nvr_parts[0] == assembly_parts[0] and nvr_parts[1] == assembly_parts[1]
-        except ValueError:
-            return True
+        return is_nvr_from_assembly(nvr, self.assembly)
 
     def _categorize_nvrs(self, nvrs: List[str]) -> Dict[str, List[str]]:
         """Split NVRs into image, bundle, fbc, and external categories.
@@ -123,7 +111,9 @@ class GenAssemblyLPPipeline:
         validates that all FBCs for the same operator contain identical related images.
         """
         if len(self.fbc_pullspecs) > 1:
-            all_related_nvrs = await validate_fbc_related_images(self.fbc_pullspecs, self.product)
+            all_related_nvrs = await validate_fbc_related_images(
+                self.fbc_pullspecs, self.product, assembly=self.assembly
+            )
         else:
             from elliottlib.util import extract_nvrs_from_fbc as _extract
 

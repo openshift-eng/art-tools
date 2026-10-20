@@ -940,6 +940,7 @@ class TestPrepareReleaseLPRun(unittest.TestCase):
         mock_validate.assert_called_once_with(
             ["quay.io/test/fbc@sha256:a18", "quay.io/test/fbc@sha256:a19"],
             "logging",
+            assembly="6.4.1",
         )
 
 
