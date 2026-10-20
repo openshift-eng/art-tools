@@ -189,6 +189,7 @@ class TestValidateFbcRelatedImages(unittest.TestCase):
                 "my-product",
                 operator_by_fbc_out=operator_by_fbc,
                 related_nvrs_by_fbc_out=related_nvrs_by_fbc,
+                assembly="1.0.0",
             )
         )
 
@@ -203,6 +204,36 @@ class TestValidateFbcRelatedImages(unittest.TestCase):
                 "quay.io/fbc:ocp4.18": ["image-a-1.0-1", "image-b-1.0-1"],
                 "quay.io/fbc:ocp4.19": ["image-a-1.0-1", "image-b-1.0-1"],
             },
+        )
+        mock_extract.assert_any_call(
+            "quay.io/fbc:ocp4.18",
+            "my-product",
+            assembly="1.0.0",
+            version_scoped=True,
+        )
+
+    @patch('pyartcd.fbc_util.extract_nvrs_from_fbc', new_callable=AsyncMock)
+    @patch('pyartcd.fbc_util.extract_fbc_labels', new_callable=AsyncMock)
+    def test_unscoped_mode_skips_assembly(self, mock_labels, mock_extract):
+        """OCP optional path must not force version-scoped extraction."""
+        mock_labels.return_value = {'nvr': 'op-fbc-4.22.0-1', 'doozer_key': 'my-operator'}
+        mock_extract.return_value = ["image-a-4.22.0-1"]
+
+        result = asyncio.run(
+            validate_fbc_related_images(
+                ["quay.io/fbc:ocp4.22"],
+                "ocp",
+                assembly="4.22.0",
+                version_scoped=False,
+            )
+        )
+
+        self.assertEqual(result, ["image-a-4.22.0-1"])
+        mock_extract.assert_called_once_with(
+            "quay.io/fbc:ocp4.22",
+            "ocp",
+            assembly=None,
+            version_scoped=False,
         )
 
     @patch('pyartcd.fbc_util.extract_nvrs_from_fbc', new_callable=AsyncMock)

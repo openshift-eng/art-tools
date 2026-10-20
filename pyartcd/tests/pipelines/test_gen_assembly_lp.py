@@ -306,7 +306,11 @@ class TestGenAssemblyLPMultiFBC(unittest.TestCase):
         result = asyncio.run(pipeline._extract_nvrs_from_fbc())
 
         mock_validate.assert_not_called()
-        mock_extract_nvrs.assert_called_once_with("quay.io/test/fbc@sha256:single", "openshift-logging")
+        mock_extract_nvrs.assert_called_once_with(
+            "quay.io/test/fbc@sha256:single",
+            "openshift-logging",
+            assembly="6.4.1",
+        )
         self.assertIn("cluster-logging-operator", result)
         self.assertIn("log-file-metric-exporter", result)
 

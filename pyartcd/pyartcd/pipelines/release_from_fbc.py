@@ -1227,13 +1227,17 @@ class ReleaseFromFbcPipeline:
         operator_groups: Dict[str, List[str]] = {}
         operator_by_fbc: dict[str, str] = {}
         related_nvrs_by_fbc: dict[str, list[str]] = {}
+        # OCP optional bundles often use build-suffixed names (*.v4.y.z-<timestamp>)
+        # that do not endswith(.v{assembly}); keep the unscoped extractor there.
+        version_scoped = not self.ocp_optional
         result = await _validate_fbc_related_images(
             fbc_pullspecs,
             self.product,
             operator_groups_out=operator_groups,
             operator_by_fbc_out=operator_by_fbc,
             related_nvrs_by_fbc_out=related_nvrs_by_fbc,
-            assembly=None if self.ocp_optional else self.assembly,
+            assembly=self.assembly if version_scoped else None,
+            version_scoped=version_scoped,
         )
         self._fbc_operator_keys = sorted(operator_groups.keys())
         self._fbc_operator_by_pullspec = operator_by_fbc

@@ -1799,6 +1799,8 @@ class KonfluxFbcBuilder:
         logger = logger or self._logger
 
         try:
+            # OCP share catch-up: use the non-versioned related-images path.
+            # Nightlies run with assembly=stream; do not use LP versioned extraction.
             logger.info("Extracting related images from FBC...")
             related_images = await artlib_util.extract_related_images_from_fbc(fbc_pullspec, product)
             logger.info(f"Found {len(related_images)} related images in FBC")
