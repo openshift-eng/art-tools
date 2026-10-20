@@ -2,7 +2,6 @@
 
 import json
 import os
-import sys
 import unittest
 from pathlib import Path
 from unittest.mock import patch
@@ -57,6 +56,7 @@ class TestMergeLayeredFbcManifests(unittest.TestCase):
             }
         )
         inputs = ['quay-fbc-3.18.2-1.ocp5.0', 'quay.io/example/fbc:tag-with-"quotes"-$(text)']
+        env['MERGE_FBC_BUILDS'] = ' , '.join(inputs)
         result = {
             'nvr': 'quay-merged-fbc-5.0-1.ocp5.0',
             'pullspec': None if dry_run else 'quay.io/example/fbc@sha256:abc',
@@ -65,7 +65,6 @@ class TestMergeLayeredFbcManifests(unittest.TestCase):
         }
         with (
             patch.dict(os.environ, env),
-            patch.object(sys, 'argv', ['task.py', *inputs]),
             patch('subprocess.run') as subprocess_run,
             patch.object(Path, 'mkdir'),
             patch.object(Path, 'touch'),
@@ -94,7 +93,7 @@ class TestMergeLayeredFbcManifests(unittest.TestCase):
             ],
         )
 
-    def test_script_passes_array_inputs_and_writes_build_results(self):
+    def test_script_passes_comma_separated_inputs_and_writes_build_results(self):
         self._invoke_script(False)
 
     def test_script_reports_empty_build_outputs_for_dry_run(self):

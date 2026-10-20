@@ -13,8 +13,8 @@ spec:
     type: string
     description: One OCP MAJOR.MINOR target, e.g. 4.20 or 5.0
   - name: fbc-builds
-    type: array
-    description: Explicit source FBC NVRs or pullspecs, one per array entry
+    type: string
+    description: Comma-separated source FBC NVRs or pullspecs
   - name: art-tools-commit
     type: string
     default: ''
@@ -69,8 +69,7 @@ spec:
     - name: ocp-target-version
       value: $(params.ocp-target-version)
     - name: fbc-builds
-      value:
-      - $(params.fbc-builds[*])
+      value: $(params.fbc-builds)
     - name: art-tools-commit
       value: $(params.art-tools-commit)
     - name: data-path

@@ -11,8 +11,8 @@ spec:
     type: string
     description: One OCP MAJOR.MINOR target, e.g. 4.20 or 5.0
   - name: fbc-builds
-    type: array
-    description: Explicit source FBC NVRs or pullspecs, one per array entry
+    type: string
+    description: Comma-separated source FBC NVRs or pullspecs
   - name: art-tools-commit
     type: string
     default: ''
@@ -74,9 +74,7 @@ spec:
     - name: GIT_COMMITTER_EMAIL
       value: openshift-dev-infra+github-openshift-art-build-bot@redhat.com
   steps:
-  - args:
-    - $(params.fbc-builds[*])
-    computeResources:
+  - computeResources:
       requests:
         memory: 10Gi
         cpu: '2'
@@ -109,6 +107,8 @@ spec:
       value: /tmp/quay-authfile
     - name: MERGE_OCP_TARGET_VERSION
       value: $(params.ocp-target-version)
+    - name: MERGE_FBC_BUILDS
+      value: $(params.fbc-builds)
     - name: MERGE_ART_TOOLS_COMMIT
       value: $(params.art-tools-commit)
     - name: MERGE_DATA_PATH
@@ -142,10 +142,10 @@ spec:
       import json
       import os
       import subprocess
-      import sys
       from pathlib import Path
 
-      if not sys.argv[1:]:
+      fbc_builds = [build.strip() for build in os.environ["MERGE_FBC_BUILDS"].split(",") if build.strip()]
+      if not fbc_builds:
           raise ValueError("At least one FBC build is required")
 
       art_tools_commit = os.environ.get("MERGE_ART_TOOLS_COMMIT", "")
@@ -191,7 +191,7 @@ spec:
           "--data-path=" + os.environ["MERGE_DATA_PATH"],
           "--output-file=" + str(output),
       ])
-      for build in sys.argv[1:]:
+      for build in fbc_builds:
           cmd.append("--fbc-build=" + build)
       for option in ("fbc-repo", "image-repo", "plr-template"):
           value = os.environ["MERGE_" + option.upper().replace("-", "_")]
