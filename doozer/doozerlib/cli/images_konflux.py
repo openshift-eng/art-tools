@@ -302,7 +302,7 @@ async def images_konflux_rebase(
     await cli.run()
 
 
-BUILD_ARG_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*=.*$", re.DOTALL)
+BUILD_ARG_RE = re.compile(r"[A-Za-z_][A-Za-z0-9_]*=[^\x00-\x1f\x7f]*")
 
 
 def validate_build_args(build_args: Sequence[str]) -> tuple[str, ...]:
@@ -311,7 +311,7 @@ def validate_build_args(build_args: Sequence[str]) -> tuple[str, ...]:
 
     :param build_args: Build arguments given on the command line.
     """
-    invalid = [arg for arg in build_args if not BUILD_ARG_RE.match(arg)]
+    invalid = [arg for arg in build_args if not BUILD_ARG_RE.fullmatch(arg)]
     if invalid:
         raise click.BadParameter(f"--build-arg must be KEY=VALUE, got: {', '.join(invalid)}")
     return tuple(build_args)

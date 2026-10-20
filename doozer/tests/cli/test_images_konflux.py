@@ -1122,6 +1122,11 @@ class TestKonfluxBuildCliBuildArgs(unittest.TestCase):
         with self.assertRaises(click.BadParameter):
             self._make_cli(("1BAD=value",))
 
+    def test_build_arg_with_newline_or_control_char_is_rejected(self):
+        for value in ("RELEASE_VERSION=4.22.18\n", "RELEASE_VERSION=4.22\nEVIL=1", "RELEASE_VERSION=4.22\t18"):
+            with self.assertRaises(click.BadParameter):
+                self._make_cli((value,))
+
     def test_build_arg_flag_is_repeatable_on_the_command(self):
         from doozerlib.cli.images_konflux import images_konflux_build
 
