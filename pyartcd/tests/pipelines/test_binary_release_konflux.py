@@ -241,6 +241,13 @@ class TestBinaryReleaseKonfluxPipeline(unittest.TestCase):
         self.assertIn("Skipping prod is forbidden", str(ctx.exception))
         self.assertFalse(pipeline.stage_release_skipped)
 
+    def test_create_shipment_config_does_not_set_release_notes_in_rpa_for_non_ocp(self):
+        pipeline = self._make_pipeline()
+        config = pipeline.create_shipment_config(_make_snapshot())
+
+        dumped = config.model_dump(exclude_unset=True, exclude_none=True)
+        self.assertNotIn("release_notes_in_rpa", dumped["shipment"]["metadata"])
+
     def test_create_shipment_config_uses_snapshot_application(self):
         """metadata.application is derived directly from the snapshot's application."""
         pipeline = self._make_pipeline()
@@ -323,6 +330,168 @@ class TestBinaryReleaseKonfluxPipeline(unittest.TestCase):
             filepath = asyncio.run(pipeline._write_shipment_file("image-el8", config, "prod", "20260804120000"))
 
         self.assertIn(".image-el8.", filepath)
+
+
+class TestOcpGroupShipment(unittest.TestCase):
+    """openshift-* groups ship CDN binaries with an explicit releasePlan key and shipment kind."""
+
+    def _runtime(self):
+        runtime = MagicMock()
+        runtime.dry_run = False
+        runtime.working_dir = MagicMock()
+        runtime.working_dir.absolute.return_value = MagicMock()
+        runtime.config = {}
+        return runtime
+
+    def _make_pipeline(self, create_mr=False):
+        pipeline = BinaryReleaseKonfluxPipeline(
+            runtime=self._runtime(),
+            group="openshift-4.22",
+            assembly="stream",
+            nvrs=["openshift-install-delivery-container-v4.22.0-202610191200.p2.g1234567.assembly.stream.el9"],
+            create_mr=create_mr,
+            release_plan_key="openshift-4-22-cdn",
+            shipment_kind="cdn",
+        )
+        pipeline.product = "ocp"
+        return pipeline
+
+    def test_openshift_group_requires_release_plan_key_and_kind(self):
+        for kwargs in ({}, {"release_plan_key": "openshift-4-22-cdn"}, {"shipment_kind": "cdn"}):
+            with self.assertRaises(ValueError):
+                BinaryReleaseKonfluxPipeline(
+                    runtime=self._runtime(),
+                    group="openshift-4.22",
+                    assembly="stream",
+                    nvrs=["openshift-install-delivery-container-v4.22.0-1.el9"],
+                    **kwargs,
+                )
+
+    @patch("pyartcd.pipelines.binary_release_konflux.exectools.cmd_gather_async")
+    def test_openshift_group_product_falls_back_to_ocp(self, mock_cmd_gather_async):
+        pipeline = self._make_pipeline()
+        mock_cmd_gather_async.side_effect = Exception("No default specified and unable to find key: product")
+
+        result = asyncio.run(pipeline._load_product_from_group_config())
+
+        self.assertEqual(result, "ocp")
+
+    def test_release_plan_key_overrides_application_lookup(self):
+        pipeline = self._make_pipeline()
+        snapshot = _make_snapshot(app="openshift-4-22")
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            pipeline.shipment_data_repo._directory = Path(tmpdir)
+            (Path(tmpdir) / "config.yaml").write_text(
+                "applications:\n"
+                "  openshift-4-22:\n"
+                "    environments:\n"
+                "      stage:\n"
+                "        releasePlan: ocp-art-advisory-stage-4-22\n"
+                "      prod:\n"
+                "        releasePlan: ocp-art-advisory-prod-4-22\n"
+                "  openshift-4-22-cdn:\n"
+                "    environments:\n"
+                "      stage:\n"
+                "        releasePlan: ocp-art-cdn-stage-4-22\n"
+                "      prod:\n"
+                "        releasePlan: ocp-art-cdn-prod-4-22\n"
+            )
+
+            config = pipeline.create_shipment_config(snapshot)
+
+        self.assertEqual(config.shipment.environments.stage.releasePlan, "ocp-art-cdn-stage-4-22")
+        self.assertEqual(config.shipment.environments.prod.releasePlan, "ocp-art-cdn-prod-4-22")
+        self.assertEqual(config.shipment.metadata.application, "openshift-4-22")
+        self.assertEqual(config.shipment.metadata.product, "ocp")
+        self.assertTrue(config.shipment.metadata.release_notes_in_rpa)
+        self.assertIsNone(config.shipment.data)
+
+    def test_release_plan_key_does_not_fall_back_to_application(self):
+        pipeline = self._make_pipeline(create_mr=True)
+        snapshot = _make_snapshot(app="openshift-4-22")
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            pipeline.shipment_data_repo._directory = Path(tmpdir)
+            (Path(tmpdir) / "config.yaml").write_text(
+                "applications:\n"
+                "  openshift-4-22:\n"
+                "    environments:\n"
+                "      stage:\n"
+                "        releasePlan: ocp-art-advisory-stage-4-22\n"
+                "      prod:\n"
+                "        releasePlan: ocp-art-advisory-prod-4-22\n"
+            )
+
+            with self.assertRaises(ValueError) as ctx:
+                pipeline.create_shipment_config(snapshot)
+
+        self.assertIn("openshift-4-22-cdn", str(ctx.exception))
+
+    def test_run_uses_shipment_kind(self):
+        pipeline = self._make_pipeline()
+        pipeline.check_env_vars = MagicMock()
+        pipeline.setup_working_dir = MagicMock()
+        pipeline._load_product_from_group_config = AsyncMock(return_value="ocp")
+        pipeline.create_snapshot = AsyncMock(return_value=_make_snapshot(app="openshift-4-22"))
+        shipment_config = MagicMock()
+        pipeline.create_shipment_config = MagicMock(return_value=shipment_config)
+        pipeline.write_shipment_files_locally = AsyncMock()
+
+        asyncio.run(pipeline.run())
+
+        shipments_by_kind = pipeline.write_shipment_files_locally.await_args.args[0]
+        self.assertEqual(shipments_by_kind, {"cdn": shipment_config})
+
+    def test_write_shipment_file_uses_ocp_product_path_and_kind(self):
+        pipeline = self._make_pipeline()
+        snapshot = _make_snapshot(app="openshift-4-22")
+        config = pipeline.create_shipment_config(snapshot)
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            pipeline.shipment_data_repo._directory = Path(tmpdir)
+            pipeline.shipment_data_repo.write_file = AsyncMock()
+            filepath = asyncio.run(pipeline._write_shipment_file("cdn", config, "prod", "20261019120000"))
+
+        self.assertEqual(filepath, "shipment/ocp/openshift-4.22/openshift-4-22/prod/stream.cdn.20261019120000.yaml")
+
+    def _rule(self, name):
+        rule = MagicMock()
+        rule.name = name
+        return rule
+
+    def test_keep_only_art_approval_rule_deletes_ert_and_docs(self):
+        pipeline = self._make_pipeline()
+        rules = [self._rule("ART"), self._rule("ERT"), self._rule("Docs")]
+        mr = MagicMock()
+        mr.approval_rules.list.return_value = rules
+        mock_gitlab = MagicMock()
+        mock_gitlab.get_mr_from_url.return_value = mr
+        pipeline.__dict__["_gitlab"] = mock_gitlab
+
+        pipeline._keep_only_art_approval_rule("https://gitlab.cee.redhat.com/a/b/-/merge_requests/1")
+
+        rules[0].delete.assert_not_called()
+        rules[1].delete.assert_called_once()
+        rules[2].delete.assert_called_once()
+
+    def test_keep_only_art_approval_rule_dry_run_touches_nothing(self):
+        pipeline = self._make_pipeline()
+        pipeline.dry_run = True
+        mock_gitlab = MagicMock()
+        pipeline.__dict__["_gitlab"] = mock_gitlab
+
+        pipeline._keep_only_art_approval_rule("https://gitlab.cee.redhat.com/a/b/-/merge_requests/1")
+
+        mock_gitlab.get_mr_from_url.assert_not_called()
+
+    def test_keep_only_art_approval_rule_swallows_gitlab_errors(self):
+        pipeline = self._make_pipeline()
+        mock_gitlab = MagicMock()
+        mock_gitlab.get_mr_from_url.side_effect = Exception("boom")
+        pipeline.__dict__["_gitlab"] = mock_gitlab
+
+        pipeline._keep_only_art_approval_rule("https://gitlab.cee.redhat.com/a/b/-/merge_requests/1")
 
 
 class TestLoadProductFromGroupConfig(unittest.TestCase):
@@ -550,6 +719,23 @@ class TestCliValidation(unittest.TestCase):
         mock_pipeline_cls.return_value.run = AsyncMock()
         result = self._invoke(["--nvrs", "oc-mirror-container-2.0-1-1.el9"])
         self.assertNotIsInstance(result.exception, click.ClickException)
+
+    @patch("pyartcd.pipelines.binary_release_konflux.BinaryReleaseKonfluxPipeline")
+    def test_release_plan_key_and_shipment_kind_passed_to_pipeline(self, mock_pipeline_cls):
+        mock_pipeline_cls.return_value.run = AsyncMock()
+        self._invoke(
+            [
+                "--nvrs",
+                "oc-mirror-container-2.0-1-1.el9",
+                "--release-plan-key",
+                "openshift-4-22-cdn",
+                "--shipment-kind",
+                "cdn",
+            ]
+        )
+        kwargs = mock_pipeline_cls.call_args.kwargs
+        self.assertEqual(kwargs["release_plan_key"], "openshift-4-22-cdn")
+        self.assertEqual(kwargs["shipment_kind"], "cdn")
 
     @patch("pyartcd.pipelines.binary_release_konflux.BinaryReleaseKonfluxPipeline")
     def test_invalid_target_release_date_raises(self, mock_pipeline_cls):

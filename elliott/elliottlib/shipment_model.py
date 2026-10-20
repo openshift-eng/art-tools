@@ -21,6 +21,7 @@ class Metadata(StrictBaseModel):
     assembly: str  # associated build-data assembly
     fbc: Optional[bool] = False  # indicates if shipment is for an FBC release
     advisory_required: Optional[bool] = True  # when False, shipment-ci skips advisory URL check (registry-push-only)
+    release_notes_in_rpa: Optional[bool] = False  # when True, releaseNotes come from the ReleasePlanAdmission (CDN)
 
 
 class GitSource(StrictBaseModel):
@@ -165,7 +166,12 @@ class Shipment(StrictBaseModel):
         if self.metadata.fbc and release_notes_present:
             raise ValueError('FBC shipment is not expected to have data.releaseNotes defined')
         # Only require releaseNotes for OpenShift products (groups starting with 'openshift-')
-        if not self.metadata.fbc and not release_notes_present and self.metadata.group.startswith('openshift-'):
+        if (
+            not self.metadata.fbc
+            and not self.metadata.release_notes_in_rpa
+            and not release_notes_present
+            and self.metadata.group.startswith('openshift-')
+        ):
             raise ValueError('A regular shipment is expected to have data.releaseNotes defined')
         return self
 

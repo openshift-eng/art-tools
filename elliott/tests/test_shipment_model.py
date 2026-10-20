@@ -132,6 +132,16 @@ class TestShipmentModel(unittest.TestCase):
 
         self.assertIn("A regular shipment is expected to have data.releaseNotes defined", str(context.exception))
 
+    def test_openshift_shipment_with_release_notes_in_rpa_passes(self):
+        """OpenShift CDN shipment without data.releaseNotes passes when releaseNotes come from the RPA"""
+        shipment_data = self._create_base_shipment_data(fbc=False)
+        shipment_data["metadata"]["group"] = "openshift-4.22"
+        shipment_data["metadata"]["release_notes_in_rpa"] = True
+
+        shipment = Shipment(**shipment_data)
+        self.assertTrue(shipment.metadata.release_notes_in_rpa)
+        self.assertIsNone(shipment.data)
+
     def test_non_openshift_shipment_validation_happy_path(self):
         """Test that non-OpenShift shipment without data.releaseNotes passes validation"""
         # Non-OpenShift products should not require data.releaseNotes
