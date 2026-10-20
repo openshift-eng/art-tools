@@ -294,7 +294,7 @@ class TestEnsureCgwVersion(IsolatedAsyncioTestCase):
             dt.now.return_value.strftime.return_value = "2026-10-20"
             await _pipeline(self.tmp.name).ensure_cgw_version()
         commit = self.project.commits.create.call_args.args[0]
-        self.assertEqual(commit["branch"], "installer-cdn-4-22-ocp-4.22.18")
+        self.assertEqual(commit["branch"], "installer-cdn-4-22/ocp/4.22.18")
         self.assertEqual(commit["start_branch"], "main")
         actions = {a["file_path"]: a for a in commit["actions"]}
         version_action = actions[f"{icr.KRD_CGW_VERSION_DIR}/4.22.18.yaml"]
@@ -309,17 +309,27 @@ class TestEnsureCgwVersion(IsolatedAsyncioTestCase):
 
     async def test_refuses_when_another_release_mr_is_open(self):
         self._set_rpas("4.22.17")
-        other = MagicMock(source_branch="installer-cdn-4-22-ocp-4.22.17", web_url="https://gitlab/mr/6")
+        other = MagicMock(source_branch="installer-cdn-4-22/ocp/4.22.17", web_url="https://gitlab/mr/6")
         self.gitlab.list_merge_requests.return_value = [other]
         with self.assertRaises(RuntimeError) as ctx:
             await _pipeline(self.tmp.name).ensure_cgw_version()
         self.assertIn("https://gitlab/mr/6", str(ctx.exception))
         self.project.commits.create.assert_not_called()
 
+    async def test_open_dev_preview_mr_does_not_block_ga(self):
+        self._set_rpas("4.22.17")
+        preview = MagicMock(
+            source_branch="installer-cdn-4-22/ocp-dev-preview/4.22.0-ec.5", web_url="https://gitlab/mr/7"
+        )
+        self.gitlab.list_merge_requests.return_value = [preview]
+        self.project.mergerequests.create.return_value = self._merged_mr()
+        await _pipeline(self.tmp.name).ensure_cgw_version()
+        self.project.commits.create.assert_called_once()
+
     async def test_reuses_open_mr_for_same_release(self):
         self._set_rpas("4.22.17")
         mr = self._merged_mr()
-        mr.source_branch = "installer-cdn-4-22-ocp-4.22.18"
+        mr.source_branch = "installer-cdn-4-22/ocp/4.22.18"
         self.gitlab.list_merge_requests.return_value = [mr]
         await _pipeline(self.tmp.name).ensure_cgw_version()
         self.project.commits.create.assert_not_called()

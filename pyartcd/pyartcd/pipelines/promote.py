@@ -782,13 +782,16 @@ class PromotePipeline:
         """
         Queue the installer-cdn-release job, which ships openshift-install through the Konflux CDN.
 
-        A failure here only logs a warning: the mirror.openshift.com publishing above is not affected.
+        A failure here only logs an error: the mirror.openshift.com publishing above is not affected.
 
         :param release_name: Promoted release name, e.g. 4.22.18.
         :param client_type: ocp or ocp-dev-preview, the same value used for the mirror clients.
         """
-        major, minor = isolate_major_minor_in_group(self.group)
         try:
+            major, minor = isolate_major_minor_in_group(self.group)
+            if major is None or minor is None:
+                self._logger.error("Not starting installer-cdn-release: cannot parse a version from %s", self.group)
+                return
             jenkins.start_installer_cdn_release(
                 build_version=f"{major}.{minor}",
                 assembly=self.assembly,
@@ -798,7 +801,7 @@ class PromotePipeline:
                 block_until_building=False,
             )
         except Exception as err:
-            self._logger.warning("Failed to start installer-cdn-release for %s: %s", release_name, err)
+            self._logger.error("Failed to start installer-cdn-release for %s: %s", release_name, err)
 
     async def extract_and_publish_clients(self, client_type: str, release_infos: Dict):
         logger = self._logger

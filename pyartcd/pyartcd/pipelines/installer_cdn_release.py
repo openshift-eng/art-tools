@@ -285,7 +285,7 @@ class InstallerCdnReleasePipeline:
             LOGGER.info("CGW version %s and RPAs %s are already on main", self.release_name, self.rpa_names)
             return
 
-        branch_prefix = f"installer-cdn-{self.major}-{self.minor}-{self.client_type}-"
+        branch_prefix = f"installer-cdn-{self.major}-{self.minor}/{self.client_type}/"
         branch = f"{branch_prefix}{self.release_name}"
         open_mrs = gitlab_client.list_merge_requests(KRD_PROJECT, state="opened", project=project, target_branch="main")
         ours = [mr for mr in open_mrs if mr.source_branch.startswith(branch_prefix)]

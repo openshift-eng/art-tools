@@ -2887,7 +2887,15 @@ class TestPromoteInstallerCdnTrigger(IsolatedAsyncioTestCase):
         )
 
     @patch("pyartcd.pipelines.promote.jenkins.start_installer_cdn_release", side_effect=RuntimeError("jenkins down"))
-    def test_trigger_failure_only_warns(self, _):
+    def test_trigger_failure_only_logs_error(self, _):
         pipeline = self._pipeline()
         pipeline._trigger_installer_cdn_release("4.23.0-ec.1", "ocp-dev-preview")
-        pipeline._logger.warning.assert_called_once()
+        pipeline._logger.error.assert_called_once()
+
+    @patch("pyartcd.pipelines.promote.jenkins.start_installer_cdn_release")
+    def test_trigger_skips_unparsable_group(self, start_installer_cdn_release):
+        pipeline = self._pipeline()
+        pipeline.group = "not-a-version"
+        pipeline._trigger_installer_cdn_release("4.22.18", "ocp")
+        start_installer_cdn_release.assert_not_called()
+        pipeline._logger.error.assert_called_once()
