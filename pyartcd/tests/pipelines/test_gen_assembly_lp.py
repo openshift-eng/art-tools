@@ -469,6 +469,7 @@ class TestCanonicalAssemblyKeys(unittest.IsolatedAsyncioTestCase):
             },
         )
         self.assertIn('--data-path=https://github.com/openshift-eng/ocp-build-data', cmd.await_args.args[0])
+        self.assertIn(f'--working-dir={self.pipeline._working_dir / "doozer-working"}', cmd.await_args.args[0])
 
     async def test_generation_emits_canonical_key_and_keeps_exact_private_pin(self):
         pipeline = self.pipeline

@@ -87,6 +87,7 @@ class GenAssemblyLPPipeline:
         """Read canonical image keys and component overrides using Doozer's metadata rules."""
         cmd = [
             'doozer',
+            f'--working-dir={self._working_dir / "doozer-working"}',
             f'--group={self.group}',
             '--assembly=stream',
             '--build-system=konflux',
