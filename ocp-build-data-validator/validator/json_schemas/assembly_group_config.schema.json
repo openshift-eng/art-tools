@@ -806,6 +806,24 @@
       },
       "additionalProperties": false
     },
+    "cdn_clients": {
+      "type": "object",
+      "description": "Ship OCP client binaries through the Konflux CDN (installer-cdn-release). Off unless enabled is true.",
+      "properties": {
+        "enabled": {"type": "boolean"},
+        "enabled!": {"$ref": "#/properties/cdn_clients/properties/enabled"},
+        "enabled?": {"$ref": "#/properties/cdn_clients/properties/enabled"},
+        "enabled-": {}
+      },
+      "additionalProperties": false
+    },
+    "cdn_clients!": {
+      "$ref": "#/properties/cdn_clients"
+    },
+    "cdn_clients?": {
+      "$ref": "#/properties/cdn_clients"
+    },
+    "cdn_clients-": {},
     "okd!": {
       "$ref": "#/properties/okd"
     },

@@ -152,6 +152,7 @@ class PromotePipeline:
         self.multi_only = multi_only
         self.use_multi_hack = use_multi_hack
         self._multi_enabled = False
+        self._cdn_clients_enabled = False
         if not self.skip_signing and not signing_env:
             raise ValueError("--signing-env is required unless --skip-signing is set")
         if not self.skip_sigstore and not signing_env:
@@ -271,6 +272,7 @@ class PromotePipeline:
         justifications = []
         try:
             self._multi_enabled = group_config.get("multi_arch", {}).get("enabled", False)
+            self._cdn_clients_enabled = bool((group_config.get("cdn_clients") or {}).get("enabled", False))
             if self.multi_only and not self._multi_enabled:
                 raise ValueError("Can't promote a multi payload: multi_arch.enabled is not set in group config")
             # Get arches
@@ -787,6 +789,9 @@ class PromotePipeline:
         :param release_name: Promoted release name, e.g. 4.22.18.
         :param client_type: ocp or ocp-dev-preview, the same value used for the mirror clients.
         """
+        if not getattr(self, "_cdn_clients_enabled", False):
+            self._logger.info("cdn_clients.enabled is not true for %s; not starting installer-cdn-release", self.group)
+            return
         try:
             major, minor = isolate_major_minor_in_group(self.group)
             if major is None or minor is None:

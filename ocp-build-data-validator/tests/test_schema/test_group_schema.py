@@ -149,6 +149,26 @@ class TestGroupSchema(unittest.TestCase):
         }
         self.assertIn("'yes' is not of type 'boolean'", group_schema.validate("group.yml", invalid_data))
 
+    def test_validate_with_cdn_clients_enabled_flag(self):
+        valid_data = {
+            "name": "openshift-4.22",
+            "vars": {"MAJOR": 4, "MINOR": 22},
+            "cdn_clients": {"enabled": False},
+        }
+        self.assertEqual("", group_schema.validate("group.yml", valid_data))
+
+    def test_validate_with_invalid_cdn_clients(self):
+        for cdn_clients, message in (
+            ({"enabled": "yes"}, "'yes' is not of type 'boolean'"),
+            ({"enabled": True, "clients": ["oc"]}, "Additional properties are not allowed"),
+        ):
+            invalid_data = {
+                "name": "openshift-4.22",
+                "vars": {"MAJOR": 4, "MINOR": 22},
+                "cdn_clients": cdn_clients,
+            }
+            self.assertIn(message, group_schema.validate("group.yml", invalid_data))
+
     def test_validate_with_valid_el_target(self):
         valid_data = {
             "el_target": 9,

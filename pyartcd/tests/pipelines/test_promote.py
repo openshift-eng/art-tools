@@ -2871,7 +2871,16 @@ class TestPromoteInstallerCdnTrigger(IsolatedAsyncioTestCase):
         pipeline.group = "openshift-4.22"
         pipeline.assembly = "4.22.18"
         pipeline._logger = MagicMock()
+        pipeline._cdn_clients_enabled = True
         return pipeline
+
+    @patch("pyartcd.pipelines.promote.jenkins.start_installer_cdn_release")
+    def test_trigger_skipped_when_cdn_clients_disabled(self, start_installer_cdn_release):
+        pipeline = self._pipeline()
+        pipeline._cdn_clients_enabled = False
+        pipeline._trigger_installer_cdn_release("4.22.18", "ocp")
+        start_installer_cdn_release.assert_not_called()
+        pipeline._logger.error.assert_not_called()
 
     @patch("pyartcd.pipelines.promote.jenkins.start_installer_cdn_release")
     def test_trigger_queues_job_without_blocking(self, start_installer_cdn_release):

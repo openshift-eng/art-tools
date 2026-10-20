@@ -376,7 +376,11 @@ class TestRun(IsolatedAsyncioTestCase):
         self.binary = self.enterContext(patch.object(icr, "BinaryReleaseKonfluxPipeline"))
         self.binary.return_value.run = AsyncMock()
         self.load_group_config = self.enterContext(patch.object(icr.util, "load_group_config", new_callable=AsyncMock))
-        self.load_group_config.return_value = {"arches": ["x86_64"], "multi_arch": {"enabled": False}}
+        self.load_group_config.return_value = {
+            "arches": ["x86_64"],
+            "multi_arch": {"enabled": False},
+            "cdn_clients": {"enabled": True},
+        }
 
     async def test_noop_when_image_not_configured(self):
         pipeline = _pipeline(self.tmp.name)
@@ -405,6 +409,32 @@ class TestRun(IsolatedAsyncioTestCase):
         self.assertEqual(kwargs["shipment_kind"], "cdn")
         self.assertTrue(kwargs["create_mr"])
         self.binary.return_value.run.assert_awaited_once()
+
+    async def test_noop_when_cdn_clients_disabled(self):
+        for group_config in ({"arches": ["x86_64"]}, {"arches": ["x86_64"], "cdn_clients": {"enabled": False}}):
+            self.load_group_config.return_value = group_config
+            pipeline = _pipeline(self.tmp.name)
+            pipeline.delivery_image_configured = AsyncMock(return_value=True)
+            pipeline.collect_release_values = AsyncMock()
+            pipeline.build_delivery_image = AsyncMock()
+            await pipeline.run()
+            pipeline.collect_release_values.assert_not_awaited()
+            pipeline.build_delivery_image.assert_not_awaited()
+            self.binary.assert_not_called()
+
+    async def test_build_only_runs_when_cdn_clients_disabled(self):
+        self.load_group_config.return_value = {"arches": ["x86_64"], "cdn_clients": {"enabled": False}}
+        pipeline = _pipeline(self.tmp.name, build_only=True)
+        df = Path(self.tmp.name, "Dockerfile")
+        df.write_text(REBASED_DOCKERFILE)
+        pipeline.delivery_image_configured = AsyncMock(return_value=True)
+        pipeline.collect_release_values = AsyncMock(return_value=(["RELEASE_VERSION=4.22.18"], EXPECTED_PARENTS))
+        pipeline.build_delivery_image = AsyncMock(return_value={"nvrs": "x-1-1.el9", "dockerfile": str(df)})
+        pipeline.ensure_cgw_version = AsyncMock()
+        await pipeline.run()
+        pipeline.build_delivery_image.assert_awaited_once()
+        pipeline.ensure_cgw_version.assert_not_awaited()
+        self.binary.assert_not_called()
 
     async def test_build_only_stops_after_verified_build(self):
         pipeline = _pipeline(self.tmp.name, build_only=True)

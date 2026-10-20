@@ -386,6 +386,13 @@ class InstallerCdnReleasePipeline:
         group_config = await util.load_group_config(
             self.group, self.assembly, doozer_data_path=self.data_path, doozer_data_gitref=self.data_gitref
         )
+        if not (group_config.get("cdn_clients") or {}).get("enabled", False) and not self.build_only:
+            LOGGER.warning(
+                "cdn_clients.enabled is not true for %s (assembly %s); not releasing. Use --build-only to test the build.",
+                self.group,
+                self.assembly,
+            )
+            return
         arches = list(group_config.get("arches", []))
         multi = bool(group_config.get("multi_arch", {}).get("enabled", False))
         build_args, expected_parents = await self.collect_release_values(arches, multi)
