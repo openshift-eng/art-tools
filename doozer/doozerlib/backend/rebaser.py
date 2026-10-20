@@ -611,6 +611,12 @@ class KonfluxRebaser:
                         "uses a build variable; only literal platforms such as linux/arm64 are supported"
                     )
                 if platform and not is_stage_ref[i]:
+                    if self.uuid_tag and downstream_parents[i].endswith(f"-{self.uuid_tag}"):
+                        raise IOError(
+                            f"{metadata.distgit_key}: FROM --platform={platform} parent {downstream_parents[i]} is "
+                            "built in this same run and has no per-arch digest yet; build it first, or rebase this "
+                            "image alone with --latest-parent-version"
+                        )
                     downstream_parents[i] = await self._pin_parent_to_platform(downstream_parents[i], platform)
 
         private_fix = any(private_fix for _, private_fix in mapped_images)

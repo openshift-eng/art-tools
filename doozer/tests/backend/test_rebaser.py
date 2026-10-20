@@ -2451,3 +2451,27 @@ class TestFromPlatformPreservation(IsolatedAsyncioTestCase):
             ],
         )
         self.assertEqual(rebaser._pin_parent_to_platform.await_count, 4)
+
+    async def test_resolve_parents_rejects_platform_parent_built_in_same_run(self):
+        dfp = self._dfp(OPM_DELIVERY_DOCKERFILE)
+        runtime = MagicMock()
+        rebaser = KonfluxRebaser(runtime, self.base_dir, MagicMock(), "unsigned")
+        rebaser.uuid_tag = "v4.22.0-202610200000"
+        rebaser._resolve_member_parent = AsyncMock(
+            return_value=("quay.io/art/oft:ose-operator-framework-tools-v4.22.0-202610200000", False)
+        )
+        rebaser._resolve_stream_parent = AsyncMock(return_value="registry.example.com/rhel9:latest")
+        rebaser._pin_parent_to_platform = AsyncMock()
+        metadata = MagicMock()
+        metadata.distgit_key = "opm-delivery"
+        metadata.config = {
+            "from": {
+                "builder": [{"member": "ose-operator-framework-tools"}] * 4,
+                "stream": "rhel9",
+            },
+            "konflux": {"allow_cross_platform_images": True},
+        }
+
+        with self.assertRaisesRegex(IOError, "built in this same run"):
+            await rebaser._resolve_parents(metadata, dfp)
+        rebaser._pin_parent_to_platform.assert_not_awaited()
