@@ -482,7 +482,8 @@ def get_shipment_config_records(
 
     Args:
         mr: Loaded python-gitlab merge request object.
-        source_project: Loaded source project containing the MR branch. May be
+        source_project: Project containing the selected revision: the target
+            project for merged MRs, or the source project otherwise. May be
             ``None`` when ``source_project_loader`` is supplied.
         kinds: Shipment kinds to include. ``None`` includes every shipment
             YAML path, including binary and product-specific kinds.
@@ -491,8 +492,8 @@ def get_shipment_config_records(
         environment: Optional environment path segment, such as ``prod``.
         product_aliases: Additional product names accepted while locating and
             validating records for ``product``.
-        source_project_loader: Optional callback that loads the source project
-            on demand when a matching file needs to be read.
+        source_project_loader: Optional callback that loads the project containing
+            the selected revision on demand when a matching file needs to be read.
 
     Returns:
         Matching path-aware shipment configuration records.
@@ -534,7 +535,13 @@ def get_shipment_config_records(
                 source_project = source_project_loader()
             except GitlabGetError as exc:
                 raise ShipmentSourceProjectError(file_path, getattr(mr, 'source_project_id', None), exc) from exc
-        file_content = source_project.files.get(file_path, mr.source_branch)
+        if mr.state == 'merged':
+            ref = mr.merge_commit_sha or mr.squash_commit_sha or mr.sha
+            if not ref:
+                raise ValueError("No commit SHA available for merged shipment MR")
+        else:
+            ref = mr.source_branch
+        file_content = source_project.files.get(file_path, ref)
         content = file_content.decode().decode('utf-8')
         yaml_data = Model(yaml.load(content)).primitive()
         shipment_config = ShipmentConfig(**yaml_data)
@@ -574,10 +581,11 @@ def get_shipment_config_records_from_mr(
     """
     gl = gitlab_client if gitlab_client is not None else GitLabClient.from_url(mr_url)
     mr = gl.get_mr_from_url(mr_url)
-    source_project = gl.get_project(mr.source_project_id)
+    project_id = mr.target_project_id if mr.state == 'merged' else mr.source_project_id
+    project = gl.get_project(project_id)
     return get_shipment_config_records(
         mr,
-        source_project,
+        project,
         kinds=kinds,
         group=group,
         product=product,
