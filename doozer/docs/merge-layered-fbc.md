@@ -1,12 +1,11 @@
 # Build a unified layered-product FBC
 
 `artcd merge-layered-fbc` combines explicit FBC builds from one product for one
-OCP target. Use an existing source group as the execution context. No new
-ocp-build-data groups are required.
+OCP target. Source groups are inferred from the explicit build records; no group
+parameter or new ocp-build-data groups are required.
 
 ```sh
 artcd --working-dir=/tmp/artcd merge-layered-fbc \
-  --group=quay-3.18 \
   --ocp-target-version=5.0 \
   --fbc-build=quay-operator-fbc-3.18.2-<release>.ocp5.0 \
   --fbc-build=quay-operator-fbc-3.19.1-<release>.ocp5.0 \
@@ -15,9 +14,12 @@ artcd --working-dir=/tmp/artcd merge-layered-fbc \
 
 Repeat `--fbc-build` for every operator/minor version to include. Each value can
 be an FBC NVR or image pullspec. Pullspecs must match the successful build record.
-The execution group and all supplied builds must support the target in their
-existing `OCP_TARGET_VERSIONS`. Build data is read from `--data-path`, which
-defaults to the production repository; every inspected source revision is saved.
+All source groups must belong to the same product and support the target in their
+existing `OCP_TARGET_VERSIONS`. ARTCD selects the first source group in sorted
+order for internal Doozer configuration. Optional `--product` restricts inputs to
+a specific product (the Quay task supplies `--product=quay`). Build data is read
+from `--data-path`, which defaults to the production repository; every inspected
+source revision is saved.
 
 The job reads bundle metadata to identify each input's package and updated
 channels. It preserves the current production history for those packages,
@@ -47,8 +49,10 @@ GitHub read access plus `opm` are still required. `pullspec`, `build_url`, and
 `provenance_url` are null until a real build succeeds.
 
 The Doozer entry point is `beta:fbc:merge-layered`, with `--major-minor` for the
-OCP target and the same repeatable `--fbc-build` inputs. Use ARTCD for normal
-invocations: its product/OCP lock serializes source pushes and builds across
+OCP target and the same repeatable `--fbc-build` inputs. Direct Doozer use still
+requires an existing source `--group` for runtime configuration; ARTCD infers it
+automatically. Use ARTCD for normal invocations: its product/OCP lock serializes
+source pushes and builds across
 execution groups. Direct Doozer invocations require equivalent serialization.
 
 Use the existing product kubeconfig and registry credentials (`QUAY_AUTH_FILE`),
@@ -73,6 +77,8 @@ pytest -q doozer/tests/backend/test_konflux_fbc_merge.py \
 pytest -q pyartcd/tests/pipelines/test_merge_layered_fbc.py
 ```
 
+For group inference, cover NVR and pullspec inputs from multiple groups, input
+order independence, mixed products, unsupported targets, and missing build records.
 Before production use, run a dry run with real Quay inputs, then a staging build.
 Inspect the rendered catalogs to confirm both selected minor-version updates and
 all existing production channels survive. No release is triggered by this job.

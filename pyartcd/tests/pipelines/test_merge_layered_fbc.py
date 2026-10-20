@@ -22,10 +22,11 @@ class TestMergeLayeredFbcPipeline(unittest.IsolatedAsyncioTestCase):
         (Path(self.temp.name) / 'merged-fbc.json').write_text(json.dumps(self.result))
         self.pipeline = MergeLayeredFbcPipeline(
             runtime=self.runtime,
-            group='quay-3.18',
             ocp_target_version='5.0',
             fbc_builds=('quay-fbc-3.18.2-1.ocp5.0', 'quay-fbc-3.19.1-1.ocp5.0'),
         )
+        self.pipeline.group = 'quay-3.18'
+        self.pipeline._resolve_groups = AsyncMock(return_value=['quay-3.18', 'quay-3.19'])
 
     async def test_passes_all_inputs_and_build_overrides(self):
         self.pipeline.options['--konflux-kubeconfig'] = '/tmp/quay-kubeconfig'
