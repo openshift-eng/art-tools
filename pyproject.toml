@@ -89,6 +89,13 @@ dependencies = [
     "urllib3>=1.26.20",
 ]
 
+[tool.uv]
+# Require CA bundles that distrust the compromised eMudhra intermediates.
+constraint-dependencies = [
+    "certifi>=2026.10.19",
+    "pip>=26.2.2",
+]
+
 [tool.uv.sources]
 rpm-lockfile-prototype = { git = "https://github.com/konflux-ci/rpm-lockfile-prototype", tag = "v0.30.0" }
 
