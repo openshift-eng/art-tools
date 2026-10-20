@@ -20,7 +20,12 @@ from doozerlib.runtime import Runtime
 )
 @click.option('--major-minor', required=True, help='Target OCP MAJOR.MINOR version, e.g. 4.20 or 5.0.')
 @click.option('--fbc-repo', default=constants.ART_FBC_GIT_REPO, show_default=True)
-@click.option('--image-repo', help='Output image repository; defaults to art-fbc in the product Konflux namespace.')
+@click.option(
+    '--image-repo',
+    default=constants.KONFLUX_DEFAULT_FBC_REPO,
+    show_default=True,
+    help='Push images to the specified repo.',
+)
 @click.option('--konflux-kubeconfig', type=click.Path())
 @click.option('--konflux-context')
 @click.option('--konflux-namespace')
@@ -68,7 +73,7 @@ async def fbc_merge_layered(
         skip_tasks=skip_tasks,
     )
     await merger.prepare(builds)
-    result = await merger.merge(image_repo or f'quay.io/redhat-user-workloads/{namespace}/art-fbc')
+    result = await merger.merge(image_repo)
     output = json.dumps(result, indent=2) + '\n'
     if output_file:
         destination = Path(output_file)
