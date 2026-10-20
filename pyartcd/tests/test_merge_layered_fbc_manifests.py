@@ -44,7 +44,6 @@ class TestMergeLayeredFbcManifests(unittest.TestCase):
         env = {key: '' for key in ('MERGE_FBC_REPO', 'MERGE_IMAGE_REPO', 'MERGE_PLR_TEMPLATE')}
         env.update(
             {
-                'MERGE_GROUP': 'quay-3.18',
                 'MERGE_OCP_TARGET_VERSION': '5.0',
                 'MERGE_DATA_PATH': 'https://github.com/openshift-eng/ocp-build-data',
                 'MERGE_DRY_RUN': 'true' if dry_run else 'false',
@@ -77,7 +76,8 @@ class TestMergeLayeredFbcManifests(unittest.TestCase):
             exec(compile(TASK['spec']['steps'][0]['script'], '<merge-layered-fbc-task>', 'exec'), {})
         cmd = subprocess_run.call_args_list[1].args[0]
         self.assertIn('merge-layered-fbc', cmd)
-        self.assertIn('--group=quay-3.18', cmd)
+        self.assertIn('--product=quay', cmd)
+        self.assertFalse(any(arg.startswith('--group') for arg in cmd))
         self.assertIn('--ocp-target-version=5.0', cmd)
         for value in inputs:
             self.assertIn('--fbc-build=' + value, cmd)

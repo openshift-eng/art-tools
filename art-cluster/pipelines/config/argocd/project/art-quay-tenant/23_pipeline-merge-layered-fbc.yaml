@@ -9,9 +9,6 @@ spec:
   description: Merge explicit Quay operator FBC builds for one OCP target. Builds a fragment without creating a
     shipment.
   params:
-  - name: group
-    type: string
-    description: Existing Quay group used as the execution context
   - name: ocp-target-version
     type: string
     description: One OCP MAJOR.MINOR target, e.g. 4.20 or 5.0
@@ -65,8 +62,6 @@ spec:
     taskRef:
       name: artcd-merge-layered-fbc
     params:
-    - name: group
-      value: $(params.group)
     - name: ocp-target-version
       value: $(params.ocp-target-version)
     - name: fbc-builds

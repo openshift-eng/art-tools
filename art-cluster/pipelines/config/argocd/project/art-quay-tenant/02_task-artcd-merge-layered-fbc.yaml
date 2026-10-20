@@ -7,9 +7,6 @@ metadata:
   namespace: art-quay-tenant
 spec:
   params:
-  - name: group
-    type: string
-    description: Existing Quay group used as the execution context
   - name: ocp-target-version
     type: string
     description: One OCP MAJOR.MINOR target, e.g. 4.20 or 5.0
@@ -106,8 +103,6 @@ spec:
       value: /tmp/quay-authfile/config.json
     - name: DOCKER_CONFIG
       value: /tmp/quay-authfile
-    - name: MERGE_GROUP
-      value: $(params.group)
     - name: MERGE_OCP_TARGET_VERSION
       value: $(params.ocp-target-version)
     - name: MERGE_DATA_PATH
@@ -144,8 +139,6 @@ spec:
       import sys
       from pathlib import Path
 
-      if not os.environ["MERGE_GROUP"].startswith("quay-"):
-          raise ValueError("An existing Quay execution group is required")
       if not sys.argv[1:]:
           raise ValueError("At least one FBC build is required")
 
@@ -162,7 +155,7 @@ spec:
           cmd.append("--dry-run")
       cmd.extend([
           "merge-layered-fbc",
-          "--group=" + os.environ["MERGE_GROUP"],
+          "--product=quay",
           "--ocp-target-version=" + os.environ["MERGE_OCP_TARGET_VERSION"],
           "--data-path=" + os.environ["MERGE_DATA_PATH"],
           "--output-file=" + str(output),

@@ -9,9 +9,9 @@ Argo discovers the Task and Pipeline from this application directory. Existing
 Quay credentials and service-account permissions are reused. The Quay team role
 and admission policy allow starting this pipeline.
 
-Use an existing Quay source group as the execution context. All selected builds
-must belong to Quay and support the target in their existing build-data
-`OCP_TARGET_VERSIONS`. No new groups or build-data changes are required. Supply
+Source groups are inferred from the explicit builds; no group parameter is needed.
+All selected builds must belong to Quay and support the target in their existing
+build-data `OCP_TARGET_VERSIONS`. No new groups or build-data changes are required. Supply
 one FBC build per operator/minor version; each entry can be an NVR or pullspec.
 
 Example parameters (replace the sample NVRs with actual successful builds):
@@ -26,8 +26,6 @@ spec:
   pipelineRef:
     name: merge-layered-fbc
   params:
-  - name: group
-    value: quay-3.18
   - name: ocp-target-version
     value: "5.0"
   - name: fbc-builds
