@@ -911,6 +911,10 @@ class KonfluxImageBuilder:
         raw_priv = _get_konflux_config(metadata, "privileged_nested")
         privileged_nested = bool(raw_priv) if raw_priv else None
 
+        allow_cross_platform_images = (
+            True if metadata.config.get("konflux", {}).get("allow_cross_platform_images") is True else None
+        )
+
         raw_res = _get_konflux_config(metadata, "build_step_resources")
         build_step_resources = dict(raw_res) if raw_res else None
 
@@ -969,6 +973,7 @@ class KonfluxImageBuilder:
             build_args=build_args,
             additional_secret=additional_secret,
             privileged_nested=privileged_nested,
+            allow_cross_platform_images=allow_cross_platform_images,
             build_step_resources=build_step_resources,
             sbom_step_resources=sbom_step_resources,
             workspace_storage=workspace_storage,

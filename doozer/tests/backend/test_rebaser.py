@@ -2228,3 +2228,226 @@ class TestPrivateFixDetectionE2E(IsolatedAsyncioTestCase):
             util.is_commit_in_public_upstream_async.assert_called_once()
         finally:
             util.is_commit_in_public_upstream_async = original_func
+
+
+OPM_DELIVERY_DOCKERFILE = """
+FROM --platform=linux/amd64 quay.io/old/oft@sha256:aaa AS up_amd64
+FROM --platform=linux/arm64 quay.io/old/oft@sha256:aaa AS up_arm64
+FROM --platform=linux/ppc64le quay.io/old/oft@sha256:aaa AS up_ppc64le
+FROM --platform=linux/s390x quay.io/old/oft@sha256:aaa AS up_s390x
+FROM up_amd64 AS packer
+COPY --from=up_arm64 /tools/opm-rhel8 /in/arm64/opm-rhel8
+FROM registry.access.redhat.com/ubi9/ubi-minimal:latest
+COPY --from=packer /releases/ /releases/
+"""
+
+
+class TestFromPlatformPreservation(IsolatedAsyncioTestCase):
+    """FROM --platform flags survive parent rewriting and pin per-arch digests."""
+
+    def setUp(self):
+        self.directory = TemporaryDirectory()
+        self.addCleanup(self.directory.cleanup)
+        self.base_dir = Path(self.directory.name)
+
+    def _dfp(self, content):
+        dfp = DockerfileParser(path=self.directory.name)
+        dfp.content = content
+        return dfp
+
+    def test_from_platforms(self):
+        dfp = self._dfp(OPM_DELIVERY_DOCKERFILE)
+        self.assertEqual(
+            KonfluxRebaser._from_platforms(dfp),
+            ["linux/amd64", "linux/arm64", "linux/ppc64le", "linux/s390x", None, None],
+        )
+
+    def test_stage_references_with_platform_stages(self):
+        dfp = self._dfp(OPM_DELIVERY_DOCKERFILE)
+        self.assertEqual(
+            KonfluxRebaser._identify_stage_references(dfp),
+            [False, False, False, False, True, False],
+        )
+
+    def test_set_parent_images_preserves_platform(self):
+        dfp = self._dfp(OPM_DELIVERY_DOCKERFILE)
+        KonfluxRebaser._set_parent_images_preserving_platform(
+            dfp,
+            [
+                "quay.io/new/oft@sha256:a1",
+                "quay.io/new/oft@sha256:a2",
+                "quay.io/new/oft@sha256:a3",
+                "quay.io/new/oft@sha256:a4",
+                "up_amd64",
+                "registry.example.com/rhel9:latest",
+            ],
+        )
+        from_lines = [line.strip() for line in dfp.lines if line.startswith("FROM")]
+        self.assertEqual(
+            from_lines,
+            [
+                "FROM --platform=linux/amd64 quay.io/new/oft@sha256:a1 AS up_amd64",
+                "FROM --platform=linux/arm64 quay.io/new/oft@sha256:a2 AS up_arm64",
+                "FROM --platform=linux/ppc64le quay.io/new/oft@sha256:a3 AS up_ppc64le",
+                "FROM --platform=linux/s390x quay.io/new/oft@sha256:a4 AS up_s390x",
+                "FROM up_amd64 AS packer",
+                "FROM registry.example.com/rhel9:latest",
+            ],
+        )
+        self.assertEqual(dfp.parent_images[0], "quay.io/new/oft@sha256:a1")
+
+    def test_set_parent_images_without_platform_is_unchanged(self):
+        dfp = self._dfp("FROM a AS build\nFROM build\nFROM c\n")
+        KonfluxRebaser._set_parent_images_preserving_platform(dfp, ["x", "build", "z"])
+        self.assertEqual([line.strip() for line in dfp.lines], ["FROM x AS build", "FROM build", "FROM z"])
+
+    def test_set_parent_images_count_mismatch_raises(self):
+        dfp = self._dfp("FROM --platform=linux/arm64 a AS one\nFROM b\n")
+        with self.assertRaises(ValueError) as ctx:
+            KonfluxRebaser._set_parent_images_preserving_platform(dfp, ["x"])
+        self.assertIn("2 FROM instructions but 1 parents", str(ctx.exception))
+
+    def test_apply_downstream_parents_opt_in_preserves_platform(self):
+        dfp = self._dfp("FROM --platform=linux/arm64 a AS one\nFROM b\n")
+        metadata = MagicMock()
+        metadata.config = {"konflux": {"allow_cross_platform_images": True}}
+
+        KonfluxRebaser._apply_downstream_parents(metadata, dfp, ["x@sha256:1", "y"])
+
+        self.assertEqual(
+            [line.strip() for line in dfp.lines], ["FROM --platform=linux/arm64 x@sha256:1 AS one", "FROM y"]
+        )
+
+    def test_apply_downstream_parents_opt_in_count_mismatch_raises(self):
+        dfp = self._dfp("FROM --platform=linux/arm64 a AS one\nFROM b\n")
+        metadata = MagicMock()
+        metadata.config = {"konflux": {"allow_cross_platform_images": True}}
+
+        with self.assertRaises(ValueError):
+            KonfluxRebaser._apply_downstream_parents(metadata, dfp, ["x"])
+
+    def test_apply_downstream_parents_without_opt_in_strips_platform(self):
+        dfp = self._dfp("FROM --platform=$BUILDPLATFORM golang AS builder\nFROM base\n")
+        metadata = MagicMock()
+        metadata.config = {"from": {"builder": [{"stream": "golang"}], "stream": "rhel9"}}
+
+        KonfluxRebaser._apply_downstream_parents(
+            metadata, dfp, ["registry.example.com/golang:1.25", "registry.example.com/rhel9"]
+        )
+
+        self.assertEqual(
+            [line.strip() for line in dfp.lines],
+            ["FROM registry.example.com/golang:1.25 AS builder", "FROM registry.example.com/rhel9"],
+        )
+
+    def test_apply_downstream_parents_without_opt_in_mismatch_keeps_dockerfile_parse_error(self):
+        dfp = self._dfp("FROM a AS one\nFROM b\n")
+        metadata = MagicMock()
+        metadata.config = {}
+
+        with self.assertRaises(RuntimeError):
+            KonfluxRebaser._apply_downstream_parents(metadata, dfp, ["x"])
+
+    async def test_resolve_parents_without_opt_in_does_not_pin(self):
+        dfp = self._dfp("FROM --platform=$BUILDPLATFORM golang AS builder\nFROM base\n")
+        rebaser = KonfluxRebaser(MagicMock(), self.base_dir, MagicMock(), "unsigned")
+        rebaser._resolve_stream_parent = AsyncMock(
+            side_effect=["registry.example.com/golang:1.25", "registry.example.com/rhel9"]
+        )
+        rebaser._pin_parent_to_platform = AsyncMock()
+        metadata = MagicMock()
+        metadata.distgit_key = "some-operator"
+        metadata.config = {"from": {"builder": [{"stream": "golang"}], "stream": "rhel9"}}
+
+        parents, _ = await rebaser._resolve_parents(metadata, dfp)
+
+        self.assertEqual(parents, ["registry.example.com/golang:1.25", "registry.example.com/rhel9"])
+        rebaser._pin_parent_to_platform.assert_not_awaited()
+
+    async def test_resolve_parents_opt_in_rejects_variable_platform(self):
+        dfp = self._dfp("FROM --platform=$BUILDPLATFORM golang AS builder\nFROM base\n")
+        rebaser = KonfluxRebaser(MagicMock(), self.base_dir, MagicMock(), "unsigned")
+        rebaser._resolve_stream_parent = AsyncMock(
+            side_effect=["registry.example.com/golang:1.25", "registry.example.com/rhel9"]
+        )
+        rebaser._pin_parent_to_platform = AsyncMock()
+        metadata = MagicMock()
+        metadata.distgit_key = "opm-delivery"
+        metadata.config = {
+            "from": {"builder": [{"stream": "golang"}], "stream": "rhel9"},
+            "konflux": {"allow_cross_platform_images": True},
+        }
+
+        with self.assertRaises(ValueError) as ctx:
+            await rebaser._resolve_parents(metadata, dfp)
+
+        self.assertIn("$BUILDPLATFORM", str(ctx.exception))
+        rebaser._pin_parent_to_platform.assert_not_awaited()
+
+    @patch("doozerlib.backend.rebaser.oc_image_info_for_arch_async", new_callable=AsyncMock)
+    async def test_pin_parent_to_platform_uses_arch_digest(self, mock_info):
+        mock_info.return_value = {"digest": "sha256:arm", "listDigest": "sha256:list"}
+        runtime = MagicMock()
+        runtime.registry_config = "/tmp/auth.json"
+        rebaser = KonfluxRebaser(runtime, self.base_dir, MagicMock(), "unsigned")
+
+        pinned = await rebaser._pin_parent_to_platform("quay.io/ns/repo@sha256:list", "linux/arm64")
+
+        self.assertEqual(pinned, "quay.io/ns/repo@sha256:arm")
+        mock_info.assert_awaited_once_with(
+            "quay.io/ns/repo@sha256:list", go_arch="linux/arm64", registry_config="/tmp/auth.json"
+        )
+
+    @patch("doozerlib.backend.rebaser.oc_image_info_for_arch_async", new_callable=AsyncMock)
+    async def test_pin_parent_to_platform_strips_tag(self, mock_info):
+        mock_info.return_value = {"digest": "sha256:s390x"}
+        runtime = MagicMock()
+        runtime.registry_config = None
+        rebaser = KonfluxRebaser(runtime, self.base_dir, MagicMock(), "unsigned")
+
+        pinned = await rebaser._pin_parent_to_platform("registry.example.com:5000/ns/repo:v1", "linux/s390x")
+
+        self.assertEqual(pinned, "registry.example.com:5000/ns/repo@sha256:s390x")
+
+    @patch("doozerlib.backend.rebaser.oc_image_info_for_arch_async", new_callable=AsyncMock)
+    async def test_pin_parent_to_platform_raises_without_digest(self, mock_info):
+        mock_info.return_value = {}
+        runtime = MagicMock()
+        runtime.registry_config = None
+        rebaser = KonfluxRebaser(runtime, self.base_dir, MagicMock(), "unsigned")
+
+        with self.assertRaises(IOError):
+            await rebaser._pin_parent_to_platform("quay.io/ns/repo@sha256:list", "linux/arm64")
+
+    async def test_resolve_parents_pins_only_platform_stages(self):
+        dfp = self._dfp(OPM_DELIVERY_DOCKERFILE)
+        runtime = MagicMock()
+        rebaser = KonfluxRebaser(runtime, self.base_dir, MagicMock(), "unsigned")
+        rebaser._resolve_member_parent = AsyncMock(return_value=("quay.io/art/oft@sha256:list", False))
+        rebaser._resolve_stream_parent = AsyncMock(return_value="registry.example.com/rhel9:latest")
+        rebaser._pin_parent_to_platform = AsyncMock(side_effect=lambda image, platform: f"{image}-{platform}")
+        metadata = MagicMock()
+        metadata.distgit_key = "opm-delivery"
+        metadata.config = {
+            "from": {
+                "builder": [{"member": "ose-operator-framework-tools"}] * 4,
+                "stream": "rhel9",
+            },
+            "konflux": {"allow_cross_platform_images": True},
+        }
+
+        parents, private_fix = await rebaser._resolve_parents(metadata, dfp)
+
+        self.assertFalse(private_fix)
+        self.assertEqual(
+            parents,
+            [
+                "quay.io/art/oft@sha256:list-linux/amd64",
+                "quay.io/art/oft@sha256:list-linux/arm64",
+                "quay.io/art/oft@sha256:list-linux/ppc64le",
+                "quay.io/art/oft@sha256:list-linux/s390x",
+                "up_amd64",
+                "registry.example.com/rhel9:latest",
+            ],
+        )
+        self.assertEqual(rebaser._pin_parent_to_platform.await_count, 4)

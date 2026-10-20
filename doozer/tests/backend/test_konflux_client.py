@@ -1375,6 +1375,42 @@ class TestNewPipelinerunPrivilegedNested(IsolatedAsyncioTestCase):
         self.assertNotIn("PRIVILEGED_NESTED", task_param_names)
 
 
+class TestNewPipelinerunAllowCrossPlatformImages(IsolatedAsyncioTestCase):
+    """Tests for allow_cross_platform_images in _new_pipelinerun_for_image_build."""
+
+    @patch("doozerlib.backend.konflux_client.KonfluxClient._get_pipelinerun_template")
+    async def test_allow_cross_platform_images_true_set_on_build_images_task(self, mock_get_template):
+        """allow_cross_platform_images=True sets ALLOW_CROSS_PLATFORM_IMAGES=true on the build-images task."""
+        client = _make_mock_client(mock_get_template)
+
+        result = await client._new_pipelinerun_for_image_build(
+            **_COMMON_KWARGS,
+            build_params=ImageBuildParams(allow_cross_platform_images=True),
+        )
+
+        tasks = result["spec"]["pipelineSpec"]["tasks"]
+        build_images_task = next(t for t in tasks if t["name"] == "build-images")
+        task_param_dict = {p["name"]: p["value"] for p in build_images_task["params"]}
+
+        self.assertEqual(task_param_dict["ALLOW_CROSS_PLATFORM_IMAGES"], "true")
+
+    @patch("doozerlib.backend.konflux_client.KonfluxClient._get_pipelinerun_template")
+    async def test_allow_cross_platform_images_none_is_noop(self, mock_get_template):
+        """None allow_cross_platform_images does not add ALLOW_CROSS_PLATFORM_IMAGES to the task."""
+        client = _make_mock_client(mock_get_template)
+
+        result = await client._new_pipelinerun_for_image_build(
+            **_COMMON_KWARGS,
+            build_params=ImageBuildParams(allow_cross_platform_images=None),
+        )
+
+        tasks = result["spec"]["pipelineSpec"]["tasks"]
+        build_images_task = next(t for t in tasks if t["name"] == "build-images")
+        task_param_names = {p["name"] for p in build_images_task["params"]}
+
+        self.assertNotIn("ALLOW_CROSS_PLATFORM_IMAGES", task_param_names)
+
+
 class TestNewPipelinerunBuildStepResources(IsolatedAsyncioTestCase):
     """Tests for build_step_resources in _new_pipelinerun_for_image_build."""
 
