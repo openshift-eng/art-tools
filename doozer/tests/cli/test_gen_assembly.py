@@ -492,6 +492,50 @@ class TestGetRhcosContainerFallback(TestCase):
     @patch('doozerlib.cli.release_gen_assembly.rhcos.get_primary_container_name', return_value='rhel-coreos')
     @patch('doozerlib.cli.release_gen_assembly.rhcos.get_container_configs')
     @patch('doozerlib.cli.release_gen_assembly.util.oc_image_info_for_arch')
+    def test_manifest_list_repo_from_primary_payload_tag(self, mock_oc_info, mock_get_configs, mock_primary):
+        configured_repo = 'registry.example.com:5000/rhcos'
+        default_repo = 'quay.io/openshift-release-dev/ocp-v4.0-art-dev'
+        configurations = [
+            ({}, default_repo),
+            ({'payload_tags': None}, default_repo),
+            ({'payload_tags': []}, default_repo),
+            ({'payload_tags': [{'rhel_build_id_index': 'quay.io/other:latest'}]}, default_repo),
+            ({'payload_tags': [{'primary': True}]}, default_repo),
+            ({'payload_tags': [{'primary': True, 'rhel_build_id_index': None}]}, default_repo),
+            ({'payload_tags': [{'primary': True, 'rhel_build_id_index': 123}]}, default_repo),
+            ({'payload_tags': [{'primary': True, 'rhel_build_id_index': 'untagged'}]}, default_repo),
+            ({'payload_tags': [{'primary': True, 'rhel_build_id_index': f'{configured_repo}:'}]}, default_repo),
+            ({'payload_tags': [{'primary': True, 'rhel_build_id_index': configured_repo}]}, default_repo),
+            (
+                {
+                    'payload_tags': [
+                        {'primary': False, 'rhel_build_id_index': 'quay.io/other:latest'},
+                        {'primary': True, 'rhel_build_id_index': f'{configured_repo}:5.1-9.8'},
+                    ]
+                },
+                configured_repo,
+            ),
+        ]
+        mock_get_configs.return_value = [Model({'name': 'rhel-coreos'})]
+        for rhcos_config, expected_repo in configurations:
+            with self.subTest(rhcos_config=rhcos_config):
+                gacli = self._make_gacli()
+                gacli.runtime.group_config.rhcos = Model({'layered_rhcos': True, **rhcos_config})
+                gacli.rhcos_by_tag = defaultdict(dict, {'rhel-coreos': {'x86_64': 'quay.io/source@sha256:amd64'}})
+                mock_oc_info.reset_mock()
+                mock_oc_info.side_effect = [
+                    {'config': {'config': {'Labels': {'coreos.build.manifest-list-tag': 'manifest-tag'}}}},
+                    {'digest': 'sha256:arm64'},
+                ]
+
+                gacli._get_rhcos_container()
+
+                self.assertEqual(mock_oc_info.call_args_list[1].args[0], f'{expected_repo}:manifest-tag')
+                self.assertEqual(gacli.rhcos_by_tag['rhel-coreos']['aarch64'], f'{expected_repo}@sha256:arm64')
+
+    @patch('doozerlib.cli.release_gen_assembly.rhcos.get_primary_container_name', return_value='rhel-coreos')
+    @patch('doozerlib.cli.release_gen_assembly.rhcos.get_container_configs')
+    @patch('doozerlib.cli.release_gen_assembly.util.oc_image_info_for_arch')
     @patch('doozerlib.cli.release_gen_assembly.get_art_prod_image_repo_for_version', return_value='quay.io/art-dev')
     def test_uses_existing_manifest_list_tag_label(self, mock_art_repo, mock_oc_info, mock_get_configs, mock_primary):
         """When coreos.build.manifest-list-tag label is present, use it directly (4.x/5.0 path)."""

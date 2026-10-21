@@ -595,10 +595,19 @@ class GenAssemblyCli:
                             "amd64",
                             registry_config=self.runtime.registry_config,
                         )
-                        # NOTE: RHCOS images are currently always in ocp-v4.0-art-dev, even for OCP 5.x.
-                        # When RHCOS 5.x images exist in their own repository, this should be updated to
-                        # use the actual OCP major version: get_art_prod_image_repo_for_version(major, "dev")
                         art_repo = get_art_prod_image_repo_for_version(4, "dev")
+                        rhel_build_id_index = next(
+                            (
+                                payload_tag.rhel_build_id_index
+                                for payload_tag in self.runtime.group_config.rhcos.payload_tags or []
+                                if payload_tag.primary
+                            ),
+                            "",
+                        )
+                        if isinstance(rhel_build_id_index, str):
+                            configured_repo, separator, configured_tag = rhel_build_id_index.rpartition(':')
+                            if configured_repo and separator and configured_tag and '/' not in configured_tag:
+                                art_repo = configured_repo
                         labels = amd64_rhcos_info['config']['config'].get('Labels') or {}
                         manifest_list_tag = labels.get('coreos.build.manifest-list-tag')
                         if not manifest_list_tag:
