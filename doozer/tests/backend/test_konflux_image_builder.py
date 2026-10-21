@@ -1903,6 +1903,47 @@ class TestStartBuildEnablePackageRegistryProxy(unittest.IsolatedAsyncioTestCase)
         self.assertIsNone(build_params.enable_package_registry_proxy)
 
 
+class TestStartBuildExtraBuildArgs(TestStartBuildEnablePackageRegistryProxy):
+    """Tests for KonfluxImageBuilderConfig.extra_build_args being appended to the build-args PLR param."""
+
+    def _builder(self, extra_build_args):
+        return KonfluxImageBuilder(
+            KonfluxImageBuilderConfig(
+                base_dir=Path(self.temp_dir.name),
+                group_name="openshift-4.22",
+                namespace="test-namespace",
+                plr_template="test-template",
+                build_priority="5",
+                extra_build_args=extra_build_args,
+            )
+        )
+
+    async def test_extra_build_args_passed_when_image_has_none(self):
+        self.builder = self._builder(("RELEASE_VERSION=4.22.18", "DIGEST_MULTI=sha256:abc"))
+        build_params = await self._run_start_build()
+        self.assertEqual(build_params.build_args, ["RELEASE_VERSION=4.22.18", "DIGEST_MULTI=sha256:abc"])
+
+    async def test_extra_build_args_appended_after_image_build_args(self):
+        self.builder = self._builder(("RELEASE_VERSION=4.22.18",))
+        metadata_factory = self._metadata
+
+        def metadata_with_build_args(enable_package_registry_proxy=None):
+            metadata = metadata_factory(enable_package_registry_proxy)
+            image_konflux_config = {"build_args": ["FOO=bar"]}
+            metadata.config.get.side_effect = lambda key, default=None: (
+                image_konflux_config if key == "konflux" else default
+            )
+            return metadata
+
+        self._metadata = metadata_with_build_args
+        build_params = await self._run_start_build()
+        self.assertEqual(build_params.build_args, ["FOO=bar", "RELEASE_VERSION=4.22.18"])
+
+    async def test_no_build_args_without_config_or_extra(self):
+        build_params = await self._run_start_build()
+        self.assertIsNone(build_params.build_args)
+
+
 class TestNormalizeVersion(unittest.TestCase):
     """
     Tests for _normalize_version.
