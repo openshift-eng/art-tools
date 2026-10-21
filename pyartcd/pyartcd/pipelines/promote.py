@@ -783,34 +783,46 @@ class PromotePipeline:
         tarball_cache_dir = f"{self._working_dir}/tarball_cache"
         os.makedirs(tarball_cache_dir, exist_ok=True)
         message_digests = []
+        publication_errors = []
         for arch, release_info in release_infos.items():
             logger.info("Extracting client binaries for %s", arch)
-            pullspec = release_info["image"]
-            release_name = release_info["metadata"]["version"]
-            if arch == "multi":
-                manifest_arches = [
-                    brew_arch_for_go_arch(manifest["platform"]["architecture"])
-                    for manifest in release_info.get("manifests", [])
-                ]
-                message_digest = await self.publish_multi_client(
-                    base_to_mirror_dir,
-                    pullspec,
-                    release_name,
-                    manifest_arches,
-                    client_type,
-                    registry_config=registry_config,
-                )
-            else:
-                message_digest = await self.publish_client(
-                    base_to_mirror_dir,
-                    pullspec,
-                    release_name,
-                    arch,
-                    client_type,
-                    registry_config=registry_config,
-                    tarball_cache_dir=tarball_cache_dir,
-                )
-            message_digests.append(message_digest)
+            try:
+                pullspec = release_info["image"]
+                release_name = release_info["metadata"]["version"]
+                if arch == "multi":
+                    manifest_arches = [
+                        brew_arch_for_go_arch(manifest["platform"]["architecture"])
+                        for manifest in release_info.get("manifests", [])
+                    ]
+                    message_digest = await self.publish_multi_client(
+                        base_to_mirror_dir,
+                        pullspec,
+                        release_name,
+                        manifest_arches,
+                        client_type,
+                        registry_config=registry_config,
+                    )
+                else:
+                    message_digest = await self.publish_client(
+                        base_to_mirror_dir,
+                        pullspec,
+                        release_name,
+                        arch,
+                        client_type,
+                        registry_config=registry_config,
+                        tarball_cache_dir=tarball_cache_dir,
+                    )
+                message_digests.append(message_digest)
+            except Exception as e:
+                logger.exception("Failed to extract and publish clients for %s", arch)
+                publication_errors.append((arch, e))
+
+        if publication_errors:
+            failed_arches = ", ".join(arch for arch, _ in publication_errors)
+            raise RuntimeError(f"Failed to extract and publish clients for: {failed_arches}") from publication_errors[
+                0
+            ][1]
+
         return message_digests
 
     async def sign_artifacts(
@@ -1042,7 +1054,13 @@ class PromotePipeline:
         os.makedirs(client_mirror_dir)
 
         # extract release clients tools
-        extract_release_client_tools(pullspec, f"--to={client_mirror_dir}", None, registry_config=registry_config)
+        await to_thread(
+            extract_release_client_tools,
+            pullspec,
+            f"--to={client_mirror_dir}",
+            None,
+            registry_config=registry_config,
+        )
 
         # Get cli installer operator-registry pull-spec from the release
         for release_component_tag_name, source_name in constants.MIRROR_CLIENTS.items():
@@ -1351,8 +1369,12 @@ class PromotePipeline:
             client_mirror_dir = f"{release_mirror_dir}/{go_arch}"
             os.makedirs(client_mirror_dir)
             # extract release clients tools
-            extract_release_client_tools(
-                pullspec, f"--to={client_mirror_dir}", go_arch, registry_config=registry_config
+            await to_thread(
+                extract_release_client_tools,
+                pullspec,
+                f"--to={client_mirror_dir}",
+                go_arch,
+                registry_config=registry_config,
             )
             # extract baremetal installer binary
             self.publish_baremetal_installer_binary(pullspec, client_mirror_dir, arch, registry_config=registry_config)
