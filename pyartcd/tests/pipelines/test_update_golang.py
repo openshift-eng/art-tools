@@ -18,12 +18,15 @@ from pyartcd.pipelines.update_golang import (
     _pullspecs_match,
     extract_and_validate_golang_nvrs,
     get_active_ocp_golang_major_minors,
+    get_active_ocp_golang_vars,
     golang_sweep_registry_config,
     is_available,
     is_latest,
     is_latest_and_available,
     move_golang_bugs,
     ocp_versions_sharing_golang,
+    ocp_versions_with_go_latest,
+    supported_rhel_versions,
     update_golang,
 )
 from tenacity import wait_none
@@ -2806,6 +2809,205 @@ class TestUpdateGolangStreamsFloatingTags(IsolatedAsyncioTestCase):
         await pipeline.update_golang_streams("1.23.5", builder_pullspecs)
         # Null-image stream is not updated.
         self.assertIsNone(streams['rhel-9-golang-extra']['image'])
+
+
+class TestSupportedRhelVersions(unittest.TestCase):
+    def test_el10_only_from_4_21(self):
+        self.assertEqual(supported_rhel_versions("4.12"), {8, 9})
+        self.assertEqual(supported_rhel_versions("4.20"), {8, 9})
+        self.assertEqual(supported_rhel_versions("4.21"), {8, 9, 10})
+        self.assertEqual(supported_rhel_versions("5.0"), {8, 9, 10})
+
+    def test_rejects_old_or_invalid_versions(self):
+        with self.assertRaisesRegex(ValueError, "Only OCP 4.12"):
+            supported_rhel_versions("4.11")
+        with self.assertRaisesRegex(ValueError, "Invalid OCP version"):
+            supported_rhel_versions("openshift-4.16")
+
+
+class TestOcpVersionsWithGoLatest(unittest.TestCase):
+    ACTIVE_VARS = {
+        "4.20": {"GO_LATEST": "1.24", "GO_EXTRA": "1.25"},
+        "4.21": {"GO_LATEST": "1.25"},
+        "4.22": {"GO_LATEST": "1.25", "GO_EXTRA": "1.26"},
+        "4.23": {"GO_LATEST": "1.26", "GO_PREVIOUS": "1.25"},
+        "5.0": {"GO_LATEST": "1.25"},
+    }
+
+    def test_only_go_latest_matches_count(self):
+        self.assertEqual(ocp_versions_with_go_latest("1.25", self.ACTIVE_VARS), ["4.21", "4.22", "5.0"])
+        self.assertEqual(ocp_versions_with_go_latest("1.26", self.ACTIVE_VARS), ["4.23"])
+        self.assertEqual(ocp_versions_with_go_latest("1.27", self.ACTIVE_VARS), [])
+
+    @patch("pyartcd.pipelines.update_golang.get_github_client_for_org")
+    def test_get_active_ocp_golang_vars_keeps_var_names(self, mock_get_github_client):
+        group_ymls = {
+            "openshift-4.22": b"vars:\n  GO_LATEST: '1.25'\n  GO_EXTRA: '1.26'\n",
+            "openshift-4.9": b"software_lifecycle:\n  phase: eol\nvars:\n  GO_LATEST: '1.16'\n",
+        }
+        repo = Mock()
+        repo.get_git_matching_refs.return_value = [Mock(ref=f"refs/heads/{branch}") for branch in group_ymls]
+        repo.get_contents.side_effect = lambda path, ref: Mock(decoded_content=group_ymls[ref])
+        mock_get_github_client.return_value.get_repo.return_value = repo
+
+        self.assertEqual(get_active_ocp_golang_vars(), {"4.22": {"GO_LATEST": "1.25", "GO_EXTRA": "1.26"}})
+        self.assertEqual(get_active_ocp_golang_major_minors(), {"4.22": {"1.25", "1.26"}})
+
+
+class TestAllOcpVersions(IsolatedAsyncioTestCase):
+    ACTIVE_VARS = {
+        "4.20": {"GO_LATEST": "1.25"},
+        "4.21": {"GO_LATEST": "1.25"},
+        "4.22": {"GO_LATEST": "1.25", "GO_EXTRA": "1.26"},
+        "4.23": {"GO_LATEST": "1.26", "GO_PREVIOUS": "1.25"},
+    }
+
+    def _make_pipeline(self, ocp_version="4.22", all_ocp_versions=True, go_nvrs=None, tag_builds=True, **kwargs):
+        runtime = Mock(dry_run=False, working_dir=Path("/tmp/working"))
+        runtime.new_slack_client.return_value = Mock(bind_channel=Mock(), say_in_thread=AsyncMock())
+        with patch("pyartcd.pipelines.update_golang.KonfluxDb"):
+            return UpdateGolangPipeline(
+                runtime=runtime,
+                ocp_version=ocp_version,
+                cves=None,
+                force_update_tracker=False,
+                go_nvrs=go_nvrs or ["golang-1.25.8-1.el8", "golang-1.25.8-1.el9", "golang-1.25.8-1.el10"],
+                art_jira="ART-1234",
+                tag_builds=tag_builds,
+                all_ocp_versions=all_ocp_versions,
+                **kwargs,
+            )
+
+    def test_cli_flag_defaults_to_off(self):
+        param = next(param for param in update_golang.params if param.name == "all_ocp_versions")
+        self.assertTrue(param.is_flag)
+        self.assertFalse(param.default)
+
+    @patch("pyartcd.pipelines.update_golang.get_active_ocp_golang_vars")
+    def test_get_rpm_ocp_versions_without_flag_is_only_ocp_version(self, mock_active_vars):
+        pipeline = self._make_pipeline(all_ocp_versions=False)
+        self.assertEqual(pipeline.get_rpm_ocp_versions("1.25"), ["4.22"])
+        mock_active_vars.assert_not_called()
+
+    @patch("pyartcd.pipelines.update_golang.get_active_ocp_golang_vars")
+    def test_get_rpm_ocp_versions_with_flag_adds_go_latest_versions(self, mock_active_vars):
+        mock_active_vars.return_value = self.ACTIVE_VARS
+        pipeline = self._make_pipeline()
+        self.assertEqual(pipeline.get_rpm_ocp_versions("1.25"), ["4.20", "4.21", "4.22"])
+
+    @patch("pyartcd.pipelines.update_golang.get_active_ocp_golang_vars")
+    def test_get_rpm_ocp_versions_major_bump_keeps_ocp_version(self, mock_active_vars):
+        mock_active_vars.return_value = self.ACTIVE_VARS
+        pipeline = self._make_pipeline(ocp_version="4.23", major_bump=True)
+        self.assertEqual(pipeline.get_rpm_ocp_versions("1.27"), ["4.23"])
+
+    @patch("pyartcd.pipelines.update_golang.is_available", new_callable=AsyncMock, return_value=True)
+    @patch("pyartcd.pipelines.update_golang.is_latest", return_value=False)
+    async def test_process_build_other_version_uses_its_tags_and_skips_signing(self, mock_is_latest, mock_is_available):
+        pipeline = self._make_pipeline()
+        pipeline.ensure_signed = AsyncMock()
+        pipeline.koji_session = Mock(logged_in=True)
+        pipeline.get_module_tag = Mock(return_value=None)
+
+        result = await pipeline.process_build(9, "golang-1.25.8-1.el9", ocp_version="4.20")
+
+        self.assertTrue(result)
+        pipeline.ensure_signed.assert_not_awaited()
+        mock_is_latest.assert_called_once_with("4.20", 9, "golang-1.25.8-1.el9", pipeline.koji_session)
+        pipeline.koji_session.tagBuild.assert_called_once_with("rhaos-4.20-rhel-9-override", "golang-1.25.8-1.el9")
+        mock_is_available.assert_awaited_once_with("4.20", 9, "golang-1.25.8-1.el9")
+
+    @patch("pyartcd.pipelines.update_golang.is_available", new_callable=AsyncMock, side_effect=[False, True])
+    @patch("pyartcd.pipelines.update_golang.is_latest", return_value=True)
+    async def test_process_build_own_version_signs_and_requests_its_repo(self, mock_is_latest, mock_is_available):
+        pipeline = self._make_pipeline()
+        pipeline.ensure_signed = AsyncMock()
+        pipeline.request_repo = AsyncMock()
+
+        result = await pipeline.process_build(8, "golang-1.25.8-1.el8")
+
+        self.assertTrue(result)
+        pipeline.ensure_signed.assert_awaited_once_with(8, "golang-1.25.8-1.el8")
+        pipeline.request_repo.assert_awaited_once_with(8, "golang-1.25.8-1.el8", ocp_version="4.22")
+
+    @patch("pyartcd.pipelines.update_golang.exectools.cmd_assert_async", new_callable=AsyncMock)
+    async def test_request_repo_uses_given_version(self, mock_cmd_assert):
+        pipeline = self._make_pipeline()
+        await pipeline.request_repo(8, "golang-1.25.8-1.el8", ocp_version="4.21")
+        mock_cmd_assert.assert_awaited_once_with(
+            "brew wait-repo rhaos-4.21-rhel-8-build --build=golang-1.25.8-1.el8 --request --verbose",
+            log_stdout=True,
+            timeout=3600,
+        )
+
+    def _stub_run(self, pipeline, allowed_major_minors):
+        pipeline.validate_go_version_matches_group_vars = Mock(
+            return_value=(f"openshift-{pipeline.ocp_version}", allowed_major_minors, "1.25")
+        )
+        pipeline.process_build = AsyncMock(return_value=True)
+        pipeline._build_golang_plashets = AsyncMock()
+        records = {
+            el_v: Mock(nvr=f"openshift-golang-builder-container-v1.25.8-202610210000.p2.assembly.stream.el{el_v}")
+            for el_v in (8, 9)
+        }
+        pipeline.get_existing_builders_konflux = AsyncMock(return_value=records)
+        pipeline._get_builder_pullspec = Mock(return_value="registry.example.com/golang-builder:x")
+        pipeline.update_golang_streams = AsyncMock()
+
+    @patch("pyartcd.pipelines.update_golang.get_active_ocp_golang_vars")
+    @patch("pyartcd.pipelines.update_golang.kinit", new_callable=AsyncMock)
+    @patch("pyartcd.pipelines.update_golang.move_golang_bugs", new_callable=AsyncMock)
+    async def test_run_tags_every_go_latest_version_once_per_el(self, mock_move_bugs, mock_kinit, mock_active_vars):
+        mock_active_vars.return_value = self.ACTIVE_VARS
+        pipeline = self._make_pipeline()
+        self._stub_run(pipeline, {"GO_LATEST": "1.25", "GO_EXTRA": "1.26"})
+
+        await pipeline.run()
+
+        calls = sorted(
+            (call.kwargs["ocp_version"], call.args[0], call.args[1]) for call in pipeline.process_build.await_args_list
+        )
+        self.assertEqual(
+            calls,
+            [
+                ("4.20", 8, "golang-1.25.8-1.el8"),
+                ("4.20", 9, "golang-1.25.8-1.el9"),
+                ("4.21", 8, "golang-1.25.8-1.el8"),
+                ("4.21", 9, "golang-1.25.8-1.el9"),
+                ("4.21", 10, "golang-1.25.8-1.el10"),
+                ("4.22", 8, "golang-1.25.8-1.el8"),
+                ("4.22", 9, "golang-1.25.8-1.el9"),
+                ("4.22", 10, "golang-1.25.8-1.el10"),
+            ],
+        )
+        pipeline._build_golang_plashets.assert_awaited_once()
+        pipeline._slack_client.bind_channel.assert_called_once_with("4.22")
+        messages = [call.args[0] for call in pipeline._slack_client.say_in_thread.await_args_list]
+        self.assertIn("Tagging golang RPMs for OCP versions: 4.20, 4.21, 4.22", messages)
+        mock_move_bugs.assert_awaited_once()
+
+    @patch("pyartcd.pipelines.update_golang.get_active_ocp_golang_vars")
+    @patch("pyartcd.pipelines.update_golang.kinit", new_callable=AsyncMock)
+    @patch("pyartcd.pipelines.update_golang.move_golang_bugs", new_callable=AsyncMock)
+    async def test_run_without_flag_tags_only_ocp_version(self, mock_move_bugs, mock_kinit, mock_active_vars):
+        pipeline = self._make_pipeline(all_ocp_versions=False)
+        self._stub_run(pipeline, {"GO_LATEST": "1.25", "GO_EXTRA": "1.26"})
+
+        await pipeline.run()
+
+        self.assertEqual({call.kwargs["ocp_version"] for call in pipeline.process_build.await_args_list}, {"4.22"})
+        self.assertEqual(pipeline.process_build.await_count, 3)
+        mock_active_vars.assert_not_called()
+
+    @patch("pyartcd.pipelines.update_golang.kinit", new_callable=AsyncMock)
+    async def test_run_rejects_ocp_version_without_matching_go_latest(self, mock_kinit):
+        pipeline = self._make_pipeline(ocp_version="4.23", tag_builds=False)
+        self._stub_run(pipeline, {"GO_LATEST": "1.26", "GO_PREVIOUS": "1.25"})
+
+        with self.assertRaisesRegex(ValueError, "--ocp-version must be a version whose group.yml GO_LATEST is 1.25"):
+            await pipeline.run()
+
+        pipeline.process_build.assert_not_awaited()
 
 
 if __name__ == "__main__":
