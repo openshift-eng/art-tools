@@ -151,17 +151,7 @@ class GenAssemblyLPPipeline:
         When multiple FBC pullspecs are provided (one per OCP target version),
         validates that all FBCs for the same operator contain identical related images.
         """
-        if len(self.fbc_pullspecs) > 1:
-            all_related_nvrs = await validate_fbc_related_images(
-                self.fbc_pullspecs, self.product, assembly=self.assembly
-            )
-        else:
-            from elliottlib.util import extract_nvrs_from_fbc as _extract
-
-            all_related_nvrs = []
-            for fbc_pullspec in self.fbc_pullspecs:
-                related_nvrs = await _extract(fbc_pullspec, self.product, assembly=self.assembly)
-                all_related_nvrs.extend(related_nvrs)
+        all_related_nvrs = await validate_fbc_related_images(self.fbc_pullspecs, self.product, assembly=self.assembly)
 
         all_related_nvrs = sorted(set(all_related_nvrs))
         categorized = self._categorize_nvrs(all_related_nvrs)

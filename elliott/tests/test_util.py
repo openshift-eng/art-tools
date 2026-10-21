@@ -9,6 +9,27 @@ from elliottlib.constants import GOLANG_BUILDER_CVE_COMPONENT
 from flexmock import flexmock
 
 
+class TestExtractNvrsFromFbc(unittest.IsolatedAsyncioTestCase):
+    async def test_digest_source_nvr_reaches_catalog_extractor(self):
+        pullspec = 'quay.io/test/fbc@sha256:abc'
+        source_nvr = 'quay-operator-fbc-3.17.6-1.ocp4.18'
+        with (
+            patch('elliottlib.util.extract_versioned_related_images_from_fbc', new_callable=AsyncMock) as extract,
+            patch('elliottlib.util.oc_image_info__cached_async', new_callable=AsyncMock) as image_info,
+        ):
+            extract.return_value = ['quay.io/test/operator@sha256:abc']
+            image_info.return_value = (
+                '{"config":{"config":{"Labels":{"com.redhat.component":"quay-operator-container",'
+                '"version":"3.17.6","release":"1"}}}}'
+            )
+            result = await util.extract_nvrs_from_fbc(pullspec, 'quay', assembly='3.17.7', fbc_nvr=source_nvr)
+
+        self.assertEqual(result, ['quay-operator-container-3.17.6-1'])
+        extract.assert_awaited_once_with(
+            pullspec, 'quay', assembly='3.17.7', ignore_patch_version=False, fbc_nvr=source_nvr
+        )
+
+
 class TestUtil(unittest.TestCase):
     def test_isolate_timestamp_in_release(self):
         actual = util.isolate_timestamp_in_release("foo-4.7.0-202107021813.p0.g01c9f3f.el8")
@@ -263,6 +284,7 @@ class TestExtractNvrsFromFbc(unittest.TestCase):
                         assembly='0.158.4',
                         version_scoped=version_scoped,
                         ignore_patch_version=True,
+                        fbc_nvr=None,
                     )
                 )
                 self.assertEqual(result, ['operator-container-0.158.0-1'])
@@ -272,6 +294,7 @@ class TestExtractNvrsFromFbc(unittest.TestCase):
                         'rhosdt',
                         assembly='0.158.4',
                         ignore_patch_version=True,
+                        fbc_nvr=None,
                     )
                     mock_unscoped.assert_not_awaited()
                     mock_versioned.reset_mock()

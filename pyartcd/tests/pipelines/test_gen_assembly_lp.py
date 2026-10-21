@@ -1,5 +1,7 @@
 import asyncio
+import json
 import unittest
+from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import click
@@ -307,10 +309,9 @@ class TestGenAssemblyLPMultiFBC(unittest.TestCase):
         self.assertIn("cluster-logging-operator", result)
 
     @patch('pyartcd.pipelines.gen_assembly_lp.validate_fbc_related_images', new_callable=AsyncMock)
-    @patch('elliottlib.util.extract_nvrs_from_fbc', new_callable=AsyncMock)
-    def test_extract_nvrs_skips_validation_for_single_pullspec(self, mock_extract_nvrs, mock_validate):
-        """When only one FBC pullspec is provided, skip validation and extract directly."""
-        mock_extract_nvrs.return_value = [
+    def test_extract_nvrs_uses_shared_source_resolution_for_single_pullspec(self, mock_validate):
+        """Single-FBC inputs also need source labels for digest version fallback."""
+        mock_validate.return_value = [
             "cluster-logging-operator-6.4.1-1",
             "log-file-metric-exporter-6.4.1-1",
         ]
@@ -320,9 +321,8 @@ class TestGenAssemblyLPMultiFBC(unittest.TestCase):
 
         result = asyncio.run(pipeline._extract_nvrs_from_fbc())
 
-        mock_validate.assert_not_called()
-        mock_extract_nvrs.assert_called_once_with(
-            "quay.io/test/fbc@sha256:single",
+        mock_validate.assert_called_once_with(
+            ["quay.io/test/fbc@sha256:single"],
             "openshift-logging",
             assembly="6.4.1",
         )
@@ -478,7 +478,11 @@ class TestCanonicalAssemblyKeys(unittest.IsolatedAsyncioTestCase):
         pipeline._build_fbc_pullspecs_map = AsyncMock(return_value={})
         pipeline._create_or_update_pull_request = AsyncMock()
         pipeline.include = [f'quay-quay={self.pin}']
-        with patch('elliottlib.util.extract_nvrs_from_fbc', new_callable=AsyncMock, return_value=[self.pin]):
+        with patch(
+            'pyartcd.pipelines.gen_assembly_lp.validate_fbc_related_images',
+            new_callable=AsyncMock,
+            return_value=[self.pin],
+        ):
             result = await pipeline.run()
         self.assertEqual(
             result['releases']['3.18.3']['assembly']['members']['images'],
@@ -486,6 +490,89 @@ class TestCanonicalAssemblyKeys(unittest.IsolatedAsyncioTestCase):
                 {'distgit_key': 'quay-quay', 'metadata': {'is': {'nvr': self.pin}}},
             ],
         )
+
+    async def test_generation_from_older_digest_catalog_applies_operator_and_private_overrides(self):
+        runtime = MagicMock(dry_run=True, config={})
+        runtime.working_dir = Path('/tmp/gen-assembly-source-version-tests')
+        operator = 'quay-operator-container-3.17.7-202610202329.p2.g015d069.assembly.stream.el9'
+        quay = 'quay-quay-container-3.17.6-202610201502.p3.gc2cec9e.assembly.stream.el9'
+        mapping = {'quay-operator-container': 'quay-operator', 'quay-quay-container': 'quay-quay'}
+        catalog = '\n'.join(
+            json.dumps(
+                {
+                    'schema': 'olm.bundle',
+                    'name': f'quay-operator.v{version}',
+                    'relatedImages': [
+                        {'name': key, 'image': f'quay.io/test/{key}@sha256:{digest}'} for key in mapping.values()
+                    ],
+                }
+            )
+            for version, digest in [('3.17.6', 'source'), ('3.18.2', 'historical')]
+        )
+
+        async def mock_oras(cmd, cwd):
+            if cmd[:2] == ['oras', 'discover']:
+                return (
+                    0,
+                    json.dumps(
+                        {
+                            'referrers': [
+                                {
+                                    'digest': 'sha256:catalog',
+                                    'artifactType': 'application/vnd.konflux-ci.attached-artifact',
+                                    'annotations': {'attachedMediaType': 'rendered-catalog'},
+                                }
+                            ]
+                        }
+                    ),
+                    '',
+                )
+            self.assertEqual(cmd[:2], ['oras', 'pull'])
+            (Path(cwd) / 'catalog.json').write_text(catalog)
+            return 0, '', ''
+
+        async def mock_image_info(pullspec, *args, **kwargs):
+            self.assertTrue(pullspec.endswith('@sha256:source'))
+            key = pullspec.split('/')[-1].split('@')[0]
+            return json.dumps(
+                {
+                    'config': {
+                        'config': {
+                            'Labels': {'com.redhat.component': f'{key}-container', 'version': '3.17.6', 'release': '1'}
+                        }
+                    }
+                }
+            )
+
+        # Exercise both single- and multi-FBC paths through the real shared extractors.
+        for count in (1, 2):
+            with self.subTest(count=count):
+                pipeline = GenAssemblyLPPipeline(
+                    runtime,
+                    'quay-3.17',
+                    '3.17.7',
+                    fbc_pullspecs=[f'quay.io/test/fbc@sha256:{i}' for i in range(count)],
+                    include=[f'quay-operator={operator}', f'quay-quay={quay}'],
+                )
+                pipeline._load_product_from_group_config = AsyncMock(return_value='quay')
+                pipeline._load_component_to_distgit_key = AsyncMock(return_value=mapping)
+                pipeline._build_fbc_pullspecs_map = AsyncMock(return_value={})
+                pipeline._create_or_update_pull_request = AsyncMock()
+                with (
+                    patch('pyartcd.fbc_util.extract_fbc_labels', new_callable=AsyncMock) as labels,
+                    patch('artcommonlib.util.cmd_gather_async', side_effect=mock_oras),
+                    patch('elliottlib.util.oc_image_info__cached_async', side_effect=mock_image_info),
+                ):
+                    labels.return_value = {
+                        'nvr': 'quay-operator-fbc-3.17.6-20261020173447.ocp4.18',
+                        'doozer_key': 'quay-operator',
+                    }
+                    result = await pipeline.run()
+                members = result['releases']['3.17.7']['assembly']['members']['images']
+                self.assertEqual(
+                    {member['distgit_key']: member['metadata']['is']['nvr'] for member in members},
+                    {'quay-operator': operator, 'quay-quay': quay},
+                )
 
     async def test_unknown_and_ambiguous_components_fail(self):
         self.pipeline._component_to_distgit_key = {'quay-quay-container': 'quay-quay'}
