@@ -210,6 +210,7 @@ class TestValidateFbcRelatedImages(unittest.TestCase):
             "my-product",
             assembly="1.0.0",
             version_scoped=True,
+            fbc_nvr='op-fbc-1.0-1.ocp4.18',
         )
 
     @patch('pyartcd.fbc_util.extract_nvrs_from_fbc', new_callable=AsyncMock)
@@ -234,7 +235,22 @@ class TestValidateFbcRelatedImages(unittest.TestCase):
             "ocp",
             assembly=None,
             version_scoped=False,
+            fbc_nvr=None,
         )
+
+    @patch('pyartcd.fbc_util.extract_nvrs_from_fbc', new_callable=AsyncMock)
+    @patch('pyartcd.fbc_util.extract_fbc_labels', new_callable=AsyncMock)
+    def test_digest_source_nvrs_forwarded_without_changing_destination(self, mock_labels, mock_extract):
+        pullspecs = ['quay.io/test/fbc@sha256:a', 'quay.io/test/fbc@sha256:b']
+        source_nvrs = [f'quay-operator-fbc-3.17.6-1.ocp4.{minor}' for minor in (18, 19)]
+        mock_labels.side_effect = [{'nvr': nvr, 'doozer_key': 'quay-operator'} for nvr in source_nvrs]
+        mock_extract.return_value = ['quay-quay-container-3.17.6-1']
+
+        result = asyncio.run(validate_fbc_related_images(pullspecs, 'quay', assembly='3.17.7'))
+
+        self.assertEqual(result, ['quay-quay-container-3.17.6-1'])
+        for pullspec, nvr in zip(pullspecs, source_nvrs):
+            mock_extract.assert_any_await(pullspec, 'quay', assembly='3.17.7', version_scoped=True, fbc_nvr=nvr)
 
     @patch('pyartcd.fbc_util.extract_nvrs_from_fbc', new_callable=AsyncMock)
     @patch('pyartcd.fbc_util.extract_fbc_labels', new_callable=AsyncMock)

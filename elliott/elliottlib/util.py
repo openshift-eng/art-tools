@@ -854,6 +854,7 @@ async def extract_nvrs_from_fbc(
     product: str,
     assembly: Optional[str] = None,
     version_scoped: bool = True,
+    fbc_nvr: Optional[str] = None,
 ) -> list[str]:
     """
     Extract NVRs from FBC image using ORAS workflow.
@@ -876,12 +877,16 @@ async def extract_nvrs_from_fbc(
             Only used when ``version_scoped`` is true.
         version_scoped: When true (default), select one release olm.bundle.
             When false, use the unscoped OCP extractor.
+        fbc_nvr: Optional FBC image label NVR for source-version fallback when
+            a digest-only catalog does not contain the requested assembly.
     """
     logger = get_logger(__name__)
     logger.info(f"Extracting NVRs from FBC image: {fbc_pullspec}")
 
     if version_scoped:
-        related_images = await extract_versioned_related_images_from_fbc(fbc_pullspec, product, assembly=assembly)
+        related_images = await extract_versioned_related_images_from_fbc(
+            fbc_pullspec, product, assembly=assembly, fbc_nvr=fbc_nvr
+        )
     else:
         related_images = await extract_related_images_from_fbc(fbc_pullspec, product)
 

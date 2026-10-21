@@ -210,8 +210,10 @@ async def validate_fbc_related_images(
     come from version-scoped rendered-catalog extraction
     (:func:`elliottlib.util.extract_nvrs_from_fbc` →
     ``extract_versioned_related_images_from_fbc``): assembly when it is a real
-    release version, otherwise the version parsed from the FBC NVR/tag.
-    ``assembly='stream'`` falls through to the FBC tag.
+    release version, otherwise the version parsed from the FBC image label NVR
+    or tag. This allows a new assembly to use operands from an older source
+    catalog, including digest-only inputs. ``assembly='stream'`` also uses
+    the source FBC version.
 
     When ``version_scoped`` is false (``--ocp-optional``), use the unscoped
     OCP extractor (``related-images.json`` / all catalog bundles) so
@@ -306,13 +308,14 @@ async def validate_fbc_related_images(
     logger.info("Extracting related images from all FBCs...")
     fbc_related_images = {}
     all_related_images = set()
-    for fbc_pullspec in fbc_pullspecs:
+    for fbc_pullspec, labels in zip(fbc_pullspecs, fbc_labels_list):
         related_nvrs = set(
             await extract_nvrs_from_fbc(
                 fbc_pullspec,
                 product,
                 assembly=assembly if version_scoped else None,
                 version_scoped=version_scoped,
+                fbc_nvr=labels.get('nvr') if version_scoped else None,
             )
         )
         all_related_images.update(related_nvrs)
