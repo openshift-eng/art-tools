@@ -43,7 +43,7 @@ REBASED_DOCKERFILE = (
 RPA_TEMPLATE = """---
 kind: ReleasePlanAdmission
 metadata:
-  name: ocp-art-cdn-prod-4-22
+  name: ocp-art-binaries-prod-4-22
 spec:
   data:
     mapping:
@@ -139,10 +139,12 @@ class TestHelpers(TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             ga = _pipeline(tmp)
             preview = _pipeline(tmp, client_type="ocp-dev-preview", version="5.0", release_name="5.0.0-ec.6")
-        self.assertEqual(ga.release_plan_key, "openshift-4-22-cdn")
-        self.assertEqual(ga.rpa_names, ["ocp-art-cdn-stage-4-22", "ocp-art-cdn-prod-4-22"])
-        self.assertEqual(preview.release_plan_key, "openshift-5-0-cdn-dev-preview")
-        self.assertEqual(preview.rpa_names, ["ocp-art-cdn-dev-preview-stage-5-0", "ocp-art-cdn-dev-preview-prod-5-0"])
+        self.assertEqual(ga.release_plan_key, "openshift-4-22-binaries")
+        self.assertEqual(ga.rpa_names, ["ocp-art-binaries-stage-4-22", "ocp-art-binaries-prod-4-22"])
+        self.assertEqual(preview.release_plan_key, "openshift-5-0-binaries-dev-preview")
+        self.assertEqual(
+            preview.rpa_names, ["ocp-art-binaries-dev-preview-stage-5-0", "ocp-art-binaries-dev-preview-prod-5-0"]
+        )
 
     def test_constructor_rejects_bad_input(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -307,7 +309,7 @@ class TestEnsureCgwVersion(IsolatedAsyncioTestCase):
 
     def _set_rpas(self, version):
         for env in ("stage", "prod"):
-            self.files[f"{icr.KRD_RPA_DIR}/ocp-art-cdn-{env}-4-22.yaml"] = RPA_TEMPLATE.format(version=version)
+            self.files[f"{icr.KRD_RPA_DIR}/ocp-art-binaries-{env}-4-22.yaml"] = RPA_TEMPLATE.format(version=version)
 
     def _merged_mr(self, sync_status="success"):
         mr = MagicMock(iid=7, web_url="https://gitlab/mr/7", state="merged", merge_commit_sha="abc")
@@ -341,7 +343,7 @@ class TestEnsureCgwVersion(IsolatedAsyncioTestCase):
         self.assertEqual(version_action["action"], "create")
         self.assertEqual(version_action["content"], cgw_version_file_content("4.22.18", True, "2026-10-20"))
         for env in ("stage", "prod"):
-            action = actions[f"{icr.KRD_RPA_DIR}/ocp-art-cdn-{env}-4-22.yaml"]
+            action = actions[f"{icr.KRD_RPA_DIR}/ocp-art-binaries-{env}-4-22.yaml"]
             self.assertEqual(action["action"], "update")
             self.assertEqual(rpa_product_version_name(action["content"]), "4.22.18")
         self.assertEqual(self.project.mergerequests.create.call_args.args[0]["source_branch"], commit["branch"])
@@ -448,8 +450,8 @@ class TestRun(IsolatedAsyncioTestCase):
         kwargs = self.binary.call_args.kwargs
         self.assertEqual(kwargs["group"], "openshift-4.22")
         self.assertEqual(kwargs["nvrs"], [nvr])
-        self.assertEqual(kwargs["release_plan_key"], "openshift-4-22-cdn")
-        self.assertEqual(kwargs["shipment_kind"], "cdn")
+        self.assertEqual(kwargs["release_plan_key"], "openshift-4-22-binaries")
+        self.assertEqual(kwargs["shipment_kind"], "binaries")
         self.assertTrue(kwargs["create_mr"])
         self.binary.return_value.run.assert_awaited_once()
 
@@ -524,8 +526,8 @@ class TestRun(IsolatedAsyncioTestCase):
         pipeline.build_binary.assert_not_awaited()
         pipeline.ensure_cgw_version.assert_not_awaited()
         kwargs = self.binary.call_args.kwargs
-        self.assertEqual(kwargs["release_plan_key"], "openshift-5-0-cdn-dev-preview")
-        self.assertEqual(kwargs["shipment_kind"], "cdn-dev-preview")
+        self.assertEqual(kwargs["release_plan_key"], "openshift-5-0-binaries-dev-preview")
+        self.assertEqual(kwargs["shipment_kind"], "binaries-dev-preview")
 
     async def test_embargoed_nvr_is_not_released(self):
         pipeline = _pipeline(

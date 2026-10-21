@@ -788,24 +788,26 @@ class TestCreateReleaseCli(IsolatedAsyncioTestCase):
         self.assertEqual(calls, ["ocp-art-advisory-stage-4-18", "ocp-art-advisory-prod-4-18"])
 
     @patch("elliottlib.cli.konflux_release_cli.fetch_rpa", new_callable=AsyncMock)
-    async def test_validate_rpa_cdn_kind_uses_cdn_rpa(self, mock_fetch_rpa):
-        rpa_data = {"spec": {"data": {"mapping": {"components": [{"name": "ose-4-22-openshift-install-delivery"}]}}}}
-        mock_fetch_rpa.return_value = rpa_data
-
-        await validate_snapshot_against_rpa("openshift-4.22", "stage", "cdn", ["ose-4-22-openshift-install-delivery"])
-        calls = [c.args[0] for c in mock_fetch_rpa.await_args_list]
-        self.assertEqual(calls, ["ocp-art-cdn-stage-4-22", "ocp-art-cdn-prod-4-22"])
-
-    @patch("elliottlib.cli.konflux_release_cli.fetch_rpa", new_callable=AsyncMock)
-    async def test_validate_rpa_cdn_dev_preview_kind_uses_dev_preview_rpa(self, mock_fetch_rpa):
-        rpa_data = {"spec": {"data": {"mapping": {"components": [{"name": "ose-5-0-openshift-install-delivery"}]}}}}
+    async def test_validate_rpa_binaries_kind_uses_binaries_rpa(self, mock_fetch_rpa):
+        rpa_data = {"spec": {"data": {"mapping": {"components": [{"name": "ose-4-22-openshift-install-binaries"}]}}}}
         mock_fetch_rpa.return_value = rpa_data
 
         await validate_snapshot_against_rpa(
-            "openshift-5.0", "prod", "cdn-dev-preview", ["ose-5-0-openshift-install-delivery"]
+            "openshift-4.22", "stage", "binaries", ["ose-4-22-openshift-install-binaries"]
         )
         calls = [c.args[0] for c in mock_fetch_rpa.await_args_list]
-        self.assertEqual(calls, ["ocp-art-cdn-dev-preview-prod-5-0", "ocp-art-cdn-dev-preview-stage-5-0"])
+        self.assertEqual(calls, ["ocp-art-binaries-stage-4-22", "ocp-art-binaries-prod-4-22"])
+
+    @patch("elliottlib.cli.konflux_release_cli.fetch_rpa", new_callable=AsyncMock)
+    async def test_validate_rpa_binaries_dev_preview_kind_uses_dev_preview_rpa(self, mock_fetch_rpa):
+        rpa_data = {"spec": {"data": {"mapping": {"components": [{"name": "ose-5-0-openshift-install-binaries"}]}}}}
+        mock_fetch_rpa.return_value = rpa_data
+
+        await validate_snapshot_against_rpa(
+            "openshift-5.0", "prod", "binaries-dev-preview", ["ose-5-0-openshift-install-binaries"]
+        )
+        calls = [c.args[0] for c in mock_fetch_rpa.await_args_list]
+        self.assertEqual(calls, ["ocp-art-binaries-dev-preview-prod-5-0", "ocp-art-binaries-dev-preview-stage-5-0"])
 
     @patch("elliottlib.cli.konflux_release_cli.fetch_rpa", new_callable=AsyncMock)
     async def test_validate_rpa_skipped_for_non_openshift(self, mock_fetch_rpa):

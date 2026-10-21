@@ -61,9 +61,9 @@ BINARIES = {
 
 
 CLIENT_TYPES = {
-    "ocp": ClientTypeConfig(shipment_kind="cdn", rpa_prefix="ocp-art-cdn", ga=True),
+    "ocp": ClientTypeConfig(shipment_kind="binaries", rpa_prefix="ocp-art-binaries", ga=True),
     "ocp-dev-preview": ClientTypeConfig(
-        shipment_kind="cdn-dev-preview", rpa_prefix="ocp-art-cdn-dev-preview", ga=False
+        shipment_kind="binaries-dev-preview", rpa_prefix="ocp-art-binaries-dev-preview", ga=False
     ),
 }
 

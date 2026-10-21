@@ -348,10 +348,10 @@ class TestOcpGroupShipment(unittest.TestCase):
             runtime=self._runtime(),
             group="openshift-4.22",
             assembly="stream",
-            nvrs=["openshift-install-delivery-container-v4.22.0-202610191200.p2.g1234567.assembly.stream.el9"],
+            nvrs=["openshift-install-binaries-container-v4.22.0-202610191200.p2.g1234567.assembly.stream.el9"],
             create_mr=create_mr,
-            release_plan_key="openshift-4-22-cdn",
-            shipment_kind="cdn",
+            release_plan_key="openshift-4-22-binaries",
+            shipment_kind="binaries",
         )
         pipeline.product = "ocp"
         return pipeline
@@ -359,23 +359,23 @@ class TestOcpGroupShipment(unittest.TestCase):
     def test_openshift_group_requires_release_plan_key_and_kind(self):
         for kwargs in (
             {},
-            {"release_plan_key": "openshift-4-22-cdn"},
-            {"shipment_kind": "cdn"},
+            {"release_plan_key": "openshift-4-22-binaries"},
+            {"shipment_kind": "binaries"},
             {"release_plan_key": "openshift-4-22", "shipment_kind": "image"},
-            {"release_plan_key": "openshift-4-22", "shipment_kind": "cdn"},
-            {"release_plan_key": "openshift-4-22-cdn", "shipment_kind": "cdn-dev-preview"},
+            {"release_plan_key": "openshift-4-22", "shipment_kind": "binaries"},
+            {"release_plan_key": "openshift-4-22-binaries", "shipment_kind": "binaries-dev-preview"},
         ):
             with self.assertRaises(ValueError):
                 BinaryReleaseKonfluxPipeline(
                     runtime=self._runtime(),
                     group="openshift-4.22",
                     assembly="stream",
-                    nvrs=["openshift-install-delivery-container-v4.22.0-1.el9"],
+                    nvrs=["openshift-install-binaries-container-v4.22.0-1.el9"],
                     **kwargs,
                 )
 
     def test_shipment_kind_allow_list(self):
-        for kind in ("../x", "cdn/../../x", "rpm"):
+        for kind in ("../x", "binaries/../../x", "rpm"):
             with self.assertRaises(ValueError):
                 BinaryReleaseKonfluxPipeline(
                     runtime=self._runtime(),
@@ -385,13 +385,16 @@ class TestOcpGroupShipment(unittest.TestCase):
                     shipment_kind=kind,
                 )
 
-    def test_openshift_group_accepts_matching_cdn_key_and_kind(self):
-        for key, kind in (("openshift-4-22-cdn", "cdn"), ("openshift-4-22-cdn-dev-preview", "cdn-dev-preview")):
+    def test_openshift_group_accepts_matching_binaries_key_and_kind(self):
+        for key, kind in (
+            ("openshift-4-22-binaries", "binaries"),
+            ("openshift-4-22-binaries-dev-preview", "binaries-dev-preview"),
+        ):
             pipeline = BinaryReleaseKonfluxPipeline(
                 runtime=self._runtime(),
                 group="openshift-4.22",
                 assembly="stream",
-                nvrs=["openshift-install-delivery-container-v4.22.0-1.el9"],
+                nvrs=["openshift-install-binaries-container-v4.22.0-1.el9"],
                 release_plan_key=key,
                 shipment_kind=kind,
             )
@@ -420,18 +423,18 @@ class TestOcpGroupShipment(unittest.TestCase):
                 "        releasePlan: ocp-art-advisory-stage-4-22\n"
                 "      prod:\n"
                 "        releasePlan: ocp-art-advisory-prod-4-22\n"
-                "  openshift-4-22-cdn:\n"
+                "  openshift-4-22-binaries:\n"
                 "    environments:\n"
                 "      stage:\n"
-                "        releasePlan: ocp-art-cdn-stage-4-22\n"
+                "        releasePlan: ocp-art-binaries-stage-4-22\n"
                 "      prod:\n"
-                "        releasePlan: ocp-art-cdn-prod-4-22\n"
+                "        releasePlan: ocp-art-binaries-prod-4-22\n"
             )
 
             config = pipeline.create_shipment_config(snapshot)
 
-        self.assertEqual(config.shipment.environments.stage.releasePlan, "ocp-art-cdn-stage-4-22")
-        self.assertEqual(config.shipment.environments.prod.releasePlan, "ocp-art-cdn-prod-4-22")
+        self.assertEqual(config.shipment.environments.stage.releasePlan, "ocp-art-binaries-stage-4-22")
+        self.assertEqual(config.shipment.environments.prod.releasePlan, "ocp-art-binaries-prod-4-22")
         self.assertEqual(config.shipment.metadata.application, "openshift-4-22")
         self.assertEqual(config.shipment.metadata.product, "ocp")
         self.assertTrue(config.shipment.metadata.release_notes_in_rpa)
@@ -456,7 +459,7 @@ class TestOcpGroupShipment(unittest.TestCase):
             with self.assertRaises(ValueError) as ctx:
                 pipeline.create_shipment_config(snapshot)
 
-        self.assertIn("openshift-4-22-cdn", str(ctx.exception))
+        self.assertIn("openshift-4-22-binaries", str(ctx.exception))
 
     def test_run_uses_shipment_kind(self):
         pipeline = self._make_pipeline()
@@ -471,7 +474,7 @@ class TestOcpGroupShipment(unittest.TestCase):
         asyncio.run(pipeline.run())
 
         shipments_by_kind = pipeline.write_shipment_files_locally.await_args.args[0]
-        self.assertEqual(shipments_by_kind, {"cdn": shipment_config})
+        self.assertEqual(shipments_by_kind, {"binaries": shipment_config})
 
     def test_write_shipment_file_uses_ocp_product_path_and_kind(self):
         pipeline = self._make_pipeline()
@@ -481,9 +484,11 @@ class TestOcpGroupShipment(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmpdir:
             pipeline.shipment_data_repo._directory = Path(tmpdir)
             pipeline.shipment_data_repo.write_file = AsyncMock()
-            filepath = asyncio.run(pipeline._write_shipment_file("cdn", config, "prod", "20261019120000"))
+            filepath = asyncio.run(pipeline._write_shipment_file("binaries", config, "prod", "20261019120000"))
 
-        self.assertEqual(filepath, "shipment/ocp/openshift-4.22/openshift-4-22/prod/stream.cdn.20261019120000.yaml")
+        self.assertEqual(
+            filepath, "shipment/ocp/openshift-4.22/openshift-4-22/prod/stream.binaries.20261019120000.yaml"
+        )
 
     def _rule(self, name):
         rule = MagicMock()
@@ -758,14 +763,14 @@ class TestCliValidation(unittest.TestCase):
                 "--nvrs",
                 "oc-mirror-container-2.0-1-1.el9",
                 "--release-plan-key",
-                "openshift-4-22-cdn",
+                "openshift-4-22-binaries",
                 "--shipment-kind",
-                "cdn",
+                "binaries",
             ]
         )
         kwargs = mock_pipeline_cls.call_args.kwargs
-        self.assertEqual(kwargs["release_plan_key"], "openshift-4-22-cdn")
-        self.assertEqual(kwargs["shipment_kind"], "cdn")
+        self.assertEqual(kwargs["release_plan_key"], "openshift-4-22-binaries")
+        self.assertEqual(kwargs["shipment_kind"], "binaries")
 
     @patch("pyartcd.pipelines.binary_release_konflux.BinaryReleaseKonfluxPipeline")
     def test_invalid_target_release_date_raises(self, mock_pipeline_cls):

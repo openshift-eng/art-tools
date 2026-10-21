@@ -42,8 +42,8 @@ from pyartcd.runtime import Runtime
 yaml = new_roundtrip_yaml_handler()
 
 
-CDN_SHIPMENT_KINDS = ("cdn", "cdn-dev-preview")
-SUPPORTED_SHIPMENT_KINDS = ("image",) + CDN_SHIPMENT_KINDS
+BINARIES_SHIPMENT_KINDS = ("binaries", "binaries-dev-preview")
+SUPPORTED_SHIPMENT_KINDS = ("image",) + BINARIES_SHIPMENT_KINDS
 
 
 class BinaryReleaseKonfluxPipeline:
@@ -88,10 +88,10 @@ class BinaryReleaseKonfluxPipeline:
                 f"Unsupported --shipment-kind {shipment_kind!r}; supported: {', '.join(SUPPORTED_SHIPMENT_KINDS)}"
             )
         if group.startswith("openshift-"):
-            if shipment_kind not in CDN_SHIPMENT_KINDS:
+            if shipment_kind not in BINARIES_SHIPMENT_KINDS:
                 raise ValueError(
                     f"Group {group} is an OCP payload group: --shipment-kind must be one of "
-                    f"{', '.join(CDN_SHIPMENT_KINDS)} so the shipment does not use the 'image' kind."
+                    f"{', '.join(BINARIES_SHIPMENT_KINDS)} so the shipment does not use the 'image' kind."
                 )
             expected_key = f"{group.replace('.', '-')}-{shipment_kind}"
             if release_plan_key != expected_key:
@@ -664,13 +664,13 @@ class BinaryReleaseKonfluxPipeline:
     '--release-plan-key',
     default=None,
     help='ocp-shipment-data config.yaml applications key to read the stage/prod releasePlans from, instead of '
-    'the snapshot application name. Required for openshift-* groups, e.g. openshift-4-22-cdn.',
+    'the snapshot application name. Required for openshift-* groups, e.g. openshift-4-22-binaries.',
 )
 @click.option(
     '--shipment-kind',
     default=None,
     help='Shipment file kind used in the file name and by shipment CI (default: image). '
-    'Required for openshift-* groups, e.g. cdn or cdn-dev-preview.',
+    'Required for openshift-* groups, e.g. binaries or binaries-dev-preview.',
 )
 @pass_runtime
 @click_coroutine
