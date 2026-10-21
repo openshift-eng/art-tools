@@ -372,12 +372,13 @@ class TestTektonJenkinsStartBuild(unittest.TestCase):
 
         self.client.get_job.assert_not_called()
 
-    def test_start_installer_cdn_release_parameters(self):
-        jenkins.start_installer_cdn_release('4.22', '4.22.18', '4.22.18', 'ocp', dry_run=False)
-        self.client.get_job.assert_called_once_with(Jobs.INSTALLER_CDN_RELEASE.value)
-        self.assertEqual(Jobs.INSTALLER_CDN_RELEASE.value, 'aos-cd-builds/build%2Finstaller-cdn-release')
+    def test_start_binaries_cdn_release_parameters(self):
+        jenkins.start_binaries_cdn_release('openshift-install', '4.22', '4.22.18', '4.22.18', 'ocp', dry_run=False)
+        self.client.get_job.assert_called_once_with(Jobs.BINARIES_CDN_RELEASE.value)
+        self.assertEqual(Jobs.BINARIES_CDN_RELEASE.value, 'aos-cd-builds/build%2Fbinaries-cdn-release')
         self.job.invoke.assert_called_once_with(
             build_params={
+                'BINARY': 'openshift-install',
                 'BUILD_VERSION': '4.22',
                 'ASSEMBLY': '4.22.18',
                 'RELEASE_NAME': '4.22.18',

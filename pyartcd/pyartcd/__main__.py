@@ -4,6 +4,7 @@ from pyartcd.cli import cli
 from pyartcd.pipelines import (
     advisory_drop,
     art_notify,
+    binaries_cdn_release,
     binary_release_konflux,
     brew_scan_osh,
     build_conforma_verify,
@@ -22,7 +23,6 @@ from pyartcd.pipelines import (
     gen_assembly,
     gen_assembly_lp,
     images_health,
-    installer_cdn_release,
     layered_products_image_health,
     layered_products_scan_konflux,
     ocp,
@@ -77,6 +77,7 @@ from pyartcd.pipelines.scheduled import (
 __all__ = [
     "advisory_drop",
     "art_notify",
+    "binaries_cdn_release",
     "binary_release_konflux",
     "brew_scan_osh",
     "build_conforma_verify",
@@ -95,7 +96,6 @@ __all__ = [
     "gen_assembly",
     "gen_assembly_lp",
     "images_health",
-    "installer_cdn_release",
     "layered_products_image_health",
     "layered_products_scan_konflux",
     "ocp",

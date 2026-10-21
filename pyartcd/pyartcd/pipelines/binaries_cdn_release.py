@@ -24,13 +24,11 @@ from pyartcd.runtime import Runtime
 
 LOGGER = logging.getLogger(__name__)
 
-DELIVERY_IMAGE = "openshift-install-delivery"
-PAYLOAD_PARENTS = {"inst": "installer", "art": "installer-artifacts", "bm": "baremetal-installer"}
 KRD_URL = "https://gitlab.cee.redhat.com"
 KRD_PROJECT = "releng/konflux-release-data"
 KRD_RPA_DIR = "config/kflux-ocp-p01.7ayg.p1/product/ReleasePlanAdmission/ocp-art"
-KRD_CGW_VERSION_DIR = "data/external/developer-portal/openshift-install"
-FROM_LINE_RE = re.compile(r"^FROM\s+--platform=linux/(\S+)\s+\S+@(sha256:[0-9a-f]{64})\s+AS\s+(inst|art|bm)_(\S+)\s*$")
+KRD_CGW_DIR = "data/external/developer-portal"
+FROM_LINE_RE = re.compile(r"^FROM\s+--platform=linux/(\S+)\s+\S+@(sha256:[0-9a-f]{64})\s+AS\s+([a-z]+)_(\S+)\s*$")
 PRODUCT_VERSION_RE = re.compile(r'^([ \t]*productVersionName:[ \t]*)"([^"]*)"[ \t]*$', re.MULTILINE)
 
 
@@ -41,12 +39,42 @@ class ClientTypeConfig:
     ga: bool
 
 
+@dataclass(frozen=True)
+class BinaryProfile:
+    """
+    What the job needs to know about one binaries/ member.
+
+    payload_parents maps the Dockerfile stage prefix (<prefix>_<goarch>) to the release payload tag whose image
+    the stage must be built from. cgw_product is the developer-portal product directory in konflux-release-data.
+    """
+
+    payload_parents: Dict[str, str]
+    cgw_product: str
+
+
+BINARIES = {
+    "openshift-install": BinaryProfile(
+        payload_parents={"inst": "installer", "art": "installer-artifacts", "bm": "baremetal-installer"},
+        cgw_product="openshift-install",
+    ),
+}
+
+
 CLIENT_TYPES = {
     "ocp": ClientTypeConfig(shipment_kind="cdn", rpa_prefix="ocp-art-cdn", ga=True),
     "ocp-dev-preview": ClientTypeConfig(
         shipment_kind="cdn-dev-preview", rpa_prefix="ocp-art-cdn-dev-preview", ga=False
     ),
 }
+
+
+def binaries_cdn_enabled(group_config: dict) -> bool:
+    """
+    Return True when group.yml (or the assembly) sets binaries.cdn.enabled: true. Missing means off.
+
+    :param group_config: Group config, assembly overrides applied.
+    """
+    return bool(((group_config.get("binaries") or {}).get("cdn") or {}).get("enabled", False))
 
 
 def cgw_version_file_content(release_name: str, ga: bool, release_date: str) -> str:
@@ -91,27 +119,29 @@ def set_rpa_product_version_name(rpa_text: str, release_name: str) -> str:
     return PRODUCT_VERSION_RE.sub(lambda m: f'{m.group(1)}"{release_name}"', rpa_text)
 
 
-def parse_delivery_dockerfile_parents(dockerfile_text: str) -> Dict[str, Dict[str, str]]:
+def parse_binary_dockerfile_parents(dockerfile_text: str, payload_parents: Dict[str, str]) -> Dict[str, Dict[str, str]]:
     """
-    Return {brew_arch: {payload_tag: digest}} from the FROM --platform lines of a rebased delivery Dockerfile.
+    Return {brew_arch: {payload_tag: digest}} from the FROM --platform lines of a rebased binaries Dockerfile.
 
     :param dockerfile_text: Content of the rebased Dockerfile.
+    :param payload_parents: {stage prefix: payload tag} of the binary, see BinaryProfile.
     """
     parents: Dict[str, Dict[str, str]] = {}
     for line in dockerfile_text.splitlines():
         match = FROM_LINE_RE.match(line.strip())
-        if not match:
+        if not match or match.group(3) not in payload_parents:
             continue
         platform_arch, digest, prefix, stage_arch = match.groups()
         if platform_arch != stage_arch:
             raise ValueError(f"Stage {prefix}_{stage_arch} is built for linux/{platform_arch}: {line}")
-        parents.setdefault(brew_arch_for_go_arch(platform_arch), {})[PAYLOAD_PARENTS[prefix]] = digest
+        parents.setdefault(brew_arch_for_go_arch(platform_arch), {})[payload_parents[prefix]] = digest
     return parents
 
 
-class InstallerCdnReleasePipeline:
+class BinariesCdnReleasePipeline:
     """
-    Build the openshift-install delivery image for one promoted OCP release and ship it to the Konflux CDN.
+    Build one binaries/ member (for example openshift-install) for one promoted OCP release and ship it to the
+    Konflux CDN.
 
     The release values injected into the binaries (release digests per arch and multi, release name) are read
     from the public release payloads, passed to the Konflux build as build args, and the parent images used by
@@ -121,6 +151,7 @@ class InstallerCdnReleasePipeline:
     def __init__(
         self,
         runtime: Runtime,
+        binary: str,
         version: str,
         assembly: str,
         release_name: str,
@@ -133,6 +164,8 @@ class InstallerCdnReleasePipeline:
         poll_seconds: int = 300,
         build_only: bool = False,
     ):
+        if binary not in BINARIES:
+            raise ValueError(f"Unsupported binary {binary!r}; expected one of {sorted(BINARIES)}")
         if client_type not in CLIENT_TYPES:
             raise ValueError(f"Unsupported client type {client_type!r}; expected one of {sorted(CLIENT_TYPES)}")
         if not re.fullmatch(r"\d+\.\d+", version):
@@ -140,6 +173,8 @@ class InstallerCdnReleasePipeline:
         if not release_name.startswith(f"{version}.") or not VersionInfo.is_valid(release_name):
             raise ValueError(f"Release name must be a {version}.Z semver release name, got {release_name!r}")
         self.runtime = runtime
+        self.binary = binary
+        self.profile = BINARIES[binary]
         self.version = version
         self.major, self.minor = version.split(".")
         self.group = f"openshift-{version}"
@@ -171,14 +206,14 @@ class InstallerCdnReleasePipeline:
             "--variant=ocp",
         ]
 
-    async def delivery_image_configured(self) -> bool:
-        cmd = self._doozer_base_command + ["--load-disabled", f"--images={DELIVERY_IMAGE}", "images:list", "--json"]
+    async def binary_configured(self) -> bool:
+        cmd = self._doozer_base_command + [f"--binaries={self.binary}", "binaries:list", "--json"]
         rc, out, err = await exectools.cmd_gather_async(cmd, check=False)
         if rc == 0:
-            return DELIVERY_IMAGE in json.loads(out.strip().splitlines()[-1]).get("images", [])
+            return self.binary in json.loads(out.strip().splitlines()[-1]).get("binaries", [])
         if "were either missing or filtered out" in err:
             return False
-        raise RuntimeError(f"Failed to list {DELIVERY_IMAGE} in {self.group}: {err}")
+        raise RuntimeError(f"Failed to list binaries/{self.binary} in {self.group}: {err}")
 
     async def collect_release_values(self, arches: List[str], multi: bool):
         """
@@ -201,7 +236,7 @@ class InstallerCdnReleasePipeline:
             build_args.append(f"DIGEST_{arch.upper()}={info['digest']}")
             tags = {t["name"]: t["from"]["name"] for t in info["references"]["spec"]["tags"]}
             expected_parents[arch] = {}
-            for tag in PAYLOAD_PARENTS.values():
+            for tag in self.profile.payload_parents.values():
                 if tag not in tags:
                     raise ValueError(f"{pullspec} has no {tag} image")
                 expected_parents[arch][tag] = tags[tag].split("@", 1)[1]
@@ -213,22 +248,22 @@ class InstallerCdnReleasePipeline:
             build_args.append(f"DIGEST_MULTI={info[0]['listDigest']}")
         return build_args, expected_parents
 
-    async def build_delivery_image(self, build_args: List[str]) -> dict:
+    async def build_binary(self, build_args: List[str]) -> dict:
         """
-        Rebase and build the delivery image with the release values as build args; return its record.log entry.
+        Rebase and build the binary with the release values as build args; return its record.log entry.
 
         :param build_args: KEY=VALUE build args for the Konflux build.
         """
-        base = self._doozer_base_command + ["--load-disabled", "--latest-parent-version", f"--images={DELIVERY_IMAGE}"]
+        base = self._doozer_base_command + ["--latest-parent-version", f"--binaries={self.binary}"]
         version = f"v{self.version}.0"
         release = util.default_release_suffix()
-        rebase = base + ["beta:images:konflux:rebase", f"--version={version}", f"--release={release}"]
+        rebase = base + ["beta:binaries:konflux:rebase", f"--version={version}", f"--release={release}"]
         rebase.append(f"--message=Updating Dockerfile version and release {version}-{release} for {self.release_name}")
         if not self.dry_run:
             rebase.append("--push")
         await exectools.cmd_assert_async(rebase)
 
-        build = base + ["beta:images:konflux:build", "--konflux-namespace=ocp-art-tenant"]
+        build = base + ["beta:binaries:konflux:build", "--konflux-namespace=ocp-art-tenant"]
         kubeconfig = os.environ.get("KONFLUX_SA_KUBECONFIG")
         if kubeconfig:
             build.extend(["--konflux-kubeconfig", kubeconfig])
@@ -241,23 +276,23 @@ class InstallerCdnReleasePipeline:
         record_log_path = Path(self.runtime.doozer_working, "record.log")
         with record_log_path.open() as f:
             record_log = record_util.parse_record_log(f)
-        entries = [e for e in record_log.get("image_build_konflux", []) if e.get("name") == DELIVERY_IMAGE]
+        entries = [e for e in record_log.get("binary_build_konflux", []) if e.get("name") == self.binary]
         if not entries or entries[-1].get("status") != "0":
-            raise RuntimeError(f"{DELIVERY_IMAGE} build failed; see {record_log_path}")
+            raise RuntimeError(f"binaries/{self.binary} build failed; see {record_log_path}")
         return entries[-1]
 
-    @staticmethod
-    def verify_parents(dockerfile_text: str, expected_parents: Dict[str, Dict[str, str]]):
+    def verify_parents(self, dockerfile_text: str, expected_parents: Dict[str, Dict[str, str]]):
         """
-        Fail unless the build used exactly the installer, installer-artifacts and baremetal-installer of the payload.
+        Fail unless the build used exactly the payload images of the binary's payload_parents.
 
-        :param dockerfile_text: Content of the rebased delivery Dockerfile.
+        :param dockerfile_text: Content of the rebased binaries Dockerfile.
         :param expected_parents: {brew_arch: {payload_tag: digest}} from the release payloads.
         """
-        actual = parse_delivery_dockerfile_parents(dockerfile_text)
+        actual = parse_binary_dockerfile_parents(dockerfile_text, self.profile.payload_parents)
         if actual != expected_parents:
             raise RuntimeError(
-                f"Delivery image parents do not match the release payload.\nexpected: {expected_parents}\nactual: {actual}"
+                f"binaries/{self.binary} parents do not match the release payload.\n"
+                f"expected: {expected_parents}\nactual: {actual}"
             )
 
     def _gitlab(self) -> GitLabClient:
@@ -275,7 +310,7 @@ class InstallerCdnReleasePipeline:
     async def ensure_cgw_version(self):
         gitlab_client = self._gitlab()
         project = gitlab_client.get_project(KRD_PROJECT)
-        version_path = f"{KRD_CGW_VERSION_DIR}/{self.release_name}.yaml"
+        version_path = f"{KRD_CGW_DIR}/{self.profile.cgw_product}/{self.release_name}.yaml"
         rpa_paths = [f"{KRD_RPA_DIR}/{name}.yaml" for name in self.rpa_names]
         rpa_texts = {path: self._read_file(project, path) for path in rpa_paths}
         missing = [path for path, text in rpa_texts.items() if text is None]
@@ -288,14 +323,14 @@ class InstallerCdnReleasePipeline:
             LOGGER.info("CGW version %s and RPAs %s are already on main", self.release_name, self.rpa_names)
             return
 
-        branch_prefix = f"installer-cdn-{self.major}-{self.minor}/{self.client_type}/"
+        branch_prefix = f"binaries-cdn-{self.major}-{self.minor}/{self.binary}/{self.client_type}/"
         branch = f"{branch_prefix}{self.release_name}"
         open_mrs = gitlab_client.list_merge_requests(KRD_PROJECT, state="opened", project=project, target_branch="main")
         ours = [mr for mr in open_mrs if mr.source_branch.startswith(branch_prefix)]
         others = [mr.web_url for mr in ours if mr.source_branch != branch]
         if others:
             raise RuntimeError(
-                f"Another openshift-install {self.client_type} CGW MR for {self.version} is still open: "
+                f"Another {self.binary} {self.client_type} CGW MR for {self.version} is still open: "
                 f"{', '.join(others)}. Merge or close it (and let its CDN release finish) before {self.release_name}."
             )
         existing = [mr for mr in ours if mr.source_branch == branch]
@@ -322,7 +357,7 @@ class InstallerCdnReleasePipeline:
                             "content": set_rpa_product_version_name(text, self.release_name),
                         }
                     )
-            title = f"openshift-install {self.release_name}: CGW version and {self.client_config.rpa_prefix} RPAs"
+            title = f"{self.binary} {self.release_name}: CGW version and {self.client_config.rpa_prefix} RPAs"
             if self.dry_run:
                 LOGGER.info("[DRY-RUN] Would create branch %s and MR %r with actions %s", branch, title, actions)
                 return
@@ -330,7 +365,7 @@ class InstallerCdnReleasePipeline:
                 {
                     "branch": branch,
                     "start_branch": "main",
-                    "commit_message": f"{title}\n\nCreated by {os.environ.get('BUILD_URL', 'installer-cdn-release')}",
+                    "commit_message": f"{title}\n\nCreated by {os.environ.get('BUILD_URL', 'binaries-cdn-release')}",
                     "actions": actions,
                 }
             )
@@ -340,9 +375,9 @@ class InstallerCdnReleasePipeline:
                     "target_branch": "main",
                     "title": title,
                     "description": (
-                        f"Adds CGW product version `{self.release_name}` for `openshift-install` and points "
+                        f"Adds CGW product version `{self.release_name}` for `{self.profile.cgw_product}` and points "
                         f"{', '.join(self.rpa_names)} at it, so the Konflux CDN release of {self.release_name} "
-                        "publishes to its own version directory. Created by the installer-cdn-release job: "
+                        "publishes to its own version directory. Created by the binaries-cdn-release job: "
                         f"{os.environ.get('BUILD_URL', 'n/a')}"
                     ),
                     "remove_source_branch": True,
@@ -382,16 +417,16 @@ class InstallerCdnReleasePipeline:
         raise TimeoutError(f"sync_cgw did not succeed for {sha} within {self.cgw_mr_timeout_seconds}s")
 
     async def run(self):
-        if not await self.delivery_image_configured():
-            LOGGER.warning("%s has no %s image; nothing to do", self.group, DELIVERY_IMAGE)
+        if not await self.binary_configured():
+            LOGGER.warning("%s has no binaries/%s.yml; nothing to do", self.group, self.binary)
             return
 
         group_config = await util.load_group_config(
             self.group, self.assembly, doozer_data_path=self.data_path, doozer_data_gitref=self.data_gitref
         )
-        if not (group_config.get("cdn_clients") or {}).get("enabled", False) and not self.build_only:
+        if not binaries_cdn_enabled(group_config) and not self.build_only:
             LOGGER.warning(
-                "cdn_clients.enabled is not true for %s (assembly %s); not releasing. Use --build-only to test the build.",
+                "binaries.cdn.enabled is not true for %s (assembly %s); not releasing. Use --build-only to test the build.",
                 self.group,
                 self.assembly,
             )
@@ -403,14 +438,14 @@ class InstallerCdnReleasePipeline:
 
         nvr = self.nvr
         if not nvr:
-            entry = await self.build_delivery_image(build_args)
+            entry = await self.build_binary(build_args)
             if not self.dry_run:
                 self.verify_parents(Path(entry["dockerfile"]).read_text(), expected_parents)
             nvr = entry.get("nvrs", "").split(",")[0]
             if self.dry_run and (not nvr or nvr == "n/a"):
                 LOGGER.info("[DRY-RUN] No NVR built; stopping before the release steps")
                 return
-        LOGGER.info("Delivery image NVR: %s", nvr)
+        LOGGER.info("binaries/%s NVR: %s", self.binary, nvr)
         if self.build_only:
             LOGGER.info("--build-only: not releasing %s", nvr)
             return
@@ -436,7 +471,8 @@ class InstallerCdnReleasePipeline:
         await pipeline.run()
 
 
-@cli.command("installer-cdn-release")
+@cli.command("binaries-cdn-release")
+@click.option("--binary", required=True, type=click.Choice(sorted(BINARIES)), help="binaries/ member to ship")
 @click.option("--version", "version", required=True, help="OCP MAJOR.MINOR, e.g. 4.22")
 @click.option("--assembly", required=True, help="Assembly that was promoted, e.g. 4.22.18")
 @click.option("--release-name", required=True, help="Promoted release name, e.g. 4.22.18 or 4.23.0-ec.1")
@@ -448,16 +484,17 @@ class InstallerCdnReleasePipeline:
 )
 @click.option("--data-path", default=constants.OCP_BUILD_DATA_URL, help="ocp-build-data repo to use")
 @click.option("--data-gitref", default="", help="Git ref of ocp-build-data to use")
-@click.option("--nvr", default=None, help="Release this delivery image NVR instead of building a new one")
+@click.option("--nvr", default=None, help="Release this binaries build NVR instead of building a new one")
 @click.option("--skip-cgw-mr", is_flag=True, help="Do not create or wait for the konflux-release-data MR")
 @click.option("--cgw-mr-timeout-hours", type=float, default=24.0, help="How long to wait for the MR and sync_cgw")
 @click.option(
-    "--build-only", is_flag=True, help="Build and verify the delivery image, then stop before any release step"
+    "--build-only", is_flag=True, help="Build and verify the binaries image, then stop before any release step"
 )
 @pass_runtime
 @click_coroutine
-async def installer_cdn_release(
+async def binaries_cdn_release(
     runtime: Runtime,
+    binary: str,
     version: str,
     assembly: str,
     release_name: str,
@@ -470,13 +507,15 @@ async def installer_cdn_release(
     build_only: bool,
 ):
     """
-    Build the openshift-install delivery image for a promoted release and ship it through Konflux push-artifacts-to-cdn.
+    Build a binaries/ member for a promoted release and ship it through Konflux push-artifacts-to-cdn.
 
     \b
-    $ artcd installer-cdn-release --version 4.22 --assembly 4.22.18 --release-name 4.22.18 --client-type ocp
+    $ artcd binaries-cdn-release --binary openshift-install --version 4.22 --assembly 4.22.18 \\
+        --release-name 4.22.18 --client-type ocp
     """
-    pipeline = InstallerCdnReleasePipeline(
+    pipeline = BinariesCdnReleasePipeline(
         runtime=runtime,
+        binary=binary,
         version=version,
         assembly=assembly,
         release_name=release_name,

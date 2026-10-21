@@ -1663,6 +1663,28 @@ class TestKonfluxImageBuilder(unittest.IsolatedAsyncioTestCase):
         self.assertIn("Target NVR", kwargs["message"])
         self.assertNotEqual(kwargs["message"], "Unknown failure")
 
+    async def test_build_records_binaries_under_their_own_record_type(self):
+        for kind, expected in (("image", "image_build_konflux"), ("binary", "binary_build_konflux")):
+            with self.subTest(kind=kind):
+                metadata = self._metadata()
+                metadata.kind = kind
+                dest_dir = self.builder._config.base_dir.joinpath(metadata.qualified_key)
+                dest_dir.mkdir(parents=True, exist_ok=True)
+                build_repo = MagicMock()
+                build_repo.local_dir = dest_dir
+                record_logger = MagicMock()
+                self.builder._record_logger = record_logger
+                with (
+                    patch(
+                        "doozerlib.backend.konflux_image_builder.BuildRepo.from_local_dir",
+                        new=AsyncMock(return_value=build_repo),
+                    ),
+                    patch.object(self.builder, "_parse_dockerfile", side_effect=ValueError("stop")),
+                ):
+                    with self.assertRaises(ValueError):
+                        await self.builder.build(metadata)
+                self.assertEqual(record_logger.add_record.call_args.args[0], expected)
+
     async def test_build_skips_nvr_ordering_check_when_ignore_incorrect_nvr_set(self):
         """When ignore_incorrect_nvr is set in assembly config, a lower NVR should be accepted."""
         metadata = self._metadata()

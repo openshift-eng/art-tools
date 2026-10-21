@@ -47,7 +47,7 @@ class Jobs(Enum):
     MICROSHIFT_SYNC = 'aos-cd-builds/build%2Fmicroshift_sync'
     CINCINNATI_PRS = 'aos-cd-builds/build%2Fcincinnati-prs'
     RHCOS_SYNC = 'aos-cd-builds/build%2Frhcos_sync'
-    INSTALLER_CDN_RELEASE = 'aos-cd-builds/build%2Finstaller-cdn-release'
+    BINARIES_CDN_RELEASE = 'aos-cd-builds/build%2Fbinaries-cdn-release'
     BUILD_PLASHETS = 'aos-cd-builds/build%2Fbuild-plashets'
     BUILD_FBC = 'aos-cd-builds/build%2Fbuild-fbc'
     LAYERED_PRODUCTS = 'aos-cd-builds/build%2Flayered-products'
@@ -833,12 +833,13 @@ def start_build_microshift_bootc(
     )
 
 
-def start_installer_cdn_release(
-    build_version: str, assembly: str, release_name: str, client_type: str, dry_run: bool, **kwargs
+def start_binaries_cdn_release(
+    binary: str, build_version: str, assembly: str, release_name: str, client_type: str, dry_run: bool, **kwargs
 ) -> Optional[str]:
     """
-    Start the installer-cdn-release job for a promoted release.
+    Start the binaries-cdn-release job for one binaries/ member of a promoted release.
 
+    :param binary: binaries/ member, e.g. openshift-install.
     :param build_version: OCP MAJOR.MINOR, e.g. 4.22.
     :param assembly: Promoted assembly name.
     :param release_name: Promoted release name.
@@ -846,8 +847,9 @@ def start_installer_cdn_release(
     :param dry_run: Run the job in dry-run mode.
     """
     return start_build(
-        job=Jobs.INSTALLER_CDN_RELEASE,
+        job=Jobs.BINARIES_CDN_RELEASE,
         params={
+            'BINARY': binary,
             'BUILD_VERSION': build_version,
             'ASSEMBLY': assembly,
             'RELEASE_NAME': release_name,

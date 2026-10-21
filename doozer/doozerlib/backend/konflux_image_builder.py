@@ -156,7 +156,7 @@ class KonfluxImageBuilder:
         """Build a container image with Konflux."""
         logger = self._logger.getChild(f"[{metadata.distgit_key}]")
         report = get_reporter().component(
-            'image', metadata.distgit_key, display_name=metadata.distgit_key, dry_run=self._config.dry_run
+            metadata.kind, metadata.distgit_key, display_name=metadata.distgit_key, dry_run=self._config.dry_run
         )
         await report.set_status('Pending')
         metadata.build_status = False
@@ -583,7 +583,9 @@ class KonfluxImageBuilder:
 
         finally:
             if self._record_logger:
-                if 'okd' in self._config.group_name:
+                if metadata.kind == 'binary':
+                    key = 'binary_build_konflux'
+                elif 'okd' in self._config.group_name:
                     key = 'image_build_okd'
                 else:
                     key = 'image_build_konflux'

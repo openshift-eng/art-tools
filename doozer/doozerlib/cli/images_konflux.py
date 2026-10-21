@@ -105,8 +105,10 @@ class KonfluxRebaseCli:
         push: bool,
         lockfile_seed_nvrs: Optional[List[str]] = None,
         extra_labels: Optional[dict[str, str]] = None,
+        kind: str = "image",
     ):
         self.runtime = runtime
+        self.kind = kind
         self.version = version
         self.release = release
         self.embargoed = embargoed
@@ -124,9 +126,13 @@ class KonfluxRebaseCli:
     @start_as_current_span_async(TRACER, "beta:images:konflux:rebase")
     async def run(self):
         runtime = self.runtime
-        runtime.initialize(mode='images', clone_distgits=False, build_system='konflux')
+        if self.kind == "binary":
+            runtime.initialize(mode='binaries', clone_distgits=False, build_system='konflux')
+            metas = runtime.binary_metas()
+        else:
+            runtime.initialize(mode='images', clone_distgits=False, build_system='konflux')
+            metas = runtime.ordered_image_metas()
         assert runtime.source_resolver is not None, "source_resolver is required for this command"
-        metas = runtime.ordered_image_metas()
 
         # Update span name to include metas count
         span = trace.get_current_span()
@@ -152,7 +158,7 @@ class KonfluxRebaseCli:
             await rebaser.rpm_lockfile_generator.ensure_repositories_loaded(art_internal_metas, base_dir)
 
         async def rebase_one(meta):
-            report = get_reporter().component('image', meta.distgit_key)
+            report = get_reporter().component(meta.kind, meta.distgit_key)
             async with report.preparing():
                 return await rebaser.rebase_to(
                     meta,
@@ -335,8 +341,10 @@ class KonfluxBuildCli:
         skip_custom_its: bool = False,
         skip_tasks: tuple[str, ...] = (),
         extra_build_args: tuple[str, ...] = (),
+        kind: str = "image",
     ):
         self.runtime = runtime
+        self.kind = kind
         self.konflux_kubeconfig = konflux_kubeconfig
         self.konflux_context = konflux_context
         self.konflux_namespace = konflux_namespace
@@ -359,11 +367,15 @@ class KonfluxBuildCli:
         runtime = self.runtime
 
         # OKD configuration is automatically merged in get_group_config() when variant=okd
-        runtime.initialize(mode='images', clone_distgits=False)
+        if self.kind == "binary":
+            runtime.initialize(mode='binaries', clone_distgits=False)
+            metas = runtime.binary_metas()
+        else:
+            runtime.initialize(mode='images', clone_distgits=False)
+            metas = _filter_okd_excluded_metas(runtime, runtime.ordered_image_metas())
 
         runtime.konflux_db.bind(KonfluxBuildRecord)
         assert runtime.source_resolver is not None, "source_resolver is not initialized. Doozer bug?"
-        metas = _filter_okd_excluded_metas(runtime, runtime.ordered_image_metas())
 
         # Update span name to include metas count
         span = trace.get_current_span()

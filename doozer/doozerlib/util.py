@@ -540,6 +540,27 @@ def konflux_image_component_name(application_name: str, image_name: str) -> str:
     return name
 
 
+def konflux_binary_component_name(application_name: str, binary_name: str) -> str:
+    """
+    Konflux Component name for a binaries/ member, given the Application slug.
+
+    'openshift-4-22' + 'openshift-install' -> 'ose-4-22-openshift-install-binaries'
+
+    :param application_name: Konflux Application slug, e.g. openshift-4-22.
+    :param binary_name: The binary's distgit key, e.g. openshift-install.
+    """
+    return f"{konflux_image_component_name(application_name, binary_name)}-binaries"
+
+
+def binary_component_name(binary_name: str) -> str:
+    """
+    Default NVR component (com.redhat.component) of a binaries/ member: <name>-binaries-container.
+
+    :param binary_name: The binary's distgit name, e.g. openshift-install.
+    """
+    return f"{binary_name}-binaries-container"
+
+
 def konflux_golang_builder_component_name(nvr: str) -> str:
     """
     Konflux Component name for a golang-builder image derived from build NVR.

@@ -7,14 +7,18 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 from gitlab.exceptions import GitlabGetError
 from pyartcd.cli import cli
-from pyartcd.pipelines import installer_cdn_release as icr
-from pyartcd.pipelines.installer_cdn_release import (
-    InstallerCdnReleasePipeline,
+from pyartcd.pipelines import binaries_cdn_release as icr
+from pyartcd.pipelines.binaries_cdn_release import (
+    BINARIES,
+    BinariesCdnReleasePipeline,
+    binaries_cdn_enabled,
     cgw_version_file_content,
-    parse_delivery_dockerfile_parents,
+    parse_binary_dockerfile_parents,
     rpa_product_version_name,
     set_rpa_product_version_name,
 )
+
+from pyartcd import constants
 
 ARCHES = {"x86_64": "amd64", "aarch64": "arm64", "ppc64le": "ppc64le", "s390x": "s390x"}
 PREFIX_TAG = {"inst": "installer", "art": "installer-artifacts", "bm": "baremetal-installer"}
@@ -44,9 +48,9 @@ spec:
   data:
     mapping:
       components:
-        - name: ose-4-22-openshift-install-delivery
+        - name: ose-4-22-openshift-install-binaries
           contentGateway:
-            productName: "openshift-install"
+            productName: "RHOSE - OpenShift Installer"
             productCode: "openshift-install"
             productVersionName: "{version}"
 """
@@ -60,9 +64,10 @@ def _runtime(working_dir: str, dry_run: bool = False):
     return runtime
 
 
-def _pipeline(working_dir: str, client_type: str = "ocp", **kwargs) -> InstallerCdnReleasePipeline:
-    return InstallerCdnReleasePipeline(
+def _pipeline(working_dir: str, client_type: str = "ocp", **kwargs) -> BinariesCdnReleasePipeline:
+    return BinariesCdnReleasePipeline(
         runtime=_runtime(working_dir, kwargs.pop("dry_run", False)),
+        binary=kwargs.pop("binary", "openshift-install"),
         version=kwargs.pop("version", "4.22"),
         assembly="4.22.18",
         release_name=kwargs.pop("release_name", "4.22.18"),
@@ -97,20 +102,38 @@ class TestHelpers(TestCase):
         with self.assertRaises(ValueError):
             set_rpa_product_version_name(twice, "c")
 
-    def test_parse_delivery_dockerfile_parents_reads_all_twelve_parents(self):
-        self.assertEqual(parse_delivery_dockerfile_parents(REBASED_DOCKERFILE), EXPECTED_PARENTS)
+    def test_parse_binary_dockerfile_parents_reads_all_twelve_parents(self):
+        self.assertEqual(parse_binary_dockerfile_parents(REBASED_DOCKERFILE, PREFIX_TAG), EXPECTED_PARENTS)
 
-    def test_parse_delivery_dockerfile_parents_rejects_platform_stage_mismatch(self):
+    def test_parse_binary_dockerfile_parents_ignores_stages_of_other_prefixes(self):
+        extra = f"FROM --platform=linux/amd64 quay.io/x/y@{_digest('x86_64', 'cli')} AS cli_amd64\n"
+        self.assertEqual(parse_binary_dockerfile_parents(extra + REBASED_DOCKERFILE, PREFIX_TAG), EXPECTED_PARENTS)
+
+    def test_parse_binary_dockerfile_parents_rejects_platform_stage_mismatch(self):
         bad = f"FROM --platform=linux/arm64 quay.io/x/y@{_digest('x86_64', 'installer')} AS inst_amd64\n"
         with self.assertRaises(ValueError):
-            parse_delivery_dockerfile_parents(bad)
+            parse_binary_dockerfile_parents(bad, PREFIX_TAG)
 
     def test_verify_parents_fails_on_mismatch(self):
         wrong = {arch: dict(tags) for arch, tags in EXPECTED_PARENTS.items()}
         wrong["s390x"]["installer"] = "sha256:" + "0" * 64
-        InstallerCdnReleasePipeline.verify_parents(REBASED_DOCKERFILE, EXPECTED_PARENTS)
-        with self.assertRaises(RuntimeError):
-            InstallerCdnReleasePipeline.verify_parents(REBASED_DOCKERFILE, wrong)
+        with tempfile.TemporaryDirectory() as tmp:
+            pipeline = _pipeline(tmp)
+            pipeline.verify_parents(REBASED_DOCKERFILE, EXPECTED_PARENTS)
+            with self.assertRaises(RuntimeError):
+                pipeline.verify_parents(REBASED_DOCKERFILE, wrong)
+
+    def test_binaries_profiles(self):
+        self.assertEqual(sorted(BINARIES), sorted(constants.CDN_BINARIES))
+        self.assertEqual(BINARIES["openshift-install"].payload_parents, PREFIX_TAG)
+        self.assertEqual(BINARIES["openshift-install"].cgw_product, "openshift-install")
+
+    def test_binaries_cdn_enabled(self):
+        self.assertTrue(binaries_cdn_enabled({"binaries": {"cdn": {"enabled": True}}}))
+        for config in ({}, {"binaries": None}, {"binaries": {}}, {"binaries": {"cdn": {"enabled": False}}}):
+            with self.subTest(config=config):
+                self.assertFalse(binaries_cdn_enabled(config))
+        self.assertFalse(binaries_cdn_enabled({"cdn_clients": {"enabled": True}}))
 
     def test_constructor_derives_names_per_client_type(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -127,6 +150,8 @@ class TestHelpers(TestCase):
                 _pipeline(tmp, client_type="ocp-nightly")
             with self.assertRaises(ValueError):
                 _pipeline(tmp, version="4.22.18")
+            with self.assertRaises(ValueError):
+                _pipeline(tmp, binary="opm")
 
     def test_constructor_rejects_release_names_outside_the_version(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -136,7 +161,9 @@ class TestHelpers(TestCase):
             self.assertEqual(_pipeline(tmp, release_name="4.22.0-rc.1").release_name, "4.22.0-rc.1")
 
     def test_cli_command_registered(self):
-        self.assertIn("installer-cdn-release", cli.commands)
+        self.assertIn("binaries-cdn-release", cli.commands)
+        self.assertNotIn("installer-cdn-release", cli.commands)
+        self.assertEqual([p.name for p in cli.commands["binaries-cdn-release"].params][:2], ["binary", "version"])
 
 
 class TestCollectAndBuild(IsolatedAsyncioTestCase):
@@ -158,8 +185,8 @@ class TestCollectAndBuild(IsolatedAsyncioTestCase):
             },
         }
 
-    @patch("pyartcd.pipelines.installer_cdn_release.oc.get_image_info", new_callable=AsyncMock)
-    @patch("pyartcd.pipelines.installer_cdn_release.oc.get_release_image_info", new_callable=AsyncMock)
+    @patch("pyartcd.pipelines.binaries_cdn_release.oc.get_image_info", new_callable=AsyncMock)
+    @patch("pyartcd.pipelines.binaries_cdn_release.oc.get_release_image_info", new_callable=AsyncMock)
     async def test_collect_release_values_all_flavors(self, get_release_image_info, get_image_info):
         get_release_image_info.side_effect = lambda pullspec, **_: self._release_info(pullspec.rsplit("-", 1)[1])
         get_image_info.return_value = [{"listDigest": "sha256:multilist"}]
@@ -180,7 +207,7 @@ class TestCollectAndBuild(IsolatedAsyncioTestCase):
         get_image_info.assert_awaited_once()
         self.assertEqual(get_image_info.await_args.args[0], "quay.io/openshift-release-dev/ocp-release:4.22.18-multi")
 
-    @patch("pyartcd.pipelines.installer_cdn_release.oc.get_release_image_info", new_callable=AsyncMock)
+    @patch("pyartcd.pipelines.binaries_cdn_release.oc.get_release_image_info", new_callable=AsyncMock)
     async def test_collect_release_values_rejects_wrong_version(self, get_release_image_info):
         info = self._release_info("x86_64")
         info["metadata"]["version"] = "4.22.17"
@@ -189,45 +216,51 @@ class TestCollectAndBuild(IsolatedAsyncioTestCase):
             with self.assertRaises(ValueError):
                 await _pipeline(tmp).collect_release_values(["x86_64"], False)
 
-    @patch("pyartcd.pipelines.installer_cdn_release.exectools.cmd_gather_async", new_callable=AsyncMock)
-    async def test_delivery_image_configured(self, cmd_gather_async):
+    @patch("pyartcd.pipelines.binaries_cdn_release.exectools.cmd_gather_async", new_callable=AsyncMock)
+    async def test_binary_configured(self, cmd_gather_async):
         with tempfile.TemporaryDirectory() as tmp:
             pipeline = _pipeline(tmp)
-            cmd_gather_async.return_value = (0, '{"images": ["openshift-install-delivery"]}\n', "")
-            self.assertTrue(await pipeline.delivery_image_configured())
+            cmd_gather_async.return_value = (0, '{"binaries": ["openshift-install"]}\n', "")
+            self.assertTrue(await pipeline.binary_configured())
             cmd = cmd_gather_async.await_args.args[0]
-            self.assertIn("--load-disabled", cmd)
-            self.assertIn("--images=openshift-install-delivery", cmd)
+            self.assertEqual(cmd[-3:], ["--binaries=openshift-install", "binaries:list", "--json"])
+            self.assertNotIn("--load-disabled", cmd)
+            self.assertFalse(any(arg.startswith("--images") for arg in cmd))
             cmd_gather_async.return_value = (
                 1,
                 "",
-                "The following images or rpms were either missing or filtered out: openshift-install-delivery",
+                "The following binaries were either missing or filtered out: openshift-install",
             )
-            self.assertFalse(await pipeline.delivery_image_configured())
+            self.assertFalse(await pipeline.binary_configured())
             cmd_gather_async.return_value = (1, "", "boom")
             with self.assertRaises(RuntimeError):
-                await pipeline.delivery_image_configured()
+                await pipeline.binary_configured()
 
-    @patch("pyartcd.pipelines.installer_cdn_release.exectools.cmd_assert_async", new_callable=AsyncMock)
-    async def test_build_delivery_image_passes_build_args_and_reads_record_log(self, cmd_assert_async):
+    @patch("pyartcd.pipelines.binaries_cdn_release.exectools.cmd_assert_async", new_callable=AsyncMock)
+    async def test_build_binary_passes_build_args_and_reads_record_log(self, cmd_assert_async):
         with tempfile.TemporaryDirectory() as tmp:
             pipeline = _pipeline(tmp)
             os.makedirs(pipeline.runtime.doozer_working)
             Path(pipeline.runtime.doozer_working, "record.log").write_text(
-                "image_build_konflux|name=other|status=0|nvrs=other-1-1|\n"
-                "image_build_konflux|name=openshift-install-delivery|status=0|"
-                "nvrs=openshift-install-delivery-container-v4.22.0-1.p2.assembly.4.22.18.el9|dockerfile=/df|\n"
+                "image_build_konflux|name=openshift-install|status=0|nvrs=other-1-1|\n"
+                "binary_build_konflux|name=other|status=0|nvrs=other-1-1|\n"
+                "binary_build_konflux|name=openshift-install|status=0|"
+                "nvrs=openshift-install-binaries-container-v4.22.0-1.p2.assembly.4.22.18.el9|dockerfile=/df|\n"
             )
             with patch.dict(os.environ, {"KONFLUX_SA_KUBECONFIG": "/kc"}):
-                entry = await pipeline.build_delivery_image(["RELEASE_VERSION=4.22.18", "DIGEST_MULTI=sha256:m"])
+                entry = await pipeline.build_binary(["RELEASE_VERSION=4.22.18", "DIGEST_MULTI=sha256:m"])
         rebase_cmd, build_cmd = [c.args[0] for c in cmd_assert_async.await_args_list]
-        self.assertIn("beta:images:konflux:rebase", rebase_cmd)
+        self.assertIn("beta:binaries:konflux:rebase", rebase_cmd)
         self.assertIn("--push", rebase_cmd)
-        self.assertIn("--latest-parent-version", build_cmd)
+        for cmd in (rebase_cmd, build_cmd):
+            self.assertIn("--latest-parent-version", cmd)
+            self.assertIn("--binaries=openshift-install", cmd)
+            self.assertNotIn("--load-disabled", cmd)
+            self.assertFalse(any(arg.startswith("--images") for arg in cmd))
         self.assertEqual(
-            build_cmd[build_cmd.index("beta:images:konflux:build") :],
+            build_cmd[build_cmd.index("beta:binaries:konflux:build") :],
             [
-                "beta:images:konflux:build",
+                "beta:binaries:konflux:build",
                 "--konflux-namespace=ocp-art-tenant",
                 "--konflux-kubeconfig",
                 "/kc",
@@ -237,18 +270,18 @@ class TestCollectAndBuild(IsolatedAsyncioTestCase):
                 "DIGEST_MULTI=sha256:m",
             ],
         )
-        self.assertEqual(entry["nvrs"], "openshift-install-delivery-container-v4.22.0-1.p2.assembly.4.22.18.el9")
+        self.assertEqual(entry["nvrs"], "openshift-install-binaries-container-v4.22.0-1.p2.assembly.4.22.18.el9")
 
-    @patch("pyartcd.pipelines.installer_cdn_release.exectools.cmd_assert_async", new_callable=AsyncMock)
-    async def test_build_delivery_image_fails_when_build_failed(self, cmd_assert_async):
+    @patch("pyartcd.pipelines.binaries_cdn_release.exectools.cmd_assert_async", new_callable=AsyncMock)
+    async def test_build_binary_fails_when_build_failed(self, cmd_assert_async):
         with tempfile.TemporaryDirectory() as tmp:
             pipeline = _pipeline(tmp)
             os.makedirs(pipeline.runtime.doozer_working)
             Path(pipeline.runtime.doozer_working, "record.log").write_text(
-                "image_build_konflux|name=openshift-install-delivery|status=-1|nvrs=n/a|\n"
+                "binary_build_konflux|name=openshift-install|status=-1|nvrs=n/a|\n"
             )
             with self.assertRaises(RuntimeError):
-                await pipeline.build_delivery_image(["RELEASE_VERSION=4.22.18"])
+                await pipeline.build_binary(["RELEASE_VERSION=4.22.18"])
 
 
 class TestEnsureCgwVersion(IsolatedAsyncioTestCase):
@@ -256,12 +289,12 @@ class TestEnsureCgwVersion(IsolatedAsyncioTestCase):
         self.tmp = tempfile.TemporaryDirectory()
         self.addCleanup(self.tmp.cleanup)
         self.enterContext(patch.dict(os.environ, {"GITLAB_TOKEN": "t", "BUILD_URL": "https://jenkins/job/1"}))
-        self.enterContext(patch("pyartcd.pipelines.installer_cdn_release.asyncio.sleep", new_callable=AsyncMock))
+        self.enterContext(patch("pyartcd.pipelines.binaries_cdn_release.asyncio.sleep", new_callable=AsyncMock))
         self.project = MagicMock()
         self.gitlab = MagicMock()
         self.gitlab.get_project.return_value = self.project
         self.gitlab.list_merge_requests.return_value = []
-        self.enterContext(patch.object(InstallerCdnReleasePipeline, "_gitlab", return_value=self.gitlab))
+        self.enterContext(patch.object(BinariesCdnReleasePipeline, "_gitlab", return_value=self.gitlab))
         self.files = {}
         self.project.files.get.side_effect = self._get_file
 
@@ -288,7 +321,7 @@ class TestEnsureCgwVersion(IsolatedAsyncioTestCase):
 
     async def test_noop_when_main_is_already_up_to_date(self):
         self._set_rpas("4.22.18")
-        self.files[f"{icr.KRD_CGW_VERSION_DIR}/4.22.18.yaml"] = "x"
+        self.files[f"{icr.KRD_CGW_DIR}/openshift-install/4.22.18.yaml"] = "x"
         await _pipeline(self.tmp.name).ensure_cgw_version()
         self.project.commits.create.assert_not_called()
         self.project.mergerequests.create.assert_not_called()
@@ -301,10 +334,10 @@ class TestEnsureCgwVersion(IsolatedAsyncioTestCase):
             dt.now.return_value.strftime.return_value = "2026-10-20"
             await _pipeline(self.tmp.name).ensure_cgw_version()
         commit = self.project.commits.create.call_args.args[0]
-        self.assertEqual(commit["branch"], "installer-cdn-4-22/ocp/4.22.18")
+        self.assertEqual(commit["branch"], "binaries-cdn-4-22/openshift-install/ocp/4.22.18")
         self.assertEqual(commit["start_branch"], "main")
         actions = {a["file_path"]: a for a in commit["actions"]}
-        version_action = actions[f"{icr.KRD_CGW_VERSION_DIR}/4.22.18.yaml"]
+        version_action = actions["data/external/developer-portal/openshift-install/4.22.18.yaml"]
         self.assertEqual(version_action["action"], "create")
         self.assertEqual(version_action["content"], cgw_version_file_content("4.22.18", True, "2026-10-20"))
         for env in ("stage", "prod"):
@@ -316,7 +349,9 @@ class TestEnsureCgwVersion(IsolatedAsyncioTestCase):
 
     async def test_refuses_when_another_release_mr_is_open(self):
         self._set_rpas("4.22.17")
-        other = MagicMock(source_branch="installer-cdn-4-22/ocp/4.22.17", web_url="https://gitlab/mr/6")
+        other = MagicMock(
+            source_branch="binaries-cdn-4-22/openshift-install/ocp/4.22.17", web_url="https://gitlab/mr/6"
+        )
         self.gitlab.list_merge_requests.return_value = [other]
         with self.assertRaises(RuntimeError) as ctx:
             await _pipeline(self.tmp.name).ensure_cgw_version()
@@ -326,7 +361,8 @@ class TestEnsureCgwVersion(IsolatedAsyncioTestCase):
     async def test_open_dev_preview_mr_does_not_block_ga(self):
         self._set_rpas("4.22.17")
         preview = MagicMock(
-            source_branch="installer-cdn-4-22/ocp-dev-preview/4.22.0-ec.5", web_url="https://gitlab/mr/7"
+            source_branch="binaries-cdn-4-22/openshift-install/ocp-dev-preview/4.22.0-ec.5",
+            web_url="https://gitlab/mr/7",
         )
         self.gitlab.list_merge_requests.return_value = [preview]
         self.project.mergerequests.create.return_value = self._merged_mr()
@@ -336,7 +372,7 @@ class TestEnsureCgwVersion(IsolatedAsyncioTestCase):
     async def test_reuses_open_mr_for_same_release(self):
         self._set_rpas("4.22.17")
         mr = self._merged_mr()
-        mr.source_branch = "installer-cdn-4-22/ocp/4.22.18"
+        mr.source_branch = "binaries-cdn-4-22/openshift-install/ocp/4.22.18"
         self.gitlab.list_merge_requests.return_value = [mr]
         await _pipeline(self.tmp.name).ensure_cgw_version()
         self.project.commits.create.assert_not_called()
@@ -386,25 +422,25 @@ class TestRun(IsolatedAsyncioTestCase):
         self.load_group_config.return_value = {
             "arches": ["x86_64"],
             "multi_arch": {"enabled": False},
-            "cdn_clients": {"enabled": True},
+            "binaries": {"cdn": {"enabled": True}},
         }
 
-    async def test_noop_when_image_not_configured(self):
+    async def test_noop_when_binary_not_configured(self):
         pipeline = _pipeline(self.tmp.name)
-        pipeline.delivery_image_configured = AsyncMock(return_value=False)
-        pipeline.build_delivery_image = AsyncMock()
+        pipeline.binary_configured = AsyncMock(return_value=False)
+        pipeline.build_binary = AsyncMock()
         await pipeline.run()
-        pipeline.build_delivery_image.assert_not_awaited()
+        pipeline.build_binary.assert_not_awaited()
         self.binary.assert_not_called()
 
     async def test_builds_verifies_and_releases(self):
         pipeline = _pipeline(self.tmp.name)
         df = Path(self.tmp.name, "Dockerfile")
         df.write_text(REBASED_DOCKERFILE)
-        pipeline.delivery_image_configured = AsyncMock(return_value=True)
+        pipeline.binary_configured = AsyncMock(return_value=True)
         pipeline.collect_release_values = AsyncMock(return_value=(["RELEASE_VERSION=4.22.18"], EXPECTED_PARENTS))
-        nvr = "openshift-install-delivery-container-v4.22.0-1.p2.assembly.4.22.18.el9"
-        pipeline.build_delivery_image = AsyncMock(return_value={"nvrs": nvr, "dockerfile": str(df)})
+        nvr = "openshift-install-binaries-container-v4.22.0-1.p2.assembly.4.22.18.el9"
+        pipeline.build_binary = AsyncMock(return_value={"nvrs": nvr, "dockerfile": str(df)})
         pipeline.ensure_cgw_version = AsyncMock()
         await pipeline.run()
         pipeline.collect_release_values.assert_awaited_once_with(["x86_64"], False)
@@ -417,29 +453,29 @@ class TestRun(IsolatedAsyncioTestCase):
         self.assertTrue(kwargs["create_mr"])
         self.binary.return_value.run.assert_awaited_once()
 
-    async def test_noop_when_cdn_clients_disabled(self):
-        for group_config in ({"arches": ["x86_64"]}, {"arches": ["x86_64"], "cdn_clients": {"enabled": False}}):
+    async def test_noop_when_binaries_cdn_disabled(self):
+        for group_config in ({"arches": ["x86_64"]}, {"arches": ["x86_64"], "binaries": {"cdn": {"enabled": False}}}):
             self.load_group_config.return_value = group_config
             pipeline = _pipeline(self.tmp.name)
-            pipeline.delivery_image_configured = AsyncMock(return_value=True)
+            pipeline.binary_configured = AsyncMock(return_value=True)
             pipeline.collect_release_values = AsyncMock()
-            pipeline.build_delivery_image = AsyncMock()
+            pipeline.build_binary = AsyncMock()
             await pipeline.run()
             pipeline.collect_release_values.assert_not_awaited()
-            pipeline.build_delivery_image.assert_not_awaited()
+            pipeline.build_binary.assert_not_awaited()
             self.binary.assert_not_called()
 
-    async def test_build_only_runs_when_cdn_clients_disabled(self):
-        self.load_group_config.return_value = {"arches": ["x86_64"], "cdn_clients": {"enabled": False}}
+    async def test_build_only_runs_when_binaries_cdn_disabled(self):
+        self.load_group_config.return_value = {"arches": ["x86_64"], "binaries": {"cdn": {"enabled": False}}}
         pipeline = _pipeline(self.tmp.name, build_only=True)
         df = Path(self.tmp.name, "Dockerfile")
         df.write_text(REBASED_DOCKERFILE)
-        pipeline.delivery_image_configured = AsyncMock(return_value=True)
+        pipeline.binary_configured = AsyncMock(return_value=True)
         pipeline.collect_release_values = AsyncMock(return_value=(["RELEASE_VERSION=4.22.18"], EXPECTED_PARENTS))
-        pipeline.build_delivery_image = AsyncMock(return_value={"nvrs": "x-1-1.el9", "dockerfile": str(df)})
+        pipeline.build_binary = AsyncMock(return_value={"nvrs": "x-1-1.el9", "dockerfile": str(df)})
         pipeline.ensure_cgw_version = AsyncMock()
         await pipeline.run()
-        pipeline.build_delivery_image.assert_awaited_once()
+        pipeline.build_binary.assert_awaited_once()
         pipeline.ensure_cgw_version.assert_not_awaited()
         self.binary.assert_not_called()
 
@@ -447,12 +483,12 @@ class TestRun(IsolatedAsyncioTestCase):
         pipeline = _pipeline(self.tmp.name, build_only=True)
         df = Path(self.tmp.name, "Dockerfile")
         df.write_text(REBASED_DOCKERFILE)
-        pipeline.delivery_image_configured = AsyncMock(return_value=True)
+        pipeline.binary_configured = AsyncMock(return_value=True)
         pipeline.collect_release_values = AsyncMock(return_value=(["RELEASE_VERSION=4.22.18"], EXPECTED_PARENTS))
-        pipeline.build_delivery_image = AsyncMock(return_value={"nvrs": "x-1-1.el9", "dockerfile": str(df)})
+        pipeline.build_binary = AsyncMock(return_value={"nvrs": "x-1-1.el9", "dockerfile": str(df)})
         pipeline.ensure_cgw_version = AsyncMock()
         await pipeline.run()
-        pipeline.build_delivery_image.assert_awaited_once()
+        pipeline.build_binary.assert_awaited_once()
         pipeline.ensure_cgw_version.assert_not_awaited()
         self.binary.assert_not_called()
 
@@ -462,9 +498,9 @@ class TestRun(IsolatedAsyncioTestCase):
         df.write_text(REBASED_DOCKERFILE)
         wrong = {arch: dict(tags) for arch, tags in EXPECTED_PARENTS.items()}
         wrong["x86_64"]["installer"] = "sha256:" + "1" * 64
-        pipeline.delivery_image_configured = AsyncMock(return_value=True)
+        pipeline.binary_configured = AsyncMock(return_value=True)
         pipeline.collect_release_values = AsyncMock(return_value=(["RELEASE_VERSION=4.22.18"], wrong))
-        pipeline.build_delivery_image = AsyncMock(return_value={"nvrs": "x-1-1.el9", "dockerfile": str(df)})
+        pipeline.build_binary = AsyncMock(return_value={"nvrs": "x-1-1.el9", "dockerfile": str(df)})
         pipeline.ensure_cgw_version = AsyncMock()
         with self.assertRaises(RuntimeError):
             await pipeline.run()
@@ -477,15 +513,15 @@ class TestRun(IsolatedAsyncioTestCase):
             client_type="ocp-dev-preview",
             version="5.0",
             release_name="5.0.0-ec.6",
-            nvr="openshift-install-delivery-container-v5.0.0-1.p2.assembly.ec.6.el9",
+            nvr="openshift-install-binaries-container-v5.0.0-1.p2.assembly.ec.6.el9",
             skip_cgw_mr=True,
         )
-        pipeline.delivery_image_configured = AsyncMock(return_value=True)
+        pipeline.binary_configured = AsyncMock(return_value=True)
         pipeline.collect_release_values = AsyncMock(return_value=(["RELEASE_VERSION=5.0.0-ec.6"], {}))
-        pipeline.build_delivery_image = AsyncMock()
+        pipeline.build_binary = AsyncMock()
         pipeline.ensure_cgw_version = AsyncMock()
         await pipeline.run()
-        pipeline.build_delivery_image.assert_not_awaited()
+        pipeline.build_binary.assert_not_awaited()
         pipeline.ensure_cgw_version.assert_not_awaited()
         kwargs = self.binary.call_args.kwargs
         self.assertEqual(kwargs["release_plan_key"], "openshift-5-0-cdn-dev-preview")
@@ -493,9 +529,9 @@ class TestRun(IsolatedAsyncioTestCase):
 
     async def test_embargoed_nvr_is_not_released(self):
         pipeline = _pipeline(
-            self.tmp.name, nvr="openshift-install-delivery-container-v4.22.0-1.p1.assembly.4.22.18.el9"
+            self.tmp.name, nvr="openshift-install-binaries-container-v4.22.0-1.p1.assembly.4.22.18.el9"
         )
-        pipeline.delivery_image_configured = AsyncMock(return_value=True)
+        pipeline.binary_configured = AsyncMock(return_value=True)
         pipeline.collect_release_values = AsyncMock(return_value=([], {}))
         pipeline.ensure_cgw_version = AsyncMock()
         await pipeline.run()

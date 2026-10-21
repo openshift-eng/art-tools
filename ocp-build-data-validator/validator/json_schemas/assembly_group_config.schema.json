@@ -806,24 +806,34 @@
       },
       "additionalProperties": false
     },
-    "cdn_clients": {
+    "binaries": {
       "type": "object",
-      "description": "Ship OCP client binaries through the Konflux CDN (installer-cdn-release). Off unless enabled is true.",
+      "description": "Group settings for the binaries/ members (the third artifact kind, next to images and rpms).",
       "properties": {
-        "enabled": {"type": "boolean"},
-        "enabled!": {"$ref": "#/properties/cdn_clients/properties/enabled"},
-        "enabled?": {"$ref": "#/properties/cdn_clients/properties/enabled"},
-        "enabled-": {}
+        "cdn": {
+          "type": "object",
+          "description": "Ship binaries/ members through the Konflux CDN after promote (binaries-cdn-release). Off unless enabled is true.",
+          "properties": {
+            "enabled": {"type": "boolean"},
+            "enabled!": {"$ref": "#/properties/binaries/properties/cdn/properties/enabled"},
+            "enabled?": {"$ref": "#/properties/binaries/properties/cdn/properties/enabled"},
+            "enabled-": {}
+          },
+          "additionalProperties": false
+        },
+        "cdn!": {"$ref": "#/properties/binaries/properties/cdn"},
+        "cdn?": {"$ref": "#/properties/binaries/properties/cdn"},
+        "cdn-": {}
       },
       "additionalProperties": false
     },
-    "cdn_clients!": {
-      "$ref": "#/properties/cdn_clients"
+    "binaries!": {
+      "$ref": "#/properties/binaries"
     },
-    "cdn_clients?": {
-      "$ref": "#/properties/cdn_clients"
+    "binaries?": {
+      "$ref": "#/properties/binaries"
     },
-    "cdn_clients-": {},
+    "binaries-": {},
     "okd!": {
       "$ref": "#/properties/okd"
     },
