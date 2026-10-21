@@ -307,7 +307,9 @@ class RhcosNodeImagePostBuildPipeline:
                 node_tags = [tags['node']]
                 extensions_tags = [tags['extensions']]
                 node_pullspec = self.node_image
+                extensions_pullspec = self.extensions_image
                 node_labeled_tags = set()
+                extensions_labeled_tags = set()
 
                 if timestamp:
                     # Build timestamped tags from the release stream and extracted timestamp
@@ -327,9 +329,20 @@ class RhcosNodeImagePostBuildPipeline:
                         auth_file=merged_auth_file,
                     )
                     node_pullspec = await self._resolve_image_digest_pullspec(node_pullspec, merged_auth_file)
+                    extensions_pullspec = await self._apply_manifest_list_tag_label(
+                        source_pullspec=self.extensions_image,
+                        dest_repo=KONFLUX_DEFAULT_IMAGE_REPO,
+                        dest_tag=extensions_timestamped_tag,
+                        label_value=extensions_timestamped_tag,
+                        auth_file=merged_auth_file,
+                    )
+                    extensions_pullspec = await self._resolve_image_digest_pullspec(
+                        extensions_pullspec, merged_auth_file
+                    )
                     node_tags.append(node_timestamped_tag)
                     node_labeled_tags.add(node_timestamped_tag)
                     extensions_tags.append(extensions_timestamped_tag)
+                    extensions_labeled_tags.add(extensions_timestamped_tag)
                 else:
                     self.runtime.logger.info('No timestamp available; promoting with floating tags only')
 
@@ -366,8 +379,38 @@ class RhcosNodeImagePostBuildPipeline:
                 else:
                     await sync_to_quay(node_pullspec, KONFLUX_DEFAULT_IMAGE_REPO, node_tags)
 
-                # Sync the extensions image to art-images
-                await sync_to_quay(self.extensions_image, KONFLUX_DEFAULT_IMAGE_REPO, extensions_tags)
+                # Sync the labeled extensions image to art-images unless it is already there
+                extensions_repo = extensions_pullspec.split('@', 1)[0]
+                if ':' in extensions_repo.rsplit('/', 1)[-1]:
+                    extensions_repo = extensions_repo.rsplit(':', 1)[0]
+                if extensions_repo == KONFLUX_DEFAULT_IMAGE_REPO:
+                    self.runtime.logger.info(
+                        'Skipping sync for %s; image is already in destination repository %s',
+                        extensions_pullspec,
+                        KONFLUX_DEFAULT_IMAGE_REPO,
+                    )
+                    for tag in extensions_tags:
+                        if tag in extensions_labeled_tags:
+                            continue
+
+                        destination = f'{KONFLUX_DEFAULT_IMAGE_REPO}:{tag}'
+                        self.runtime.logger.info(
+                            'Mirroring labeled image from %s to remaining tag %s', extensions_pullspec, destination
+                        )
+                        await cmd_gather_async(
+                            [
+                                'oc',
+                                'image',
+                                'mirror',
+                                '--keep-manifest-list',
+                                extensions_pullspec,
+                                destination,
+                                f'--registry-config={merged_auth_file}',
+                            ],
+                            check=True,
+                        )
+                else:
+                    await sync_to_quay(extensions_pullspec, KONFLUX_DEFAULT_IMAGE_REPO, extensions_tags)
             finally:
                 if previous_auth_file is None:
                     os.environ.pop('QUAY_AUTH_FILE', None)

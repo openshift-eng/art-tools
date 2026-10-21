@@ -1,6 +1,6 @@
 import json
 import unittest
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, call, patch
 
 from artcommonlib.constants import KONFLUX_DEFAULT_IMAGE_REPO, RHCOS_IMAGE_REPO
 from pyartcd.pipelines.rhcos_node_image_post_build import RhcosNodeImagePostBuildPipeline
@@ -221,13 +221,18 @@ class TestRhcosNodeImagePostBuildPipeline(unittest.IsolatedAsyncioTestCase):
         pipeline = _make_pipeline()
 
         labeled_node_pullspec = f'{KONFLUX_DEFAULT_IMAGE_REPO}:5.0-9.8-202610141234-node-image'
+        labeled_extensions_pullspec = f'{KONFLUX_DEFAULT_IMAGE_REPO}:5.0-9.8-202610141234-node-image-extensions'
         labeled_node_digest_pullspec = f'{KONFLUX_DEFAULT_IMAGE_REPO}@sha256:{"c" * 64}'
+        labeled_extensions_digest_pullspec = f'{KONFLUX_DEFAULT_IMAGE_REPO}@sha256:{"c" * 64}'
         with (
             patch.object(
                 pipeline, '_extract_timestamp_from_nvr', new_callable=AsyncMock, return_value='202610141234'
             ) as mock_extract,
             patch.object(
-                pipeline, '_apply_manifest_list_tag_label', new_callable=AsyncMock, return_value=labeled_node_pullspec
+                pipeline,
+                '_apply_manifest_list_tag_label',
+                new_callable=AsyncMock,
+                side_effect=[labeled_node_pullspec, labeled_extensions_pullspec],
             ) as mock_apply_label,
             patch(
                 'pyartcd.pipelines.rhcos_node_image_post_build.cmd_gather_async', new_callable=AsyncMock
@@ -245,14 +250,25 @@ class TestRhcosNodeImagePostBuildPipeline(unittest.IsolatedAsyncioTestCase):
                 f'{RHCOS_IMAGE_REPO}@sha256:{"a" * 64}',
                 '/tmp/merged-auth.json',
             )
-            mock_apply_label.assert_awaited_once_with(
-                source_pullspec=f'{RHCOS_IMAGE_REPO}@sha256:{"a" * 64}',
-                dest_repo=KONFLUX_DEFAULT_IMAGE_REPO,
-                dest_tag='5.0-9.8-202610141234-node-image',
-                label_value='5.0-9.8-202610141234-node-image',
-                auth_file='/tmp/merged-auth.json',
+            mock_apply_label.assert_has_awaits(
+                [
+                    call(
+                        source_pullspec=f'{RHCOS_IMAGE_REPO}@sha256:{"a" * 64}',
+                        dest_repo=KONFLUX_DEFAULT_IMAGE_REPO,
+                        dest_tag='5.0-9.8-202610141234-node-image',
+                        label_value='5.0-9.8-202610141234-node-image',
+                        auth_file='/tmp/merged-auth.json',
+                    ),
+                    call(
+                        source_pullspec=f'{RHCOS_IMAGE_REPO}@sha256:{"b" * 64}',
+                        dest_repo=KONFLUX_DEFAULT_IMAGE_REPO,
+                        dest_tag='5.0-9.8-202610141234-node-image-extensions',
+                        label_value='5.0-9.8-202610141234-node-image-extensions',
+                        auth_file='/tmp/merged-auth.json',
+                    ),
+                ]
             )
-            self.assertEqual(mock_cmd_gather.await_count, 2)
+            self.assertEqual(mock_cmd_gather.await_count, 4)
             mock_cmd_gather.assert_any_await(
                 [
                     'oc',
@@ -270,10 +286,35 @@ class TestRhcosNodeImagePostBuildPipeline(unittest.IsolatedAsyncioTestCase):
                 [
                     'oc',
                     'image',
+                    'info',
+                    '--filter-by-os=linux/amd64',
+                    '-o',
+                    'json',
+                    labeled_extensions_pullspec,
+                    '--registry-config=/tmp/merged-auth.json',
+                ],
+                check=True,
+            )
+            mock_cmd_gather.assert_any_await(
+                [
+                    'oc',
+                    'image',
                     'mirror',
                     '--keep-manifest-list',
                     labeled_node_digest_pullspec,
                     f'{KONFLUX_DEFAULT_IMAGE_REPO}:5.0-9.8-node-image',
+                    '--registry-config=/tmp/merged-auth.json',
+                ],
+                check=True,
+            )
+            mock_cmd_gather.assert_any_await(
+                [
+                    'oc',
+                    'image',
+                    'mirror',
+                    '--keep-manifest-list',
+                    labeled_extensions_digest_pullspec,
+                    f'{KONFLUX_DEFAULT_IMAGE_REPO}:5.0-9.8-node-image-extensions',
                     '--registry-config=/tmp/merged-auth.json',
                 ],
                 check=True,
@@ -289,16 +330,8 @@ class TestRhcosNodeImagePostBuildPipeline(unittest.IsolatedAsyncioTestCase):
         )
         mock_client.wait_for_build.assert_called_once_with('build-node-image', 46173, timeout=90 * 60)
 
-        # The node image is already in art-images; only sync the extensions image.
-        ext_sync_call = mock_sync.call_args_list[0]
-        self.assertEqual(ext_sync_call.args[0], f'{RHCOS_IMAGE_REPO}@sha256:{"b" * 64}')
-        self.assertEqual(ext_sync_call.args[1], KONFLUX_DEFAULT_IMAGE_REPO)
-        ext_tags = ext_sync_call.args[2]
-        self.assertEqual(len(ext_tags), 2)
-        self.assertEqual(ext_tags[0], '5.0-9.8-node-image-extensions')
-        self.assertEqual(ext_tags[1], '5.0-9.8-202610141234-node-image-extensions')
-
-        self.assertEqual(mock_sync.await_count, 1)
+        # Both labeled images are already in art-images; only their floating tags need mirroring.
+        self.assertEqual(mock_sync.await_count, 0)
         pipeline.runtime.logger.info.assert_any_call(
             'Skipping sync for %s; image is already in destination repository %s',
             labeled_node_digest_pullspec,
@@ -308,6 +341,16 @@ class TestRhcosNodeImagePostBuildPipeline(unittest.IsolatedAsyncioTestCase):
             'Mirroring labeled image from %s to remaining tag %s',
             labeled_node_digest_pullspec,
             f'{KONFLUX_DEFAULT_IMAGE_REPO}:5.0-9.8-node-image',
+        )
+        pipeline.runtime.logger.info.assert_any_call(
+            'Skipping sync for %s; image is already in destination repository %s',
+            labeled_extensions_digest_pullspec,
+            KONFLUX_DEFAULT_IMAGE_REPO,
+        )
+        pipeline.runtime.logger.info.assert_any_call(
+            'Mirroring labeled image from %s to remaining tag %s',
+            labeled_extensions_digest_pullspec,
+            f'{KONFLUX_DEFAULT_IMAGE_REPO}:5.0-9.8-node-image-extensions',
         )
         mock_init_jenkins.assert_called_once()
         mock_update_description.assert_called_once()
