@@ -433,7 +433,7 @@ class BuildLayeredProductsPipeline:
             [
                 "beta:images:konflux:build",
                 f"--image-repo={image_repo}",
-                "--build-priority=1",
+                "--build-priority=2",
             ]
         )
 
