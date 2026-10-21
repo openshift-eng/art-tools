@@ -297,6 +297,7 @@ class KonfluxImageBuilder:
             for attempt in range(build_attempts):
                 logger.info("Build attempt %s/%s", attempt + 1, build_attempts)
                 custom_its_blocking_failed = False
+                shipment_refused = False
                 image_pullspec = None
                 image_digest = None
                 definitive_image_pullspec = None
@@ -527,10 +528,21 @@ class KonfluxImageBuilder:
                                 container_image=definitive_image_pullspec,
                                 rebase_repo_url=build_repo.https_url,
                                 rebase_commitish=build_repo.commit_hash,
+                                distgit_key=metadata.distgit_key,
                             )
                             if mr_url:
                                 logger.info("Golang builder shipment MR: %s", mr_url)
                                 record["shipment_mr"] = mr_url
+                        except util.GolangBuilderComponentNameError as e:
+                            logger.error(
+                                "Golang builder shipment refused for %s, persisting build record as %s: %s",
+                                nvr,
+                                KonfluxBuildOutcome.RELEASE_ERROR,
+                                e,
+                            )
+                            record["shipment_error"] = str(e)
+                            outcome = KonfluxBuildOutcome.RELEASE_ERROR
+                            shipment_refused = True
                         except Exception:
                             logger.exception("Golang builder shipment MR creation failed (non-fatal)")
 
@@ -550,12 +562,15 @@ class KonfluxImageBuilder:
 
                 if not outcome.is_success():
                     record["outcome"] = str(outcome)
+                    error_message = f"Konflux image build for {metadata.distgit_key} failed with output={outcome}"
+                    if shipment_refused:
+                        error_message += f": {record['shipment_error']}"
                     error = KonfluxImageBuildError(
-                        f"Konflux image build for {metadata.distgit_key} failed with output={outcome}",
+                        error_message,
                         pipelinerun_name,
                         pipelinerun_info.to_dict(),
                     )
-                    if ec_pipeline_url or custom_its_blocking_failed:
+                    if ec_pipeline_url or custom_its_blocking_failed or shipment_refused:
                         # EC and blocking custom ITS failures are not recoverable by rebuilding.
                         # Retrying would rebuild the same image and repeat verification.
                         break
