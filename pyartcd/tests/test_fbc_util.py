@@ -103,15 +103,22 @@ class TestSourceBundleVersions(unittest.IsolatedAsyncioTestCase):
     @patch('pyartcd.fbc_util.KonfluxDb')
     async def test_version_comes_from_selected_csv_not_nvr(self, mock_db):
         db = mock_db.return_value
-        db.get_build_records_by_nvrs = AsyncMock(
-            side_effect=[
-                [SimpleNamespace(nvr='operator-fbc-99.0.0-1', bundle_nvrs=['bundle-42.0.0-1'])],
-                [SimpleNamespace(nvr='bundle-42.0.0-1', bundle_csv_name='quay-operator.v3.16.6')],
-            ]
-        )
-        result = await _get_source_bundle_versions(['operator-fbc-99.0.0-1'])
-        self.assertEqual(result, {'operator-fbc-99.0.0-1': '3.16.6'})
-        self.assertEqual(db.get_build_records_by_nvrs.await_count, 2)
+        for csv_name, version in [
+            ('quay-operator.v3.16.6', '3.16.6'),
+            ('quay-operator.3.17.6', '3.17.6'),
+            ('operator.v3.99.0-dev', '3.99.0-dev'),
+            ('operator.3.99.0-dev+build.1', '3.99.0-dev+build.1'),
+        ]:
+            with self.subTest(csv_name=csv_name):
+                db.get_build_records_by_nvrs = AsyncMock(
+                    side_effect=[
+                        [SimpleNamespace(nvr='operator-fbc-99.0.0-1', bundle_nvrs=['bundle-42.0.0-1'])],
+                        [SimpleNamespace(nvr='bundle-42.0.0-1', bundle_csv_name=csv_name)],
+                    ]
+                )
+                result = await _get_source_bundle_versions(['operator-fbc-99.0.0-1'])
+                self.assertEqual(result, {'operator-fbc-99.0.0-1': version})
+                self.assertEqual(db.get_build_records_by_nvrs.await_count, 2)
 
     @patch('pyartcd.fbc_util.KonfluxDb')
     async def test_missing_or_ambiguous_provenance_fails(self, mock_db):

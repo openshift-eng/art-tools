@@ -2,6 +2,7 @@ import asyncio
 import json
 import unittest
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import click
@@ -564,7 +565,7 @@ class TestCanonicalAssemblyKeys(unittest.IsolatedAsyncioTestCase):
                 pipeline._create_or_update_pull_request = AsyncMock()
                 with (
                     patch('pyartcd.fbc_util.extract_fbc_labels', new_callable=AsyncMock) as labels,
-                    patch('pyartcd.fbc_util._get_source_bundle_versions', new_callable=AsyncMock) as versions,
+                    patch('pyartcd.fbc_util.KonfluxDb') as db,
                     patch('artcommonlib.util.cmd_gather_async', side_effect=mock_oras),
                     patch('elliottlib.util.oc_image_info__cached_async', side_effect=mock_image_info),
                 ):
@@ -572,7 +573,12 @@ class TestCanonicalAssemblyKeys(unittest.IsolatedAsyncioTestCase):
                         'nvr': 'quay-operator-fbc-99.0.0-20261020173447.ocp4.18',
                         'doozer_key': 'quay-operator',
                     }
-                    versions.return_value = {labels.return_value['nvr']: '3.16.7'}
+                    db.return_value.get_build_records_by_nvrs = AsyncMock(
+                        side_effect=[
+                            [SimpleNamespace(nvr=labels.return_value['nvr'], bundle_nvrs=['bundle-42.0.0-1'])],
+                            [SimpleNamespace(nvr='bundle-42.0.0-1', bundle_csv_name='quay-operator.3.16.7')],
+                        ]
+                    )
                     result = await pipeline.run()
                 members = result['releases']['3.17.7']['assembly']['members']['images']
                 self.assertEqual(

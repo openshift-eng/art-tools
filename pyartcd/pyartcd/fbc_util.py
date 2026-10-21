@@ -206,10 +206,10 @@ async def _get_source_bundle_versions(fbc_nvrs: List[str]) -> Dict[str, str]:
         if len(csv_names) != 1 or not all(csv_names):
             raise RuntimeError(f"FBC {catalog.nvr} must select exactly one identifiable source bundle: {csv_names}")
         csv_name = csv_names.pop()
-        _, separator, version = csv_name.rpartition('.v')
-        if not separator or not version:
+        version_match = re.search(r'\.v?(\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.+-]+)?)$', csv_name)
+        if not version_match:
             raise RuntimeError(f"Cannot determine source bundle version from CSV '{csv_name}'")
-        versions[catalog.nvr] = version
+        versions[catalog.nvr] = version_match.group(1)
     return versions
 
 
