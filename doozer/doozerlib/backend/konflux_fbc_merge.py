@@ -41,6 +41,7 @@ class LayeredFbcInput:
     channels: tuple[str, ...]
     catalog: list[dict]
     group_revision: str
+    csv_name: str
 
 
 def _package(blob: dict) -> str:
@@ -79,7 +80,7 @@ def merge_layered_catalogs(baseline: list[dict], inputs: list[LayeredFbcInput]) 
         package_key = ('olm.package', package, package)
         if package_key not in catalog:
             raise ValueError(f'{source.record.nvr}: missing package {package}')
-        csv = source.bundle.bundle_csv_name
+        csv = source.csv_name
         if not csv:
             raise ValueError(f'{source.record.nvr}: source bundle {source.bundle.nvr} has no selected CSV name')
         if ('olm.bundle', package, csv) not in catalog:
@@ -259,6 +260,16 @@ class LayeredFbcMerger(KonfluxFbcFragmentMerger):
             )
             if not package or not channels or any(not channel for channel in channels):
                 raise ValueError(f'{bundle.nvr} has missing package or channel labels')
+            # The recorded CSV comes from package.yaml's currentCSV, which can differ from the actual CSV.
+            bundle_blobs = await opm.render(bundle.image_pullspec, auth=auth, migrate_level=migrate_level)
+            if len(bundle_blobs) != 1 or bundle_blobs[0].get('schema') != 'olm.bundle':
+                raise ValueError(f'{bundle.nvr}: expected exactly one rendered olm.bundle')
+            bundle_blob = bundle_blobs[0]
+            if bundle_blob.get('package') != package:
+                raise ValueError(f'{bundle.nvr}: rendered bundle package does not match label {package}')
+            csv_name = bundle_blob.get('name')
+            if not isinstance(csv_name, str) or not csv_name:
+                raise ValueError(f'{bundle.nvr}: rendered bundle has no CSV name')
             selection = (record.name, record.group)
             if selection in seen:
                 raise ValueError(f'Multiple FBC builds supplied for {selection}')
@@ -266,7 +277,9 @@ class LayeredFbcMerger(KonfluxFbcFragmentMerger):
             catalog = await opm.render(pinned, auth=auth, migrate_level=migrate_level)
             if {blob['name'] for blob in catalog if blob['schema'] == 'olm.package'} != {package}:
                 raise ValueError(f'{build} must contain exactly its source bundle package {package}')
-            self.inputs.append(LayeredFbcInput(record, bundle, package, channels, catalog, revisions[record.group]))
+            self.inputs.append(
+                LayeredFbcInput(record, bundle, package, channels, catalog, revisions[record.group], csv_name)
+            )
 
         baseline = await self._pin_image(
             PRODUCTION_INDEX_PULLSPEC_FORMAT.format(
@@ -289,6 +302,7 @@ class LayeredFbcMerger(KonfluxFbcFragmentMerger):
                     'group': source.record.group,
                     'group_revision': source.group_revision,
                     'bundle_nvr': source.bundle.nvr,
+                    'bundle_csv_name': source.csv_name,
                     'package': source.package,
                     'channels': list(source.channels),
                 }
