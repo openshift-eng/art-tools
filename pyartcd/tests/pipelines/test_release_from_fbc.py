@@ -70,6 +70,34 @@ class TestReleaseFromFbcPipeline(unittest.TestCase):
         pipeline = self._make_pipeline()
         self.assertIsNone(pipeline.jira_bugs)
 
+    @patch("pyartcd.pipelines.release_from_fbc.resolve_shipment_release_plans")
+    def test_layered_product_shipment_resolves_registered_release_plans(self, mock_resolve):
+        """Resolve LP shipment plans strictly from the canonical configuration."""
+        mock_resolve.return_value = ("oadp-stage", "oadp-prod")
+        pipeline = self._make_pipeline(create_mr=True, ocp_optional=False)
+
+        config = pipeline.create_shipment_config("image", _make_snapshot())
+
+        mock_resolve.assert_called_once_with(pipeline.shipment_data_repo, "oadp-1-4")
+        self.assertEqual(config.shipment.environments.stage.releasePlan, "oadp-stage")
+        self.assertEqual(config.shipment.environments.prod.releasePlan, "oadp-prod")
+
+    @patch("pyartcd.pipelines.release_from_fbc.resolve_shipment_release_plans")
+    def test_ocp_optional_shipment_keeps_existing_release_plan_behavior(self, mock_resolve):
+        """Leave the independent OCP optional shipment path unchanged."""
+        import tempfile
+        from pathlib import Path
+
+        with tempfile.TemporaryDirectory() as directory:
+            pipeline = self._make_pipeline(create_mr=True, ocp_optional=True)
+            pipeline.shipment_data_repo._directory = Path(directory)
+
+            config = pipeline.create_shipment_config("extras", _make_snapshot())
+
+        mock_resolve.assert_not_called()
+        self.assertEqual(config.shipment.environments.stage.releasePlan, "n/a")
+        self.assertEqual(config.shipment.environments.prod.releasePlan, "n/a")
+
     @patch('pyartcd.pipelines.release_from_fbc._validate_fbc_related_images', new_callable=AsyncMock)
     def test_related_image_validation_passes_assembly_only_for_layered_products(self, mock_validate):
         for ocp_optional in [False, True]:

@@ -16,6 +16,7 @@ from pathlib import Path
 from typing import Dict, Sequence
 from urllib.parse import urlparse
 
+import yaml as stdlib_yaml
 from artcommonlib import exectools
 from artcommonlib.rpm_utils import parse_nvr
 from artcommonlib.util import new_roundtrip_yaml_handler
@@ -66,6 +67,43 @@ class FbcRefreshRecord:
     target_version: str | None
     source_pullspecs: tuple[str, ...]
     refreshed_pullspecs: tuple[str, ...]
+
+
+def resolve_shipment_release_plans(repo: GitRepository, application: str) -> tuple[str, str]:
+    """Resolve stage and production ReleasePlans from shipment-data ``main``.
+
+    Callers must ensure that the repository is checked out to ``main``. This
+    helper deliberately rejects missing mappings instead of producing a
+    shipment file with the nonfunctional ``n/a`` placeholder.
+
+    Args:
+        repo: Shipment-data repository checked out to ``main``.
+        application: Konflux application recorded in the shipment snapshot.
+
+    Returns:
+        The stage and production ReleasePlan names.
+
+    Raises:
+        ValueError: If ``config.yaml`` cannot be read or either ReleasePlan is
+            missing or set to ``n/a``.
+    """
+    config_path = repo._directory / "config.yaml"
+    try:
+        with config_path.open() as config_file:
+            shipment_config = stdlib_yaml.safe_load(config_file) or {}
+        app_env = shipment_config.get("applications", {}).get(application, {}).get("environments", {})
+    except Exception as exc:
+        raise ValueError(f"Unable to read shipment ReleasePlan configuration from {config_path}: {exc}") from exc
+
+    stage_rpa = app_env.get("stage", {}).get("releasePlan")
+    prod_rpa = app_env.get("prod", {}).get("releasePlan")
+    release_plans = (stage_rpa, prod_rpa)
+    if not all(isinstance(plan, str) and plan.strip() and plan != "n/a" for plan in release_plans):
+        raise ValueError(
+            f"stage/prod releasePlan is not registered for {application!r} in {config_path}. "
+            "Cannot create a layered-product shipment MR with unresolved ReleasePlans."
+        )
+    return stage_rpa, prod_rpa
 
 
 async def create_shipment_mr_with_retry(source_project, attributes: dict, logger: logging.Logger) -> object:
@@ -645,7 +683,8 @@ async def validate_shipment_mr_for_operation(
             stage work on the previous MR continues.
 
     Returns:
-        The validated MR and its inspected Shipment CI state.
+        The validated MR and its inspected Shipment CI state. The repository is
+        restored to ``main`` after content inspection.
 
     Raises:
         ShipmentMRValidationError: If the MR is invalid or unrelated.
@@ -662,7 +701,12 @@ async def validate_shipment_mr_for_operation(
         push_url,
         allowed_states=allowed_states,
     )
-    await validate_shipment_mr_reuse_state(repo, mr, product, group, assembly)
+    try:
+        await validate_shipment_mr_reuse_state(repo, mr, product, group, assembly)
+    finally:
+        # Scope validation inspects files on the MR source branch. Always return
+        # to canonical main so later shipment generation cannot read stale config.
+        await repo.fetch_switch_branch("main")
     state = validate_shipment_mr_ci_state(
         gitlab_client,
         mr_url,
