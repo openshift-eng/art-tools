@@ -862,63 +862,68 @@ class TestUpdateGolangPipeline(IsolatedAsyncioTestCase):
             "registry.example.com/golang-builder:v1.26.5-el8",
         )
 
-    @patch("pyartcd.pipelines.update_golang.jenkins")
-    @patch("pyartcd.pipelines.update_golang.get_github_client_for_org")
-    @patch("pyartcd.pipelines.update_golang.KonfluxDb")
-    async def test_update_golang_streams_pr_body_contains_shipment_warning(
-        self, mock_konflux_db, mock_get_github_client, mock_jenkins
-    ):
-        """PR body includes a shipment-MR warning block with each timestamped pullspec listed"""
-        mock_jenkins.get_build_url.return_value = "https://jenkins.example.com/job/1"
-
-        upstream_repo = Mock()
-        upstream_repo.get_contents.return_value = Mock(decoded_content=b"vars:\n  GO_LATEST: 1.22\n")
-        upstream_repo.get_branch.return_value = Mock(commit=Mock(sha="abc123"))
-        fork_repo = Mock()
-        fork_repo.get_branches.return_value = []
-        fork_repo.create_git_ref.return_value = Mock(ref="refs/heads/test-branch")
-        fork_repo.get_contents.return_value = Mock(sha="file-sha", decoded_content=b"{}\n")
-        mock_get_github_client.return_value.get_repo.side_effect = lambda name: (
-            fork_repo if "openshift-bot" in name else upstream_repo
-        )
-
+    def _streams_pipeline(self, image):
         pipeline = UpdateGolangPipeline(
             runtime=self._make_test_runtime(),
-            ocp_version="4.19",
+            ocp_version="5.0",
             cves=None,
             force_update_tracker=False,
-            go_nvrs=["golang-1.22.9-1.el8"],
+            go_nvrs=["golang-1.26.5-1.el9"],
             art_jira="ART-1234",
             tag_builds=False,
-            build_system="konflux",
         )
         pipeline._branch_content = {
-            "branch": "openshift-4.19",
-            "repo": upstream_repo,
-            "group": {"vars": {"GO_LATEST": "1.22"}},
-            "streams": {
-                "rhel-8-golang": {
-                    "aliases": ["rhel-8-golang-{GO_LATEST}"],
-                    "image": "registry.redhat.io/openshift/golang-builder:old-el8",
-                },
-                "rhel-9-golang": {
-                    "aliases": ["rhel-9-golang-{GO_LATEST}"],
-                    "image": "registry.redhat.io/openshift/golang-builder:old-el9",
-                },
-            },
+            "branch": "openshift-5.0",
+            "repo": Mock(),
+            "group": {"vars": {"GO_LATEST": "1.26"}},
+            "streams": {"rhel-9-golang": {"aliases": ["rhel-9-golang-{GO_LATEST}"], "image": image}},
         }
+        return pipeline
 
-        el8_pullspec = "registry.redhat.io/openshift/golang-builder:openshift-golang-builder-container-v1.22.9-202608241902.p0.assembly.stream.el8"
-        el9_pullspec = "registry.redhat.io/openshift/golang-builder:openshift-golang-builder-container-v1.22.9-202608241902.p0.assembly.stream.el9"
-        await pipeline.update_golang_streams("1.22.9", {8: el8_pullspec, 9: el9_pullspec})
+    @patch("pyartcd.pipelines.update_golang.KonfluxDb")
+    async def test_update_golang_streams_floating_branch_does_not_warn(self, mock_konflux_db):
+        floating = "registry.redhat.io/openshift/golang-builder:golang-builder-v1.26-rhel9"
+        pipeline = self._streams_pipeline(floating)
 
-        upstream_repo.create_pull.assert_called_once()
-        _, kwargs = upstream_repo.create_pull.call_args
-        body = kwargs["body"]
-        self.assertIn("[!WARNING]", body)
-        self.assertIn("ocp-shipment-data", body)
-        self.assertIn(el8_pullspec, body)
-        self.assertIn(el9_pullspec, body)
+        await pipeline.update_golang_streams("1.26.5", {9: floating})
+
+        pipeline._slack_client.say_in_thread.assert_not_awaited()
+
+    @patch("pyartcd.pipelines.update_golang.KonfluxDb")
+    async def test_update_golang_streams_floating_branch_major_bump_warns(self, mock_konflux_db):
+        floating = "registry.redhat.io/openshift/golang-builder:golang-builder-v1.26-rhel9"
+        pipeline = self._streams_pipeline(floating)
+
+        with self.assertLogs("pyartcd.pipelines.update_golang", level="WARNING") as logs:
+            await pipeline.update_golang_streams(
+                "1.27.1", {9: "registry.redhat.io/openshift/golang-builder:golang-builder-v1.27-rhel9"}
+            )
+
+        self.assertIn("golang 1.27 is newer than GO_LATEST 1.26 on openshift-5.0", logs.output[0])
+        pipeline._slack_client.say_in_thread.assert_awaited_once()
+
+    @patch("pyartcd.pipelines.update_golang.KonfluxDb")
+    async def test_update_golang_streams_pinned_branch_major_bump_warns(self, mock_konflux_db):
+        pinned = "registry.redhat.io/openshift/golang-builder:openshift-golang-builder-container-v1.26.3-202609010000.p2.gabc1234.assembly.stream.el9"
+        pipeline = self._streams_pipeline(pinned)
+
+        with self.assertLogs("pyartcd.pipelines.update_golang", level="WARNING") as logs:
+            await pipeline.update_golang_streams("1.27.1", {9: pinned.replace("v1.26.3", "v1.27.1")})
+
+        self.assertIn("Update GO_LATEST in group.yml and the golang-builder pinned NVRs", logs.output[0])
+        pipeline._slack_client.say_in_thread.assert_awaited_once()
+
+    @patch("pyartcd.pipelines.update_golang.KonfluxDb")
+    async def test_update_golang_streams_pinned_branch_warns(self, mock_konflux_db):
+        pinned = "registry.redhat.io/openshift/golang-builder:openshift-golang-builder-container-v1.26.3-202609010000.p2.gabc1234.assembly.stream.el9"
+        pipeline = self._streams_pipeline(pinned)
+
+        with self.assertLogs("pyartcd.pipelines.update_golang", level="WARNING") as logs:
+            await pipeline.update_golang_streams("1.26.5", {9: pinned})
+
+        self.assertIn("openshift-5.0 still pins golang-builder NVRs", logs.output[0])
+        pipeline._slack_client.say_in_thread.assert_awaited_once()
+        self.assertIn("openshift-5.0 still pins", pipeline._slack_client.say_in_thread.await_args.args[0])
 
     @patch("pyartcd.pipelines.update_golang.get_github_client_for_org")
     @patch("pyartcd.pipelines.update_golang.KonfluxDb")
@@ -2931,7 +2936,6 @@ class TestUpdateGolangStreamsFloatingTags(IsolatedAsyncioTestCase):
         pipeline = self._make_pipeline()
         pipeline._branch_content = branch_content
         pipeline.data_path = None
-        pipeline.skip_pr = True  # avoid GitHub calls
 
         new_float9 = 'registry.redhat.io/openshift/golang-builder:golang-builder-v1.22-rhel9'
         new_float8 = 'registry.redhat.io/openshift/golang-builder:golang-builder-v1.22-rhel8'
@@ -2978,7 +2982,6 @@ class TestUpdateGolangStreamsFloatingTags(IsolatedAsyncioTestCase):
         pipeline = self._make_pipeline()
         pipeline._branch_content = branch_content
         pipeline.data_path = None
-        pipeline.skip_pr = True
 
         builder_pullspecs = {9: new_nvr9, 8: new_nvr8}
         await pipeline.update_golang_streams("1.22.12", builder_pullspecs)
@@ -3014,7 +3017,6 @@ class TestUpdateGolangStreamsFloatingTags(IsolatedAsyncioTestCase):
         pipeline = self._make_pipeline()
         pipeline._branch_content = branch_content
         pipeline.data_path = None
-        pipeline.skip_pr = True
         pipeline.major_bump = True
 
         # New floating pullspecs for go 1.23 (full pullspecs, as _get_builder_pullspec emits them)
@@ -3052,7 +3054,6 @@ class TestUpdateGolangStreamsFloatingTags(IsolatedAsyncioTestCase):
         pipeline = self._make_pipeline()
         pipeline._branch_content = branch_content
         pipeline.data_path = None
-        pipeline.skip_pr = True
 
         new_float9 = 'registry.redhat.io/openshift/golang-builder:golang-builder-v1.22-rhel9'
         builder_pullspecs = {9: new_float9}
@@ -3070,7 +3071,6 @@ class TestUpdateGolangStreamsFloatingTags(IsolatedAsyncioTestCase):
         pipeline = self._make_pipeline()
         pipeline._branch_content = branch_content
         pipeline.data_path = None
-        pipeline.skip_pr = True
 
         new_float9 = 'registry.redhat.io/openshift/golang-builder:golang-builder-v1.22-rhel9'
         builder_pullspecs = {9: new_float9}
@@ -3093,7 +3093,6 @@ class TestUpdateGolangStreamsFloatingTags(IsolatedAsyncioTestCase):
         pipeline = self._make_pipeline()
         pipeline._branch_content = branch_content
         pipeline.data_path = None
-        pipeline.skip_pr = True
 
         extra_pullspec = 'registry.redhat.io/openshift/golang-builder:golang-builder-v1.23-rhel9'
         builder_pullspecs = {9: extra_pullspec}
@@ -3121,7 +3120,6 @@ class TestUpdateGolangStreamsFloatingTags(IsolatedAsyncioTestCase):
         pipeline = self._make_pipeline()
         pipeline._branch_content = branch_content
         pipeline.data_path = None
-        pipeline.skip_pr = True
 
         extra_pullspec = 'registry.redhat.io/openshift/golang-builder:golang-builder-v1.23-rhel9'
         builder_pullspecs = {9: extra_pullspec}
