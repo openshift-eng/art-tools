@@ -9,8 +9,8 @@ from unittest.mock import patch
 import yaml
 
 BASE = Path(__file__).resolve().parents[2] / 'art-cluster/pipelines/config/argocd/project/art-quay-tenant'
-TASK = yaml.safe_load((BASE / '02_task-artcd-merge-layered-fbc.yaml').read_text())
-PIPELINE = yaml.safe_load((BASE / '23_pipeline-merge-layered-fbc.yaml').read_text())
+TASK = yaml.safe_load((BASE / '02_task-artcd-lp-unified-fbc.yaml').read_text())
+PIPELINE = yaml.safe_load((BASE / '23_pipeline-lp-unified-fbc.yaml').read_text())
 
 
 class TestMergeLayeredFbcManifests(unittest.TestCase):
@@ -24,7 +24,7 @@ class TestMergeLayeredFbcManifests(unittest.TestCase):
         results = {result['name'] for result in TASK['spec']['results']}
         self.assertEqual(results, {result['name'] for result in PIPELINE['spec']['results']})
         for result in PIPELINE['spec']['results']:
-            self.assertEqual(result['value'], '$(tasks.merge-fbc.results.' + result['name'] + ')')
+            self.assertEqual(result['value'], '$(tasks.unified-fbc.results.' + result['name'] + ')')
         for resource in (TASK, PIPELINE):
             defaults = {param['name']: param.get('default') for param in resource['spec']['params']}
             self.assertEqual(defaults['dry-run'], 'true')
@@ -37,31 +37,32 @@ class TestMergeLayeredFbcManifests(unittest.TestCase):
         self.assertIn(TASK['metadata']['name'], task_rule['resourceNames'])
         resources = yaml.safe_load_all((BASE / '22_quay-team-pipelinerun-admission.yaml').read_text())
         policy = next(resource for resource in resources if resource['kind'] == 'ValidatingAdmissionPolicy')
-        self.assertIn('"merge-layered-fbc"', policy['spec']['validations'][0]['expression'])
+        self.assertIn('"lp-unified-fbc"', policy['spec']['validations'][0]['expression'])
 
-    def _invoke_script(self, dry_run):
-        env = {key: '' for key in ('MERGE_FBC_REPO', 'MERGE_IMAGE_REPO', 'MERGE_PLR_TEMPLATE')}
+    def _invoke_script(self, dry_run, builds=None, art_tools_commit=''):
+        env = {key: '' for key in ('UNIFIED_FBC_REPO', 'UNIFIED_IMAGE_REPO', 'UNIFIED_PLR_TEMPLATE')}
         env.update(
             {
-                'MERGE_OCP_TARGET_VERSION': '5.0',
-                'MERGE_DATA_PATH': 'https://github.com/openshift-eng/ocp-build-data',
-                'MERGE_DRY_RUN': 'true' if dry_run else 'false',
-                'MERGE_SKIP_CHECKS': 'false',
-                'MERGE_SKIP_TASKS': 'clair-scan, sast-snyk-check',
-                'MERGE_TASKRUN': 'merge-test',
-                'MERGE_RESULT_NVR': '/tekton/results/nvr',
-                'MERGE_RESULT_PULLSPEC': '/tekton/results/pullspec',
-                'MERGE_RESULT_BUILD_URL': '/tekton/results/build',
-                'MERGE_RESULT_PROVENANCE_URL': '/tekton/results/provenance',
+                'UNIFIED_OCP_TARGET_VERSION': '5.0',
+                'UNIFIED_DATA_PATH': 'https://github.com/openshift-eng/ocp-build-data',
+                'UNIFIED_DRY_RUN': 'true' if dry_run else 'false',
+                'UNIFIED_SKIP_CHECKS': 'false',
+                'UNIFIED_SKIP_TASKS': 'clair-scan, sast-snyk-check',
+                'UNIFIED_TASKRUN': 'unified-test',
+                'UNIFIED_ART_TOOLS_COMMIT': art_tools_commit,
+                'UNIFIED_RESULT_NVR': '/tekton/results/nvr',
+                'UNIFIED_RESULT_PULLSPEC': '/tekton/results/pullspec',
+                'UNIFIED_RESULT_BUILD_URL': '/tekton/results/build',
+                'UNIFIED_RESULT_PROVENANCE_URL': '/tekton/results/provenance',
             }
         )
         inputs = ['quay-fbc-3.18.2-1.ocp5.0', 'quay.io/example/fbc:tag-with-"quotes"-$(text)']
-        env['MERGE_FBC_BUILDS'] = ' , '.join(inputs)
+        env['UNIFIED_FBC_BUILDS'] = ' , '.join(inputs) if builds is None else builds
         result = {
-            'nvr': 'quay-merged-fbc-5.0-1.ocp5.0',
+            'nvr': 'container-security-operator-fbc-unified-5.0-1.ocp5.0',
             'pullspec': None if dry_run else 'quay.io/example/fbc@sha256:abc',
             'build_url': None if dry_run else 'https://konflux.example/build',
-            'provenance_url': None if dry_run else 'https://github.com/example/fbc/blob/sha/merge-provenance.json',
+            'provenance_url': None if dry_run else 'https://github.com/example/fbc/blob/sha/unified-provenance.json',
         }
         with (
             patch.dict(os.environ, env),
@@ -72,9 +73,10 @@ class TestMergeLayeredFbcManifests(unittest.TestCase):
             patch.object(Path, 'write_text') as write,
             patch('builtins.print'),
         ):
-            exec(compile(TASK['spec']['steps'][0]['script'], '<merge-layered-fbc-task>', 'exec'), {})
-        cmd = subprocess_run.call_args_list[1].args[0]
-        self.assertIn('merge-layered-fbc', cmd)
+            exec(compile(TASK['spec']['steps'][0]['script'], '<lp-unified-fbc-task>', 'exec'), {})
+        cmd = subprocess_run.call_args_list[-1].args[0]
+        self.assertIn('lp-unified-fbc', cmd)
+        self.assertTrue(any(arg.endswith('/unified-fbc.json') for arg in cmd))
         self.assertIn('--product=quay', cmd)
         self.assertFalse(any(arg.startswith('--group') for arg in cmd))
         self.assertIn('--ocp-target-version=5.0', cmd)
@@ -92,9 +94,25 @@ class TestMergeLayeredFbcManifests(unittest.TestCase):
                 result['provenance_url'] or '',
             ],
         )
+        if art_tools_commit:
+            self.assertEqual(
+                subprocess_run.call_args_list[0].args[0],
+                ['git', 'clone', '-b', 'merge-layered-fbc-build', 'https://github.com/ashwindasr/art-tools.git'],
+            )
 
     def test_script_passes_comma_separated_inputs_and_writes_build_results(self):
         self._invoke_script(False)
 
     def test_script_reports_empty_build_outputs_for_dry_run(self):
         self._invoke_script(True)
+
+    def test_script_uses_art_tools_override(self):
+        self._invoke_script(True, art_tools_commit='ashwindasr@merge-layered-fbc-build')
+
+    def test_script_rejects_unapproved_override_owner(self):
+        with self.assertRaisesRegex(ValueError, 'not allowed'):
+            self._invoke_script(True, art_tools_commit='unapproved@branch')
+
+    def test_script_rejects_empty_builds(self):
+        with self.assertRaisesRegex(ValueError, 'At least one FBC build'):
+            self._invoke_script(True, builds=' , , ')

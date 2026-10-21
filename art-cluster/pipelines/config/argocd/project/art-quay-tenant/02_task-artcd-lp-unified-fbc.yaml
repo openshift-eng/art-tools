@@ -3,7 +3,7 @@ kind: Task
 metadata:
   labels:
     app: artcd
-  name: artcd-merge-layered-fbc
+  name: artcd-lp-unified-fbc
   namespace: art-quay-tenant
 spec:
   params:
@@ -105,35 +105,35 @@ spec:
       value: /tmp/quay-authfile/config.json
     - name: DOCKER_CONFIG
       value: /tmp/quay-authfile
-    - name: MERGE_OCP_TARGET_VERSION
+    - name: UNIFIED_OCP_TARGET_VERSION
       value: $(params.ocp-target-version)
-    - name: MERGE_FBC_BUILDS
+    - name: UNIFIED_FBC_BUILDS
       value: $(params.fbc-builds)
-    - name: MERGE_ART_TOOLS_COMMIT
+    - name: UNIFIED_ART_TOOLS_COMMIT
       value: $(params.art-tools-commit)
-    - name: MERGE_DATA_PATH
+    - name: UNIFIED_DATA_PATH
       value: $(params.data-path)
-    - name: MERGE_FBC_REPO
+    - name: UNIFIED_FBC_REPO
       value: $(params.fbc-repo)
-    - name: MERGE_IMAGE_REPO
+    - name: UNIFIED_IMAGE_REPO
       value: $(params.image-repo)
-    - name: MERGE_PLR_TEMPLATE
+    - name: UNIFIED_PLR_TEMPLATE
       value: $(params.plr-template)
-    - name: MERGE_SKIP_CHECKS
+    - name: UNIFIED_SKIP_CHECKS
       value: $(params.skip-checks)
-    - name: MERGE_SKIP_TASKS
+    - name: UNIFIED_SKIP_TASKS
       value: $(params.skip-tasks)
-    - name: MERGE_DRY_RUN
+    - name: UNIFIED_DRY_RUN
       value: $(params.dry-run)
-    - name: MERGE_TASKRUN
+    - name: UNIFIED_TASKRUN
       value: $(context.taskRun.name)
-    - name: MERGE_RESULT_NVR
-      value: $(results.merged-fbc-nvr.path)
-    - name: MERGE_RESULT_PULLSPEC
-      value: $(results.merged-fbc-pullspec.path)
-    - name: MERGE_RESULT_BUILD_URL
+    - name: UNIFIED_RESULT_NVR
+      value: $(results.unified-fbc-nvr.path)
+    - name: UNIFIED_RESULT_PULLSPEC
+      value: $(results.unified-fbc-pullspec.path)
+    - name: UNIFIED_RESULT_BUILD_URL
       value: $(results.build-url.path)
-    - name: MERGE_RESULT_PROVENANCE_URL
+    - name: UNIFIED_RESULT_PROVENANCE_URL
       value: $(results.provenance-url.path)
     image: quay.io/redhat-user-workloads/ocp-art-tenant/art-cd:latest
     name: invoke-artcd
@@ -144,11 +144,11 @@ spec:
       import subprocess
       from pathlib import Path
 
-      fbc_builds = [build.strip() for build in os.environ["MERGE_FBC_BUILDS"].split(",") if build.strip()]
+      fbc_builds = [build.strip() for build in os.environ["UNIFIED_FBC_BUILDS"].split(",") if build.strip()]
       if not fbc_builds:
           raise ValueError("At least one FBC build is required")
 
-      art_tools_commit = os.environ.get("MERGE_ART_TOOLS_COMMIT", "")
+      art_tools_commit = os.environ.get("UNIFIED_ART_TOOLS_COMMIT", "")
       if art_tools_commit:
           allowed_owners = {
               "adobes1",
@@ -177,29 +177,29 @@ spec:
       Path("/root/.config").mkdir(parents=True, exist_ok=True)
       Path("/root/.config/artcd.toml").touch(exist_ok=True)
       Path("artcd-working").mkdir(exist_ok=True)
-      output = Path("artcd-working/merged-fbc.json").absolute()
+      output = Path("artcd-working/unified-fbc.json").absolute()
       os.environ["DOOZER_DB_NAME"] = "art_dash"
-      os.environ["TEKTON_TASKRUN_NAME"] = os.environ["MERGE_TASKRUN"]
+      os.environ["TEKTON_TASKRUN_NAME"] = os.environ["UNIFIED_TASKRUN"]
 
       cmd = ["artcd", "-v", "--working-dir=artcd-working", "--config=/root/.config/artcd.toml"]
-      if os.environ["MERGE_DRY_RUN"] == "true":
+      if os.environ["UNIFIED_DRY_RUN"] == "true":
           cmd.append("--dry-run")
       cmd.extend([
-          "merge-layered-fbc",
+          "lp-unified-fbc",
           "--product=quay",
-          "--ocp-target-version=" + os.environ["MERGE_OCP_TARGET_VERSION"],
-          "--data-path=" + os.environ["MERGE_DATA_PATH"],
+          "--ocp-target-version=" + os.environ["UNIFIED_OCP_TARGET_VERSION"],
+          "--data-path=" + os.environ["UNIFIED_DATA_PATH"],
           "--output-file=" + str(output),
       ])
       for build in fbc_builds:
           cmd.append("--fbc-build=" + build)
       for option in ("fbc-repo", "image-repo", "plr-template"):
-          value = os.environ["MERGE_" + option.upper().replace("-", "_")]
+          value = os.environ["UNIFIED_" + option.upper().replace("-", "_")]
           if value:
               cmd.append("--" + option + "=" + value)
-      if os.environ["MERGE_SKIP_CHECKS"] == "true":
+      if os.environ["UNIFIED_SKIP_CHECKS"] == "true":
           cmd.append("--skip-checks")
-      for task_name in os.environ["MERGE_SKIP_TASKS"].split(","):
+      for task_name in os.environ["UNIFIED_SKIP_TASKS"].split(","):
           if task_name.strip():
               cmd.append("--skip-task=" + task_name.strip())
 
@@ -207,10 +207,10 @@ spec:
       subprocess.run(cmd, check=True)
       result = json.loads(output.read_text())
       for env, key in (
-          ("MERGE_RESULT_NVR", "nvr"),
-          ("MERGE_RESULT_PULLSPEC", "pullspec"),
-          ("MERGE_RESULT_BUILD_URL", "build_url"),
-          ("MERGE_RESULT_PROVENANCE_URL", "provenance_url"),
+          ("UNIFIED_RESULT_NVR", "nvr"),
+          ("UNIFIED_RESULT_PULLSPEC", "pullspec"),
+          ("UNIFIED_RESULT_BUILD_URL", "build_url"),
+          ("UNIFIED_RESULT_PROVENANCE_URL", "provenance_url"),
       ):
           Path(os.environ[env]).write_text(result.get(key) or "")
       print(json.dumps(result, indent=2))
@@ -262,10 +262,10 @@ spec:
       secretName: quay-authfile
   description: Build one unified Quay FBC fragment; creates no shipment or release.
   results:
-  - name: merged-fbc-nvr
-    description: Merged FBC NVR (planned NVR in dry runs)
-  - name: merged-fbc-pullspec
-    description: Immutable merged FBC image, empty in dry runs
+  - name: unified-fbc-nvr
+    description: Unified FBC NVR (planned NVR in dry runs)
+  - name: unified-fbc-pullspec
+    description: Immutable unified FBC image, empty in dry runs
   - name: build-url
     description: Konflux build URL, empty in dry runs
   - name: provenance-url
