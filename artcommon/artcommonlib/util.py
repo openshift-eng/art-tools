@@ -1052,7 +1052,7 @@ def parse_version_from_fbc_pullspec(fbc_pullspec: str) -> Optional[str]:
     """
     tag = fbc_pullspec
     if '@' in tag:
-        # Digest-only refs have no version; callers need an assembly or the image's NVR label.
+        # Digest-only refs have no version; callers need an explicit bundle version or assembly.
         return None
     if ':' in tag:
         tag = tag.rsplit(':', 1)[-1]
@@ -1426,7 +1426,7 @@ async def extract_versioned_related_images_from_fbc(
     fbc_pullspec: str,
     product: str,
     assembly: Optional[str] = None,
-    fbc_nvr: Optional[str] = None,
+    bundle_version: Optional[str] = None,
 ) -> list[str]:
     """Extract related images for layered-product shipping / validation.
 
@@ -1438,18 +1438,19 @@ async def extract_versioned_related_images_from_fbc(
 
     Version selection:
 
-      1. Prefer caller-provided ``assembly`` when it is a real release version
+      1. Use an explicit ``bundle_version`` from selected bundle provenance when
+         provided. It must exist in the catalog; no fallback is allowed.
+      2. Prefer caller-provided ``assembly`` when it is a real release version
          (e.g. ``3.18.2``). ``assembly='stream'`` is *not* treated as a version —
          nightlies use stream, so we fall through to the FBC tag/NVR instead.
-      2. Fall back to the version encoded in the supplied FBC image label NVR,
-         or the FBC pullspec/NVR tag
+      3. Fall back to the version encoded in the FBC pullspec/NVR tag
          (``…-fbc-{version}-{timestamp}…``).
-      3. If a non-stream assembly misses the catalog, also fall back to (2).
+      4. If a non-stream assembly misses the catalog, also fall back to (3).
 
     :param fbc_pullspec: FBC image pullspec
     :param product: Product name for URL transformation (e.g., 'openshift', 'oadp')
     :param assembly: Optional assembly/release version used to select the olm.bundle
-    :param fbc_nvr: Optional FBC image label NVR for digest-only source catalogs
+    :param bundle_version: Actual selected source bundle version, independent of NVR versions
     :return: List of image pullspecs (product images rewritten to art-images)
     """
     ATTACHED_ARTIFACT_TYPE = 'application/vnd.konflux-ci.attached-artifact'
@@ -1530,7 +1531,11 @@ async def extract_versioned_related_images_from_fbc(
         selected_version: Optional[str] = None
         assembly_missed = False
 
-        if assembly_for_match:
+        if bundle_version:
+            raw_images = _extract_versioned_images_from_catalog_json(catalog_json_path, bundle_version)
+            selected_version = bundle_version.lstrip('v')
+            LOGGER.info("Selected relatedImages using source bundle version '%s'", selected_version)
+        elif assembly_for_match:
             try:
                 raw_images = _extract_versioned_images_from_catalog_json(catalog_json_path, assembly_for_match)
                 selected_version = assembly_for_match.lstrip('v')
@@ -1540,7 +1545,7 @@ async def extract_versioned_related_images_from_fbc(
                     assembly_missed = True
                     LOGGER.warning(
                         "No olm.bundle matching assembly '%s' in catalog for %s; "
-                        "falling back to version parsed from FBC NVR or pullspec",
+                        "falling back to version parsed from FBC pullspec",
                         assembly_for_match,
                         fbc_pullspec,
                     )
@@ -1548,18 +1553,15 @@ async def extract_versioned_related_images_from_fbc(
                     raise
 
         if not selected_version:
-            fbc_version = parse_version_from_fbc_pullspec(fbc_nvr or '') or parse_version_from_fbc_pullspec(
-                fbc_pullspec
-            )
+            fbc_version = parse_version_from_fbc_pullspec(fbc_pullspec)
             if not fbc_version:
                 if assembly_missed:
                     raise RuntimeError(
                         f"No olm.bundle matching assembly '{assembly_for_match}' and could not parse a version "
-                        f"from FBC NVR '{fbc_nvr}' or pullspec '{fbc_pullspec}'"
+                        f"from FBC pullspec '{fbc_pullspec}'"
                     )
                 raise RuntimeError(
-                    f"No assembly provided and could not parse a version from FBC NVR '{fbc_nvr}' "
-                    f"or pullspec '{fbc_pullspec}'"
+                    f"No assembly provided and could not parse a version from FBC pullspec '{fbc_pullspec}'"
                 )
             raw_images = _extract_versioned_images_from_catalog_json(catalog_json_path, fbc_version)
             selected_version = fbc_version

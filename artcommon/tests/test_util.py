@@ -1468,7 +1468,7 @@ class TestExtractVersionedRelatedImagesFromFBC(unittest.TestCase):
     @patch('builtins.open', new_callable=MagicMock)
     @patch('os.path.exists')
     @patch('os.listdir')
-    def test_digest_source_version_fallback(self, mock_listdir, mock_exists, mock_open, mock_cmd):
+    def test_explicit_source_bundle_version(self, mock_listdir, mock_exists, mock_open, mock_cmd):
         digest_only = "quay.io/test/art-fbc@sha256:abc123"
         for assembly in ("1.0.1", "stream", None):
             with self.subTest(assembly=assembly):
@@ -1478,7 +1478,7 @@ class TestExtractVersionedRelatedImagesFromFBC(unittest.TestCase):
                         digest_only,
                         self.product,
                         assembly=assembly,
-                        fbc_nvr="test-operator-fbc-1.0.0-20261020173447.ocp4.18",
+                        bundle_version="1.0.0",
                     )
                 )
                 self.assertEqual(len(result), 1)
@@ -1489,18 +1489,18 @@ class TestExtractVersionedRelatedImagesFromFBC(unittest.TestCase):
     @patch('builtins.open', new_callable=MagicMock)
     @patch('os.path.exists')
     @patch('os.listdir')
-    def test_assembly_match_precedes_source_fallback(self, mock_listdir, mock_exists, mock_open, mock_cmd):
+    def test_source_bundle_version_precedes_destination(self, mock_listdir, mock_exists, mock_open, mock_cmd):
         self._mock_catalog_extraction(mock_listdir, mock_exists, mock_open, mock_cmd, self.catalog_multi_bundle)
         result = asyncio.run(
             extract_versioned_related_images_from_fbc(
                 "quay.io/test/art-fbc@sha256:abc123",
                 self.product,
                 assembly="1.1.0",
-                fbc_nvr="test-operator-fbc-1.0.0-20261020173447.ocp4.18",
+                bundle_version="1.0.0",
             )
         )
-        self.assertEqual(len(result), 2)
-        self.assertNotIn('sha256:old111', str(result))
+        self.assertEqual(len(result), 1)
+        self.assertIn('sha256:old111', str(result))
 
     @patch('artcommonlib.util.cmd_gather_async', new_callable=AsyncMock)
     @patch('builtins.open', new_callable=MagicMock)
@@ -1514,7 +1514,7 @@ class TestExtractVersionedRelatedImagesFromFBC(unittest.TestCase):
                     "quay.io/test/art-fbc@sha256:abc123",
                     self.product,
                     assembly="1.0.3",
-                    fbc_nvr="test-operator-fbc-1.0.2-20261020173447.ocp4.18",
+                    bundle_version="1.0.2",
                 )
             )
 

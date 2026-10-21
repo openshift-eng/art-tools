@@ -1,8 +1,10 @@
 import asyncio
 import unittest
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
 from pyartcd.fbc_util import (
+    _get_source_bundle_versions,
     extract_ocp_version_from_nvr,
     is_nvr_from_assembly,
     validate_fbc_related_images,
@@ -95,6 +97,107 @@ class TestIsNvrFromAssembly(unittest.TestCase):
         for nvr, assembly, expected in cases:
             with self.subTest(nvr=nvr, assembly=assembly):
                 self.assertEqual(is_nvr_from_assembly(nvr, assembly), expected)
+
+
+class TestSourceBundleVersions(unittest.IsolatedAsyncioTestCase):
+    @patch('pyartcd.fbc_util.KonfluxDb')
+    async def test_version_comes_from_selected_csv_not_nvr(self, mock_db):
+        db = mock_db.return_value
+        db.get_build_records_by_nvrs = AsyncMock(
+            side_effect=[
+                [SimpleNamespace(nvr='operator-fbc-99.0.0-1', bundle_nvrs=['bundle-42.0.0-1'])],
+                [SimpleNamespace(nvr='bundle-42.0.0-1', bundle_csv_name='quay-operator.v3.16.6')],
+            ]
+        )
+        result = await _get_source_bundle_versions(['operator-fbc-99.0.0-1'])
+        self.assertEqual(result, {'operator-fbc-99.0.0-1': '3.16.6'})
+        self.assertEqual(db.get_build_records_by_nvrs.await_count, 2)
+
+    @patch('pyartcd.fbc_util.KonfluxDb')
+    async def test_missing_or_ambiguous_provenance_fails(self, mock_db):
+        for bundle_nvrs, csv_names in [
+            ([], []),
+            (['bundle'], [None]),
+            (['bundle'], ['unversioned']),
+            (['bundle', 'other-bundle'], ['operator.v1.0.0', 'operator.v1.0.1']),
+        ]:
+            with self.subTest(csv_names=csv_names):
+                mock_db.return_value.get_build_records_by_nvrs = AsyncMock(
+                    side_effect=[
+                        [SimpleNamespace(nvr='fbc', bundle_nvrs=bundle_nvrs)],
+                        [SimpleNamespace(nvr=nvr, bundle_csv_name=csv) for nvr, csv in zip(bundle_nvrs, csv_names)],
+                    ]
+                )
+                with self.assertRaises(RuntimeError):
+                    await _get_source_bundle_versions(['fbc'])
+
+    async def test_missing_identity_fails(self):
+        with self.assertRaisesRegex(RuntimeError, 'identity labels'):
+            await _get_source_bundle_versions([None])
+
+
+class TestFinalFbcOperands(unittest.IsolatedAsyncioTestCase):
+    async def test_overrides_win_before_consistency_and_versions_do_not_filter_operands(self):
+        pullspecs = ['quay.io/fbc@sha256:a', 'quay.io/fbc@sha256:b']
+        operator = 'quay-operator-container-3.17.7-202610202329.p2.g015d069.assembly.stream.el9'
+        quay = 'quay-quay-container-3.16.7-202610201501.p3.gcfeea14.assembly.stream.el9'
+        overrides = {'quay-operator-container': operator, 'quay-quay-container': quay}
+        clair = 'quay-clair-container-3.15.1-1'
+        with (
+            patch('pyartcd.fbc_util.extract_fbc_labels', new_callable=AsyncMock) as labels,
+            patch('pyartcd.fbc_util._get_source_bundle_versions', new_callable=AsyncMock) as versions,
+            patch('pyartcd.fbc_util.extract_nvrs_from_fbc', new_callable=AsyncMock) as extract,
+        ):
+            labels.side_effect = [{'nvr': nvr, 'doozer_key': 'quay-operator'} for nvr in ('fbc-a', 'fbc-b')]
+            versions.return_value = {'fbc-a': '3.16.6', 'fbc-b': '3.16.6'}
+            extract.side_effect = [
+                ['quay-operator-container-3.16.6-1', 'quay-quay-container-3.16.6-1', clair],
+                ['quay-operator-container-3.16.6-2', 'quay-quay-container-3.16.6-2', clair],
+            ]
+            result = await validate_fbc_related_images(
+                pullspecs,
+                'quay',
+                assembly='3.17.7',
+                use_source_bundle=True,
+                image_components={*overrides, 'quay-clair-container'},
+                image_overrides=overrides,
+            )
+            self.assertEqual(result, sorted([operator, quay, clair]))
+            for pullspec in pullspecs:
+                extract.assert_any_await(
+                    pullspec, 'quay', assembly='3.17.7', version_scoped=True, bundle_version='3.16.6'
+                )
+
+    async def test_inconsistent_bundle_version_or_remaining_operand_fails(self):
+        for versions, images, error in [
+            (
+                {'fbc-a': '3.16.6', 'fbc-b': '3.16.7'},
+                [['quay-clair-container-3.15.1-1']] * 2,
+                'Inconsistent source bundle versions',
+            ),
+            (
+                {'fbc-a': '3.16.6', 'fbc-b': '3.16.6'},
+                [['quay-clair-container-3.15.1-1'], ['quay-clair-container-3.15.1-2']],
+                'mismatched related images',
+            ),
+        ]:
+            with (
+                self.subTest(versions=versions, images=images),
+                patch('pyartcd.fbc_util.extract_fbc_labels', new_callable=AsyncMock) as labels,
+                patch('pyartcd.fbc_util._get_source_bundle_versions', new_callable=AsyncMock) as source,
+                patch('pyartcd.fbc_util.extract_nvrs_from_fbc', new_callable=AsyncMock) as extract,
+            ):
+                labels.side_effect = [{'nvr': nvr, 'doozer_key': 'quay-operator'} for nvr in ('fbc-a', 'fbc-b')]
+                source.return_value = versions
+                extract.side_effect = images
+                with self.assertRaisesRegex(RuntimeError, error):
+                    await validate_fbc_related_images(
+                        ['quay.io/fbc@sha256:a', 'quay.io/fbc@sha256:b'],
+                        'quay',
+                        assembly='3.17.7',
+                        use_source_bundle=True,
+                        image_components={'quay-clair-container'},
+                    )
 
 
 class TestValidateFbcRelatedImages(unittest.TestCase):
@@ -210,7 +313,7 @@ class TestValidateFbcRelatedImages(unittest.TestCase):
             "my-product",
             assembly="1.0.0",
             version_scoped=True,
-            fbc_nvr='op-fbc-1.0-1.ocp4.18',
+            bundle_version=None,
         )
 
     @patch('pyartcd.fbc_util.extract_nvrs_from_fbc', new_callable=AsyncMock)
@@ -235,22 +338,8 @@ class TestValidateFbcRelatedImages(unittest.TestCase):
             "ocp",
             assembly=None,
             version_scoped=False,
-            fbc_nvr=None,
+            bundle_version=None,
         )
-
-    @patch('pyartcd.fbc_util.extract_nvrs_from_fbc', new_callable=AsyncMock)
-    @patch('pyartcd.fbc_util.extract_fbc_labels', new_callable=AsyncMock)
-    def test_digest_source_nvrs_forwarded_without_changing_destination(self, mock_labels, mock_extract):
-        pullspecs = ['quay.io/test/fbc@sha256:a', 'quay.io/test/fbc@sha256:b']
-        source_nvrs = [f'quay-operator-fbc-3.17.6-1.ocp4.{minor}' for minor in (18, 19)]
-        mock_labels.side_effect = [{'nvr': nvr, 'doozer_key': 'quay-operator'} for nvr in source_nvrs]
-        mock_extract.return_value = ['quay-quay-container-3.17.6-1']
-
-        result = asyncio.run(validate_fbc_related_images(pullspecs, 'quay', assembly='3.17.7'))
-
-        self.assertEqual(result, ['quay-quay-container-3.17.6-1'])
-        for pullspec, nvr in zip(pullspecs, source_nvrs):
-            mock_extract.assert_any_await(pullspec, 'quay', assembly='3.17.7', version_scoped=True, fbc_nvr=nvr)
 
     @patch('pyartcd.fbc_util.extract_nvrs_from_fbc', new_callable=AsyncMock)
     @patch('pyartcd.fbc_util.extract_fbc_labels', new_callable=AsyncMock)
