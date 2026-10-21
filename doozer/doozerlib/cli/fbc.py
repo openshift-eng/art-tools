@@ -2,6 +2,7 @@ import asyncio
 import json
 import logging
 import os
+import re
 import sys
 import traceback
 from pathlib import Path
@@ -614,7 +615,7 @@ class FbcRebaseAndBuildCli:
     async def _check_existing_fbc_build(
         self, operator_meta: ImageMetadata, bundle_build: KonfluxBundleBuildRecord
     ) -> Optional[KonfluxFbcBuildRecord]:
-        """Check if an FBC build already exists for the given bundle build.
+        """Check if an FBC build already exists for the bundle and requested OCP target.
 
         :param operator_meta: Operator metadata
         :param bundle_build: Bundle build record
@@ -631,10 +632,18 @@ class FbcRebaseAndBuildCli:
             "outcome": str(KonfluxBuildOutcome.SUCCESS),
         }
 
-        # Search for FBC builds that contain this bundle build NVR
+        extra_patterns = {}
+        if self.major_minor:
+            # Filter before limit=1 so another target cannot hide a matching build.
+            extra_patterns["release"] = rf"\.ocp{re.escape(self.major_minor)}$"
+
+        # Search for FBC builds that contain this bundle build NVR.
         existing_fbc_build = await anext(
             self._fbc_db.search_builds_by_fields(
-                where=where, array_contains={"bundle_nvrs": bundle_build.nvr}, limit=1
+                where=where,
+                extra_patterns=extra_patterns,
+                array_contains={"bundle_nvrs": bundle_build.nvr},
+                limit=1,
             ),
             None,
         )

@@ -1,3 +1,4 @@
+import re
 import unittest
 from unittest import mock
 
@@ -482,3 +483,36 @@ class TestFbcRebaseAndBuildCli(unittest.IsolatedAsyncioTestCase):
         result = await self.fbc_cli._check_existing_fbc_build(operator_meta, bundle_build)
 
         self.assertIsNone(result)
+
+    async def test_check_existing_fbc_build_matches_ocp_target(self):
+        operator_meta = mock.Mock(distgit_key="test-operator")
+        bundle_build = self._create_mock_bundle_build(
+            "test-operator-bundle", "test-operator-bundle-1.0.0-1", "test-operator-1.0.0-1"
+        )
+        # Newest first, as returned by KonfluxDb; include absent and similar targets.
+        builds = [
+            KonfluxFbcBuildRecord(name="test-operator-fbc", version="1.0.0", release=release)
+            for release in ("6", "5.ocp4.160", "4.ocp4.16", "3.ocp5.0", "2.ocp4.18", "1.ocp4.18")
+        ]
+
+        async def search_builds(*, where, array_contains, limit, extra_patterns=None):
+            matching_builds = [
+                build
+                for build in builds
+                if all(re.search(pattern, getattr(build, field)) for field, pattern in (extra_patterns or {}).items())
+            ]
+            for build in matching_builds[:limit]:
+                yield build
+
+        self.mock_fbc_db.search_builds_by_fields = mock.Mock(side_effect=search_builds)
+
+        for target, expected in (("4.16", builds[2]), ("4.18", builds[4]), ("5.0", builds[3]), ("4.1", None)):
+            with self.subTest(target=target):
+                self.fbc_cli.major_minor = target
+                result = await self.fbc_cli._check_existing_fbc_build(operator_meta, bundle_build)
+                self.assertIs(result, expected)
+
+                query = self.mock_fbc_db.search_builds_by_fields.call_args.kwargs
+                self.assertEqual(query["where"]["assembly"], self.runtime.assembly)
+                self.assertEqual(query["array_contains"], {"bundle_nvrs": bundle_build.nvr})
+                self.assertEqual(query["limit"], 1)
