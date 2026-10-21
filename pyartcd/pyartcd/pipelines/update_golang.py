@@ -1129,8 +1129,9 @@ class UpdateGolangPipeline:
 
                 for _, info in streams_content.items():
                     if isinstance(info, dict) and _pullspecs_match(info.get('image'), latest_go):
-                        info['image'] = pullspec
-                        update_streams = True
+                        if info['image'] != pullspec:
+                            info['image'] = pullspec
+                            update_streams = True
         # This is to bump minor golang for GO_PREVIOUS
         elif previous_major_minor and build_major_minor == previous_major_minor:
             for el_v, pullspec in builder_pullspecs.items():
@@ -1140,8 +1141,9 @@ class UpdateGolangPipeline:
 
                 for _, info in streams_content.items():
                     if isinstance(info, dict) and _pullspecs_match(info.get('image'), previous_go):
-                        info['image'] = pullspec
-                        update_streams = True
+                        if info['image'] != pullspec:
+                            info['image'] = pullspec
+                            update_streams = True
         # This is to bump minor golang for GO_EXTRA
         elif extra_major_minor and build_major_minor == extra_major_minor:
             for el_v, pullspec in builder_pullspecs.items():
@@ -1172,8 +1174,9 @@ class UpdateGolangPipeline:
 
                 for _, info in streams_content.items():
                     if isinstance(info, dict) and _pullspecs_match(info.get('image'), extra_go):
-                        info['image'] = pullspec
-                        update_streams = True
+                        if info['image'] != pullspec:
+                            info['image'] = pullspec
+                            update_streams = True
         # This is to bump major golang for GO_LATEST and update GO_PREVIOUS to current GO_LATEST
         elif build_major_minor_tuple > latest_major_minor_tuple:
             for el_v, pullspec in builder_pullspecs.items():

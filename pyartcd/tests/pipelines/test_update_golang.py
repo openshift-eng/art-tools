@@ -2946,6 +2946,27 @@ class TestUpdateGolangStreamsFloatingTags(IsolatedAsyncioTestCase):
             'registry.redhat.io/openshift/ose-base:some-unrelated-tag',
         )
 
+    @patch("pyartcd.pipelines.update_golang.get_github_client_for_org")
+    async def test_floating_branch_unchanged_opens_no_pr(self, mock_get_github_client):
+        """A floating-tag branch already pointing at the builder tags has nothing to change, so no PR."""
+        streams = {
+            'rhel-9-golang': {
+                'aliases': ['rhel-9-golang-{GO_LATEST}'],
+                'image': 'registry.redhat.io/openshift/golang-builder:golang-builder-v1.22-rhel9',
+            },
+        }
+        pipeline = self._make_pipeline()
+        pipeline._branch_content = self._make_branch_content(streams)
+        pipeline.data_path = None
+        pipeline.skip_pr = False
+
+        await pipeline.update_golang_streams(
+            "1.22.12", {9: 'registry.redhat.io/openshift/golang-builder:golang-builder-v1.22-rhel9'}
+        )
+
+        mock_get_github_client.assert_not_called()
+        pipeline._branch_content['repo'].create_pull.assert_not_called()
+
     async def test_nvr_branch_minor_bump(self):
         """t4d: NVR-pinned branch gets NVR pullspecs after minor bump."""
         old_nvr9 = (
