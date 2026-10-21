@@ -1,18 +1,18 @@
 # Build a unified layered-product FBC
 
-`artcd merge-layered-fbc` combines explicit FBC builds from one product for one
+`artcd lp-unified-fbc` combines explicit FBC builds for one operator and one
 OCP target. Source groups are inferred from the explicit build records; no group
 parameter or new ocp-build-data groups are required.
 
 ```sh
-artcd --working-dir=/tmp/artcd merge-layered-fbc \
+artcd --working-dir=/tmp/artcd lp-unified-fbc \
   --ocp-target-version=5.0 \
   --fbc-build=quay-operator-fbc-3.18.2-<release>.ocp5.0 \
   --fbc-build=quay-operator-fbc-3.19.1-<release>.ocp5.0 \
-  --output-file=/tmp/artcd/merged-fbc.json
+  --output-file=/tmp/artcd/unified-fbc.json
 ```
 
-Repeat `--fbc-build` for every operator/minor version to include. Each value can
+Repeat `--fbc-build` for every minor version of the operator to include. Each value can
 be an FBC NVR or image pullspec. Pullspecs must match the successful build record.
 All source groups must belong to the same product and support the target in their
 existing `OCP_TARGET_VERSIONS`. ARTCD selects the first source group in sorted
@@ -22,25 +22,29 @@ from `--data-path`, which defaults to the production repository; every inspected
 source revision is saved.
 
 The job reads bundle metadata to identify each input's package and updated
-channels. It preserves the current production history for those packages,
+channels. It preserves the current production history for that package,
 applies each selected channel, and emits shared objects once. Other channels
 carried by the input's historical snapshot are ignored. Two inputs owning the
 same channel, conflicting published objects, removed production entries, and
 ambiguous default channels cause the build to fail. The production index must
 exist. This command does not create a complete replacement operator index;
-its fragment contains only the selected packages.
+its fragment contains only the selected operator package.
 
-The output application/component is derived from product and target, for
-example `quay-ocp-5-0-fbc-merged`. The FBC source branch is
-`art-quay-ocp-5.0-fbc-merged`. Successful builds receive a unique
-`quay-merged-fbc-5.0-<timestamp>.ocp5.0` NVR. Database records use the existing
-execution group and `stream` assembly, with all source bundle NVRs retained.
+All inputs must contain the same operator package. The selected bundle CSV must
+exist as an `olm.bundle` for that package and appear in every declared channel.
+
+The output application/component is derived from the operator package and target,
+for example `container-security-operator-fbc-unified-4-22`. Its source branch is
+`art-container-security-operator-fbc-unified-4-22`. Successful builds receive a
+unique `container-security-operator-fbc-unified-4.22-<timestamp>.ocp4.22` NVR.
+Database records and ART name labels use `container-security-operator-fbc-unified`;
+records retain the existing execution group, `stream` assembly, and all source bundle NVRs.
 The output image defaults to `quay.io/redhat-user-workloads/ocp-art-tenant/art-fbc`,
 matching existing FBC builds. The Konflux execution namespace remains product-specific.
 
 The JSON result includes `nvr`, digest-pinned `pullspec`, `build_url`,
 `provenance_url`, `dry_run`, and the complete `provenance`. The source repository
-stores `merge-provenance.json`, including input digests, source groups and their
+stores `unified-provenance.json`, including the operator package, input digests, source groups and their
 build-data revisions, channel ownership, and production baseline digest.
 
 For local inspection, use the global `artcd --dry-run` flag. It renders and

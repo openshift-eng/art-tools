@@ -40,7 +40,7 @@ class MergeLayeredFbcPipeline:
         self.target = ocp_target_version
         self.builds = fbc_builds
         self.data_path = data_path
-        self.output_file = Path(output_file or runtime.working_dir / 'merged-fbc.json').absolute()
+        self.output_file = Path(output_file or runtime.working_dir / 'unified-fbc.json').absolute()
         self.options = {
             '--fbc-repo': fbc_repo,
             '--image-repo': image_repo,
@@ -123,16 +123,16 @@ class MergeLayeredFbcPipeline:
             cmd.append('--skip-checks')
         for task in self.skip_tasks:
             cmd.extend(['--skip-task', task])
-        self.runtime.logger.info('Building merged FBC for %s OCP %s', self.group, self.target)
+        self.runtime.logger.info('Building unified FBC for %s OCP %s', self.group, self.target)
         await exectools.cmd_assert_async(cmd)
         result = json.loads(self.output_file.read_text())
         if not self.runtime.dry_run and (not result.get('pullspec') or not result.get('build_url')):
-            raise ValueError('Merged FBC build returned no immutable pullspec or build URL')
-        self.runtime.logger.info('Merged FBC result: %s', json.dumps(result))
+            raise ValueError('Unified FBC build returned no immutable pullspec or build URL')
+        self.runtime.logger.info('Unified FBC result: %s', json.dumps(result))
         return result
 
 
-@cli.command('merge-layered-fbc', help='Build a unified layered-product FBC for one OCP target')
+@cli.command('lp-unified-fbc', help='Build a unified layered-product FBC for one OCP target')
 @click.option('--ocp-target-version', required=True, help='Target OCP MAJOR.MINOR version.')
 @click.option('--fbc-build', 'fbc_builds', multiple=True, required=True, help='FBC NVR or pullspec; repeat per build.')
 @click.option('--product', help='Require all source builds to belong to this product.')

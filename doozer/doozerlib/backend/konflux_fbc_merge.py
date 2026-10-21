@@ -24,6 +24,7 @@ from artcommonlib.variants import get_build_variant_for_product
 from dockerfile_parse import DockerfileParser
 from doozerlib import opm, util
 from doozerlib.backend.build_repo import BuildRepo
+from doozerlib.backend.konflux_client import KonfluxClient
 from doozerlib.backend.konflux_fbc import (
     LIFECYCLE_SCHEMA,
     PRODUCTION_INDEX_PULLSPEC_FORMAT,
@@ -62,6 +63,8 @@ def _catalog_index(blobs: list[dict], packages: set[str]) -> dict[tuple[str, str
 def merge_layered_catalogs(baseline: list[dict], inputs: list[LayeredFbcInput]) -> list[dict]:
     """Overlay only the channels owned by the supplied bundles onto production."""
     packages = {source.package for source in inputs}
+    if len(packages) != 1:
+        raise ValueError(f'A unified FBC requires exactly one operator package; got {sorted(packages)}')
     merged = _catalog_index(baseline, packages)
     owners = {}
     defaults = {package: set() for package in packages}
@@ -76,6 +79,11 @@ def merge_layered_catalogs(baseline: list[dict], inputs: list[LayeredFbcInput]) 
         package_key = ('olm.package', package, package)
         if package_key not in catalog:
             raise ValueError(f'{source.record.nvr}: missing package {package}')
+        csv = source.bundle.bundle_csv_name
+        if not csv:
+            raise ValueError(f'{source.record.nvr}: source bundle {source.bundle.nvr} has no selected CSV name')
+        if ('olm.bundle', package, csv) not in catalog:
+            raise ValueError(f'{source.record.nvr}: missing bundle {package}/{csv} for selected CSV')
         defaults[package].add(catalog[package_key]['defaultChannel'])
         if package_key not in merged:
             merged[package_key] = catalog[package_key]
@@ -91,6 +99,8 @@ def merge_layered_catalogs(baseline: list[dict], inputs: list[LayeredFbcInput]) 
                 raise ValueError(f'{source.record.nvr}: missing channel {package}/{channel}')
             updated = catalog[key]
             entries = {entry['name'] for entry in updated['entries']}
+            if csv not in entries:
+                raise ValueError(f'{source.record.nvr}: selected CSV {csv} is missing from channel {package}/{channel}')
             published = {entry['name'] for entry in merged.get(key, {}).get('entries', [])}
             if missing := published - entries:
                 raise ValueError(f'{source.record.nvr}: stale channel {package}/{channel} removes {sorted(missing)}')
@@ -128,10 +138,12 @@ class LayeredFbcMerger(KonfluxFbcFragmentMerger):
         self.runtime = runtime
         self.target_version = target_version
         self.product = runtime.product
-        self.identity = f'{self.product}-ocp-{target_version}-fbc-merged'
+        self.operator = None
+        self.identity = None
+        self.name = None
         self.version = target_version
         self.release = f'{datetime.now(timezone.utc):%Y%m%d%H%M%S%f}.ocp{target_version}'
-        self.nvr = f'{self.product}-merged-fbc-{self.version}-{self.release}'
+        self.nvr = None
         self.inputs: list[LayeredFbcInput] = []
         self.catalog: list[dict] = []
         self.provenance = {}
@@ -142,18 +154,27 @@ class LayeredFbcMerger(KonfluxFbcFragmentMerger):
         super().__init__(
             group=runtime.group,
             group_config=runtime.group_config.primitive(),
-            working_dir=Path(runtime.working_dir) / 'konflux-fbc-sources' / self.identity,
-            fbc_git_branch=f'art-{self.identity}',
+            working_dir=Path(runtime.working_dir) / 'konflux-fbc-sources',
             registry_auth=registry_auth,
             major_minor_override=tuple(map(int, target_version.split('.'))),
             **kwargs,
         )
 
     def get_application_name(self, group: str):
-        return self.identity.replace('.', '-').replace('_', '-')
+        if not self.identity:
+            raise ValueError('Prepare the operator inputs before building a unified FBC')
+        return self.identity
 
     def get_component_name(self, group: str):
         return self.get_application_name(group)
+
+    def _set_operator_identity(self, package: str):
+        self.operator = package
+        self.name = f'{package}-fbc-unified'
+        self.identity = f'{self.name}-{self.target_version}'.replace('.', '-').replace('_', '-')
+        self.nvr = f'{self.name}-{self.version}-{self.release}'
+        self.working_dir = Path(self.runtime.working_dir) / 'konflux-fbc-sources' / self.identity
+        self.fbc_git_branch = f'art-{self.identity}'
 
     async def _pin_image(self, pullspec: str) -> str:
         info = await util.oc_image_info_for_arch_async(pullspec, registry_config=self.registry_auth)
@@ -254,8 +275,10 @@ class LayeredFbcMerger(KonfluxFbcFragmentMerger):
         )
         baseline_blobs = await opm.render(baseline, auth=auth, migrate_level=migrate_level)
         self.catalog = merge_layered_catalogs(baseline_blobs, self.inputs)
+        self._set_operator_identity(self.inputs[0].package)
         self.provenance = {
             'product': self.product,
+            'operator': self.operator,
             'ocp_target_version': self.target_version,
             'production_index': baseline,
             'execution_group': self.runtime.group,
@@ -296,7 +319,7 @@ class LayeredFbcMerger(KonfluxFbcFragmentMerger):
         return {
             'apiVersion': 'config.openshift.io/v1',
             'kind': 'ImageDigestMirrorSet',
-            'metadata': {'name': 'art-merged-fbc-mirror-set'},
+            'metadata': {'name': 'art-unified-fbc-mirror-set'},
             'spec': {
                 'imageDigestMirrors': [
                     {'source': source, 'mirrors': sorted(mirrors)} for source, mirrors in sorted(sources.items())
@@ -306,15 +329,15 @@ class LayeredFbcMerger(KonfluxFbcFragmentMerger):
 
     async def _prepare_source(self, build_repo: BuildRepo):
         self.build_source = build_repo
-        # Remove catalogs left by previous runs on this branch before writing the single merged catalog.
+        # Remove catalogs left by previous runs on this branch before writing the unified catalog.
         catalog_dir = build_repo.local_dir / 'catalog'
         for path in catalog_dir.iterdir():
             if path.name != 'catalog.yaml':
                 if path.is_dir():
-                    raise ValueError(f'Unexpected catalog directory in merged FBC source: {path}')
+                    raise ValueError(f'Unexpected catalog directory in unified FBC source: {path}')
                 path.unlink()
         dfp = DockerfileParser(str(build_repo.local_dir / 'catalog.Dockerfile'))
-        dfp.labels['com.redhat.art.name'] = f'{self.product}-merged-fbc'
+        dfp.labels['com.redhat.art.name'] = self.name
         dfp.labels['com.redhat.art.nvr'] = self.nvr
         dfp.envs = {
             '__doozer_group': self.group,
@@ -322,7 +345,7 @@ class LayeredFbcMerger(KonfluxFbcFragmentMerger):
             '__doozer_release': self.release,
             '__doozer_bundle_nvrs': ','.join(sorted(source.bundle.nvr for source in self.inputs)),
         }
-        (build_repo.local_dir / 'merge-provenance.json').write_text(json.dumps(self.provenance, indent=2) + '\n')
+        (build_repo.local_dir / 'unified-provenance.json').write_text(json.dumps(self.provenance, indent=2) + '\n')
 
     async def _record_build(self, build_repo, plr_info, outcome):
         plr = plr_info.to_dict()
@@ -331,10 +354,10 @@ class LayeredFbcMerger(KonfluxFbcFragmentMerger):
         pullspec = None
         if outcome == KonfluxBuildOutcome.SUCCESS:
             if not results.get('IMAGE_URL') or not results.get('IMAGE_DIGEST'):
-                raise ValueError('Successful merged FBC PipelineRun has no IMAGE_URL or IMAGE_DIGEST')
+                raise ValueError('Successful unified FBC PipelineRun has no IMAGE_URL or IMAGE_DIGEST')
             pullspec = f"{results['IMAGE_URL'].rsplit(':', 1)[0]}@{results['IMAGE_DIGEST']}"
         record = KonfluxFbcBuildRecord(
-            name=f'{self.product}-merged-fbc',
+            name=self.name,
             group=self.group,
             assembly=self.runtime.assembly,
             version=self.version,
@@ -352,7 +375,7 @@ class LayeredFbcMerger(KonfluxFbcFragmentMerger):
             image_tag=self.nvr if pullspec else None,
             art_job_url=os.environ.get('BUILD_URL', ''),
             bundle_nvrs=sorted(source.bundle.nvr for source in self.inputs),
-            arches=self.group_config['arches'],
+            arches=self.group_config.get('arches', list(KonfluxClient.SUPPORTED_ARCHES.keys())),
             build_variant=get_build_variant_for_product(self.product),
             start_time=datetime.fromisoformat(status['startTime'].replace('Z', '+00:00'))
             if status.get('startTime')
@@ -380,7 +403,7 @@ class LayeredFbcMerger(KonfluxFbcFragmentMerger):
             try:
                 await client.delete_git_auth_secret(namespace=self.konflux_namespace)
             except Exception:
-                self._logger.exception('Failed to clean up merged FBC git-auth secret')
+                self._logger.exception('Failed to clean up unified FBC git-auth secret')
 
     async def merge(self, image_repo: str) -> dict:
         plr_info = await self.run([source.record.image_pullspec for source in self.inputs], f'{image_repo}:{self.nvr}')
@@ -399,6 +422,6 @@ class LayeredFbcMerger(KonfluxFbcFragmentMerger):
             result['build_url'] = self._konflux_client.resource_url(plr)
             result['provenance_url'] = (
                 f'{self.build_source.https_url.removesuffix(".git")}/blob/'
-                f'{self.build_source.commit_hash}/merge-provenance.json'
+                f'{self.build_source.commit_hash}/unified-provenance.json'
             )
         return result

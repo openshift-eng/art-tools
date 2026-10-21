@@ -4,22 +4,27 @@ import unittest
 from pathlib import Path
 from unittest.mock import AsyncMock, Mock, patch
 
+from pyartcd.cli import cli
 from pyartcd.pipelines.merge_layered_fbc import MergeLayeredFbcPipeline
 
 
 class TestMergeLayeredFbcPipeline(unittest.IsolatedAsyncioTestCase):
+    def test_public_command_name(self):
+        self.assertIn('lp-unified-fbc', cli.commands)
+        self.assertNotIn('merge-layered-fbc', cli.commands)
+
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()
         self.addCleanup(self.temp.cleanup)
         self.runtime = Mock(working_dir=Path(self.temp.name), doozer_working='/tmp/doozer', dry_run=False)
         self.result = {
-            'nvr': 'quay-merged-fbc-5.0-1.ocp5.0',
+            'nvr': 'container-security-operator-fbc-unified-5.0-1.ocp5.0',
             'pullspec': 'quay.io/test/fbc@sha256:abc',
             'build_url': 'https://konflux.example/build',
             'dry_run': False,
             'provenance': {},
         }
-        (Path(self.temp.name) / 'merged-fbc.json').write_text(json.dumps(self.result))
+        (Path(self.temp.name) / 'unified-fbc.json').write_text(json.dumps(self.result))
         self.pipeline = MergeLayeredFbcPipeline(
             runtime=self.runtime,
             ocp_target_version='5.0',
