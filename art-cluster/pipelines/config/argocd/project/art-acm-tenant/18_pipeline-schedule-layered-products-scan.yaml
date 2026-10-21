@@ -46,6 +46,7 @@ spec:
             "--working-dir=./artcd_working",
             "--config=/root/.config/artcd.toml",
             "schedule-layered-products-scan",
+            "--group=acm-2.11",
             "--group=acm-2.13",
             "--group=acm-2.14",
             "--group=acm-2.15",
