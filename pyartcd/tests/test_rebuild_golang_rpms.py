@@ -291,5 +291,38 @@ class TestRunForceGolangVersionCheck(IsolatedAsyncioTestCase):
         mock_bump_rebuild.assert_called_once_with('foo-rpm', '9', unittest.mock.ANY, unittest.mock.ANY)
 
 
+class TestMoveGolangBugsCallSite(IsolatedAsyncioTestCase):
+    @patch(f'{MODULE}.Specfile', MagicMock(), create=True)
+    @patch(f'{MODULE}.exectools.cmd_gather_async', new_callable=AsyncMock)
+    @patch(f'{MODULE}.move_golang_bugs', new_callable=AsyncMock)
+    @patch(f'{MODULE}.RebuildGolangRPMsPipeline.bump_and_rebuild_rpm', new_callable=AsyncMock, return_value=True)
+    @patch(f'{MODULE}.RebuildGolangRPMsPipeline.get_rpms', return_value=['foo-rpm-1.0-1.el9'])
+    @patch(f'{MODULE}.RebuildGolangRPMsPipeline.get_art_built_rpms', return_value=[])
+    @patch(f'{MODULE}.is_latest_and_available', new_callable=AsyncMock, return_value=True)
+    @patch(f'{MODULE}.elliottutil.get_golang_rpm_nvrs', return_value={'1.22.3': [('foo-rpm', '1.0', '1.el9')]})
+    async def test_sweeps_with_golang_major_minor(self, _nvr_map, _available, _art, _rpms, _bump, move_bugs, gather):
+        gather.side_effect = [(0, 'ART Bot', ''), (0, 'aos-team-art@redhat.com', '')]
+        pipeline = RebuildGolangRPMsPipeline(
+            MagicMock(dry_run=False),
+            ocp_version='4.18',
+            go_nvrs=['golang-1.22.12-1.el9'],
+            art_jira='ART-1234',
+            cves=['CVE-2026-1234'],
+            rpms=['foo-rpm'],
+        )
+        pipeline.koji_session = MagicMock()
+
+        await pipeline.run()
+
+        move_bugs.assert_awaited_once_with(
+            ocp_version='4.18',
+            golang_major_minor='1.22',
+            cves=['CVE-2026-1234'],
+            nvrs=['golang-1.22.12-1.el9'],
+            rpms_only=True,
+            dry_run=False,
+        )
+
+
 if __name__ == '__main__':
     unittest.main()

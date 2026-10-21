@@ -1,10 +1,11 @@
 import asyncio
+import contextlib
 import io
 import logging
 import os
 import re
 from pathlib import Path
-from typing import List, cast
+from typing import Iterable, List, cast
 
 import click
 import koji
@@ -14,10 +15,13 @@ from artcommonlib.constants import (
     BREW_HUB,
     GOLANG_BUILDER_IMAGE_NAME,
     GOLANG_NVR_LABEL,
+    REGISTRY_CI_OPENSHIFT,
+    REGISTRY_REDHAT_IO,
 )
 from artcommonlib.github_auth import get_github_client_for_org
 from artcommonlib.konflux.konflux_build_record import ArtifactType, Engine, KonfluxBuildOutcome, KonfluxBuildRecord
 from artcommonlib.konflux.konflux_db import KonfluxDb
+from artcommonlib.registry_config import RegistryConfig
 from artcommonlib.release_util import isolate_assembly_in_release, isolate_el_version_in_release
 from artcommonlib.rpm_utils import parse_nvr
 from artcommonlib.util import new_roundtrip_yaml_handler, resolve_konflux_namespace_by_product
@@ -205,19 +209,110 @@ def extract_major_minor(version: str, label: str = "version") -> str:
     return f"{match[1]}.{match[2]}"
 
 
+GOLANG_GROUP_VAR_NAMES = ("GO_LATEST", "GO_EXTRA", "GO_PREVIOUS")
+_OCP_BRANCH_PATTERN = re.compile(r"openshift-(\d+)\.(\d+)")
+
+
+def go_major_minors_from_group_vars(
+    vars_content: dict, label_prefix: str = "group.yml", skip_invalid: bool = False
+) -> dict[str, str]:
+    """Map the GO_LATEST / GO_EXTRA / GO_PREVIOUS vars of a group.yml to golang major.minor strings.
+
+    :param vars_content: the ``vars`` mapping of a group.yml
+    :param label_prefix: prefix for the error message of an invalid value
+    :param skip_invalid: leave out invalid values instead of raising ValueError
+    """
+    result: dict[str, str] = {}
+    for var_name in GOLANG_GROUP_VAR_NAMES:
+        var_value = vars_content.get(var_name)
+        if not var_value:
+            continue
+        try:
+            result[var_name] = extract_major_minor(var_value, f"{label_prefix} {var_name}")
+        except ValueError:
+            if not skip_invalid:
+                raise
+            _LOGGER.warning("Ignoring invalid %s %s: %s", label_prefix, var_name, var_value)
+    return result
+
+
+def _ocp_version_key(version: str) -> tuple[int, ...]:
+    return tuple(int(part) for part in version.split("."))
+
+
+def get_active_ocp_golang_major_minors() -> dict[str, set[str]]:
+    """Map every active OCP version to the golang major.minors of its group.yml GO_* vars.
+
+    The versions are the openshift-X.Y branches of upstream ocp-build-data. A branch is
+    inactive when its group.yml software_lifecycle.phase is eol or it sets no GO_* var.
+    """
+    repo = get_github_client_for_org("openshift-eng").get_repo("openshift-eng/ocp-build-data")
+    result: dict[str, set[str]] = {}
+    for ref in repo.get_git_matching_refs("heads/openshift-"):
+        branch = ref.ref.removeprefix("refs/heads/")
+        match = _OCP_BRANCH_PATTERN.fullmatch(branch)
+        if not match:
+            continue
+        try:
+            group = yaml.load(repo.get_contents("group.yml", ref=branch).decoded_content) or {}
+        except Exception as exc:
+            _LOGGER.warning("Could not load group.yml from %s; skipping it: %s", branch, exc)
+            continue
+        if (group.get("software_lifecycle") or {}).get("phase") == "eol":
+            continue
+        major_minors = go_major_minors_from_group_vars(
+            group.get("vars") or {}, label_prefix=f"{branch} group.yml", skip_invalid=True
+        )
+        if major_minors:
+            result[f"{match[1]}.{match[2]}"] = set(major_minors.values())
+    return result
+
+
+def ocp_versions_sharing_golang(
+    golang_major_minors: Iterable[str],
+    ocp_version: str,
+    active_versions: dict[str, set[str]] | None = None,
+) -> List[str]:
+    """Return the active OCP versions using any of golang_major_minors, plus ocp_version, sorted.
+
+    :param golang_major_minors: golang major.minor strings, e.g. ["1.25", "1.26"]
+    :param ocp_version: version that is always included, e.g. the version a pipeline runs for
+    :param active_versions: result of get_active_ocp_golang_major_minors(); fetched when None
+    """
+    if active_versions is None:
+        active_versions = get_active_ocp_golang_major_minors()
+    wanted = set(golang_major_minors)
+    versions = {version for version, major_minors in active_versions.items() if major_minors & wanted}
+    versions.add(ocp_version)
+    return sorted(versions, key=_ocp_version_key)
+
+
 async def move_golang_bugs(
     ocp_version: str,
+    golang_major_minor: str,
     cves: list[str] | None = None,
     nvrs: list[str] | None = None,
     components: list[str] | None = None,
     force_update_tracker: bool = False,
     rpms_only: bool = False,
     dry_run: bool = False,
+    registry_config: str | None = None,
 ):
-    cmd = [
-        'elliott',
-        '--group',
-        f'openshift-{ocp_version}',
+    """Run find-bugs:golang for ocp_version and every other active OCP version using golang_major_minor.
+
+    registry_config is passed to elliott so it can read nightlies on registry.ci and resolve floating
+    golang-builder tags on registry.redhat.io.
+
+    A failing version does not stop the others; ChildProcessError names all failed versions at the end.
+    When version discovery fails, only ocp_version is swept.
+    """
+    try:
+        versions = ocp_versions_sharing_golang([golang_major_minor], ocp_version)
+    except Exception as exc:
+        _LOGGER.warning("Could not discover OCP versions from ocp-build-data; sweeping %s only: %s", ocp_version, exc)
+        versions = [ocp_version]
+    _LOGGER.info("Sweeping golang %s bugs for OCP versions: %s", golang_major_minor, ", ".join(versions))
+    args = [
         '--assembly',
         DEFAULT_GOLANG_ASSEMBLY,
         'find-bugs:golang',
@@ -226,20 +321,56 @@ async def move_golang_bugs(
     ]
     if cves:
         for cve in cves:
-            cmd.extend(['--cve-id', cve])
+            args.extend(['--cve-id', cve])
     if nvrs:
         for nvr in nvrs:
-            cmd.extend(['--fixed-in-nvr', nvr])
+            args.extend(['--fixed-in-nvr', nvr])
     if components:
         for component in components:
-            cmd.extend(['--component', component])
+            args.extend(['--component', component])
     if force_update_tracker:
-        cmd.append('--force-update-tracker')
+        args.append('--force-update-tracker')
     if rpms_only:
-        cmd.append('--rpms-only')
+        args.append('--rpms-only')
     if dry_run:
-        cmd.append('--dry-run')
-    await exectools.cmd_assert_async(cmd, log_stdout=True)
+        args.append('--dry-run')
+    failed_versions = []
+    for version in versions:
+        try:
+            cmd = ['elliott', '--group', f'openshift-{version}']
+            if registry_config:
+                cmd.append(f'--registry-config={registry_config}')
+            await exectools.cmd_assert_async(cmd + args, log_stdout=True)
+        except ChildProcessError as exc:
+            _LOGGER.error("find-bugs:golang failed for openshift-%s: %s", version, exc)
+            failed_versions.append(version)
+    if failed_versions:
+        raise ChildProcessError(f"find-bugs:golang failed for OCP versions: {', '.join(failed_versions)}")
+
+
+def golang_sweep_registry_config():
+    """Auth file for the golang bug sweep, or None when the job provides no registry credentials.
+
+    KUBECONFIG (app.ci) gives registry.ci for nightlies; KONFLUX_OPERATOR_INDEX_AUTH_FILE gives registry.redhat.io
+    for floating golang-builder tags. Same sources ocp4-konflux uses.
+    """
+    kubeconfig = os.environ.get('KUBECONFIG')
+    redhat_auth_file = os.environ.get('KONFLUX_OPERATOR_INDEX_AUTH_FILE')
+    registries = []
+    if kubeconfig:
+        registries.append(REGISTRY_CI_OPENSHIFT)
+    if redhat_auth_file:
+        registries.append(REGISTRY_REDHAT_IO)
+    if not registries:
+        _LOGGER.warning(
+            'No KUBECONFIG or KONFLUX_OPERATOR_INDEX_AUTH_FILE; golang bug sweep runs without --registry-config'
+        )
+        return contextlib.nullcontext(None)
+    return RegistryConfig(
+        kubeconfig=kubeconfig,
+        source_files=[redhat_auth_file] if redhat_auth_file else None,
+        registries=registries,
+    )
 
 
 class UpdateGolangPipeline:
@@ -367,12 +498,7 @@ class UpdateGolangPipeline:
                 f"{go_latest_var} variable not found in group.yml, please make sure it is defined before running the pipeline"
             )
 
-        allowed_major_minors = {
-            var_name: extract_major_minor(var_value, f"group.yml {var_name}")
-            for var_name in ("GO_LATEST", "GO_EXTRA", "GO_PREVIOUS")
-            for var_value in [vars_content.get(var_name)]
-            if var_value
-        }
+        allowed_major_minors = go_major_minors_from_group_vars(vars_content)
         return branch, allowed_major_minors
 
     def validate_go_version_matches_group_vars(self, go_version: str):
@@ -627,14 +753,17 @@ class UpdateGolangPipeline:
                 _LOGGER.info("No Konflux golang builder images found; streams.yml will not be updated.")
 
         if self.is_production_assembly:
-            await move_golang_bugs(
-                ocp_version=self.ocp_version,
-                cves=self.cves,
-                nvrs=self.go_nvrs if self.cves else None,
-                components=[GOLANG_BUILDER_CVE_COMPONENT],
-                force_update_tracker=self.force_update_tracker,
-                dry_run=self.dry_run,
-            )
+            with golang_sweep_registry_config() as registry_auth_file:
+                await move_golang_bugs(
+                    ocp_version=self.ocp_version,
+                    golang_major_minor=build_major_minor,
+                    cves=self.cves,
+                    nvrs=self.go_nvrs if self.cves else None,
+                    components=[GOLANG_BUILDER_CVE_COMPONENT],
+                    force_update_tracker=self.force_update_tracker,
+                    dry_run=self.dry_run,
+                    registry_config=registry_auth_file,
+                )
         else:
             _LOGGER.info("Skipping Golang bug updates for the test assembly")
         await self._slack_client.say_in_thread(

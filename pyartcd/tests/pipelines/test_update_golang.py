@@ -18,11 +18,14 @@ from pyartcd.pipelines.update_golang import (
     _parse_pullspec_tuple,
     _pullspecs_match,
     extract_and_validate_golang_nvrs,
+    get_active_ocp_golang_major_minors,
     get_latest_nvr_in_tag,
+    golang_sweep_registry_config,
     is_available,
     is_latest,
     is_latest_and_available,
     move_golang_bugs,
+    ocp_versions_sharing_golang,
     update_golang,
 )
 from tenacity import wait_none
@@ -224,14 +227,105 @@ class TestIsLatestAndAvailable(IsolatedAsyncioTestCase):
         self.assertFalse(result)
 
 
+def _group_yml(go_vars: dict | None = None, phase: str | None = "release") -> bytes:
+    lines = []
+    if phase:
+        lines += ["software_lifecycle:", f"  phase: {phase}"]
+    if go_vars:
+        lines.append("vars:")
+        lines += [f"  {name}: {value}" for name, value in go_vars.items()]
+    return ("\n".join(lines) + "\n").encode()
+
+
+class TestGetActiveOcpGolangMajorMinors(unittest.TestCase):
+    def _mock_repo(self, branches: dict):
+        repo = Mock()
+        repo.get_git_matching_refs.return_value = [Mock(ref=f"refs/heads/{name}") for name in branches]
+
+        def get_contents(path, ref):
+            payload = branches[ref]
+            if isinstance(payload, Exception):
+                raise payload
+            return Mock(decoded_content=payload)
+
+        repo.get_contents.side_effect = get_contents
+        return repo
+
+    @patch("pyartcd.pipelines.update_golang.get_github_client_for_org")
+    def test_discovers_active_branches_from_group_yml(self, mock_gh):
+        repo = self._mock_repo(
+            {
+                "openshift-3.11": _group_yml(phase="eol"),
+                "openshift-4.5": _group_yml(phase=None),
+                "openshift-4.11": _group_yml({"GO_LATEST": '"1.19"'}, phase="eol"),
+                "openshift-4.16": _group_yml({"GO_LATEST": '"1.21"', "GO_EXTRA": '"1.23"', "GO_PREVIOUS": '"1.20"'}),
+                "openshift-4.17-hotfix": _group_yml({"GO_LATEST": '"1.22"'}),
+                "openshift-4.20": Exception("network error"),
+                "openshift-4.22": _group_yml({"GO_LATEST": '"1.25"', "GO_EXTRA": '"1.26"'}),
+                "openshift-5.0": _group_yml({"GO_LATEST": '"1.26"', "GO_EXTRA": '"1.26"'}, phase="signing"),
+                "openshift-5.1": _group_yml({"GO_LATEST": "golang-1.26.5-1.el9", "GO_EXTRA": '"1.26"'}, "pre-release"),
+            }
+        )
+        mock_gh.return_value.get_repo.return_value = repo
+
+        result = get_active_ocp_golang_major_minors()
+
+        self.assertEqual(
+            result,
+            {
+                "4.16": {"1.21", "1.23", "1.20"},
+                "4.22": {"1.25", "1.26"},
+                "5.0": {"1.26"},
+                "5.1": {"1.26"},
+            },
+        )
+        mock_gh.assert_called_once_with("openshift-eng")
+        mock_gh.return_value.get_repo.assert_called_once_with("openshift-eng/ocp-build-data")
+        repo.get_git_matching_refs.assert_called_once_with("heads/openshift-")
+
+    @patch("pyartcd.pipelines.update_golang.get_github_client_for_org")
+    def test_unquoted_trailing_zero_is_not_truncated(self, mock_gh):
+        mock_gh.return_value.get_repo.return_value = self._mock_repo(
+            {"openshift-4.14": _group_yml({"GO_LATEST": "1.20", "GO_EXTRA": "1.19"})}
+        )
+        self.assertEqual(get_active_ocp_golang_major_minors(), {"4.14": {"1.20", "1.19"}})
+
+
+class TestOcpVersionsSharingGolang(unittest.TestCase):
+    ACTIVE = {
+        "4.9": {"1.22"},
+        "4.10": {"1.22", "1.23"},
+        "4.12": {"1.19", "1.22"},
+        "4.20": {"1.24", "1.25"},
+        "4.22": {"1.25", "1.26"},
+    }
+
+    def test_union_of_all_major_minors_sorted_numerically(self):
+        self.assertEqual(
+            ocp_versions_sharing_golang(["1.22", "1.25"], "4.22", self.ACTIVE), ["4.9", "4.10", "4.12", "4.20", "4.22"]
+        )
+
+    def test_always_includes_given_version(self):
+        self.assertEqual(ocp_versions_sharing_golang(["1.27"], "5.1", self.ACTIVE), ["5.1"])
+        self.assertEqual(ocp_versions_sharing_golang([], "4.22", self.ACTIVE), ["4.22"])
+
+    @patch("pyartcd.pipelines.update_golang.get_active_ocp_golang_major_minors")
+    def test_fetches_active_versions_when_not_given(self, mock_active):
+        mock_active.return_value = self.ACTIVE
+        self.assertEqual(ocp_versions_sharing_golang(["1.26"], "4.22"), ["4.22"])
+        mock_active.assert_called_once_with()
+
+
+@patch("pyartcd.pipelines.update_golang.get_active_ocp_golang_major_minors", return_value={})
 class TestMoveGolangBugs(IsolatedAsyncioTestCase):
     """Test the move_golang_bugs async function"""
 
     @patch("artcommonlib.exectools.cmd_assert_async")
-    async def test_move_golang_bugs_with_cves(self, mock_cmd_assert):
+    async def test_move_golang_bugs_with_cves(self, mock_cmd_assert, _):
         """Test moving golang bugs with CVEs"""
         await move_golang_bugs(
             ocp_version="4.16",
+            golang_major_minor="1.20",
             cves=["CVE-2024-1234", "CVE-2024-5678"],
             nvrs=["golang-1.20.12-2.el8"],
             components=["openshift-golang-builder-container"],
@@ -260,10 +354,11 @@ class TestMoveGolangBugs(IsolatedAsyncioTestCase):
         mock_cmd_assert.assert_called_once_with(expected_cmd, log_stdout=True)
 
     @patch("artcommonlib.exectools.cmd_assert_async")
-    async def test_move_golang_bugs_with_force_update(self, mock_cmd_assert):
+    async def test_move_golang_bugs_with_force_update(self, mock_cmd_assert, _):
         """Test moving golang bugs with force update tracker"""
         await move_golang_bugs(
             ocp_version="4.16",
+            golang_major_minor="1.20",
             cves=["CVE-2024-1234"],
             force_update_tracker=True,
             dry_run=False,
@@ -274,10 +369,11 @@ class TestMoveGolangBugs(IsolatedAsyncioTestCase):
         self.assertIn("--force-update-tracker", call_args)
 
     @patch("artcommonlib.exectools.cmd_assert_async")
-    async def test_move_golang_bugs_dry_run(self, mock_cmd_assert):
+    async def test_move_golang_bugs_dry_run(self, mock_cmd_assert, _):
         """Test moving golang bugs in dry-run mode"""
         await move_golang_bugs(
             ocp_version="4.16",
+            golang_major_minor="1.20",
             cves=["CVE-2024-1234"],
             dry_run=True,
         )
@@ -285,6 +381,53 @@ class TestMoveGolangBugs(IsolatedAsyncioTestCase):
         mock_cmd_assert.assert_called_once()
         call_args = mock_cmd_assert.call_args[0][0]
         self.assertIn("--dry-run", call_args)
+
+    @patch("artcommonlib.exectools.cmd_assert_async")
+    async def test_move_golang_bugs_passes_registry_config(self, mock_cmd_assert, _):
+        await move_golang_bugs(ocp_version="4.16", golang_major_minor="1.20", registry_config="/tmp/auth.json")
+
+        call_args = mock_cmd_assert.call_args[0][0]
+        self.assertEqual(call_args[:4], ["elliott", "--group", "openshift-4.16", "--registry-config=/tmp/auth.json"])
+
+    @patch("artcommonlib.exectools.cmd_assert_async")
+    async def test_move_golang_bugs_without_registry_config(self, mock_cmd_assert, _):
+        await move_golang_bugs(ocp_version="4.16", golang_major_minor="1.20")
+
+        call_args = mock_cmd_assert.call_args[0][0]
+        self.assertFalse(any(arg.startswith("--registry-config") for arg in call_args))
+
+    @patch("artcommonlib.exectools.cmd_assert_async")
+    async def test_sweeps_every_version_sharing_the_major_minor(self, mock_cmd_assert, mock_active):
+        mock_active.return_value = {"4.12": {"1.19", "1.22"}, "4.17": {"1.22", "1.23"}, "4.19": {"1.23", "1.24"}}
+
+        await move_golang_bugs(ocp_version="4.18", golang_major_minor="1.22", rpms_only=True)
+
+        groups = [call.args[0][2] for call in mock_cmd_assert.call_args_list]
+        self.assertEqual(groups, ["openshift-4.12", "openshift-4.17", "openshift-4.18"])
+        for call in mock_cmd_assert.call_args_list:
+            self.assertEqual(
+                call.args[0][3:],
+                ["--assembly", "stream", "find-bugs:golang", "--analyze", "--update-tracker", "--rpms-only"],
+            )
+
+    @patch("artcommonlib.exectools.cmd_assert_async")
+    async def test_failure_does_not_stop_other_versions(self, mock_cmd_assert, mock_active):
+        mock_active.return_value = {"4.16": {"1.22"}, "4.17": {"1.22"}, "4.18": {"1.22"}}
+        mock_cmd_assert.side_effect = [None, ChildProcessError("boom"), ChildProcessError("boom")]
+
+        with self.assertRaisesRegex(ChildProcessError, r"find-bugs:golang failed for OCP versions: 4\.17, 4\.18$"):
+            await move_golang_bugs(ocp_version="4.18", golang_major_minor="1.22")
+
+        self.assertEqual(mock_cmd_assert.call_count, 3)
+
+    @patch("artcommonlib.exectools.cmd_assert_async")
+    async def test_discovery_failure_sweeps_ocp_version_only(self, mock_cmd_assert, mock_active):
+        mock_active.side_effect = RuntimeError("rate limited")
+
+        await move_golang_bugs(ocp_version="4.18", golang_major_minor="1.22")
+
+        groups = [call.args[0][2] for call in mock_cmd_assert.call_args_list]
+        self.assertEqual(groups, ["openshift-4.18"])
 
 
 class TestUpdateGolangPipeline(IsolatedAsyncioTestCase):
@@ -1221,6 +1364,8 @@ repos:
             {8: "registry.example.com/golang-builder:v1.25.11-el8"},
         )
         move_golang_bugs.assert_awaited_once()
+        self.assertEqual(move_golang_bugs.await_args.kwargs["ocp_version"], "5.0")
+        self.assertEqual(move_golang_bugs.await_args.kwargs["golang_major_minor"], "1.25")
 
     @patch("pyartcd.pipelines.update_golang.kinit", new_callable=AsyncMock)
     @patch("pyartcd.pipelines.update_golang.move_golang_bugs", new_callable=AsyncMock)
@@ -2988,3 +3133,32 @@ class TestUpdateGolangStreamsFloatingTags(IsolatedAsyncioTestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestGolangSweepRegistryConfig(unittest.TestCase):
+    @patch.dict(os.environ, {}, clear=True)
+    def test_no_credentials_gives_none(self):
+        with golang_sweep_registry_config() as auth_file:
+            self.assertIsNone(auth_file)
+
+    @patch("pyartcd.pipelines.update_golang.RegistryConfig")
+    @patch.dict(os.environ, {"KUBECONFIG": "/kc", "KONFLUX_OPERATOR_INDEX_AUTH_FILE": "/rh.json"}, clear=True)
+    def test_both_credentials(self, mock_registry_config):
+        golang_sweep_registry_config()
+
+        mock_registry_config.assert_called_once_with(
+            kubeconfig="/kc",
+            source_files=["/rh.json"],
+            registries=["registry.ci.openshift.org", "registry.redhat.io"],
+        )
+
+    @patch("pyartcd.pipelines.update_golang.RegistryConfig")
+    @patch.dict(os.environ, {"KUBECONFIG": "/kc"}, clear=True)
+    def test_kubeconfig_only(self, mock_registry_config):
+        golang_sweep_registry_config()
+
+        mock_registry_config.assert_called_once_with(
+            kubeconfig="/kc",
+            source_files=None,
+            registries=["registry.ci.openshift.org"],
+        )
