@@ -1,12 +1,14 @@
+import hashlib
 import html
 import json
 import os
 import re
 from typing import Dict, Optional
+from uuid import uuid4
 
 import click
 from artcommonlib.constants import KONFLUX_DEFAULT_IMAGE_REPO, RHCOS_IMAGE_REPO
-from artcommonlib.exectools import cmd_assert_async, cmd_gather_async
+from artcommonlib.exectools import cmd_gather_async
 from artcommonlib.registry_config import RegistryConfig
 from artcommonlib.util import sync_to_quay
 
@@ -117,32 +119,6 @@ class RhcosNodeImagePostBuildPipeline:
         self.runtime.logger.info('Extracted timestamp %s from release label %s', timestamp, release_label)
         return timestamp
 
-    async def _resolve_image_digest_pullspec(self, pullspec: str, auth_file: str) -> str:
-        """Resolve a mutable image tag to its immutable manifest-list digest pullspec."""
-
-        self.runtime.logger.info('Resolving manifest-list digest for %s', pullspec)
-        _, stdout, _ = await cmd_gather_async(
-            [
-                'oc',
-                'image',
-                'info',
-                '--filter-by-os=linux/amd64',
-                '-o',
-                'json',
-                pullspec,
-                f'--registry-config={auth_file}',
-            ],
-            check=True,
-        )
-        image_info = json.loads(stdout)
-        digest = image_info.get('listDigest') or image_info.get('digest')
-        if not digest:
-            raise RuntimeError(f'Image info did not return a manifest-list digest for {pullspec}')
-
-        digest_pullspec = f'{pullspec.rsplit(":", 1)[0]}@{digest}'
-        self.runtime.logger.info('Resolved %s to immutable pullspec %s', pullspec, digest_pullspec)
-        return digest_pullspec
-
     async def _apply_manifest_list_tag_label(
         self,
         source_pullspec: str,
@@ -151,140 +127,65 @@ class RhcosNodeImagePostBuildPipeline:
         label_value: str,
         auth_file: str,
     ) -> str:
-        """Apply the ``coreos.build.manifest-list-tag`` label and return the destination pullspec."""
+        """Label every platform config and publish the list by its immutable digest.
+
+        A unique staging tag isolates concurrent promotions. Keep that tag rather
+        than deleting its manifest, which is also referenced by the published tags.
+        """
 
         dest = f'{dest_repo}:{dest_tag}'
+        staging_pullspec = f'{dest_repo}:rhcos-label-{uuid4().hex}'
         label_patch = json.dumps({'Labels': {'coreos.build.manifest-list-tag': label_value}})
         self.runtime.logger.info(
-            'Applying coreos.build.manifest-list-tag=%s to each platform in %s -> %s',
+            'Applying coreos.build.manifest-list-tag=%s to every platform in %s via %s',
             label_value,
             source_pullspec,
-            dest,
+            staging_pullspec,
         )
-
-        async def inspect_manifest_list(cmd):
-            exit_code, stdout, stderr = await cmd_gather_async(cmd, check=False)
-            if exit_code:
-                self.runtime.logger.warning('Manifest inspection failed: %s', stderr.strip())
-                return None
-            try:
-                manifest_list = json.loads(stdout)
-            except json.JSONDecodeError:
-                self.runtime.logger.warning('Manifest inspection returned invalid JSON')
-                return None
-            manifests = manifest_list.get('list', {}).get('manifests') or manifest_list.get('manifests')
-            if not manifests:
-                self.runtime.logger.warning('Manifest inspection returned no platform manifests')
-                return None
-            return manifests
-
-        manifests = await inspect_manifest_list(
+        await cmd_gather_async(
             [
                 'oc',
                 'image',
-                'info',
-                source_pullspec,
-                '--filter-by-os=.*',
-                '-o',
-                'json',
+                'append',
+                f'--from={source_pullspec}',
+                f'--to={staging_pullspec}',
+                f'--image={label_patch}',
+                '--keep-manifest-list',
                 f'--registry-config={auth_file}',
-            ]
+            ],
+            check=True,
         )
-        if manifests is None:
-            self.runtime.logger.info('Retrying manifest inspection with skopeo')
-            manifests = await inspect_manifest_list(
-                [
-                    'skopeo',
-                    'inspect',
-                    '--raw',
-                    f'--authfile={auth_file}',
-                    f'docker://{source_pullspec}',
-                ]
-            )
-        if manifests is None:
-            self.runtime.logger.info('Retrying manifest inspection with oc without an OS filter')
-            manifests = await inspect_manifest_list(
-                ['oc', 'image', 'info', source_pullspec, '-o', 'json', f'--registry-config={auth_file}']
-            )
-        if manifests is None:
-            raise RuntimeError(f'Unable to inspect platform manifests for {source_pullspec}')
-
-        platforms = []
-        seen_architectures = set()
-        for manifest in manifests:
-            architecture = manifest.get('platform', {}).get('architecture')
-            digest = manifest.get('digest')
-            if not architecture or not digest:
-                continue
-            if not re.fullmatch(r'[A-Za-z0-9_.-]+', architecture):
-                raise ValueError(f'Unexpected architecture in manifest list: {architecture!r}')
-            if architecture in seen_architectures:
-                raise ValueError(f'Manifest list contains multiple entries for architecture {architecture!r}')
-            seen_architectures.add(architecture)
-            platforms.append((architecture, digest))
-
-        if not platforms:
-            raise RuntimeError(f'No architecture-specific manifests found for {source_pullspec}')
-
-        source_repo = source_pullspec.split('@', 1)[0]
-        temp_tags = []
-        manifest_created = False
+        _, raw_manifest, _ = await cmd_gather_async(
+            ['skopeo', 'inspect', '--raw', f'--authfile={auth_file}', f'docker://{staging_pullspec}'],
+            check=True,
+        )
         try:
-            for architecture, digest in platforms:
-                temp_tag = f'{dest_tag}-labeled-{architecture}'
-                temp_tags.append(temp_tag)
-                platform_pullspec = f'{source_repo}@{digest}'
-                temp_pullspec = f'{dest_repo}:{temp_tag}'
-                self.runtime.logger.info(
-                    'Labeling %s platform image %s into %s', architecture, platform_pullspec, temp_pullspec
-                )
-                await cmd_assert_async(
-                    [
-                        'oc',
-                        'image',
-                        'append',
-                        f'--from={platform_pullspec}',
-                        f'--to={temp_pullspec}',
-                        f'--image={label_patch}',
-                        f'--registry-config={auth_file}',
-                    ]
-                )
-
-            self.runtime.logger.info('Creating destination manifest list %s', dest)
-            await cmd_assert_async(['buildah', 'manifest', 'rm', dest], check=False)
-            await cmd_assert_async(['buildah', 'manifest', 'create', dest])
-            manifest_created = True
-            for architecture, _ in platforms:
-                temp_pullspec = f'{dest_repo}:{dest_tag}-labeled-{architecture}'
-                self.runtime.logger.info('Adding %s platform image %s to %s', architecture, temp_pullspec, dest)
-                await cmd_assert_async(
-                    ['buildah', 'manifest', 'add', f'--authfile={auth_file}', dest, f'docker://{temp_pullspec}']
-                )
-
-            self.runtime.logger.info('Pushing manifest list %s', dest)
-            await cmd_assert_async(
-                ['buildah', 'manifest', 'push', '--all', f'--authfile={auth_file}', dest, f'docker://{dest}']
-            )
-        finally:
-            if manifest_created:
-                try:
-                    await cmd_assert_async(['buildah', 'manifest', 'rm', dest])
-                except Exception as error:
-                    self.runtime.logger.warning('Could not remove local buildah manifest %s: %s', dest, error)
-            for temp_tag in temp_tags:
-                temp_pullspec = f'{dest_repo}:{temp_tag}'
-                self.runtime.logger.info('Cleaning up temporary platform tag %s', temp_pullspec)
-                try:
-                    await cmd_assert_async(['skopeo', 'delete', f'--authfile={auth_file}', f'docker://{temp_pullspec}'])
-                except Exception as error:
-                    self.runtime.logger.warning(
-                        'Could not remove temporary platform tag %s; it may remain in the registry: %s',
-                        temp_pullspec,
-                        error,
-                    )
-
-        self.runtime.logger.info('Labeled image available at %s', dest)
-        return dest
+            manifest_list = json.loads(raw_manifest)
+        except json.JSONDecodeError as error:
+            raise ValueError(f'Invalid manifest-list JSON for {staging_pullspec}') from error
+        if (
+            not isinstance(manifest_list, dict)
+            or not isinstance(manifest_list.get('manifests'), list)
+            or not manifest_list['manifests']
+        ):
+            raise ValueError(f'Expected a non-empty manifest list for {staging_pullspec}')
+        digest_pullspec = f'{dest_repo}@sha256:{hashlib.sha256(raw_manifest.encode()).hexdigest()}'
+        await cmd_gather_async(
+            [
+                'oc',
+                'image',
+                'mirror',
+                '--keep-manifest-list',
+                digest_pullspec,
+                dest,
+                f'--registry-config={auth_file}',
+            ],
+            check=True,
+        )
+        self.runtime.logger.info(
+            'Labeled image available at %s (%s); retaining staging tag %s', dest, digest_pullspec, staging_pullspec
+        )
+        return digest_pullspec
 
     async def _promote(self, tags: Dict[str, str]):
         quay_auth_file = os.environ.get('QUAY_AUTH_FILE')
@@ -328,7 +229,6 @@ class RhcosNodeImagePostBuildPipeline:
                         label_value=node_timestamped_tag,
                         auth_file=merged_auth_file,
                     )
-                    node_pullspec = await self._resolve_image_digest_pullspec(node_pullspec, merged_auth_file)
                     extensions_pullspec = await self._apply_manifest_list_tag_label(
                         source_pullspec=self.extensions_image,
                         dest_repo=KONFLUX_DEFAULT_IMAGE_REPO,
@@ -336,33 +236,37 @@ class RhcosNodeImagePostBuildPipeline:
                         label_value=extensions_timestamped_tag,
                         auth_file=merged_auth_file,
                     )
-                    extensions_pullspec = await self._resolve_image_digest_pullspec(
-                        extensions_pullspec, merged_auth_file
-                    )
                     node_tags.append(node_timestamped_tag)
+                    node_tags.insert(0, f'sha256-{node_pullspec.split("@sha256:", 1)[1]}')
                     node_labeled_tags.add(node_timestamped_tag)
                     extensions_tags.append(extensions_timestamped_tag)
+                    extensions_tags.insert(0, f'sha256-{extensions_pullspec.split("@sha256:", 1)[1]}')
                     extensions_labeled_tags.add(extensions_timestamped_tag)
                 else:
                     self.runtime.logger.info('No timestamp available; promoting with floating tags only')
 
-                # Sync the labeled node image to art-images unless it is already there
-                node_repo = node_pullspec.split('@', 1)[0]
-                if ':' in node_repo.rsplit('/', 1)[-1]:
-                    node_repo = node_repo.rsplit(':', 1)[0]
-                if node_repo == KONFLUX_DEFAULT_IMAGE_REPO:
+                for pullspec, image_tags, labeled_tags in (
+                    (node_pullspec, node_tags, node_labeled_tags),
+                    (extensions_pullspec, extensions_tags, extensions_labeled_tags),
+                ):
+                    source_repo = pullspec.split('@', 1)[0]
+                    if ':' in source_repo.rsplit('/', 1)[-1]:
+                        source_repo = source_repo.rsplit(':', 1)[0]
+                    if source_repo != KONFLUX_DEFAULT_IMAGE_REPO:
+                        await sync_to_quay(pullspec, KONFLUX_DEFAULT_IMAGE_REPO, image_tags)
+                        continue
+
                     self.runtime.logger.info(
                         'Skipping sync for %s; image is already in destination repository %s',
-                        node_pullspec,
+                        pullspec,
                         KONFLUX_DEFAULT_IMAGE_REPO,
                     )
-                    for tag in node_tags:
-                        if tag in node_labeled_tags:
+                    for tag in image_tags:
+                        if tag in labeled_tags:
                             continue
-
                         destination = f'{KONFLUX_DEFAULT_IMAGE_REPO}:{tag}'
                         self.runtime.logger.info(
-                            'Mirroring labeled image from %s to remaining tag %s', node_pullspec, destination
+                            'Mirroring labeled image from %s to remaining tag %s', pullspec, destination
                         )
                         await cmd_gather_async(
                             [
@@ -370,47 +274,12 @@ class RhcosNodeImagePostBuildPipeline:
                                 'image',
                                 'mirror',
                                 '--keep-manifest-list',
-                                node_pullspec,
+                                pullspec,
                                 destination,
                                 f'--registry-config={merged_auth_file}',
                             ],
                             check=True,
                         )
-                else:
-                    await sync_to_quay(node_pullspec, KONFLUX_DEFAULT_IMAGE_REPO, node_tags)
-
-                # Sync the labeled extensions image to art-images unless it is already there
-                extensions_repo = extensions_pullspec.split('@', 1)[0]
-                if ':' in extensions_repo.rsplit('/', 1)[-1]:
-                    extensions_repo = extensions_repo.rsplit(':', 1)[0]
-                if extensions_repo == KONFLUX_DEFAULT_IMAGE_REPO:
-                    self.runtime.logger.info(
-                        'Skipping sync for %s; image is already in destination repository %s',
-                        extensions_pullspec,
-                        KONFLUX_DEFAULT_IMAGE_REPO,
-                    )
-                    for tag in extensions_tags:
-                        if tag in extensions_labeled_tags:
-                            continue
-
-                        destination = f'{KONFLUX_DEFAULT_IMAGE_REPO}:{tag}'
-                        self.runtime.logger.info(
-                            'Mirroring labeled image from %s to remaining tag %s', extensions_pullspec, destination
-                        )
-                        await cmd_gather_async(
-                            [
-                                'oc',
-                                'image',
-                                'mirror',
-                                '--keep-manifest-list',
-                                extensions_pullspec,
-                                destination,
-                                f'--registry-config={merged_auth_file}',
-                            ],
-                            check=True,
-                        )
-                else:
-                    await sync_to_quay(extensions_pullspec, KONFLUX_DEFAULT_IMAGE_REPO, extensions_tags)
             finally:
                 if previous_auth_file is None:
                     os.environ.pop('QUAY_AUTH_FILE', None)

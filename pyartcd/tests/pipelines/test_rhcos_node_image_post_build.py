@@ -1,3 +1,4 @@
+import hashlib
 import json
 import unittest
 from unittest.mock import AsyncMock, MagicMock, call, patch
@@ -92,97 +93,111 @@ class TestRhcosNodeImagePostBuildPipeline(unittest.IsolatedAsyncioTestCase):
         pipeline.runtime.logger.warning.assert_called_once()
         self.assertIn('Could not extract timestamp', pipeline.runtime.logger.warning.call_args.args[0])
 
-    @patch('pyartcd.pipelines.rhcos_node_image_post_build.cmd_assert_async', new_callable=AsyncMock)
     @patch('pyartcd.pipelines.rhcos_node_image_post_build.cmd_gather_async', new_callable=AsyncMock)
-    async def test_apply_manifest_list_tag_label_labels_and_reassembles_each_architecture(
-        self, mock_cmd_gather, mock_cmd_assert
-    ):
+    async def test_apply_manifest_list_tag_label_mutates_whole_list_and_publishes_digest(self, mock_cmd_gather):
         pipeline = _make_pipeline()
-        source_pullspec = f'{RHCOS_IMAGE_REPO}@sha256:{"a" * 64}'
-        manifests = [
-            {'digest': f'sha256:{"1" * 64}', 'platform': {'os': 'linux', 'architecture': 'amd64'}},
-            {'digest': f'sha256:{"2" * 64}', 'platform': {'os': 'linux', 'architecture': 'arm64'}},
-            {'digest': f'sha256:{"3" * 64}', 'platform': {'os': 'linux', 'architecture': 's390x'}},
-        ]
-        mock_cmd_gather.return_value = (0, json.dumps({'list': {'manifests': manifests}}), '')
+        source_pullspec = pipeline.node_image
+        raw_manifest = (
+            json.dumps(
+                {
+                    'schemaVersion': 2,
+                    'manifests': [
+                        {'digest': f'sha256:{"1" * 64}', 'platform': {'os': 'linux', 'architecture': 'amd64'}},
+                        {
+                            'digest': f'sha256:{"2" * 64}',
+                            'platform': {'os': 'linux', 'architecture': 'arm64', 'variant': 'v8'},
+                        },
+                    ],
+                }
+            )
+            + '\n'
+        )
+        mock_cmd_gather.side_effect = [(0, '', ''), (0, raw_manifest, ''), (0, '', '')]
 
         labeled_pullspec = await pipeline._apply_manifest_list_tag_label(
-            source_pullspec=source_pullspec,
-            dest_repo=KONFLUX_DEFAULT_IMAGE_REPO,
-            dest_tag='5.0-9.8-202610141234-node-image',
-            label_value='5.0-9.8-202610141234-node-image',
-            auth_file='/fake/auth.json',
+            source_pullspec, KONFLUX_DEFAULT_IMAGE_REPO, 'tag', 'tag', '/fake/auth.json'
         )
 
-        dest = f'{KONFLUX_DEFAULT_IMAGE_REPO}:5.0-9.8-202610141234-node-image'
-        self.assertEqual(labeled_pullspec, dest)
-        self.assertEqual(mock_cmd_gather.await_count, 1)
-        self.assertIn('--filter-by-os=.*', mock_cmd_gather.call_args.args[0])
-
-        commands = [call.args[0] for call in mock_cmd_assert.await_args_list]
-        append_commands = [command for command in commands if command[:3] == ['oc', 'image', 'append']]
-        self.assertEqual(len(append_commands), 3)
-        expected_label = {'Labels': {'coreos.build.manifest-list-tag': '5.0-9.8-202610141234-node-image'}}
-        for architecture, digest in zip(('amd64', 'arm64', 's390x'), manifests, strict=True):
-            append_cmd = next(command for command in append_commands if f'-labeled-{architecture}' in ' '.join(command))
-            self.assertIn(f'--from={RHCOS_IMAGE_REPO}@{digest["digest"]}', append_cmd)
-            self.assertIn(f'--to={dest}-labeled-{architecture}', append_cmd)
-            image_patch = next(arg for arg in append_cmd if arg.startswith('--image='))
-            self.assertEqual(json.loads(image_patch.split('=', 1)[1]), expected_label)
-            self.assertNotIn('--keep-manifest-list', append_cmd)
-            self.assertNotIn('--filter-by-os=.*', append_cmd)
-            self.assertIn('--registry-config=/fake/auth.json', append_cmd)
-
-        manifest_adds = [command for command in commands if command[:3] == ['buildah', 'manifest', 'add']]
-        self.assertEqual(len(manifest_adds), 3)
+        expected_pullspec = f'{KONFLUX_DEFAULT_IMAGE_REPO}@sha256:{hashlib.sha256(raw_manifest.encode()).hexdigest()}'
+        self.assertEqual(labeled_pullspec, expected_pullspec)
+        self.assertEqual(mock_cmd_gather.await_count, 3)
+        append_cmd, inspect_cmd, mirror_cmd = [await_call.args[0] for await_call in mock_cmd_gather.await_args_list]
+        self.assertEqual(append_cmd[:3], ['oc', 'image', 'append'])
+        self.assertIn(f'--from={source_pullspec}', append_cmd)
+        self.assertIn('--keep-manifest-list', append_cmd)
+        self.assertFalse(any(argument.startswith('--filter-by-os') for argument in append_cmd))
+        image_patch = next(argument.split('=', 1)[1] for argument in append_cmd if argument.startswith('--image='))
+        self.assertEqual(json.loads(image_patch), {'Labels': {'coreos.build.manifest-list-tag': 'tag'}})
+        self.assertIn('--registry-config=/fake/auth.json', append_cmd)
+        staging_pullspec = next(argument.split('=', 1)[1] for argument in append_cmd if argument.startswith('--to='))
+        self.assertRegex(staging_pullspec, rf'^{KONFLUX_DEFAULT_IMAGE_REPO}:rhcos-label-[0-9a-f]{{32}}$')
         self.assertEqual(
-            next(command for command in commands if command[:3] == ['buildah', 'manifest', 'push']),
+            inspect_cmd, ['skopeo', 'inspect', '--raw', '--authfile=/fake/auth.json', f'docker://{staging_pullspec}']
+        )
+        self.assertEqual(
+            mirror_cmd,
             [
-                'buildah',
-                'manifest',
-                'push',
-                '--all',
-                '--authfile=/fake/auth.json',
-                dest,
-                f'docker://{dest}',
+                'oc',
+                'image',
+                'mirror',
+                '--keep-manifest-list',
+                expected_pullspec,
+                f'{KONFLUX_DEFAULT_IMAGE_REPO}:tag',
+                '--registry-config=/fake/auth.json',
             ],
         )
-        cleanup_commands = [command for command in commands if command[:2] == ['skopeo', 'delete']]
-        self.assertEqual(
-            cleanup_commands,
-            [
-                ['skopeo', 'delete', '--authfile=/fake/auth.json', f'docker://{dest}-labeled-{architecture}']
-                for architecture in ('amd64', 'arm64', 's390x')
-            ],
-        )
+        self.assertTrue(all(await_call.kwargs == {'check': True} for await_call in mock_cmd_gather.await_args_list))
 
-    @patch('pyartcd.pipelines.rhcos_node_image_post_build.cmd_assert_async', new_callable=AsyncMock)
     @patch('pyartcd.pipelines.rhcos_node_image_post_build.cmd_gather_async', new_callable=AsyncMock)
-    async def test_apply_manifest_list_tag_label_falls_back_to_skopeo(self, mock_cmd_gather, mock_cmd_assert):
+    async def test_apply_manifest_list_tag_label_uses_unique_staging_tags(self, mock_cmd_gather):
         pipeline = _make_pipeline()
-        raw_manifest_list = {
-            'manifests': [
-                {'digest': f'sha256:{"1" * 64}', 'platform': {'os': 'linux', 'architecture': 'amd64'}},
-            ]
-        }
-        mock_cmd_gather.side_effect = [
-            (1, '', 'the image is a manifest list and contains multiple images'),
-            (0, json.dumps(raw_manifest_list), ''),
+        raw_manifest = json.dumps({'manifests': [{'digest': f'sha256:{"1" * 64}'}]})
+        mock_cmd_gather.side_effect = [(0, '', ''), (0, raw_manifest, ''), (0, '', '')] * 2
+        for _ in range(2):
+            await pipeline._apply_manifest_list_tag_label(
+                pipeline.node_image, KONFLUX_DEFAULT_IMAGE_REPO, 'tag', 'tag', '/fake/auth.json'
+            )
+        appends = [
+            await_call.args[0]
+            for await_call in mock_cmd_gather.await_args_list
+            if await_call.args[0][:3] == ['oc', 'image', 'append']
         ]
+        staging_destinations = [
+            next(argument for argument in command if argument.startswith('--to=')) for command in appends
+        ]
+        self.assertEqual(len(set(staging_destinations)), 2)
 
-        result = await pipeline._apply_manifest_list_tag_label(
-            source_pullspec=f'{RHCOS_IMAGE_REPO}@sha256:{"a" * 64}',
-            dest_repo=KONFLUX_DEFAULT_IMAGE_REPO,
-            dest_tag='tag',
-            label_value='tag',
-            auth_file='/fake/auth.json',
-        )
+    @patch('pyartcd.pipelines.rhcos_node_image_post_build.cmd_gather_async', new_callable=AsyncMock)
+    async def test_apply_manifest_list_tag_label_rejects_invalid_output_before_publication(self, mock_cmd_gather):
+        pipeline = _make_pipeline()
+        for raw_manifest in ('not JSON', '[]', '{}', '{"manifests":[]}', '{"manifests":"not a list"}'):
+            with self.subTest(raw_manifest=raw_manifest):
+                mock_cmd_gather.reset_mock()
+                mock_cmd_gather.side_effect = [(0, '', ''), (0, raw_manifest, '')]
+                with self.assertRaises(ValueError):
+                    await pipeline._apply_manifest_list_tag_label(
+                        pipeline.node_image, KONFLUX_DEFAULT_IMAGE_REPO, 'tag', 'tag', '/fake/auth.json'
+                    )
+                self.assertEqual(mock_cmd_gather.await_count, 2)
 
-        self.assertEqual(result, f'{KONFLUX_DEFAULT_IMAGE_REPO}:tag')
-        self.assertEqual(mock_cmd_gather.await_count, 2)
-        self.assertEqual(mock_cmd_gather.await_args_list[1].args[0][:3], ['skopeo', 'inspect', '--raw'])
-        commands = [call.args[0] for call in mock_cmd_assert.await_args_list]
-        self.assertTrue(any(command[:3] == ['buildah', 'manifest', 'push'] for command in commands))
+    @patch('pyartcd.pipelines.rhcos_node_image_post_build.cmd_gather_async', new_callable=AsyncMock)
+    async def test_apply_manifest_list_tag_label_propagates_each_command_failure(self, mock_cmd_gather):
+        pipeline = _make_pipeline()
+        raw_manifest = json.dumps({'manifests': [{'digest': f'sha256:{"1" * 64}'}]})
+        successes = [(0, '', ''), (0, raw_manifest, '')]
+        for failed_stage in range(3):
+            with self.subTest(failed_stage=failed_stage):
+                mock_cmd_gather.reset_mock()
+                mock_cmd_gather.side_effect = successes[:failed_stage] + [ChildProcessError('command failed')]
+                with self.assertRaisesRegex(ChildProcessError, 'command failed'):
+                    await pipeline._apply_manifest_list_tag_label(
+                        pipeline.node_image, KONFLUX_DEFAULT_IMAGE_REPO, 'tag', 'tag', '/fake/auth.json'
+                    )
+                self.assertEqual(mock_cmd_gather.await_count, failed_stage + 1)
+                commands = [await_call.args[0] for await_call in mock_cmd_gather.await_args_list]
+                self.assertFalse(
+                    any(command[0] == 'buildah' or command[:2] == ['skopeo', 'delete'] for command in commands)
+                )
 
     # ---- full pipeline integration test ----
 
@@ -220,10 +235,8 @@ class TestRhcosNodeImagePostBuildPipeline(unittest.IsolatedAsyncioTestCase):
 
         pipeline = _make_pipeline()
 
-        labeled_node_pullspec = f'{KONFLUX_DEFAULT_IMAGE_REPO}:5.0-9.8-202610141234-node-image'
-        labeled_extensions_pullspec = f'{KONFLUX_DEFAULT_IMAGE_REPO}:5.0-9.8-202610141234-node-image-extensions'
         labeled_node_digest_pullspec = f'{KONFLUX_DEFAULT_IMAGE_REPO}@sha256:{"c" * 64}'
-        labeled_extensions_digest_pullspec = f'{KONFLUX_DEFAULT_IMAGE_REPO}@sha256:{"c" * 64}'
+        labeled_extensions_digest_pullspec = f'{KONFLUX_DEFAULT_IMAGE_REPO}@sha256:{"d" * 64}'
         with (
             patch.object(
                 pipeline, '_extract_timestamp_from_nvr', new_callable=AsyncMock, return_value='202610141234'
@@ -232,17 +245,12 @@ class TestRhcosNodeImagePostBuildPipeline(unittest.IsolatedAsyncioTestCase):
                 pipeline,
                 '_apply_manifest_list_tag_label',
                 new_callable=AsyncMock,
-                side_effect=[labeled_node_pullspec, labeled_extensions_pullspec],
+                side_effect=[labeled_node_digest_pullspec, labeled_extensions_digest_pullspec],
             ) as mock_apply_label,
             patch(
                 'pyartcd.pipelines.rhcos_node_image_post_build.cmd_gather_async', new_callable=AsyncMock
             ) as mock_cmd_gather,
         ):
-            mock_cmd_gather.return_value = (
-                0,
-                json.dumps({'digest': f'sha256:{"d" * 64}', 'listDigest': f'sha256:{"c" * 64}'}),
-                '',
-            )
             await pipeline.run()
 
             # Verify the NVR timestamp was extracted from the node image digest
@@ -273,32 +281,6 @@ class TestRhcosNodeImagePostBuildPipeline(unittest.IsolatedAsyncioTestCase):
                 [
                     'oc',
                     'image',
-                    'info',
-                    '--filter-by-os=linux/amd64',
-                    '-o',
-                    'json',
-                    labeled_node_pullspec,
-                    '--registry-config=/tmp/merged-auth.json',
-                ],
-                check=True,
-            )
-            mock_cmd_gather.assert_any_await(
-                [
-                    'oc',
-                    'image',
-                    'info',
-                    '--filter-by-os=linux/amd64',
-                    '-o',
-                    'json',
-                    labeled_extensions_pullspec,
-                    '--registry-config=/tmp/merged-auth.json',
-                ],
-                check=True,
-            )
-            mock_cmd_gather.assert_any_await(
-                [
-                    'oc',
-                    'image',
                     'mirror',
                     '--keep-manifest-list',
                     labeled_node_digest_pullspec,
@@ -318,6 +300,31 @@ class TestRhcosNodeImagePostBuildPipeline(unittest.IsolatedAsyncioTestCase):
                     '--registry-config=/tmp/merged-auth.json',
                 ],
                 check=True,
+            )
+            for pullspec, digest in (
+                (labeled_node_digest_pullspec, 'c' * 64),
+                (labeled_extensions_digest_pullspec, 'd' * 64),
+            ):
+                mock_cmd_gather.assert_any_await(
+                    [
+                        'oc',
+                        'image',
+                        'mirror',
+                        '--keep-manifest-list',
+                        pullspec,
+                        f'{KONFLUX_DEFAULT_IMAGE_REPO}:sha256-{digest}',
+                        '--registry-config=/tmp/merged-auth.json',
+                    ],
+                    check=True,
+                )
+            self.assertEqual(
+                [await_call.args[0][5] for await_call in mock_cmd_gather.await_args_list],
+                [
+                    f'{KONFLUX_DEFAULT_IMAGE_REPO}:sha256-{"c" * 64}',
+                    f'{KONFLUX_DEFAULT_IMAGE_REPO}:5.0-9.8-node-image',
+                    f'{KONFLUX_DEFAULT_IMAGE_REPO}:sha256-{"d" * 64}',
+                    f'{KONFLUX_DEFAULT_IMAGE_REPO}:5.0-9.8-node-image-extensions',
+                ],
             )
 
         mock_client.trigger_build.assert_called_once_with(
