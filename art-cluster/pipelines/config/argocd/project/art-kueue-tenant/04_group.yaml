@@ -1,0 +1,12 @@
+apiVersion: user.openshift.io/v1
+kind: Group
+metadata:
+  name: art-kueue-team-members
+users:
+  - kehannon
+  - cmeadors
+  - skunkerk
+  - pbhojara
+  - rphillips
+  - anahas
+  - mdemaced
