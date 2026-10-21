@@ -416,6 +416,13 @@ class RpmLockfilePrototypeGenerator:
 
         stages_with_bare_updates = _detect_stages_with_bare_updates(entries)
 
+        no_rpms_stages: set[int] = set()
+        builders = image_meta.config.get('from', {}).get('builder', [])
+        if isinstance(builders, list):
+            for i, builder_entry in enumerate(builders):
+                if isinstance(builder_entry, dict) and builder_entry.get('no_rpms', False):
+                    no_rpms_stages.add(i)
+
         out_file_path = dest_dir / filename
         if total_stages == 0:
             self._write_lockfile(None, out_file_path, image_meta.distgit_key)
@@ -432,6 +439,7 @@ class RpmLockfilePrototypeGenerator:
             image_meta.distgit_key,
             dockerfile_path,
             entries,
+            no_rpms_stages=no_rpms_stages,
         )
         lockfile = self._assemble_lockfile(stage_lockfiles, image_meta)
         self._write_lockfile(lockfile, out_file_path, image_meta.distgit_key)
@@ -537,6 +545,7 @@ class RpmLockfilePrototypeGenerator:
         distgit_key: str,
         dockerfile_path: Path,
         entries: list[dict],
+        no_rpms_stages: set[int] | None = None,
     ) -> list[LockfileData]:
         """
         Resolve RPM packages for each Dockerfile stage.
@@ -555,8 +564,14 @@ class RpmLockfilePrototypeGenerator:
         stage_lockfiles: list[LockfileData] = []
         final_stage_num = total_stages - 1
         stages_with_installroot_only = _detect_stages_with_installroot_only(entries)
+        if no_rpms_stages is None:
+            no_rpms_stages = set()
 
         for stage_num in range(total_stages):
+            if stage_num in no_rpms_stages:
+                self.logger.info(f"{distgit_key}: stage {stage_num}: no_rpms=true in config, skipping RPM resolution")
+                continue
+
             if stage_num != final_stage_num:
                 if (
                     stage_num not in stages_with_runs
@@ -573,14 +588,24 @@ class RpmLockfilePrototypeGenerator:
                 if self._has_rhel_version_mismatch(stage_num, repo_list, distgit_key):
                     continue
 
+            extra_packages: list[str] = list(cat_packages.get(stage_num, []))
+            dynamic_package_set = dynamic_packages.get(stage_num)
+
+            if image_pullspec and stage_num != final_stage_num and not bare_context:
+                if not extra_packages and not dynamic_package_set:
+                    if await self._has_no_rpmdb(image_pullspec, distgit_key, arches):
+                        self.logger.info(
+                            f"{distgit_key}: stage {stage_num}: base image has no RPMDB "
+                            f"(FROM scratch), skipping RPM resolution"
+                        )
+                        continue
+
             if bare_context:
                 self.logger.info(
                     f"{distgit_key}: stage {stage_num}: installroot-only stage, resolving with bare context"
                 )
 
-            extra_packages: list[str] = list(cat_packages.get(stage_num, []))
             dockerfile_install_pkgs = _extract_install_packages(entries, stage_num)
-            dynamic_package_set = dynamic_packages.get(stage_num)
             dynamic_arch_specific_packages = dynamic_package_set.arch_specific if dynamic_package_set else None
             if dynamic_package_set:
                 extra_packages.extend(dynamic_package_set.common)
@@ -839,6 +864,34 @@ class RpmLockfilePrototypeGenerator:
             )
             return True
         return False
+
+    async def _has_no_rpmdb(self, image_pullspec: str, distgit_key: str, arches: list[str]) -> bool:
+        """
+        Check whether a base image has no RPM database (e.g. FROM scratch).
+
+        Probes a single architecture (the first in *arches*) via
+        ``_get_base_image_rpmdb_packages`` — RPMDB presence is
+        arch-independent (FROM scratch images have no RPMDB on any
+        arch).  Caching is handled by ``_get_base_image_rpmdb_packages``
+        via ``_rpmdb_package_cache``.
+
+        Fail-open: returns ``False`` on any exception so resolution
+        proceeds normally.
+
+        Arg(s):
+            image_pullspec (str): Fully-qualified image pullspec.
+            distgit_key (str): Image identifier for logging.
+            arches (list[str]): Brew architectures (only the first is probed).
+        Return Value(s):
+            bool: True if the image has no RPMDB (e.g. FROM scratch).
+        """
+        probe_arch = arches[0] if arches else "amd64"
+        try:
+            packages = await self._get_base_image_rpmdb_packages(image_pullspec, probe_arch)
+        except Exception as e:
+            self.logger.warning(f"{distgit_key}: RPMDB probe failed for {image_pullspec}: {e}")
+            return False
+        return packages is None
 
     async def _get_base_image_rpmdb_packages(self, image_pullspec: str, arch: str) -> set[str] | None:
         """
