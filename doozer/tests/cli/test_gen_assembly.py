@@ -1,3 +1,4 @@
+from collections import defaultdict
 from unittest import TestCase
 from unittest.mock import MagicMock, patch
 
@@ -462,3 +463,165 @@ class TestGenAssemblyCli(TestCase):
         }
         self.assertEqual(expected, gacli._get_shipment_info())
         gacli.logger.warning.assert_called_once_with("No matching previous assembly found")
+
+
+class TestGetRhcosContainerFallback(TestCase):
+    """Tests for _get_rhcos_container manifest-list-tag label fallback logic."""
+
+    def _make_gacli(self, arches=None, layered=True, rhcos_version='51.20261016.0'):
+        """Create a GenAssemblyCli with mocked runtime for _get_rhcos_container tests."""
+        if arches is None:
+            arches = ['x86_64', 'aarch64']
+
+        runtime = MagicMock()
+        runtime.get_minor_version.return_value = '5.1'
+        runtime.group_config.arches = arches
+        runtime.group_config.vars.RHCOS_EL_MAJOR = 9
+        runtime.group_config.vars.RHCOS_EL_MINOR = 8
+        runtime.group_config.rhcos.get.return_value = layered
+        runtime.registry_config = '/fake/registry-config.json'
+
+        gacli = GenAssemblyCli(runtime=runtime)
+        gacli.rhcos_version = rhcos_version
+        gacli.logger = MagicMock()
+
+        # primary_rhcos_tag is set by _get_rhcos_container via rhcos.get_primary_container_name
+        # We mock the functions that _get_rhcos_container calls
+        return gacli
+
+    @patch('doozerlib.cli.release_gen_assembly.rhcos.get_primary_container_name', return_value='rhel-coreos')
+    @patch('doozerlib.cli.release_gen_assembly.rhcos.get_container_configs')
+    @patch('doozerlib.cli.release_gen_assembly.util.oc_image_info_for_arch')
+    @patch('doozerlib.cli.release_gen_assembly.get_art_prod_image_repo_for_version', return_value='quay.io/art-dev')
+    def test_uses_existing_manifest_list_tag_label(self, mock_art_repo, mock_oc_info, mock_get_configs, mock_primary):
+        """When coreos.build.manifest-list-tag label is present, use it directly (4.x/5.0 path)."""
+        gacli = self._make_gacli()
+
+        # x86_64 already found, need to resolve aarch64
+        tag_config = MagicMock()
+        tag_config.name = 'rhel-coreos'
+        mock_get_configs.return_value = [tag_config]
+
+        gacli.rhcos_by_tag = defaultdict(
+            dict,
+            {
+                'rhel-coreos': {'x86_64': 'quay.io/art-dev@sha256:' + 'a' * 64},
+            },
+        )
+
+        # oc_image_info_for_arch returns different results for different calls:
+        # First call: get amd64 image info (with the existing label)
+        # Second call: resolve the manifest list for aarch64
+        mock_oc_info.side_effect = [
+            {
+                'config': {
+                    'config': {
+                        'Labels': {
+                            'coreos.build.manifest-list-tag': '5.1-9.8-202610160945-node-image',
+                        }
+                    }
+                }
+            },
+            {'digest': 'sha256:' + 'b' * 64},
+        ]
+
+        gacli._get_rhcos_container()
+
+        # Should use the label value directly
+        second_call = mock_oc_info.call_args_list[1]
+        self.assertEqual(second_call.args[0], 'quay.io/art-dev:5.1-9.8-202610160945-node-image')
+
+        # aarch64 should be resolved
+        self.assertEqual(
+            gacli.rhcos_by_tag['rhel-coreos']['aarch64'],
+            'quay.io/art-dev@sha256:' + 'b' * 64,
+        )
+
+    @patch('doozerlib.cli.release_gen_assembly.rhcos.get_primary_container_name', return_value='rhel-coreos')
+    @patch('doozerlib.cli.release_gen_assembly.rhcos.get_container_configs')
+    @patch('doozerlib.cli.release_gen_assembly.util.oc_image_info_for_arch')
+    @patch('doozerlib.cli.release_gen_assembly.get_art_prod_image_repo_for_version', return_value='quay.io/art-dev')
+    def test_falls_back_to_release_label(self, mock_art_repo, mock_oc_info, mock_get_configs, mock_primary):
+        """When coreos.build.manifest-list-tag is absent, derive tag from release label (5.1+ path).
+        The timestamped tag only exists in the art-images repo (from rhcos_index_tag config),
+        not in ocp-v4.0-art-dev."""
+        art_images_repo = 'quay.io/redhat-user-workloads/ocp-art-tenant/art-images'
+        gacli = self._make_gacli()
+
+        tag_config = MagicMock()
+        tag_config.name = 'rhel-coreos'
+        tag_config.rhcos_index_tag = f'{art_images_repo}:5.1-9.8-node-image'
+        mock_get_configs.return_value = [tag_config]
+
+        gacli.rhcos_by_tag = defaultdict(
+            dict,
+            {
+                'rhel-coreos': {'x86_64': 'quay.io/art-dev@sha256:' + 'a' * 64},
+            },
+        )
+
+        # First call: get amd64 image info - NO manifest-list-tag, but has release label
+        # Second call: resolve the derived tag for aarch64
+        mock_oc_info.side_effect = [
+            {
+                'config': {
+                    'config': {
+                        'Labels': {
+                            'release': '202610160945.p2.g62965e8.assembly.stream.el9',
+                            # No 'coreos.build.manifest-list-tag'
+                        }
+                    }
+                }
+            },
+            {'digest': 'sha256:' + 'c' * 64},
+        ]
+
+        gacli._get_rhcos_container()
+
+        # Should derive the tag from the release label timestamp and use art-images repo
+        second_call = mock_oc_info.call_args_list[1]
+        self.assertEqual(second_call.args[0], f'{art_images_repo}:5.1-9.8-202610160945-node-image')
+
+        # aarch64 should be resolved using art-images repo
+        self.assertEqual(
+            gacli.rhcos_by_tag['rhel-coreos']['aarch64'],
+            f'{art_images_repo}@sha256:' + 'c' * 64,
+        )
+
+        # Should log the fallback
+        gacli.logger.info.assert_any_call(
+            'Derived manifest-list tag %s from release label %s (coreos.build.manifest-list-tag label absent)',
+            '5.1-9.8-202610160945-node-image',
+            '202610160945.p2.g62965e8.assembly.stream.el9',
+        )
+
+    @patch('doozerlib.cli.release_gen_assembly.rhcos.get_primary_container_name', return_value='rhel-coreos')
+    @patch('doozerlib.cli.release_gen_assembly.rhcos.get_container_configs')
+    @patch('doozerlib.cli.release_gen_assembly.util.oc_image_info_for_arch')
+    @patch('doozerlib.cli.release_gen_assembly.get_art_prod_image_repo_for_version', return_value='quay.io/art-dev')
+    def test_errors_when_both_labels_missing(self, mock_art_repo, mock_oc_info, mock_get_configs, mock_primary):
+        """When both coreos.build.manifest-list-tag and release labels are missing, exit with error."""
+        gacli = self._make_gacli()
+
+        tag_config = MagicMock()
+        tag_config.name = 'rhel-coreos'
+        mock_get_configs.return_value = [tag_config]
+
+        gacli.rhcos_by_tag = defaultdict(
+            dict,
+            {
+                'rhel-coreos': {'x86_64': 'quay.io/art-dev@sha256:' + 'a' * 64},
+            },
+        )
+        gacli._exit_with_error = MagicMock()
+
+        # Image has neither label
+        mock_oc_info.return_value = {'config': {'config': {'Labels': {}}}}
+
+        gacli._get_rhcos_container()
+
+        gacli._exit_with_error.assert_called_once()
+        error_msg = gacli._exit_with_error.call_args.args[0]
+        self.assertIn('missing both', error_msg)
+        self.assertIn('coreos.build.manifest-list-tag', error_msg)
+        self.assertIn('release', error_msg)

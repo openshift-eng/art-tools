@@ -599,8 +599,40 @@ class GenAssemblyCli:
                         # When RHCOS 5.x images exist in their own repository, this should be updated to
                         # use the actual OCP major version: get_art_prod_image_repo_for_version(major, "dev")
                         art_repo = get_art_prod_image_repo_for_version(4, "dev")
+                        labels = amd64_rhcos_info['config']['config'].get('Labels') or {}
+                        manifest_list_tag = labels.get('coreos.build.manifest-list-tag')
+                        if not manifest_list_tag:
+                            # For 5.1+ ART/Konflux-built RHCOS images that lack the
+                            # coreos.build.manifest-list-tag label, derive the timestamped
+                            # tag from the release label (e.g.
+                            # "202610160945.p2.g62965e8.assembly.stream.el9" -> "202610160945").
+                            release_label = labels.get('release', '')
+                            ts_match = re.match(r'^(\d{12})\.', release_label)
+                            if not ts_match:
+                                self._exit_with_error(
+                                    f'RHCOS image for {tag.name} (x86_64) is missing both '
+                                    f'"coreos.build.manifest-list-tag" and a parseable "release" label. '
+                                    f'Cannot determine the manifest-list tag for other architectures. '
+                                    f'Pullspec: {self.rhcos_by_tag[tag.name]["x86_64"]}'
+                                )
+                                continue  # _exit_with_error terminates; guard for test mocks
+                            timestamp = ts_match.group(1)
+                            manifest_list_tag = (
+                                f'{major_minor}-{rhcos_el_major}.{rhcos_el_minor}-{timestamp}-node-image'
+                            )
+                            # The timestamped tag lives in the art-images repo
+                            # (from rhcos_index_tag in the payload_tag config),
+                            # NOT in ocp-v4.0-art-dev.
+                            if tag.rhcos_index_tag is not Missing:
+                                art_repo = str(tag.rhcos_index_tag).split('@', 1)[0].rsplit(':', 1)[0]
+                            self.logger.info(
+                                'Derived manifest-list tag %s from release label %s '
+                                '(coreos.build.manifest-list-tag label absent)',
+                                manifest_list_tag,
+                                release_label,
+                            )
                         rhcos_info = util.oc_image_info_for_arch(
-                            f"{art_repo}:{amd64_rhcos_info['config']['config']['Labels']['coreos.build.manifest-list-tag']}",
+                            f"{art_repo}:{manifest_list_tag}",
                             go_arch_for_brew_arch(arch),
                             registry_config=self.runtime.registry_config,
                         )
