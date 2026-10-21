@@ -3,6 +3,7 @@ import json
 import unittest
 from unittest.mock import AsyncMock, MagicMock, PropertyMock, patch
 
+from elliottlib.shipment_model import Snapshot, SnapshotSpec
 from pyartcd.fbc_build import FbcBuildResult
 from pyartcd.lp_shipment import FbcRefreshRecord, ShipmentMRActiveStageError
 from pyartcd.pipelines.prepare_release_lp import PrepareReleaseLPPipeline
@@ -26,6 +27,20 @@ class TestPrepareReleaseLPPipeline(unittest.TestCase):
         )
         kwargs.update(overrides)
         return PrepareReleaseLPPipeline(**kwargs)
+
+    @patch("pyartcd.pipelines.prepare_release_lp.resolve_shipment_release_plans")
+    def test_shipment_resolves_registered_release_plans(self, mock_resolve):
+        """Use strict canonical ReleasePlan resolution for prepare-release-lp."""
+        mock_resolve.return_value = ("acm-stage", "acm-prod")
+        pipeline = self._make_pipeline(create_mr=True)
+        pipeline.product = "rhacm2"
+        snapshot = Snapshot(spec=SnapshotSpec(application="acm-2-17", components=[]), nvrs=[])
+
+        config = pipeline._create_shipment_config("image", snapshot)
+
+        mock_resolve.assert_called_once_with(pipeline.shipment_data_repo, "acm-2-17")
+        self.assertEqual(config.shipment.environments.stage.releasePlan, "acm-stage")
+        self.assertEqual(config.shipment.environments.prod.releasePlan, "acm-prod")
 
     @patch("pyartcd.pipelines.prepare_release_lp.get_advisory_boilerplate")
     @patch.object(PrepareReleaseLPPipeline, "get_file_from_branch")

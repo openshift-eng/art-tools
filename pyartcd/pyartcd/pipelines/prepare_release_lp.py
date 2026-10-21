@@ -57,6 +57,7 @@ from pyartcd.lp_shipment import (
     create_shipment_mr_with_retry,
     get_shipment_mr_url,
     reconcile_shipment_mr,
+    resolve_shipment_release_plans,
     set_shipment_mr_draft,
     update_shipment_mr_url,
     validate_shipment_mr_for_operation,
@@ -657,17 +658,10 @@ class PrepareReleaseLPPipeline:
         stage_rpa = "n/a"
         prod_rpa = "n/a"
         if self.create_mr:
-            try:
-                config_path = self.shipment_data_repo._directory / "config.yaml"
-                if config_path.exists():
-                    with open(config_path, 'r') as f:
-                        shipment_config = stdlib_yaml.safe_load(f) or {}
-                    application = snapshot.spec.application if snapshot else "default-app"
-                    app_env = shipment_config.get("applications", {}).get(application, {}).get("environments", {})
-                    stage_rpa = app_env.get("stage", {}).get("releasePlan", "n/a")
-                    prod_rpa = app_env.get("prod", {}).get("releasePlan", "n/a")
-            except Exception as e:
-                self._logger.warning("Failed to read shipment config: %s", e)
+            stage_rpa, prod_rpa = resolve_shipment_release_plans(
+                self.shipment_data_repo,
+                snapshot.spec.application if snapshot else "default-app",
+            )
 
         environments = Environments(
             stage=ShipmentEnv(releasePlan=stage_rpa),
@@ -813,8 +807,8 @@ class PrepareReleaseLPPipeline:
         timestamp = datetime.now(timezone.utc).strftime('%Y%m%d%H%M%S')
         source_branch = f"prepare-shipment-lp-{self.assembly}-{timestamp}"
 
-        # Validation of an existing MR checks out its source branch. A forced
-        # replacement must always start cleanly from main.
+        # Fetch main again immediately before cutting a forced replacement so
+        # concurrent shipment-data changes are included in the new branch.
         if self.force:
             await self.shipment_data_repo.fetch_switch_branch("main")
 

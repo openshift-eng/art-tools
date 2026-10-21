@@ -58,6 +58,7 @@ from pyartcd.lp_shipment import (
     create_shipment_mr_with_retry,
     get_shipment_mr_url,
     reconcile_shipment_mr,
+    resolve_shipment_release_plans,
     set_shipment_mr_draft,
     update_shipment_mr_url,
     validate_shipment_mr_for_operation,
@@ -923,11 +924,16 @@ class ReleaseFromFbcPipeline:
             fbc=kind == 'fbc',
         )
 
-        # Create environments - read from shipment repo config if available
+        # Create environments - read from shipment repo config if available.
         stage_rpa = "n/a"
         prod_rpa = "n/a"
 
-        if hasattr(self, 'shipment_data_repo') and self.shipment_data_repo:
+        if self.create_mr and not self.ocp_optional:
+            stage_rpa, prod_rpa = resolve_shipment_release_plans(
+                self.shipment_data_repo,
+                snapshot.spec.application if snapshot else "default-app",
+            )
+        elif hasattr(self, 'shipment_data_repo') and self.shipment_data_repo:
             try:
                 config_path = self.shipment_data_repo._directory / "config.yaml"
                 if config_path.exists():
@@ -982,8 +988,8 @@ class ReleaseFromFbcPipeline:
         source_branch = f"prepare-shipment-{self.assembly}-{timestamp}"
         target_branch = "main"
 
-        # Validation of an existing MR checks out its source branch. A new MR,
-        # especially a forced replacement, must always start cleanly from main.
+        # Fetch main again immediately before cutting a forced replacement so
+        # concurrent shipment-data changes are included in the new branch.
         if self.force:
             await self.shipment_data_repo.fetch_switch_branch(target_branch)
 

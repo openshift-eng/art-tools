@@ -23,14 +23,120 @@ from pyartcd.lp_shipment import (
     get_shipment_mr_url,
     inspect_shipment_mr_ci_state,
     reconcile_shipment_mr,
+    resolve_shipment_release_plans,
     set_shipment_mr_draft,
     update_shipment_mr_url,
     validate_shipment_mr,
     validate_shipment_mr_ci_state,
+    validate_shipment_mr_for_operation,
     validate_shipment_mr_reuse_state,
 )
 
 YAML = new_roundtrip_yaml_handler()
+
+
+def test_resolve_shipment_release_plans_from_main_config():
+    """Return both registered plans from the canonical shipment config."""
+    with TemporaryDirectory() as directory:
+        config_path = Path(directory, "config.yaml")
+        config_path.write_text(
+            """applications:
+  quay-3-18:
+    environments:
+      stage:
+        releasePlan: quay-advisory-stage-3-18
+      prod:
+        releasePlan: quay-advisory-prod-3-18
+"""
+        )
+
+        assert resolve_shipment_release_plans(GitRepository(directory), "quay-3-18") == (
+            "quay-advisory-stage-3-18",
+            "quay-advisory-prod-3-18",
+        )
+
+
+@pytest.mark.parametrize(
+    "config",
+    [
+        "applications: {}\n",
+        """applications:
+  quay-3-18:
+    environments:
+      stage:
+        releasePlan: n/a
+      prod:
+        releasePlan: quay-advisory-prod-3-18
+""",
+    ],
+)
+def test_resolve_shipment_release_plans_rejects_unresolved_config(config):
+    """Never bake an absent or placeholder ReleasePlan into shipment YAML."""
+    with TemporaryDirectory() as directory:
+        Path(directory, "config.yaml").write_text(config)
+
+        with pytest.raises(ValueError, match="Cannot create a layered-product shipment MR"):
+            resolve_shipment_release_plans(GitRepository(directory), "quay-3-18")
+
+
+@patch("pyartcd.lp_shipment.validate_shipment_mr_ci_state")
+@patch("pyartcd.lp_shipment.validate_shipment_mr_reuse_state", new_callable=AsyncMock)
+@patch("pyartcd.lp_shipment.validate_shipment_mr")
+def test_validate_shipment_mr_for_operation_restores_main(mock_validate, mock_reuse_state, mock_ci_state):
+    """Restore main after inspecting an old MR branch for reuse safety."""
+    mr = MagicMock()
+    state = MagicMock()
+    mock_validate.return_value = mr
+    mock_ci_state.return_value = state
+    repo = MagicMock(spec=GitRepository)
+    repo.fetch_switch_branch = AsyncMock()
+
+    result = asyncio.run(
+        validate_shipment_mr_for_operation(
+            MagicMock(),
+            repo,
+            "https://gitlab.example/group/project/-/merge_requests/42",
+            "https://gitlab.example/group/project.git",
+            "https://gitlab.example/group/project.git",
+            "quay",
+            "quay-3.18",
+            "3.18.2",
+            allowed_states=("opened", "closed"),
+            allow_active_stage=True,
+        )
+    )
+
+    assert result == (mr, state)
+    mock_reuse_state.assert_awaited_once_with(repo, mr, "quay", "quay-3.18", "3.18.2")
+    repo.fetch_switch_branch.assert_awaited_once_with("main")
+
+
+@patch("pyartcd.lp_shipment.validate_shipment_mr_reuse_state", new_callable=AsyncMock)
+@patch("pyartcd.lp_shipment.validate_shipment_mr")
+def test_validate_shipment_mr_for_operation_restores_main_after_scope_failure(mock_validate, mock_reuse_state):
+    """Do not leave a stale MR checkout behind when content validation fails."""
+    mock_validate.return_value = MagicMock()
+    mock_reuse_state.side_effect = ShipmentMRScopeError("wrong release")
+    repo = MagicMock(spec=GitRepository)
+    repo.fetch_switch_branch = AsyncMock()
+
+    with pytest.raises(ShipmentMRScopeError, match="wrong release"):
+        asyncio.run(
+            validate_shipment_mr_for_operation(
+                MagicMock(),
+                repo,
+                "https://gitlab.example/group/project/-/merge_requests/42",
+                "https://gitlab.example/group/project.git",
+                "https://gitlab.example/group/project.git",
+                "quay",
+                "quay-3.18",
+                "3.18.2",
+                allowed_states=("opened", "closed"),
+                allow_active_stage=True,
+            )
+        )
+
+    repo.fetch_switch_branch.assert_awaited_once_with("main")
 
 
 @patch("pyartcd.lp_shipment.asyncio.sleep", new_callable=AsyncMock)
