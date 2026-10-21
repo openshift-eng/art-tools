@@ -12,7 +12,6 @@ import click
 import yaml
 from artcommonlib import exectools
 from artcommonlib.arch_util import go_arch_for_brew_arch, go_suffix_for_arch
-from artcommonlib.constants import REGISTRY_QUAY_PROXY_CI
 from artcommonlib.util import oc_image_info_for_arch_async
 from artcommonlib.variants import BuildVariant
 from doozerlib.cli.images_okd import OKD_DEFAULT_IMAGE_REPO
