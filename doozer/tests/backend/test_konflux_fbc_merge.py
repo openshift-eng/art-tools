@@ -50,6 +50,7 @@ def source(version, catalog, channels=None, pkg='quay'):
         channels=channels or (f'stable-{version}',),
         catalog=catalog,
         group_revision='c' * 40,
+        csv_name=f'{pkg}.v{version}.1',
     )
 
 
@@ -119,12 +120,12 @@ class TestMergeLayeredCatalogs(unittest.TestCase):
             merge_layered_catalogs(self.baseline, [self.first, other])
 
     def test_missing_selected_csv_name_fails(self):
-        self.first.bundle.bundle_csv_name = ''
+        self.first.csv_name = ''
         with self.assertRaisesRegex(ValueError, 'no selected CSV name'):
             merge_layered_catalogs(self.baseline, [self.first])
 
     def test_stale_catalog_missing_requested_csv_fails(self):
-        self.first.bundle.bundle_csv_name = 'quay.v3.17.2'
+        self.first.csv_name = 'quay.v3.17.2'
         with self.assertRaisesRegex(ValueError, 'missing bundle quay/quay.v3.17.2 for selected CSV'):
             merge_layered_catalogs(self.baseline, [self.first])
 
@@ -364,6 +365,7 @@ class TestLayeredFbcMerger(unittest.IsolatedAsyncioTestCase):
 
     async def test_prepare_uses_bundle_channels_and_pins_production(self):
         selected = self.merger.inputs[0]
+        selected.bundle.bundle_csv_name = 'quay.3.18.1'
         selected.catalog = [
             package(default='stable-3.18'),
             channel('stable-3.18', [{'name': 'quay.v3.18.1'}]),
@@ -387,13 +389,18 @@ class TestLayeredFbcMerger(unittest.IsolatedAsyncioTestCase):
                 'doozerlib.backend.konflux_fbc_merge.util.oc_image_info_for_arch_async',
                 new=AsyncMock(return_value={'config': {'config': {'Labels': labels}}}),
             ),
-            patch('doozerlib.backend.konflux_fbc_merge.opm.render', new=AsyncMock(side_effect=[selected.catalog, []])),
+            patch(
+                'doozerlib.backend.konflux_fbc_merge.opm.render',
+                new=AsyncMock(side_effect=[[bundle(selected.csv_name)], selected.catalog, []]),
+            ),
         ):
             await self.merger.prepare((selected.record.nvr,))
         self.assertEqual(self.merger.inputs[0].channels, ('stable-3.18',))
         self.assertEqual(self.merger.provenance['operator'], 'quay')
         self.assertEqual(self.merger.identity, 'quay-fbc-unified-4-20')
         self.assertEqual(self.merger.provenance['inputs'][0]['group_revision'], 'c' * 40)
+        self.assertEqual(self.merger.provenance['inputs'][0]['bundle_csv_name'], 'quay.v3.18.1')
+        self.assertEqual(selected.bundle.bundle_csv_name, 'quay.3.18.1')
         self.assertEqual(
             self.merger.provenance['production_index'],
             'registry.redhat.io/redhat/redhat-operator-index@sha256:' + 'b' * 64,
@@ -472,7 +479,12 @@ class TestLayeredFbcMerger(unittest.IsolatedAsyncioTestCase):
             ),
             patch(
                 'doozerlib.backend.konflux_fbc_merge.opm.render',
-                new=AsyncMock(side_effect=[item.catalog for item in selected] + [[]]),
+                new=AsyncMock(
+                    side_effect=[
+                        blobs for item in selected for blobs in ([bundle(item.csv_name, item.package)], item.catalog)
+                    ]
+                    + [[]]
+                ),
             ),
         ):
             await self.merger.prepare(tuple(item.record.nvr for item in selected))
