@@ -145,7 +145,11 @@ async def is_latest_and_available(ocp_version: str, el_v: int, nvr: str, koji_se
     return is_latest(ocp_version, el_v, nvr, koji_session) and await is_available(ocp_version, el_v, nvr)
 
 
-def extract_and_validate_golang_nvrs(ocp_version: str, go_nvrs: List[str]):
+def supported_rhel_versions(ocp_version: str) -> set[int]:
+    """Return the RHEL versions whose golang RPMs an OCP version builds with.
+
+    :param ocp_version: OCP version, e.g. 4.21
+    """
     match = re.fullmatch(r"(\d).(\d+)", ocp_version)
     if not match:
         raise ValueError(f'Invalid OCP version: {ocp_version}')
@@ -156,6 +160,11 @@ def extract_and_validate_golang_nvrs(ocp_version: str, go_nvrs: List[str]):
     supported_els = {8, 9}
     if (major, minor) >= (4, 21):
         supported_els.add(10)
+    return supported_els
+
+
+def extract_and_validate_golang_nvrs(ocp_version: str, go_nvrs: List[str]):
+    supported_els = supported_rhel_versions(ocp_version)
 
     if len(go_nvrs) > len(supported_els):
         raise click.BadParameter(f'There should be max 1 nvr for each supported rhel version: {supported_els}')
@@ -228,14 +237,14 @@ def _ocp_version_key(version: str) -> tuple[int, ...]:
     return tuple(int(part) for part in version.split("."))
 
 
-def get_active_ocp_golang_major_minors() -> dict[str, set[str]]:
-    """Map every active OCP version to the golang major.minors of its group.yml GO_* vars.
+def get_active_ocp_golang_vars() -> dict[str, dict[str, str]]:
+    """Map every active OCP version to its group.yml GO_* vars as golang major.minors.
 
     The versions are the openshift-X.Y branches of upstream ocp-build-data. A branch is
     inactive when its group.yml software_lifecycle.phase is eol or it sets no GO_* var.
     """
     repo = get_github_client_for_org("openshift-eng").get_repo("openshift-eng/ocp-build-data")
-    result: dict[str, set[str]] = {}
+    result: dict[str, dict[str, str]] = {}
     for ref in repo.get_git_matching_refs("heads/openshift-"):
         branch = ref.ref.removeprefix("refs/heads/")
         match = _OCP_BRANCH_PATTERN.fullmatch(branch)
@@ -252,8 +261,23 @@ def get_active_ocp_golang_major_minors() -> dict[str, set[str]]:
             group.get("vars") or {}, label_prefix=f"{branch} group.yml", skip_invalid=True
         )
         if major_minors:
-            result[f"{match[1]}.{match[2]}"] = set(major_minors.values())
+            result[f"{match[1]}.{match[2]}"] = major_minors
     return result
+
+
+def get_active_ocp_golang_major_minors() -> dict[str, set[str]]:
+    """Map every active OCP version to the golang major.minors of its group.yml GO_* vars."""
+    return {version: set(major_minors.values()) for version, major_minors in get_active_ocp_golang_vars().items()}
+
+
+def ocp_versions_with_go_latest(golang_major_minor: str, active_vars: dict[str, dict[str, str]]) -> List[str]:
+    """Return the OCP versions whose group.yml GO_LATEST is golang_major_minor, sorted.
+
+    :param golang_major_minor: golang major.minor, e.g. 1.25
+    :param active_vars: result of get_active_ocp_golang_vars()
+    """
+    versions = [version for version, go_vars in active_vars.items() if go_vars.get("GO_LATEST") == golang_major_minor]
+    return sorted(versions, key=_ocp_version_key)
 
 
 def ocp_versions_sharing_golang(
@@ -380,6 +404,7 @@ class UpdateGolangPipeline:
         network_mode: str | None = None,
         major_bump: bool = False,
         assembly: str = DEFAULT_GOLANG_ASSEMBLY,
+        all_ocp_versions: bool = False,
     ):
         self.runtime = runtime
         self.dry_run = runtime.dry_run
@@ -397,6 +422,7 @@ class UpdateGolangPipeline:
         self.external_golang_rpms = external_golang_rpms
         self.network_mode = network_mode
         self.major_bump = major_bump
+        self.all_ocp_versions = all_ocp_versions
         if assembly not in GOLANG_ASSEMBLIES:
             raise ValueError(f"Unsupported golang assembly {assembly!r}; expected one of {GOLANG_ASSEMBLIES}")
         self.assembly = assembly
@@ -523,6 +549,20 @@ class UpdateGolangPipeline:
                     f"{branch} group.yml GO_LATEST major.minor ({latest_major_minor})."
                 )
 
+    def get_rpm_ocp_versions(self, build_major_minor: str) -> List[str]:
+        """Return the OCP versions whose Brew build tags get the golang RPMs, sorted.
+
+        Without --all-ocp-versions this is only --ocp-version. With it, every active OCP
+        version whose group.yml GO_LATEST is build_major_minor is added.
+
+        :param build_major_minor: golang major.minor of the NVRs, e.g. 1.25
+        """
+        if not self.all_ocp_versions:
+            return [self.ocp_version]
+        versions = set(ocp_versions_with_go_latest(build_major_minor, get_active_ocp_golang_vars()))
+        versions.add(self.ocp_version)
+        return sorted(versions, key=_ocp_version_key)
+
     async def run(self):
         try:
             await kinit()
@@ -537,6 +577,12 @@ class UpdateGolangPipeline:
         if self.tag_builds:
             self.validate_tag_builds_go_latest(branch, allowed_major_minors, build_major_minor)
         process_rpm_builds = self.major_bump or build_major_minor == allowed_major_minors["GO_LATEST"]
+        if self.all_ocp_versions and not process_rpm_builds and not self.external_golang_rpms:
+            raise ValueError(
+                f"--all-ocp-versions tags golang RPMs, so --ocp-version must be a version whose group.yml "
+                f"GO_LATEST is {build_major_minor}; {self.ocp_version} has GO_LATEST "
+                f"{allowed_major_minors['GO_LATEST']}."
+            )
 
         # el10 is only supported for build roots (RPM tagging), not for golang-builder images yet
         el_nvr_map_for_images = {el_v: nvr for el_v, nvr in el_nvr_map.items() if el_v != 10}
@@ -551,6 +597,8 @@ class UpdateGolangPipeline:
             jenkins.init_jenkins()
             jenkins.update_title(title_update)
         external_repos_msg = " using golang RPMs from external repos" if self.external_golang_rpms else ""
+        if self.all_ocp_versions:
+            external_repos_msg += ", RPMs for all OCP versions with this GO_LATEST"
         await self._slack_client.say_in_thread(
             f":construction: Updating golang for {self.ocp_version} "
             f"(building {self.assembly} images on konflux{external_repos_msg}) :construction:"
@@ -566,8 +614,20 @@ class UpdateGolangPipeline:
             )
         elif process_rpm_builds:
             # Process golang RPM builds (always from Brew)
+            rpm_ocp_versions = self.get_rpm_ocp_versions(build_major_minor)
+            if self.all_ocp_versions:
+                await self._slack_client.say_in_thread(
+                    f"Tagging golang RPMs for OCP versions: {', '.join(rpm_ocp_versions)}"
+                )
             cannot_proceed = not all(
-                await asyncio.gather(*[self.process_build(el_v, nvr) for el_v, nvr in el_nvr_map.items()])
+                await asyncio.gather(
+                    *[
+                        self.process_build(el_v, nvr, ocp_version=version)
+                        for version in rpm_ocp_versions
+                        for el_v, nvr in el_nvr_map.items()
+                        if el_v in supported_rhel_versions(version)
+                    ]
+                )
             )
             if cannot_proceed:
                 raise ValueError(
@@ -700,23 +760,32 @@ class UpdateGolangPipeline:
             f":white_check_mark: Updating golang for {self.ocp_version} assembly {self.assembly} complete."
         )
 
-    async def process_build(self, el_v, nvr):
-        await self.ensure_signed(el_v, nvr)
-        if not is_latest(self.ocp_version, el_v, nvr, self.koji_session):
+    async def process_build(self, el_v, nvr, ocp_version: str | None = None):
+        """Make sure nvr is signed, tagged and in the buildroot repo of an OCP version.
+
+        :param el_v: RHEL version of nvr
+        :param nvr: golang RPM NVR
+        :param ocp_version: OCP version whose Brew tags are used; defaults to --ocp-version.
+            Signing is checked only for --ocp-version, because it is per build, not per tag.
+        """
+        version = ocp_version or self.ocp_version
+        if version == self.ocp_version:
+            await self.ensure_signed(el_v, nvr)
+        if not is_latest(version, el_v, nvr, self.koji_session):
             if not self.tag_builds:
                 return False
-            await self.tag_build(el_v, nvr)
+            await self.tag_build(el_v, nvr, ocp_version=version)
 
         # retry 5 times to request repo regen and check availability,
         # which can take around 5 hours in worst case, before giving up and raise error
         for _ in range(5):
-            if await is_available(self.ocp_version, el_v, nvr):
+            if await is_available(version, el_v, nvr):
                 return True
-            await self.request_repo(el_v, nvr)
+            await self.request_repo(el_v, nvr, ocp_version=version)
             if self.dry_run:
                 return True
 
-        if await is_available(self.ocp_version, el_v, nvr):
+        if await is_available(version, el_v, nvr):
             return True
 
         _LOGGER.warning("build not available after 5 hours")
@@ -729,8 +798,14 @@ class UpdateGolangPipeline:
         before_sleep=before_sleep_log(_LOGGER, logging.WARNING),
         reraise=True,
     )
-    async def request_repo(self, el_v, nvr):
-        build_tag = f'rhaos-{self.ocp_version}-rhel-{el_v}-build'
+    async def request_repo(self, el_v, nvr, ocp_version: str | None = None):
+        """Request a buildroot repo regen and wait until it contains nvr.
+
+        :param el_v: RHEL version of nvr
+        :param nvr: golang RPM NVR
+        :param ocp_version: OCP version of the build tag; defaults to --ocp-version
+        """
+        build_tag = f'rhaos-{ocp_version or self.ocp_version}-rhel-{el_v}-build'
         # --request triggers a repo regen (like regen-repo) and waits for it to complete.
         # Not using --timeout because it can be unreliable
         # wait for 1hr
@@ -745,8 +820,14 @@ class UpdateGolangPipeline:
             _LOGGER.info("user logged out from session, login again")
             self.koji_session.gssapi_login()
 
-    async def tag_build(self, el_v, nvr):
-        build_tag = f'rhaos-{self.ocp_version}-rhel-{el_v}-override'
+    async def tag_build(self, el_v, nvr, ocp_version: str | None = None):
+        """Tag nvr (and the el8 go-toolset module builds) into the override tag of an OCP version.
+
+        :param el_v: RHEL version of nvr
+        :param nvr: golang RPM NVR
+        :param ocp_version: OCP version of the override tag; defaults to --ocp-version
+        """
+        build_tag = f'rhaos-{ocp_version or self.ocp_version}-rhel-{el_v}-override'
         self.brew_login()
         builds_to_tag = [nvr]
         if el_v == 8:
@@ -1308,6 +1389,13 @@ class UpdateGolangPipeline:
     help='Indicates a major.minor golang version bump (e.g. 1.22 -> 1.23). '
     'Permits validation of go_latest even when the new version does not match current group.yml vars.',
 )
+@click.option(
+    '--all-ocp-versions',
+    is_flag=True,
+    default=False,
+    help='Also tag the golang RPMs into the Brew tags of every active OCP version whose group.yml GO_LATEST '
+    'matches the NVRs. --ocp-version must be one of them; it still picks the plashet, image vars and Slack channel.',
+)
 @pass_runtime
 @click_coroutine
 async def update_golang(
@@ -1329,6 +1417,7 @@ async def update_golang(
     network_mode: str | None,
     assembly: str,
     major_bump: bool,
+    all_ocp_versions: bool,
 ):
     if not runtime.dry_run and not confirm:
         _LOGGER.info('--confirm is not set, running in dry-run mode')
@@ -1353,5 +1442,6 @@ async def update_golang(
         network_mode,
         major_bump,
         assembly,
+        all_ocp_versions,
     )
     await pipeline.run()
