@@ -30,8 +30,10 @@ ambiguous default channels cause the build to fail. The production index must
 exist. This command does not create a complete replacement operator index;
 its fragment contains only the selected operator package.
 
-All inputs must contain the same operator package. The selected bundle CSV must
-exist as an `olm.bundle` for that package and appear in every declared channel.
+All inputs must contain the same operator package. The selected CSV name is read
+from the actual bundle image, rather than the database's `bundle_csv_name`, which
+can come from an outdated package YAML. That CSV must exist as an `olm.bundle`
+for that package and appear in every declared channel. Its name is saved in provenance.
 
 The output application/component is derived from the operator package and target,
 for example `container-security-operator-fbc-unified-4-22`. Its source branch is
