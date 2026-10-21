@@ -1,8 +1,10 @@
+import hashlib
 import html
 import json
 import os
 import re
 from typing import Dict, Optional
+from uuid import uuid4
 
 import click
 from artcommonlib.constants import KONFLUX_DEFAULT_IMAGE_REPO, RHCOS_IMAGE_REPO
@@ -125,31 +127,65 @@ class RhcosNodeImagePostBuildPipeline:
         label_value: str,
         auth_file: str,
     ) -> str:
-        """Apply the ``coreos.build.manifest-list-tag`` label and return the destination pullspec."""
+        """Label every platform config and publish the list by its immutable digest.
+
+        A unique staging tag isolates concurrent promotions. Keep that tag rather
+        than deleting its manifest, which is also referenced by the published tags.
+        """
 
         dest = f'{dest_repo}:{dest_tag}'
-        label_patch = json.dumps({'config': {'Labels': {'coreos.build.manifest-list-tag': label_value}}})
-        cmd = [
-            'oc',
-            'image',
-            'append',
-            f'--from={source_pullspec}',
-            f'--to={dest}',
-            f'--image={label_patch}',
-            '--keep-manifest-list',
-            '--filter-by-os=.*',
-            f'--registry-config={auth_file}',
-        ]
+        staging_pullspec = f'{dest_repo}:rhcos-label-{uuid4().hex}'
+        label_patch = json.dumps({'Labels': {'coreos.build.manifest-list-tag': label_value}})
         self.runtime.logger.info(
-            'Applying coreos.build.manifest-list-tag=%s label to %s -> %s',
+            'Applying coreos.build.manifest-list-tag=%s to every platform in %s via %s',
             label_value,
             source_pullspec,
-            dest,
+            staging_pullspec,
         )
-        await cmd_gather_async(cmd, check=True)
-
-        self.runtime.logger.info('Labeled image available at %s', dest)
-        return dest
+        await cmd_gather_async(
+            [
+                'oc',
+                'image',
+                'append',
+                f'--from={source_pullspec}',
+                f'--to={staging_pullspec}',
+                f'--image={label_patch}',
+                '--keep-manifest-list',
+                f'--registry-config={auth_file}',
+            ],
+            check=True,
+        )
+        _, raw_manifest, _ = await cmd_gather_async(
+            ['skopeo', 'inspect', '--raw', f'--authfile={auth_file}', f'docker://{staging_pullspec}'],
+            check=True,
+        )
+        try:
+            manifest_list = json.loads(raw_manifest)
+        except json.JSONDecodeError as error:
+            raise ValueError(f'Invalid manifest-list JSON for {staging_pullspec}') from error
+        if (
+            not isinstance(manifest_list, dict)
+            or not isinstance(manifest_list.get('manifests'), list)
+            or not manifest_list['manifests']
+        ):
+            raise ValueError(f'Expected a non-empty manifest list for {staging_pullspec}')
+        digest_pullspec = f'{dest_repo}@sha256:{hashlib.sha256(raw_manifest.encode()).hexdigest()}'
+        await cmd_gather_async(
+            [
+                'oc',
+                'image',
+                'mirror',
+                '--keep-manifest-list',
+                digest_pullspec,
+                dest,
+                f'--registry-config={auth_file}',
+            ],
+            check=True,
+        )
+        self.runtime.logger.info(
+            'Labeled image available at %s (%s); retaining staging tag %s', dest, digest_pullspec, staging_pullspec
+        )
+        return digest_pullspec
 
     async def _promote(self, tags: Dict[str, str]):
         quay_auth_file = os.environ.get('QUAY_AUTH_FILE')
@@ -172,6 +208,9 @@ class RhcosNodeImagePostBuildPipeline:
                 node_tags = [tags['node']]
                 extensions_tags = [tags['extensions']]
                 node_pullspec = self.node_image
+                extensions_pullspec = self.extensions_image
+                node_labeled_tags = set()
+                extensions_labeled_tags = set()
 
                 if timestamp:
                     # Build timestamped tags from the release stream and extracted timestamp
@@ -190,26 +229,57 @@ class RhcosNodeImagePostBuildPipeline:
                         label_value=node_timestamped_tag,
                         auth_file=merged_auth_file,
                     )
+                    extensions_pullspec = await self._apply_manifest_list_tag_label(
+                        source_pullspec=self.extensions_image,
+                        dest_repo=KONFLUX_DEFAULT_IMAGE_REPO,
+                        dest_tag=extensions_timestamped_tag,
+                        label_value=extensions_timestamped_tag,
+                        auth_file=merged_auth_file,
+                    )
                     node_tags.append(node_timestamped_tag)
+                    node_tags.insert(0, f'sha256-{node_pullspec.split("@sha256:", 1)[1]}')
+                    node_labeled_tags.add(node_timestamped_tag)
                     extensions_tags.append(extensions_timestamped_tag)
+                    extensions_tags.insert(0, f'sha256-{extensions_pullspec.split("@sha256:", 1)[1]}')
+                    extensions_labeled_tags.add(extensions_timestamped_tag)
                 else:
                     self.runtime.logger.info('No timestamp available; promoting with floating tags only')
 
-                # Sync the labeled node image to art-images unless it is already there
-                node_repo = node_pullspec.split('@', 1)[0]
-                if ':' in node_repo.rsplit('/', 1)[-1]:
-                    node_repo = node_repo.rsplit(':', 1)[0]
-                if node_repo == KONFLUX_DEFAULT_IMAGE_REPO:
+                for pullspec, image_tags, labeled_tags in (
+                    (node_pullspec, node_tags, node_labeled_tags),
+                    (extensions_pullspec, extensions_tags, extensions_labeled_tags),
+                ):
+                    source_repo = pullspec.split('@', 1)[0]
+                    if ':' in source_repo.rsplit('/', 1)[-1]:
+                        source_repo = source_repo.rsplit(':', 1)[0]
+                    if source_repo != KONFLUX_DEFAULT_IMAGE_REPO:
+                        await sync_to_quay(pullspec, KONFLUX_DEFAULT_IMAGE_REPO, image_tags)
+                        continue
+
                     self.runtime.logger.info(
                         'Skipping sync for %s; image is already in destination repository %s',
-                        node_pullspec,
+                        pullspec,
                         KONFLUX_DEFAULT_IMAGE_REPO,
                     )
-                else:
-                    await sync_to_quay(node_pullspec, KONFLUX_DEFAULT_IMAGE_REPO, node_tags)
-
-                # Sync the extensions image to art-images
-                await sync_to_quay(self.extensions_image, KONFLUX_DEFAULT_IMAGE_REPO, extensions_tags)
+                    for tag in image_tags:
+                        if tag in labeled_tags:
+                            continue
+                        destination = f'{KONFLUX_DEFAULT_IMAGE_REPO}:{tag}'
+                        self.runtime.logger.info(
+                            'Mirroring labeled image from %s to remaining tag %s', pullspec, destination
+                        )
+                        await cmd_gather_async(
+                            [
+                                'oc',
+                                'image',
+                                'mirror',
+                                '--keep-manifest-list',
+                                pullspec,
+                                destination,
+                                f'--registry-config={merged_auth_file}',
+                            ],
+                            check=True,
+                        )
             finally:
                 if previous_auth_file is None:
                     os.environ.pop('QUAY_AUTH_FILE', None)
