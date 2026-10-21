@@ -56,6 +56,7 @@ class ImageBuildParams:
     build_args: Optional[list[str]] = None
     additional_secret: Optional[str] = None
     privileged_nested: Optional[bool] = None
+    allow_cross_platform_images: Optional[bool] = None
     build_step_resources: Optional[dict[str, str]] = None
     sbom_step_resources: Optional[dict[str, str]] = None
     workspace_storage: Optional[str] = None
@@ -1845,6 +1846,12 @@ class KonfluxClient:
                         _modify_param(task["params"], "ADDITIONAL_SECRET", build_params.additional_secret)
                     if build_params.privileged_nested is not None:
                         _modify_param(task["params"], "PRIVILEGED_NESTED", str(build_params.privileged_nested).lower())
+                    if build_params.allow_cross_platform_images is not None:
+                        _modify_param(
+                            task["params"],
+                            "ALLOW_CROSS_PLATFORM_IMAGES",
+                            str(build_params.allow_cross_platform_images).lower(),
+                        )
                 case "prefetch-dependencies":
                     _modify_param(task["params"], "sbom-type", "spdx")
                     if build_params.prefetch_mode:
