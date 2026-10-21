@@ -14,6 +14,7 @@ from artcommonlib.arch_util import brew_arch_for_go_arch
 from artcommonlib.build_visibility import is_nvr_embargoed
 from artcommonlib.gitlab import GitLabClient
 from gitlab.exceptions import GitlabGetError
+from semver import VersionInfo
 
 from pyartcd import constants, oc, util
 from pyartcd import record as record_util
@@ -136,6 +137,8 @@ class InstallerCdnReleasePipeline:
             raise ValueError(f"Unsupported client type {client_type!r}; expected one of {sorted(CLIENT_TYPES)}")
         if not re.fullmatch(r"\d+\.\d+", version):
             raise ValueError(f"Version must be MAJOR.MINOR, got {version!r}")
+        if not release_name.startswith(f"{version}.") or not VersionInfo.is_valid(release_name):
+            raise ValueError(f"Release name must be a {version}.Z semver release name, got {release_name!r}")
         self.runtime = runtime
         self.version = version
         self.major, self.minor = version.split(".")

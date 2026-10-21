@@ -128,6 +128,13 @@ class TestHelpers(TestCase):
             with self.assertRaises(ValueError):
                 _pipeline(tmp, version="4.22.18")
 
+    def test_constructor_rejects_release_names_outside_the_version(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            for name in ("4.22", "4.2.18", "4.23.1", "4.22.18.1", "latest"):
+                with self.subTest(name=name), self.assertRaises(ValueError):
+                    _pipeline(tmp, release_name=name)
+            self.assertEqual(_pipeline(tmp, release_name="4.22.0-rc.1").release_name, "4.22.0-rc.1")
+
     def test_cli_command_registered(self):
         self.assertIn("installer-cdn-release", cli.commands)
 
