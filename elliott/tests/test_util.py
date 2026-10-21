@@ -9,10 +9,10 @@ from elliottlib.constants import GOLANG_BUILDER_CVE_COMPONENT
 from flexmock import flexmock
 
 
-class TestExtractNvrsFromFbc(unittest.IsolatedAsyncioTestCase):
-    async def test_digest_source_nvr_reaches_catalog_extractor(self):
+class TestExtractNvrsFromSourceBundle(unittest.IsolatedAsyncioTestCase):
+    async def test_actual_bundle_version_reaches_catalog_extractor(self):
         pullspec = 'quay.io/test/fbc@sha256:abc'
-        source_nvr = 'quay-operator-fbc-3.17.6-1.ocp4.18'
+        source_version = '3.17.6'
         with (
             patch('elliottlib.util.extract_versioned_related_images_from_fbc', new_callable=AsyncMock) as extract,
             patch('elliottlib.util.oc_image_info__cached_async', new_callable=AsyncMock) as image_info,
@@ -22,12 +22,12 @@ class TestExtractNvrsFromFbc(unittest.IsolatedAsyncioTestCase):
                 '{"config":{"config":{"Labels":{"com.redhat.component":"quay-operator-container",'
                 '"version":"3.17.6","release":"1"}}}}'
             )
-            result = await util.extract_nvrs_from_fbc(pullspec, 'quay', assembly='3.17.7', fbc_nvr=source_nvr)
+            result = await util.extract_nvrs_from_fbc(
+                pullspec, 'quay', assembly='3.17.7', bundle_version=source_version
+            )
 
         self.assertEqual(result, ['quay-operator-container-3.17.6-1'])
-        extract.assert_awaited_once_with(
-            pullspec, 'quay', assembly='3.17.7', ignore_patch_version=False, fbc_nvr=source_nvr
-        )
+        extract.assert_awaited_once_with(pullspec, 'quay', assembly='3.17.7', ignore_patch_version=False, bundle_version=source_version)
 
 
 class TestUtil(unittest.TestCase):
@@ -284,7 +284,7 @@ class TestExtractNvrsFromFbc(unittest.TestCase):
                         assembly='0.158.4',
                         version_scoped=version_scoped,
                         ignore_patch_version=True,
-                        fbc_nvr=None,
+                        bundle_version=None,
                     )
                 )
                 self.assertEqual(result, ['operator-container-0.158.0-1'])
@@ -294,7 +294,7 @@ class TestExtractNvrsFromFbc(unittest.TestCase):
                         'rhosdt',
                         assembly='0.158.4',
                         ignore_patch_version=True,
-                        fbc_nvr=None,
+                        bundle_version=None,
                     )
                     mock_unscoped.assert_not_awaited()
                     mock_versioned.reset_mock()
