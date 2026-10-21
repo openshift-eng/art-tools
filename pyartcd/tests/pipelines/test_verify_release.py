@@ -98,6 +98,7 @@ class TestVerifyReleasePipeline(unittest.IsolatedAsyncioTestCase):
             "kernel-tag",
             "cve-trackers",
             "stage-testing",
+            "shipment-label",
         }
         self.assertEqual({s.name for s in result.steps}, expected_steps)
         for step in result.steps:
@@ -179,6 +180,87 @@ class TestVerifyReleasePipeline(unittest.IsolatedAsyncioTestCase):
 
         cdn_push_calls = [call for call in mock_assert.call_args_list if "verify-cdn-push" in str(call)]
         self.assertTrue(any("--no-push" in str(call) for call in cdn_push_calls))
+
+
+    @patch("pyartcd.pipelines.verify_release.exectools.cmd_assert_async", new_callable=AsyncMock)
+    async def test_shipment_label_runs_after_checks_pass(self, mock_assert):
+        mock_assert.return_value = 0
+
+        pipeline = VerifyReleasePipeline(
+            runtime=self.runtime,
+            version="4.19",
+            assembly="4.19.42",
+        )
+
+        result = await pipeline.run()
+
+        self.assertTrue(result.passed)
+        label_step = [s for s in result.steps if s.name == "shipment-label"][0]
+        self.assertEqual(label_step.status, StepStatus.PASS)
+        label_calls = [
+            call for call in mock_assert.call_args_list
+            if "verify-release" in str(call) and "--mark" in str(call)
+        ]
+        self.assertEqual(len(label_calls), 1)
+
+    @patch("pyartcd.pipelines.verify_release.exectools.cmd_assert_async", new_callable=AsyncMock)
+    async def test_shipment_label_skipped_when_checks_fail(self, mock_assert):
+        def mock_side_effect(cmd, **kwargs):
+            if "verify-signatures" in cmd:
+                raise ChildProcessError("Process exited with code 1.")
+            return 0
+
+        mock_assert.side_effect = mock_side_effect
+
+        pipeline = VerifyReleasePipeline(
+            runtime=self.runtime,
+            version="4.19",
+            assembly="4.19.42",
+        )
+
+        result = await pipeline.run()
+
+        self.assertFalse(result.passed)
+        label_steps = [s for s in result.steps if s.name == "shipment-label"]
+        self.assertEqual(len(label_steps), 0)
+
+    @patch("pyartcd.pipelines.verify_release.exectools.cmd_assert_async", new_callable=AsyncMock)
+    async def test_shipment_label_skip_by_user(self, mock_assert):
+        mock_assert.return_value = 0
+
+        pipeline = VerifyReleasePipeline(
+            runtime=self.runtime,
+            version="4.19",
+            assembly="4.19.42",
+            skip_steps=["shipment-label"],
+        )
+
+        result = await pipeline.run()
+
+        self.assertTrue(result.passed)
+        label_step = [s for s in result.steps if s.name == "shipment-label"][0]
+        self.assertEqual(label_step.status, StepStatus.SKIP)
+
+    @patch("pyartcd.pipelines.verify_release.exectools.cmd_assert_async", new_callable=AsyncMock)
+    async def test_shipment_label_failure_reported(self, mock_assert):
+        def mock_side_effect(cmd, **kwargs):
+            if "verify-release" in cmd and "--mark" in str(cmd):
+                raise ChildProcessError("GITLAB_TOKEN not set")
+            return 0
+
+        mock_assert.side_effect = mock_side_effect
+
+        pipeline = VerifyReleasePipeline(
+            runtime=self.runtime,
+            version="4.19",
+            assembly="4.19.42",
+        )
+
+        result = await pipeline.run()
+
+        self.assertFalse(result.passed)
+        label_step = [s for s in result.steps if s.name == "shipment-label"][0]
+        self.assertEqual(label_step.status, StepStatus.FAIL)
 
 
 if __name__ == "__main__":
