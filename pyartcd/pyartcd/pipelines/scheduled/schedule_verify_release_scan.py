@@ -22,12 +22,11 @@ async def scan_and_trigger(runtime: Runtime):
     """Queue verify-release for stage-tested OCP shipment MRs not yet verified."""
     gitlab_client = GitLabClient.from_url(SHIPMENT_DATA_URL_TEMPLATE)
     project_path = SHIPMENT_DATA_URL_TEMPLATE.split(REDHAT_GITLAB_URL + "/")[1]
-    project = gitlab_client.get_project(project_path)
-    merge_requests = project.mergerequests.list(
+    merge_requests = gitlab_client.list_merge_requests(
+        project_path,
         state="opened",
         labels=[STAGE_RELEASE_SUCCESS_LABEL, STAGE_TESTING_SUCCESS_LABEL],
         per_page=100,
-        get_all=True,
     )
 
     for mr in merge_requests:
