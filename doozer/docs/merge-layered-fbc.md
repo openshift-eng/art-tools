@@ -21,6 +21,12 @@ a specific product (the Quay task supplies `--product=quay`). Build data is read
 from `--data-path`, which defaults to the production repository; every inspected
 source revision is saved.
 
+Build architectures come from `konflux.arches` on the target's `openshift-MAJOR.MINOR`
+branch in the same build-data repository. OpenShift 4.12 and 4.13 build only for
+`x86_64`. The list is resolved once during preparation and used for build submission
+and all database outcomes. Missing or invalid target configuration fails preparation,
+including dry runs.
+
 The job reads bundle metadata to identify each input's package and updated
 channels. It preserves the current production history for that package,
 applies each selected channel, and emits shared objects once. Other channels

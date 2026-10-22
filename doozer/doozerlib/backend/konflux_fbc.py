@@ -76,6 +76,34 @@ FBC_BUILD_PRIORITY = "2"
 LIFECYCLE_SCHEMA = "io.openshift.operators.lifecycles.v1alpha1"
 
 
+async def get_target_fbc_arches(data_path: str, ocp_version: tuple[int, int], logger: logging.Logger) -> list[str]:
+    """Read the target OpenShift group's Konflux architectures."""
+    major, minor = ocp_version
+    override_group = f"openshift-{major}.{minor}"
+    if not data_path:
+        raise ValueError(f"Cannot read konflux.arches from group {override_group}: no data path configured")
+
+    logger.info("Using major_minor_override %s.%s, getting arches from group %s", major, minor, override_group)
+    doozer_cmd = [
+        'doozer',
+        f'--data-path={data_path}',
+        f'--group={override_group}',
+        'config:read-group',
+        'konflux.arches',
+        '--yaml',
+    ]
+    try:
+        _, out, _ = await exectools.cmd_gather_async(doozer_cmd)
+        arches = yaml.load(out.strip()) if out.strip() else None
+    except Exception as exc:
+        raise RuntimeError(f"Failed to read konflux.arches from group {override_group}") from exc
+
+    if not isinstance(arches, list) or not arches or not all(isinstance(arch, str) and arch for arch in arches):
+        raise ValueError(f"Invalid konflux.arches from group {override_group}: expected a nonempty list of arches")
+    logger.info("Retrieved arches from group %s: %s", override_group, arches)
+    return arches
+
+
 def _generate_fbc_branch_name(
     group: str, assembly: str, distgit_key: str, ocp_version: Optional[Tuple[int, int]] = None
 ) -> str:
@@ -677,6 +705,9 @@ class KonfluxFbcFragmentMerger:
         }
         return target_idms
 
+    def _get_build_arches(self) -> list[str]:
+        return self.group_config.get("arches", list(KonfluxClient.SUPPORTED_ARCHES.keys()))
+
     async def _start_build(self, build_repo: BuildRepo, output_image: str, git_auth_secret: Optional[str] = None):
         logger = self._logger
         konflux_client = self._konflux_client
@@ -716,7 +747,7 @@ class KonfluxFbcFragmentMerger:
             )
             logger.info(f"Created component {comp_name} in application {app_name}")
 
-        arches = self.group_config.get("arches", list(KonfluxClient.SUPPORTED_ARCHES.keys()))
+        arches = self._get_build_arches()
 
         group_skip_tasks = self.group_config.get("konflux", {}).get("skip_tasks", [])
         merged_skip_tasks = tuple(dict.fromkeys([*self.skip_tasks, *group_skip_tasks]))
@@ -1880,31 +1911,7 @@ class KonfluxFbcBuilder:
         if not self.major_minor_override:
             return metadata.get_arches()
 
-        major, minor = self.major_minor_override
-        override_group = f"openshift-{major}.{minor}"
-        data_path = metadata.runtime.data_path
-        if not data_path:
-            raise ValueError(f"Cannot read konflux.arches from group {override_group}: no data path configured")
-
-        logger.info("Using major_minor_override %s.%s, getting arches from group %s", major, minor, override_group)
-        doozer_cmd = [
-            'doozer',
-            f'--data-path={data_path}',
-            f'--group={override_group}',
-            'config:read-group',
-            'konflux.arches',
-            '--yaml',
-        ]
-        try:
-            _, out, _ = await exectools.cmd_gather_async(doozer_cmd)
-            arches = yaml.load(out.strip()) if out.strip() else None
-        except Exception as exc:
-            raise RuntimeError(f"Failed to read konflux.arches from group {override_group}") from exc
-
-        if not isinstance(arches, list) or not arches or not all(isinstance(arch, str) for arch in arches):
-            raise ValueError(f"Invalid konflux.arches from group {override_group}: expected a nonempty list of arches")
-        logger.info("Retrieved arches from group %s: %s", override_group, arches)
-        return arches
+        return await get_target_fbc_arches(metadata.runtime.data_path, self.major_minor_override, logger)
 
     async def build(
         self, metadata: ImageMetadata, operator_nvr: Optional[str] = None, git_auth_secret: Optional[str] = None
