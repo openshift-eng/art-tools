@@ -428,12 +428,30 @@ class LayeredProductsScanPipeline:
             return
 
         self.logger.info('Triggering bundle builds for %d operators', len(nvrs))
-        jenkins.start_olm_bundle_konflux(
-            build_version=self.version,
-            assembly=self.assembly,
-            operator_nvrs=nvrs,
-            group=self.group,
-        )
+        if tekton.is_tekton_context():
+            created_name = tekton.start_pipeline_run(
+                pipeline_name='olm-bundle-konflux',
+                params={
+                    'version': self.version,
+                    'assembly': self.assembly,
+                    'group': self.group,
+                    'operator-nvrs': ','.join(nvrs),
+                    'data-path': self.data_path or '',
+                    'data-gitref': self.data_gitref or '',
+                    'dry-run': 'false',
+                },
+            )
+            if created_name:
+                tekton.annotate_current_pipelinerun({'art.openshift.io/triggered-olm-bundle-konflux': created_name})
+        else:
+            jenkins.start_olm_bundle_konflux(
+                build_version=self.version,
+                assembly=self.assembly,
+                operator_nvrs=nvrs,
+                group=self.group,
+                doozer_data_path=self.data_path or '',
+                doozer_data_gitref=self.data_gitref or '',
+            )
 
     def trigger_fbc_builds(self, operators: List[KonfluxBuildRecord]):
         """Trigger FBC builds for multiple operators in one job."""
@@ -445,13 +463,29 @@ class LayeredProductsScanPipeline:
             return
 
         self.logger.info('Triggering FBC builds for %d operators', len(nvrs))
-        jenkins.start_build_fbc(
-            version=self.version,
-            assembly=self.assembly,
-            operator_nvrs=nvrs,
-            dry_run=False,
-            group=self.group,
-        )
+        if tekton.is_tekton_context():
+            created_name = tekton.start_pipeline_run(
+                pipeline_name='build-fbc',
+                params={
+                    'version': self.version,
+                    'assembly': self.assembly,
+                    'group': self.group,
+                    'operator-nvrs': ','.join(nvrs),
+                    'data-path': self.data_path or '',
+                    'data-gitref': self.data_gitref or '',
+                    'dry-run': 'false',
+                },
+            )
+            if created_name:
+                tekton.annotate_current_pipelinerun({'art.openshift.io/triggered-build-fbc': created_name})
+        else:
+            jenkins.start_build_fbc(
+                version=self.version,
+                assembly=self.assembly,
+                operator_nvrs=nvrs,
+                dry_run=False,
+                group=self.group,
+            )
 
     def get_bundle_name(self, operator_name: str) -> str:
         """Get bundle name from operator name.
