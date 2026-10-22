@@ -596,14 +596,12 @@ class GenAssemblyCli:
                             registry_config=self.runtime.registry_config,
                         )
                         art_repo = get_art_prod_image_repo_for_version(4, "dev")
-                        rhel_build_id_index = next(
-                            (
-                                payload_tag.rhel_build_id_index
-                                for payload_tag in self.runtime.group_config.rhcos.payload_tags or []
-                                if payload_tag.primary
-                            ),
-                            "",
+                        payload_tags = self.runtime.group_config.rhcos.payload_tags or []
+                        payload_tag = next(
+                            (payload_tag for payload_tag in payload_tags if payload_tag.name == tag.name),
+                            next((payload_tag for payload_tag in payload_tags if payload_tag.primary), tag),
                         )
+                        rhel_build_id_index = payload_tag.rhel_build_id_index
                         if isinstance(rhel_build_id_index, str):
                             configured_repo, separator, configured_tag = rhel_build_id_index.rpartition(':')
                             if configured_repo and separator and configured_tag and '/' not in configured_tag:
@@ -632,8 +630,13 @@ class GenAssemblyCli:
                             # The timestamped tag lives in the art-images repo
                             # (from rhcos_index_tag in the payload_tag config),
                             # NOT in ocp-v4.0-art-dev.
-                            if tag.rhcos_index_tag is not Missing:
-                                art_repo = str(tag.rhcos_index_tag).split('@', 1)[0].rsplit(':', 1)[0]
+                            if payload_tag.rhcos_index_tag is not Missing:
+                                art_repo, _, rhcos_index_tag = (
+                                    str(payload_tag.rhcos_index_tag).split('@', 1)[0].rpartition(':')
+                                )
+                                if rhcos_index_tag.endswith('-node-image'):
+                                    tag_prefix = rhcos_index_tag.removesuffix('-node-image')
+                                    manifest_list_tag = f'{tag_prefix}-{timestamp}-node-image'
                             self.logger.info(
                                 'Derived manifest-list tag %s from release label %s '
                                 '(coreos.build.manifest-list-tag label absent)',

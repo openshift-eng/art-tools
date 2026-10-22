@@ -536,6 +536,99 @@ class TestGetRhcosContainerFallback(TestCase):
     @patch('doozerlib.cli.release_gen_assembly.rhcos.get_primary_container_name', return_value='rhel-coreos')
     @patch('doozerlib.cli.release_gen_assembly.rhcos.get_container_configs')
     @patch('doozerlib.cli.release_gen_assembly.util.oc_image_info_for_arch')
+    def test_manifest_list_lookup_matches_variant(self, mock_oc_info, mock_get_configs, mock_primary):
+        configurations = [
+            {
+                'name': 'rhel-coreos',
+                'primary': True,
+                'rhel_build_id_index': 'registry.example.com:5000/rhel9:5.1-9.8',
+                'rhcos_index_tag': 'quay.io/art-images/rhel9:5.1-9.8-node-image',
+            },
+            {
+                'name': 'rhel-coreos-10',
+                'rhel_build_id_index': 'registry.example.com:5000/rhel10:5.1-10.2',
+                'rhcos_index_tag': 'quay.io/art-images/rhel10:5.1-10.2-node-image',
+            },
+        ]
+        for reverse_order in (False, True):
+            for has_manifest_label in (False, True):
+                with self.subTest(reverse_order=reverse_order, has_manifest_label=has_manifest_label):
+                    gacli = self._make_gacli()
+                    payload_tags = configurations[::-1] if reverse_order else configurations
+                    gacli.runtime.group_config.rhcos = Model({'layered_rhcos': True, 'payload_tags': payload_tags})
+                    mock_get_configs.return_value = gacli.runtime.group_config.rhcos.payload_tags
+                    gacli.rhcos_by_tag = defaultdict(
+                        dict,
+                        {
+                            config['name']: {'x86_64': f'quay.io/source@sha256:{config["name"]}'}
+                            for config in payload_tags
+                        },
+                    )
+                    mock_oc_info.reset_mock()
+                    image_infos = []
+                    expected_pullspecs = []
+                    expected_digests = {}
+                    for config in payload_tags:
+                        rhel_major = 9 if config.get('primary') else 10
+                        manifest_tag = (
+                            config['rhcos_index_tag']
+                            .rsplit(':', 1)[1]
+                            .replace('-node-image', '-202610160945-node-image')
+                        )
+                        labels = {'release': f'202610160945.p2.g62965e8.assembly.stream.el{rhel_major}'}
+                        if has_manifest_label:
+                            labels['coreos.build.manifest-list-tag'] = f'label-{manifest_tag}'
+                            expected_repo = config['rhel_build_id_index'].rsplit(':', 1)[0]
+                        else:
+                            expected_repo = config['rhcos_index_tag'].rsplit(':', 1)[0]
+                        expected_tag = labels.get('coreos.build.manifest-list-tag', manifest_tag)
+                        expected_pullspecs.append(f'{expected_repo}:{expected_tag}')
+                        digest = f'sha256:arm64-el{rhel_major}'
+                        expected_digests[config['name']] = f'{expected_repo}@{digest}'
+                        image_infos.extend([{'config': {'config': {'Labels': labels}}}, {'digest': digest}])
+                    mock_oc_info.side_effect = image_infos
+
+                    gacli._get_rhcos_container()
+
+                    self.assertEqual(mock_oc_info.call_count, 4)
+                    self.assertEqual(
+                        [image_call.args[0] for image_call in mock_oc_info.call_args_list[1::2]], expected_pullspecs
+                    )
+                    for name, pullspec in expected_digests.items():
+                        self.assertEqual(gacli.rhcos_by_tag[name]['aarch64'], pullspec)
+
+    @patch('doozerlib.cli.release_gen_assembly.rhcos.get_primary_container_name', return_value='rhel-coreos')
+    @patch('doozerlib.cli.release_gen_assembly.rhcos.get_container_configs')
+    @patch('doozerlib.cli.release_gen_assembly.util.oc_image_info_for_arch')
+    def test_unmatched_variant_uses_primary_prefix(self, mock_oc_info, mock_get_configs, mock_primary):
+        gacli = self._make_gacli()
+        gacli.runtime.group_config.rhcos = Model(
+            {
+                'layered_rhcos': True,
+                'payload_tags': [
+                    {
+                        'name': 'other-name',
+                        'primary': True,
+                        'rhcos_index_tag': 'quay.io/art-images:5.1-10.2-node-image',
+                    }
+                ],
+            }
+        )
+        mock_get_configs.return_value = [Model({'name': 'rhel-coreos'})]
+        gacli.rhcos_by_tag = defaultdict(dict, {'rhel-coreos': {'x86_64': 'quay.io/source@sha256:amd64'}})
+        mock_oc_info.side_effect = [
+            {'config': {'config': {'Labels': {'release': '202610160945.p2.g62965e8.assembly.stream.el10'}}}},
+            {'digest': 'sha256:arm64'},
+        ]
+
+        gacli._get_rhcos_container()
+
+        self.assertEqual(mock_oc_info.call_args_list[1].args[0], 'quay.io/art-images:5.1-10.2-202610160945-node-image')
+        self.assertEqual(gacli.rhcos_by_tag['rhel-coreos']['aarch64'], 'quay.io/art-images@sha256:arm64')
+
+    @patch('doozerlib.cli.release_gen_assembly.rhcos.get_primary_container_name', return_value='rhel-coreos')
+    @patch('doozerlib.cli.release_gen_assembly.rhcos.get_container_configs')
+    @patch('doozerlib.cli.release_gen_assembly.util.oc_image_info_for_arch')
     @patch('doozerlib.cli.release_gen_assembly.get_art_prod_image_repo_for_version', return_value='quay.io/art-dev')
     def test_uses_existing_manifest_list_tag_label(self, mock_art_repo, mock_oc_info, mock_get_configs, mock_primary):
         """When coreos.build.manifest-list-tag label is present, use it directly (4.x/5.0 path)."""
