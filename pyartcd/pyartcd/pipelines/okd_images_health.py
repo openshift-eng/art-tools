@@ -345,18 +345,19 @@ class ImagesHealthPipeline:
             okd_group = group.replace('openshift-', 'okd-')
             version_build_failures.setdefault(okd_group, []).append(concern)
 
-        # Rebase failures are already keyed by version in self.rebase_failures
-        # Need to collect all groups that have any kind of failure
+        # Keep only versions that have actual rebase failures. get_rebase_failures()
+        # also stores empty dictionaries for versions with no failures.
+        version_rebase_failures = {version: failures for version, failures in self.rebase_failures.items() if failures}
 
         # If no concerns and no rebase failures, report all healthy
-        if not version_build_failures and not self.rebase_failures:
+        if not version_build_failures and not version_rebase_failures:
             await self.slack_client.say(':white_check_mark: All OKD images are healthy for all monitored releases')
             return
 
         # Collect all groups that have any kind of failure
         all_groups = set()
         all_groups.update(version_build_failures.keys())
-        all_groups.update(f'okd-{v}' for v in self.rebase_failures.keys())
+        all_groups.update(f'okd-{v}' for v in version_rebase_failures)
 
         # Build message grouped by version
         message_parts = [':alert: There are some issues to look into for OKD builds:\n']
@@ -372,7 +373,7 @@ class ImagesHealthPipeline:
                 group_summary.append(f'{n} image{"s" if n > 1 else ""} with build failures')
 
             # Rebase failures for this group
-            rebase_fails = self.rebase_failures.get(version, {})
+            rebase_fails = version_rebase_failures.get(version, {})
             if rebase_fails:
                 n = len(rebase_fails)
                 group_summary.append(f'{n} image{"s" if n > 1 else ""} with rebase failures')
