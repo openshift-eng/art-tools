@@ -262,6 +262,16 @@ class TestScanForMissingBundlesFbcs(unittest.IsolatedAsyncioTestCase):
         patcher.start()
         self.addCleanup(patcher.stop)
 
+        # Mock load_group_config so load_ocp_target_versions doesn't try
+        # to run doozer (which re-raises on failure after Fix 2).
+        config_patcher = patch(
+            'pyartcd.pipelines.layered_products_scan_konflux.load_group_config',
+            new_callable=AsyncMock,
+            return_value={},
+        )
+        config_patcher.start()
+        self.addCleanup(config_patcher.stop)
+
     def _make_pipeline(self, group='oadp-1.5', assembly='stream'):
         pipeline = LayeredProductsScanPipeline(
             runtime=self.runtime,
@@ -432,6 +442,70 @@ class TestScanForMissingBundlesFbcs(unittest.IsolatedAsyncioTestCase):
                 await pipeline.scan_for_missing_bundles_fbcs()
             self.assertIn('BigQuery timeout', str(ctx.exception))
 
+    @patch('pyartcd.pipelines.layered_products_scan_konflux.load_group_config', new_callable=AsyncMock)
+    async def test_ocp_target_versions_loaded(self, mock_load_group_config):
+        """OCP_TARGET_VERSIONS should be loaded from group config and stored on the pipeline."""
+        mock_load_group_config.return_value = {'OCP_TARGET_VERSIONS': ['4.14', '4.15']}
+        pipeline = self._make_pipeline()
+
+        await pipeline.load_ocp_target_versions()
+
+        self.assertEqual(pipeline.ocp_target_versions, ['4.14', '4.15'])
+
+    @patch('pyartcd.pipelines.layered_products_scan_konflux.load_group_config', new_callable=AsyncMock)
+    async def test_ocp_target_versions_not_set(self, mock_load_group_config):
+        """When OCP_TARGET_VERSIONS is not in group config, ocp_target_versions should be empty."""
+        mock_load_group_config.return_value = {'some_other_key': 'value'}
+        pipeline = self._make_pipeline()
+
+        await pipeline.load_ocp_target_versions()
+
+        self.assertEqual(pipeline.ocp_target_versions, [])
+
+    @patch('pyartcd.pipelines.layered_products_scan_konflux.load_group_config', new_callable=AsyncMock)
+    async def test_ocp_target_versions_load_failure_raises(self, mock_load_group_config):
+        """If loading group config fails, the exception should propagate."""
+        mock_load_group_config.side_effect = RuntimeError('doozer failed')
+        pipeline = self._make_pipeline()
+
+        with self.assertRaises(RuntimeError) as ctx:
+            await pipeline.load_ocp_target_versions()
+        self.assertIn('doozer failed', str(ctx.exception))
+
+    @patch('pyartcd.pipelines.layered_products_scan_konflux.load_group_config', new_callable=AsyncMock)
+    async def test_ocp_target_versions_string_wrapped_in_list(self, mock_load_group_config):
+        """A bare string OCP_TARGET_VERSIONS should be wrapped in a list."""
+        mock_load_group_config.return_value = {'OCP_TARGET_VERSIONS': '4.14'}
+        pipeline = self._make_pipeline()
+
+        await pipeline.load_ocp_target_versions()
+
+        self.assertEqual(pipeline.ocp_target_versions, ['4.14'])
+
+    @patch('pyartcd.pipelines.layered_products_scan_konflux.load_group_config', new_callable=AsyncMock)
+    async def test_ocp_target_versions_invalid_entries_filtered(self, mock_load_group_config):
+        """Invalid OCP_TARGET_VERSIONS entries should be filtered out."""
+        mock_load_group_config.return_value = {'OCP_TARGET_VERSIONS': ['4.14', 'bad', '4.15', '4.14.1', '', '5.0']}
+        pipeline = self._make_pipeline()
+
+        await pipeline.load_ocp_target_versions()
+
+        self.assertEqual(pipeline.ocp_target_versions, ['4.14', '4.15', '5.0'])
+
+    @patch('pyartcd.pipelines.layered_products_scan_konflux.load_group_config', new_callable=AsyncMock)
+    async def test_scan_loads_ocp_target_versions(self, mock_load_group_config):
+        """scan_for_missing_bundles_fbcs should call load_ocp_target_versions."""
+        mock_load_group_config.return_value = {'OCP_TARGET_VERSIONS': ['4.14']}
+        pipeline = self._make_pipeline()
+
+        with (
+            patch.object(pipeline, 'load_operator_names', new_callable=AsyncMock, return_value={'oadp-operator'}),
+            patch.object(pipeline, 'get_latest_operator_builds', new_callable=AsyncMock, return_value=[]),
+        ):
+            await pipeline.scan_for_missing_bundles_fbcs()
+
+        self.assertEqual(pipeline.ocp_target_versions, ['4.14'])
+
 
 class TestDeduplication(unittest.IsolatedAsyncioTestCase):
     """Tests for the deduplication logic: operators already being rebuilt
@@ -447,6 +521,16 @@ class TestDeduplication(unittest.IsolatedAsyncioTestCase):
         patcher = patch('pyartcd.pipelines.layered_products_scan_konflux.KonfluxDb')
         patcher.start()
         self.addCleanup(patcher.stop)
+
+        # Mock load_group_config so load_ocp_target_versions doesn't try
+        # to run doozer (which re-raises on failure after Fix 2).
+        config_patcher = patch(
+            'pyartcd.pipelines.layered_products_scan_konflux.load_group_config',
+            new_callable=AsyncMock,
+            return_value={},
+        )
+        config_patcher.start()
+        self.addCleanup(config_patcher.stop)
 
     def _make_pipeline(self, group='oadp-1.5'):
         pipeline = LayeredProductsScanPipeline(
@@ -733,31 +817,14 @@ class TestTriggerBuilds(unittest.TestCase):
             {'art.openshift.io/triggered-olm-bundle-konflux': 'olm-bundle-konflux-oadp-1-5-abc'}
         )
 
-    @patch('pyartcd.pipelines.layered_products_scan_konflux.tekton.annotate_current_pipelinerun')
-    @patch(
-        'pyartcd.pipelines.layered_products_scan_konflux.tekton.start_pipeline_run',
-        return_value='build-fbc-oadp-1-5-abc',
-    )
-    @patch('pyartcd.pipelines.layered_products_scan_konflux.tekton.is_tekton_context', return_value=True)
-    def test_trigger_fbc_builds_tekton(self, _mock_ctx, mock_start, mock_annotate):
+    def test_trigger_fbc_builds_no_target_versions_raises(self):
+        """When ocp_target_versions is empty, trigger_fbc_builds raises RuntimeError."""
         pipeline = self._make_pipeline()
         operators = [_make_operator(nvr='op-1')]
 
-        pipeline.trigger_fbc_builds(operators)
-
-        mock_start.assert_called_once_with(
-            pipeline_name='build-fbc',
-            params={
-                'version': '1.5',
-                'assembly': 'stream',
-                'group': 'oadp-1.5',
-                'operator-nvrs': 'op-1',
-                'data-path': 'https://github.com/openshift-eng/ocp-build-data',
-                'data-gitref': '',
-                'dry-run': 'false',
-            },
-        )
-        mock_annotate.assert_called_once_with({'art.openshift.io/triggered-build-fbc': 'build-fbc-oadp-1-5-abc'})
+        with self.assertRaises(RuntimeError) as ctx:
+            pipeline.trigger_fbc_builds(operators)
+        self.assertIn('No OCP_TARGET_VERSIONS configured', str(ctx.exception))
 
     @patch('pyartcd.pipelines.layered_products_scan_konflux.jenkins.start_olm_bundle_konflux')
     @patch('pyartcd.pipelines.layered_products_scan_konflux.tekton.is_tekton_context', return_value=False)
@@ -776,20 +843,101 @@ class TestTriggerBuilds(unittest.TestCase):
             doozer_data_gitref='',
         )
 
-    @patch('pyartcd.pipelines.layered_products_scan_konflux.jenkins.start_build_fbc')
-    @patch('pyartcd.pipelines.layered_products_scan_konflux.tekton.is_tekton_context', return_value=False)
-    def test_trigger_fbc_builds_jenkins(self, _mock_ctx, mock_jenkins_start):
+    @patch('pyartcd.pipelines.layered_products_scan_konflux.tekton.annotate_current_pipelinerun')
+    @patch('pyartcd.pipelines.layered_products_scan_konflux.tekton.start_pipeline_run')
+    @patch('pyartcd.pipelines.layered_products_scan_konflux.tekton.is_tekton_context', return_value=True)
+    def test_trigger_fbc_builds_tekton_multiple_target_versions(self, _mock_ctx, mock_start, mock_annotate):
+        """With multiple OCP target versions, a separate PipelineRun is created for each."""
         pipeline = self._make_pipeline()
+        pipeline.ocp_target_versions = ['4.14', '4.15', '4.16']
+        operators = [_make_operator(nvr='op-1')]
+
+        mock_start.side_effect = [
+            'build-fbc-oadp-1-5-v414',
+            'build-fbc-oadp-1-5-v415',
+            'build-fbc-oadp-1-5-v416',
+        ]
+
+        pipeline.trigger_fbc_builds(operators)
+
+        self.assertEqual(mock_start.call_count, 3)
+        for i, tv in enumerate(['4.14', '4.15', '4.16']):
+            call_params = mock_start.call_args_list[i].kwargs['params']
+            self.assertEqual(call_params['ocp-target-version'], tv)
+            self.assertEqual(call_params['force'], 'true')
+
+        self.assertEqual(mock_annotate.call_count, 3)
+        mock_annotate.assert_any_call({'art.openshift.io/triggered-build-fbc-4.14': 'build-fbc-oadp-1-5-v414'})
+        mock_annotate.assert_any_call({'art.openshift.io/triggered-build-fbc-4.15': 'build-fbc-oadp-1-5-v415'})
+        mock_annotate.assert_any_call({'art.openshift.io/triggered-build-fbc-4.16': 'build-fbc-oadp-1-5-v416'})
+
+    @patch('pyartcd.pipelines.layered_products_scan_konflux.tekton.annotate_current_pipelinerun')
+    @patch(
+        'pyartcd.pipelines.layered_products_scan_konflux.tekton.start_pipeline_run',
+        return_value='build-fbc-oadp-1-5-v414',
+    )
+    @patch('pyartcd.pipelines.layered_products_scan_konflux.tekton.is_tekton_context', return_value=True)
+    def test_trigger_fbc_builds_tekton_single_target_version(self, _mock_ctx, mock_start, mock_annotate):
+        """With a single OCP target version, one PipelineRun is created with ocp-target-version."""
+        pipeline = self._make_pipeline()
+        pipeline.ocp_target_versions = ['4.14']
         operators = [_make_operator(nvr='op-1')]
 
         pipeline.trigger_fbc_builds(operators)
 
-        mock_jenkins_start.assert_called_once_with(
+        mock_start.assert_called_once_with(
+            pipeline_name='build-fbc',
+            params={
+                'version': '1.5',
+                'assembly': 'stream',
+                'group': 'oadp-1.5',
+                'operator-nvrs': 'op-1',
+                'data-path': 'https://github.com/openshift-eng/ocp-build-data',
+                'data-gitref': '',
+                'dry-run': 'false',
+                'ocp-target-version': '4.14',
+                'force': 'true',
+            },
+        )
+        mock_annotate.assert_called_once_with({'art.openshift.io/triggered-build-fbc-4.14': 'build-fbc-oadp-1-5-v414'})
+
+    def test_trigger_fbc_builds_jenkins_no_target_versions_raises(self):
+        """Jenkins fallback: no target versions raises RuntimeError."""
+        pipeline = self._make_pipeline()
+        operators = [_make_operator(nvr='op-1')]
+
+        with self.assertRaises(RuntimeError) as ctx:
+            pipeline.trigger_fbc_builds(operators)
+        self.assertIn('No OCP_TARGET_VERSIONS configured', str(ctx.exception))
+
+    @patch('pyartcd.pipelines.layered_products_scan_konflux.jenkins.start_build_fbc')
+    @patch('pyartcd.pipelines.layered_products_scan_konflux.tekton.is_tekton_context', return_value=False)
+    def test_trigger_fbc_builds_jenkins_multiple_target_versions(self, _mock_ctx, mock_jenkins_start):
+        """Jenkins fallback: with target versions triggers one build-fbc per version."""
+        pipeline = self._make_pipeline()
+        pipeline.ocp_target_versions = ['4.14', '4.15']
+        operators = [_make_operator(nvr='op-1')]
+
+        pipeline.trigger_fbc_builds(operators)
+
+        self.assertEqual(mock_jenkins_start.call_count, 2)
+        mock_jenkins_start.assert_any_call(
             version='1.5',
             assembly='stream',
             operator_nvrs=['op-1'],
             dry_run=False,
             group='oadp-1.5',
+            ocp_target_version='4.14',
+            force_build=True,
+        )
+        mock_jenkins_start.assert_any_call(
+            version='1.5',
+            assembly='stream',
+            operator_nvrs=['op-1'],
+            dry_run=False,
+            group='oadp-1.5',
+            ocp_target_version='4.15',
+            force_build=True,
         )
 
     def test_trigger_bundle_builds_dry_run(self):
@@ -846,6 +994,181 @@ class TestNaming(unittest.TestCase):
     def test_get_fbc_name(self):
         pipeline = self._make_pipeline()
         self.assertEqual(pipeline.get_fbc_name('oadp-operator'), 'oadp-operator-fbc')
+
+
+class TestCheckFbcExists(unittest.IsolatedAsyncioTestCase):
+    """Tests for check_fbc_exists, including per-version logic."""
+
+    def setUp(self):
+        self.runtime = MagicMock(spec=Runtime)
+        self.runtime.dry_run = True
+        self.runtime.working_dir = MagicMock()
+        self.runtime.working_dir.__truediv__ = lambda self, x: MagicMock()
+
+        patcher = patch('pyartcd.pipelines.layered_products_scan_konflux.KonfluxDb')
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
+    def _make_pipeline(self):
+        return LayeredProductsScanPipeline(
+            runtime=self.runtime,
+            group='oadp-1.5',
+            data_path='https://github.com/openshift-eng/ocp-build-data',
+            assembly='stream',
+            data_gitref='',
+            image_list='',
+        )
+
+    async def test_per_version_all_exist(self):
+        """When all OCP target versions have successful FBCs, return a SUCCESS FBC."""
+        pipeline = self._make_pipeline()
+        pipeline.ocp_target_versions = ['4.14', '4.15']
+
+        operator = _make_operator()
+        bundle = _make_bundle()
+
+        fbc_414 = _make_fbc(nvr='oadp-operator-fbc-1.5-1.ocp4.14')
+        fbc_415 = _make_fbc(nvr='oadp-operator-fbc-1.5-1.ocp4.15')
+
+        mock_fbc_db = MagicMock()
+
+        async def mock_search(**kwargs):
+            extra_patterns = kwargs.get('extra_patterns', {})
+            nvr_pattern = extra_patterns.get('nvr', '')
+            where = kwargs.get('where', {})
+            outcome = where.get('outcome')
+
+            if outcome == KonfluxBuildOutcome.SUCCESS:
+                if r'4\.14' in nvr_pattern:
+                    yield fbc_414
+                elif r'4\.15' in nvr_pattern:
+                    yield fbc_415
+
+        mock_fbc_db.search_builds_by_fields = mock_search
+
+        result = await pipeline.check_fbc_exists(mock_fbc_db, operator, bundle)
+        self.assertIsNotNone(result)
+        self.assertEqual(result.outcome, KonfluxBuildOutcome.SUCCESS)
+
+    async def test_per_version_one_missing(self):
+        """When one OCP target version is missing an FBC, return None."""
+        pipeline = self._make_pipeline()
+        pipeline.ocp_target_versions = ['4.14', '4.15']
+
+        operator = _make_operator()
+        bundle = _make_bundle()
+
+        fbc_414 = _make_fbc(nvr='oadp-operator-fbc-1.5-1.ocp4.14')
+
+        mock_fbc_db = MagicMock()
+
+        async def mock_search(**kwargs):
+            extra_patterns = kwargs.get('extra_patterns', {})
+            nvr_pattern = extra_patterns.get('nvr', '')
+            where = kwargs.get('where', {})
+            outcome = where.get('outcome')
+
+            if outcome == KonfluxBuildOutcome.SUCCESS:
+                if r'4\.14' in nvr_pattern:
+                    yield fbc_414
+                # No FBC for 4.15 → nothing yielded
+            # PENDING/FAILURE checks yield nothing too
+            return
+
+        mock_fbc_db.search_builds_by_fields = mock_search
+
+        result = await pipeline.check_fbc_exists(mock_fbc_db, operator, bundle)
+        self.assertIsNone(result)
+
+    async def test_no_target_versions_original_behavior(self):
+        """Without OCP target versions, use original single-check behaviour."""
+        pipeline = self._make_pipeline()
+        pipeline.ocp_target_versions = []
+
+        operator = _make_operator()
+        bundle = _make_bundle()
+        fbc = _make_fbc()
+
+        mock_fbc_db = MagicMock()
+
+        async def mock_search(**kwargs):
+            where = kwargs.get('where', {})
+            outcome = where.get('outcome')
+            if outcome == KonfluxBuildOutcome.SUCCESS:
+                yield fbc
+
+        mock_fbc_db.search_builds_by_fields = mock_search
+
+        result = await pipeline.check_fbc_exists(mock_fbc_db, operator, bundle)
+        self.assertIsNotNone(result)
+        self.assertEqual(result.outcome, KonfluxBuildOutcome.SUCCESS)
+
+    async def test_per_version_missing_detected_despite_pending_other(self):
+        """Missing 4.15 must be detected even when 4.14 is pending.
+
+        Before the fix, _check_fbc_per_version returned immediately on a
+        pending record, masking missing FBCs for later versions. The
+        corrected method checks ALL versions and prioritises missing
+        over pending.
+        """
+        pipeline = self._make_pipeline()
+        pipeline.ocp_target_versions = ['4.14', '4.15']
+
+        operator = _make_operator()
+        bundle = _make_bundle()
+
+        pending_414 = _make_fbc(nvr='oadp-operator-fbc-1.5-1.ocp4.14', outcome=KonfluxBuildOutcome.PENDING)
+
+        mock_fbc_db = MagicMock()
+
+        async def mock_search(**kwargs):
+            extra_patterns = kwargs.get('extra_patterns', {})
+            nvr_pattern = extra_patterns.get('nvr', '')
+            where = kwargs.get('where', {})
+            outcome = where.get('outcome')
+
+            if outcome == KonfluxBuildOutcome.PENDING and r'4\.14' in nvr_pattern:
+                yield pending_414
+            # 4.14 has no SUCCESS, 4.15 has nothing at all → missing
+
+        mock_fbc_db.search_builds_by_fields = mock_search
+
+        result = await pipeline.check_fbc_exists(mock_fbc_db, operator, bundle)
+        # Missing version detected → returns None (triggers rebuild)
+        self.assertIsNone(result)
+
+    async def test_per_version_all_pending_returns_pending(self):
+        """When all versions have pending FBCs (none missing), return a pending record."""
+        pipeline = self._make_pipeline()
+        pipeline.ocp_target_versions = ['4.14', '4.15']
+
+        operator = _make_operator()
+        bundle = _make_bundle()
+
+        pending_414 = _make_fbc(nvr='oadp-operator-fbc-1.5-1.ocp4.14', outcome=KonfluxBuildOutcome.PENDING)
+        pending_415 = _make_fbc(nvr='oadp-operator-fbc-1.5-1.ocp4.15', outcome=KonfluxBuildOutcome.PENDING)
+
+        mock_fbc_db = MagicMock()
+
+        async def mock_search(**kwargs):
+            extra_patterns = kwargs.get('extra_patterns', {})
+            nvr_pattern = extra_patterns.get('nvr', '')
+            where = kwargs.get('where', {})
+            outcome = where.get('outcome')
+
+            if outcome == KonfluxBuildOutcome.PENDING:
+                if r'4\.14' in nvr_pattern:
+                    yield pending_414
+                elif r'4\.15' in nvr_pattern:
+                    yield pending_415
+            # No SUCCESS for either version
+
+        mock_fbc_db.search_builds_by_fields = mock_search
+
+        result = await pipeline.check_fbc_exists(mock_fbc_db, operator, bundle)
+        # All versions have pending FBCs, none missing → returns pending record
+        self.assertIsNotNone(result)
+        self.assertEqual(result.outcome, KonfluxBuildOutcome.PENDING)
 
 
 if __name__ == '__main__':
