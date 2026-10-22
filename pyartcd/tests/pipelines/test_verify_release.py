@@ -75,6 +75,18 @@ class TestVerifyReleasePipeline(unittest.IsolatedAsyncioTestCase):
         self.mock_registry_config.return_value.__enter__.return_value = "/tmp/merged-auth.json"
 
     @patch("pyartcd.pipelines.verify_release.exectools.cmd_assert_async", new_callable=AsyncMock)
+    async def test_shipment_label_forwards_dry_run(self, mock_assert):
+        self.runtime.dry_run = True
+        pipeline = VerifyReleasePipeline(runtime=self.runtime, version="4.19", assembly="4.19.42")
+
+        result = await pipeline.run()
+
+        self.assertTrue(result.passed)
+        label_commands = [call.args[0] for call in mock_assert.call_args_list if "verify-release" in call.args[0]]
+        self.assertEqual(len(label_commands), 1)
+        self.assertEqual(label_commands[0][-3:], ["verify-release", "--mark", "--dry-run"])
+
+    @patch("pyartcd.pipelines.verify_release.exectools.cmd_assert_async", new_callable=AsyncMock)
     async def test_run_all_steps_pass(self, mock_assert):
         mock_assert.return_value = 0
 
@@ -181,7 +193,6 @@ class TestVerifyReleasePipeline(unittest.IsolatedAsyncioTestCase):
         cdn_push_calls = [call for call in mock_assert.call_args_list if "verify-cdn-push" in str(call)]
         self.assertTrue(any("--no-push" in str(call) for call in cdn_push_calls))
 
-
     @patch("pyartcd.pipelines.verify_release.exectools.cmd_assert_async", new_callable=AsyncMock)
     async def test_shipment_label_runs_after_checks_pass(self, mock_assert):
         mock_assert.return_value = 0
@@ -198,8 +209,7 @@ class TestVerifyReleasePipeline(unittest.IsolatedAsyncioTestCase):
         label_step = [s for s in result.steps if s.name == "shipment-label"][0]
         self.assertEqual(label_step.status, StepStatus.PASS)
         label_calls = [
-            call for call in mock_assert.call_args_list
-            if "verify-release" in str(call) and "--mark" in str(call)
+            call for call in mock_assert.call_args_list if "verify-release" in str(call) and "--mark" in str(call)
         ]
         self.assertEqual(len(label_calls), 1)
 

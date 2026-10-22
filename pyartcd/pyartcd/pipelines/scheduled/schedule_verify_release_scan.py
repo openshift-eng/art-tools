@@ -25,7 +25,7 @@ async def scan_and_trigger(runtime: Runtime):
     project = gitlab_client.get_project(project_path)
     merge_requests = project.mergerequests.list(
         state="opened",
-        labels=[STAGE_RELEASE_SUCCESS_LABEL],
+        labels=[STAGE_RELEASE_SUCCESS_LABEL, STAGE_TESTING_SUCCESS_LABEL],
         per_page=100,
     )
 
@@ -47,6 +47,10 @@ async def scan_and_trigger(runtime: Runtime):
         major, minor, patch, suffix = match.groups()
         version = f"{major}.{minor}"
         assembly = suffix if suffix else f"{major}.{minor}.{patch}"
+
+        if runtime.dry_run:
+            LOGGER.info("[DRY-RUN] MR !%s — would queue verify-release for %s/%s", mr.iid, version, assembly)
+            continue
 
         LOGGER.info("MR !%s — queueing verify-release for %s/%s", mr.iid, version, assembly)
         try:

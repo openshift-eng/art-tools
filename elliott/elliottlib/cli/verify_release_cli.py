@@ -82,10 +82,11 @@ class MarkResult(VerifyResultBase):
     default=False,
     help="Add verify-release-success label to the shipment MR.",
 )
+@click.option("--dry-run", is_flag=True, default=False, help="Do not update the shipment MR.")
 @verify_output_option
 @click.pass_obj
 @click_coroutine
-async def verify_release_cli(runtime, mark, output):
+async def verify_release_cli(runtime, mark, dry_run, output):
     """Check or update the verify-release-success label on a shipment MR.
 
     Without options, checks whether the shipment MR has the
@@ -106,6 +107,7 @@ async def verify_release_cli(runtime, mark, output):
         # Mark as verified
         elliott -g openshift-4.18 --assembly 4.18.51 verify-release --mark
     """
+    runtime.dry_run = dry_run
     runtime.initialize(no_group=False)
 
     mr_url = get_assembly_shipment_url(runtime, required=True)

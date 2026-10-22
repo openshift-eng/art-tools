@@ -1,12 +1,15 @@
+import asyncio
 from unittest import TestCase
 from unittest.mock import MagicMock, patch
 
+from click.testing import CliRunner
 from elliottlib.cli.verify_release_cli import (
+    VERIFY_RELEASE_SUCCESS_LABEL,
     LabelCheckResult,
     MarkResult,
-    VERIFY_RELEASE_SUCCESS_LABEL,
     _handle_label_check,
     _handle_mark,
+    verify_release_cli,
 )
 
 
@@ -139,9 +142,7 @@ class TestHandleMark(TestCase):
 
         _handle_mark(runtime, "https://gitlab/group/project/-/merge_requests/42", "text")
 
-        mock_project.mergerequests.update.assert_called_once_with(
-            42, add_labels=VERIFY_RELEASE_SUCCESS_LABEL
-        )
+        mock_project.mergerequests.update.assert_called_once_with(42, add_labels=VERIFY_RELEASE_SUCCESS_LABEL)
         result = mock_handle.call_args[0][0]
         self.assertIsInstance(result, MarkResult)
         self.assertTrue(result.label_added)
@@ -175,3 +176,38 @@ class TestHandleMark(TestCase):
         result = mock_handle.call_args[0][0]
         self.assertFalse(result.label_added)
         self.assertIn("403 Forbidden", result.error)
+
+
+class TestVerifyReleaseCLI(TestCase):
+    def setUp(self):
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        self.addCleanup(loop.close)
+        self.addCleanup(asyncio.set_event_loop, None)
+
+    @patch("elliottlib.cli.verify_release_cli.get_assembly_shipment_url")
+    @patch("elliottlib.cli.verify_release_cli.GitLabClient")
+    def test_mark_dry_run_does_not_update_gitlab(self, mock_gitlab_cls, mock_shipment_url):
+        runtime = MagicMock(spec=["initialize", "dry_run"])
+        runtime.initialize.side_effect = lambda **kwargs: self.assertTrue(runtime.dry_run)
+        mock_shipment_url.return_value = "https://gitlab/group/project/-/merge_requests/42"
+
+        result = CliRunner().invoke(verify_release_cli, ["--mark", "--dry-run"], obj=runtime)
+
+        self.assertEqual(result.exit_code, 0, result.output)
+        runtime.initialize.assert_called_once_with(no_group=False)
+        mock_gitlab_cls.from_url.assert_not_called()
+
+    @patch("elliottlib.cli.verify_release_cli.get_assembly_shipment_url")
+    @patch("elliottlib.cli.verify_release_cli.GitLabClient")
+    def test_mark_without_dry_run_updates_gitlab(self, mock_gitlab_cls, mock_shipment_url):
+        runtime = MagicMock(spec=["initialize", "dry_run"])
+        runtime.initialize.side_effect = lambda **kwargs: self.assertFalse(runtime.dry_run)
+        mock_shipment_url.return_value = "https://gitlab/group/project/-/merge_requests/42"
+        mock_gitlab_cls._parse_mr_url.return_value = ("group/project", "42")
+
+        result = CliRunner().invoke(verify_release_cli, ["--mark"], obj=runtime)
+
+        self.assertEqual(result.exit_code, 0, result.output)
+        mock_project = mock_gitlab_cls.from_url.return_value.get_project.return_value
+        mock_project.mergerequests.update.assert_called_once_with(42, add_labels=VERIFY_RELEASE_SUCCESS_LABEL)

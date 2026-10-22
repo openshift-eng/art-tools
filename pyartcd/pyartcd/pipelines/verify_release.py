@@ -171,6 +171,8 @@ class VerifyReleasePipeline:
 
     async def _mark_release_verified(self) -> StepResult:
         cmd = self._elliott_base + ["verify-release", "--mark"]
+        if self.runtime.dry_run:
+            cmd.append("--dry-run")
         return await self._run_elliott_cmd("shipment-label", cmd)
 
     async def _run_checks(self) -> VerifyReleaseResult:

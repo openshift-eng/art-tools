@@ -70,8 +70,8 @@ from pyartcd.pipelines.scheduled import (
     schedule_scan_operator,
     schedule_scan_plashet_rpms,
     schedule_stage_testing_scan,
-    schedule_verify_release_scan,
     schedule_sync_ci_images,
+    schedule_verify_release_scan,
 )
 
 __all__ = [
