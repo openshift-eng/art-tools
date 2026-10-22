@@ -176,6 +176,7 @@ class ReleaseFromFbcPipeline:
         self.refresh_fbcs = refresh_fbcs
         self.dry_run = self.runtime.dry_run
         self.ocp_optional = ocp_optional
+        self._ignore_patch_version = False
         self.excluded_components = set(exclude_nvr_components) if exclude_nvr_components else set()
 
         # Setup working directories
@@ -540,7 +541,8 @@ class ReleaseFromFbcPipeline:
         """Load the optional ignore_patch_version boolean from group.yml.
 
         The setting defaults to false so existing groups continue to require
-        FBC and assembly patch versions to match exactly.
+        FBC and assembly patch versions to match exactly. When true, catalog
+        extraction uses the FBC's recorded bundle on the same major/minor train.
         """
         cmd = [
             'doozer',
@@ -1244,6 +1246,7 @@ class ReleaseFromFbcPipeline:
             related_nvrs_by_fbc_out=related_nvrs_by_fbc,
             assembly=self.assembly if version_scoped else None,
             version_scoped=version_scoped,
+            ignore_patch_version=self._ignore_patch_version if version_scoped else False,
         )
         self._fbc_operator_keys = sorted(operator_groups.keys())
         self._fbc_operator_by_pullspec = operator_by_fbc
@@ -1498,9 +1501,11 @@ class ReleaseFromFbcPipeline:
                 fbc_nvrs.append(nvr)
 
             if not self.ocp_optional:
-                ignore_patch_version = await self._load_ignore_patch_version_from_group_config()
+                self._ignore_patch_version = await self._load_ignore_patch_version_from_group_config()
                 # This group.yml flag permits patch-version differences while still checking major and minor.
-                validate_layered_product_fbc_nvrs(self.assembly, fbc_nvrs, ignore_patch_version=ignore_patch_version)
+                validate_layered_product_fbc_nvrs(
+                    self.assembly, fbc_nvrs, ignore_patch_version=self._ignore_patch_version
+                )
             if fbc_nvrs:
                 self.logger.info(f"Extracted {len(fbc_nvrs)} FBC NVRs: {fbc_nvrs}")
             else:
@@ -1526,11 +1531,10 @@ class ReleaseFromFbcPipeline:
                                 "No shipment data was changed."
                             )
                         fbc_nvrs.append(nvr)
-                    ignore_patch_version = await self._load_ignore_patch_version_from_group_config()
                     validate_layered_product_fbc_nvrs(
                         self.assembly,
                         fbc_nvrs,
-                        ignore_patch_version=ignore_patch_version,
+                        ignore_patch_version=self._ignore_patch_version,
                     )
                     related_nvrs = await self.validate_fbc_related_images(self.fbc_pullspecs)
 

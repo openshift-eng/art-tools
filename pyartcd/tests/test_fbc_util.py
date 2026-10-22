@@ -210,7 +210,32 @@ class TestValidateFbcRelatedImages(unittest.TestCase):
             "my-product",
             assembly="1.0.0",
             version_scoped=True,
+            ignore_patch_version=False,
         )
+
+    @patch('pyartcd.fbc_util.extract_nvrs_from_fbc', new_callable=AsyncMock)
+    @patch('pyartcd.fbc_util.extract_fbc_labels', new_callable=AsyncMock)
+    def test_virtual_assembly_propagated_to_each_fbc(self, mock_labels, mock_extract):
+        mock_labels.return_value = {'nvr': 'op-fbc-0.158.0-1', 'doozer_key': 'op'}
+        mock_extract.return_value = ['op-container-0.158.0-1']
+        fbcs = ['quay.io/fbc:ocp4.18', 'quay.io/fbc:ocp4.19']
+        result = asyncio.run(
+            validate_fbc_related_images(
+                fbcs,
+                'rhosdt',
+                assembly='0.158.4',
+                ignore_patch_version=True,
+            )
+        )
+        self.assertEqual(result, ['op-container-0.158.0-1'])
+        for fbc in fbcs:
+            mock_extract.assert_any_await(
+                fbc,
+                'rhosdt',
+                assembly='0.158.4',
+                version_scoped=True,
+                ignore_patch_version=True,
+            )
 
     @patch('pyartcd.fbc_util.extract_nvrs_from_fbc', new_callable=AsyncMock)
     @patch('pyartcd.fbc_util.extract_fbc_labels', new_callable=AsyncMock)
@@ -225,6 +250,7 @@ class TestValidateFbcRelatedImages(unittest.TestCase):
                 "ocp",
                 assembly="4.22.0",
                 version_scoped=False,
+                ignore_patch_version=True,
             )
         )
 
@@ -234,6 +260,7 @@ class TestValidateFbcRelatedImages(unittest.TestCase):
             "ocp",
             assembly=None,
             version_scoped=False,
+            ignore_patch_version=False,
         )
 
     @patch('pyartcd.fbc_util.extract_nvrs_from_fbc', new_callable=AsyncMock)
