@@ -1042,14 +1042,7 @@ class PrepareReleaseLPPipeline:
                         allow_active_stage=False,
                     )
                     await self._verify_assembly_shipment_url()
-                    # The previous success label no longer describes the regenerated shipment files.
-                    labels = list(existing_mr.labels or [])
-                    if 'stage-release-success' in labels:
-                        labels.remove('stage-release-success')
-                        existing_mr.labels = labels
-                        if not self.dry_run:
-                            existing_mr.save()
-                    # Clearing stage status mutates the MR; check again before replacing its files.
+                    # Check CI again immediately before reconciling the shipment files.
                     await validate_shipment_mr_for_operation(
                         self._gitlab,
                         self.shipment_data_repo,

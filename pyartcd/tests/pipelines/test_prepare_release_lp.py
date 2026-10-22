@@ -729,11 +729,9 @@ class TestPrepareReleaseLPRun(unittest.TestCase):
             asyncio.run(pipeline.run())
 
             self.assertEqual(existing_mr.title, title)
-            self.assertEqual(existing_mr.labels, ['reviewed'])
-            if dry_run:
-                existing_mr.save.assert_not_called()
-            else:
-                existing_mr.save.assert_called_once_with()
+            # Reconciliation owns conditional label clearing; the caller leaves status untouched.
+            self.assertEqual(existing_mr.labels, ['stage-release-success', 'reviewed'])
+            existing_mr.save.assert_not_called()
             self.assertEqual(mock_validate.await_count, 3)
             pipeline._verify_assembly_shipment_url.assert_awaited_once_with()
             mock_reconcile.assert_awaited_once_with(
