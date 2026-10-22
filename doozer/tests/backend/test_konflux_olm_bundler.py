@@ -2461,3 +2461,136 @@ class TestReplacePullspec(IsolatedAsyncioTestCase):
         content = "registry.redhat.io/foo:v1"
         result = _replace_pullspec(content, "registry.redhat.io/foo:v1", "registry.redhat.io/foo@sha256:abc")
         self.assertEqual(result, "registry.redhat.io/foo@sha256:abc")
+
+
+class TestNamedReleasePins(IsolatedAsyncioTestCase):
+    pin = 'quay-quay-container-3.18.2-202610201426.p3.g16cba93.assembly.stream.el9'
+
+    def setUp(self):
+        self.db = MagicMock()
+        self.rebaser = KonfluxOlmBundleRebaser(
+            base_dir=Path('/tmp/nonexistent-bundle-pin-tests'),
+            group='quay-3.18',
+            assembly='3.18.3',
+            group_config=Model({'csv_namespace': 'quay', 'operator_image_ref_mode': 'manifest-list'}),
+            konflux_db=self.db,
+            source_resolver=MagicMock(),
+        )
+        self.metadata = MagicMock()
+        self.metadata.distgit_key = 'quay-operator'
+        self.metadata.runtime.data_dir = '/tmp/nonexistent-bundle-pin-tests'
+        self.releases = {
+            'releases': {
+                '3.18.3': {
+                    'assembly': {
+                        'type': 'standard',
+                        'members': {
+                            'images': [
+                                {'distgit_key': 'quay-quay-container', 'metadata': {'is': {'nvr': self.pin}}},
+                            ]
+                        },
+                    }
+                }
+            }
+        }
+        self.metadata.runtime.get_releases_config.side_effect = lambda: Model(self.releases)
+        self.operand = MagicMock()
+        self.operand.distgit_key = 'quay-quay'
+        self.operand.get_component_name.return_value = 'quay-quay-container'
+        self.operand.image_name_short = 'quay-rhel9'
+        self.operand.config = Model({'delivery': {'delivery_repo_names': ['quay/quay-rhel9']}})
+        self.operand.branch_el_target.return_value = 9
+        self.operand.get_latest_konflux_build = AsyncMock()
+        self.metadata.runtime.name_in_bundle_map = {'quay': 'quay-quay'}
+        self.metadata.runtime.image_map = {'quay-quay': self.operand}
+        self.build = MagicMock(
+            nvr=self.pin,
+            assembly='stream',
+            version='3.18.2',
+            release=self.pin.rsplit('-', 1)[1],
+            image_pullspec='quay.io/private@sha256:pinned',
+        )
+        self.db.get_build_record_by_nvr = AsyncMock(return_value=self.build)
+        self.info = {
+            'config': {
+                'config': {
+                    'Labels': {
+                        'com.redhat.component': 'quay-quay-container',
+                        'version': '3.18.2',
+                        'release': self.build.release,
+                    }
+                }
+            },
+            'listDigest': 'sha256:pinned',
+            'contentDigest': 'sha256:pinned-arch',
+        }
+        self.refs = [{'name': 'quay', 'from': {'name': 'quay.io/quay/quay:latest'}}]
+
+    @patch('doozerlib.backend.konflux_olm_bundler.util.oc_image_info_for_arch_async')
+    async def test_exact_private_pin_from_stream_is_preserved_for_all_release_types(self, inspect):
+        inspect.return_value = self.info
+        for kind in ('standard', 'candidate', 'custom', 'preview'):
+            with self.subTest(kind=kind):
+                self.releases['releases']['3.18.3']['assembly']['type'] = kind
+                result = await self.rebaser._resolve_operands_from_db(self.metadata, self.refs, {}, {})
+                self.assertEqual(result['quay-rhel9'][2], self.pin)
+                self.assertIn('@sha256:pinned', result['quay-rhel9'][1])
+        self.operand.get_latest_konflux_build.assert_not_called()
+        self.db.get_build_record_by_nvr.assert_awaited_with(self.pin, strict=True, exclude_large_columns=True)
+
+    @patch('doozerlib.backend.konflux_olm_bundler.util.oc_image_info_for_arch_async')
+    async def test_pinned_image_label_mismatch_fails(self, inspect):
+        self.info['config']['config']['Labels']['release'] = 'wrong.p2'
+        inspect.return_value = self.info
+        with self.assertRaisesRegex(KonfluxOlmBundleRebaseError, 'inspected image labels'):
+            await self.rebaser._resolve_operands_from_db(self.metadata, self.refs, {}, {})
+
+    async def test_missing_pin_fails_without_public_fallback(self):
+        self.db.get_build_record_by_nvr.side_effect = IOError('pinned build missing')
+        with self.assertRaisesRegex(IOError, 'pinned build missing'):
+            await self.rebaser._resolve_operands_from_db(self.metadata, self.refs, {}, {})
+        self.operand.get_latest_konflux_build.assert_not_called()
+
+    @patch('doozerlib.backend.konflux_olm_bundler.util.oc_image_info_for_arch_async')
+    async def test_legacy_reference_is_replaced_by_exact_private_pin(self, inspect):
+        import copy
+
+        public_info = copy.deepcopy(self.info)
+        public_info['config']['config']['Labels']['release'] = 'old.p2'
+        inspect.side_effect = [public_info, self.info]
+        content, found = await self.rebaser._replace_image_references(
+            'registry.redhat.io', 'image: registry.redhat.io/quay/quay-rhel9:old', Engine.KONFLUX, self.metadata
+        )
+        self.assertIn('@sha256:pinned', content)
+        self.assertEqual(found['quay-rhel9'][2], self.pin)
+        self.operand.get_latest_konflux_build.assert_not_called()
+
+    @patch('doozerlib.backend.konflux_olm_bundler.util.oc_image_info_for_arch_async')
+    async def test_unpinned_private_operand_still_uses_public_substitute(self, inspect):
+        self.releases['releases']['3.18.3']['assembly']['members']['images'] = []
+        self.build.assembly = '3.18.3'
+        public = MagicMock(
+            nvr=self.pin.replace('.p3.', '.p2.'),
+            assembly='3.18.3',
+            version='3.18.2',
+            release=self.build.release.replace('.p3.', '.p2.'),
+        )
+        self.operand.get_latest_konflux_build.side_effect = [self.build, public]
+        self.info['config']['config']['Labels']['release'] = public.release
+        inspect.return_value = self.info
+        result = await self.rebaser._resolve_operands_from_db(self.metadata, self.refs, {}, {})
+        self.assertEqual(result['quay-rhel9'][2], public.nvr)
+        self.assertTrue(self.operand.get_latest_konflux_build.await_args.kwargs['embargoed'] is False)
+        self.db.get_build_record_by_nvr.assert_not_awaited()
+
+    async def test_db_cannot_return_another_build_for_a_pin(self):
+        self.build.nvr = self.pin.replace('.p3.', '.p2.')
+        with self.assertRaisesRegex(KonfluxOlmBundleRebaseError, 'Expected assembly pin'):
+            await self.rebaser._resolve_operands_from_db(self.metadata, self.refs, {}, {})
+
+    def test_stream_and_ocp_do_not_gain_pin_exception(self):
+        self.releases['releases']['3.18.3']['assembly']['type'] = 'stream'
+        self.assertEqual(self.rebaser._release_image_pins(self.metadata), {})
+        self.releases['releases']['3.18.3']['assembly']['type'] = 'standard'
+        self.rebaser.group = 'openshift-4.18'
+        self.assertEqual(self.rebaser._release_image_pins(self.metadata), {})

@@ -2,14 +2,15 @@
 
 This module owns the ``assembly.group.shipment.mr`` pointer in ``releases.yml``
 and reconciles generated shipment files with an existing GitLab merge request.
-On reuse, the previous layered-product shipment files are discarded and rebuilt
-from the current release inputs.
+On reuse, shipment files are reconciled with the current release inputs while
+preserving stage results for unchanged shipments.
 """
 
 import asyncio
 import logging
 import re
 from collections import Counter
+from copy import deepcopy
 from dataclasses import dataclass
 from io import StringIO
 from pathlib import Path
@@ -556,6 +557,18 @@ def _identity_sort_key(item: tuple) -> tuple[str, ...]:
     return tuple("" if value is None else str(value) for value in item[0])
 
 
+def _without_stage_outputs(config: dict) -> dict:
+    """Compare release inputs independently of results recorded by stage CI."""
+    config = deepcopy(config)
+    environments = config.get('shipment', {}).get('environments')
+    if isinstance(environments, dict):
+        stage = environments.get('stage')
+        if isinstance(stage, dict):
+            stage.pop('advisory', None)
+            stage.pop('result', None)
+    return config
+
+
 def _shipment_path_matches(
     path: str,
     group: str,
@@ -742,12 +755,12 @@ async def reconcile_shipment_mr(
     include_fbc_ocp_version: bool,
     dry_run: bool,
 ) -> bool:
-    """Replace a reusable MR's layered-product shipment files from scratch.
+    """Reconcile a reusable MR's shipment files with current release inputs.
 
-    Every MR-owned file for the generated product, group, and assembly is
-    removed (or restored from ``main``), then the current shipment set is
-    written with deterministic filenames. No content or CI mutation from the
-    previous files is carried into the replacement.
+    Unchanged shipments retain their files and stage results. Changed shipments
+    are regenerated without previous stage outputs, and obsolete MR-owned files
+    are removed (or restored from ``main``). Stage success is cleared only when
+    the shipment set changes.
 
     Args:
         repo: Initialized shipment-data repository.
@@ -762,8 +775,8 @@ async def reconcile_shipment_mr(
         returns ``False`` and is considered successful.
 
     Raises:
-        ValueError: If the MR branch lacks a timestamp or desired files contain
-            duplicate semantic identities or scopes.
+        ValueError: If the MR branch lacks a timestamp or shipment files contain
+            duplicate semantic identities or desired scopes.
         RuntimeError: If GitLab truncates the MR change list or a stale file
             cannot be restored safely.
     """
@@ -788,7 +801,8 @@ async def reconcile_shipment_mr(
     if change_data.get('overflow'):
         raise RuntimeError("GitLab truncated the shipment MR change list; refusing an incomplete reconciliation")
     changes = change_data.get('changes', [])
-    existing_files: list[tuple[str, bool]] = []
+    existing_files: dict[str, bool] = {}
+    existing_by_identity: dict[tuple, tuple[str, dict]] = {}
     for change in changes:
         path = change['new_path']
         if not _shipment_path_matches(path, desired_scope[1], desired_scope[2], product=desired_scope[0]):
@@ -797,31 +811,69 @@ async def reconcile_shipment_mr(
         if not absolute_path.exists():
             continue
         is_new = change.get('new_file') is True or change.get('new_file') == 'true'
-        existing_files.append((path, is_new))
+        existing_files[path] = is_new
+        existing = YAML.load(absolute_path)
+        try:
+            identity = _identity(existing)
+        except (AttributeError, TypeError, ValueError):
+            # Path ownership still allows malformed shipment inputs to be replaced.
+            continue
+        if identity in existing_by_identity:
+            raise ValueError(f"Existing shipment configurations contain duplicate identity: {identity}")
+        existing_by_identity[identity] = (path, existing)
 
-    for path, is_new in existing_files:
+    retained_paths = {path for identity, (path, _) in existing_by_identity.items() if identity in desired_by_identity}
+    changed = False
+    for path, is_new in existing_files.items():
+        if path in retained_paths:
+            continue
         if is_new:
             (repo._directory / path).unlink()
         else:
             await _restore_from_main(repo, path)
+        changed = True
 
     next_counter = 1
+    used_paths = set(retained_paths)
     for identity, (kind, desired) in sorted(desired_by_identity.items(), key=_identity_sort_key):
-        metadata = desired['shipment']['metadata']
-        target_dir = Path('shipment') / metadata['product'] / metadata['group'] / metadata['application'] / 'prod'
-        if metadata.get('fbc'):
-            ocp_part = f".ocp{identity[-1]}" if include_fbc_ocp_version and identity[-1] else ""
-            filename = f"{metadata['assembly']}.fbc{ocp_part}.{timestamp}{next_counter:02d}.yaml"
-            next_counter += 1
+        if identity in existing_by_identity:
+            existing_path, existing = existing_by_identity[identity]
+            if _without_stage_outputs(existing) == _without_stage_outputs(desired):
+                continue
+            path = Path(existing_path)
         else:
-            filename = f"{metadata['assembly']}.{kind.rstrip('0123456789')}.{timestamp}.yaml"
+            metadata = desired['shipment']['metadata']
+            target_dir = Path('shipment') / metadata['product'] / metadata['group'] / metadata['application'] / 'prod'
+            if metadata.get('fbc'):
+                ocp_part = f".ocp{identity[-1]}" if include_fbc_ocp_version and identity[-1] else ""
+                while True:
+                    filename = f"{metadata['assembly']}.fbc{ocp_part}.{timestamp}{next_counter:02d}.yaml"
+                    next_counter += 1
+                    path = target_dir / filename
+                    if str(path) not in used_paths and not (repo._directory / path).exists():
+                        break
+            else:
+                filename = f"{metadata['assembly']}.{kind.rstrip('0123456789')}.{timestamp}.yaml"
+                path = target_dir / filename
+                if str(path) in used_paths or ((repo._directory / path).exists() and str(path) not in existing_files):
+                    raise ValueError(f"Cannot create shipment at occupied path {path}")
+            used_paths.add(str(path))
         out = StringIO()
         YAML.dump(desired, out)
-        path = target_dir / filename
         (repo._directory / path).parent.mkdir(parents=True, exist_ok=True)
         await repo.write_file(path, out.getvalue())
+        changed = True
+
+    if not changed:
+        LOGGER.info("Shipment inputs are unchanged; preserving stage results and MR status")
+        return False
 
     await repo.log_diff()
     if dry_run:
         return True
+    labels = list(mr.labels or [])
+    if _STAGE_RELEASE_SUCCESS_LABEL in labels:
+        labels.remove(_STAGE_RELEASE_SUCCESS_LABEL)
+        mr.labels = labels
+        mr.save()
     return await repo.commit_push(f"Update shipment configurations for {desired_identities[0][2]}", safe=True)

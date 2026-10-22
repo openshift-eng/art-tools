@@ -5,7 +5,10 @@ from typing import Dict, List, Optional, Tuple
 
 import click
 from artcommonlib import exectools
+from artcommonlib.assembly import assembly_image_pins
 from artcommonlib.github_auth import get_github_client_for_org
+from artcommonlib.metadata import MetadataBase
+from artcommonlib.model import Model
 from artcommonlib.rpm_utils import parse_nvr
 from artcommonlib.util import merge_objects, new_roundtrip_yaml_handler, split_git_url
 
@@ -14,7 +17,6 @@ from pyartcd.cli import cli, click_coroutine, pass_runtime
 from pyartcd.fbc_util import (
     extract_fbc_labels,
     extract_ocp_version_from_nvr,
-    is_nvr_from_assembly,
     validate_fbc_related_images,
 )
 from pyartcd.git import GitRepository
@@ -60,6 +62,7 @@ class GenAssemblyLPPipeline:
         self._logger = logging.getLogger(__name__)
 
         self.product: Optional[str] = None
+        self._component_to_distgit_key: Optional[Dict[str, str]] = None
 
         if not self.fbc_pullspecs and not self.basis_assembly:
             raise ValueError("At least one of --fbc-pullspecs or --basis-assembly must be provided")
@@ -79,15 +82,49 @@ class GenAssemblyLPPipeline:
             product = 'ocp'
         return product
 
-    def _is_nvr_from_current_group(self, nvr: str) -> bool:
-        """Filter out NVRs from other groups based on version matching."""
-        return is_nvr_from_assembly(nvr, self.assembly)
+    async def _load_component_to_distgit_key(self) -> Dict[str, str]:
+        """Read canonical image keys and component overrides using Doozer's metadata rules."""
+        cmd = [
+            'doozer',
+            f'--working-dir={self._working_dir / "doozer-working"}',
+            f'--group={self.group}',
+            '--assembly=stream',
+            '--build-system=konflux',
+            f'--data-path={self.data_path}',
+            '--load-disabled',
+            'config:print',
+            '--yaml',
+        ]
+        _, output, _ = await exectools.cmd_gather_async(cmd)
+        configs = yaml.load(output) or {}
+        images = configs.get('images')
+        if not isinstance(images, dict) or not images:
+            raise click.ClickException("Doozer returned no image configurations for canonical assembly keys")
+        result = {}
+        for key, config in images.items():
+            _, component = MetadataBase.extract_component_info('image', key, Model(config))
+            if component in result and result[component] != key:
+                raise click.ClickException(f"Component '{component}' maps to multiple Doozer image keys")
+            result[component] = key
+        return result
+
+    def _distgit_key_for_nvr(self, nvr: str) -> str:
+        component = parse_nvr(nvr)['name']
+        if self._component_to_distgit_key is None:
+            raise RuntimeError("Image metadata must be loaded before resolving assembly keys")
+        key = self._component_to_distgit_key.get(component)
+        if key is None:
+            raise click.ClickException(
+                f"No Doozer image configuration found for component '{component}' in {self.group}"
+            )
+        return key
 
     def _categorize_nvrs(self, nvrs: List[str]) -> Dict[str, List[str]]:
         """Split NVRs into image, bundle, fbc, and external categories.
 
         Bundles (metadata containers) and FBCs are excluded from the assembly
         because ``prepare-release-lp`` rebuilds them from the pinned operands.
+        Group metadata identifies product images; their NVR versions are unrestricted.
         """
         categorized: Dict[str, List[str]] = {"image": [], "bundle": [], "fbc": [], "external": []}
         for nvr in nvrs:
@@ -97,7 +134,7 @@ class GenAssemblyLPPipeline:
                 categorized["fbc"].append(nvr)
             elif '-metadata-container' in component_name:
                 categorized["bundle"].append(nvr)
-            elif self._is_nvr_from_current_group(nvr):
+            elif component_name in (self._component_to_distgit_key or {}):
                 categorized["image"].append(nvr)
             else:
                 categorized["external"].append(nvr)
@@ -108,19 +145,18 @@ class GenAssemblyLPPipeline:
         Extract operand NVRs from FBC pullspecs and return a dict of distgit_key -> NVR.
 
         When multiple FBC pullspecs are provided (one per OCP target version),
-        validates that all FBCs for the same operator contain identical related images.
+        validates that all FBCs for the same operator select the same source bundle
+        version and contain identical product images after applying explicit overrides.
         """
-        if len(self.fbc_pullspecs) > 1:
-            all_related_nvrs = await validate_fbc_related_images(
-                self.fbc_pullspecs, self.product, assembly=self.assembly
-            )
-        else:
-            from elliottlib.util import extract_nvrs_from_fbc as _extract
-
-            all_related_nvrs = []
-            for fbc_pullspec in self.fbc_pullspecs:
-                related_nvrs = await _extract(fbc_pullspec, self.product, assembly=self.assembly)
-                all_related_nvrs.extend(related_nvrs)
+        overrides = self._apply_extra_image_nvrs(self._apply_includes({}))
+        all_related_nvrs = await validate_fbc_related_images(
+            self.fbc_pullspecs,
+            self.product,
+            assembly=self.assembly,
+            use_source_bundle=True,
+            image_components=set(self._component_to_distgit_key or {}),
+            image_overrides={parse_nvr(nvr)['name']: nvr for nvr in overrides.values()},
+        )
 
         all_related_nvrs = sorted(set(all_related_nvrs))
         categorized = self._categorize_nvrs(all_related_nvrs)
@@ -150,20 +186,17 @@ class GenAssemblyLPPipeline:
     def _nvrs_to_distgit_map(self, nvrs: List[str]) -> Dict[str, str]:
         """Convert a list of NVRs to a dict of distgit_key -> NVR.
 
-        Uses the component name (the 'name' field from parsing the NVR) as
-        the distgit_key.
+        Map NVR component names to actual image YAML keys, honoring distgit.component.
         """
         result: Dict[str, str] = {}
         for nvr in nvrs:
-            nvr_dict = parse_nvr(nvr)
-            distgit_key = nvr_dict['name']
+            distgit_key = self._distgit_key_for_nvr(nvr)
             if distgit_key in result:
-                self._logger.warning(
-                    "Duplicate distgit_key '%s': keeping %s, discarding %s",
-                    distgit_key,
-                    result[distgit_key],
-                    nvr,
-                )
+                if result[distgit_key] != nvr:
+                    raise click.ClickException(
+                        f"Conflicting builds for '{distgit_key}': {result[distgit_key]} and {nvr}. "
+                        "Select the intended build with --include."
+                    )
                 continue
             result[distgit_key] = nvr
         return result
@@ -174,28 +207,18 @@ class GenAssemblyLPPipeline:
             if '=' not in include_spec:
                 raise click.ClickException(f"Invalid --include format: '{include_spec}'. Expected 'distgit_key=nvr'")
             distgit_key, nvr = include_spec.split('=', 1)
-            if distgit_key not in operand_map:
-                raise click.ClickException(
-                    f"Cannot swap '{distgit_key}': not found in the extracted operand set. "
-                    f"Available keys: {sorted(operand_map.keys())}. "
-                    f"To add a new operand, use --extra-image-nvrs instead."
-                )
-            self._logger.info("Swapping %s: %s -> %s", distgit_key, operand_map[distgit_key], nvr)
+            # Accept the old component-name selector, but always emit the YAML key.
+            distgit_key = (self._component_to_distgit_key or {}).get(distgit_key, distgit_key)
+            if self._distgit_key_for_nvr(nvr) != distgit_key:
+                raise click.ClickException(f"Include '{include_spec}' selects an NVR for a different image")
+            self._logger.info("Pinning %s: %s", distgit_key, nvr)
             operand_map[distgit_key] = nvr
         return operand_map
 
     def _apply_extra_image_nvrs(self, operand_map: Dict[str, str]) -> Dict[str, str]:
         """Add extra image NVRs to the operand map."""
         for nvr in self.extra_image_nvrs:
-            if not self._is_nvr_from_current_group(nvr):
-                nvr_dict = parse_nvr(nvr)
-                raise click.ClickException(
-                    f"Extra image NVR '{nvr}' has version '{nvr_dict.get('version', '?')}' "
-                    f"which does not match assembly '{self.assembly}'. "
-                    f"Only NVRs matching the group's major.minor version are allowed."
-                )
-            nvr_dict = parse_nvr(nvr)
-            distgit_key = nvr_dict['name']
+            distgit_key = self._distgit_key_for_nvr(nvr)
             if distgit_key in operand_map:
                 self._logger.info(
                     "Extra NVR overrides existing entry for %s: %s -> %s",
@@ -209,9 +232,7 @@ class GenAssemblyLPPipeline:
     async def _resolve_parent_operands(self) -> Dict[str, str]:
         """Resolve the full operand set from the parent (basis) assembly.
 
-        NOTE: Only resolves one level of inheritance. Multi-level chains
-        (A->B->C) are not supported; the basis assembly must list all
-        operands explicitly.
+        Resolve inherited pins and normalize legacy component-name member keys.
         """
         self._logger.info("Resolving operand set from basis assembly '%s'...", self.basis_assembly)
 
@@ -230,13 +251,8 @@ class GenAssemblyLPPipeline:
         if parent_assembly is None:
             raise click.ClickException(f"Basis assembly '{self.basis_assembly}' not found in releases.yml")
 
-        members_images = parent_assembly.get('assembly', {}).get('members', {}).get('images', [])
-        operand_map: Dict[str, str] = {}
-        for entry in members_images:
-            distgit_key = entry.get('distgit_key')
-            nvr = entry.get('metadata', {}).get('is', {}).get('nvr')
-            if distgit_key and nvr:
-                operand_map[distgit_key] = nvr
+        pins = assembly_image_pins(Model(releases_config), self.basis_assembly)
+        operand_map = self._nvrs_to_distgit_map(list(pins.values()))
 
         self._logger.info(
             "Resolved %d operands from basis assembly '%s'",
@@ -422,6 +438,7 @@ class GenAssemblyLPPipeline:
         self.product = await self._load_product_from_group_config()
         self._logger.info("Product: %s", self.product)
 
+        self._component_to_distgit_key = await self._load_component_to_distgit_key()
         parent_operand_map: Optional[Dict[str, str]] = None
 
         if self.basis_assembly:
@@ -482,10 +499,10 @@ class GenAssemblyLPPipeline:
     "--fbc-pullspecs",
     metavar="FBC_PULLSPECS",
     default="",
-    help="Comma-separated FBC image pullspecs to extract operand NVRs from. "
+    help="Comma-separated FBC image pullspecs to extract baseline operand NVRs from. "
     "Provide one pullspec per OCP target version for multi-OCP products. "
-    "When multiple are provided, related images are validated for consistency "
-    "across OCP versions. Required unless --basis-assembly is provided.",
+    "Selected source bundle versions and final related images after overrides must "
+    "agree across OCP targets. Required unless --basis-assembly is provided.",
 )
 @click.option(
     "--basis-assembly",

@@ -63,6 +63,41 @@ class TestKonfluxBundleCli(unittest.IsolatedAsyncioTestCase):
         build.nvr = nvr
         return build
 
+    async def test_forced_rebuild_allocates_after_releases_from_other_assemblies(self):
+        operator = self._create_operator_build("operator", "operator-container-1-1.p2")
+        image_meta = mock.Mock()
+        image_meta.get_olm_bundle_short_name.return_value = "operator-bundle"
+
+        async def search(**kwargs):
+            self.assertNotIn("assembly", kwargs["where"])
+            for release in ("3", "11", "2"):
+                yield mock.Mock(release=release)
+
+        self.mock_bundle_db.search_builds_by_fields = mock.Mock(side_effect=search)
+        self.bundle_cli.force = True
+        self.bundle_cli._get_bundle_build_for = mock.AsyncMock(return_value=mock.Mock(release="2"))
+        self.bundle_cli._get_bundle_build_by_nvr = mock.AsyncMock(return_value=None)
+        rebaser = mock.AsyncMock()
+        rebaser.rebase.return_value = "operator-bundle-1-12"
+        builder = mock.AsyncMock()
+        result = await self.bundle_cli._rebase_and_build(rebaser, builder, image_meta, operator)
+        self.assertEqual(result, "operator-bundle-1-12")
+        rebaser.rebase.assert_awaited_once_with(image_meta, operator, "12")
+        builder.build.assert_awaited_once()
+
+    async def test_explicit_forced_release_retains_collision_check(self):
+        self.bundle_cli.force = True
+        self.bundle_cli.release = "7"
+        self.bundle_cli._next_bundle_release = mock.AsyncMock()
+        self.bundle_cli._get_bundle_build_by_nvr = mock.AsyncMock(return_value=None)
+        operator = self._create_operator_build("operator", "operator-container-1-1.p2")
+        image_meta = mock.Mock()
+        rebaser = mock.AsyncMock()
+        await self.bundle_cli._rebase_and_build(rebaser, mock.AsyncMock(), image_meta, operator)
+        rebaser.rebase.assert_awaited_once_with(image_meta, operator, "7")
+        self.bundle_cli._next_bundle_release.assert_not_awaited()
+        self.bundle_cli._get_bundle_build_by_nvr.assert_awaited_once()
+
     async def test_get_bundle_build_by_nvr_searches_without_assembly_filter(self):
         existing_build = mock.Mock(spec=KonfluxBundleBuildRecord)
 
@@ -95,6 +130,7 @@ class TestKonfluxBundleCli(unittest.IsolatedAsyncioTestCase):
 
         self.bundle_cli._get_bundle_build_for = mock.AsyncMock(return_value=None)
         self.bundle_cli._get_bundle_build_by_nvr = mock.AsyncMock(return_value=existing_build)
+        self.bundle_cli._next_bundle_release = mock.AsyncMock(return_value="1")
 
         with self.assertRaisesRegex(
             ValueError,
