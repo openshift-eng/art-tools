@@ -817,7 +817,9 @@ class TestPrepareReleaseLPRun(unittest.TestCase):
     @patch.object(PrepareReleaseLPPipeline, '_trigger_bundle_build', new_callable=AsyncMock)
     @patch.object(PrepareReleaseLPPipeline, '_load_assembly', new_callable=AsyncMock)
     @patch.object(PrepareReleaseLPPipeline, '_load_product_from_group_config', new_callable=AsyncMock)
-    def test_run_dry_run(self, mock_product, mock_assembly, mock_bundle, mock_fbc, mock_snapshot, mock_template):
+    def test_run_includes_bundle_in_image_snapshot(
+        self, mock_product, mock_assembly, mock_bundle, mock_fbc, mock_snapshot, mock_template
+    ):
         import tempfile
 
         mock_product.return_value = "rhacm2"
@@ -835,7 +837,8 @@ class TestPrepareReleaseLPRun(unittest.TestCase):
                 },
             },
         }
-        mock_bundle.return_value = ([], [])
+        bundle_nvr = "search-v2-api-metadata-container-2.17.3-1"
+        mock_bundle.return_value = ([bundle_nvr, bundle_nvr], [])
         mock_fbc.return_value = ([], [])
         mock_snapshot.return_value = []
 
@@ -847,7 +850,7 @@ class TestPrepareReleaseLPRun(unittest.TestCase):
         mock_assembly.assert_called_once()
         mock_bundle.assert_called_once_with(['search-v2-api-container-2.17.3-1'])
         mock_fbc.assert_called_once_with([])
-        mock_snapshot.assert_called_once_with(['search-v2-api-container-2.17.3-1'])
+        mock_snapshot.assert_called_once_with(['search-v2-api-container-2.17.3-1', bundle_nvr])
 
     @patch('pyartcd.pipelines.prepare_release_lp.validate_fbc_related_images', new_callable=AsyncMock)
     @patch.object(PrepareReleaseLPPipeline, '_load_release_notes_template', return_value=None)
@@ -1286,7 +1289,7 @@ class TestPinnedReleasePreparation(unittest.IsolatedAsyncioTestCase):
             pipeline._write_shipment_file.assert_not_awaited()
             bundle.operand_nvrs = [self.pin]
             await pipeline.run()
-            self.assertEqual(pipeline._create_snapshot.await_args_list[0].args[0], [self.pin])
+            self.assertEqual(pipeline._create_snapshot.await_args_list[0].args[0], [self.pin, 'bundle'])
             self.assertEqual(pipeline._create_snapshot.await_args_list[1].args[0], [fbc])
             self.assertEqual(validate.await_count, 1)
 

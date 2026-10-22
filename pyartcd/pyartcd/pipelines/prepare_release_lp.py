@@ -1004,8 +1004,9 @@ class PrepareReleaseLPPipeline:
 
         shipments_by_kind: Dict[str, ShipmentConfig] = {}
 
-        if operand_nvrs:
-            image_snapshots = await self._create_snapshot(operand_nvrs)
+        image_nvrs = list(dict.fromkeys(operand_nvrs + bundle_nvrs))
+        if image_nvrs:
+            image_snapshots = await self._create_snapshot(image_nvrs)
             for i, snapshot in enumerate(image_snapshots, start=1):
                 key = 'image' if len(image_snapshots) == 1 else f'image{i:02d}'
                 shipments_by_kind[key] = self._create_shipment_config(
