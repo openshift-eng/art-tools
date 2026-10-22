@@ -705,28 +705,86 @@ class TestTriggerBuilds(unittest.TestCase):
         )
         return pipeline
 
-    @patch('pyartcd.pipelines.layered_products_scan_konflux.jenkins.start_olm_bundle_konflux')
-    def test_trigger_bundle_builds(self, mock_start):
+    @patch('pyartcd.pipelines.layered_products_scan_konflux.tekton.annotate_current_pipelinerun')
+    @patch(
+        'pyartcd.pipelines.layered_products_scan_konflux.tekton.start_pipeline_run',
+        return_value='olm-bundle-konflux-oadp-1-5-abc',
+    )
+    @patch('pyartcd.pipelines.layered_products_scan_konflux.tekton.is_tekton_context', return_value=True)
+    def test_trigger_bundle_builds_tekton(self, _mock_ctx, mock_start, mock_annotate):
         pipeline = self._make_pipeline()
         operators = [_make_operator(nvr='op-1'), _make_operator(nvr='op-2')]
 
         pipeline.trigger_bundle_builds(operators)
 
         mock_start.assert_called_once_with(
-            build_version='1.5',
-            assembly='stream',
-            operator_nvrs=['op-1', 'op-2'],
-            group='oadp-1.5',
+            pipeline_name='olm-bundle-konflux',
+            params={
+                'version': '1.5',
+                'assembly': 'stream',
+                'group': 'oadp-1.5',
+                'operator-nvrs': 'op-1,op-2',
+                'data-path': 'https://github.com/openshift-eng/ocp-build-data',
+                'data-gitref': '',
+                'dry-run': 'false',
+            },
+        )
+        mock_annotate.assert_called_once_with(
+            {'art.openshift.io/triggered-olm-bundle-konflux': 'olm-bundle-konflux-oadp-1-5-abc'}
         )
 
-    @patch('pyartcd.pipelines.layered_products_scan_konflux.jenkins.start_build_fbc')
-    def test_trigger_fbc_builds(self, mock_start):
+    @patch('pyartcd.pipelines.layered_products_scan_konflux.tekton.annotate_current_pipelinerun')
+    @patch(
+        'pyartcd.pipelines.layered_products_scan_konflux.tekton.start_pipeline_run',
+        return_value='build-fbc-oadp-1-5-abc',
+    )
+    @patch('pyartcd.pipelines.layered_products_scan_konflux.tekton.is_tekton_context', return_value=True)
+    def test_trigger_fbc_builds_tekton(self, _mock_ctx, mock_start, mock_annotate):
         pipeline = self._make_pipeline()
         operators = [_make_operator(nvr='op-1')]
 
         pipeline.trigger_fbc_builds(operators)
 
         mock_start.assert_called_once_with(
+            pipeline_name='build-fbc',
+            params={
+                'version': '1.5',
+                'assembly': 'stream',
+                'group': 'oadp-1.5',
+                'operator-nvrs': 'op-1',
+                'data-path': 'https://github.com/openshift-eng/ocp-build-data',
+                'data-gitref': '',
+                'dry-run': 'false',
+            },
+        )
+        mock_annotate.assert_called_once_with({'art.openshift.io/triggered-build-fbc': 'build-fbc-oadp-1-5-abc'})
+
+    @patch('pyartcd.pipelines.layered_products_scan_konflux.jenkins.start_olm_bundle_konflux')
+    @patch('pyartcd.pipelines.layered_products_scan_konflux.tekton.is_tekton_context', return_value=False)
+    def test_trigger_bundle_builds_jenkins(self, _mock_ctx, mock_jenkins_start):
+        pipeline = self._make_pipeline()
+        operators = [_make_operator(nvr='op-1'), _make_operator(nvr='op-2')]
+
+        pipeline.trigger_bundle_builds(operators)
+
+        mock_jenkins_start.assert_called_once_with(
+            build_version='1.5',
+            assembly='stream',
+            operator_nvrs=['op-1', 'op-2'],
+            group='oadp-1.5',
+            doozer_data_path='https://github.com/openshift-eng/ocp-build-data',
+            doozer_data_gitref='',
+        )
+
+    @patch('pyartcd.pipelines.layered_products_scan_konflux.jenkins.start_build_fbc')
+    @patch('pyartcd.pipelines.layered_products_scan_konflux.tekton.is_tekton_context', return_value=False)
+    def test_trigger_fbc_builds_jenkins(self, _mock_ctx, mock_jenkins_start):
+        pipeline = self._make_pipeline()
+        operators = [_make_operator(nvr='op-1')]
+
+        pipeline.trigger_fbc_builds(operators)
+
+        mock_jenkins_start.assert_called_once_with(
             version='1.5',
             assembly='stream',
             operator_nvrs=['op-1'],
@@ -739,7 +797,7 @@ class TestTriggerBuilds(unittest.TestCase):
         pipeline = self._make_pipeline()
         operators = [_make_operator(nvr='op-1')]
 
-        with patch('pyartcd.pipelines.layered_products_scan_konflux.jenkins.start_olm_bundle_konflux') as mock_start:
+        with patch('pyartcd.pipelines.layered_products_scan_konflux.tekton.start_pipeline_run') as mock_start:
             pipeline.trigger_bundle_builds(operators)
             mock_start.assert_not_called()
 
@@ -748,7 +806,7 @@ class TestTriggerBuilds(unittest.TestCase):
         pipeline = self._make_pipeline()
         operators = [_make_operator(nvr='op-1')]
 
-        with patch('pyartcd.pipelines.layered_products_scan_konflux.jenkins.start_build_fbc') as mock_start:
+        with patch('pyartcd.pipelines.layered_products_scan_konflux.tekton.start_pipeline_run') as mock_start:
             pipeline.trigger_fbc_builds(operators)
             mock_start.assert_not_called()
 
