@@ -27,7 +27,9 @@ class TestExtractNvrsFromSourceBundle(unittest.IsolatedAsyncioTestCase):
             )
 
         self.assertEqual(result, ['quay-operator-container-3.17.6-1'])
-        extract.assert_awaited_once_with(pullspec, 'quay', assembly='3.17.7', ignore_patch_version=False, bundle_version=source_version)
+        extract.assert_awaited_once_with(
+            pullspec, 'quay', assembly='3.17.7', ignore_patch_version=False, bundle_version=source_version
+        )
 
 
 class TestUtil(unittest.TestCase):

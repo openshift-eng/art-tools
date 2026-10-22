@@ -889,7 +889,11 @@ async def extract_nvrs_from_fbc(
 
     if version_scoped:
         related_images = await extract_versioned_related_images_from_fbc(
-            fbc_pullspec, product, assembly=assembly, ignore_patch_version=ignore_patch_version, bundle_version=bundle_version
+            fbc_pullspec,
+            product,
+            assembly=assembly,
+            ignore_patch_version=ignore_patch_version,
+            bundle_version=bundle_version,
         )
     else:
         related_images = await extract_related_images_from_fbc(fbc_pullspec, product)

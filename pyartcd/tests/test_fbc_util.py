@@ -172,7 +172,12 @@ class TestFinalFbcOperands(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(result, sorted([operator, quay, clair]))
             for pullspec in pullspecs:
                 extract.assert_any_await(
-                    pullspec, 'quay', assembly='3.17.7', version_scoped=True, ignore_patch_version=False, bundle_version='3.16.6'
+                    pullspec,
+                    'quay',
+                    assembly='3.17.7',
+                    version_scoped=True,
+                    ignore_patch_version=False,
+                    bundle_version='3.16.6',
                 )
 
     async def test_inconsistent_bundle_version_or_remaining_operand_fails(self):
