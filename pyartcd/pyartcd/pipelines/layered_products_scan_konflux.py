@@ -1,6 +1,7 @@
 import asyncio
 import logging
 import os
+import re
 from typing import Dict, List, Optional, Set
 
 import click
@@ -19,6 +20,7 @@ from pyartcd import constants, jenkins, locks, tekton, util
 from pyartcd.cli import cli, click_coroutine, pass_runtime
 from pyartcd.locks import Lock
 from pyartcd.runtime import Runtime
+from pyartcd.util import load_group_config
 
 
 class LayeredProductsScanPipeline:
@@ -46,6 +48,9 @@ class LayeredProductsScanPipeline:
 
         # Populated by load_operator_names(): distgit_key -> bundle short name
         self.bundle_names_by_operator: Dict[str, str] = {}
+
+        # OCP target versions for FBC builds (loaded from group config)
+        self.ocp_target_versions: List[str] = []
 
         # Extract version from group name (e.g. 'oadp-1.5' -> '1.5')
         version_tuple = product_version_from_group_name(self.group)
@@ -216,6 +221,9 @@ class LayeredProductsScanPipeline:
             self.logger.info('No operators found in group %s; skipping bundle/FBC scan', self.group)
             return
 
+        # Load OCP target versions for multi-version FBC builds
+        await self.load_ocp_target_versions()
+
         operator_builds = await self.get_latest_operator_builds(operator_db, operator_names)
         self.logger.info('Found %d operators with latest successful builds', len(operator_builds))
 
@@ -276,6 +284,49 @@ class LayeredProductsScanPipeline:
                     self.bundle_names_by_operator[distgit_key] = bundle_name
 
         return set(self.bundle_names_by_operator.keys())
+
+    async def load_ocp_target_versions(self):
+        """Load OCP_TARGET_VERSIONS from group config for multi-version FBC builds.
+
+        Layered product groups (e.g. oadp-1.5) may define ``OCP_TARGET_VERSIONS``
+        in their group.yml to specify which OCP versions they target.  When set,
+        ``trigger_fbc_builds`` creates a separate ``build-fbc`` PipelineRun for
+        each target version (mirroring the olm-bundle-konflux pattern).
+        """
+
+        try:
+            group_config = await load_group_config(
+                group=self.group,
+                assembly=self.assembly,
+                doozer_data_path=self.data_path,
+                doozer_data_gitref=self.data_gitref,
+            )
+            ocp_versions = group_config.get('OCP_TARGET_VERSIONS')
+            if ocp_versions:
+                # Handle string values: wrap in a list to avoid iterating characters
+                if isinstance(ocp_versions, str):
+                    self.logger.warning('OCP_TARGET_VERSIONS is a string (%r); wrapping in a list', ocp_versions)
+                    ocp_versions = [ocp_versions]
+
+                ocp_version_re = re.compile(r'^[0-9]+\.[0-9]+$')
+                valid_versions = []
+                for v in ocp_versions:
+                    if isinstance(v, str) and ocp_version_re.fullmatch(v):
+                        if v not in valid_versions:
+                            valid_versions.append(v)
+                    else:
+                        self.logger.warning('Ignoring invalid OCP_TARGET_VERSION entry: %r', v)
+
+                self.ocp_target_versions = valid_versions
+                self.logger.info('OCP_TARGET_VERSIONS from group config: %s', self.ocp_target_versions)
+            else:
+                self.logger.info('No OCP_TARGET_VERSIONS defined for group %s', self.group)
+        except Exception:
+            self.logger.error(
+                'Failed to load group config for OCP_TARGET_VERSIONS; cannot determine FBC target versions',
+                exc_info=True,
+            )
+            raise
 
     async def get_latest_operator_builds(
         self, operator_db: KonfluxDb, operator_names: Set[str]
@@ -369,10 +420,21 @@ class LayeredProductsScanPipeline:
     async def check_fbc_exists(
         self, fbc_db: KonfluxDb, operator: KonfluxBuildRecord, bundle: KonfluxBundleBuildRecord
     ) -> Optional[KonfluxFbcBuildRecord]:
-        """Check if FBC build exists containing this operator's bundle."""
+        """Check if FBC build exists containing this operator's bundle.
+
+        When ``self.ocp_target_versions`` is configured, verifies that a
+        successful FBC exists for EACH target version (matched via the
+        ``.ocp{major}.{minor}`` marker in the NVR).  Returns ``None`` if
+        any version is missing, which causes ``trigger_fbc_builds`` to
+        rebuild all versions (idempotent for those already built).
+        """
 
         fbc_name = self.get_fbc_name(operator.name)
 
+        if self.ocp_target_versions:
+            return await self._check_fbc_per_version(fbc_db, fbc_name, operator, bundle)
+
+        # No target versions configured – original single-check behaviour
         # Query FBC records containing this bundle NVR
         async for fbc in fbc_db.search_builds_by_fields(
             where={
@@ -418,6 +480,104 @@ class LayeredProductsScanPipeline:
         self.logger.info('  FBC MISSING for operator %s', operator.nvr)
         return None
 
+    async def _check_fbc_per_version(
+        self,
+        fbc_db: KonfluxDb,
+        fbc_name: str,
+        operator: KonfluxBuildRecord,
+        bundle: KonfluxBundleBuildRecord,
+    ) -> Optional[KonfluxFbcBuildRecord]:
+        """Check FBC existence for each OCP target version.
+
+        Checks ALL configured versions before returning.  Prioritises
+        "missing" over "pending": if ANY version has no FBC at all,
+        returns ``None`` so the operator is flagged for rebuild
+        (idempotent for versions already built).  If all versions have
+        an FBC but some are still pending, returns the pending record.
+        A failed record is returned immediately when found.
+        """
+
+        missing_any = False
+        pending_record: Optional[KonfluxFbcBuildRecord] = None
+        success_record: Optional[KonfluxFbcBuildRecord] = None
+
+        for target_version in self.ocp_target_versions:
+            version_pattern = r'\.ocp' + re.escape(target_version) + r'$'
+
+            # Check for successful FBC for this version
+            success_found = False
+            async for fbc in fbc_db.search_builds_by_fields(
+                where={
+                    'name': fbc_name,
+                    'group': self.group,
+                    'outcome': KonfluxBuildOutcome.SUCCESS,
+                    'assembly': self.assembly,
+                },
+                array_contains={'bundle_nvrs': bundle.nvr},
+                extra_patterns={'nvr': version_pattern},
+                limit=1,
+                order_by='start_time',
+                sorting='DESC',
+            ):
+                self.logger.info(
+                    '  FBC for %s (ocp-target-version=%s) exists: %s', operator.nvr, target_version, fbc.nvr
+                )
+                success_record = fbc
+                success_found = True
+
+            if success_found:
+                continue
+
+            # No success for this version – check for pending build
+            pending_found = False
+            async for pending_fbc in fbc_db.search_builds_by_fields(
+                where={
+                    'name': fbc_name,
+                    'group': self.group,
+                    'outcome': KonfluxBuildOutcome.PENDING,
+                    'assembly': self.assembly,
+                },
+                array_contains={'bundle_nvrs': bundle.nvr},
+                extra_patterns={'nvr': version_pattern},
+                limit=1,
+                order_by='start_time',
+                sorting='DESC',
+            ):
+                # Check if this pending build has a failure record
+                async for failed_build in fbc_db.search_builds_by_fields(
+                    where={'nvr': pending_fbc.nvr, 'outcome': [o for o in KonfluxBuildOutcome if o.is_failure()]},
+                    limit=1,
+                ):
+                    self.logger.info(
+                        '  FBC build for %s (ocp-target-version=%s) failed (%s): %s',
+                        operator.nvr,
+                        target_version,
+                        failed_build.outcome.value,
+                        failed_build.nvr,
+                    )
+                    return failed_build
+
+                self.logger.info(
+                    '  FBC build for %s (ocp-target-version=%s) in progress: %s',
+                    operator.nvr,
+                    target_version,
+                    pending_fbc.nvr,
+                )
+                pending_record = pending_fbc
+                pending_found = True
+
+            if not pending_found:
+                self.logger.info('  FBC MISSING for operator %s (ocp-target-version=%s)', operator.nvr, target_version)
+                missing_any = True
+
+        if missing_any:
+            return None
+        if pending_record:
+            return pending_record
+
+        self.logger.info('  FBC builds for %s exist for all target versions', operator.nvr)
+        return success_record
+
     def trigger_bundle_builds(self, operators: List[KonfluxBuildRecord]):
         """Trigger bundle builds for multiple operators in one job."""
 
@@ -454,7 +614,14 @@ class LayeredProductsScanPipeline:
             )
 
     def trigger_fbc_builds(self, operators: List[KonfluxBuildRecord]):
-        """Trigger FBC builds for multiple operators in one job."""
+        """Trigger FBC builds for operators, one per OCP target version.
+
+        When ``self.ocp_target_versions`` is populated (from the group
+        config's ``OCP_TARGET_VERSIONS``), a separate ``build-fbc``
+        PipelineRun is started for each target version – mirroring the
+        olm-bundle-konflux pattern.  Without target versions the method
+        raises ``RuntimeError``.
+        """
 
         nvrs = [op.nvr for op in operators]
 
@@ -463,28 +630,49 @@ class LayeredProductsScanPipeline:
             return
 
         self.logger.info('Triggering FBC builds for %d operators', len(nvrs))
-        if tekton.is_tekton_context():
-            created_name = tekton.start_pipeline_run(
-                pipeline_name='build-fbc',
-                params={
-                    'version': self.version,
-                    'assembly': self.assembly,
-                    'group': self.group,
-                    'operator-nvrs': ','.join(nvrs),
-                    'data-path': self.data_path or '',
-                    'data-gitref': self.data_gitref or '',
-                    'dry-run': 'false',
-                },
-            )
-            if created_name:
-                tekton.annotate_current_pipelinerun({'art.openshift.io/triggered-build-fbc': created_name})
+
+        if self.ocp_target_versions:
+            self.logger.info('Starting FBC builds for OCP target versions: %s', self.ocp_target_versions)
+            for target_version in self.ocp_target_versions:
+                self.logger.info('Triggering build-fbc for ocp-target-version=%s', target_version)
+                if tekton.is_tekton_context():
+                    created_name = tekton.start_pipeline_run(
+                        pipeline_name='build-fbc',
+                        params={
+                            'version': self.version,
+                            'assembly': self.assembly,
+                            'group': self.group,
+                            'operator-nvrs': ','.join(nvrs),
+                            'data-path': self.data_path or '',
+                            'data-gitref': self.data_gitref or '',
+                            'dry-run': 'false',
+                            'ocp-target-version': target_version,
+                            'force': 'true',
+                        },
+                    )
+                    if created_name:
+                        tekton.annotate_current_pipelinerun(
+                            {f'art.openshift.io/triggered-build-fbc-{target_version}': created_name}
+                        )
+                else:
+                    jenkins.start_build_fbc(
+                        version=self.version,
+                        assembly=self.assembly,
+                        operator_nvrs=nvrs,
+                        dry_run=False,
+                        group=self.group,
+                        ocp_target_version=target_version,
+                        force_build=True,
+                    )
         else:
-            jenkins.start_build_fbc(
-                version=self.version,
-                assembly=self.assembly,
-                operator_nvrs=nvrs,
-                dry_run=False,
-                group=self.group,
+            self.logger.error(
+                'No OCP_TARGET_VERSIONS configured for group %s; '
+                'FBC builds cannot be triggered without target versions for non-OpenShift groups',
+                self.group,
+            )
+            raise RuntimeError(
+                f'No OCP_TARGET_VERSIONS configured for group {self.group}; '
+                'cannot trigger FBC builds without target versions for non-OpenShift groups'
             )
 
     def get_bundle_name(self, operator_name: str) -> str:
