@@ -154,12 +154,26 @@ class VerifyReleasePipeline:
                     f'(cherry-picked from {len(source_files)} source file(s))'
                 )
 
-                return await self._run_checks()
+                result = await self._run_checks()
+                if "shipment-label" in self.skip_steps:
+                    message = "skipped by user"
+                    click.echo("[verify-release: shipment-label] SKIP (skipped by user)", err=True)
+                    result.steps.append(StepResult("shipment-label", StepStatus.SKIP, message))
+                elif result.passed:
+                    label_result = await self._mark_release_verified()
+                    result.steps.append(label_result)
+                return result
             finally:
                 # RegistryConfig removes the merged file after this block.
                 elliott_env["QUAY_AUTH_FILE"] = quay_auth_file
                 self._elliott_env = elliott_env
                 self._registry_auth_file = original_registry_auth_file
+
+    async def _mark_release_verified(self) -> StepResult:
+        cmd = self._elliott_base + ["verify-release", "--mark"]
+        if self.runtime.dry_run:
+            cmd.append("--dry-run")
+        return await self._run_elliott_cmd("shipment-label", cmd)
 
     async def _run_checks(self) -> VerifyReleaseResult:
         """
@@ -298,6 +312,7 @@ class VerifyReleasePipeline:
             "kernel-tag",
             "cve-trackers",
             "stage-testing",
+            "shipment-label",
         ]
     ),
     help="Steps to skip.",

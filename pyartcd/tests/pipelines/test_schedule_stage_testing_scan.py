@@ -16,17 +16,34 @@ def _make_mr(iid, title, labels):
 class TestScheduleStageTestingScan(unittest.IsolatedAsyncioTestCase):
     def setUp(self):
         self.runtime = MagicMock()
+        self.runtime.dry_run = False
+
+    @patch("pyartcd.pipelines.scheduled.schedule_stage_testing_scan.jenkins")
+    @patch("pyartcd.pipelines.scheduled.schedule_stage_testing_scan.GitLabClient")
+    async def test_dry_run_does_not_trigger_jenkins(self, mock_gitlab_cls, mock_jenkins):
+        self.runtime.dry_run = True
+        mr = _make_mr(42, "Shipment for 4.22.9", ["stage-release-success"])
+        mock_client = mock_gitlab_cls.from_url.return_value
+        mock_client.list_merge_requests.return_value = [mr]
+
+        with self.assertLogs("pyartcd.pipelines.scheduled.schedule_stage_testing_scan", level="INFO") as logs:
+            await scan_and_trigger(self.runtime)
+
+        mock_jenkins.start_verify_stage_testing.assert_not_called()
+        self.assertIn("[DRY-RUN] MR !42 — would queue verify-stage-testing for 4.22/4.22.9", "\n".join(logs.output))
 
     @patch("pyartcd.pipelines.scheduled.schedule_stage_testing_scan.jenkins")
     @patch("pyartcd.pipelines.scheduled.schedule_stage_testing_scan.GitLabClient")
     async def test_triggers_qualifying_mr(self, mock_gitlab_cls, mock_jenkins):
         mr = _make_mr(42, "Shipment for 4.22.9 (ship date: 2026-10-15)", ["stage-release-success"])
-        mock_project = MagicMock()
-        mock_project.mergerequests.list.return_value = [mr]
-        mock_gitlab_cls.from_url.return_value.get_project.return_value = mock_project
+        mock_client = mock_gitlab_cls.from_url.return_value
+        mock_client.list_merge_requests.return_value = [mr]
 
         await scan_and_trigger(self.runtime)
 
+        mock_client.list_merge_requests.assert_called_once_with(
+            "hybrid-platforms/art/ocp-shipment-data", state="opened", labels=["stage-release-success"], per_page=100
+        )
         mock_jenkins.start_verify_stage_testing.assert_called_once_with(
             version="4.22", assembly="4.22.9", block_until_building=False
         )
@@ -35,9 +52,8 @@ class TestScheduleStageTestingScan(unittest.IsolatedAsyncioTestCase):
     @patch("pyartcd.pipelines.scheduled.schedule_stage_testing_scan.GitLabClient")
     async def test_skips_already_triggered(self, mock_gitlab_cls, mock_jenkins):
         mr = _make_mr(42, "Shipment for 4.22.9", ["stage-release-success", "stage-testing-triggered"])
-        mock_project = MagicMock()
-        mock_project.mergerequests.list.return_value = [mr]
-        mock_gitlab_cls.from_url.return_value.get_project.return_value = mock_project
+        mock_client = mock_gitlab_cls.from_url.return_value
+        mock_client.list_merge_requests.return_value = [mr]
 
         await scan_and_trigger(self.runtime)
 
@@ -47,9 +63,8 @@ class TestScheduleStageTestingScan(unittest.IsolatedAsyncioTestCase):
     @patch("pyartcd.pipelines.scheduled.schedule_stage_testing_scan.GitLabClient")
     async def test_skips_already_passed(self, mock_gitlab_cls, mock_jenkins):
         mr = _make_mr(42, "Shipment for 4.22.9", ["stage-release-success", "stage-testing-success"])
-        mock_project = MagicMock()
-        mock_project.mergerequests.list.return_value = [mr]
-        mock_gitlab_cls.from_url.return_value.get_project.return_value = mock_project
+        mock_client = mock_gitlab_cls.from_url.return_value
+        mock_client.list_merge_requests.return_value = [mr]
 
         await scan_and_trigger(self.runtime)
 
@@ -59,9 +74,8 @@ class TestScheduleStageTestingScan(unittest.IsolatedAsyncioTestCase):
     @patch("pyartcd.pipelines.scheduled.schedule_stage_testing_scan.GitLabClient")
     async def test_skips_failed(self, mock_gitlab_cls, mock_jenkins):
         mr = _make_mr(42, "Shipment for 4.22.9", ["stage-release-success", "stage-testing-fail"])
-        mock_project = MagicMock()
-        mock_project.mergerequests.list.return_value = [mr]
-        mock_gitlab_cls.from_url.return_value.get_project.return_value = mock_project
+        mock_client = mock_gitlab_cls.from_url.return_value
+        mock_client.list_merge_requests.return_value = [mr]
 
         await scan_and_trigger(self.runtime)
 
@@ -71,9 +85,8 @@ class TestScheduleStageTestingScan(unittest.IsolatedAsyncioTestCase):
     @patch("pyartcd.pipelines.scheduled.schedule_stage_testing_scan.GitLabClient")
     async def test_skips_non_ocp(self, mock_gitlab_cls, mock_jenkins):
         mr = _make_mr(42, "Shipment for logging 6.5.2", ["stage-release-success"])
-        mock_project = MagicMock()
-        mock_project.mergerequests.list.return_value = [mr]
-        mock_gitlab_cls.from_url.return_value.get_project.return_value = mock_project
+        mock_client = mock_gitlab_cls.from_url.return_value
+        mock_client.list_merge_requests.return_value = [mr]
 
         await scan_and_trigger(self.runtime)
 
@@ -86,9 +99,8 @@ class TestScheduleStageTestingScan(unittest.IsolatedAsyncioTestCase):
         mr2 = _make_mr(11, "Shipment for 5.0.3", ["stage-release-success"])
         mr3 = _make_mr(12, "Shipment for logging 6.5.2", ["stage-release-success"])
         mr4 = _make_mr(13, "Shipment for 4.21.15", ["stage-release-success", "stage-testing-triggered"])
-        mock_project = MagicMock()
-        mock_project.mergerequests.list.return_value = [mr1, mr2, mr3, mr4]
-        mock_gitlab_cls.from_url.return_value.get_project.return_value = mock_project
+        mock_client = mock_gitlab_cls.from_url.return_value
+        mock_client.list_merge_requests.return_value = [mr1, mr2, mr3, mr4]
 
         await scan_and_trigger(self.runtime)
 
@@ -98,9 +110,8 @@ class TestScheduleStageTestingScan(unittest.IsolatedAsyncioTestCase):
     @patch("pyartcd.pipelines.scheduled.schedule_stage_testing_scan.GitLabClient")
     async def test_triggers_rc_assembly(self, mock_gitlab_cls, mock_jenkins):
         mr = _make_mr(42, "Shipment for 5.0.0-rc.6 (ship date: 2026-10-15)", ["stage-release-success"])
-        mock_project = MagicMock()
-        mock_project.mergerequests.list.return_value = [mr]
-        mock_gitlab_cls.from_url.return_value.get_project.return_value = mock_project
+        mock_client = mock_gitlab_cls.from_url.return_value
+        mock_client.list_merge_requests.return_value = [mr]
 
         await scan_and_trigger(self.runtime)
 
@@ -111,9 +122,8 @@ class TestScheduleStageTestingScan(unittest.IsolatedAsyncioTestCase):
     @patch("pyartcd.pipelines.scheduled.schedule_stage_testing_scan.jenkins")
     @patch("pyartcd.pipelines.scheduled.schedule_stage_testing_scan.GitLabClient")
     async def test_no_mrs(self, mock_gitlab_cls, mock_jenkins):
-        mock_project = MagicMock()
-        mock_project.mergerequests.list.return_value = []
-        mock_gitlab_cls.from_url.return_value.get_project.return_value = mock_project
+        mock_client = mock_gitlab_cls.from_url.return_value
+        mock_client.list_merge_requests.return_value = []
 
         await scan_and_trigger(self.runtime)
 
