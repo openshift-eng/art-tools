@@ -44,7 +44,10 @@ class TestScheduleVerifyReleaseScan(unittest.IsolatedAsyncioTestCase):
         await scan_and_trigger(self.runtime)
 
         mock_project.mergerequests.list.assert_called_once_with(
-            state="opened", labels=["stage-release-success", "stage-testing-success"], per_page=100
+            state="opened",
+            labels=["stage-release-success", "stage-testing-success"],
+            per_page=100,
+            get_all=True,
         )
         mock_jenkins.start_verify_release.assert_called_once_with(
             version="4.22", assembly="4.22.9", block_until_building=False

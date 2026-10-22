@@ -27,6 +27,7 @@ async def scan_and_trigger(runtime: Runtime):
         state="opened",
         labels=[STAGE_RELEASE_SUCCESS_LABEL, STAGE_TESTING_SUCCESS_LABEL],
         per_page=100,
+        get_all=True,
     )
 
     for mr in merge_requests:
