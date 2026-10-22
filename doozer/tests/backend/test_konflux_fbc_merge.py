@@ -15,6 +15,7 @@ from artcommonlib.model import Model
 from artcommonlib.util import KubeCondition
 from dockerfile_parse import DockerfileParser
 from doozerlib.backend.konflux_client import KonfluxClient
+from doozerlib.backend.konflux_fbc import get_target_fbc_arches
 from doozerlib.backend.konflux_fbc_merge import LayeredFbcInput, LayeredFbcMerger, merge_layered_catalogs
 
 
@@ -208,6 +209,11 @@ class TestLayeredFbcMerger(unittest.IsolatedAsyncioTestCase):
         self.merger.inputs = [source('3.18', [])]
         self.merger._set_operator_identity('quay')
         self.merger.provenance = {'production_index': 'registry.example/index@sha256:abc'}
+        self.merger._build_arches = ['x86_64']
+        lookup_patch = patch('doozerlib.backend.konflux_fbc_merge.get_target_fbc_arches', new_callable=AsyncMock)
+        self.arch_lookup = lookup_patch.start()
+        self.arch_lookup.return_value = ['x86_64']
+        self.addCleanup(lookup_patch.stop)
 
     async def test_prepares_release_labels_and_provenance(self):
         directory = Path(self.temp.name)
@@ -231,7 +237,7 @@ class TestLayeredFbcMerger(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(self.merger.working_dir.name, 'container-security-operator-fbc-unified-4-20')
         self.assertEqual(self.merger.nvr, f'container-security-operator-fbc-unified-4.20-{self.merger.release}')
 
-    async def test_submission_uses_unified_names_and_architecture_fallback(self):
+    async def test_submission_and_records_use_target_architectures(self):
         client = self.merger._konflux_client
         client.ensure_application = AsyncMock()
         client.get_component = AsyncMock(return_value=None)
@@ -242,23 +248,104 @@ class TestLayeredFbcMerger(unittest.IsolatedAsyncioTestCase):
             commit_hash='a' * 40,
             branch=self.merger.fbc_git_branch,
         )
-        for arches in (None, ['x86_64']):
-            with self.subTest(arches=arches):
-                if arches is None:
-                    self.merger.group_config.pop('arches', None)
-                else:
-                    self.merger.group_config['arches'] = arches
+        self.arch_lookup.side_effect = get_target_fbc_arches
+        selected = self.merger.inputs[0]
+        selected.catalog = [package(), channel('stable-3.17', [{'name': selected.csv_name}]), bundle(selected.csv_name)]
+        self._fbc_query(selected.record)
+        self.merger.bundle_db.get_build_records_by_nvrs = AsyncMock(return_value=[selected.bundle])
+        self.merger._load_group = Mock(return_value=({}, 'a' * 40))
+        self.merger._pin_image = AsyncMock(side_effect=lambda image: image)
+        labels = {
+            'operators.operatorframework.io.bundle.package.v1': 'quay',
+            'operators.operatorframework.io.bundle.channels.v1': 'stable-3.17',
+        }
+        for target, source_arches, target_arches in (
+            ('4.12', list(KonfluxClient.SUPPORTED_ARCHES), ['x86_64']),
+            ('4.13', list(KonfluxClient.SUPPORTED_ARCHES), ['x86_64']),
+            ('4.20', ['x86_64'], ['x86_64', 'aarch64', 's390x', 'ppc64le']),
+            ('4.20', None, ['x86_64', 'aarch64']),
+        ):
+            with self.subTest(target=target, source_arches=source_arches):
+                self.merger.target_version = target
+                self.merger.major_minor_override = tuple(map(int, target.split('.')))
+                selected.record.nvr = f'quay-operator-fbc-3.18.1-1.ocp{target}'
+                self.merger.group_config['arches'] = source_arches
+                if source_arches is None:
+                    self.merger.group_config.pop('arches')
+                with (
+                    patch(
+                        'doozerlib.backend.konflux_fbc.exectools.cmd_gather_async',
+                        new=AsyncMock(return_value=(0, ''.join(f'- {arch}\n' for arch in target_arches), '')),
+                    ) as read_group,
+                    patch(
+                        'doozerlib.backend.konflux_fbc_merge.util.oc_image_info_for_arch_async',
+                        new=AsyncMock(return_value={'config': {'config': {'Labels': labels}}}),
+                    ),
+                    patch(
+                        'doozerlib.backend.konflux_fbc_merge.opm.render',
+                        new=AsyncMock(side_effect=[[bundle(selected.csv_name)], selected.catalog, []]),
+                    ),
+                ):
+                    await self.merger.prepare((selected.record.nvr,))
+                read_group.assert_awaited_once_with(
+                    [
+                        'doozer',
+                        f'--data-path={self.runtime.data_path}',
+                        f'--group=openshift-{target}',
+                        'config:read-group',
+                        'konflux.arches',
+                        '--yaml',
+                    ]
+                )
                 await self.merger._start_build(repo, f'quay.io/test/fbc:{self.merger.nvr}')
                 submitted = client.start_pipeline_run_for_image_build.await_args.kwargs
-                self.assertEqual(submitted['generate_name'], 'quay-fbc-unified-4-20-')
-                self.assertEqual(submitted['component_name'], 'quay-fbc-unified-4-20')
-                self.assertEqual(submitted['application_name'], 'quay-fbc-unified-4-20')
-                self.assertEqual(submitted['target_branch'], 'art-quay-fbc-unified-4-20')
-                self.assertEqual(submitted['building_arches'], arches or list(KonfluxClient.SUPPORTED_ARCHES.keys()))
+                identity = f'quay-fbc-unified-{target.replace(".", "-")}'
+                self.assertEqual(submitted['generate_name'], f'{identity}-')
+                self.assertEqual(submitted['component_name'], identity)
+                self.assertEqual(submitted['application_name'], identity)
+                self.assertEqual(submitted['target_branch'], f'art-{identity}')
+                self.assertEqual(submitted['building_arches'], target_arches)
                 plr = Mock()
-                plr.to_dict.return_value = {}
-                await self.merger._record_build(repo, plr, KonfluxBuildOutcome.PENDING)
-                self.assertEqual(self.merger.db.add_build.call_args.args[0].arches, submitted['building_arches'])
+                plr.to_dict.return_value = {
+                    'status': {
+                        'results': [
+                            {'name': 'IMAGE_URL', 'value': 'quay.io/test/fbc:tag'},
+                            {'name': 'IMAGE_DIGEST', 'value': 'sha256:' + 'd' * 64},
+                        ]
+                    }
+                }
+                for outcome in (
+                    KonfluxBuildOutcome.PENDING,
+                    KonfluxBuildOutcome.BUILD_ERROR,
+                    KonfluxBuildOutcome.SUCCESS,
+                ):
+                    await self.merger._record_build(repo, plr, outcome)
+                    self.assertEqual(self.merger.db.add_build.call_args.args[0].arches, submitted['building_arches'])
+                self.arch_lookup.assert_awaited_once_with(
+                    self.runtime.data_path, self.merger.major_minor_override, self.merger._logger
+                )
+                self.arch_lookup.reset_mock()
+
+    async def test_prepare_rejects_failed_or_invalid_target_architectures(self):
+        self.arch_lookup.side_effect = get_target_fbc_arches
+        self.merger.major_minor_override = (4, 13)
+        with patch('doozerlib.backend.konflux_fbc.exectools.cmd_gather_async', new_callable=AsyncMock) as read_group:
+            read_group.side_effect = ChildProcessError('config lookup failed')
+            with self.assertRaisesRegex(RuntimeError, 'Failed to read konflux.arches from group openshift-4.13'):
+                await self.merger.prepare(('source-fbc',))
+            read_group.side_effect = None
+            for output in ('', '[]', 'x86_64\n', '- x86_64\n- 42\n', '- ""\n', '[invalid yaml'):
+                with self.subTest(output=output):
+                    read_group.return_value = (0, output, '')
+                    with self.assertRaises((ValueError, RuntimeError)):
+                        await self.merger.prepare(('source-fbc',))
+            self.runtime.data_path = None
+            with self.assertRaisesRegex(ValueError, 'no data path configured'):
+                await self.merger.prepare(('source-fbc',))
+        with self.assertRaisesRegex(ValueError, 'Prepare the target architectures'):
+            self.merger._get_build_arches()
+        self.merger._konflux_client.start_pipeline_run_for_image_build.assert_not_called()
+        self.merger.db.add_build.assert_not_called()
 
     async def test_dry_run_does_not_create_auth_or_build(self):
         client = self.merger._konflux_client
@@ -295,6 +382,7 @@ class TestLayeredFbcMerger(unittest.IsolatedAsyncioTestCase):
 
     async def test_records_all_outcomes_without_configured_arches(self):
         self.merger.group_config.pop('arches')
+        self.merger._build_arches = ['x86_64', 'aarch64']
         plr_info = Mock()
         plr_info.name = 'unified-test'
         plr_info.to_dict.return_value = {
@@ -310,7 +398,7 @@ class TestLayeredFbcMerger(unittest.IsolatedAsyncioTestCase):
             with self.subTest(outcome=outcome):
                 await self.merger._record_build(repo, plr_info, outcome)
                 record = self.merger.db.add_build.call_args.args[0]
-                self.assertEqual(record.arches, list(KonfluxClient.SUPPORTED_ARCHES.keys()))
+                self.assertEqual(record.arches, ['x86_64', 'aarch64'])
 
     async def test_success_without_digest_fails(self):
         plr = Mock()
@@ -406,6 +494,8 @@ class TestLayeredFbcMerger(unittest.IsolatedAsyncioTestCase):
             'registry.redhat.io/redhat/redhat-operator-index@sha256:' + 'b' * 64,
         )
         self.merger._pin_image.assert_any_await('registry.redhat.io/redhat/redhat-operator-index:v4.20')
+        self.arch_lookup.assert_awaited_once_with(self.runtime.data_path, (4, 20), self.merger._logger)
+        self.assertEqual(self.merger._get_build_arches(), ['x86_64'])
 
     async def test_dry_run_renders_and_validates_without_remote_writes(self):
         directory = self.merger.working_dir
@@ -502,10 +592,20 @@ class TestLayeredFbcMerger(unittest.IsolatedAsyncioTestCase):
         succeeded.find_condition.return_value = KubeCondition(
             {'type': 'Succeeded', 'status': 'True', 'reason': 'Succeeded'}
         )
+        for plr in (failed, succeeded):
+            plr.to_dict.return_value = {
+                'status': {
+                    'results': [
+                        {'name': 'IMAGE_URL', 'value': 'quay.io/test/fbc:tag'},
+                        {'name': 'IMAGE_DIGEST', 'value': 'sha256:' + 'd' * 64},
+                    ]
+                }
+            }
         self.merger._start_build = AsyncMock(side_effect=[failed, succeeded])
-        self.merger._record_build = AsyncMock()
+        self.merger._record_build = AsyncMock(wraps=self.merger._record_build)
         self.merger._konflux_client.wait_for_pipelinerun = AsyncMock(side_effect=[failed, succeeded])
-        await self.merger._build(Mock(), 'quay.io/example/art-fbc:tag', None)
+        repo = SimpleNamespace(https_url='https://github.com/openshift-priv/art-fbc', commit_hash='a' * 40)
+        await self.merger._build(repo, 'quay.io/example/art-fbc:tag', None)
         self.assertEqual(self.merger._start_build.await_count, 2)
         self.assertEqual(
             [call.args[2] for call in self.merger._record_build.await_args_list],
@@ -517,6 +617,7 @@ class TestLayeredFbcMerger(unittest.IsolatedAsyncioTestCase):
             ],
         )
         self.merger._konflux_client.delete_git_auth_secret.assert_awaited_once()
+        self.assertEqual([call.args[0].arches for call in self.merger.db.add_build.call_args_list], [['x86_64']] * 4)
 
     async def test_source_group_rejects_other_products_and_targets(self):
         for config in (

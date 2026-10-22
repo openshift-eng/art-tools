@@ -24,12 +24,12 @@ from artcommonlib.variants import get_build_variant_for_product
 from dockerfile_parse import DockerfileParser
 from doozerlib import opm, util
 from doozerlib.backend.build_repo import BuildRepo
-from doozerlib.backend.konflux_client import KonfluxClient
 from doozerlib.backend.konflux_fbc import (
     LIFECYCLE_SCHEMA,
     PRODUCTION_INDEX_PULLSPEC_FORMAT,
     KonfluxFbcFragmentMerger,
     KonfluxFbcRebaser,
+    get_target_fbc_arches,
 )
 
 
@@ -148,6 +148,7 @@ class LayeredFbcMerger(KonfluxFbcFragmentMerger):
         self.inputs: list[LayeredFbcInput] = []
         self.catalog: list[dict] = []
         self.provenance = {}
+        self._build_arches: list[str] | None = None
         self.db = KonfluxDb()
         self.db.bind(KonfluxFbcBuildRecord)
         self.bundle_db = KonfluxDb()
@@ -168,6 +169,11 @@ class LayeredFbcMerger(KonfluxFbcFragmentMerger):
 
     def get_component_name(self, group: str):
         return self.get_application_name(group)
+
+    def _get_build_arches(self) -> list[str]:
+        if self._build_arches is None:
+            raise ValueError('Prepare the target architectures before building a unified FBC')
+        return self._build_arches
 
     def _set_operator_identity(self, package: str):
         self.operator = package
@@ -210,6 +216,10 @@ class LayeredFbcMerger(KonfluxFbcFragmentMerger):
     async def prepare(self, builds: tuple[str, ...]):
         if not builds:
             raise ValueError('At least one FBC build is required')
+        self._build_arches = None
+        self._build_arches = await get_target_fbc_arches(
+            self.runtime.data_path, self.major_minor_override, self._logger
+        )
         self.inputs = []
         seen = set()
         revisions = {}
@@ -389,7 +399,7 @@ class LayeredFbcMerger(KonfluxFbcFragmentMerger):
             image_tag=self.nvr if pullspec else None,
             art_job_url=os.environ.get('BUILD_URL', ''),
             bundle_nvrs=sorted(source.bundle.nvr for source in self.inputs),
-            arches=self.group_config.get('arches', list(KonfluxClient.SUPPORTED_ARCHES.keys())),
+            arches=self._get_build_arches(),
             build_variant=get_build_variant_for_product(self.product),
             start_time=datetime.fromisoformat(status['startTime'].replace('Z', '+00:00'))
             if status.get('startTime')
