@@ -135,8 +135,23 @@ class TestGoVersionFromFloatingTagExact(TestCase):
             result = go_version_from_floating_tag_exact('registry.redhat.io/openshift/golang-builder:v1.22-rhel9')
 
         self.assertEqual(result, 'golang-1.22.12-2.el9')
-        mock_oi.assert_called_once_with('registry.redhat.io/openshift/golang-builder:v1.22-rhel9')
+        mock_oi.assert_called_once_with('registry.redhat.io/openshift/golang-builder:v1.22-rhel9', registry_config=None)
         mock_nvrs.assert_not_called()
+
+    def test_floating_tag_exact_passes_registry_config(self):
+        fake_image_data = {'config': {'config': {'Labels': {'io.openshift.build.golang-nvr': 'golang-1.22.12-2.el9'}}}}
+        with patch(
+            'elliottlib.cli.get_golang_report_cli.oc_image_info_for_arch',
+            return_value=fake_image_data,
+        ) as mock_oi:
+            result = go_version_from_floating_tag_exact(
+                'registry.redhat.io/openshift/golang-builder:v1.22-rhel9', registry_config='/tmp/auth.json'
+            )
+
+        self.assertEqual(result, 'golang-1.22.12-2.el9')
+        mock_oi.assert_called_once_with(
+            'registry.redhat.io/openshift/golang-builder:v1.22-rhel9', registry_config='/tmp/auth.json'
+        )
 
     def test_falls_back_to_db_when_golang_nvr_label_absent(self):
         """Fallback path: no io.openshift.build.golang-nvr label — reuse extract_nvr_from_pullspec."""
@@ -171,8 +186,10 @@ class TestGoVersionFromFloatingTagExact(TestCase):
             result = go_version_from_floating_tag_exact('registry.redhat.io/openshift/golang-builder:v1.22-rhel9')
 
         self.assertEqual(result, 'golang-1.22.12-1.el9')
-        mock_oi.assert_called_once_with('registry.redhat.io/openshift/golang-builder:v1.22-rhel9')
-        mock_extract.assert_called_once_with('registry.redhat.io/openshift/golang-builder:v1.22-rhel9')
+        mock_oi.assert_called_once_with('registry.redhat.io/openshift/golang-builder:v1.22-rhel9', registry_config=None)
+        mock_extract.assert_called_once_with(
+            'registry.redhat.io/openshift/golang-builder:v1.22-rhel9', registry_config=None
+        )
         mock_nvrs.assert_called_once_with(
             [('openshift-golang-builder-container', 'v1.22.12', '202608131106.p2.g7d3050a.assembly.stream.el9')],
             unittest.mock.ANY,

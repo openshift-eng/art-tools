@@ -540,14 +540,33 @@ def konflux_image_component_name(application_name: str, image_name: str) -> str:
     return name
 
 
-def konflux_golang_builder_component_name(nvr: str) -> str:
+GOLANG_BUILDER_RHEL_SUFFIXES = {"el8": "rhel8", "el9": "rhel9", "el10": "rhel10"}
+_GOLANG_BUILDER_DISTGIT_KEY_RE = re.compile(r"openshift-golang-builder-\d+-\d+\.rhel(?P<el>\d+)")
+_EL_RELEASE_TOKEN_RE = re.compile(r"el\d+(?:_\d+)?")
+
+
+class GolangBuilderComponentNameError(ValueError):
+    """A golang builder build cannot be mapped to a ``golang-builder-vX.Y-rhelN`` floating-tag component."""
+
+
+def konflux_golang_builder_component_name(nvr: str, distgit_key: Optional[str] = None) -> str:
     """
     Konflux Component name for a golang-builder image derived from build NVR.
 
+    The component name is also the floating tag the release pushes on registry.redhat.io,
+    so anything that cannot be mapped exactly raises instead of guessing a RHEL suffix.
+
     Example NVR::
         openshift-golang-builder-container-v1.25.8-202604081607.p0.g2aa6a05.el8
-    yields something like::
+    yields::
         golang-builder-v1.25-rhel8
+
+    :param nvr: Golang builder image NVR. Its release must end in exactly one of ``.el8``, ``.el9`` or ``.el10``.
+    :param distgit_key: Image config key that produced the build. When given, it must be the plain
+        ``openshift-golang-builder-X-Y.rhelN`` form with N matching the NVR. Variant keys such as
+        ``openshift-golang-builder-1-25.rhel9-6`` build NVRs that look identical to the plain ``.el9`` ones,
+        so the key is the only way to keep them off the shared floating tag.
+    :raises GolangBuilderComponentNameError: when the RHEL suffix or the image config key cannot be mapped.
     """
     nvr_parsed = parse_nvr(nvr)
     version = nvr_parsed["version"]
@@ -563,11 +582,28 @@ def konflux_golang_builder_component_name(nvr: str) -> str:
     else:
         major_minor = version
 
-    el_suffix = "rhel9"
-    if ".el8" in release:
-        el_suffix = "rhel8"
+    release_tokens = release.split(".")
+    el_tokens = [token for token in release_tokens if _EL_RELEASE_TOKEN_RE.fullmatch(token)]
+    el_suffix = GOLANG_BUILDER_RHEL_SUFFIXES.get(release_tokens[-1])
+    if el_suffix is None or len(el_tokens) != 1:
+        raise GolangBuilderComponentNameError(
+            f"Cannot map golang builder NVR {nvr} to a golang-builder floating-tag component: "
+            f"the release must end in exactly one of {', '.join('.' + el for el in GOLANG_BUILDER_RHEL_SUFFIXES)}"
+        )
 
-    return f"golang-builder-{major_minor}-{el_suffix}"
+    component_name = f"golang-builder-{major_minor}-{el_suffix}"
+
+    if distgit_key is not None:
+        key_match = _GOLANG_BUILDER_DISTGIT_KEY_RE.fullmatch(distgit_key)
+        if not key_match or f"rhel{key_match.group('el')}" != el_suffix:
+            raise GolangBuilderComponentNameError(
+                f"Refusing to map golang builder {nvr} built from image config {distgit_key} to {component_name}: "
+                f"only openshift-golang-builder-X-Y.{el_suffix} may publish that floating tag. "
+                f"Set base_image_release.enabled: false on variant image configs (e.g. .rhel9-6) "
+                f"to build them without a shipment"
+            )
+
+    return component_name
 
 
 def rc_api_url(tag: str, arch: str, private_nightly: bool) -> str:

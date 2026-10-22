@@ -12,6 +12,7 @@ from doozerlib.backend.golang_builder_shipment import (
     format_shipment_mr_title,
 )
 from doozerlib.constants import ART_IMAGES_BASE_APPLICATION
+from doozerlib.util import GolangBuilderComponentNameError
 
 SAMPLE_GOLANG_NVR = "openshift-golang-builder-container-v1.25.8-202604081607.p0.g2aa6a05.el9"
 
@@ -390,6 +391,46 @@ class TestCreateShipmentInline(IsolatedAsyncioTestCase):
         self.assertIsNone(result)
 
 
+class TestCreateShipmentRefusesUnmappedBuilds(IsolatedAsyncioTestCase):
+    def _handler(self):
+        runtime = Mock()
+        runtime.logger = Mock()
+        runtime.group_config = Model({})
+        runtime.working_dir = "/tmp"
+        handler = GolangBuilderShipmentHandler(runtime=runtime)
+        handler._setup_repos = AsyncMock()
+        handler._create_shipment_mr = AsyncMock(return_value="https://gitlab.example.com/mr/1")
+        return handler
+
+    async def _create(self, handler, nvr, distgit_key=None):
+        return await handler.create_shipment(
+            nvr=nvr,
+            container_image="quay.io/test@sha256:abc",
+            rebase_repo_url="https://example.com/repo.git",
+            rebase_commitish="abc123",
+            distgit_key=distgit_key,
+        )
+
+    async def test_variant_distgit_key_raises_before_repo_setup(self):
+        handler = self._handler()
+        with self.assertRaises(GolangBuilderComponentNameError):
+            await self._create(handler, SAMPLE_GOLANG_NVR, distgit_key="openshift-golang-builder-1-25.rhel9-6")
+        handler._setup_repos.assert_not_awaited()
+        handler._create_shipment_mr.assert_not_awaited()
+
+    async def test_unknown_el_raises_before_repo_setup(self):
+        handler = self._handler()
+        with self.assertRaises(GolangBuilderComponentNameError):
+            await self._create(handler, "openshift-golang-builder-container-v1.25.8-202604081607.p0.g2aa6a05.el7")
+        handler._setup_repos.assert_not_awaited()
+
+    async def test_plain_distgit_key_creates_mr(self):
+        handler = self._handler()
+        result = await self._create(handler, SAMPLE_GOLANG_NVR, distgit_key="openshift-golang-builder-1-25.rhel9")
+        self.assertEqual(result, "https://gitlab.example.com/mr/1")
+        handler._setup_repos.assert_awaited_once()
+
+
 class TestBuildInlineSnapshot(unittest.TestCase):
     def test_inline_snapshot_uses_component_name_and_application(self):
         runtime = Mock()
@@ -435,6 +476,24 @@ class TestApplyRpaComponentNames(unittest.TestCase):
         )
         GolangBuilderShipmentHandler._apply_rpa_component_names(snapshot, [nvr])
         self.assertEqual(snapshot.spec.components[0].name, "golang-builder-v1.25-rhel9")
+
+
+class TestApplyRpaComponentNamesUnmapped(unittest.TestCase):
+    def test_unmapped_nvr_raises(self):
+        """The CLI path fails instead of shipping an el7 NVR under a guessed rhel9 tag."""
+        nvr = "openshift-golang-builder-container-v1.25.11-202607210212.p2.g6245b3b.el7"
+        snapshot = Mock()
+        snapshot.spec.components = [Mock(name="rhel-9-golang-1-25-openshift-golang-builder")]
+        with self.assertRaises(GolangBuilderComponentNameError):
+            GolangBuilderShipmentHandler._apply_rpa_component_names(snapshot, [nvr])
+
+    def test_el10_maps_to_rhel10(self):
+        nvr = "openshift-golang-builder-container-v1.26.2-202610011200.p2.gabc1234.el10"
+        component = Mock()
+        snapshot = Mock()
+        snapshot.spec.components = [component]
+        GolangBuilderShipmentHandler._apply_rpa_component_names(snapshot, [nvr])
+        self.assertEqual(component.name, "golang-builder-v1.26-rhel10")
 
 
 class TestDeriveGolangGroup(unittest.TestCase):

@@ -40,6 +40,7 @@ from pyartcd.build_strategy import BuildStrategy
 from pyartcd.cli import cli, click_coroutine, pass_runtime
 from pyartcd.counter_models import BuildFailCounterContext, RebaseCounterContext
 from pyartcd.locks import Lock
+from pyartcd.pipelines.update_golang import get_active_ocp_golang_major_minors, ocp_versions_sharing_golang
 from pyartcd.runtime import Runtime
 from pyartcd.util import (
     build_history_link_url,
@@ -525,28 +526,51 @@ class KonfluxOcpPipeline:
             self.runtime.logger.info('Not setting golang bugs to ON_QA since assembly is not stream')
             return
 
-        cmd = [
-            'elliott',
-            '--assembly',
-            'stream',
-            f'--group=openshift-{self.version}',
-            f'--registry-config={self._registry_auth_file}',
-            "find-bugs:golang",
-            "--analyze",
-            "--update-tracker",
-        ]
-
-        if self.runtime.dry_run:
-            cmd.append('--dry-run')
-
         try:
-            await exectools.cmd_assert_async(cmd)
+            active_versions = get_active_ocp_golang_major_minors()
+        except Exception as exc:
+            self.runtime.logger.warning('Could not discover OCP versions from ocp-build-data: %s', exc)
+            active_versions = {}
+        golang_major_minors = active_versions.get(self.version, set())
+        if not golang_major_minors:
+            self.runtime.logger.warning(
+                'No GO_LATEST / GO_EXTRA / GO_PREVIOUS found for %s; sweeping golang bugs for %s only',
+                self.version,
+                self.version,
+            )
+        versions = ocp_versions_sharing_golang(golang_major_minors, self.version, active_versions)
+        self.runtime.logger.info(
+            'Sweeping golang %s bugs for OCP versions: %s',
+            ', '.join(sorted(golang_major_minors)) or 'unknown',
+            ', '.join(versions),
+        )
 
-        except ChildProcessError:
+        failed_versions = []
+        for version in versions:
+            cmd = [
+                'elliott',
+                '--assembly',
+                'stream',
+                f'--group=openshift-{version}',
+                f'--registry-config={self._registry_auth_file}',
+                "find-bugs:golang",
+                "--analyze",
+                "--update-tracker",
+            ]
             if self.runtime.dry_run:
-                return
+                cmd.append('--dry-run')
+            try:
+                await exectools.cmd_assert_async(cmd)
+            except ChildProcessError:
+                failed_versions.append(version)
+
+        if not failed_versions or self.runtime.dry_run:
+            return
+        try:
             self.slack_client.bind_channel(f'openshift-{self.version}')
-            await self.slack_client.say(f'Golang bug sweep failed for {self.version}. Please investigate')
+            await self.slack_client.say(f'Golang bug sweep failed for {", ".join(failed_versions)}. Please investigate')
+        except Exception as exc:
+            self.runtime.logger.warning('Could not send the golang bug sweep failure to Slack: %s', exc)
 
     async def sweep_second_fix_bugs(self):
         # find-bugs:second-fix closes CVE trackers that are not first-fix in pre-release branches
