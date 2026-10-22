@@ -1,9 +1,19 @@
+import asyncio
 import logging
 import os
+from typing import Dict, List, Optional, Set
 
 import click
 import yaml
 from artcommonlib import exectools
+from artcommonlib.konflux.konflux_build_record import (
+    KonfluxBuildOutcome,
+    KonfluxBuildRecord,
+    KonfluxBundleBuildRecord,
+    KonfluxFbcBuildRecord,
+)
+from artcommonlib.konflux.konflux_db import KonfluxDb
+from artcommonlib.util import product_version_from_group_name
 
 from pyartcd import constants, jenkins, locks, tekton, util
 from pyartcd.cli import cli, click_coroutine, pass_runtime
@@ -26,6 +36,20 @@ class LayeredProductsScanPipeline:
         self.changes = {}
 
         self.skipped = True  # True by default; if not locked, run() will set it to False
+
+        # Track which images are being rebuilt due to source changes (for dedup)
+        self.rebuilding_images: List[str] = []
+
+        # Track operators needing bundle/FBC builds
+        self.operators_without_bundles: List[KonfluxBuildRecord] = []
+        self.operators_without_fbcs: List[KonfluxBuildRecord] = []
+
+        # Populated by load_operator_names(): distgit_key -> bundle short name
+        self.bundle_names_by_operator: Dict[str, str] = {}
+
+        # Extract version from group name (e.g. 'oadp-1.5' -> '1.5')
+        version_tuple = product_version_from_group_name(self.group)
+        self.version: Optional[str] = f'{version_tuple[0]}.{version_tuple[1]}' if version_tuple else None
 
         group_param = self.group
         if self.data_gitref:
@@ -57,6 +81,9 @@ class LayeredProductsScanPipeline:
 
         # Handle image source changes
         self.handle_source_changes()
+
+        # Check for operators with missing bundle/FBC builds
+        await self.scan_for_missing_bundles_fbcs()
 
     def check_params(self):
         """
@@ -121,6 +148,9 @@ class LayeredProductsScanPipeline:
         if skipped_images:
             self.logger.warning('Skipping images with disabled dependencies: %s', skipped_images)
 
+        # Track which images are being rebuilt (for deduplication with bundle/FBC scan)
+        self.rebuilding_images = image_list.copy()
+
         if not image_list:
             self.logger.info('No buildable images after filtering disabled dependencies')
             return
@@ -154,6 +184,287 @@ class LayeredProductsScanPipeline:
                 assembly=self.assembly,
                 image_list=image_list,
             )
+
+    # ---- Scan-operator logic for LP groups ----
+
+    async def scan_for_missing_bundles_fbcs(self):
+        """Check for operators with missing bundle/FBC builds and trigger them.
+
+        This replicates the scan-operator logic for layered product groups.
+        Operators that are already being rebuilt due to source changes are
+        skipped (deduplication).
+        """
+
+        if not self.version:
+            self.logger.info('Could not extract version from group %s; skipping bundle/FBC scan', self.group)
+            return
+
+        # Initialize Konflux DB clients
+        operator_db = KonfluxDb()
+        operator_db.bind(KonfluxBuildRecord)
+
+        bundle_db = KonfluxDb()
+        bundle_db.bind(KonfluxBundleBuildRecord)
+
+        fbc_db = KonfluxDb()
+        fbc_db.bind(KonfluxFbcBuildRecord)
+
+        operator_names = await self.load_operator_names()
+        self.logger.info('Found %d operators in group %s', len(operator_names), self.group)
+
+        if not operator_names:
+            self.logger.info('No operators found in group %s; skipping bundle/FBC scan', self.group)
+            return
+
+        operator_builds = await self.get_latest_operator_builds(operator_db, operator_names)
+        self.logger.info('Found %d operators with latest successful builds', len(operator_builds))
+
+        if not operator_builds:
+            self.logger.info('No successful operator builds found')
+            return
+
+        # Check each operator for missing bundles/FBCs
+        results = await asyncio.gather(
+            *[self.check_operator(bundle_db, fbc_db, op) for op in operator_builds],
+            return_exceptions=True,
+        )
+
+        check_errors = []
+        for i, result in enumerate(results):
+            if isinstance(result, Exception):
+                self.logger.error('Failed to process %s: %s', operator_builds[i].nvr, result)
+                check_errors.append(result)
+
+        # Track failures to trigger bundle/fbc jobs
+        trigger_errors = []
+
+        if self.operators_without_bundles:
+            try:
+                self.trigger_bundle_builds(self.operators_without_bundles)
+            except Exception as e:
+                trigger_errors.append(e)
+                self.logger.error('Failed to trigger bundle builds: %s', e)
+
+        if self.operators_without_fbcs:
+            try:
+                self.trigger_fbc_builds(self.operators_without_fbcs)
+            except Exception as e:
+                trigger_errors.append(e)
+                self.logger.error('Failed to trigger FBC builds: %s', e)
+
+        all_errors = check_errors + trigger_errors
+        if all_errors:
+            raise RuntimeError(f"Errors during bundle/FBC scan: {', '.join(map(str, all_errors))}")
+
+    async def load_operator_names(self) -> Set[str]:
+        """Load operator image names from ocp-build-data using doozer.
+
+        Returns distgit keys (metadata names) like 'oadp-operator'.
+        Populates ``self.bundle_names_by_operator`` with each operator's
+        bundle short name (honoring any ``bundle_name_override`` config).
+        """
+
+        cmd = self.doozer_base_command + ['olm-bundle:list-olm-operators', '--output-format', 'delivery-info']
+
+        _, out, _ = await exectools.cmd_gather_async(cmd, stderr=None)
+        self.bundle_names_by_operator = {}
+        for line in out.strip().split('\n') if out.strip() else []:
+            parts = line.split('\t')
+            if len(parts) >= 2:
+                distgit_key, bundle_name = parts[0], parts[1]
+                if distgit_key and bundle_name:
+                    self.bundle_names_by_operator[distgit_key] = bundle_name
+
+        return set(self.bundle_names_by_operator.keys())
+
+    async def get_latest_operator_builds(
+        self, operator_db: KonfluxDb, operator_names: Set[str]
+    ) -> List[KonfluxBuildRecord]:
+        """Get the latest successful build for each operator."""
+
+        tasks = [
+            operator_db.get_latest_build(
+                name=operator_name,
+                group=self.group,
+                assembly=self.assembly,
+                outcome=KonfluxBuildOutcome.SUCCESS,
+                exclude_large_columns=True,
+            )
+            for operator_name in operator_names
+        ]
+
+        builds = await asyncio.gather(*tasks)
+        return [build for build in builds if build]
+
+    async def check_operator(self, bundle_db: KonfluxDb, fbc_db: KonfluxDb, operator: KonfluxBuildRecord):
+        """Check one operator for missing bundle/FBC builds.
+
+        Operators that are already being rebuilt due to source changes
+        are skipped (deduplication).
+        """
+
+        # Deduplication: skip operators already being rebuilt from source changes
+        if operator.name in self.rebuilding_images:
+            self.logger.info(
+                'Skipping bundle/FBC check for %s: already being rebuilt due to source changes', operator.name
+            )
+            return
+
+        bundle = await self.check_bundle_exists(bundle_db, operator)
+
+        if bundle is None or bundle.outcome.is_failure():
+            self.operators_without_bundles.append(operator)
+        elif bundle.outcome == KonfluxBuildOutcome.SUCCESS:
+            fbc = await self.check_fbc_exists(fbc_db, operator, bundle)
+            if fbc is None or fbc.outcome.is_failure():
+                self.operators_without_fbcs.append(operator)
+        # If bundle.outcome == PENDING, do nothing (auto-triggers when complete)
+
+    async def check_bundle_exists(
+        self, bundle_db: KonfluxDb, operator: KonfluxBuildRecord
+    ) -> Optional[KonfluxBundleBuildRecord]:
+        """Check if bundle build exists for operator."""
+
+        bundle_name = self.get_bundle_name(operator.name)
+
+        # Check for successful bundle
+        bundle = await bundle_db.get_latest_build(
+            name=bundle_name,
+            group=self.group,
+            outcome=KonfluxBuildOutcome.SUCCESS,
+            assembly=self.assembly,
+            extra_patterns={'operator_nvr': operator.nvr},
+        )
+
+        if bundle:
+            self.logger.info('  Bundle for %s exists: %s', operator.nvr, bundle.nvr)
+            return bundle
+
+        # Check for the most recent PENDING build
+        pending = await bundle_db.get_latest_build(
+            name=bundle_name,
+            group=self.group,
+            outcome=KonfluxBuildOutcome.PENDING,
+            assembly=self.assembly,
+            extra_patterns={'operator_nvr': operator.nvr},
+        )
+
+        if pending:
+            # Check if a failure record with the same NVR exists
+            async for failed_build in bundle_db.search_builds_by_fields(
+                where={'nvr': pending.nvr, 'outcome': [o for o in KonfluxBuildOutcome if o.is_failure()]},
+                limit=1,
+            ):
+                self.logger.info(
+                    '  Bundle build for %s failed (%s): %s', operator.nvr, failed_build.outcome.value, failed_build.nvr
+                )
+                return failed_build
+
+            self.logger.info('  Bundle build for %s in progress: %s', operator.nvr, pending.nvr)
+            return pending
+
+        self.logger.info('  Bundle MISSING for %s', operator.nvr)
+        return None
+
+    async def check_fbc_exists(
+        self, fbc_db: KonfluxDb, operator: KonfluxBuildRecord, bundle: KonfluxBundleBuildRecord
+    ) -> Optional[KonfluxFbcBuildRecord]:
+        """Check if FBC build exists containing this operator's bundle."""
+
+        fbc_name = self.get_fbc_name(operator.name)
+
+        # Query FBC records containing this bundle NVR
+        async for fbc in fbc_db.search_builds_by_fields(
+            where={
+                'name': fbc_name,
+                'group': self.group,
+                'outcome': KonfluxBuildOutcome.SUCCESS,
+                'assembly': self.assembly,
+            },
+            array_contains={'bundle_nvrs': bundle.nvr},
+            limit=1,
+            order_by='start_time',
+            sorting='DESC',
+        ):
+            self.logger.info('  FBC build for %s exists: %s', operator.nvr, fbc.nvr)
+            return fbc
+
+        # Check for the most recent PENDING build
+        async for fbc in fbc_db.search_builds_by_fields(
+            where={
+                'name': fbc_name,
+                'group': self.group,
+                'outcome': KonfluxBuildOutcome.PENDING,
+                'assembly': self.assembly,
+            },
+            array_contains={'bundle_nvrs': bundle.nvr},
+            limit=1,
+            order_by='start_time',
+            sorting='DESC',
+        ):
+            # Check if a failure record with the same NVR exists
+            async for failed_build in fbc_db.search_builds_by_fields(
+                where={'nvr': fbc.nvr, 'outcome': [o for o in KonfluxBuildOutcome if o.is_failure()]},
+                limit=1,
+            ):
+                self.logger.info(
+                    '  FBC build for %s failed (%s): %s', operator.nvr, failed_build.outcome.value, failed_build.nvr
+                )
+                return failed_build
+
+            self.logger.info('  FBC build for %s in progress: %s', operator.nvr, fbc.nvr)
+            return fbc
+
+        self.logger.info('  FBC MISSING for operator %s', operator.nvr)
+        return None
+
+    def trigger_bundle_builds(self, operators: List[KonfluxBuildRecord]):
+        """Trigger bundle builds for multiple operators in one job."""
+
+        nvrs = [op.nvr for op in operators]
+
+        if self.runtime.dry_run:
+            self.logger.info('[DRY-RUN] Would trigger bundle builds for %d operators: %s', len(nvrs), ', '.join(nvrs))
+            return
+
+        self.logger.info('Triggering bundle builds for %d operators', len(nvrs))
+        jenkins.start_olm_bundle_konflux(
+            build_version=self.version,
+            assembly=self.assembly,
+            operator_nvrs=nvrs,
+            group=self.group,
+        )
+
+    def trigger_fbc_builds(self, operators: List[KonfluxBuildRecord]):
+        """Trigger FBC builds for multiple operators in one job."""
+
+        nvrs = [op.nvr for op in operators]
+
+        if self.runtime.dry_run:
+            self.logger.info('[DRY-RUN] Would trigger FBC builds for %d operators: %s', len(nvrs), ', '.join(nvrs))
+            return
+
+        self.logger.info('Triggering FBC builds for %d operators', len(nvrs))
+        jenkins.start_build_fbc(
+            version=self.version,
+            assembly=self.assembly,
+            operator_nvrs=nvrs,
+            dry_run=False,
+            group=self.group,
+        )
+
+    def get_bundle_name(self, operator_name: str) -> str:
+        """Get bundle name from operator name.
+
+        Uses the bundle short name resolved by ``load_operator_names()``,
+        which honors any ``bundle_name_override`` config. Falls back to the
+        default ``'{operator_name}-bundle'`` pattern.
+        """
+        return self.bundle_names_by_operator.get(operator_name, f'{operator_name}-bundle')
+
+    def get_fbc_name(self, operator_name: str) -> str:
+        """Get FBC name from operator name."""
+        return f'{operator_name}-fbc'
 
 
 @cli.command('layered-products-scan')
