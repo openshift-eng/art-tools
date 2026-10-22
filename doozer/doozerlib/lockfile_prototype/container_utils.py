@@ -14,6 +14,7 @@ import json
 import logging
 import os
 import tempfile
+from enum import Enum
 from pathlib import Path
 
 from artcommonlib import logutil
@@ -27,6 +28,12 @@ from doozerlib.lockfile_prototype.constants import DEFAULT_PLATFORM, DIGEST_PREF
 from doozerlib.lockfile_prototype.utils import build_env
 
 _SBOM_PREDICATE_TYPE = "https://spdx.dev/Document"
+
+
+class RpmdbProbeStatus(Enum):
+    """RPMDB probe outcomes that cannot be represented by package names."""
+
+    ABSENT = "absent"
 
 
 class ContainerImageHelper:
@@ -132,21 +139,28 @@ class ContainerImageHelper:
             return packages
 
         self.logger.info("No usable SBOM for %s [platform=%s]; extracting RPMDB", image_pullspec, platform)
-        return (await self.get_installed_packages_from_rpmdb(image_pullspec, arch)) or []
+        packages = await self.get_installed_packages_from_rpmdb(image_pullspec, arch)
+        if packages is None or packages is RpmdbProbeStatus.ABSENT:
+            return []
+        return packages
 
-    async def get_installed_packages_from_rpmdb(self, image_pullspec: str, arch: str) -> list[str] | None:
+    async def get_installed_packages_from_rpmdb(
+        self, image_pullspec: str, arch: str
+    ) -> list[str] | RpmdbProbeStatus | None:
         """
         Query installed RPM package names directly from an image RPM database.
 
         Unlike get_installed_packages(), this bypasses SBOM data. Returning
         None means the RPM database could not be queried; an empty list means
-        the query succeeded and found no packages.
+        a database was found but contained no packages. RpmdbProbeStatus.ABSENT
+        means both known RPM database paths were confirmed absent.
 
         Arg(s):
             image_pullspec (str): Fully-qualified image pullspec (digest preferred).
             arch (str): Brew architecture to query.
         Return Value(s):
-            list[str] | None: Sorted package names, or None when querying failed.
+            list[str] | RpmdbProbeStatus | None: Package names, confirmed absence,
+                or None when querying failed.
         """
         query_pullspec = self._proxy_pullspec(image_pullspec)
         platform = f"linux/{go_arch_for_brew_arch(arch)}"
@@ -418,7 +432,7 @@ class ContainerImageHelper:
 
     async def _get_installed_packages_from_rpmdb(
         self, image_pullspec: str, platform: str, original_pullspec: str
-    ) -> list[str] | None:
+    ) -> list[str] | RpmdbProbeStatus | None:
         """
         Extract and query an image RPM database with host-side tools.
 
@@ -427,9 +441,11 @@ class ContainerImageHelper:
             platform (str): Image platform in ``os/architecture`` form.
             original_pullspec (str): Original image pullspec used for logging.
         Return Value(s):
-            list[str] | None: Sorted unique package names, or None on command failure.
+            list[str] | RpmdbProbeStatus | None: Sorted package names, confirmed
+                absence, or None on an indeterminate probe failure.
         """
         rpmdb_paths = ("/usr/lib/sysimage/rpm/", "/var/lib/rpm/")
+        probe_failed = False
         with tempfile.TemporaryDirectory() as tmpdir:
             for index, rpmdb_path in enumerate(rpmdb_paths):
                 extract_dir = Path(tmpdir) / f"rpmdb-{index}"
@@ -453,9 +469,12 @@ class ContainerImageHelper:
                     rc, _, stderr = await cmd_gather_async(extract_cmd, check=False)
                 except Exception as exc:
                     self.logger.warning("Failed to extract RPM database from %s: %s", image_pullspec, exc)
+                    probe_failed = True
                     continue
                 if rc != 0:
                     self.logger.debug("RPMDB path %s unavailable for %s: %s", rpmdb_path, image_pullspec, stderr[:200])
+                    if not self._is_missing_rpmdb_path_error(stderr):
+                        probe_failed = True
                     continue
 
                 rpmdb_directories = self._find_rpmdb_directories(extract_dir)
@@ -476,6 +495,7 @@ class ContainerImageHelper:
                         rc, stdout, stderr = await cmd_gather_async(query_cmd, check=False)
                     except Exception as exc:
                         self.logger.warning("Failed to query RPM database from %s: %s", original_pullspec, exc)
+                        probe_failed = True
                         continue
                     if rc == 0:
                         packages = self._parse_package_names(stdout)
@@ -487,9 +507,31 @@ class ContainerImageHelper:
                         )
                         return packages
                     self.logger.debug("RPMDB query failed for %s: %s", original_pullspec, stderr[:200])
+                    probe_failed = True
 
+        if not probe_failed:
+            self.logger.info("No RPM database found in %s [platform=%s]", original_pullspec, platform)
+            return RpmdbProbeStatus.ABSENT
         self.logger.warning("Unable to discover installed packages from %s [platform=%s]", original_pullspec, platform)
         return None
+
+    @staticmethod
+    def _is_missing_rpmdb_path_error(stderr: str) -> bool:
+        """
+        Return whether an image extraction error confirms the requested RPMDB path is absent.
+
+        Arg(s):
+            stderr (str): Error output from ``oc image extract``.
+        Return Value(s):
+            bool: True when the error explicitly reports a missing path.
+        """
+        normalized_stderr = stderr.lower()
+        if "path not found" in normalized_stderr:
+            return True
+        return "rpm" in normalized_stderr and any(
+            message in normalized_stderr
+            for message in ("no such file or directory", "does not exist", "cannot find path")
+        )
 
     @staticmethod
     def _registry_config_arg() -> list[str]:
