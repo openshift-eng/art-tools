@@ -664,23 +664,31 @@ class TestPrepareReleaseLPRun(unittest.TestCase):
 
             pipeline._trigger_bundle_build.assert_not_awaited()
 
+    def test_normal_run_reuses_existing_shipment_mr(self):
+        """Reuse preserves Draft/Ready state and relies on GitLab to trigger CI."""
+        for title in ('Shipment for rhacm2 2.17.3', 'Draft: Shipment for rhacm2 2.17.3'):
+            for dry_run in (False, True):
+                for changed in (False, True):
+                    with self.subTest(title=title, dry_run=dry_run, changed=changed):
+                        self._assert_reuses_existing_shipment_mr(title, dry_run, changed)
+
     @patch('pyartcd.pipelines.prepare_release_lp.reconcile_shipment_mr', new_callable=AsyncMock)
     @patch('pyartcd.pipelines.prepare_release_lp.validate_shipment_mr_for_operation', new_callable=AsyncMock)
-    def test_normal_run_reuses_existing_shipment_mr(self, mock_validate, mock_reconcile):
-        """Reconcile the configured MR without creating or persisting a new pointer."""
+    def _assert_reuses_existing_shipment_mr(self, title, dry_run, changed, mock_validate, mock_reconcile):
         import tempfile
 
         mr_url = "https://gitlab.example/project/-/merge_requests/42"
         existing_mr = MagicMock(
             state='opened',
-            title='Shipment for rhacm2 2.17.3',
+            title=title,
             labels=['stage-release-success', 'reviewed'],
         )
         mock_validate.return_value = (existing_mr, MagicMock(active_stage=(), prod_attempts=()))
+        mock_reconcile.return_value = changed
 
         with tempfile.TemporaryDirectory() as tmp_dir:
             pipeline = self._make_pipeline(tmp_dir, create_mr=True)
-            pipeline.dry_run = False
+            pipeline.dry_run = dry_run
             pipeline._configured_shipment_mr_url = mr_url
             pipeline._check_env_vars = MagicMock()
             pipeline._setup_working_dir = MagicMock()
@@ -720,9 +728,12 @@ class TestPrepareReleaseLPRun(unittest.TestCase):
 
             asyncio.run(pipeline.run())
 
-            self.assertEqual(existing_mr.title, 'Draft: Shipment for rhacm2 2.17.3')
+            self.assertEqual(existing_mr.title, title)
             self.assertEqual(existing_mr.labels, ['reviewed'])
-            existing_mr.save.assert_called_once_with()
+            if dry_run:
+                existing_mr.save.assert_not_called()
+            else:
+                existing_mr.save.assert_called_once_with()
             self.assertEqual(mock_validate.await_count, 3)
             pipeline._verify_assembly_shipment_url.assert_awaited_once_with()
             mock_reconcile.assert_awaited_once_with(
@@ -730,12 +741,14 @@ class TestPrepareReleaseLPRun(unittest.TestCase):
                 existing_mr,
                 {'image': shipment_config},
                 include_fbc_ocp_version=False,
-                dry_run=False,
+                dry_run=dry_run,
             )
             self.assertEqual(pipeline.shipment_mr_url, mr_url)
             pipeline._create_shipment_mr.assert_not_awaited()
             pipeline._update_assembly_with_shipment_url.assert_not_awaited()
-            pipeline._set_shipment_mr_ready.assert_awaited_once_with()
+            pipeline._set_shipment_mr_ready.assert_not_awaited()
+            pipeline._gitlab.set_mr_ready.assert_not_called()
+            pipeline._gitlab.trigger_ci_pipeline.assert_not_called()
 
     @patch('pyartcd.pipelines.prepare_release_lp.validate_shipment_mr_for_operation', new_callable=AsyncMock)
     def test_force_closes_open_previous_mr_before_replacement(self, mock_validate):
@@ -806,10 +819,46 @@ class TestPrepareReleaseLPRun(unittest.TestCase):
                 "https://gitlab.example/project/-/merge_requests/43"
             )
             self.assertEqual(operation_order, ['close', 'create', 'pointer', 'comment'])
+            pipeline._set_shipment_mr_ready.assert_awaited_once_with()
             comment_url, comment_body = pipeline._gitlab.add_mr_comment.call_args.args
             self.assertEqual(comment_url, "https://gitlab.example/project/-/merge_requests/42")
             self.assertIn("merge_requests/43", comment_body)
             self.assertIn("prepare-release-lp run", comment_body)
+
+    def test_new_shipment_mr_is_marked_ready(self):
+        """A first run still makes its new MR ready and starts CI."""
+        import tempfile
+
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            pipeline = self._make_pipeline(tmp_dir, create_mr=True)
+            pipeline.dry_run = False
+            pipeline._check_env_vars = MagicMock()
+            pipeline._setup_working_dir = MagicMock()
+            pipeline._setup_shipment_repo = AsyncMock()
+            pipeline._load_product_from_group_config = AsyncMock(return_value="rhacm2")
+            pipeline._load_assembly = AsyncMock(return_value={'assembly': {'type': 'standard'}})
+            pipeline._extract_operand_nvrs = MagicMock(return_value=['search-v2-api-container-2.17.3-1'])
+            pipeline._trigger_bundle_build = AsyncMock(return_value=([], []))
+            pipeline._trigger_fbc_build = AsyncMock(return_value=([], []))
+            pipeline._create_snapshot = AsyncMock(return_value=[MagicMock()])
+            pipeline._create_shipment_config = MagicMock(return_value=MagicMock())
+            pipeline._load_release_notes_template = MagicMock(return_value=None)
+            mr_url = "https://gitlab.example/project/-/merge_requests/42"
+            pipeline._create_shipment_mr = AsyncMock(return_value=mr_url)
+            pipeline._update_assembly_with_shipment_url = AsyncMock()
+            pipeline.shipment_mr_url = mr_url
+            pipeline.__dict__['_gitlab'] = MagicMock()
+            mr = MagicMock()
+            pipeline._gitlab.set_mr_ready = AsyncMock(return_value=mr)
+            pipeline._gitlab.trigger_ci_pipeline = AsyncMock(return_value="https://gitlab.example/pipelines/42")
+
+            with patch('pyartcd.pipelines.prepare_release_lp.asyncio.sleep', new_callable=AsyncMock):
+                asyncio.run(pipeline.run())
+
+            pipeline._create_shipment_mr.assert_awaited_once()
+            pipeline._update_assembly_with_shipment_url.assert_awaited_once_with(mr_url)
+            pipeline._gitlab.set_mr_ready.assert_awaited_once_with(mr_url)
+            pipeline._gitlab.trigger_ci_pipeline.assert_awaited_once_with(mr)
 
     @patch.object(PrepareReleaseLPPipeline, '_load_release_notes_template', return_value=None)
     @patch.object(PrepareReleaseLPPipeline, '_create_snapshot', new_callable=AsyncMock)

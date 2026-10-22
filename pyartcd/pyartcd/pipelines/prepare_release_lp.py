@@ -61,7 +61,6 @@ from pyartcd.lp_shipment import (
     get_shipment_mr_url,
     reconcile_shipment_mr,
     resolve_shipment_release_plans,
-    set_shipment_mr_draft,
     update_shipment_mr_url,
     validate_shipment_mr_for_operation,
     verify_shipment_mr_url,
@@ -1028,7 +1027,7 @@ class PrepareReleaseLPPipeline:
         if shipments_by_kind:
             if self.create_mr:
                 if existing_mr:
-                    # Revalidate around the draft transition because CI or MR state may have changed
+                    # Revalidate before updating the MR because CI or MR state may have changed
                     # since the initial check performed before the expensive build work.
                     existing_mr, _ = await validate_shipment_mr_for_operation(
                         self._gitlab,
@@ -1043,8 +1042,14 @@ class PrepareReleaseLPPipeline:
                         allow_active_stage=False,
                     )
                     await self._verify_assembly_shipment_url()
-                    set_shipment_mr_draft(existing_mr, self.dry_run)
-                    # Drafting mutates the MR; check again before replacing its shipment files.
+                    # The previous success label no longer describes the regenerated shipment files.
+                    labels = list(existing_mr.labels or [])
+                    if 'stage-release-success' in labels:
+                        labels.remove('stage-release-success')
+                        existing_mr.labels = labels
+                        if not self.dry_run:
+                            existing_mr.save()
+                    # Clearing stage status mutates the MR; check again before replacing its files.
                     await validate_shipment_mr_for_operation(
                         self._gitlab,
                         self.shipment_data_repo,
@@ -1123,7 +1128,8 @@ class PrepareReleaseLPPipeline:
                             run_url=self.job_url,
                             dry_run=self.dry_run,
                         )
-                    await self._set_shipment_mr_ready()
+                    if not existing_mr:
+                        await self._set_shipment_mr_ready()
             else:
                 timestamp = datetime.now(timezone.utc).strftime('%Y%m%d%H%M%S')
                 for kind, config in shipments_by_kind.items():
