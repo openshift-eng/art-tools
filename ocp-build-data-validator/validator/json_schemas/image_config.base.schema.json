@@ -84,7 +84,7 @@
                     },
                     "member-": {},
                     "image": {
-                      "description": "Currently unused",
+                      "description": "External registry image not managed by ocp-build-data",
                       "type": "string",
                       "minLength": 1
                     },
@@ -94,7 +94,18 @@
                     "image?": {
                       "$ref": "#/properties/from/properties/builder/items/properties/image"
                     },
-                    "image-": {}
+                    "image-": {},
+                    "no_rpms": {
+                      "description": "If true, skip RPM lockfile resolution for this builder stage. Use for builder images whose only purpose is content copying (e.g., operator-index catalog images).",
+                      "type": "boolean"
+                    },
+                    "no_rpms!": {
+                      "$ref": "#/properties/from/properties/builder/items/properties/no_rpms"
+                    },
+                    "no_rpms?": {
+                      "$ref": "#/properties/from/properties/builder/items/properties/no_rpms"
+                    },
+                    "no_rpms-": {}
                   }
                 }
               },
@@ -482,7 +493,7 @@
               },
               "member-": {},
               "image": {
-                "description": "Currently unused",
+                "description": "External registry image not managed by ocp-build-data",
                 "type": "string",
                 "minLength": 1
               },
@@ -492,7 +503,18 @@
               "image?": {
                 "$ref": "#/properties/from/properties/builder/items/properties/image"
               },
-              "image-": {}
+              "image-": {},
+              "no_rpms": {
+                "description": "If true, skip RPM lockfile resolution for this builder stage. Use for builder images whose only purpose is content copying (e.g., operator-index catalog images).",
+                "type": "boolean"
+              },
+              "no_rpms!": {
+                "$ref": "#/properties/from/properties/builder/items/properties/no_rpms"
+              },
+              "no_rpms?": {
+                "$ref": "#/properties/from/properties/builder/items/properties/no_rpms"
+              },
+              "no_rpms-": {}
             }
           }
         },
