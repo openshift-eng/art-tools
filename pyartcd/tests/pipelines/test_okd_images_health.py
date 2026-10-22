@@ -21,6 +21,47 @@ def _make_concern(image_name, group, code, **kwargs):
     return concern
 
 
+class TestNotifyOkdChannel(IsolatedAsyncioTestCase):
+    async def test_no_concerns_after_filtering(self):
+        runtime = MagicMock()
+        runtime.working_dir = MagicMock()
+        runtime.logger = MagicMock()
+        slack_client = MagicMock()
+        slack_client.say = AsyncMock()
+        runtime.new_slack_client.return_value = slack_client
+
+        pipeline = ImagesHealthPipeline(
+            runtime=runtime,
+            versions="4.22",
+            send_to_release_channel=False,
+            send_to_okd_channel=True,
+            ping_chai_bot=False,
+            data_path=DATA_PATH,
+            data_gitref="",
+            image_list="",
+            assembly="stream",
+        )
+        pipeline.report = [
+            {
+                "code": ConcernCode.NEVER_BUILT.value,
+                "image_name": "never-built-image",
+                "group": "openshift-4.22",
+            },
+            {
+                "code": ConcernCode.LATEST_BUILD_SUCCEEDED.value,
+                "image_name": "succeeded-image",
+                "group": "openshift-4.22",
+            },
+        ]
+        pipeline.rebase_failures = {"4.22": {}}
+
+        await pipeline.notify_okd_channel()
+
+        slack_client.say.assert_awaited_once_with(
+            ":white_check_mark: All OKD images are healthy for all monitored releases"
+        )
+
+
 class TestGetReport(IsolatedAsyncioTestCase):
     def _make_pipeline(self, versions="4.21", image_list=""):
         runtime = MagicMock()
