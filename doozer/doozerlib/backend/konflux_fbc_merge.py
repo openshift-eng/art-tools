@@ -5,6 +5,7 @@ import copy
 import json
 import os
 import re
+import shutil
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -353,13 +354,19 @@ class LayeredFbcMerger(KonfluxFbcFragmentMerger):
 
     async def _prepare_source(self, build_repo: BuildRepo):
         self.build_source = build_repo
-        # Remove catalogs left by previous runs on this branch before writing the unified catalog.
+        # Replace previous catalog contents and use the package layout required by validate-fbc.
         catalog_dir = build_repo.local_dir / 'catalog'
         for path in catalog_dir.iterdir():
             if path.name != 'catalog.yaml':
                 if path.is_dir():
-                    raise ValueError(f'Unexpected catalog directory in unified FBC source: {path}')
-                path.unlink()
+                    if path.name != self.operator:
+                        raise ValueError(f'Unexpected catalog directory in unified FBC source: {path}')
+                    shutil.rmtree(path)
+                else:
+                    path.unlink()
+        package_dir = catalog_dir / self.operator
+        package_dir.mkdir()
+        (catalog_dir / 'catalog.yaml').rename(package_dir / 'catalog.yaml')
         dfp = DockerfileParser(str(build_repo.local_dir / 'catalog.Dockerfile'))
         dfp.labels['com.redhat.art.name'] = self.name
         dfp.labels['com.redhat.art.nvr'] = self.nvr
