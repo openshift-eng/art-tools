@@ -134,7 +134,13 @@ class MergeLayeredFbcPipeline:
 
 @cli.command('lp-unified-fbc', help='Build a unified layered-product FBC for one OCP target')
 @click.option('--ocp-target-version', required=True, help='Target OCP MAJOR.MINOR version.')
-@click.option('--fbc-build', 'fbc_builds', multiple=True, required=True, help='FBC NVR or pullspec; repeat per build.')
+@click.option(
+    '--fbc-build',
+    'fbc_builds',
+    multiple=True,
+    required=True,
+    help='FBC NVR or pullspec; repeat for each operator and source version, all matching the OCP target.',
+)
 @click.option('--product', help='Require all source builds to belong to this product.')
 @click.option('--data-path', default=constants.OCP_BUILD_DATA_URL)
 @click.option('--fbc-repo')

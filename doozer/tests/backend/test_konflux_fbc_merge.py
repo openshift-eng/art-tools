@@ -41,12 +41,12 @@ def source(version, catalog, channels=None, pkg='quay'):
             release='1.ocp4.20',
             nvr=f'{pkg}-operator-fbc-{version}.1-1.ocp4.20',
             image_pullspec='quay.io/test/fbc@sha256:' + 'a' * 64,
-            bundle_nvrs=[f'quay-operator-bundle-container-{version}.1-1'],
+            bundle_nvrs=[f'{pkg}-operator-bundle-container-{version}.1-1'],
             rebase_repo_url='https://github.com/openshift-priv/art-fbc',
             rebase_commitish='b' * 40,
         ),
         bundle=KonfluxBundleBuildRecord(
-            nvr=f'quay-operator-bundle-container-{version}.1-1', bundle_csv_name=f'{pkg}.v{version}.1'
+            nvr=f'{pkg}-operator-bundle-container-{version}.1-1', bundle_csv_name=f'{pkg}.v{version}.1'
         ),
         package=pkg,
         channels=channels or (f'stable-{version}',),
@@ -107,19 +107,52 @@ class TestMergeLayeredCatalogs(unittest.TestCase):
         self.assertIn(self.baseline[1], result)
         self.assertIn(self.baseline[2], result)
 
-    def test_different_operators_fail(self):
+    def test_multiple_operators_preserve_independent_history_and_defaults(self):
         other = source(
             '3.18',
             [
                 package('other', 'stable'),
-                channel('stable', [{'name': 'other.v1'}], 'other'),
+                channel('stable', [{'name': 'other.v1'}, {'name': 'other.v3.18.1', 'replaces': 'other.v1'}], 'other'),
                 bundle('other.v1', 'other'),
+                bundle('other.v3.18.1', 'other'),
             ],
             channels=('stable',),
             pkg='other',
         )
-        with self.assertRaisesRegex(ValueError, 'exactly one operator package'):
-            merge_layered_catalogs(self.baseline, [self.first, other])
+        third = source(
+            '3.19',
+            [
+                package('third', 'stable'),
+                channel('stable', [{'name': 'third.v3.19.1'}], 'third'),
+                bundle('third.v3.19.1', 'third'),
+            ],
+            channels=('stable',),
+            pkg='third',
+        )
+        baseline = self.baseline + [
+            package('unselected', 'stable'),
+            channel('stable', [{'name': 'unselected.v1'}], 'unselected'),
+            bundle('unselected.v1', 'unselected'),
+        ]
+        inputs = [self.first, self.second, other, third]
+        result = merge_layered_catalogs(baseline, inputs)
+        self.assertEqual(result, merge_layered_catalogs(baseline, list(reversed(inputs))))
+        self.assertEqual(
+            {blob['name']: blob['defaultChannel'] for blob in result if blob['schema'] == 'olm.package'},
+            {'quay': 'stable-3.18', 'other': 'stable', 'third': 'stable'},
+        )
+        self.assertEqual(
+            {blob['name'] for blob in result if blob['schema'] == 'olm.bundle'},
+            {'quay.v3.17.0', 'quay.v3.17.1', 'quay.v3.18.1', 'other.v1', 'other.v3.18.1', 'third.v3.19.1'},
+        )
+        self.assertEqual(
+            next(blob for blob in result if blob['schema'] == 'olm.channel' and blob['package'] == 'other')['entries'],
+            [{'name': 'other.v1'}, {'name': 'other.v3.18.1', 'replaces': 'other.v1'}],
+        )
+
+    def test_empty_inputs_fail(self):
+        with self.assertRaisesRegex(ValueError, 'at least one operator package'):
+            merge_layered_catalogs(self.baseline, [])
 
     def test_missing_selected_csv_name_fails(self):
         self.first.csv_name = ''
@@ -207,8 +240,9 @@ class TestLayeredFbcMerger(unittest.IsolatedAsyncioTestCase):
                 konflux_kubeconfig=None,
                 dry_run=True,
             )
-        self.merger.inputs = [source('3.18', [])]
-        self.merger._set_operator_identity('quay')
+        self.merger.inputs = [source('3.18', [package()])]
+        self.merger.catalog = self.merger.inputs[0].catalog
+        self.merger._set_product_identity()
         self.merger.provenance = {'production_index': 'registry.example/index@sha256:abc'}
         self.merger._build_arches = ['x86_64']
         lookup_patch = patch('doozerlib.backend.konflux_fbc_merge.get_target_fbc_arches', new_callable=AsyncMock)
@@ -236,7 +270,7 @@ class TestLayeredFbcMerger(unittest.IsolatedAsyncioTestCase):
     async def test_replaces_previous_package_catalog_without_stale_files(self):
         for operator in ('quay-operator', 'container-security-operator'):
             with self.subTest(operator=operator):
-                self.merger._set_operator_identity(operator)
+                self.merger.catalog = [package(operator)]
                 directory = Path(self.temp.name) / operator
                 catalog_dir = directory / 'catalog'
                 package_dir = catalog_dir / operator
@@ -245,23 +279,28 @@ class TestLayeredFbcMerger(unittest.IsolatedAsyncioTestCase):
                 (package_dir / 'stale.yaml').write_text('stale package catalog')
                 (catalog_dir / 'stale.yaml').write_text('stale root catalog')
                 (catalog_dir / 'catalog.yaml').write_text('updated catalog')
+                removed_dir = catalog_dir / 'removed-operator'
+                removed_dir.mkdir()
+                (removed_dir / 'catalog.yaml').write_text('removed package')
                 (directory / 'catalog.Dockerfile').write_text('FROM scratch\n')
 
                 await self.merger._prepare_source(SimpleNamespace(local_dir=directory))
 
-                self.assertEqual((package_dir / 'catalog.yaml').read_text(), 'updated catalog')
+                with (package_dir / 'catalog.yaml').open() as catalog_file:
+                    self.assertEqual(list(opm.yaml.load_all(catalog_file)), self.merger.catalog)
                 self.assertEqual(
                     {path.relative_to(catalog_dir) for path in catalog_dir.rglob('*') if path.is_file()},
                     {Path(operator) / 'catalog.yaml'},
                 )
 
-    def test_names_come_from_operator_and_target(self):
-        for operator in ('quay-operator', 'container-security-operator'):
+    def test_names_come_from_product_and_target(self):
+        for product in ('quay', 'logging'):
             for target in ('4.15', '4.22'):
-                with self.subTest(operator=operator, target=target):
+                with self.subTest(product=product, target=target):
+                    self.merger.product = product
                     self.merger.target_version = self.merger.version = target
-                    self.merger._set_operator_identity(operator)
-                    application = f'{operator}-fbc-unified'
+                    self.merger._set_product_identity()
+                    application = f'{product}-fbc-unified'
                     component = f'{application}-{target.replace(".", "-")}'
                     self.assertEqual(self.merger.get_application_name('quay-3.16'), application)
                     self.assertEqual(self.merger.get_component_name('quay-3.16'), component)
@@ -390,6 +429,7 @@ class TestLayeredFbcMerger(unittest.IsolatedAsyncioTestCase):
         self.merger.db.add_build.assert_not_called()
 
     async def test_records_pending_and_success(self):
+        self.merger.inputs += [source('3.17', [], pkg='other'), source('3.19', [], pkg='third')]
         self.merger.db.add_build = Mock()
         plr = {
             'metadata': {'name': 'unified-test'},
@@ -410,7 +450,7 @@ class TestLayeredFbcMerger(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(pending.outcome, KonfluxBuildOutcome.PENDING)
         self.assertIsNone(pending.image_pullspec)
         self.assertEqual(success.image_pullspec, 'quay.io/test/fbc@sha256:' + 'd' * 64)
-        self.assertEqual(success.bundle_nvrs, [self.merger.inputs[0].bundle.nvr])
+        self.assertEqual(success.bundle_nvrs, sorted(item.bundle.nvr for item in self.merger.inputs))
         self.assertEqual(success.build_component, 'quay-fbc-unified-4-20')
         self.assertEqual(success.name, 'quay-fbc-unified')
         self.assertEqual(success.arches, ['x86_64'])
@@ -519,7 +559,7 @@ class TestLayeredFbcMerger(unittest.IsolatedAsyncioTestCase):
         ):
             await self.merger.prepare((selected.record.nvr,))
         self.assertEqual(self.merger.inputs[0].channels, ('stable-3.18',))
-        self.assertEqual(self.merger.provenance['operator'], 'quay')
+        self.assertEqual(self.merger.provenance['operators'], ['quay'])
         self.assertEqual(self.merger.identity, 'quay-fbc-unified-4-20')
         self.assertEqual(self.merger.provenance['inputs'][0]['group_revision'], 'c' * 40)
         self.assertEqual(self.merger.provenance['inputs'][0]['bundle_csv_name'], 'quay.v3.18.1')
@@ -538,16 +578,31 @@ class TestLayeredFbcMerger(unittest.IsolatedAsyncioTestCase):
         repo.ensure_source = AsyncMock()
         repo.commit = AsyncMock()
         repo.push = AsyncMock()
-        self.merger.catalog = [package(), channel('stable-3.17', [{'name': 'quay.v3.17.0'}]), bundle('quay.v3.17.0')]
+        self.merger.catalog = [
+            blob
+            for pkg in ('quay', 'container-security-operator', 'quay-bridge-operator')
+            for blob in (
+                package(pkg, 'stable'),
+                channel('stable', [{'name': f'{pkg}.v1'}], pkg),
+                bundle(f'{pkg}.v1', pkg),
+            )
+        ]
         self.merger._merge_idms = AsyncMock(return_value={})
 
         async def generate(*args, **kwargs):
             (directory / 'catalog.Dockerfile').write_text('FROM scratch\n')
 
         async def validate_catalog(catalog_dir):
-            self.assertEqual({path.name for path in catalog_dir.iterdir()}, {'quay'})
-            with (catalog_dir / 'quay' / 'catalog.yaml').open() as catalog_file:
-                self.assertEqual(list(opm.yaml.load_all(catalog_file)), self.merger.catalog)
+            self.assertEqual(
+                {path.name for path in catalog_dir.iterdir()},
+                {'quay', 'container-security-operator', 'quay-bridge-operator'},
+            )
+            for pkg in ('quay', 'container-security-operator', 'quay-bridge-operator'):
+                with (catalog_dir / pkg / 'catalog.yaml').open() as catalog_file:
+                    self.assertEqual(
+                        list(opm.yaml.load_all(catalog_file)),
+                        [blob for blob in self.merger.catalog if blob.get('package', blob.get('name')) == pkg],
+                    )
 
         with (
             patch('doozerlib.backend.konflux_fbc.BuildRepo', return_value=repo),
@@ -582,7 +637,57 @@ class TestLayeredFbcMerger(unittest.IsolatedAsyncioTestCase):
             )
             for version in ('3.17', '3.18')
         ]
+        await self._prepare_inputs(selected)
+        self.assertEqual(self.merger.identity, 'quay-fbc-unified-4-20')
+        self.assertEqual(self.merger.provenance['operators'], ['container-security-operator'])
+        self.assertEqual({item['group'] for item in self.merger.provenance['inputs']}, {'quay-3.17', 'quay-3.18'})
 
+    async def test_prepare_accepts_three_operators_across_groups_independent_of_order(self):
+        packages = ['quay-operator', 'container-security-operator', 'quay-bridge-operator']
+        selected = [
+            source(
+                version,
+                [
+                    package(pkg, f'stable-{version}'),
+                    channel(f'stable-{version}', [{'name': f'{pkg}.v{version}.1'}], pkg),
+                    bundle(f'{pkg}.v{version}.1', pkg),
+                ],
+                pkg=pkg,
+            )
+            for pkg in packages
+            for version in ('3.17', '3.18')
+        ]
+        await self._prepare_inputs(selected)
+        catalog, provenance = self.merger.catalog, self.merger.provenance
+        await self._prepare_inputs(list(reversed(selected)))
+        self.assertEqual(self.merger.catalog, catalog)
+        self.assertEqual(self.merger.provenance, provenance)
+        self.assertEqual(self.merger.provenance['operators'], sorted(packages))
+        self.assertNotIn('operator', self.merger.provenance)
+        self.assertEqual(len(self.merger.provenance['inputs']), 6)
+        self.assertEqual({blob['name'] for blob in catalog if blob['schema'] == 'olm.package'}, set(packages))
+        self.assertEqual(self.merger.get_application_name(self.runtime.group), 'quay-fbc-unified')
+        self.assertEqual(self.merger.get_component_name(self.runtime.group), 'quay-fbc-unified-4-20')
+        self.assertEqual({call.args[0] for call in self.merger._load_group.call_args_list}, {'quay-3.17', 'quay-3.18'})
+
+    async def test_prepare_rejects_multiple_packages_in_one_source(self):
+        selected = self.merger.inputs[0]
+        selected.catalog += [package('other', 'stable')]
+        with self.assertRaisesRegex(ValueError, 'must contain exactly its source bundle package'):
+            await self._prepare_inputs([selected])
+
+    async def test_prepare_rejects_duplicate_source_selection(self):
+        selected = self.merger.inputs[0]
+        with self.assertRaisesRegex(ValueError, 'Multiple FBC builds supplied'):
+            await self._prepare_inputs([selected, selected])
+
+    async def test_prepare_rejects_mixed_targets(self):
+        selected = [self.merger.inputs[0], source('3.19', [], pkg='other')]
+        selected[1].record.nvr = 'other-operator-fbc-3.19.1-1.ocp4.22'
+        with self.assertRaisesRegex(ValueError, 'not a successful FBC for OCP 4.20'):
+            await self._prepare_inputs(selected)
+
+    async def _prepare_inputs(self, selected):
         async def search(**kwargs):
             yield next(item.record for item in selected if item.record.nvr == kwargs['where']['nvr'])
 
@@ -620,8 +725,6 @@ class TestLayeredFbcMerger(unittest.IsolatedAsyncioTestCase):
             ),
         ):
             await self.merger.prepare(tuple(item.record.nvr for item in selected))
-        self.assertEqual(self.merger.identity, 'container-security-operator-fbc-unified-4-20')
-        self.assertEqual({item['group'] for item in self.merger.provenance['inputs']}, {'quay-3.17', 'quay-3.18'})
 
     async def test_retries_and_records_failed_attempt_before_success(self):
         self.merger.dry_run = False
