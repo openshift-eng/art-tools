@@ -537,3 +537,59 @@ class TestImageSchema(unittest.TestCase):
         error = image_schema.validate('filename', invalid_data)
         self.assertIsNotNone(error)
         self.assertIn("is less than the minimum of 1", error)
+
+    def test_builder_no_rpms_true_is_valid(self):
+        """Builder entry with no_rpms: true should be valid."""
+        valid_data = {
+            'from': {
+                'builder': [
+                    {'stream': 'golang', 'no_rpms': True},
+                ],
+            },
+            'name': 'my-name',
+            'for_payload': True,
+            'delivery': {'delivery_repo_names': ['foo', 'bar']},
+        }
+        self.assertIsNone(image_schema.validate('filename', valid_data))
+
+    def test_builder_no_rpms_false_is_valid(self):
+        """Builder entry with no_rpms: false should be valid."""
+        valid_data = {
+            'from': {
+                'builder': [
+                    {'stream': 'golang', 'no_rpms': False},
+                ],
+            },
+            'name': 'my-name',
+            'for_payload': True,
+            'delivery': {'delivery_repo_names': ['foo', 'bar']},
+        }
+        self.assertIsNone(image_schema.validate('filename', valid_data))
+
+    def test_builder_without_no_rpms_is_valid(self):
+        """Builder entry without no_rpms key should be valid (backward compat)."""
+        valid_data = {
+            'from': {
+                'builder': [
+                    {'stream': 'golang'},
+                ],
+            },
+            'name': 'my-name',
+            'for_payload': True,
+            'delivery': {'delivery_repo_names': ['foo', 'bar']},
+        }
+        self.assertIsNone(image_schema.validate('filename', valid_data))
+
+    def test_builder_no_rpms_wrong_type_is_invalid(self):
+        """Builder entry with no_rpms as string should be invalid."""
+        invalid_data = {
+            'from': {
+                'builder': [
+                    {'stream': 'golang', 'no_rpms': 'yes'},
+                ],
+            },
+            'name': 'my-name',
+            'for_payload': True,
+            'delivery': {'delivery_repo_names': ['foo', 'bar']},
+        }
+        self.assertIn("'yes' is not of type 'boolean'", image_schema.validate('filename', invalid_data))
