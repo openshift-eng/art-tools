@@ -10,8 +10,6 @@ from typing import Optional, Tuple
 
 import click
 import yaml
-from tenacity import retry, stop_after_attempt, wait_exponential
-
 from artcommonlib import exectools, redis
 from artcommonlib.build_visibility import is_release_embargoed
 from artcommonlib.constants import (
@@ -35,6 +33,7 @@ from artcommonlib.util import (
     validate_build_priority,
 )
 from artcommonlib.variants import BuildVariant
+from tenacity import retry, stop_after_attempt, wait_exponential
 
 from pyartcd import constants, jenkins, locks, util
 from pyartcd import record as record_util
