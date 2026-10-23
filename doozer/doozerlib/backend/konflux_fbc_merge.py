@@ -166,10 +166,12 @@ class LayeredFbcMerger(KonfluxFbcFragmentMerger):
     def get_application_name(self, group: str):
         if not self.identity:
             raise ValueError('Prepare the operator inputs before building a unified FBC')
-        return self.identity
+        return self.name.replace('.', '-').replace('_', '-')
 
     def get_component_name(self, group: str):
-        return self.get_application_name(group)
+        if not self.identity:
+            raise ValueError('Prepare the operator inputs before building a unified FBC')
+        return self.identity
 
     def _get_build_arches(self) -> list[str]:
         if self._build_arches is None:
