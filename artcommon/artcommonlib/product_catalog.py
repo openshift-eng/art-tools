@@ -99,6 +99,7 @@ PRODUCT_CATALOG: tuple[ProductConfig, ...] = (
             (1, 4): "kueue-advisory-stage-1-4",
             (1, 5): "kueue-advisory-stage-1-5",
         },
+        cpe_product_name="kueue_operator",
     ),
     ProductConfig(
         product_id=ProductId.EXTERNAL_SECRETS,
