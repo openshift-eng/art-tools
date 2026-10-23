@@ -186,6 +186,10 @@ PRODUCT_CATALOG: tuple[ProductConfig, ...] = (
             release_plan="quay-images-base-silent",
             application="quay-images-base",
         ),
+        conforma_stage_policies=ConformaPolicies(
+            image_policy="rhtap-releng-tenant/registry-art-quay-stage",
+            fbc_policy="rhtap-releng-tenant/fbc-stage",
+        ),
         fbc_stage_release_plans={
             (3, 9): "quay-advisory-stage-3-9",
             (3, 10): "quay-advisory-stage-3-10",
