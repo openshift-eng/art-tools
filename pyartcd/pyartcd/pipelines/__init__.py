@@ -53,6 +53,8 @@ from . import (
     tag_rpms,
     tarball_sources,
     update_golang,
+    verify_advisory_transition,
+    verify_cdn_push,
     verify_release,
     verify_stage_testing,
 )
@@ -108,6 +110,8 @@ __all__ = [
     'tag_rpms',
     'tarball_sources',
     'update_golang',
+    'verify_advisory_transition',
+    'verify_cdn_push',
     'verify_release',
     'verify_stage_testing',
 ]

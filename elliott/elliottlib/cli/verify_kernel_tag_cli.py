@@ -14,7 +14,7 @@ from elliottlib.cli.common import cli, click_coroutine
 from elliottlib.errata_async import AsyncErrataAPI
 from elliottlib.verify_common import (
     VerifyResultBase,
-    get_assembly_advisory_ids,
+    get_ocp_release_advisory_ids,
     handle_verify_result,
     verify_output_option,
 )
@@ -268,7 +268,7 @@ async def verify_kernel_tag_cli(runtime, output):
     if not kernel_packages or not stop_ship_tag:
         raise click.UsageError("No kernel packages or stop_ship_tag found in rpm_deliveries config.")
 
-    advisories = get_assembly_advisory_ids(runtime, include_types=KERNEL_TAG_ADVISORY_TYPES)
+    advisories = get_ocp_release_advisory_ids(runtime, include_types=KERNEL_TAG_ADVISORY_TYPES)
     if not advisories:
         raise click.UsageError(f"No advisory IDs found for {KERNEL_TAG_ADVISORY_TYPES} in assembly config.")
 
