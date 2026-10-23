@@ -10,6 +10,8 @@ from typing import Optional, Tuple
 
 import click
 import yaml
+from tenacity import retry, stop_after_attempt, wait_exponential
+
 from artcommonlib import exectools, redis
 from artcommonlib.build_visibility import is_release_embargoed
 from artcommonlib.constants import (
@@ -54,6 +56,25 @@ from pyartcd.util import (
 )
 
 LOGGER = logging.getLogger(__name__)
+
+
+@retry(reraise=True, stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=1, max=10))
+async def _retry_reset_fail_counter(branch: str) -> None:
+    """
+    Retry a fail-counter reset when Redis has a transient error.
+    """
+    await reset_fail_counter(branch)
+
+
+async def _reset_fail_counter_best_effort(branch: str) -> None:
+    """
+    Reset a fail counter without letting Redis errors fail the Konflux job.
+    """
+    try:
+        await _retry_reset_fail_counter(branch)
+    except Exception:
+        LOGGER.warning("Failed to reset fail counter in Redis after retries")
+
 
 # ART-built RHCOS images that require integration testing after rebuild.
 # Covers both RHEL 9 (default) and RHEL 10 variants of node image and extensions.
@@ -252,7 +273,7 @@ class KonfluxOcpPipeline:
             requested_images=[],
             images_excluded=self.build_plan.images_excluded,
             state_path=Path(self.runtime.doozer_working, "state.yaml"),
-            reset_counter=reset_fail_counter,
+            reset_counter=_reset_fail_counter_best_effort,
             increment_counter=increment_fail_counter,
         )
 
@@ -420,7 +441,7 @@ class KonfluxOcpPipeline:
                 built_images=built_images,
                 failed_images=failed_images,
                 failed_entries=failed_entries,
-                reset_counter=reset_fail_counter,
+                reset_counter=_reset_fail_counter_best_effort,
                 increment_counter=increment_fail_counter,
             )
         )
