@@ -62,6 +62,7 @@ class Jobs(Enum):
     VERIFY_STAGE_TESTING = 'verify%2Fverify-stage-testing'
     VERIFY_CDN_PUSH = 'verify%2Fverify-cdn-push'
     VERIFY_RELEASE = 'verify%2Fverify-release'
+    VERIFY_ADVISORY_TRANSITION = 'verify%2Fverify-advisory-transition'
 
 
 def get_jenkins_url():
@@ -698,6 +699,18 @@ def start_verify_release(version: str, assembly: str, **kwargs) -> Optional[str]
     }
     return start_build(
         job=Jobs.VERIFY_RELEASE,
+        params=params,
+        **kwargs,
+    )
+
+
+def start_verify_advisory_transition(version: str, assembly: str, **kwargs) -> Optional[str]:
+    params = {
+        'BUILD_VERSION': version,
+        'ASSEMBLY': assembly,
+    }
+    return start_build(
+        job=Jobs.VERIFY_ADVISORY_TRANSITION,
         params=params,
         **kwargs,
     )

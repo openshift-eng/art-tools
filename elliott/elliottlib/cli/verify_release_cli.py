@@ -135,9 +135,7 @@ def _handle_mark(runtime, mr_url: str, output: str) -> None:
     else:
         try:
             gitlab_client = GitLabClient.from_url(mr_url)
-            project_path, mr_iid = GitLabClient._parse_mr_url(mr_url)
-            project = gitlab_client.get_project(project_path)
-            project.mergerequests.update(int(mr_iid), add_labels=VERIFY_RELEASE_SUCCESS_LABEL)
+            gitlab_client.add_mr_labels(mr_url, [VERIFY_RELEASE_SUCCESS_LABEL])
             LOGGER.info("Added label '%s' to MR %s", VERIFY_RELEASE_SUCCESS_LABEL, mr_url)
             result.label_added = True
         except Exception as exc:
