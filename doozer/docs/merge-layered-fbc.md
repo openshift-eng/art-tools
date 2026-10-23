@@ -45,9 +45,12 @@ from the actual bundle image, rather than the database's `bundle_csv_name`, whic
 can come from an outdated package YAML. That CSV must exist as an `olm.bundle`
 for that package and appear in every declared channel. Its name is saved in provenance.
 
-The output application/component is derived from the operator package and target,
-for example `container-security-operator-fbc-unified-4-22`. Its source branch is
-`art-container-security-operator-fbc-unified-4-22`. Successful builds receive a
+The output application is derived from the operator package, for example
+`quay-operator-fbc-unified`. All OCP targets for that operator share this application,
+with a separate component per target, such as `quay-operator-fbc-unified-4-15`.
+For `container-security-operator`, the application is `container-security-operator-fbc-unified`
+and the OCP 4.22 component is `container-security-operator-fbc-unified-4-22`.
+Its source branch is `art-container-security-operator-fbc-unified-4-22`. Successful builds receive a
 unique `container-security-operator-fbc-unified-4.22-<timestamp>.ocp4.22` NVR.
 Database records and ART name labels use `container-security-operator-fbc-unified`;
 records retain the existing execution group, `stream` assembly, and all source bundle NVRs.
