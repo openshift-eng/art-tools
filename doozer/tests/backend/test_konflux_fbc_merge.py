@@ -14,6 +14,7 @@ from artcommonlib.konflux.konflux_build_record import (
 from artcommonlib.model import Model
 from artcommonlib.util import KubeCondition
 from dockerfile_parse import DockerfileParser
+from doozerlib import opm
 from doozerlib.backend.konflux_client import KonfluxClient
 from doozerlib.backend.konflux_fbc import get_target_fbc_arches
 from doozerlib.backend.konflux_fbc_merge import LayeredFbcInput, LayeredFbcMerger, merge_layered_catalogs
@@ -229,6 +230,30 @@ class TestLayeredFbcMerger(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(dfp.labels['com.redhat.art.name'], 'quay-fbc-unified')
         self.assertEqual(json.loads((directory / 'unified-provenance.json').read_text()), self.merger.provenance)
         self.assertEqual(self.merger.get_application_name('quay-3.18'), 'quay-fbc-unified-4-20')
+        self.assertTrue((directory / 'catalog' / 'quay' / 'catalog.yaml').is_file())
+        self.assertFalse((directory / 'catalog' / 'catalog.yaml').exists())
+
+    async def test_replaces_previous_package_catalog_without_stale_files(self):
+        for operator in ('quay-operator', 'container-security-operator'):
+            with self.subTest(operator=operator):
+                self.merger._set_operator_identity(operator)
+                directory = Path(self.temp.name) / operator
+                catalog_dir = directory / 'catalog'
+                package_dir = catalog_dir / operator
+                package_dir.mkdir(parents=True)
+                (package_dir / 'catalog.yaml').write_text('previous catalog')
+                (package_dir / 'stale.yaml').write_text('stale package catalog')
+                (catalog_dir / 'stale.yaml').write_text('stale root catalog')
+                (catalog_dir / 'catalog.yaml').write_text('updated catalog')
+                (directory / 'catalog.Dockerfile').write_text('FROM scratch\n')
+
+                await self.merger._prepare_source(SimpleNamespace(local_dir=directory))
+
+                self.assertEqual((package_dir / 'catalog.yaml').read_text(), 'updated catalog')
+                self.assertEqual(
+                    {path.relative_to(catalog_dir) for path in catalog_dir.rglob('*') if path.is_file()},
+                    {Path(operator) / 'catalog.yaml'},
+                )
 
     def test_names_come_from_operator_and_target(self):
         self.merger._set_operator_identity('container-security-operator')
@@ -509,10 +534,17 @@ class TestLayeredFbcMerger(unittest.IsolatedAsyncioTestCase):
         async def generate(*args, **kwargs):
             (directory / 'catalog.Dockerfile').write_text('FROM scratch\n')
 
+        async def validate_catalog(catalog_dir):
+            self.assertEqual({path.name for path in catalog_dir.iterdir()}, {'quay'})
+            with (catalog_dir / 'quay' / 'catalog.yaml').open() as catalog_file:
+                self.assertEqual(list(opm.yaml.load_all(catalog_file)), self.merger.catalog)
+
         with (
             patch('doozerlib.backend.konflux_fbc.BuildRepo', return_value=repo),
             patch('doozerlib.backend.konflux_fbc.opm.generate_dockerfile', new=AsyncMock(side_effect=generate)),
-            patch('doozerlib.backend.konflux_fbc.opm.validate', new=AsyncMock()) as validate,
+            patch(
+                'doozerlib.backend.konflux_fbc.opm.validate', new=AsyncMock(side_effect=validate_catalog)
+            ) as validate,
         ):
             result = await self.merger.merge('quay.io/example/art-fbc')
         validate.assert_awaited_once_with(directory / 'catalog')
@@ -521,7 +553,7 @@ class TestLayeredFbcMerger(unittest.IsolatedAsyncioTestCase):
         self.merger._konflux_client.ensure_git_auth_secret.assert_not_called()
         self.assertIsNone(result['pullspec'])
         self.assertIsNone(result['provenance_url'])
-        self.assertTrue((directory / 'catalog' / 'catalog.yaml').is_file())
+        self.assertTrue((directory / 'catalog' / 'quay' / 'catalog.yaml').is_file())
 
     async def test_prepare_accepts_same_operator_across_groups(self):
         selected = [
