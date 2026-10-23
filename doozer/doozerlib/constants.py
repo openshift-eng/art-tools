@@ -87,6 +87,7 @@ PRODUCT_EC_POLICY_MAP = {
     "oadp": "rhtap-releng-tenant/registry-art-oadp-stage",
     "ocp": KONFLUX_DEFAULT_EC_POLICY_CONFIGURATION,
     "openshift-logging": "rhtap-releng-tenant/registry-art-logging-stage",
+    "quay": "rhtap-releng-tenant/registry-art-quay-stage",
     "rhmtc": "rhtap-releng-tenant/registry-art-mtc-stage",
 }
 
