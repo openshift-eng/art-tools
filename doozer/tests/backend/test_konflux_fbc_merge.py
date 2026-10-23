@@ -229,7 +229,7 @@ class TestLayeredFbcMerger(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(dfp.envs['__doozer_bundle_nvrs'], self.merger.inputs[0].bundle.nvr)
         self.assertEqual(dfp.labels['com.redhat.art.name'], 'quay-fbc-unified')
         self.assertEqual(json.loads((directory / 'unified-provenance.json').read_text()), self.merger.provenance)
-        self.assertEqual(self.merger.get_application_name('quay-3.18'), 'quay-fbc-unified-4-20')
+        self.assertEqual(self.merger.get_application_name('quay-3.18'), 'quay-fbc-unified')
         self.assertTrue((directory / 'catalog' / 'quay' / 'catalog.yaml').is_file())
         self.assertFalse((directory / 'catalog' / 'catalog.yaml').exists())
 
@@ -256,11 +256,18 @@ class TestLayeredFbcMerger(unittest.IsolatedAsyncioTestCase):
                 )
 
     def test_names_come_from_operator_and_target(self):
-        self.merger._set_operator_identity('container-security-operator')
-        self.assertEqual(self.merger.get_component_name('quay-3.16'), 'container-security-operator-fbc-unified-4-20')
-        self.assertEqual(self.merger.fbc_git_branch, 'art-container-security-operator-fbc-unified-4-20')
-        self.assertEqual(self.merger.working_dir.name, 'container-security-operator-fbc-unified-4-20')
-        self.assertEqual(self.merger.nvr, f'container-security-operator-fbc-unified-4.20-{self.merger.release}')
+        for operator in ('quay-operator', 'container-security-operator'):
+            for target in ('4.15', '4.22'):
+                with self.subTest(operator=operator, target=target):
+                    self.merger.target_version = self.merger.version = target
+                    self.merger._set_operator_identity(operator)
+                    application = f'{operator}-fbc-unified'
+                    component = f'{application}-{target.replace(".", "-")}'
+                    self.assertEqual(self.merger.get_application_name('quay-3.16'), application)
+                    self.assertEqual(self.merger.get_component_name('quay-3.16'), component)
+                    self.assertEqual(self.merger.fbc_git_branch, f'art-{component}')
+                    self.assertEqual(self.merger.working_dir.name, component)
+                    self.assertEqual(self.merger.nvr, f'{application}-{target}-{self.merger.release}')
 
     async def test_submission_and_records_use_target_architectures(self):
         client = self.merger._konflux_client
@@ -327,7 +334,10 @@ class TestLayeredFbcMerger(unittest.IsolatedAsyncioTestCase):
                 identity = f'quay-fbc-unified-{target.replace(".", "-")}'
                 self.assertEqual(submitted['generate_name'], f'{identity}-')
                 self.assertEqual(submitted['component_name'], identity)
-                self.assertEqual(submitted['application_name'], identity)
+                self.assertEqual(submitted['application_name'], 'quay-fbc-unified')
+                client.ensure_application.assert_awaited_with('quay-fbc-unified', 'quay-fbc-unified')
+                self.assertEqual(client.ensure_component.await_args.kwargs['application'], 'quay-fbc-unified')
+                self.assertEqual(client.ensure_component.await_args.kwargs['name'], identity)
                 self.assertEqual(submitted['target_branch'], f'art-{identity}')
                 self.assertEqual(submitted['building_arches'], target_arches)
                 plr = Mock()
