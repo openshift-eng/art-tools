@@ -1007,7 +1007,10 @@ class ConfigScanSources:
     @alru_cache
     async def get_builder_build_nvr(self, builder_image_name: str):
         """
-        Given a builder stream definition,
+        Given a builder stream definition, return a tuple of (nvr, image_created_datetime).
+        The image_created_datetime is parsed from the image's config.created field and can be
+        used as a fallback when the NVR cannot be found in Konflux DB or Brew.
+        Returns (None, None) if the NVR cannot be constructed from image labels.
         """
 
         if "." in builder_image_name.split('/', 2)[0]:
@@ -1029,6 +1032,19 @@ class ConfigScanSources:
             await oc_image_info_for_arch_async(builder_image_url, registry_config=builder_auth_file)
         )
         builder_info_labels = latest_builder_image_info.config.config.Labels
+
+        # Extract config.created timestamp for fallback use when Konflux DB and Brew
+        # cannot find the build record (e.g. non-ART images like rhel9 stream)
+        image_created = None
+        config_created = latest_builder_image_info.config.created
+        if config_created is not Missing and config_created:
+            try:
+                image_created = dateutil.parser.parse(str(config_created))
+                if image_created.tzinfo is None:
+                    image_created = image_created.replace(tzinfo=timezone.utc)
+            except (ValueError, TypeError) as e:
+                self.logger.warning('Could not parse config.created for %s: %s', builder_image_name, e)
+
         builder_nvr_list = [
             builder_info_labels['com.redhat.component'],
             builder_info_labels['version'],
@@ -1039,18 +1055,21 @@ class ConfigScanSources:
             self.logger.warning(
                 f'Builder image {builder_image_name} does not have the labels necessary to construct NVR (com.redhat.component, version, release). Available labels: {builder_info_labels}'
             )
-            return None
+            return None, None
 
         builder_image_nvr = '-'.join(builder_nvr_list)
 
-        return builder_image_nvr
+        return builder_image_nvr, image_created
 
     @alru_cache
-    async def get_builder_build_start_time(self, builder_build_nvr: str) -> Optional[datetime]:
+    async def get_builder_build_start_time(
+        self, builder_build_nvr: str, image_created: Optional[datetime] = None
+    ) -> Optional[datetime]:
         """
         Given a builder pullspec, determine the build start time.
         First check if the build is tracked inside the Konflux DB.
         If it's not, query Brew API to get the Brew build result. Querying Brew API will eventually go away.
+        If neither source has the build, fall back to the image's config.created timestamp.
         """
 
         # Look for the build record in Konflux DB using optimized NVR lookup.
@@ -1070,8 +1089,14 @@ class ConfigScanSources:
             if builder_brew_build:
                 return dateutil.parser.parse(builder_brew_build['creation_time']).replace(tzinfo=timezone.utc)
 
-            # No builder build info?
-            self.logger.warning('Could not fetch build info for %s', builder_build_nvr)
+        # Neither Konflux DB nor Brew has the build record. Fall back to image config.created
+        # timestamp if available (e.g. non-ART images like rhel9 stream).
+        if image_created:
+            self.logger.info('Using image config.created timestamp as fallback for build time of %s', builder_build_nvr)
+            return image_created
+
+        # No builder build info at all
+        self.logger.warning('Could not fetch build info for %s', builder_build_nvr)
 
     @skip_check_if_changing
     @start_as_current_span_async(TRACER, "scan-sources-konflux.scan-builders-changes")
@@ -1103,7 +1128,7 @@ class ConfigScanSources:
                 builder_image_name = stream_config.image
             else:
                 raise IOError(f'Unable to determine builder or parent image pullspec from {builder}')
-            builder_build_nvr = await self.get_builder_build_nvr(builder_image_name)
+            builder_build_nvr, image_created = await self.get_builder_build_nvr(builder_image_name)
 
             if not builder_build_nvr:
                 if builder.stream:
@@ -1114,8 +1139,10 @@ class ConfigScanSources:
                 # If it's a direct image reference, skip it (likely an external/upstream image)
                 continue
 
-            # Get the builder build start time
-            builder_build_start_time = await self.get_builder_build_start_time(builder_build_nvr)
+            # Get the builder build start time, with image_created as fallback
+            builder_build_start_time = await self.get_builder_build_start_time(
+                builder_build_nvr, image_created=image_created
+            )
             if not builder_build_start_time:
                 continue
 
