@@ -193,6 +193,7 @@ async def validate_fbc_related_images(
     *,
     assembly: Optional[str] = None,
     version_scoped: bool = True,
+    ignore_patch_version: bool = False,
 ) -> List[str]:
     """
     Validate that FBC pullspecs from the same operator have the same related images.
@@ -212,6 +213,9 @@ async def validate_fbc_related_images(
     ``extract_versioned_related_images_from_fbc``): assembly when it is a real
     release version, otherwise the version parsed from the FBC NVR/tag.
     ``assembly='stream'`` falls through to the FBC tag.
+
+    With ``ignore_patch_version``, version-scoped extraction selects the bundle
+    recorded in FBC metadata and checks only the assembly's major/minor train.
 
     When ``version_scoped`` is false (``--ocp-optional``), use the unscoped
     OCP extractor (``related-images.json`` / all catalog bundles) so
@@ -313,6 +317,7 @@ async def validate_fbc_related_images(
                 product,
                 assembly=assembly if version_scoped else None,
                 version_scoped=version_scoped,
+                ignore_patch_version=ignore_patch_version if version_scoped else False,
             )
         )
         all_related_images.update(related_nvrs)
