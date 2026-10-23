@@ -18,17 +18,22 @@ class TestMergeLayeredFbcPipeline(unittest.IsolatedAsyncioTestCase):
         self.addCleanup(self.temp.cleanup)
         self.runtime = Mock(working_dir=Path(self.temp.name), doozer_working='/tmp/doozer', dry_run=False)
         self.result = {
-            'nvr': 'container-security-operator-fbc-unified-5.0-1.ocp5.0',
+            'nvr': 'quay-fbc-unified-5.0-1.ocp5.0',
             'pullspec': 'quay.io/test/fbc@sha256:abc',
             'build_url': 'https://konflux.example/build',
             'dry_run': False,
-            'provenance': {},
+            'provenance': {'operators': ['container-security-operator', 'quay-bridge-operator', 'quay-operator']},
         }
         (Path(self.temp.name) / 'unified-fbc.json').write_text(json.dumps(self.result))
         self.pipeline = MergeLayeredFbcPipeline(
             runtime=self.runtime,
             ocp_target_version='5.0',
-            fbc_builds=('quay-fbc-3.18.2-1.ocp5.0', 'quay-fbc-3.19.1-1.ocp5.0'),
+            fbc_builds=(
+                'quay-operator-fbc-3.18.2-1.ocp5.0',
+                'quay-operator-fbc-3.19.1-1.ocp5.0',
+                'container-security-operator-fbc-3.18.2-1.ocp5.0',
+                'quay-bridge-operator-fbc-3.19.1-1.ocp5.0',
+            ),
         )
         self.pipeline.group = 'quay-3.18'
         self.pipeline._resolve_groups = AsyncMock(return_value=['quay-3.18', 'quay-3.19'])
@@ -42,7 +47,10 @@ class TestMergeLayeredFbcPipeline(unittest.IsolatedAsyncioTestCase):
         cmd = command.await_args.args[0]
         self.assertIn('--group=quay-3.18', cmd)
         self.assertIn('--major-minor=5.0', cmd)
-        self.assertEqual(cmd.count('--fbc-build'), 2)
+        self.assertEqual(cmd.count('--fbc-build'), 4)
+        self.assertEqual(
+            tuple(cmd[i + 1] for i, value in enumerate(cmd) if value == '--fbc-build'), self.pipeline.builds
+        )
         self.assertIn('/tmp/quay-kubeconfig', cmd)
         self.assertIn('clair-scan', cmd)
         self.assertNotIn('--dry-run', cmd)
@@ -110,3 +118,20 @@ class TestMergeLayeredFbcPipeline(unittest.IsolatedAsyncioTestCase):
         ):
             with self.assertRaisesRegex(RuntimeError, 'failed'):
                 await self.pipeline._build()
+
+    async def test_mixed_products_fail_before_build(self):
+        with (
+            patch(
+                'pyartcd.pipelines.merge_layered_fbc.load_group_config',
+                new=AsyncMock(
+                    side_effect=[
+                        {'product': 'quay', 'OCP_TARGET_VERSIONS': ['5.0']},
+                        {'product': 'logging', 'OCP_TARGET_VERSIONS': ['5.0']},
+                    ]
+                ),
+            ),
+            patch.object(self.pipeline, '_build', new=AsyncMock()) as build,
+        ):
+            with self.assertRaisesRegex(ValueError, 'belongs to logging, expected product quay'):
+                await self.pipeline.run()
+        build.assert_not_awaited()

@@ -65,8 +65,8 @@ def _catalog_index(blobs: list[dict], packages: set[str]) -> dict[tuple[str, str
 def merge_layered_catalogs(baseline: list[dict], inputs: list[LayeredFbcInput]) -> list[dict]:
     """Overlay only the channels owned by the supplied bundles onto production."""
     packages = {source.package for source in inputs}
-    if len(packages) != 1:
-        raise ValueError(f'A unified FBC requires exactly one operator package; got {sorted(packages)}')
+    if not packages:
+        raise ValueError('A unified FBC requires at least one operator package')
     merged = _catalog_index(baseline, packages)
     owners = {}
     defaults = {package: set() for package in packages}
@@ -140,7 +140,6 @@ class LayeredFbcMerger(KonfluxFbcFragmentMerger):
         self.runtime = runtime
         self.target_version = target_version
         self.product = runtime.product
-        self.operator = None
         self.identity = None
         self.name = None
         self.version = target_version
@@ -178,9 +177,8 @@ class LayeredFbcMerger(KonfluxFbcFragmentMerger):
             raise ValueError('Prepare the target architectures before building a unified FBC')
         return self._build_arches
 
-    def _set_operator_identity(self, package: str):
-        self.operator = package
-        self.name = f'{package}-fbc-unified'
+    def _set_product_identity(self):
+        self.name = f'{self.product}-fbc-unified'
         self.identity = f'{self.name}-{self.target_version}'.replace('.', '-').replace('_', '-')
         self.nvr = f'{self.name}-{self.version}-{self.release}'
         self.working_dir = Path(self.runtime.working_dir) / 'konflux-fbc-sources' / self.identity
@@ -301,10 +299,10 @@ class LayeredFbcMerger(KonfluxFbcFragmentMerger):
         )
         baseline_blobs = await opm.render(baseline, auth=auth, migrate_level=migrate_level)
         self.catalog = merge_layered_catalogs(baseline_blobs, self.inputs)
-        self._set_operator_identity(self.inputs[0].package)
+        self._set_product_identity()
         self.provenance = {
             'product': self.product,
-            'operator': self.operator,
+            'operators': sorted({source.package for source in self.inputs}),
             'ocp_target_version': self.target_version,
             'production_index': baseline,
             'execution_group': self.runtime.group,
@@ -359,16 +357,18 @@ class LayeredFbcMerger(KonfluxFbcFragmentMerger):
         # Replace previous catalog contents and use the package layout required by validate-fbc.
         catalog_dir = build_repo.local_dir / 'catalog'
         for path in catalog_dir.iterdir():
-            if path.name != 'catalog.yaml':
-                if path.is_dir():
-                    if path.name != self.operator:
-                        raise ValueError(f'Unexpected catalog directory in unified FBC source: {path}')
-                    shutil.rmtree(path)
-                else:
-                    path.unlink()
-        package_dir = catalog_dir / self.operator
-        package_dir.mkdir()
-        (catalog_dir / 'catalog.yaml').rename(package_dir / 'catalog.yaml')
+            if path.is_dir() and not path.is_symlink():
+                shutil.rmtree(path)
+            else:
+                path.unlink()
+        catalogs = {}
+        for blob in self.catalog:
+            catalogs.setdefault(_package(blob), []).append(blob)
+        for package, blobs in sorted(catalogs.items()):
+            package_dir = catalog_dir / package
+            package_dir.mkdir()
+            with (package_dir / 'catalog.yaml').open('w') as catalog_file:
+                opm.yaml.dump_all(blobs, catalog_file)
         dfp = DockerfileParser(str(build_repo.local_dir / 'catalog.Dockerfile'))
         dfp.labels['com.redhat.art.name'] = self.name
         dfp.labels['com.redhat.art.nvr'] = self.nvr

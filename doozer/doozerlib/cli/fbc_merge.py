@@ -16,7 +16,11 @@ from doozerlib.runtime import Runtime
 @cli.command('beta:fbc:merge-layered', short_help='Build a unified layered-product FBC for one OCP target')
 @pass_runtime
 @click.option(
-    '--fbc-build', 'builds', multiple=True, required=True, help='Source FBC NVR or pullspec. Repeat per build.'
+    '--fbc-build',
+    'builds',
+    multiple=True,
+    required=True,
+    help='Source FBC NVR or pullspec. Repeat for each operator and source version; all must match the OCP target.',
 )
 @click.option('--major-minor', required=True, help='Target OCP MAJOR.MINOR version, e.g. 4.20 or 5.0.')
 @click.option('--fbc-repo', default=constants.ART_FBC_GIT_REPO, show_default=True)
