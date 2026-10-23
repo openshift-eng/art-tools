@@ -95,6 +95,10 @@ PRODUCT_CATALOG: tuple[ProductConfig, ...] = (
             release_plan="kueue-images-base-silent",
             application="kueue-images-base",
         ),
+        fbc_stage_release_plans={
+            (1, 4): "kueue-advisory-stage-1-4",
+            (1, 5): "kueue-advisory-stage-1-5",
+        },
     ),
     ProductConfig(
         product_id=ProductId.EXTERNAL_SECRETS,
