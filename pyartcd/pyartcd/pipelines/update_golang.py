@@ -29,6 +29,7 @@ from tenacity import before_sleep_log, retry, retry_if_exception_type, stop_afte
 
 from pyartcd import constants, jenkins
 from pyartcd.cli import cli, click_coroutine, pass_runtime
+from pyartcd.plashets import plashet_config_for_major_minor
 from pyartcd.runtime import Runtime
 from pyartcd.util import default_release_suffix, kinit
 
@@ -634,6 +635,7 @@ class UpdateGolangPipeline:
 
     async def process_build(self, el_v, nvr):
         await self.ensure_signed(el_v, nvr)
+        await self.ensure_plashet_packages_signed(el_v)
         if not is_latest(self.ocp_version, el_v, nvr, self.koji_session):
             if not self.tag_builds:
                 return False
@@ -706,6 +708,9 @@ class UpdateGolangPipeline:
             return
 
         signing_tag = f'rhaos-{self.ocp_version}-rhel-{el_v}-golang'
+        if any(tag['name'] == signing_tag for tag in self.koji_session.listTags(build=nvr)):
+            _LOGGER.info(f"{nvr} is already in {signing_tag}, waiting for auto-signing")
+            return
         self.brew_login()
         if self.dry_run:
             _LOGGER.info(f"[DRY RUN] Would have tagged {nvr} into {signing_tag} for auto-signing")
@@ -714,6 +719,25 @@ class UpdateGolangPipeline:
             _LOGGER.info(f"Tagged {nvr} into {signing_tag} for auto-signing")
             await self._slack_client.say_in_thread(f"Tagged {nvr} into {signing_tag} for auto-signing")
             # Polling for the signed RPM to appear in brewroot is handled by the plashet build
+
+    async def ensure_plashet_packages_signed(self, el_v):
+        """
+        The golang plashet requires every package it includes to be signed, not only golang.
+        Send the latest build of each companion package (e.g. goversioninfo) for auto-signing too.
+
+        :param el_v: RHEL major version of the golang plashet
+        """
+        if not self.is_production_assembly:
+            return
+        major, minor = self.ocp_version.split('.')
+        plashet = plashet_config_for_major_minor(major, minor).get(f"rhel-{el_v}-golang-rpms")
+        if not plashet:
+            return
+        for package in plashet.get("include_packages", []):
+            if package == "golang":
+                continue
+            for build in self.koji_session.listTagged(plashet["tag"], package=package, latest=True, inherit=True):
+                await self.ensure_signed(el_v, build["nvr"])
 
     @staticmethod
     def is_rpm_signed(parsed_nvr):

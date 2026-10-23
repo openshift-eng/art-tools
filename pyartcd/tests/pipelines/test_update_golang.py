@@ -1419,9 +1419,10 @@ repos:
     @patch("pyartcd.pipelines.update_golang.KonfluxDb")
     @patch("pyartcd.pipelines.update_golang.is_available", new_callable=AsyncMock, return_value=True)
     @patch("pyartcd.pipelines.update_golang.is_latest", return_value=True)
+    @patch.object(UpdateGolangPipeline, "ensure_plashet_packages_signed", new_callable=AsyncMock)
     @patch.object(UpdateGolangPipeline, "ensure_signed", new_callable=AsyncMock)
     async def test_process_build_already_latest_and_available(
-        self, mock_ensure_signed, mock_is_latest, mock_is_available, mock_konflux_db
+        self, mock_ensure_signed, mock_ensure_pkgs_signed, mock_is_latest, mock_is_available, mock_konflux_db
     ):
         """Test process_build when build is already latest and available"""
         mock_runtime = Mock(
@@ -1448,8 +1449,11 @@ repos:
 
     @patch("pyartcd.pipelines.update_golang.KonfluxDb")
     @patch("pyartcd.pipelines.update_golang.is_latest", return_value=False)
+    @patch.object(UpdateGolangPipeline, "ensure_plashet_packages_signed", new_callable=AsyncMock)
     @patch.object(UpdateGolangPipeline, "ensure_signed", new_callable=AsyncMock)
-    async def test_process_build_not_latest_no_tag(self, mock_ensure_signed, mock_is_latest, mock_konflux_db):
+    async def test_process_build_not_latest_no_tag(
+        self, mock_ensure_signed, mock_ensure_pkgs_signed, mock_is_latest, mock_konflux_db
+    ):
         """Test process_build when build is not latest and tag_builds is False"""
         mock_runtime = Mock(
             dry_run=False,
@@ -1474,9 +1478,10 @@ repos:
     @patch("pyartcd.pipelines.update_golang.KonfluxDb")
     @patch("pyartcd.pipelines.update_golang.is_available", new_callable=AsyncMock, side_effect=[False, False, True])
     @patch("pyartcd.pipelines.update_golang.is_latest", return_value=True)
+    @patch.object(UpdateGolangPipeline, "ensure_plashet_packages_signed", new_callable=AsyncMock)
     @patch.object(UpdateGolangPipeline, "ensure_signed", new_callable=AsyncMock)
     async def test_process_build_available_after_retries(
-        self, mock_ensure_signed, mock_is_latest, mock_is_available, mock_konflux_db
+        self, mock_ensure_signed, mock_ensure_pkgs_signed, mock_is_latest, mock_is_available, mock_konflux_db
     ):
         """Test process_build succeeds after retrying request_repo"""
         mock_runtime = Mock(
@@ -2327,6 +2332,7 @@ class TestEnsureSigned(IsolatedAsyncioTestCase):
         )
         pipeline.is_rpm_signed = Mock(return_value=False)
         pipeline.koji_session = Mock(logged_in=True)
+        pipeline.koji_session.listTags.return_value = []
 
         await pipeline.ensure_signed(9, "golang-1.22.9-1.el9")
 
@@ -2350,6 +2356,7 @@ class TestEnsureSigned(IsolatedAsyncioTestCase):
         )
         pipeline.is_rpm_signed = Mock(return_value=False)
         pipeline.koji_session = Mock(logged_in=True)
+        pipeline.koji_session.listTags.return_value = []
 
         await pipeline.ensure_signed(9, "golang-1.22.9-1.el9")
 
@@ -2373,6 +2380,7 @@ class TestEnsureSigned(IsolatedAsyncioTestCase):
         )
         pipeline.is_rpm_signed = Mock(return_value=False)
         pipeline.koji_session = Mock(logged_in=True)
+        pipeline.koji_session.listTags.return_value = []
 
         await pipeline.ensure_signed(9, "golang-1.25.3-1.el9")
 
@@ -2398,6 +2406,75 @@ class TestEnsureSigned(IsolatedAsyncioTestCase):
 
         pipeline.is_rpm_signed.assert_not_called()
         pipeline.koji_session.tagBuild.assert_not_called()
+
+    @patch("pyartcd.pipelines.update_golang.KonfluxDb")
+    async def test_unsigned_already_in_signing_tag_skips(self, mock_konflux_db):
+        pipeline = UpdateGolangPipeline(
+            runtime=Mock(dry_run=False, working_dir=Path("/tmp/working")),
+            ocp_version="4.21",
+            cves=None,
+            force_update_tracker=False,
+            go_nvrs=["golang-1.24.13-11.el10"],
+            art_jira="ART-1234",
+            tag_builds=True,
+        )
+        pipeline.is_rpm_signed = Mock(return_value=False)
+        pipeline.koji_session = Mock(logged_in=True)
+        pipeline.koji_session.listTags.return_value = [{"name": "rhaos-4.21-rhel-10-golang"}]
+
+        await pipeline.ensure_signed(10, "goversioninfo-1.4.0-1.el10")
+
+        pipeline.koji_session.tagBuild.assert_not_called()
+
+
+class TestEnsurePlashetPackagesSigned(IsolatedAsyncioTestCase):
+    """Test the ensure_plashet_packages_signed method"""
+
+    def _pipeline(self, assembly="stream"):
+        pipeline = UpdateGolangPipeline(
+            runtime=Mock(dry_run=False, working_dir=Path("/tmp/working")),
+            ocp_version="4.21",
+            cves=None,
+            force_update_tracker=False,
+            go_nvrs=["golang-1.24.13-11.el10"],
+            art_jira="ART-1234",
+            tag_builds=True,
+            build_system="konflux",
+            assembly=assembly,
+        )
+        pipeline.koji_session = Mock(logged_in=True)
+        pipeline.ensure_signed = AsyncMock()
+        return pipeline
+
+    @patch("pyartcd.pipelines.update_golang.KonfluxDb")
+    async def test_signs_latest_goversioninfo_from_override_tag(self, mock_konflux_db):
+        pipeline = self._pipeline()
+        pipeline.koji_session.listTagged.return_value = [{"nvr": "goversioninfo-1.4.0-1.el10"}]
+
+        await pipeline.ensure_plashet_packages_signed(10)
+
+        pipeline.koji_session.listTagged.assert_called_once_with(
+            "rhaos-4.21-rhel-10-override", package="goversioninfo", latest=True, inherit=True
+        )
+        pipeline.ensure_signed.assert_awaited_once_with(10, "goversioninfo-1.4.0-1.el10")
+
+    @patch("pyartcd.pipelines.update_golang.KonfluxDb")
+    async def test_non_stream_assembly_skips(self, mock_konflux_db):
+        pipeline = self._pipeline(assembly="test")
+
+        await pipeline.ensure_plashet_packages_signed(10)
+
+        pipeline.koji_session.listTagged.assert_not_called()
+        pipeline.ensure_signed.assert_not_awaited()
+
+    @patch("pyartcd.pipelines.update_golang.KonfluxDb")
+    async def test_no_golang_plashet_for_el_version(self, mock_konflux_db):
+        pipeline = self._pipeline()
+
+        await pipeline.ensure_plashet_packages_signed(7)
+
+        pipeline.koji_session.listTagged.assert_not_called()
+        pipeline.ensure_signed.assert_not_awaited()
 
 
 class TestIsRpmSigned(unittest.TestCase):
