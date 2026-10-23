@@ -6,13 +6,13 @@ from unittest.mock import MagicMock
 
 from elliottlib.verify_common import (
     VerifyResultBase,
-    get_assembly_advisory_ids,
+    get_ocp_release_advisory_ids,
     handle_verify_result,
     render_verify_result,
 )
 
 
-class TestGetAssemblyAdvisoryIds(TestCase):
+class TestGetOcpReleaseAdvisoryIds(TestCase):
     def _make_runtime(self, advisories: dict):
         runtime = MagicMock()
         runtime.assembly = "4.18.51"
@@ -43,34 +43,41 @@ class TestGetAssemblyAdvisoryIds(TestCase):
         if hasattr(self, "_patcher") and hasattr(self._patcher, "stop"):
             self._patcher.stop()
 
-    def test_no_filter(self):
-        runtime = self._make_runtime({"rpm": 111, "image": 222, "rhcos": 333})
-        result = get_assembly_advisory_ids(runtime)
+    def test_default_excludes_microshift_and_preserves_legacy_types(self):
+        runtime = self._make_runtime({"rpm": 111, "image": 222, "rhcos": 333, "microshift": 444})
+        result = get_ocp_release_advisory_ids(runtime)
         self.assertEqual(result, {"rpm": 111, "image": 222, "rhcos": 333})
+
+    def test_explicit_exclusion_override_can_include_microshift(self):
+        runtime = self._make_runtime({"rpm": 111, "microshift": 444})
+        result = get_ocp_release_advisory_ids(runtime, exclude_types=())
+        self.assertEqual(result, {"rpm": 111, "microshift": 444})
 
     def test_include_types(self):
         runtime = self._make_runtime({"rpm": 111, "image": 222, "rhcos": 333})
-        result = get_assembly_advisory_ids(runtime, include_types=("rpm", "rhcos"))
+        result = get_ocp_release_advisory_ids(runtime, include_types=("rpm", "rhcos"))
         self.assertEqual(result, {"rpm": 111, "rhcos": 333})
 
     def test_exclude_types(self):
         runtime = self._make_runtime({"rpm": 111, "image": 222, "microshift": 444})
-        result = get_assembly_advisory_ids(runtime, exclude_types=("microshift",))
+        result = get_ocp_release_advisory_ids(runtime, exclude_types=("microshift",))
         self.assertEqual(result, {"rpm": 111, "image": 222})
 
     def test_include_and_exclude(self):
         runtime = self._make_runtime({"rpm": 111, "image": 222, "rhcos": 333})
-        result = get_assembly_advisory_ids(runtime, include_types=("rpm", "image", "rhcos"), exclude_types=("image",))
+        result = get_ocp_release_advisory_ids(
+            runtime, include_types=("rpm", "image", "rhcos"), exclude_types=("image",)
+        )
         self.assertEqual(result, {"rpm": 111, "rhcos": 333})
 
     def test_skips_empty_ids(self):
         runtime = self._make_runtime({"rpm": 111, "image": 0, "rhcos": None})
-        result = get_assembly_advisory_ids(runtime)
+        result = get_ocp_release_advisory_ids(runtime)
         self.assertEqual(result, {"rpm": 111})
 
     def test_converts_to_int(self):
         runtime = self._make_runtime({"rpm": "111"})
-        result = get_assembly_advisory_ids(runtime)
+        result = get_ocp_release_advisory_ids(runtime)
         self.assertEqual(result, {"rpm": 111})
         self.assertIsInstance(result["rpm"], int)
 
