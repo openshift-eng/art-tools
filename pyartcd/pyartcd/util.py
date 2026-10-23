@@ -1144,7 +1144,10 @@ async def reset_fail_counter(branch: str) -> None:
     Arg(s):
         branch (str): Full Redis key prefix for the failure counter.
     """
-    await redis.delete_keys_by_pattern(f"{branch}:*")
+    try:
+        await redis.delete_keys_by_pattern(f"{branch}:*")
+    except Exception as e:
+        logger.warning("Failed to reset fail counter in Redis: %s", e)
 
 
 async def update_rebase_fail_counters(
