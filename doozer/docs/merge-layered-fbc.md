@@ -36,6 +36,10 @@ ambiguous default channels cause the build to fail. The production index must
 exist. This command does not create a complete replacement operator index;
 its fragment contains only the selected operator package.
 
+The generated source stores the fragment at `catalog/<package>/catalog.yaml`.
+The image preserves this layout at `/configs/<package>/catalog.yaml`, as required
+by the release pipeline's `validate-fbc` task.
+
 All inputs must contain the same operator package. The selected CSV name is read
 from the actual bundle image, rather than the database's `bundle_csv_name`, which
 can come from an outdated package YAML. That CSV must exist as an `olm.bundle`
@@ -93,5 +97,7 @@ pytest -q pyartcd/tests/pipelines/test_merge_layered_fbc.py
 For group inference, cover NVR and pullspec inputs from multiple groups, input
 order independence, mixed products, unsupported targets, and missing build records.
 Before production use, run a dry run with real Quay inputs, then a staging build.
-Inspect the rendered catalogs to confirm both selected minor-version updates and
-all existing production channels survive. No release is triggered by this job.
+Run the release pipeline's `validate-fbc` task against the staging image to check
+the package directory layout. Inspect the rendered catalogs to confirm both selected
+minor-version updates and all existing production channels survive. No release is
+triggered by this job.
