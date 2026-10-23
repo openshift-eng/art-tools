@@ -2905,6 +2905,42 @@ class TestUpdateGolangStreamsFloatingTags(IsolatedAsyncioTestCase):
             'streams': streams,
         }
 
+    @patch("pyartcd.pipelines.update_golang.get_github_client_for_org")
+    async def test_unchanged_pullspecs_skip_pr(self, mock_get_github_client):
+        """Unchanged floating or pinned pullspecs must not trigger GitHub writes."""
+        for go_var, group_vars in (
+            ("GO_LATEST", {"go_latest": "1.22"}),
+            ("GO_PREVIOUS", {"go_latest": "1.23", "go_previous": "1.22"}),
+            ("GO_EXTRA", {"go_latest": "1.21", "go_extra": "1.22"}),
+        ):
+            for tag in (
+                "golang-builder-v1.22-rhel{el}",
+                "openshift-golang-builder-container-v1.22.12-202608131106.p2.g7d3050a.assembly.stream.el{el}",
+            ):
+                with self.subTest(go_var=go_var, tag=tag):
+                    mock_get_github_client.reset_mock()
+                    pullspecs = {
+                        el: f"registry.redhat.io/openshift/golang-builder:{tag.format(el=el)}" for el in (8, 9)
+                    }
+                    streams = {
+                        f"rhel-{el}-golang": {
+                            "aliases": [f"rhel-{el}-golang-{{{go_var}}}"],
+                            "image": pullspec,
+                        }
+                        for el, pullspec in pullspecs.items()
+                    }
+                    pipeline = self._make_pipeline()
+                    pipeline._branch_content = self._make_branch_content(streams, **group_vars)
+
+                    with self.assertLogs("pyartcd.pipelines.update_golang", level="INFO") as logs:
+                        await pipeline.update_golang_streams("1.22.12", pullspecs)
+
+                    self.assertTrue(any("No update needed" in line for line in logs.output))
+                    mock_get_github_client.assert_not_called()
+                    pipeline._branch_content["repo"].create_pull.assert_not_called()
+                    for el, pullspec in pullspecs.items():
+                        self.assertEqual(streams[f"rhel-{el}-golang"]["image"], pullspec)
+
     async def test_floating_branch_minor_bump(self):
         """t4d: floating-tag branch gets floating pullspecs after minor bump."""
         streams = {
