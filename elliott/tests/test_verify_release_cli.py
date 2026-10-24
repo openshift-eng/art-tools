@@ -131,18 +131,17 @@ class TestHandleMark(TestCase):
     @patch("elliottlib.cli.verify_release_cli.handle_verify_result")
     @patch("elliottlib.cli.verify_release_cli.GitLabClient")
     def test_mark_success(self, mock_gitlab_cls, mock_handle):
-        mock_project = MagicMock()
         mock_client = MagicMock()
-        mock_client.get_project.return_value = mock_project
         mock_gitlab_cls.from_url.return_value = mock_client
-        mock_gitlab_cls._parse_mr_url.return_value = ("group/project", "42")
 
         runtime = MagicMock()
         runtime.dry_run = False
 
         _handle_mark(runtime, "https://gitlab/group/project/-/merge_requests/42", "text")
 
-        mock_project.mergerequests.update.assert_called_once_with(42, add_labels=VERIFY_RELEASE_SUCCESS_LABEL)
+        mock_client.add_mr_labels.assert_called_once_with(
+            "https://gitlab/group/project/-/merge_requests/42", [VERIFY_RELEASE_SUCCESS_LABEL]
+        )
         result = mock_handle.call_args[0][0]
         self.assertIsInstance(result, MarkResult)
         self.assertTrue(result.label_added)
@@ -164,9 +163,8 @@ class TestHandleMark(TestCase):
     @patch("elliottlib.cli.verify_release_cli.GitLabClient")
     def test_mark_gitlab_error(self, mock_gitlab_cls, mock_handle):
         mock_client = MagicMock()
-        mock_client.get_project.side_effect = Exception("403 Forbidden")
+        mock_client.add_mr_labels.side_effect = Exception("403 Forbidden")
         mock_gitlab_cls.from_url.return_value = mock_client
-        mock_gitlab_cls._parse_mr_url.return_value = ("group/project", "42")
 
         runtime = MagicMock()
         runtime.dry_run = False
@@ -204,10 +202,10 @@ class TestVerifyReleaseCLI(TestCase):
         runtime = MagicMock(spec=["initialize", "dry_run"])
         runtime.initialize.side_effect = lambda **kwargs: self.assertFalse(runtime.dry_run)
         mock_shipment_url.return_value = "https://gitlab/group/project/-/merge_requests/42"
-        mock_gitlab_cls._parse_mr_url.return_value = ("group/project", "42")
 
         result = CliRunner().invoke(verify_release_cli, ["--mark"], obj=runtime)
 
         self.assertEqual(result.exit_code, 0, result.output)
-        mock_project = mock_gitlab_cls.from_url.return_value.get_project.return_value
-        mock_project.mergerequests.update.assert_called_once_with(42, add_labels=VERIFY_RELEASE_SUCCESS_LABEL)
+        mock_gitlab_cls.from_url.return_value.add_mr_labels.assert_called_once_with(
+            "https://gitlab/group/project/-/merge_requests/42", [VERIFY_RELEASE_SUCCESS_LABEL]
+        )

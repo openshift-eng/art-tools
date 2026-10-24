@@ -136,7 +136,7 @@ class TestGetAssemblyShipmentKinds(unittest.TestCase):
 
 class TestVerifyCVETrackers(unittest.IsolatedAsyncioTestCase):
     @patch("elliottlib.cli.verify_cve_trackers_cli.get_assembly_shipment_url")
-    @patch("elliottlib.cli.verify_cve_trackers_cli.get_assembly_advisory_ids")
+    @patch("elliottlib.cli.verify_cve_trackers_cli.get_ocp_release_advisory_ids")
     @patch("elliottlib.cli.verify_cve_trackers_cli.errata")
     @patch("elliottlib.cli.verify_cve_trackers_cli.find_cve_tracker_bugs", new_callable=AsyncMock)
     async def test_no_trackers(self, mock_find, mock_errata, mock_get_ads, mock_get_mr):
@@ -146,7 +146,7 @@ class TestVerifyCVETrackers(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(result.ok)
 
     @patch("elliottlib.cli.verify_cve_trackers_cli.get_assembly_shipment_url")
-    @patch("elliottlib.cli.verify_cve_trackers_cli.get_assembly_advisory_ids")
+    @patch("elliottlib.cli.verify_cve_trackers_cli.get_ocp_release_advisory_ids")
     @patch("elliottlib.cli.verify_cve_trackers_cli.errata")
     @patch("elliottlib.cli.verify_cve_trackers_cli.find_cve_tracker_bugs", new_callable=AsyncMock)
     async def test_trackers_found_in_rhsa(self, mock_find, mock_errata, mock_get_ads, mock_get_mr):
@@ -184,7 +184,7 @@ class TestVerifyCVETrackers(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(result.ok)
 
     @patch("elliottlib.cli.verify_cve_trackers_cli.get_assembly_shipment_url")
-    @patch("elliottlib.cli.verify_cve_trackers_cli.get_assembly_advisory_ids")
+    @patch("elliottlib.cli.verify_cve_trackers_cli.get_ocp_release_advisory_ids")
     @patch("elliottlib.cli.verify_cve_trackers_cli.errata")
     @patch("elliottlib.cli.verify_cve_trackers_cli.find_cve_tracker_bugs", new_callable=AsyncMock)
     async def test_trackers_missing_from_rhsa(self, mock_find, mock_errata, mock_get_ads, mock_get_mr):
@@ -211,7 +211,7 @@ class TestVerifyCVETrackers(unittest.IsolatedAsyncioTestCase):
     @patch("elliottlib.cli.verify_cve_trackers_cli.get_assembly_shipment_kinds")
     @patch("elliottlib.cli.verify_cve_trackers_cli.get_shipment_jira_issues")
     @patch("elliottlib.cli.verify_cve_trackers_cli.get_assembly_shipment_url")
-    @patch("elliottlib.cli.verify_cve_trackers_cli.get_assembly_advisory_ids")
+    @patch("elliottlib.cli.verify_cve_trackers_cli.get_ocp_release_advisory_ids")
     @patch("elliottlib.cli.verify_cve_trackers_cli.errata")
     @patch("elliottlib.cli.verify_cve_trackers_cli.find_cve_tracker_bugs", new_callable=AsyncMock)
     async def test_trackers_missing_from_shipment(
@@ -240,7 +240,7 @@ class TestVerifyCVETrackers(unittest.IsolatedAsyncioTestCase):
     @patch("elliottlib.cli.verify_cve_trackers_cli.get_assembly_shipment_kinds")
     @patch("elliottlib.cli.verify_cve_trackers_cli.get_shipment_jira_issues")
     @patch("elliottlib.cli.verify_cve_trackers_cli.get_assembly_shipment_url")
-    @patch("elliottlib.cli.verify_cve_trackers_cli.get_assembly_advisory_ids")
+    @patch("elliottlib.cli.verify_cve_trackers_cli.get_ocp_release_advisory_ids")
     @patch("elliottlib.cli.verify_cve_trackers_cli.errata")
     @patch("elliottlib.cli.verify_cve_trackers_cli.find_cve_tracker_bugs", new_callable=AsyncMock)
     async def test_trackers_found_in_shipment(
@@ -264,7 +264,7 @@ class TestVerifyCVETrackers(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(result.ok)
 
     @patch("elliottlib.cli.verify_cve_trackers_cli.get_assembly_shipment_url")
-    @patch("elliottlib.cli.verify_cve_trackers_cli.get_assembly_advisory_ids")
+    @patch("elliottlib.cli.verify_cve_trackers_cli.get_ocp_release_advisory_ids")
     @patch("elliottlib.cli.verify_cve_trackers_cli.errata")
     @patch("elliottlib.cli.verify_cve_trackers_cli.find_cve_tracker_bugs", new_callable=AsyncMock)
     async def test_advisory_error_propagates(self, mock_find, mock_errata, mock_get_ads, mock_get_mr):
@@ -280,7 +280,7 @@ class TestVerifyCVETrackers(unittest.IsolatedAsyncioTestCase):
     @patch("elliottlib.cli.verify_cve_trackers_cli.get_assembly_shipment_kinds")
     @patch("elliottlib.cli.verify_cve_trackers_cli.get_shipment_jira_issues")
     @patch("elliottlib.cli.verify_cve_trackers_cli.get_assembly_shipment_url")
-    @patch("elliottlib.cli.verify_cve_trackers_cli.get_assembly_advisory_ids")
+    @patch("elliottlib.cli.verify_cve_trackers_cli.get_ocp_release_advisory_ids")
     @patch("elliottlib.cli.verify_cve_trackers_cli.errata")
     @patch("elliottlib.cli.verify_cve_trackers_cli.find_cve_tracker_bugs", new_callable=AsyncMock)
     async def test_shipment_error_propagates(
@@ -304,7 +304,7 @@ class TestVerifyCVETrackers(unittest.IsolatedAsyncioTestCase):
             await verify_cve_trackers(runtime)
 
     @patch("elliottlib.cli.verify_cve_trackers_cli.get_assembly_shipment_url")
-    @patch("elliottlib.cli.verify_cve_trackers_cli.get_assembly_advisory_ids")
+    @patch("elliottlib.cli.verify_cve_trackers_cli.get_ocp_release_advisory_ids")
     @patch("elliottlib.cli.verify_cve_trackers_cli.errata")
     @patch("elliottlib.cli.verify_cve_trackers_cli.find_cve_tracker_bugs", new_callable=AsyncMock)
     async def test_cve_covered_by_another_tracker(self, mock_find, mock_errata, mock_get_ads, mock_get_mr):
@@ -329,7 +329,7 @@ class TestVerifyCVETrackers(unittest.IsolatedAsyncioTestCase):
     @patch("elliottlib.cli.verify_cve_trackers_cli.get_assembly_shipment_kinds")
     @patch("elliottlib.cli.verify_cve_trackers_cli.get_shipment_jira_issues")
     @patch("elliottlib.cli.verify_cve_trackers_cli.get_assembly_shipment_url")
-    @patch("elliottlib.cli.verify_cve_trackers_cli.get_assembly_advisory_ids")
+    @patch("elliottlib.cli.verify_cve_trackers_cli.get_ocp_release_advisory_ids")
     @patch("elliottlib.cli.verify_cve_trackers_cli.errata")
     @patch("elliottlib.cli.verify_cve_trackers_cli.find_cve_tracker_bugs", new_callable=AsyncMock)
     async def test_advisory_only_kind_skipped_in_shipment_check(
@@ -364,7 +364,7 @@ class TestVerifyCVETrackers(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(result.missed_trackers), 0)
 
     @patch("elliottlib.cli.verify_cve_trackers_cli.get_assembly_shipment_url")
-    @patch("elliottlib.cli.verify_cve_trackers_cli.get_assembly_advisory_ids")
+    @patch("elliottlib.cli.verify_cve_trackers_cli.get_ocp_release_advisory_ids")
     @patch("elliottlib.cli.verify_cve_trackers_cli.errata")
     @patch("elliottlib.cli.verify_cve_trackers_cli.find_cve_tracker_bugs", new_callable=AsyncMock)
     async def test_cve_coverage_does_not_leak_across_kinds(self, mock_find, mock_errata, mock_get_ads, mock_get_mr):
@@ -394,7 +394,7 @@ class TestVerifyCVETrackers(unittest.IsolatedAsyncioTestCase):
     @patch("elliottlib.cli.verify_cve_trackers_cli.get_assembly_shipment_kinds")
     @patch("elliottlib.cli.verify_cve_trackers_cli.get_shipment_jira_issues")
     @patch("elliottlib.cli.verify_cve_trackers_cli.get_assembly_shipment_url")
-    @patch("elliottlib.cli.verify_cve_trackers_cli.get_assembly_advisory_ids")
+    @patch("elliottlib.cli.verify_cve_trackers_cli.get_ocp_release_advisory_ids")
     @patch("elliottlib.cli.verify_cve_trackers_cli.errata")
     @patch("elliottlib.cli.verify_cve_trackers_cli.find_cve_tracker_bugs", new_callable=AsyncMock)
     async def test_empty_shipment_kinds_falls_back_to_non_advisory_kinds(
