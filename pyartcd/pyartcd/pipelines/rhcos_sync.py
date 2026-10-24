@@ -221,6 +221,7 @@ class RhcosSyncPipeline:
         no_latest: bool = False,
         sign_only: bool = False,
         signing_env: Optional[str] = None,
+        signing_transport: str = "umb",
     ):
         self.runtime = runtime
         self.release_tag = release_tag
@@ -228,6 +229,9 @@ class RhcosSyncPipeline:
         self.no_latest = no_latest
         self.sign_only = sign_only
         self.signing_env = signing_env
+        if signing_transport not in ("umb", "direct"):
+            raise ValueError("signing_transport must be either 'umb' or 'direct'")
+        self.signing_transport = signing_transport
         self.logger = runtime.logger
 
         # These are populated during run()
@@ -561,6 +565,7 @@ class RhcosSyncPipeline:
             synclist=str(synclist_path),
             no_latest=self.no_latest,
             signing_env=signing_env,
+            signing_transport=self.signing_transport,
         )
         await pipeline.run()
         self.logger.info("Boot image sync completed")
@@ -648,6 +653,13 @@ class RhcosSyncPipeline:
     default=None,
     help="Signing environment (default: 'prod' for real runs, 'stage' for dry-run)",
 )
+@click.option(
+    "--signing-transport",
+    type=click.Choice(["umb", "direct"]),
+    default="umb",
+    show_default=True,
+    help="Signing transport for the RHCOS checksum signature",
+)
 @pass_runtime
 @click_coroutine
 async def rhcos_sync(
@@ -657,6 +669,7 @@ async def rhcos_sync(
     no_latest: bool,
     sign_only: bool,
     signing_env: Optional[str],
+    signing_transport: str,
 ):
     """Sync RHCOS boot images to mirror.openshift.com and sign container images.
 
@@ -683,6 +696,10 @@ async def rhcos_sync(
       Dry-run with explicit signing env:
 
         artcd -vv --dry-run rhcos-sync --release-tag 4.19.0-ec.0-x86_64 --signing-env stage
+
+      Use direct signing for the RHCOS checksum:
+
+        artcd -vv rhcos-sync --release-tag 4.19.0-x86_64 --signing-env prod --signing-transport direct
     """
     pipeline = RhcosSyncPipeline(
         runtime=runtime,
@@ -691,5 +708,6 @@ async def rhcos_sync(
         no_latest=no_latest,
         sign_only=sign_only,
         signing_env=signing_env,
+        signing_transport=signing_transport,
     )
     await pipeline.run()
