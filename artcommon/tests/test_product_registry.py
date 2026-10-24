@@ -20,7 +20,7 @@ def test_unified_fbc_release_targets_are_explicit_and_quay_only():
     assert config.unified_fbc_stage_release == ReleaseTarget('quay-fbc-stage-unified', 'quay-fbc-unified')
     assert config.unified_fbc_prod_release == ReleaseTarget('quay-fbc-prod-unified', 'quay-fbc-unified')
     assert get_product_config('logging').unified_fbc_stage_release is None
-    assert config.fbc_stage_release_plans[(3, 18)] == 'quay-advisory-stage-3-18'
+    assert config.fbc_stage_release_plans[(3, 18)] == 'quay-advisory-stage-auto-3-18'
 
 
 class TestProductCatalog(unittest.TestCase):

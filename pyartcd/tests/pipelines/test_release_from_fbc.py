@@ -103,6 +103,7 @@ class TestReleaseFromFbcPipeline(unittest.TestCase):
         for ocp_optional in [False, True]:
             with self.subTest(ocp_optional=ocp_optional):
                 pipeline = self._make_pipeline(ocp_optional=ocp_optional)
+                pipeline._ignore_patch_version = True
 
                 def validate(fbcs, product, **kwargs):
                     kwargs['operator_groups_out'].update({'operator': fbcs})
@@ -114,6 +115,7 @@ class TestReleaseFromFbcPipeline(unittest.TestCase):
                 result = asyncio.run(pipeline.validate_fbc_related_images(pipeline.fbc_pullspecs))
 
                 self.assertEqual(mock_validate.call_args.kwargs['assembly'], None if ocp_optional else '1.4.5')
+                self.assertEqual(mock_validate.call_args.kwargs['ignore_patch_version'], not ocp_optional)
                 self.assertEqual(result, ['image-1.4.5-1'])
                 self.assertEqual(pipeline._fbc_operator_keys, ['operator'])
                 self.assertEqual(pipeline._fbc_operator_by_pullspec, {pipeline.fbc_pullspecs[0]: 'operator'})
@@ -2024,6 +2026,7 @@ class TestOcpOptionalMode(unittest.TestCase):
             asyncio.run(pipeline.run())
 
         pipeline._load_ignore_patch_version_from_group_config.assert_awaited_once()
+        self.assertTrue(pipeline._ignore_patch_version)
         pipeline.validate_fbc_related_images.assert_awaited_once()
         pipeline.create_snapshot.assert_not_awaited()
 
@@ -2174,7 +2177,7 @@ class TestOcpOptionalMode(unittest.TestCase):
                 "oadp-operator-fbc-1.5.8-2.ocp4.20",
             ]
         )
-        pipeline._load_ignore_patch_version_from_group_config = AsyncMock(return_value=False)
+        pipeline._load_ignore_patch_version_from_group_config = AsyncMock(return_value=True)
         pipeline.validate_fbc_related_images = AsyncMock(
             side_effect=[
                 ["oadp-operator-container-1.5.8-1"],
@@ -2190,6 +2193,9 @@ class TestOcpOptionalMode(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError, "replacement related-image validation failed"):
             asyncio.run(pipeline.run())
 
+        pipeline._load_ignore_patch_version_from_group_config.assert_awaited_once()
+        self.assertTrue(pipeline._ignore_patch_version)
+        self.assertEqual(pipeline.validate_fbc_related_images.await_count, 2)
         pipeline.create_snapshot.assert_not_awaited()
         pipeline.create_shipment_mr.assert_not_awaited()
         pipeline.set_shipment_mr_ready.assert_not_awaited()

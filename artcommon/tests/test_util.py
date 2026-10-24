@@ -1287,6 +1287,115 @@ class TestExtractVersionedRelatedImagesFromFBC(unittest.TestCase):
             ]
         )
 
+    def _virtual_assembly_catalog(self):
+        return [
+            {
+                'schema': 'olm.bundle',
+                'name': f'opentelemetry-operator.v{version}',
+                'image': f'registry.redhat.io/rhosdt/bundle@sha256:{digest * 64}',
+                'properties': [{'type': 'olm.package', 'value': {'version': version}}],
+                'relatedImages': [{'name': 'operator', 'image': image}],
+            }
+            for version, digest, image in [
+                ('0.158.0-3', 'a', 'registry.redhat.io/rhosdt/operator@sha256:old'),
+                ('0.158.4', 'b', 'registry.redhat.io/rhosdt/operator@sha256:historical'),
+                ('0.158.0-202610221301', 'c', 'registry.redhat.io/rhosdt/operator@sha256:new'),
+            ]
+        ]
+
+    @patch('artcommonlib.util.oc_image_info_for_arch_async', new_callable=AsyncMock)
+    @patch('artcommonlib.util.cmd_gather_async', new_callable=AsyncMock)
+    @patch('builtins.open', new_callable=MagicMock)
+    @patch('os.path.exists')
+    @patch('os.listdir')
+    def test_virtual_assembly_selects_recorded_bundle_over_history(
+        self, mock_listdir, mock_exists, mock_open, mock_cmd, mock_info
+    ):
+        catalog = '\n'.join(json.dumps(entry) for entry in self._virtual_assembly_catalog())
+        self._mock_catalog_extraction(mock_listdir, mock_exists, mock_open, mock_cmd, catalog)
+        mock_info.return_value = {
+            'config': {
+                'config': {
+                    'Labels': {
+                        'com.redhat.art.bundle.pullspec': f'quay.io/other/bundle@sha256:{"c" * 64}',
+                    }
+                }
+            }
+        }
+        fbc = f'quay.io/test/art-fbc@sha256:{"d" * 64}'
+        with patch.dict('os.environ', {'QUAY_AUTH_FILE': '/test/auth.json'}):
+            result = asyncio.run(
+                extract_versioned_related_images_from_fbc(
+                    fbc,
+                    'openshift-opentelemetry-operator',
+                    assembly='0.158.4',
+                    ignore_patch_version=True,
+                )
+            )
+        self.assertEqual(
+            result,
+            [
+                'quay.io/redhat-user-workloads/ocp-art-tenant/art-images@sha256:new',
+            ],
+        )
+        mock_info.assert_awaited_once_with(fbc, registry_config='/test/auth.json')
+
+    @patch('artcommonlib.util._parse_catalog_json_entries')
+    def test_recorded_bundle_requires_unambiguous_same_train_identity(self, mock_entries):
+        identity = f'quay.io/test/bundle@sha256:{"c" * 64}'
+        for label, assembly, entries, error in [
+            (None, '0.158.4', self._virtual_assembly_catalog()[-1:], 'Missing or malformed'),
+            (158, '0.158.4', self._virtual_assembly_catalog(), 'Missing or malformed'),
+            ('quay.io/test/bundle:latest', '0.158.4', self._virtual_assembly_catalog(), 'Missing or malformed'),
+            ('quay.io/test/bundle@sha256:short', '0.158.4', self._virtual_assembly_catalog(), 'Missing or malformed'),
+            (identity, 'stream', self._virtual_assembly_catalog(), 'Cannot determine'),
+            (identity, '0.159.4', self._virtual_assembly_catalog(), 'major/minor release train'),
+            (identity, '1.158.4', self._virtual_assembly_catalog(), 'major/minor release train'),
+            (identity, '0.158.4', self._virtual_assembly_catalog()[:2], 'found 0'),
+            (identity, '0.158.4', self._virtual_assembly_catalog() + [self._virtual_assembly_catalog()[-1]], 'found 2'),
+        ]:
+            with self.subTest(label=label, assembly=assembly, error=error):
+                mock_entries.return_value = entries
+                with self.assertRaisesRegex(RuntimeError, error):
+                    util._extract_fbc_bundle_images_from_catalog_json('catalog.json', label, assembly)
+
+    @patch('artcommonlib.util._parse_catalog_json_entries')
+    def test_recorded_bundle_rejects_missing_or_malformed_package_version(self, mock_entries):
+        identity = f'quay.io/test/bundle@sha256:{"c" * 64}'
+        for version in [None, '', 'not-a-version', 158]:
+            with self.subTest(version=version):
+                entries = self._virtual_assembly_catalog()
+                entries[-1]['properties'][0]['value']['version'] = version
+                mock_entries.return_value = entries
+                with self.assertRaisesRegex(RuntimeError, 'Missing or malformed olm.package version'):
+                    util._extract_fbc_bundle_images_from_catalog_json('catalog.json', identity, '0.158.4')
+        entries[-1]['properties'] = []
+        mock_entries.return_value = entries
+        with self.assertRaisesRegex(RuntimeError, 'Missing or malformed olm.package version'):
+            util._extract_fbc_bundle_images_from_catalog_json('catalog.json', identity, '0.158.4')
+
+    @patch('artcommonlib.util.oc_image_info_for_arch_async', new_callable=AsyncMock)
+    @patch('artcommonlib.util.cmd_gather_async', new_callable=AsyncMock)
+    @patch('builtins.open', new_callable=MagicMock)
+    @patch('os.path.exists')
+    @patch('os.listdir')
+    def test_virtual_assembly_missing_provenance_reports_fbc_and_assembly(
+        self, mock_listdir, mock_exists, mock_open, mock_cmd, mock_info
+    ):
+        self._mock_catalog_extraction(mock_listdir, mock_exists, mock_open, mock_cmd, self.catalog_multi_bundle)
+        mock_info.return_value = {'config': {'config': {'Labels': {}}}}
+        with self.assertRaisesRegex(RuntimeError, 'Missing or malformed') as raised:
+            asyncio.run(
+                extract_versioned_related_images_from_fbc(
+                    self.fbc_pullspec,
+                    self.product,
+                    assembly='1.1.0',
+                    ignore_patch_version=True,
+                )
+            )
+        self.assertIn(self.fbc_pullspec, str(raised.exception))
+        self.assertIn('1.1.0', str(raised.exception))
+
     def test_parse_version_from_fbc_pullspec(self):
         self.assertEqual(
             parse_version_from_fbc_pullspec("quay.io/x/art-fbc:quay-operator-fbc-3.18.2-20261016202302.ocp4.12"),
@@ -1497,6 +1606,7 @@ class TestExtractVersionedRelatedImagesFromFBC(unittest.TestCase):
                 self.product,
                 assembly="1.1.0",
                 bundle_version="1.0.0",
+                ignore_patch_version=True,
             )
         )
         self.assertEqual(len(result), 1)

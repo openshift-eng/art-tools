@@ -1,3 +1,5 @@
+import asyncio
+import json
 import unittest
 from unittest.mock import AsyncMock, Mock, patch
 
@@ -7,7 +9,7 @@ from elliottlib.constants import GOLANG_BUILDER_CVE_COMPONENT
 from flexmock import flexmock
 
 
-class TestExtractNvrsFromFbc(unittest.IsolatedAsyncioTestCase):
+class TestExtractNvrsFromFbcSourceVersion(unittest.IsolatedAsyncioTestCase):
     async def test_actual_bundle_version_reaches_catalog_extractor(self):
         pullspec = 'quay.io/test/fbc@sha256:abc'
         source_version = '3.17.6'
@@ -25,7 +27,9 @@ class TestExtractNvrsFromFbc(unittest.IsolatedAsyncioTestCase):
             )
 
         self.assertEqual(result, ['quay-operator-container-3.17.6-1'])
-        extract.assert_awaited_once_with(pullspec, 'quay', assembly='3.17.7', bundle_version=source_version)
+        extract.assert_awaited_once_with(
+            pullspec, 'quay', assembly='3.17.7', bundle_version=source_version, ignore_patch_version=False
+        )
 
 
 class TestUtil(unittest.TestCase):
@@ -251,6 +255,53 @@ class TestKonfluxGolangBuildRecordLookup(unittest.IsolatedAsyncioTestCase):
             'ose-cli-container-v5.0.0-202607272002.p2.g1234567.el9'
         )
         konflux_db.search_builds_by_fields.assert_not_called()
+
+
+class TestExtractNvrsFromFbc(unittest.TestCase):
+    @patch('elliottlib.util.oc_image_info__cached_async', new_callable=AsyncMock)
+    @patch('elliottlib.util.extract_versioned_related_images_from_fbc', new_callable=AsyncMock)
+    @patch('elliottlib.util.extract_related_images_from_fbc', new_callable=AsyncMock)
+    def test_virtual_assembly_selection_and_optional_mode(self, mock_unscoped, mock_versioned, mock_info):
+        mock_unscoped.return_value = ['quay.io/test/operator@sha256:new']
+        mock_versioned.return_value = ['quay.io/test/operator@sha256:new']
+        mock_info.return_value = json.dumps(
+            {
+                'config': {
+                    'config': {
+                        'Labels': {
+                            'com.redhat.component': 'operator-container',
+                            'version': '0.158.0',
+                            'release': '1',
+                        }
+                    }
+                }
+            }
+        )
+        for version_scoped in [True, False]:
+            with self.subTest(version_scoped=version_scoped):
+                result = asyncio.run(
+                    util.extract_nvrs_from_fbc(
+                        'quay.io/test/fbc',
+                        'rhosdt',
+                        assembly='0.158.4',
+                        version_scoped=version_scoped,
+                        ignore_patch_version=True,
+                    )
+                )
+                self.assertEqual(result, ['operator-container-0.158.0-1'])
+                if version_scoped:
+                    mock_versioned.assert_awaited_once_with(
+                        'quay.io/test/fbc',
+                        'rhosdt',
+                        assembly='0.158.4',
+                        bundle_version=None,
+                        ignore_patch_version=True,
+                    )
+                    mock_unscoped.assert_not_awaited()
+                    mock_versioned.reset_mock()
+                else:
+                    mock_unscoped.assert_awaited_once_with('quay.io/test/fbc', 'rhosdt')
+                    mock_versioned.assert_not_awaited()
 
 
 if __name__ == '__main__':

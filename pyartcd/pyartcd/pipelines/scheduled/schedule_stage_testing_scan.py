@@ -6,6 +6,8 @@ from artcommonlib.gitlab import GitLabClient
 
 from pyartcd import jenkins
 from pyartcd.cli import cli, click_coroutine, pass_runtime
+from pyartcd.constants import RELEASE_IMAGE_REPO
+from pyartcd.oc import get_image_info
 from pyartcd.runtime import Runtime
 
 LOGGER = logging.getLogger(__name__)
@@ -18,9 +20,9 @@ RELEASE_NAME_PATTERN = re.compile(r"Shipment for (\d+)\.(\d+)\.(\d+)(?:-([a-zA-Z
 async def scan_and_trigger(runtime: Runtime):
     gitlab_client = GitLabClient.from_url(SHIPMENT_DATA_URL_TEMPLATE)
     project_path = SHIPMENT_DATA_URL_TEMPLATE.split(REDHAT_GITLAB_URL + "/")[1]
-    project = gitlab_client.get_project(project_path)
 
-    mrs = project.mergerequests.list(
+    mrs = gitlab_client.list_merge_requests(
+        project_path,
         state="opened",
         labels=[STAGE_RELEASE_SUCCESS_LABEL],
         per_page=100,
@@ -42,6 +44,21 @@ async def scan_and_trigger(runtime: Runtime):
         version = f"{major}.{minor}"
         # RC/EC: assembly is the suffix (e.g. "rc.5"), standard: full "X.Y.Z"
         assembly = suffix if suffix else f"{major}.{minor}.{patch}"
+
+        release_name = f"{major}.{minor}.{patch}-{suffix}" if suffix else assembly
+        pullspec = f"{RELEASE_IMAGE_REPO}:{release_name}-x86_64"
+        try:
+            info = await get_image_info(pullspec)
+        except Exception:
+            LOGGER.exception("MR !%s — failed to check image availability for %s", mr.iid, pullspec)
+            continue
+        if not info:
+            LOGGER.info("MR !%s — payload image %s not yet available on quay.io, skipping", mr.iid, pullspec)
+            continue
+
+        if runtime.dry_run:
+            LOGGER.info("[DRY-RUN] MR !%s — would queue verify-stage-testing for %s/%s", mr.iid, version, assembly)
+            continue
 
         LOGGER.info("MR !%s — queueing verify-stage-testing for %s/%s", mr.iid, version, assembly)
         try:

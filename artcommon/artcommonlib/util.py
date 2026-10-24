@@ -1194,6 +1194,62 @@ def _extract_versioned_images_from_catalog_json(catalog_path: str, bundle_versio
     return images
 
 
+def _extract_fbc_bundle_images_from_catalog_json(
+    catalog_path: str, bundle_pullspec: Optional[str], assembly: Optional[str]
+) -> tuple[list[str], str]:
+    """Select the FBC's recorded bundle while preserving a virtual release assembly."""
+    identity = (
+        re.fullmatch(r'[^@\s]+@(sha256:[0-9a-f]{64})', bundle_pullspec) if isinstance(bundle_pullspec, str) else None
+    )
+    if not identity:
+        raise RuntimeError(
+            "Missing or malformed digest-pinned com.redhat.art.bundle.pullspec "
+            f"for assembly {assembly!r}: {bundle_pullspec!r}"
+        )
+    assembly_match = re.fullmatch(r'v?([0-9]+)\.([0-9]+)(?:\.[0-9]+)?', assembly or '')
+    if not assembly_match:
+        raise RuntimeError(f"Cannot determine the major/minor release train for assembly {assembly!r}")
+
+    digest = identity.group(1)
+    bundles = [
+        entry
+        for entry in _parse_catalog_json_entries(catalog_path)
+        if entry.get('schema') == 'olm.bundle' and str(entry.get('image', '')).endswith(f'@{digest}')
+    ]
+    if len(bundles) != 1:
+        raise RuntimeError(
+            f"Expected exactly one olm.bundle for recorded bundle {bundle_pullspec!r}, "
+            f"found {len(bundles)} (assembly {assembly!r})"
+        )
+    bundle = bundles[0]
+    versions = [
+        prop.get('value', {}).get('version')
+        for prop in bundle.get('properties') or []
+        if prop.get('type') == 'olm.package' and isinstance(prop.get('value'), dict)
+    ]
+    try:
+        if len(versions) != 1 or not isinstance(versions[0], str):
+            raise ValueError("Expected one olm.package version")
+        version = VersionInfo.parse(versions[0].lstrip('v'))
+    except ValueError as exc:
+        raise RuntimeError(f"Missing or malformed olm.package version on bundle {bundle.get('name')!r}") from exc
+    if (version.major, version.minor) != tuple(int(part) for part in assembly_match.groups()):
+        raise RuntimeError(
+            f"Bundle {bundle.get('name')!r} version {version} does not belong to "
+            f"assembly {assembly!r}'s major/minor release train"
+        )
+
+    LOGGER.info(
+        "Selected recorded FBC bundle %s (%s), version %s, for virtual assembly %s",
+        bundle.get('name'),
+        digest,
+        version,
+        assembly,
+    )
+    images = sorted({ri['image'] for ri in bundle.get('relatedImages') or [] if ri.get('image')})
+    return images, str(version)
+
+
 def get_registry_namespace_pattern(product: str) -> str:
     """Return the registry.redhat.io namespace pattern used for a product's published images."""
     if product in ("ocp", "openshift"):
@@ -1427,6 +1483,8 @@ async def extract_versioned_related_images_from_fbc(
     product: str,
     assembly: Optional[str] = None,
     bundle_version: Optional[str] = None,
+    *,
+    ignore_patch_version: bool = False,
 ) -> list[str]:
     """Extract related images for layered-product shipping / validation.
 
@@ -1440,17 +1498,19 @@ async def extract_versioned_related_images_from_fbc(
 
       1. Use an explicit ``bundle_version`` from selected bundle provenance when
          provided. It must exist in the catalog; no fallback is allowed.
-      2. Prefer caller-provided ``assembly`` when it is a real release version
-         (e.g. ``3.18.2``). ``assembly='stream'`` is *not* treated as a version —
-         nightlies use stream, so we fall through to the FBC tag/NVR instead.
-      3. Fall back to the version encoded in the FBC pullspec/NVR tag
-         (``…-fbc-{version}-{timestamp}…``).
-      4. If a non-stream assembly misses the catalog, also fall back to (3).
+      2. With ``ignore_patch_version``, select the FBC's recorded bundle by digest,
+         validating the assembly's major/minor release train.
+      3. Prefer caller-provided ``assembly`` when it is a real release version.
+         ``assembly='stream'`` falls through to the FBC tag/NVR.
+      4. Fall back to the version encoded in the FBC pullspec/NVR tag, including
+         when a non-stream assembly misses the catalog.
 
     :param fbc_pullspec: FBC image pullspec
     :param product: Product name for URL transformation (e.g., 'openshift', 'oadp')
     :param assembly: Optional assembly/release version used to select the olm.bundle
     :param bundle_version: Actual selected source bundle version, independent of NVR versions
+    :param ignore_patch_version: Select the FBC's recorded bundle by digest instead of
+        assembly version; require the same major/minor release train. Missing provenance fails.
     :return: List of image pullspecs (product images rewritten to art-images)
     """
     ATTACHED_ARTIFACT_TYPE = 'application/vnd.konflux-ci.attached-artifact'
@@ -1535,6 +1595,25 @@ async def extract_versioned_related_images_from_fbc(
             raw_images = _extract_versioned_images_from_catalog_json(catalog_json_path, bundle_version)
             selected_version = bundle_version.lstrip('v')
             LOGGER.info("Selected relatedImages using source bundle version '%s'", selected_version)
+        elif ignore_patch_version:
+            try:
+                image_info = await oc_image_info_for_arch_async(
+                    fbc_pullspec, registry_config=os.getenv('QUAY_AUTH_FILE')
+                )
+                bundle_pullspec = (
+                    image_info.get('config', {})
+                    .get('config', {})
+                    .get('Labels', {})
+                    .get('com.redhat.art.bundle.pullspec')
+                )
+                raw_images, selected_version = _extract_fbc_bundle_images_from_catalog_json(
+                    catalog_json_path, bundle_pullspec, assembly
+                )
+            except (RuntimeError, ChildProcessError) as exc:
+                raise RuntimeError(
+                    f"Cannot select bundle for FBC {fbc_pullspec}, assembly {assembly!r}: {exc}"
+                ) from exc
+
         elif assembly_for_match:
             try:
                 raw_images = _extract_versioned_images_from_catalog_json(catalog_json_path, assembly_for_match)

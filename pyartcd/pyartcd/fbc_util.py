@@ -225,6 +225,7 @@ async def validate_fbc_related_images(
     use_source_bundle: bool = False,
     image_components: Optional[Collection[str]] = None,
     image_overrides: Optional[Dict[str, str]] = None,
+    ignore_patch_version: bool = False,
 ) -> List[str]:
     """
     Validate that FBC pullspecs from the same operator have the same related images.
@@ -246,6 +247,9 @@ async def validate_fbc_related_images(
     ``use_source_bundle``, the selected bundle's recorded CSV version takes
     precedence; FBC and operand NVR versions are not used to select a bundle.
     All source FBCs for an operator must select the same bundle version.
+
+    With ``ignore_patch_version``, version-scoped extraction selects the bundle
+    recorded in FBC metadata and checks only the assembly's major/minor train.
 
     When ``version_scoped`` is false (``--ocp-optional``), use the unscoped
     OCP extractor (``related-images.json`` / all catalog bundles) so
@@ -366,6 +370,7 @@ async def validate_fbc_related_images(
                 assembly=assembly if version_scoped else None,
                 version_scoped=version_scoped,
                 bundle_version=source_versions[labels['nvr']] if use_source_bundle else None,
+                ignore_patch_version=ignore_patch_version if version_scoped else False,
             )
         )
         if image_overrides:

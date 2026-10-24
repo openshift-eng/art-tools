@@ -59,6 +59,7 @@ class Jobs(Enum):
     OPEN_RECONCILIATION_PRS_LAYERED = 'aos-cd-builds/build%2Fopen-reconciliation-prs-layered-products'
     VERIFY_STAGE_TESTING = 'verify%2Fverify-stage-testing'
     VERIFY_CDN_PUSH = 'verify%2Fverify-cdn-push'
+    VERIFY_RELEASE = 'verify%2Fverify-release'
 
 
 def get_jenkins_url():
@@ -601,6 +602,18 @@ def start_verify_stage_testing(version: str, assembly: str, **kwargs) -> Optiona
     }
     return start_build(
         job=Jobs.VERIFY_STAGE_TESTING,
+        params=params,
+        **kwargs,
+    )
+
+
+def start_verify_release(version: str, assembly: str, **kwargs) -> Optional[str]:
+    params = {
+        'BUILD_VERSION': version,
+        'ASSEMBLY': assembly,
+    }
+    return start_build(
+        job=Jobs.VERIFY_RELEASE,
         params=params,
         **kwargs,
     )

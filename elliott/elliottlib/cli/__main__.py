@@ -84,6 +84,7 @@ from elliottlib.cli.verify_kernel_tag_cli import verify_kernel_tag_cli
 from elliottlib.cli.verify_metadata_url_cli import verify_metadata_url_cli
 from elliottlib.cli.verify_payload import verify_payload
 from elliottlib.cli.verify_qe_qualifier_cli import verify_qe_qualifier_cli
+from elliottlib.cli.verify_release_cli import verify_release_cli
 from elliottlib.cli.verify_security_alerts_cli import verify_security_alerts_cli
 from elliottlib.cli.verify_signatures_cli import verify_signatures_cli
 from elliottlib.cli.verify_stage_testing_cli import verify_stage_testing_cli
@@ -346,6 +347,7 @@ cli.add_command(verify_image_grades_cli)
 cli.add_command(verify_qe_qualifier_cli)
 cli.add_command(verify_kernel_tag_cli)
 cli.add_command(verify_metadata_url_cli)
+cli.add_command(verify_release_cli)
 
 # -----------------------------------------------------------------------------
 # CLI Entry point
