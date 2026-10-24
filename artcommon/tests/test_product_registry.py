@@ -15,6 +15,14 @@ from artcommonlib.product_models import ConformaPolicies, ProductConfig, Release
 from artcommonlib.variants import ProductId
 
 
+def test_unified_fbc_release_targets_are_explicit_and_quay_only():
+    config = get_product_config('quay')
+    assert config.unified_fbc_stage_release == ReleaseTarget('quay-fbc-stage-unified', 'quay-fbc-unified')
+    assert config.unified_fbc_prod_release == ReleaseTarget('quay-fbc-prod-unified', 'quay-fbc-unified')
+    assert get_product_config('logging').unified_fbc_stage_release is None
+    assert config.fbc_stage_release_plans[(3, 18)] == 'quay-advisory-stage-3-18'
+
+
 class TestProductCatalog(unittest.TestCase):
     def test_product_config_is_a_frozen_dataclass(self):
         """Represent product configuration as an immutable dataclass."""

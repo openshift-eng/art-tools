@@ -11,10 +11,23 @@ from doozerlib.backend.konflux_client import API_VERSION, KIND_SNAPSHOT
 from elliottlib.cli.snapshot_cli import (
     CreateSnapshotCli,
     GetSnapshotCli,
+    get_build_records_by_nvrs,
 )
 
 
 class TestCreateSnapshotCli(IsolatedAsyncioTestCase):
+    async def test_unified_fbc_nvr_uses_fbc_records_and_existing_group(self):
+        from artcommonlib.konflux.konflux_build_record import KonfluxFbcBuildRecord
+
+        runtime = Mock(group='quay-3.18', image_map={})
+        nvr = 'quay-fbc-unified-4.22-1.ocp4.22'
+        record = Mock(nvr=nvr)
+        with patch('elliottlib.cli.snapshot_cli._get_konflux_db') as get_db:
+            get_db.return_value.get_build_records_by_nvrs = AsyncMock(return_value=[record])
+            assert await get_build_records_by_nvrs(runtime, [nvr]) == {nvr: record}
+        get_db.assert_called_once_with(KonfluxFbcBuildRecord)
+        assert get_db.return_value.get_build_records_by_nvrs.await_args.kwargs['where']['group'] == 'quay-3.18'
+
     def setUp(self):
         self.runtime = MagicMock()
         self.runtime.group = "openshift-4.18"

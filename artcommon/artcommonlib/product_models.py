@@ -51,6 +51,8 @@ class ProductConfig:
         ec_base_image_release: Pre-release base-image ReleasePlan and application.
         conforma_stage_policies: Image and optional FBC Conforma stage policies.
         fbc_stage_release_plans: Product-version to FBC ReleasePlan mapping.
+        unified_fbc_stage_release: Product-wide unified FBC staging target.
+        unified_fbc_prod_release: Product-wide unified FBC production target.
         cpe_product_name: Product name used in generated CPE labels.
     """
 
@@ -63,6 +65,8 @@ class ProductConfig:
     conforma_stage_policies: ConformaPolicies | None = None
     fbc_stage_release_plans: Mapping[tuple[int, int], str] = field(default_factory=dict)
     cpe_product_name: str | None = None
+    unified_fbc_stage_release: ReleaseTarget | None = None
+    unified_fbc_prod_release: ReleaseTarget | None = None
 
     def __post_init__(self) -> None:
         """

@@ -33,6 +33,7 @@ YAML = new_roundtrip_yaml_handler()
 _TIMESTAMP_RE = re.compile(r"(\d{14})$")
 _PROD_RELEASE_LABEL_PREFIX = "prod-release"
 _STAGE_RELEASE_SUCCESS_LABEL = "stage-release-success"
+UNIFIED_MR_MARKER = '<!-- prepare-release-lp-unified -->'
 _MR_CREATION_ATTEMPTS = 3
 _MR_CREATION_RETRY_DELAY_SECONDS = 5
 
@@ -47,6 +48,10 @@ class ShipmentMRScopeError(ShipmentMRValidationError):
 
 class ShipmentMRProductionError(ValueError):
     """Indicate that production history makes automated MR replacement unsafe."""
+
+
+class ShipmentMRUnifiedError(ValueError):
+    """Require unified mode when an assembly points to a combined shipment."""
 
 
 class ShipmentMRActiveStageError(ValueError):
@@ -603,6 +608,9 @@ async def validate_shipment_mr_reuse_state(
     product: str,
     group: str,
     assembly: str,
+    *,
+    scopes: Sequence[tuple[str, str, str]] | None = None,
+    require_all_scopes: bool = False,
 ) -> None:
     """Validate the release scope and reject production-completed MR reuse.
 
@@ -623,18 +631,27 @@ async def validate_shipment_mr_reuse_state(
             matching shipment file records production release data.
         RuntimeError: If GitLab truncates the MR change list.
     """
+    if scopes is None and isinstance(getattr(mr, 'description', None), str) and UNIFIED_MR_MARKER in mr.description:
+        raise ShipmentMRUnifiedError("This is a unified shipment MR; use --create-unified-fbcs to update it")
     await repo.fetch_switch_branch(mr.source_branch, remote="origin")
     change_data = mr.changes()
     if change_data.get('overflow'):
         raise RuntimeError("GitLab truncated the shipment MR change list; refusing an incomplete validation")
 
+    allowed_scopes = set(scopes or [(product, group, assembly)])
+    found_scopes = set()
     matching_files = []
     shipment_paths = []
     for change in change_data.get('changes', []):
         path = change['new_path']
         if _shipment_path_matches(path, group, assembly):
             shipment_paths.append(path)
-        if not _shipment_path_matches(path, group, assembly, product=product):
+        matching_scopes = {
+            scope for scope in allowed_scopes if _shipment_path_matches(path, scope[1], scope[2], product=scope[0])
+        }
+        if not matching_scopes:
+            if scopes is not None and path.startswith('shipment/'):
+                raise ShipmentMRScopeError(f"Shipment MR contains a release outside the selected scopes: {path}")
             continue
         absolute_path = repo._directory / path
         if not absolute_path.exists():
@@ -644,6 +661,14 @@ async def validate_shipment_mr_reuse_state(
         if not isinstance(config, dict) or 'shipment' not in config:
             raise ValueError(f"Cannot safely determine production release state from malformed shipment file {path}")
         shipment = config['shipment']
+        metadata = shipment.get('metadata', {})
+        if scopes is None and str(metadata.get('application', '')).endswith('-fbc-unified'):
+            raise ShipmentMRUnifiedError("This is a unified shipment MR; use --create-unified-fbcs to update it")
+        if scopes is not None:
+            actual_scope = (metadata.get('product'), metadata.get('group'), metadata.get('assembly'))
+            if actual_scope not in matching_scopes:
+                raise ShipmentMRScopeError(f"Shipment metadata does not match its selected release scope: {path}")
+            found_scopes.add(actual_scope)
         prod = shipment.get('environments', {}).get('prod', {}) or {}
         advisory = prod.get('advisory')
         pipeline = (prod.get('result') or {}).get('pipeline')
@@ -666,6 +691,13 @@ async def validate_shipment_mr_reuse_state(
             "Correct the assembly shipment.mr pointer or use --force to create a replacement MR."
         )
 
+    if scopes is not None:
+        required = allowed_scopes if require_all_scopes else {(product, group, assembly)}
+        if not required.issubset(found_scopes):
+            raise ShipmentMRScopeError(
+                f"Shipment MR is missing selected release scopes: {sorted(required - found_scopes)}"
+            )
+
 
 async def validate_shipment_mr_for_operation(
     gitlab_client,
@@ -679,6 +711,8 @@ async def validate_shipment_mr_for_operation(
     *,
     allowed_states: tuple[str, ...],
     allow_active_stage: bool,
+    scopes: Sequence[tuple[str, str, str]] | None = None,
+    require_all_scopes: bool = False,
 ) -> tuple[object, ShipmentMRCIState]:
     """Validate a layered-product shipment MR and its complete safety state.
 
@@ -715,7 +749,8 @@ async def validate_shipment_mr_for_operation(
         allowed_states=allowed_states,
     )
     try:
-        await validate_shipment_mr_reuse_state(repo, mr, product, group, assembly)
+        scope_options = {} if scopes is None else {"scopes": scopes, "require_all_scopes": require_all_scopes}
+        await validate_shipment_mr_reuse_state(repo, mr, product, group, assembly, **scope_options)
     finally:
         # Scope validation inspects files on the MR source branch. Always return
         # to canonical main so later shipment generation cannot read stale config.
@@ -754,6 +789,7 @@ async def reconcile_shipment_mr(
     *,
     include_fbc_ocp_version: bool,
     dry_run: bool,
+    scopes: Sequence[tuple[str, str, str]] | None = None,
 ) -> bool:
     """Reconcile a reusable MR's shipment files with current release inputs.
 
@@ -792,9 +828,11 @@ async def reconcile_shipment_mr(
         raise ValueError(f"Generated shipment configurations contain duplicate identities: {duplicates}")
     desired_by_identity = {identity: item for identity, item in zip(desired_identities, desired_items)}
     desired_scopes = {identity[:3] for identity in desired_identities}
-    if len(desired_scopes) != 1:
+    if scopes is not None and desired_scopes != set(scopes):
+        raise ValueError("Generated shipment scopes do not match the authorized release scopes")
+    if scopes is None and len(desired_scopes) != 1:
         raise ValueError(f"Generated shipment configurations span multiple scopes: {sorted(desired_scopes)}")
-    desired_scope = next(iter(desired_scopes))
+    allowed_scopes = set(scopes) if scopes is not None else desired_scopes
 
     await repo.fetch_switch_branch(mr.source_branch, remote="origin")
     change_data = mr.changes()
@@ -805,7 +843,7 @@ async def reconcile_shipment_mr(
     existing_by_identity: dict[tuple, tuple[str, dict]] = {}
     for change in changes:
         path = change['new_path']
-        if not _shipment_path_matches(path, desired_scope[1], desired_scope[2], product=desired_scope[0]):
+        if not any(_shipment_path_matches(path, scope[1], scope[2], product=scope[0]) for scope in allowed_scopes):
             continue
         absolute_path = repo._directory / path
         if not absolute_path.exists():

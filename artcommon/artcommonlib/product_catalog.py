@@ -175,6 +175,8 @@ PRODUCT_CATALOG: tuple[ProductConfig, ...] = (
     ),
     ProductConfig(
         product_id=ProductId.QUAY,
+        unified_fbc_stage_release=ReleaseTarget(release_plan="quay-fbc-stage-unified", application="quay-fbc-unified"),
+        unified_fbc_prod_release=ReleaseTarget(release_plan="quay-fbc-prod-unified", application="quay-fbc-unified"),
         namespace="art-quay-tenant",
         kubeconfig_env="QUAY_KONFLUX_SA_KUBECONFIG",
         base_image_release=ReleaseTarget(

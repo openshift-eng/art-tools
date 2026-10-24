@@ -99,6 +99,68 @@ release orchestration are separate work. A fragment reflects its recorded
 production baseline; independently releasing older fragments later can still
 replace newer package content.
 
+## Prepare a combined shipment from group releases
+
+`artcd prepare-release-lp` can prepare source releases and then use the same
+unified builder to create their final shipment:
+
+```sh
+artcd --working-dir=/tmp/artcd prepare-release-lp \
+  --create-unified-fbcs \
+  --unified-fbc-groups=quay-3.18,quay-3.17 \
+  --create-mr --force
+```
+
+This mode currently supports Quay only. Supply comma-separated groups without
+assembly assignments. It selects the highest numeric assembly in each group's
+`releases.yml` within that group's major/minor release train, using numeric
+ordering (for example, `3.18.10` follows `3.18.9`). The selected assembly must
+contain resolvable image pins; the pipeline does not fall back to an older release
+when the newest assembly is incomplete. `--group`, `--assembly`, and
+`--refresh-fbcs` cannot be used in unified mode.
+
+Each group gets an isolated workspace. The pipeline prepares and validates its
+pinned images, operator bundles, and ordinary FBCs. It then builds one unified
+FBC for each OCP target supported by any selected group, including every prepared
+operator FBC from the selected groups that support that target. A group which
+does not support a target contributes no input for that target; production history
+is preserved by the unified merger. Include all groups intended for the output.
+
+The final shipment MR contains each selected release's image snapshots, including
+its bundles, and only the unified FBC snapshots. Ordinary per-version FBCs are
+build inputs and are omitted from the shipment. Unified snapshots use application
+`quay-fbc-unified` and ReleasePlans `quay-fbc-stage-unified` and
+`quay-fbc-prod-unified`, configured in the product catalog. The existing Konflux
+ReleasePlans and admissions must reference that product-wide application before
+staging. Older configuration pointing to `quay-operator-fbc-unified` needs updating.
+
+Use `--force` for the first consolidation when the selected assemblies already
+point to shipment MRs. Every selected assembly's existing `shipment.mr` is updated
+to the same combined MR URL. Source MRs are closed only after all pointers are
+successfully updated. A partial pointer update leaves the new MR Draft and reports
+the groups needing attention; no source MRs are closed. Resolve the failure and
+rerun with `--force`. Merged MRs, production attempts, and MRs containing releases
+outside the selected set cannot be replaced automatically.
+
+Subsequent runs without `--force` reuse the shared MR when its complete release
+scope matches. Unchanged shipment files retain their stage results; changed files
+need staging again. Ordinary mode refuses to modify a unified shipment MR. All
+selected group/assembly shipment locks are acquired in sorted order alongside
+the existing source and unified FBC build locks.
+
+The separate Jenkins job `build/layered-products-prepare-release-unified` exposes
+`CREATE_UNIFIED_FBCS` (default `false`) and `UNIFIED_FBC_GROUPS`, as well as the
+existing ordinary-mode parameters. In unified mode, leave `GROUP` and `ASSEMBLY`
+blank and disable `REFRESH_FBCS`. The original `build/layered-products-prepare-release`
+job remains available. Until this implementation is in the ARTCD image, set
+`ART_TOOLS_COMMIT=ashwindasr@codex/lp-prepare-unified-release` on the new job.
+
+A global `--dry-run` reports selected assemblies, source build steps, and target
+membership in `unified-release-plan.json`. It does not fabricate source FBC NVRs,
+merge unbuilt images, or write shipment MRs, release pointers, or build records.
+The standalone `lp-unified-fbc` command can still render and validate a merge using
+explicit existing FBC inputs during a dry run.
+
 ## Validation
 
 Run the new merge/backend tests and existing FBC tests, then the ARTCD tests
@@ -107,7 +169,10 @@ in a separate pytest invocation (the projects share the `tests` package name):
 ```sh
 pytest -q doozer/tests/backend/test_konflux_fbc_merge.py \
   doozer/tests/backend/test_konflux_fbc.py doozer/tests/cli/test_fbc.py
-pytest -q pyartcd/tests/pipelines/test_merge_layered_fbc.py
+pytest -q pyartcd/tests/pipelines/test_merge_layered_fbc.py \
+  pyartcd/tests/pipelines/test_prepare_unified_release_lp.py \
+  pyartcd/tests/pipelines/test_prepare_release_lp.py pyartcd/tests/test_lp_shipment.py
+pytest -q elliott/tests/test_snapshot_cli.py
 ```
 
 For group inference, cover NVR and pullspec inputs from multiple groups, input

@@ -1163,3 +1163,80 @@ def test_reconcile_adds_and_removes_shipments_without_renaming_retained_files(re
         restore_main.assert_awaited_once()
     repo.write_file.assert_awaited_once()
     repo.commit_push.assert_awaited_once()
+
+
+def _quay_shipment(group, assembly, *, unified=False):
+    config = _shipment(
+        fbc=unified, nvr='quay-fbc-unified-4.22-1.ocp4.22' if unified else None, release_notes=not unified
+    )
+    app = 'quay-fbc-unified' if unified else group.replace('.', '-')
+    config['shipment']['metadata'].update(product='quay', group=group, assembly=assembly, application=app)
+    config['shipment']['snapshot']['spec']['application'] = app
+    return config
+
+
+def test_combined_scope_validation_checks_every_release_and_production_state(reconciliation_repo):
+    repo, mr, add_file = reconciliation_repo
+    scopes = [('quay', 'quay-3.17', '3.17.7'), ('quay', 'quay-3.18', '3.18.3')]
+    for _, group, assembly in scopes:
+        add_file(_quay_shipment(group, assembly), f'{assembly}.image.20260817161645.yaml')
+    asyncio.run(validate_shipment_mr_reuse_state(repo, mr, *scopes[0], scopes=scopes, require_all_scopes=True))
+    prod = _quay_shipment('quay-3.18', '3.18.3', unified=True)
+    prod['shipment']['environments']['prod']['result'] = {'pipeline': 'https://prod/pipeline'}
+    add_file(prod, '3.18.3.fbc.20260817161645.yaml')
+    with pytest.raises(ShipmentMRProductionError):
+        asyncio.run(validate_shipment_mr_reuse_state(repo, mr, *scopes[0], scopes=scopes))
+
+
+def test_combined_scope_validation_rejects_unselected_release(reconciliation_repo):
+    repo, mr, add_file = reconciliation_repo
+    scopes = [('quay', 'quay-3.18', '3.18.3')]
+    add_file(_quay_shipment('quay-3.18', '3.18.3'), '3.18.3.image.yaml')
+    add_file(_quay_shipment('quay-3.17', '3.17.7'), '3.17.7.image.yaml')
+    with pytest.raises(ShipmentMRScopeError, match='outside the selected scopes'):
+        asyncio.run(validate_shipment_mr_reuse_state(repo, mr, *scopes[0], scopes=scopes))
+
+
+def test_combined_scope_validation_requires_all_scopes_for_reuse(reconciliation_repo):
+    repo, mr, add_file = reconciliation_repo
+    scopes = [('quay', 'quay-3.17', '3.17.7'), ('quay', 'quay-3.18', '3.18.3')]
+    add_file(_quay_shipment('quay-3.17', '3.17.7'), '3.17.7.image.yaml')
+    with pytest.raises(ShipmentMRScopeError, match='missing selected release scopes'):
+        asyncio.run(validate_shipment_mr_reuse_state(repo, mr, *scopes[0], scopes=scopes, require_all_scopes=True))
+
+
+def test_ordinary_mode_cannot_modify_combined_mr_even_with_force_marker(reconciliation_repo):
+    from pyartcd.lp_shipment import UNIFIED_MR_MARKER, ShipmentMRUnifiedError
+
+    repo, mr, _ = reconciliation_repo
+    mr.description = UNIFIED_MR_MARKER
+    with pytest.raises(ShipmentMRUnifiedError, match='use --create-unified-fbcs'):
+        asyncio.run(validate_shipment_mr_reuse_state(repo, mr, 'quay', 'quay-3.18', '3.18.3'))
+
+
+def test_combined_reconciliation_preserves_unchanged_images_and_replaces_only_changed_fbc(reconciliation_repo):
+    repo, mr, add_file = reconciliation_repo
+    scopes = [('quay', 'quay-3.17', '3.17.7'), ('quay', 'quay-3.18', '3.18.3')]
+    desired = {}
+    originals = {}
+    for index, (_, group, assembly) in enumerate(scopes):
+        image = _quay_shipment(group, assembly)
+        existing = deepcopy(image)
+        existing['shipment']['environments']['stage']['advisory'] = {'url': 'https://stage/advisory'}
+        path = add_file(existing, f'{assembly}.image.20260817161645.yaml')
+        originals[path] = path.read_bytes()
+        desired[f'image{index:02d}'] = ShipmentConfig(**image)
+    fbc = _quay_shipment('quay-3.18', '3.18.3', unified=True)
+    existing = deepcopy(fbc)
+    existing['shipment']['snapshot']['nvrs'] = ['quay-fbc-unified-4.22-0.ocp4.22']
+    existing['shipment']['environments']['stage']['result'] = {'pipeline': 'https://stage/fbc'}
+    path = add_file(existing, '3.18.3.fbc.2026081716164501.yaml')
+    desired['fbc01'] = ShipmentConfig(**fbc)
+    assert asyncio.run(
+        reconcile_shipment_mr(repo, mr, desired, include_fbc_ocp_version=True, dry_run=False, scopes=scopes)
+    )
+    assert all(path.read_bytes() == original for path, original in originals.items())
+    assert YAML.load(path)['shipment']['snapshot']['nvrs'] == fbc['shipment']['snapshot']['nvrs']
+    assert 'result' not in YAML.load(path)['shipment']['environments']['stage']
+    repo.write_file.assert_awaited_once()
+    assert mr.labels == ['reviewed']

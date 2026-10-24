@@ -22,6 +22,7 @@ from artcommonlib.gitlab import GitLabClient
 from artcommonlib.konflux.konflux_build_record import KonfluxBundleBuildRecord, KonfluxFbcBuildRecord
 from artcommonlib.konflux.konflux_db import KonfluxDb
 from artcommonlib.model import Model
+from artcommonlib.product_catalog import get_product_config
 from artcommonlib.rpm_utils import parse_nvr
 from artcommonlib.util import (
     new_roundtrip_yaml_handler,
@@ -625,6 +626,8 @@ class PrepareReleaseLPPipeline:
         kind: str,
         snapshot: Optional[Snapshot],
         release_notes: Optional[ReleaseNotes] = None,
+        *,
+        unified_fbc: bool = False,
     ) -> ShipmentConfig:
         """Create a shipment configuration for the given kind."""
         metadata = Metadata(
@@ -637,7 +640,18 @@ class PrepareReleaseLPPipeline:
 
         stage_rpa = "n/a"
         prod_rpa = "n/a"
-        if self.create_mr:
+        if unified_fbc:
+            config = get_product_config(self.product)
+            stage, prod = config.unified_fbc_stage_release, config.unified_fbc_prod_release
+            if (
+                not stage
+                or not prod
+                or snapshot.spec.application != stage.application
+                or stage.application != prod.application
+            ):
+                raise ValueError(f"No matching unified FBC release targets for {self.product}")
+            stage_rpa, prod_rpa = stage.release_plan, prod.release_plan
+        elif self.create_mr:
             stage_rpa, prod_rpa = resolve_shipment_release_plans(
                 self.shipment_data_repo,
                 snapshot.spec.application if snapshot else "default-app",
@@ -760,11 +774,12 @@ class PrepareReleaseLPPipeline:
         env: str,
         timestamp: str,
     ) -> str:
+        assembly = shipment_config.shipment.metadata.assembly
         if advisory_kind.startswith('fbc'):
             counter = advisory_kind[3:]
-            filename = f"{self.assembly}.fbc.{timestamp}{counter}.yaml"
+            filename = f"{assembly}.fbc.{timestamp}{counter}.yaml"
         else:
-            filename = f"{self.assembly}.{advisory_kind}.{timestamp}.yaml"
+            filename = f"{assembly}.{advisory_kind}.{timestamp}.yaml"
 
         product = shipment_config.shipment.metadata.product
         group = shipment_config.shipment.metadata.group
@@ -778,6 +793,19 @@ class PrepareReleaseLPPipeline:
         yaml.dump(shipment_config.model_dump(exclude_unset=True, exclude_none=True), out)
         await self.shipment_data_repo.write_file(filepath, out.getvalue())
         return str(filepath)
+
+    def _shipment_mr_text(self) -> tuple[str, str]:
+        if self.target_release_date:
+            mr_title = f"Draft: Shipment for {self.product} {self.assembly} (ship date: {self.target_release_date})"
+        else:
+            mr_title = f"Draft: Shipment for {self.product} {self.assembly}"
+
+        mr_description = ""
+        if self.job_url:
+            mr_description += f"Created by job: {self.job_url}\n\n"
+        mr_description += f"Shipment files for {self.product} {self.assembly} (prepare-release-lp)"
+
+        return mr_title, mr_description
 
     async def _create_shipment_mr(self, shipments_by_kind: Dict[str, ShipmentConfig]) -> Optional[str]:
         if not self.create_mr:
@@ -808,15 +836,7 @@ class PrepareReleaseLPPipeline:
         source_project = self._get_gitlab_project(self.shipment_data_repo_push_url)
         target_project = self._get_gitlab_project(self.shipment_data_repo_pull_url)
 
-        if self.target_release_date:
-            mr_title = f"Draft: Shipment for {self.product} {self.assembly} (ship date: {self.target_release_date})"
-        else:
-            mr_title = f"Draft: Shipment for {self.product} {self.assembly}"
-
-        mr_description = ""
-        if self.job_url:
-            mr_description += f"Created by job: {self.job_url}\n\n"
-        mr_description += f"Shipment files for {self.product} {self.assembly} (prepare-release-lp)"
+        mr_title, mr_description = self._shipment_mr_text()
 
         if self.dry_run:
             self._logger.info("[DRY-RUN] Would create MR: %s", mr_title)
@@ -913,6 +933,61 @@ class PrepareReleaseLPPipeline:
         await build_data.setup(push_url)
         await verify_shipment_mr_url(build_data, self.group, self.assembly, self._configured_shipment_mr_url)
 
+    async def _prepare_artifacts(self, assembly_config: Dict):
+        """Prepare and validate one release, retaining exact source pins."""
+        operand_nvrs = self._extract_operand_nvrs(assembly_config)
+        self._logger.info("Assembly contains %d pinned operand NVRs", len(operand_nvrs))
+
+        bundle_nvrs, assembly_operator_nvrs = await self._trigger_bundle_build(operand_nvrs)
+        self._logger.info("Bundle builds: %d NVRs", len(bundle_nvrs))
+
+        fbc_nvrs, fbc_pullspecs = await self._trigger_fbc_build(assembly_operator_nvrs)
+        self._logger.info("FBC builds: %d NVRs", len(fbc_nvrs))
+        if fbc_pullspecs and len(fbc_nvrs) != len(fbc_pullspecs):
+            raise ValueError(
+                f"Cannot match {len(fbc_pullspecs)} generated FBC pullspecs to {len(fbc_nvrs)} FBC NVRs. "
+                "Refusing to create shipment data."
+            )
+        validate_layered_product_fbc_nvrs(self.assembly, fbc_nvrs)
+        await self._validate_fbc_pins(fbc_nvrs, bundle_nvrs, operand_nvrs)
+
+        if fbc_pullspecs:
+            self._logger.info("Validating FBC related-image consistency...")
+            await validate_fbc_related_images(fbc_pullspecs, self.product, assembly=self.assembly)
+        elif len(fbc_nvrs) > 1 and not fbc_pullspecs:
+            self._logger.warning("FBC pullspecs not available; skipping FBC consistency validation")
+
+        return operand_nvrs, bundle_nvrs, fbc_nvrs, fbc_pullspecs
+
+    async def _create_image_shipments(self, operand_nvrs: List[str], bundle_nvrs: List[str]):
+        """Include operands and bundles in source-scoped image shipments."""
+        release_notes = self._generate_release_notes()
+
+        errata_type = release_notes.type if release_notes is not None else "RHBA"
+        template = self._load_release_notes_template(errata_type=errata_type)
+        if template:
+            if release_notes is None:
+                release_notes = ReleaseNotes(type="RHBA")
+            release_notes.synopsis = template["synopsis"]
+            release_notes.topic = template["topic"]
+            release_notes.description = template["description"]
+            release_notes.solution = template["solution"]
+
+        shipments_by_kind: Dict[str, ShipmentConfig] = {}
+
+        image_nvrs = list(dict.fromkeys(operand_nvrs + bundle_nvrs))
+        if image_nvrs:
+            image_snapshots = await self._create_snapshot(image_nvrs)
+            for i, snapshot in enumerate(image_snapshots, start=1):
+                key = 'image' if len(image_snapshots) == 1 else f'image{i:02d}'
+                shipments_by_kind[key] = self._create_shipment_config(
+                    'image',
+                    snapshot,
+                    release_notes=release_notes,
+                )
+
+        return shipments_by_kind
+
     async def run(self) -> None:
         """Build release artifacts and create or reconcile their shipment MR."""
         self._logger.info(
@@ -967,52 +1042,8 @@ class PrepareReleaseLPPipeline:
                     "unchanged while --force creates a replacement: %s",
                     exc,
                 )
-        operand_nvrs = self._extract_operand_nvrs(assembly_config)
-        self._logger.info("Assembly contains %d pinned operand NVRs", len(operand_nvrs))
-
-        bundle_nvrs, assembly_operator_nvrs = await self._trigger_bundle_build(operand_nvrs)
-        self._logger.info("Bundle builds: %d NVRs", len(bundle_nvrs))
-
-        fbc_nvrs, fbc_pullspecs = await self._trigger_fbc_build(assembly_operator_nvrs)
-        self._logger.info("FBC builds: %d NVRs", len(fbc_nvrs))
-        if fbc_pullspecs and len(fbc_nvrs) != len(fbc_pullspecs):
-            raise ValueError(
-                f"Cannot match {len(fbc_pullspecs)} generated FBC pullspecs to {len(fbc_nvrs)} FBC NVRs. "
-                "Refusing to create shipment data."
-            )
-        validate_layered_product_fbc_nvrs(self.assembly, fbc_nvrs)
-        await self._validate_fbc_pins(fbc_nvrs, bundle_nvrs, operand_nvrs)
-
-        if fbc_pullspecs:
-            self._logger.info("Validating FBC related-image consistency...")
-            await validate_fbc_related_images(fbc_pullspecs, self.product, assembly=self.assembly)
-        elif len(fbc_nvrs) > 1 and not fbc_pullspecs:
-            self._logger.warning("FBC pullspecs not available; skipping FBC consistency validation")
-
-        release_notes = self._generate_release_notes()
-
-        errata_type = release_notes.type if release_notes is not None else "RHBA"
-        template = self._load_release_notes_template(errata_type=errata_type)
-        if template:
-            if release_notes is None:
-                release_notes = ReleaseNotes(type="RHBA")
-            release_notes.synopsis = template["synopsis"]
-            release_notes.topic = template["topic"]
-            release_notes.description = template["description"]
-            release_notes.solution = template["solution"]
-
-        shipments_by_kind: Dict[str, ShipmentConfig] = {}
-
-        image_nvrs = list(dict.fromkeys(operand_nvrs + bundle_nvrs))
-        if image_nvrs:
-            image_snapshots = await self._create_snapshot(image_nvrs)
-            for i, snapshot in enumerate(image_snapshots, start=1):
-                key = 'image' if len(image_snapshots) == 1 else f'image{i:02d}'
-                shipments_by_kind[key] = self._create_shipment_config(
-                    'image',
-                    snapshot,
-                    release_notes=release_notes,
-                )
+        operand_nvrs, bundle_nvrs, fbc_nvrs, fbc_pullspecs = await self._prepare_artifacts(assembly_config)
+        shipments_by_kind = await self._create_image_shipments(operand_nvrs, bundle_nvrs)
 
         fbc_counter = 1
         for fbc_nvr in fbc_nvrs:
@@ -1142,13 +1173,13 @@ class PrepareReleaseLPPipeline:
     "-g",
     "--group",
     metavar='NAME',
-    required=True,
+    required=False,
     help="The group to operate on (e.g. acm-2.17, mce-2.17)",
 )
 @click.option(
     "--assembly",
     metavar="ASSEMBLY_NAME",
-    required=True,
+    required=False,
     help="The named assembly to prepare (e.g. 2.17.3). Must exist in releases.yml.",
 )
 @click.option(
@@ -1181,6 +1212,8 @@ class PrepareReleaseLPPipeline:
     is_flag=True,
     help="Force FBC rebuilds from the latest production catalogs before creating shipment data.",
 )
+@click.option("--create-unified-fbcs", is_flag=True, help="Combine selected Quay releases into unified FBCs.")
+@click.option("--unified-fbc-groups", help="Comma-separated source groups; selects each highest numeric assembly.")
 @click.option(
     "--jira-bugs",
     default=None,
@@ -1202,6 +1235,8 @@ async def prepare_release_lp(
     create_mr: bool,
     force: bool,
     refresh_fbcs: bool,
+    create_unified_fbcs: bool,
+    unified_fbc_groups: Optional[str],
     jira_bugs: Optional[str],
     target_release_date: Optional[str],
 ):
@@ -1224,6 +1259,16 @@ async def prepare_release_lp(
     if force and not create_mr:
         raise click.ClickException("--force requires --create-mr")
 
+    if create_unified_fbcs:
+        if group or assembly or refresh_fbcs:
+            raise click.ClickException("Unified mode cannot use --group, --assembly, or --refresh-fbcs")
+        if not unified_fbc_groups or not unified_fbc_groups.strip():
+            raise click.ClickException("Unified mode requires --unified-fbc-groups")
+    elif unified_fbc_groups is not None:
+        raise click.ClickException("--unified-fbc-groups requires --create-unified-fbcs")
+    elif not group or not assembly:
+        raise click.ClickException("Ordinary mode requires --group and --assembly")
+
     jira_bugs_list = None
     if jira_bugs:
         jira_bugs_list = [j.strip() for j in jira_bugs.split(',') if j.strip()]
@@ -1233,6 +1278,23 @@ async def prepare_release_lp(
     normalized_date = None
     if target_release_date:
         normalized_date = _normalize_release_date(target_release_date)
+
+    if create_unified_fbcs:
+        # Import lazily because the coordinator reuses the single-release pipeline.
+        from pyartcd.pipelines.prepare_unified_release_lp import PrepareUnifiedReleaseLPPipeline
+
+        pipeline = PrepareUnifiedReleaseLPPipeline(
+            runtime=runtime,
+            groups=unified_fbc_groups,
+            build_data_repo_url=build_data_repo_url,
+            shipment_data_repo_url=shipment_data_repo_url,
+            create_mr=create_mr,
+            force=force,
+            jira_bugs=jira_bugs_list,
+            target_release_date=normalized_date,
+        )
+        await pipeline.run()
+        return
 
     pipeline = PrepareReleaseLPPipeline(
         runtime=runtime,
