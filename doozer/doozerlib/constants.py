@@ -82,22 +82,42 @@ KONFLUX_TEST_PREGA_EC_POLICY_CONFIGURATION = "ocp-art-tenant/conforma-build-ec-s
 # Product-to-EC-policy mappings for build-time ITS verification.
 # Maps product name -> "namespace/policy-name" for each assembly type.
 PRODUCT_EC_POLICY_MAP = {
+    "cert-manager": "rhtap-releng-tenant/registry-art-oap-stage",
+    "cluster-observability-operator": "rhtap-releng-tenant/registry-art-coo-stage",
+    "external-secrets-operator": "rhtap-releng-tenant/registry-art-oap-stage",
+    "kueue-operator": "rhtap-releng-tenant/registry-art-kueue-stage",
     "logging": "rhtap-releng-tenant/registry-art-logging-stage",
+    "mirror_gui": "rhtap-releng-tenant/registry-art-oc-mirror-mirror-gui-stage",
     "mta": "rhtap-releng-tenant/registry-art-mta-stage",
+    "multicluster-engine": "rhtap-releng-tenant/registry-art-acm-stage",
     "oadp": "rhtap-releng-tenant/registry-art-oadp-stage",
+    "oc-mirror": "rhtap-releng-tenant/registry-standard",
     "ocp": KONFLUX_DEFAULT_EC_POLICY_CONFIGURATION,
     "openshift-logging": "rhtap-releng-tenant/registry-art-logging-stage",
+    "openshift-opentelemetry-operator": "rhtap-releng-tenant/registry-art-rhosdt-stage",
     "quay": "rhtap-releng-tenant/registry-art-quay-stage",
+    "rhacm2": "rhtap-releng-tenant/registry-art-acm-stage",
     "rhmtc": "rhtap-releng-tenant/registry-art-mtc-stage",
+    "zero-trust-workload-identity-manager": "rhtap-releng-tenant/registry-art-oap-stage",
 }
 
 PRODUCT_TEST_EC_POLICY_MAP = {
+    "cert-manager": "rhtap-releng-tenant/registry-art-oap-stage",
+    "cluster-observability-operator": "rhtap-releng-tenant/registry-art-coo-stage",
+    "external-secrets-operator": "rhtap-releng-tenant/registry-art-oap-stage",
+    "kueue-operator": "rhtap-releng-tenant/registry-art-kueue-stage",
     "logging": "rhtap-releng-tenant/registry-art-logging-stage",
+    "mirror_gui": "rhtap-releng-tenant/registry-art-oc-mirror-mirror-gui-stage",
     "mta": "rhtap-releng-tenant/registry-art-mta-stage",
+    "multicluster-engine": "rhtap-releng-tenant/registry-art-acm-stage",
     "oadp": "rhtap-releng-tenant/registry-art-oadp-stage",
+    "oc-mirror": "rhtap-releng-tenant/registry-standard",
     "ocp": KONFLUX_TEST_EC_POLICY_CONFIGURATION,
     "openshift-logging": "rhtap-releng-tenant/registry-art-logging-stage",
+    "openshift-opentelemetry-operator": "rhtap-releng-tenant/registry-art-rhosdt-stage",
+    "rhacm2": "rhtap-releng-tenant/registry-art-acm-stage",
     "rhmtc": "rhtap-releng-tenant/registry-art-mtc-stage",
+    "zero-trust-workload-identity-manager": "rhtap-releng-tenant/registry-art-oap-stage",
 }
 
 PRODUCT_PREGA_EC_POLICY_MAP = {
