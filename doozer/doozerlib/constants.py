@@ -51,6 +51,7 @@ KONFLUX_REPO_CA_BUNDLE_HOST = "https://certs.corp.redhat.com/certs"
 WORKING_SUBDIR_KONFLUX_BUILD_SOURCES = "konflux_build_sources"
 WORKING_SUBDIR_KONFLUX_FBC_SOURCES = "konflux_fbc_sources"
 WORKING_SUBDIR_KONFLUX_OKD_SOURCES = "konflux_okd_sources"
+WORKING_SUBDIR_RELEASE_PAYLOAD_SOURCES = "release_payload_sources"
 # Legacy constants removed - use get_art_prod_image_repo_for_version() from artcommonlib.util instead
 DELIVERY_IMAGE_REGISTRY = "registry.redhat.io"
 KONFLUX_UI_HOST = "https://konflux-ui.apps.kflux-ocp-p01.7ayg.p1.openshiftapps.com"
@@ -58,6 +59,12 @@ KONFLUX_DEFAULT_IMAGE_BUILD_PLR_TEMPLATE_URL = "https://api.github.com/repos/ope
 KONFLUX_DEFAULT_BUNDLE_BUILD_PLR_TEMPLATE_URL = "https://api.github.com/repos/openshift-priv/art-konflux-template/contents/.tekton/art-bundle-konflux-template-push.yaml?ref=main"
 KONFLUX_DEFAULT_FBC_BUILD_PLR_TEMPLATE_URL = "https://api.github.com/repos/openshift-priv/art-konflux-template/contents/.tekton/art-fbc-konflux-template-push.yaml?ref=main"
 ART_FBC_GIT_REPO = "https://github.com/openshift-priv/art-fbc.git"
+# ART-14237 / ART-21775: source repo for Konflux-built release payload images
+ART_RELEASE_PAYLOAD_GIT_REPO = "https://github.com/openshift-priv/ocp-release-payloads.git"
+# ART-21775: destination repo for release payload images synced from Konflux. This is the
+# same repo the promote job publishes to (pyartcd.constants.RELEASE_IMAGE_REPO); doozer
+# cannot import pyartcd, so the pullspec is duplicated here.
+RELEASE_PAYLOAD_DEST_REPO = "quay.io/openshift-release-dev/ocp-release"
 REGISTRY_PROXY_BASE_URL = "registry-proxy.engineering.redhat.com"
 BREW_REGISTRY_BASE_URL = "brew.registry.redhat.io"
 
