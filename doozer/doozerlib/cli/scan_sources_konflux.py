@@ -23,7 +23,7 @@ from artcommonlib.konflux.konflux_build_record import Engine, KonfluxBuildOutcom
 from artcommonlib.konflux.package_rpm_finder import PackageRpmFinder
 from artcommonlib.model import Missing, Model
 from artcommonlib.pushd import Dir
-from artcommonlib.release_util import isolate_timestamp_in_release
+from artcommonlib.release_util import isolate_timestamp_in_release, split_el_suffix_in_release
 from artcommonlib.rhcos import get_latest_layered_rhcos_build, get_primary_container_name
 from artcommonlib.rpm_utils import parse_nvr, to_nevra
 from artcommonlib.telemetry import start_as_current_span_async
@@ -48,6 +48,8 @@ from doozerlib.source_resolver import SourceResolver
 from doozerlib.util import oc_image_info_for_arch_async
 
 DEFAULT_THRESHOLD_HOURS = 6
+
+FLOATING_GOLANG_BUILDER_TAG_RE = re.compile(r':golang-builder-v\d+\.\d+-rhel\d+$')
 
 TRACER = trace.get_tracer(__name__)
 
@@ -1073,6 +1075,57 @@ class ConfigScanSources:
             # No builder build info?
             self.logger.warning('Could not fetch build info for %s', builder_build_nvr)
 
+    @staticmethod
+    def is_floating_builder_tag(builder_image_name: str) -> bool:
+        """
+        Tell whether a builder pullspec is a floating golang-builder tag, e.g.
+        registry.redhat.io/openshift/golang-builder:golang-builder-v1.25-rhel9.
+        Such a tag moves when the builder shipment merges, not when the builder is built.
+
+        :param builder_image_name: builder or parent image pullspec
+        :return: True for a floating golang-builder tag
+        """
+        return bool(FLOATING_GOLANG_BUILDER_TAG_RE.search(builder_image_name))
+
+    @staticmethod
+    def builder_stream_key(nvr: str) -> Optional[tuple]:
+        """
+        Identify the builder stream an NVR belongs to: component name, major.minor version and RHEL suffix.
+        openshift-golang-builder-container-v1.25.3-202510011200.p0.gabc1234.el9 gives
+        ('openshift-golang-builder-container', '1.25', 'el9').
+
+        :param nvr: image NVR
+        :return: (name, major.minor, el suffix), or None if the NVR cannot be parsed
+        """
+        try:
+            parsed = parse_nvr(nvr)
+        except ValueError:
+            return None
+        major_minor = '.'.join(parsed['version'].lstrip('v').split('.')[:2])
+        _, el_suffix = split_el_suffix_in_release(parsed['release'])
+        if el_suffix:
+            el_suffix = re.sub(r'_\d+$', '', el_suffix)
+        return parsed['name'], major_minor, el_suffix
+
+    @classmethod
+    def recorded_parent_nvrs_for_stream(cls, build_record: KonfluxBuildRecord, builder_build_nvr: str) -> Set[str]:
+        """
+        Return the parent NVRs recorded on a build that belong to the same builder stream as builder_build_nvr.
+        Entries containing '/' are pullspecs recorded when NVR extraction failed, so they are ignored.
+
+        :param build_record: latest build record of the consumer image
+        :param builder_build_nvr: NVR the builder pullspec resolves to now
+        :return: set of recorded NVRs of the same stream (empty if none was recorded)
+        """
+        key = cls.builder_stream_key(builder_build_nvr)
+        if not key:
+            return set()
+        return {
+            entry
+            for entry in getattr(build_record, 'parent_images', None) or []
+            if entry and '/' not in entry and cls.builder_stream_key(entry) == key
+        }
+
     @skip_check_if_changing
     @start_as_current_span_async(TRACER, "scan-sources-konflux.scan-builders-changes")
     async def scan_builders_changes(self, image_meta: ImageMetadata):
@@ -1113,6 +1166,35 @@ class ConfigScanSources:
                     raise IOError(f'Unable to find nvr for {builder_image_name}')
                 # If it's a direct image reference, skip it (likely an external/upstream image)
                 continue
+
+            if self.is_floating_builder_tag(builder_image_name):
+                # The tag moves at builder shipment time, later than the builder build start time,
+                # so only the parent NVR recorded on the consumer build tells which builder it used.
+                recorded_nvrs = self.recorded_parent_nvrs_for_stream(build_record, builder_build_nvr)
+                if recorded_nvrs:
+                    if builder_build_nvr in recorded_nvrs:
+                        continue
+                    self.logger.info(
+                        '%s will be rebuilt because floating tag %s now points to %s (latest build used %s)',
+                        image_meta.distgit_key,
+                        builder_image_name,
+                        builder_build_nvr,
+                        ', '.join(sorted(recorded_nvrs)),
+                    )
+                    self.add_image_meta_change(
+                        image_meta,
+                        RebuildHint(
+                            RebuildHintCode.BUILDER_CHANGING,
+                            f'Floating builder tag {builder_image_name} now points to {builder_build_nvr}, '
+                            f'but latest {image_meta.distgit_key} build used {", ".join(sorted(recorded_nvrs))}',
+                        ),
+                    )
+                    return
+                self.logger.info(
+                    'No parent NVR recorded for %s on latest %s build; falling back to build time comparison',
+                    builder_image_name,
+                    image_meta.distgit_key,
+                )
 
             # Get the builder build start time
             builder_build_start_time = await self.get_builder_build_start_time(builder_build_nvr)
