@@ -105,8 +105,10 @@ class KonfluxRebaseCli:
         push: bool,
         lockfile_seed_nvrs: Optional[List[str]] = None,
         extra_labels: Optional[dict[str, str]] = None,
+        kind: str = "image",
     ):
         self.runtime = runtime
+        self.kind = kind
         self.version = version
         self.release = release
         self.embargoed = embargoed
@@ -124,9 +126,13 @@ class KonfluxRebaseCli:
     @start_as_current_span_async(TRACER, "beta:images:konflux:rebase")
     async def run(self):
         runtime = self.runtime
-        runtime.initialize(mode='images', clone_distgits=False, build_system='konflux')
+        if self.kind == "binary":
+            runtime.initialize(mode='binaries', clone_distgits=False, build_system='konflux')
+            metas = runtime.binary_metas()
+        else:
+            runtime.initialize(mode='images', clone_distgits=False, build_system='konflux')
+            metas = runtime.ordered_image_metas()
         assert runtime.source_resolver is not None, "source_resolver is required for this command"
-        metas = runtime.ordered_image_metas()
 
         # Update span name to include metas count
         span = trace.get_current_span()
@@ -152,7 +158,7 @@ class KonfluxRebaseCli:
             await rebaser.rpm_lockfile_generator.ensure_repositories_loaded(art_internal_metas, base_dir)
 
         async def rebase_one(meta):
-            report = get_reporter().component('image', meta.distgit_key)
+            report = get_reporter().component(meta.kind, meta.distgit_key)
             async with report.preparing():
                 return await rebaser.rebase_to(
                     meta,
@@ -302,6 +308,21 @@ async def images_konflux_rebase(
     await cli.run()
 
 
+BUILD_ARG_RE = re.compile(r"[A-Za-z_][A-Za-z0-9_]*=[^\x00-\x1f\x7f]*")
+
+
+def validate_build_args(build_args: Sequence[str]) -> tuple[str, ...]:
+    """
+    Return build_args as a tuple after checking that every entry is KEY=VALUE.
+
+    :param build_args: Build arguments given on the command line.
+    """
+    invalid = [arg for arg in build_args if not BUILD_ARG_RE.fullmatch(arg)]
+    if invalid:
+        raise click.BadParameter(f"--build-arg must be KEY=VALUE, got: {', '.join(invalid)}")
+    return tuple(build_args)
+
+
 class KonfluxBuildCli:
     def __init__(
         self,
@@ -319,8 +340,11 @@ class KonfluxBuildCli:
         effective_time: str = "now",
         skip_custom_its: bool = False,
         skip_tasks: tuple[str, ...] = (),
+        extra_build_args: tuple[str, ...] = (),
+        kind: str = "image",
     ):
         self.runtime = runtime
+        self.kind = kind
         self.konflux_kubeconfig = konflux_kubeconfig
         self.konflux_context = konflux_context
         self.konflux_namespace = konflux_namespace
@@ -334,6 +358,7 @@ class KonfluxBuildCli:
         self.skip_ec_verify = skip_ec_verify
         self.effective_time = effective_time
         self.skip_custom_its = skip_custom_its
+        self.extra_build_args = validate_build_args(extra_build_args)
 
         validate_build_priority(self.build_priority)
 
@@ -342,11 +367,15 @@ class KonfluxBuildCli:
         runtime = self.runtime
 
         # OKD configuration is automatically merged in get_group_config() when variant=okd
-        runtime.initialize(mode='images', clone_distgits=False)
+        if self.kind == "binary":
+            runtime.initialize(mode='binaries', clone_distgits=False)
+            metas = runtime.binary_metas()
+        else:
+            runtime.initialize(mode='images', clone_distgits=False)
+            metas = _filter_okd_excluded_metas(runtime, runtime.ordered_image_metas())
 
         runtime.konflux_db.bind(KonfluxBuildRecord)
         assert runtime.source_resolver is not None, "source_resolver is not initialized. Doozer bug?"
-        metas = _filter_okd_excluded_metas(runtime, runtime.ordered_image_metas())
 
         # Update span name to include metas count
         span = trace.get_current_span()
@@ -424,6 +453,7 @@ class KonfluxBuildCli:
             integration_test_scenarios=tuple(dict.fromkeys(integration_test_scenarios)),
             integration_test_snapshot_annotations=dict(integration_test_snapshot_annotations),
             skip_custom_its=self.skip_custom_its,
+            extra_build_args=self.extra_build_args,
         )
         builder = KonfluxImageBuilder(config=config, record_logger=runtime.record_logger)
         await builder.validate_custom_integration_test_scenarios()
@@ -710,6 +740,13 @@ class KonfluxBuildCli:
     is_flag=True,
     help='Skip custom IntegrationTestScenarios configured in group.yml.',
 )
+@click.option(
+    '--build-arg',
+    'build_args',
+    multiple=True,
+    metavar='KEY=VALUE',
+    help='Extra Konflux build argument, appended after konflux.build_args of every image built by this run. Repeatable.',
+)
 @pass_runtime
 @click_coroutine
 async def images_konflux_build(
@@ -727,6 +764,7 @@ async def images_konflux_build(
     skip_ec_verify: bool,
     effective_time: str,
     skip_custom_its: bool,
+    build_args: tuple,
 ):
     if network_mode:
         runtime.network_mode_override = network_mode
@@ -746,6 +784,7 @@ async def images_konflux_build(
         skip_ec_verify=skip_ec_verify,
         effective_time=effective_time,
         skip_custom_its=skip_custom_its,
+        extra_build_args=build_args,
     )
     await cli.run()
 

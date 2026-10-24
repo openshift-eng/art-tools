@@ -1663,6 +1663,28 @@ class TestKonfluxImageBuilder(unittest.IsolatedAsyncioTestCase):
         self.assertIn("Target NVR", kwargs["message"])
         self.assertNotEqual(kwargs["message"], "Unknown failure")
 
+    async def test_build_records_binaries_under_their_own_record_type(self):
+        for kind, expected in (("image", "image_build_konflux"), ("binary", "binary_build_konflux")):
+            with self.subTest(kind=kind):
+                metadata = self._metadata()
+                metadata.kind = kind
+                dest_dir = self.builder._config.base_dir.joinpath(metadata.qualified_key)
+                dest_dir.mkdir(parents=True, exist_ok=True)
+                build_repo = MagicMock()
+                build_repo.local_dir = dest_dir
+                record_logger = MagicMock()
+                self.builder._record_logger = record_logger
+                with (
+                    patch(
+                        "doozerlib.backend.konflux_image_builder.BuildRepo.from_local_dir",
+                        new=AsyncMock(return_value=build_repo),
+                    ),
+                    patch.object(self.builder, "_parse_dockerfile", side_effect=ValueError("stop")),
+                ):
+                    with self.assertRaises(ValueError):
+                        await self.builder.build(metadata)
+                self.assertEqual(record_logger.add_record.call_args.args[0], expected)
+
     async def test_build_skips_nvr_ordering_check_when_ignore_incorrect_nvr_set(self):
         """When ignore_incorrect_nvr is set in assembly config, a lower NVR should be accepted."""
         metadata = self._metadata()
@@ -1901,6 +1923,47 @@ class TestStartBuildEnablePackageRegistryProxy(unittest.IsolatedAsyncioTestCase)
         """Test that enable_package_registry_proxy is None when not set in config."""
         build_params = await self._run_start_build(enable_package_registry_proxy=None)
         self.assertIsNone(build_params.enable_package_registry_proxy)
+
+
+class TestStartBuildExtraBuildArgs(TestStartBuildEnablePackageRegistryProxy):
+    """Tests for KonfluxImageBuilderConfig.extra_build_args being appended to the build-args PLR param."""
+
+    def _builder(self, extra_build_args):
+        return KonfluxImageBuilder(
+            KonfluxImageBuilderConfig(
+                base_dir=Path(self.temp_dir.name),
+                group_name="openshift-4.22",
+                namespace="test-namespace",
+                plr_template="test-template",
+                build_priority="5",
+                extra_build_args=extra_build_args,
+            )
+        )
+
+    async def test_extra_build_args_passed_when_image_has_none(self):
+        self.builder = self._builder(("RELEASE_VERSION=4.22.18", "DIGEST_MULTI=sha256:abc"))
+        build_params = await self._run_start_build()
+        self.assertEqual(build_params.build_args, ["RELEASE_VERSION=4.22.18", "DIGEST_MULTI=sha256:abc"])
+
+    async def test_extra_build_args_appended_after_image_build_args(self):
+        self.builder = self._builder(("RELEASE_VERSION=4.22.18",))
+        metadata_factory = self._metadata
+
+        def metadata_with_build_args(enable_package_registry_proxy=None):
+            metadata = metadata_factory(enable_package_registry_proxy)
+            image_konflux_config = {"build_args": ["FOO=bar"]}
+            metadata.config.get.side_effect = lambda key, default=None: (
+                image_konflux_config if key == "konflux" else default
+            )
+            return metadata
+
+        self._metadata = metadata_with_build_args
+        build_params = await self._run_start_build()
+        self.assertEqual(build_params.build_args, ["FOO=bar", "RELEASE_VERSION=4.22.18"])
+
+    async def test_no_build_args_without_config_or_extra(self):
+        build_params = await self._run_start_build()
+        self.assertIsNone(build_params.build_args)
 
 
 class TestNormalizeVersion(unittest.TestCase):

@@ -42,6 +42,10 @@ from pyartcd.runtime import Runtime
 yaml = new_roundtrip_yaml_handler()
 
 
+BINARIES_SHIPMENT_KINDS = ("binaries", "binaries-dev-preview")
+SUPPORTED_SHIPMENT_KINDS = ("image",) + BINARIES_SHIPMENT_KINDS
+
+
 class BinaryReleaseKonfluxPipeline:
     """
     Pipeline for shipping standalone CDN binary products (e.g. oc-mirror) built via Konflux.
@@ -66,6 +70,8 @@ class BinaryReleaseKonfluxPipeline:
         create_mr: bool = False,
         shipment_data_repo_url: Optional[str] = None,
         target_release_date: Optional[str] = None,
+        release_plan_key: Optional[str] = None,
+        shipment_kind: Optional[str] = None,
     ) -> None:
         self.logger = logging.getLogger(__name__)
         self.runtime = runtime
@@ -75,6 +81,24 @@ class BinaryReleaseKonfluxPipeline:
         self.create_mr = create_mr
         self.dry_run = self.runtime.dry_run
         self.target_release_date = target_release_date
+        self.release_plan_key = release_plan_key
+        self.shipment_kind = shipment_kind
+        if shipment_kind is not None and shipment_kind not in SUPPORTED_SHIPMENT_KINDS:
+            raise ValueError(
+                f"Unsupported --shipment-kind {shipment_kind!r}; supported: {', '.join(SUPPORTED_SHIPMENT_KINDS)}"
+            )
+        if group.startswith("openshift-"):
+            if shipment_kind not in BINARIES_SHIPMENT_KINDS:
+                raise ValueError(
+                    f"Group {group} is an OCP payload group: --shipment-kind must be one of "
+                    f"{', '.join(BINARIES_SHIPMENT_KINDS)} so the shipment does not use the 'image' kind."
+                )
+            expected_key = f"{group.replace('.', '-')}-{shipment_kind}"
+            if release_plan_key != expected_key:
+                raise ValueError(
+                    f"Group {group} with --shipment-kind {shipment_kind} needs --release-plan-key {expected_key}, "
+                    f"not {release_plan_key!r}, so the shipment does not use the OCP advisory ReleasePlans."
+                )
 
         # Setup working directories
         self.working_dir = self.runtime.working_dir.absolute()
@@ -186,6 +210,8 @@ class BinaryReleaseKonfluxPipeline:
 
         # Fallback: extract product from group name (e.g., "oc-mirror-2.0" -> "oc-mirror")
         product = self.group.rsplit('-', 1)[0]
+        if product == 'openshift':
+            product = 'ocp'
         self.logger.info(f"Using product extracted from group name: {product}")
         return product
 
@@ -283,6 +309,7 @@ class BinaryReleaseKonfluxPipeline:
 
         When rhel_suffix is given (e.g. 'el8', 'el9'), the config.yaml lookup first tries
         the key '{application}-{rhel_suffix}' and falls back to '{application}'.
+        When self.release_plan_key is set it replaces '{application}' in that lookup.
         """
         if self.product is None:
             raise RuntimeError(
@@ -293,14 +320,17 @@ class BinaryReleaseKonfluxPipeline:
         application = snapshot.spec.application
         self.logger.info(f"Creating shipment config for application '{application}' (rhel_suffix={rhel_suffix!r})...")
 
+        metadata_extra = {"release_notes_in_rpa": True} if self.group.startswith("openshift-") else {}
         metadata = Metadata(
             product=self.product,
             application=application,
             group=self.group,
             assembly=self.assembly,
             fbc=False,
+            **metadata_extra,
         )
 
+        base_key = self.release_plan_key or application
         stage_rpa = "n/a"
         prod_rpa = "n/a"
         config_path = self.shipment_data_repo._directory / "config.yaml"
@@ -310,14 +340,12 @@ class BinaryReleaseKonfluxPipeline:
             applications = shipment_config.get("applications", {})
             # Try RHEL-versioned key first (e.g. 'oc-mirror-2-0-el9'), then fall back to the
             # plain application name for products that don't split by RHEL version.
-            lookup_key = f"{application}-{rhel_suffix}" if rhel_suffix else application
-            app_env_config = (applications.get(lookup_key) or applications.get(application) or {}).get(
-                "environments", {}
-            )
+            lookup_key = f"{base_key}-{rhel_suffix}" if rhel_suffix else base_key
+            app_env_config = (applications.get(lookup_key) or applications.get(base_key) or {}).get("environments", {})
             stage_rpa = app_env_config.get("stage", {}).get("releasePlan", "n/a")
             prod_rpa = app_env_config.get("prod", {}).get("releasePlan", "n/a")
 
-        effective_key = f"{application}-{rhel_suffix}" if rhel_suffix else application
+        effective_key = f"{base_key}-{rhel_suffix}" if rhel_suffix else base_key
 
         # Prod must never use the skip-stage sentinel.
         if is_release_plan_skipped(prod_rpa):
@@ -425,9 +453,35 @@ class BinaryReleaseKonfluxPipeline:
                     await self._gitlab.set_mr_approval_rules(mr_url, approvers_config)
                 except Exception as e:
                     self.logger.warning(f"Failed to set MR approval rules: {e}")
+        elif self.group.startswith("openshift-"):
+            self._keep_only_art_approval_rule(mr_url)
 
         self.shipment_mr_url = mr_url
         return mr_url
+
+    def _keep_only_art_approval_rule(self, mr_url: str):
+        """
+        Remove every MR approval rule except ART, as golang builder shipments do.
+
+        The shipment repo's default rules are ART + ERT + Docs; CDN binary shipments
+        for openshift groups only need ART sign-off.
+
+        :param mr_url: URL of the shipment merge request.
+        """
+        if self.dry_run:
+            self.logger.info("[DRY-RUN] Would remove non-ART approval rules from %s", mr_url)
+            return
+        try:
+            mr = self._gitlab.get_mr_from_url(mr_url)
+            if not mr:
+                self.logger.warning("Could not load MR %s to clean up approval rules", mr_url)
+                return
+            for rule in mr.approval_rules.list():
+                if rule.name != "ART":
+                    self.logger.info("Removing approval rule '%s' (not needed for CDN binary shipment)", rule.name)
+                    rule.delete()
+        except Exception as e:
+            self.logger.warning("Could not clean up approval rules: %s", e)
 
     async def set_shipment_mr_ready(self):
         """
@@ -546,7 +600,8 @@ class BinaryReleaseKonfluxPipeline:
 
             # Use a RHEL-qualified kind only when multiple versions are present, so that
             # single-RHEL products continue to produce 'stream.image.<ts>.yaml' as before.
-            advisory_kind = f"image-{rhel_suffix}" if multi_rhel else "image"
+            base_kind = self.shipment_kind or "image"
+            advisory_kind = f"{base_kind}-{rhel_suffix}" if multi_rhel else base_kind
             rhel_suffix_for_lookup = rhel_suffix if multi_rhel else None
             shipments_by_kind[advisory_kind] = self.create_shipment_config(snapshot, rhel_suffix=rhel_suffix_for_lookup)
 
@@ -605,6 +660,18 @@ class BinaryReleaseKonfluxPipeline:
     help='Target ship date for the release (e.g., 2026-Mar-31 or 2026-03-31). '
     'When provided, the date is included in the shipment MR title.',
 )
+@click.option(
+    '--release-plan-key',
+    default=None,
+    help='ocp-shipment-data config.yaml applications key to read the stage/prod releasePlans from, instead of '
+    'the snapshot application name. Required for openshift-* groups, e.g. openshift-4-22-binaries.',
+)
+@click.option(
+    '--shipment-kind',
+    default=None,
+    help='Shipment file kind used in the file name and by shipment CI (default: image). '
+    'Required for openshift-* groups, e.g. binaries or binaries-dev-preview.',
+)
 @pass_runtime
 @click_coroutine
 async def binary_release_konflux(
@@ -615,6 +682,8 @@ async def binary_release_konflux(
     create_mr: bool,
     shipment_data_repo_url: Optional[str],
     target_release_date: Optional[str],
+    release_plan_key: Optional[str],
+    shipment_kind: Optional[str],
 ):
     """
     Create a shipment for a standalone CDN binary product built via Konflux.
@@ -645,6 +714,8 @@ async def binary_release_konflux(
         create_mr=create_mr,
         shipment_data_repo_url=shipment_data_repo_url,
         target_release_date=target_release_date,
+        release_plan_key=release_plan_key,
+        shipment_kind=shipment_kind,
     )
 
     await pipeline.run()

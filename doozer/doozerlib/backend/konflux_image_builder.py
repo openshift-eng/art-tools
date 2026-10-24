@@ -107,6 +107,7 @@ class KonfluxImageBuilderConfig:
     integration_test_scenarios: tuple[str, ...] = ()
     integration_test_snapshot_annotations: Dict[str, str] = field(default_factory=dict)
     skip_custom_its: bool = False
+    extra_build_args: tuple[str, ...] = ()
 
 
 class KonfluxImageBuilder:
@@ -155,7 +156,7 @@ class KonfluxImageBuilder:
         """Build a container image with Konflux."""
         logger = self._logger.getChild(f"[{metadata.distgit_key}]")
         report = get_reporter().component(
-            'image', metadata.distgit_key, display_name=metadata.distgit_key, dry_run=self._config.dry_run
+            metadata.kind, metadata.distgit_key, display_name=metadata.distgit_key, dry_run=self._config.dry_run
         )
         await report.set_status('Pending')
         metadata.build_status = False
@@ -582,7 +583,9 @@ class KonfluxImageBuilder:
 
         finally:
             if self._record_logger:
-                if 'okd' in self._config.group_name:
+                if metadata.kind == 'binary':
+                    key = 'binary_build_konflux'
+                elif 'okd' in self._config.group_name:
                     key = 'image_build_okd'
                 else:
                     key = 'image_build_konflux'
@@ -904,12 +907,18 @@ class KonfluxImageBuilder:
         build_args = None
         if raw_ba:
             build_args = [str(arg.primitive()) if hasattr(arg, 'primitive') else str(arg) for arg in raw_ba]
+        if self._config.extra_build_args:
+            build_args = (build_args or []) + list(self._config.extra_build_args)
 
         raw_secret = _get_konflux_config(metadata, "additional_secret")
         additional_secret = str(raw_secret) if raw_secret else None
 
         raw_priv = _get_konflux_config(metadata, "privileged_nested")
         privileged_nested = bool(raw_priv) if raw_priv else None
+
+        allow_cross_platform_images = (
+            True if metadata.config.get("konflux", {}).get("allow_cross_platform_images") is True else None
+        )
 
         raw_res = _get_konflux_config(metadata, "build_step_resources")
         build_step_resources = dict(raw_res) if raw_res else None
@@ -969,6 +978,7 @@ class KonfluxImageBuilder:
             build_args=build_args,
             additional_secret=additional_secret,
             privileged_nested=privileged_nested,
+            allow_cross_platform_images=allow_cross_platform_images,
             build_step_resources=build_step_resources,
             sbom_step_resources=sbom_step_resources,
             workspace_storage=workspace_storage,

@@ -149,6 +149,36 @@ class TestGroupSchema(unittest.TestCase):
         }
         self.assertIn("'yes' is not of type 'boolean'", group_schema.validate("group.yml", invalid_data))
 
+    def test_validate_with_binaries_cdn_enabled_flag(self):
+        for binaries in ({"cdn": {"enabled": False}}, {"cdn": {"enabled": True}}, {"cdn!": {"enabled": True}}, {}):
+            valid_data = {
+                "name": "openshift-4.22",
+                "vars": {"MAJOR": 4, "MINOR": 22},
+                "binaries": binaries,
+            }
+            self.assertEqual("", group_schema.validate("group.yml", valid_data))
+
+    def test_validate_with_invalid_binaries(self):
+        for binaries, message in (
+            ({"cdn": {"enabled": "yes"}}, "'yes' is not of type 'boolean'"),
+            ({"cdn": {"enabled": True, "clients": ["oc"]}}, "Additional properties are not allowed"),
+            ({"enabled": True}, "Additional properties are not allowed"),
+        ):
+            invalid_data = {
+                "name": "openshift-4.22",
+                "vars": {"MAJOR": 4, "MINOR": 22},
+                "binaries": binaries,
+            }
+            self.assertIn(message, group_schema.validate("group.yml", invalid_data))
+
+    def test_validate_rejects_old_cdn_clients_key(self):
+        invalid_data = {
+            "name": "openshift-4.22",
+            "vars": {"MAJOR": 4, "MINOR": 22},
+            "cdn_clients": {"enabled": True},
+        }
+        self.assertIn("cdn_clients", group_schema.validate("group.yml", invalid_data))
+
     def test_validate_with_valid_el_target(self):
         valid_data = {
             "el_target": 9,

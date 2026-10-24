@@ -158,6 +158,46 @@ class TestImageSchema(unittest.TestCase):
         }
         self.assertIn("'true' is not of type 'boolean'", image_schema.validate('filename', data))
 
+    def test_validate_with_valid_konflux_no_shell(self):
+        data = {
+            'from': {},
+            'name': 'my-name',
+            'for_payload': False,
+            'for_release': False,
+            'konflux': {'no_shell': True},
+        }
+        self.assertIsNone(image_schema.validate('filename', data))
+
+    def test_validate_with_invalid_konflux_no_shell(self):
+        data = {
+            'from': {},
+            'name': 'my-name',
+            'for_payload': False,
+            'for_release': False,
+            'konflux': {'no_shell': 'yes'},
+        }
+        self.assertIn("'yes' is not of type 'boolean'", image_schema.validate('filename', data))
+
+    def test_validate_with_valid_konflux_allow_cross_platform_images(self):
+        data = {
+            'from': {},
+            'name': 'my-name',
+            'for_payload': False,
+            'for_release': False,
+            'konflux': {'allow_cross_platform_images': True},
+        }
+        self.assertIsNone(image_schema.validate('filename', data))
+
+    def test_validate_with_invalid_konflux_allow_cross_platform_images(self):
+        data = {
+            'from': {},
+            'name': 'my-name',
+            'for_payload': False,
+            'for_release': False,
+            'konflux': {'allow_cross_platform_images': 'true'},
+        }
+        self.assertIn("'true' is not of type 'boolean'", image_schema.validate('filename', data))
+
     def test_validate_with_empty_konflux_cachi2_lockfile_rpms(self):
         """Test empty rpms array is valid"""
         valid_data = {

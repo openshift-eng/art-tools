@@ -806,6 +806,34 @@
       },
       "additionalProperties": false
     },
+    "binaries": {
+      "type": "object",
+      "description": "Group settings for the binaries/ members (the third artifact kind, next to images and rpms).",
+      "properties": {
+        "cdn": {
+          "type": "object",
+          "description": "Ship binaries/ members through the Konflux CDN after promote (binaries-cdn-release). Off unless enabled is true.",
+          "properties": {
+            "enabled": {"type": "boolean"},
+            "enabled!": {"$ref": "#/properties/binaries/properties/cdn/properties/enabled"},
+            "enabled?": {"$ref": "#/properties/binaries/properties/cdn/properties/enabled"},
+            "enabled-": {}
+          },
+          "additionalProperties": false
+        },
+        "cdn!": {"$ref": "#/properties/binaries/properties/cdn"},
+        "cdn?": {"$ref": "#/properties/binaries/properties/cdn"},
+        "cdn-": {}
+      },
+      "additionalProperties": false
+    },
+    "binaries!": {
+      "$ref": "#/properties/binaries"
+    },
+    "binaries?": {
+      "$ref": "#/properties/binaries"
+    },
+    "binaries-": {},
     "okd!": {
       "$ref": "#/properties/okd"
     },

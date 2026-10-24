@@ -1,0 +1,46 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "binary_config.schema.json",
+  "title": "Binary config",
+  "description": "A binaries/ member: client tarballs shipped to the CDN, built as a container image that carries them under /releases/. Only the binaries commands load it, so payload, release and image-tree keys do not apply.",
+  "type": "object",
+  "properties": {
+    "name": {
+      "$ref": "image_config.base.schema.json#/properties/name"
+    },
+    "mode": {
+      "$ref": "image_config.base.schema.json#/properties/mode"
+    },
+    "arches": {
+      "$ref": "image_config.base.schema.json#/properties/arches"
+    },
+    "canonical_builders_from_upstream": {
+      "$ref": "image_config.base.schema.json#/properties/canonical_builders_from_upstream"
+    },
+    "content": {
+      "$ref": "image_config.base.schema.json#/properties/content"
+    },
+    "distgit": {
+      "$ref": "image_config.base.schema.json#/properties/distgit"
+    },
+    "from": {
+      "$ref": "image_config.base.schema.json#/properties/from"
+    },
+    "konflux": {
+      "$ref": "image_config.base.schema.json#/properties/konflux"
+    },
+    "labels": {
+      "$ref": "image_config.base.schema.json#/properties/labels"
+    },
+    "owners": {
+      "$ref": "image_config.base.schema.json#/properties/owners"
+    }
+  },
+  "required": [
+    "name",
+    "content",
+    "from",
+    "owners"
+  ],
+  "additionalProperties": false
+}

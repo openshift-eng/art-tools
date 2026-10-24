@@ -1663,6 +1663,28 @@
           "$ref": "#/properties/konflux/properties/privileged_nested"
         },
         "privileged_nested-": {},
+        "allow_cross_platform_images": {
+          "description": "Set ALLOW_CROSS_PLATFORM_IMAGES on the build-images task so FROM --platform stages may use foreign-arch parents",
+          "type": "boolean"
+        },
+        "allow_cross_platform_images!": {
+          "$ref": "#/properties/konflux/properties/allow_cross_platform_images"
+        },
+        "allow_cross_platform_images?": {
+          "$ref": "#/properties/konflux/properties/allow_cross_platform_images"
+        },
+        "allow_cross_platform_images-": {},
+        "no_shell": {
+          "description": "Skip doozer-injected RUN and USER lines in every stage (for images or stages without /bin/sh)",
+          "type": "boolean"
+        },
+        "no_shell!": {
+          "$ref": "#/properties/konflux/properties/no_shell"
+        },
+        "no_shell?": {
+          "$ref": "#/properties/konflux/properties/no_shell"
+        },
+        "no_shell-": {},
         "enable_symlink_check": {
           "description": "Enable symlink check in the build pipeline. Defaults to true if not specified.",
           "type": "boolean"

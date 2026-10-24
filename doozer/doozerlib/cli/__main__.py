@@ -15,6 +15,7 @@ from future import standard_library
 from doozerlib import cli as cli_package
 from doozerlib import state
 from doozerlib.cli import cli, click_coroutine, pass_runtime
+from doozerlib.cli.binaries import binaries_konflux_build, binaries_konflux_rebase, binaries_list
 from doozerlib.cli.config import (
     config_commit,
     config_gencsv,

@@ -106,6 +106,13 @@ def print_version(ctx, param, value):
     help="Name of group rpm member to include in operation (all by default). Can be comma delimited list.",
 )
 @click.option(
+    "--binaries",
+    default=[],
+    metavar='NAME',
+    multiple=True,
+    help="Name of group binaries member to include in binaries:* operations (all by default). Can be comma delimited list.",
+)
+@click.option(
     "-a",
     "--arches",
     default=[],

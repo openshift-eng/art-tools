@@ -2861,3 +2861,51 @@ class TestFixDocsAfterAdvisoryDrop(IsolatedAsyncioTestCase):
             )
 
         mock_file.save.assert_not_called()
+
+
+class TestPromoteBinariesCdnTrigger(IsolatedAsyncioTestCase):
+    def _pipeline(self):
+        runtime = MagicMock(dry_run=True)
+        pipeline = PromotePipeline.__new__(PromotePipeline)
+        pipeline.runtime = runtime
+        pipeline.group = "openshift-4.22"
+        pipeline.assembly = "4.22.18"
+        pipeline._logger = MagicMock()
+        pipeline._binaries_cdn_enabled = True
+        return pipeline
+
+    @patch("pyartcd.pipelines.promote.jenkins.start_binaries_cdn_release")
+    def test_trigger_skipped_when_binaries_cdn_disabled(self, start_binaries_cdn_release):
+        pipeline = self._pipeline()
+        pipeline._binaries_cdn_enabled = False
+        pipeline._trigger_binaries_cdn_release("4.22.18", "ocp")
+        start_binaries_cdn_release.assert_not_called()
+        pipeline._logger.error.assert_not_called()
+
+    @patch("pyartcd.pipelines.promote.jenkins.start_binaries_cdn_release")
+    def test_trigger_queues_job_without_blocking(self, start_binaries_cdn_release):
+        pipeline = self._pipeline()
+        pipeline._trigger_binaries_cdn_release("4.22.18", "ocp")
+        start_binaries_cdn_release.assert_called_once_with(
+            binary="openshift-install",
+            build_version="4.22",
+            assembly="4.22.18",
+            release_name="4.22.18",
+            client_type="ocp",
+            dry_run=True,
+            block_until_building=False,
+        )
+
+    @patch("pyartcd.pipelines.promote.jenkins.start_binaries_cdn_release", side_effect=RuntimeError("jenkins down"))
+    def test_trigger_failure_only_logs_error(self, _):
+        pipeline = self._pipeline()
+        pipeline._trigger_binaries_cdn_release("4.23.0-ec.1", "ocp-dev-preview")
+        pipeline._logger.error.assert_called_once()
+
+    @patch("pyartcd.pipelines.promote.jenkins.start_binaries_cdn_release")
+    def test_trigger_skips_unparsable_group(self, start_binaries_cdn_release):
+        pipeline = self._pipeline()
+        pipeline.group = "not-a-version"
+        pipeline._trigger_binaries_cdn_release("4.22.18", "ocp")
+        start_binaries_cdn_release.assert_not_called()
+        pipeline._logger.error.assert_called_once()
