@@ -57,6 +57,7 @@ spec:
           "build-layered-products",
           "olm-bundle-konflux",
           "build-fbc",
+          "lp-unified-fbc",
           "schedule-layered-products-scan"
         ] &&
         !has(object.spec.pipelineSpec) &&

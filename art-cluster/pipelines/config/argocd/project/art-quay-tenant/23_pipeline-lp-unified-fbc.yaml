@@ -1,0 +1,88 @@
+apiVersion: tekton.dev/v1
+kind: Pipeline
+metadata:
+  name: lp-unified-fbc
+  namespace: art-quay-tenant
+  labels:
+    app: artcd
+spec:
+  description: Merge explicit Quay operator FBC builds for one OCP target. Builds a fragment without creating a
+    shipment.
+  params:
+  - name: ocp-target-version
+    type: string
+    description: One OCP MAJOR.MINOR target, e.g. 4.20 or 5.0
+  - name: fbc-builds
+    type: string
+    description: Comma-separated source FBC NVRs or pullspecs
+  - name: art-tools-commit
+    type: string
+    default: ''
+    description: '(Optional) Override art-tools version. Format: ghuser@branch (e.g. ashwindasr@my-feature)'
+  - name: data-path
+    type: string
+    default: https://github.com/openshift-eng/ocp-build-data
+  - name: fbc-repo
+    type: string
+    default: ''
+  - name: image-repo
+    type: string
+    default: ''
+  - name: plr-template
+    type: string
+    default: ''
+    description: Optional full URL of the FBC PipelineRun template
+  - name: skip-checks
+    type: string
+    default: 'false'
+    enum:
+    - 'true'
+    - 'false'
+  - name: skip-tasks
+    type: string
+    default: ''
+    description: Optional comma-separated Konflux task names to skip
+  - name: dry-run
+    type: string
+    default: 'true'
+    enum:
+    - 'true'
+    - 'false'
+  results:
+  - name: unified-fbc-nvr
+    description: Unified FBC NVR (planned NVR in dry runs)
+    value: $(tasks.unified-fbc.results.unified-fbc-nvr)
+  - name: unified-fbc-pullspec
+    description: Immutable unified FBC image, empty in dry runs
+    value: $(tasks.unified-fbc.results.unified-fbc-pullspec)
+  - name: build-url
+    description: Konflux build URL, empty in dry runs
+    value: $(tasks.unified-fbc.results.build-url)
+  - name: provenance-url
+    description: Committed input and baseline provenance, empty in dry runs
+    value: $(tasks.unified-fbc.results.provenance-url)
+  tasks:
+  - name: unified-fbc
+    taskRef:
+      name: artcd-lp-unified-fbc
+    params:
+    - name: ocp-target-version
+      value: $(params.ocp-target-version)
+    - name: fbc-builds
+      value: $(params.fbc-builds)
+    - name: art-tools-commit
+      value: $(params.art-tools-commit)
+    - name: data-path
+      value: $(params.data-path)
+    - name: fbc-repo
+      value: $(params.fbc-repo)
+    - name: image-repo
+      value: $(params.image-repo)
+    - name: plr-template
+      value: $(params.plr-template)
+    - name: skip-checks
+      value: $(params.skip-checks)
+    - name: skip-tasks
+      value: $(params.skip-tasks)
+    - name: dry-run
+      value: $(params.dry-run)
