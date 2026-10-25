@@ -5,7 +5,7 @@ metadata:
   namespace: art-osus-tenant
 spec:
   schedule: "0 * * * *"
-  suspend: true
+  suspend: false
   concurrencyPolicy: Forbid
   jobTemplate:
     spec:
