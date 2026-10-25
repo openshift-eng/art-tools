@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { componentCounts, filterComponents } from '../src/componentResults.js';
+import { checkColumns, componentCounts, filterComponents } from '../src/componentResults.js';
 import { parseHash, viewHref } from '../src/navigation.js';
 
 const components = [
@@ -36,4 +36,38 @@ test('component tab deep links preserve archived UID and tenant', () => {
   const view = { kind: 'run', namespace: 'tenant', name: 'run', uid: 'archived-uid',
     tab: 'components', filterNamespace: 'tenant' };
   assert.deepEqual(parseHash(viewHref(view)), view);
+});
+
+test('blocking check failure affects counts and result filters while build remains successful', () => {
+  const items = [{ name: 'operator', status: 'Succeeded', resultStatus: 'Failed', checks: [
+    { kind: 'conforma', name: 'Conforma', status: 'Failed', blocking: true },
+  ] }];
+  assert.deepEqual(componentCounts(items), { Failed: 1 });
+  assert.equal(filterComponents(items, '', 'Failed').length, 1);
+  assert.equal(filterComponents(items, '', 'Succeeded').length, 0);
+  assert.equal(items[0].status, 'Succeeded');
+});
+
+test('failed-attempt filter includes optional checks and recovered check failures', () => {
+  const items = [
+    { name: 'optional', status: 'Succeeded', resultStatus: 'Succeeded', checks: [{ status: 'Failed', blocking: false }] },
+    { name: 'retry', status: 'Succeeded', resultStatus: 'Succeeded', pipelineRuns: [
+      { status: 'Succeeded', checks: [{ status: 'Failed', blocking: true }] },
+      { status: 'Succeeded', checks: [{ status: 'Succeeded', blocking: true }] },
+    ] },
+  ];
+  assert.deepEqual(componentCounts(items), { Succeeded: 2 });
+  assert.deepEqual(filterComponents(items, '', 'Has failed attempts').map((item) => item.name), ['optional', 'retry']);
+});
+
+test('check columns require at least one enabled check in the full component list', () => {
+  assert.deepEqual(checkColumns(components), []);
+  assert.deepEqual(checkColumns([{ checks: [] }]), []);
+  const items = [{ name: 'unchecked', checks: [] }, { name: 'checked', checks: [
+    { kind: 'custom', status: 'Pending' }, { kind: 'conforma', status: 'Skipped' },
+  ] }];
+  assert.deepEqual(checkColumns(items).map((column) => column.label), ['Conforma', 'Custom ITS']);
+  assert.equal(filterComponents(items, 'unchecked', '').length, 1);
+  assert.equal(checkColumns(items).length, 2);
+  assert.deepEqual(checkColumns([{ checks: [{ kind: 'custom' }] }]).map((column) => column.kind), ['custom']);
 });

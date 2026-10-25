@@ -1094,6 +1094,11 @@ class KonfluxOlmBundleBuilder:
         }
 
         try:
+            await report.configure_checks(
+                [{'kind': 'conforma', 'name': 'Conforma', 'blocking': True}]
+                if self.group.startswith('openshift-') and not self.skip_ec_verify
+                else []
+            )
             if bundle_dir.exists():
                 # Load exiting build source repository
                 logger.info("Loading existing bundle repository...")
@@ -1244,6 +1249,7 @@ class KonfluxOlmBundleBuilder:
                             commit_sha=bundle_build_repo.commit_hash,
                             ec_policy=ec_policy,
                             logger=logger,
+                            on_check_update=report.check_callback('conforma'),
                         )
                         ec_pipeline_url = ec_result.ec_pipeline_url
                         if ec_result.ec_failed:
@@ -1294,6 +1300,7 @@ class KonfluxOlmBundleBuilder:
             await report.failed(str(exc))
             raise
         finally:
+            await report.finish_checks()
             if self._record_logger:
                 self._record_logger.add_record("build_olm_bundle_konflux", **record)
         return pipelinerun_name, pipelinerun_dict

@@ -7,11 +7,12 @@ override, without bypassing other prerequisites or explicit skips.
 import asyncio
 from pathlib import Path
 from unittest import IsolatedAsyncioTestCase
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import ANY, AsyncMock, MagicMock, create_autospec, patch
 
 from artcommonlib.conforma import resolve_stage_policy
 from artcommonlib.konflux.konflux_build_record import KonfluxBuildOutcome
 from artcommonlib.model import Model
+from artcommonlib.pipeline_report import ComponentReport
 from artcommonlib.variants import BuildVariant
 from doozerlib.backend.konflux_client import CustomIntegrationTestResult, ECVerificationResult
 from doozerlib.backend.konflux_image_builder import (
@@ -105,6 +106,42 @@ def _ec_exception_result():
 @patch("doozerlib.backend.konflux_client.KonfluxClient.from_kubeconfig")
 class TestEcVerificationGating(IsolatedAsyncioTestCase):
     """Test that EC verification is only triggered under the correct conditions."""
+
+    async def test_declares_only_enabled_checks_before_building(self, mock_kc_init):
+        for for_release, its_enabled, skip_ec, skip_custom, expected in (
+            (True, None, False, False, ['conforma', 'custom']),
+            (True, None, True, False, ['custom']),
+            (True, None, False, True, ['conforma']),
+            (True, None, True, True, []),
+            (False, None, False, False, []),
+            (False, True, False, False, ['conforma', 'custom']),
+            (True, False, False, False, []),
+        ):
+            with self.subTest(
+                for_release=for_release, its_enabled=its_enabled, skip_ec=skip_ec, skip_custom=skip_custom
+            ):
+                handle = create_autospec(ComponentReport, instance=True)
+                reporter = MagicMock()
+                reporter.component.return_value = handle
+                config = _make_config(
+                    skip_ec_verify=skip_ec,
+                    skip_custom_its=skip_custom,
+                    integration_test_scenarios=('qe',),
+                )
+                metadata = _make_metadata(for_release=for_release)
+                if its_enabled is not None:
+                    metadata.config = Model({'konflux': {'its': {'enabled': its_enabled}}})
+                with patch('doozerlib.backend.konflux_image_builder.get_reporter', return_value=reporter):
+                    await self._run_build_and_get_ec_calls(
+                        config,
+                        metadata,
+                        mock_kc_init,
+                        blocking_custom_its=['qe'],
+                    )
+                checks = handle.configure_checks.await_args.args[0]
+                self.assertEqual([check['kind'] for check in checks], expected)
+                self.assertTrue(all(check['blocking'] for check in checks))
+                handle.finish_checks.assert_awaited()
 
     async def _run_build_and_get_ec_calls(
         self,
@@ -419,6 +456,7 @@ class TestEcVerificationGating(IsolatedAsyncioTestCase):
             commit_sha="deadbeef",
             blocking_scenario_names=set(),
             snapshot_annotations={"pac.test.appstudio.openshift.io/branch": "release-4.18"},
+            on_check_update=ANY,
             namespace="ocp-art-tenant",
         )
 
