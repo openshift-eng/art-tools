@@ -13,9 +13,9 @@ spec:
     namespace: art-kueue-tenant
   syncPolicy:
     automated:
-      enabled: true
-      prune: true
-      selfHeal: true
+      enabled: false
+      prune: false
+      selfHeal: false
     syncOptions:
       - CreateNamespace=true
       - PruneLast=true
