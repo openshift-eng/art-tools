@@ -5,7 +5,7 @@ metadata:
   namespace: art-logging-tenant
 spec:
   schedule: "0 * * * *"
-  suspend: true
+  suspend: false
   concurrencyPolicy: Forbid
   jobTemplate:
     spec:
