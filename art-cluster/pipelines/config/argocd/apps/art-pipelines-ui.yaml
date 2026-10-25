@@ -28,7 +28,7 @@ spec:
         - /spec/replicas
   syncPolicy:
     automated:
-      enabled: true
+      enabled: false
       prune: false
       selfHeal: false
     syncOptions:

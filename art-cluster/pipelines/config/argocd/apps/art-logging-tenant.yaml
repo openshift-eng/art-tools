@@ -13,7 +13,7 @@ spec:
     namespace: art-logging-tenant
   syncPolicy:
     automated:
-      enabled: true
+      enabled: false
       prune: false
       selfHeal: false
     syncOptions:
