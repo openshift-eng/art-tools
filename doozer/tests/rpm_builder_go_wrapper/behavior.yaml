@@ -1,0 +1,357 @@
+# Behavior specification for doozerlib/rpm_builder_go_wrapper.sh.
+#
+# This file *is* the spec: each entry states one requirement as a concrete
+# example -- given this environment and this command line, the shim must
+# produce this outcome. test_rpm_builder_go_wrapper.py just interprets it
+# generically; read this file top to bottom to know how the shim actually
+# behaves, not the other way around.
+#
+# This is the RPM-side sibling of tests/golang_builder_fips_wrapper/. The
+# two shims do much the same job but are deployed completely differently,
+# and the RPM one is far simpler: it has no exemption policy, no strict
+# mode, and no GO_COMPLIANCE_* include/exclude configuration. It always
+# enforces. The only variable it reads from its own configuration is
+# GO_COMPLIANCE_COVER, which doozerlib/rpm_builder.py bakes into the
+# generated /tmp/goshim/go.
+#
+# Case schema:
+#   name:             short, unique, used as the pytest id
+#   description:      the requirement this case pins down, in prose
+#   args:             argv the shim is invoked with (i.e. what `go ...` becomes)
+#   env:              environment variables a real caller would set (default: {})
+#   go_real_version:  what the golang package in the Brew buildroot reports
+#                     via `go env GOVERSION` (default: go1.24.0)
+#   go_hostarch:      GOHOSTARCH the stubbed `go.real` reports (default: amd64)
+#   cwd_files:        relative paths to pre-create (empty) in a scratch cwd,
+#                     for cases that depend on files existing on disk
+#   expect:
+#     invoked:                    whether go.real's compiler branch was reached (default: true)
+#     exit_code:                  the shim's exit code (default: 0 if invoked else 1)
+#     stderr_contains:            substring that must appear on stderr
+#     args:                       exact final argv handed to the compiler
+#     args_contains:              elements that must be present in the final argv
+#     args_not_contains:          elements that must be absent from the final argv
+#     tags_include:               tags that must be present in the final -tags value
+#     tags_exclude:               tags that must be absent from the final -tags value
+#     no_tags:                    true if the final command line must have no -tags at all
+#     env:                        {VAR: value} the compiler must see; value null means unset
+#     probed_goversion_toolchain: GOTOOLCHAIN as seen at the moment the script
+#                                 probed `go.real env GOVERSION` -- before any
+#                                 later rewriting. null means GOTOOLCHAIN was
+#                                 unset at that point.
+
+# ---------------------------------------------------------------------------
+# The baseline: what the shim does to an ordinary RPM `go build`.
+# ---------------------------------------------------------------------------
+
+- name: plain_build_gets_the_full_compliance_treatment
+  description: >
+    The whole point of the shim, in one case: a bare `go build` comes out
+    the other side with the strictfipsruntime tag and GOEXPERIMENT, and
+    cgo forced on so the libopenssl crypto backend is reachable.
+  args: [build, ./...]
+  expect:
+    args: [build, -tags, strictfipsruntime, ./...]
+    env:
+      CGO_ENABLED: "1"
+      GOEXPERIMENT: strictfipsruntime
+      GOTOOLCHAIN: local
+
+- name: install_is_treated_as_a_build
+  description: >
+    `go install` compiles too, so it gets the same treatment as `go build`.
+  args: [install, ./cmd/mytool]
+  expect:
+    args: [install, -tags, strictfipsruntime, ./cmd/mytool]
+
+- name: build_after_run_is_not_treated_as_a_build
+  description: >
+    A build script invoked as `go run build.go build` must not have the
+    tags flag spliced into it -- the trailing "build" is an argument to the
+    script being run, not a go subcommand.
+  args: [run, build.go, build]
+  expect:
+    args: [run, build.go, build]
+    no_tags: true
+
+- name: non_build_subcommand_is_passed_through
+  description: >
+    Subcommands that don't compile anything are handed on unchanged.
+  args: [version]
+  expect:
+    args: [version]
+
+- name: exit_code_from_the_real_compiler_is_propagated
+  description: >
+    The shim is transparent about failure: a compiler error has to reach
+    rpmbuild, or a broken build would be packaged as a successful one.
+  args: [build, ./...]
+  env: {FAKE_GO_EXIT_CODE: "3"}
+  expect:
+    exit_code: 3
+
+# ---------------------------------------------------------------------------
+# GOTOOLCHAIN: pinned to "local" so that a go.mod `go` directive cannot make
+# the toolchain download and switch to a different compiler than the one
+# tagged into the Brew buildroot.
+# ---------------------------------------------------------------------------
+
+- name: gotoolchain_is_pinned_to_local
+  description: >
+    GOTOOLCHAIN=local is forced, overriding whatever the RPM's %build
+    section asked for.
+  args: [build, ./...]
+  env: {GOTOOLCHAIN: auto}
+  expect:
+    env: {GOTOOLCHAIN: local}
+
+# ---------------------------------------------------------------------------
+# GOEXPERIMENT: unlike the container shim, which preserves the caller's value
+# and prepends to it, this shim assigns it outright. That is load-bearing
+# further down -- it is why this shim needs no boringcrypto filtering.
+# ---------------------------------------------------------------------------
+
+- name: goexperiment_is_assigned_not_merged
+  description: >
+    A caller-supplied GOEXPERIMENT is replaced wholesale, not appended to.
+  args: [build, ./...]
+  env: {GOEXPERIMENT: fieldtrack}
+  expect:
+    env: {GOEXPERIMENT: strictfipsruntime}
+
+- name: goexperiment_assignment_displaces_boringcrypto
+  description: >
+    Upstreams commonly set GOEXPERIMENT=boringcrypto, because without a
+    toolchain carrying the libopenssl backend it is the only FIPS-capable
+    crypto available to them. The outright assignment above means it never
+    reaches the compiler -- which is why this shim, unlike the container
+    one, needs no explicit boringcrypto filtering.
+  args: [build, ./...]
+  env: {GOEXPERIMENT: boringcrypto}
+  expect:
+    env: {GOEXPERIMENT: strictfipsruntime}
+
+# ---------------------------------------------------------------------------
+# cgo: the libopenssl crypto backend is reached through cgo, so it is forced
+# on -- except where there is no such backend to reach.
+# ---------------------------------------------------------------------------
+
+- name: cgo_is_forced_on_when_the_caller_disabled_it
+  description: >
+    CGO_ENABLED=0 would leave the binary on Go's non-validated crypto, so
+    it is overridden -- loudly, since it means the RPM asked for something
+    non-compliant.
+  args: [build, ./...]
+  env: {CGO_ENABLED: "0"}
+  expect:
+    env: {CGO_ENABLED: "1"}
+    stderr_contains: "non-compliant RPM attempted to use CGO_ENABLED=0"
+
+- name: cgo_is_forced_on_even_when_the_caller_said_nothing
+  description: >
+    Forcing is unconditional rather than a correction of an explicit 0.
+  args: [build, ./...]
+  expect:
+    env: {CGO_ENABLED: "1"}
+
+- name: cgo_is_left_alone_for_windows_targets
+  description: >
+    There is no libopenssl to link against when cross-building for Windows,
+    so the caller's choice stands.
+  args: [build, ./...]
+  env: {GOOS: windows, CGO_ENABLED: "0"}
+  expect:
+    env: {GOOS: windows, CGO_ENABLED: "0"}
+
+- name: cgo_is_left_alone_for_darwin_targets
+  description: >
+    Likewise for macOS targets.
+  args: [build, ./...]
+  env: {GOOS: darwin, CGO_ENABLED: "0"}
+  expect:
+    env: {GOOS: darwin, CGO_ENABLED: "0"}
+
+- name: cgo_is_forced_for_an_explicit_linux_target
+  description: >
+    The carve-out is specific to darwin and windows; an explicit
+    GOOS=linux is still forced.
+  args: [build, ./...]
+  env: {GOOS: linux, CGO_ENABLED: "0"}
+  expect:
+    env: {CGO_ENABLED: "1"}
+
+- name: cgo_is_forced_outside_a_build_too
+  description: >
+    Unlike the container shim, which only forces cgo once it has seen a
+    build subcommand, this shim sets CGO_ENABLED before it inspects the
+    command line at all.
+  args: [run, build.go]
+  expect:
+    env: {CGO_ENABLED: "1"}
+
+# ---------------------------------------------------------------------------
+# Tag injection: strictfipsruntime makes the binary refuse to start on a FIPS
+# host if it was not built against a compliant crypto backend. It has to be
+# merged into whatever tags the RPM already asked for, in any of the
+# spellings the go command accepts.
+# ---------------------------------------------------------------------------
+
+- name: tags_are_added_when_the_caller_had_none
+  description: >
+    With no tags flag of its own, the shim inserts one directly after the
+    build subcommand -- go rejects a tags flag that comes after a build
+    path.
+  args: [build, ./...]
+  expect:
+    args: [build, -tags, strictfipsruntime, ./...]
+
+- name: existing_separate_tags_argument_is_merged_into
+  description: >
+    A `-tags foo` pair gets strictfipsruntime appended to its value rather
+    than a second tags flag.
+  args: [build, -tags, foo, ./...]
+  expect:
+    args: [build, -tags, "foo,strictfipsruntime", ./...]
+
+- name: existing_equals_form_tags_argument_is_merged_into
+  description: >
+    The `-tags=foo` spelling is merged into just the same.
+  args: [build, "-tags=foo", ./...]
+  expect:
+    args: [build, "-tags=foo,strictfipsruntime", ./...]
+
+- name: long_option_equals_form_tags_argument_is_merged_into
+  description: >
+    go accepts `--tags=` as well as `-tags=`.
+  args: [build, "--tags=foo", ./...]
+  expect:
+    args: [build, "--tags=foo,strictfipsruntime", ./...]
+
+- name: space_delimited_tags_stay_space_delimited
+  description: >
+    go's older space-delimited tag syntax is detected and preserved rather
+    than being turned into a mix of both delimiters.
+  args: [build, -tags, foo bar, ./...]
+  expect:
+    args: [build, -tags, foo bar strictfipsruntime, ./...]
+
+- name: literal_quotes_around_a_tag_value_are_stripped
+  description: >
+    Some upstream build scripts pass quotes through literally, so a tag
+    value can arrive still wearing them. They are removed before merging,
+    or the quote would end up in the middle of the tag list.
+  args: [build, -tags, "'foo'", ./...]
+  expect:
+    args: [build, -tags, "foo,strictfipsruntime", ./...]
+
+- name: tags_elsewhere_on_the_command_line_suppress_the_inserted_pair
+  description: >
+    The decision to insert a tags flag is made from a scan of the whole
+    command line, so a tags flag appearing after the build path still
+    stops a second one being inserted -- it is merged into instead.
+  args: [install, ./cmd/mytool, -tags, foo]
+  expect:
+    args: [install, ./cmd/mytool, -tags, "foo,strictfipsruntime"]
+
+# ---------------------------------------------------------------------------
+# no_openssl scrubbing: the tag disables the libopenssl backend, which is
+# exactly the backend this shim exists to mandate, so it is neutralised into
+# a tag that means nothing to anyone.
+# ---------------------------------------------------------------------------
+
+- name: caller_supplied_no_openssl_tag_is_neutralised
+  description: >
+    no_openssl would turn off the very backend cgo is being forced on for,
+    so it is renamed to something inert.
+  args: [build, -tags, no_openssl, ./...]
+  expect:
+    tags_include: [shim_prevented_no_openssl, strictfipsruntime]
+    tags_exclude: [no_openssl]
+    stderr_contains: "non-compliant: eliminated no_openssl"
+
+# ---------------------------------------------------------------------------
+# Static linking: forcing cgo on is incompatible with -extldflags "-static",
+# because the static libraries to link against are not present in the
+# buildroot. The flag is neutralised rather than removed, because it can be
+# buried inside the value of an -ldflags argument alongside things that must
+# survive.
+# ---------------------------------------------------------------------------
+
+- name: static_linking_is_neutralised
+  description: >
+    -static becomes -lc, which asks for the C standard library -- already
+    the default, so it is inert almost everywhere.
+  args: [build, -ldflags, '-extldflags "-static"', ./...]
+  expect:
+    args_contains: ['-extldflags "-lc"']
+    args_not_contains: ['-extldflags "-static"']
+    stderr_contains: "non-compliant: eliminated static"
+
+- name: neutralising_static_preserves_the_rest_of_ldflags
+  description: >
+    Replacing rather than removing is what makes this safe: everything else
+    inside the -ldflags value, including other linker flags next to
+    -static, comes through untouched.
+  args: [build, -ldflags, '-X main.version=1.2.3 -extldflags "-lm -static"', ./...]
+  expect:
+    args_contains: ['-X main.version=1.2.3 -extldflags "-lm -lc"']
+
+- name: ldflags_without_extldflags_are_untouched
+  description: >
+    The rewrite is scoped to arguments that actually mention extldflags.
+  args: [build, -ldflags, -X main.version=1.2.3, ./...]
+  expect:
+    args_contains: [-X main.version=1.2.3]
+
+# ---------------------------------------------------------------------------
+# Coverage instrumentation: when the group enables it, rpm_builder.py bakes
+# GO_COMPLIANCE_COVER=1 into the shim and injects a coverage_server.go into
+# each main package. The shim has to build with -cover and, for builds that
+# name .go files explicitly, add that file to the list by hand.
+# ---------------------------------------------------------------------------
+
+- name: coverage_flags_are_added_when_enabled
+  description: >
+    GO_COMPLIANCE_COVER=1 turns on Go's own coverage instrumentation.
+  args: [build, ./...]
+  env: {GO_COMPLIANCE_COVER: "1"}
+  expect:
+    args: [build, -cover, -covermode=atomic, -tags, strictfipsruntime, ./...]
+
+- name: coverage_flags_are_absent_by_default
+  description: >
+    Coverage is off unless asked for.
+  args: [build, ./...]
+  expect:
+    args_not_contains: [-cover, -covermode=atomic]
+
+- name: coverage_server_is_added_to_an_explicit_go_file_list
+  description: >
+    A build that names its .go files explicitly only compiles those files,
+    so the injected coverage server has to be named too or it would be
+    silently left out.
+  args: [build, ./cmd/main.go]
+  env: {GO_COMPLIANCE_COVER: "1"}
+  cwd_files: [cmd/coverage_server.go]
+  expect:
+    args_contains: [./cmd/coverage_server.go]
+
+- name: coverage_server_is_not_added_to_a_package_path_build
+  description: >
+    Building a package path already compiles every .go file in the package,
+    so there is nothing to add.
+  args: [build, ./cmd/mytool]
+  env: {GO_COMPLIANCE_COVER: "1"}
+  cwd_files: [cmd/coverage_server.go]
+  expect:
+    args_not_contains: [./cmd/coverage_server.go]
+
+- name: coverage_server_is_not_added_twice
+  description: >
+    A build that already names coverage_server.go itself must not get a
+    duplicate copy on its command line.
+  args: [build, ./cmd/coverage_server.go, ./cmd/main.go]
+  env: {GO_COMPLIANCE_COVER: "1"}
+  cwd_files: [cmd/coverage_server.go]
+  expect:
+    args: [build, -cover, -covermode=atomic, -tags, strictfipsruntime, ./cmd/coverage_server.go, ./cmd/main.go]
