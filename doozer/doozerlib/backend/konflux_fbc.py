@@ -2115,19 +2115,19 @@ class KonfluxFbcBuilder:
                             additional_tags.append(f"{version_tag}__operator_nvr__{operator_nvr}")
 
         if upstream_commit:
-            if group_name.startswith("openshift-"):
+            if self.major_minor_override:
+                ocp_version = '.'.join(map(str, self.major_minor_override))
+            elif group_name.startswith("openshift-"):
                 ocp_version = group_name.removeprefix("openshift-")
-                tag_prefix = f"ocp__{ocp_version}"
             else:
-                if self.major_minor_override:
-                    ocp_version = '.'.join(map(str, self.major_minor_override))
-                else:
-                    group_vars = metadata.runtime.group_config.get("vars", {})
-                    major, minor = group_vars.get("MAJOR"), group_vars.get("MINOR")
-                    if not str(major).isdigit() or not str(minor).isdigit():
-                        raise ValueError("OCP target version is required for upstream SHA tags")
-                    ocp_version = f"{major}.{minor}"
-                tag_prefix = f"{self.group}__v{ocp_version}"
+                group_vars = metadata.runtime.group_config.get("vars", {})
+                major, minor = group_vars.get("MAJOR"), group_vars.get("MINOR")
+                if not str(major).isdigit() or not str(minor).isdigit():
+                    raise ValueError("OCP target version is required for upstream SHA tags")
+                ocp_version = f"{major}.{minor}"
+            tag_prefix = (
+                f"ocp__{ocp_version}" if group_name.startswith("openshift-") else f"{self.group}__v{ocp_version}"
+            )
 
             # Both formats float to the latest rebuild of this upstream commit.
             # Generate them for every assembly, independently of stream-only tags.

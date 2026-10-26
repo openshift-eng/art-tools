@@ -123,11 +123,30 @@ class TestFbcUpstreamTags(unittest.IsolatedAsyncioTestCase):
 
     async def test_ocp_has_upstream_sha_tag(self):
         self.assertEqual(
-            await self._start(group="openshift-4.16"),
+            await self._start(group="openshift-4.16", target=None),
             [
                 "ocp__4.16__otel-operator",
                 "ocp__4.16__otel-operator__1995bd1",
                 f"sha-{SHA}__v4.16",
+            ],
+        )
+
+    async def test_ocp_sha_tags_honor_target_override(self):
+        self.assertEqual(
+            await self._start(group="openshift-4.16", target=(4, 18)),
+            [
+                "ocp__4.16__otel-operator",
+                "ocp__4.18__otel-operator__1995bd1",
+                f"sha-{SHA}__v4.18",
+            ],
+        )
+
+    async def test_named_ocp_assembly_sha_tags_honor_target_override(self):
+        self.assertEqual(
+            await self._start(group="openshift-4.16", assembly="4.16.1", target=(4, 18)),
+            [
+                "ocp__4.18__otel-operator__1995bd1",
+                f"sha-{SHA}__v4.18",
             ],
         )
 
