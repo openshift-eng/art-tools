@@ -480,12 +480,6 @@ def get_konflux_build_priority(metadata, group):
     :return: Priority value as string; "1" (high) "10" (low)
     """
     logger.info(f"Resolving build priority for {metadata.distgit_key}")
-
-    # Temporarily prioritize all OpenShift image builds over configured and phase-based priorities.
-    if group.startswith("openshift-"):
-        logger.info(f"Using temporary OpenShift build priority for {metadata.distgit_key}: 1")
-        return "1"
-
     phase = metadata.runtime.group_config.software_lifecycle.phase
 
     def higher_by(val: int) -> str:
