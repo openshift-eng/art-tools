@@ -1,5 +1,5 @@
 {
-  "$comment": "Schema generated on 2026-08-06 15:29 UTC from elliottlib.shipment_model",
+  "$comment": "Schema generated on 2026-10-20 05:07 UTC from elliottlib.shipment_model",
   "$defs": {
     "ComponentSource": {
       "additionalProperties": false,
@@ -224,6 +224,18 @@
           ],
           "default": true,
           "title": "Advisory Required"
+        },
+        "release_notes_in_rpa": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": false,
+          "title": "Release Notes In Rpa"
         }
       },
       "required": [

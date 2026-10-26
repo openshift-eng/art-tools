@@ -51,6 +51,7 @@ from tenacity import retry, stop_after_attempt, wait_fixed
 
 LOGGER = logging.getLogger(__name__)
 TRACER = trace.get_tracer(__name__)
+FROM_PLATFORM_RE = re.compile(r"^--platform=(\S+)\s")
 
 
 def _get_cpe_product_name(product: str) -> str:
@@ -465,6 +466,83 @@ class KonfluxRebaser:
 
         return is_stage_ref
 
+    @staticmethod
+    def _allows_cross_platform(metadata: ImageMetadata) -> bool:
+        """
+        Return True when the image opts into FROM --platform handling with konflux.allow_cross_platform_images: true.
+
+        :param metadata: Image metadata.
+        """
+        return metadata.config.get("konflux", {}).get("allow_cross_platform_images") is True
+
+    @staticmethod
+    def _from_platforms(dfp: DockerfileParser) -> List[Optional[str]]:
+        """
+        Return the --platform value of every FROM instruction in order, or None where a FROM has no --platform.
+
+        :param dfp: Parser for the Dockerfile.
+        """
+        platforms: List[Optional[str]] = []
+        for line in json.loads(dfp.json):
+            if 'FROM' in line:
+                match = FROM_PLATFORM_RE.match(line['FROM'].strip())
+                platforms.append(match.group(1) if match else None)
+        return platforms
+
+    @staticmethod
+    def _set_parent_images_preserving_platform(dfp: DockerfileParser, parents: List[str]):
+        """
+        Set dfp.parent_images while keeping each FROM's --platform flag, which dockerfile_parse drops on rewrite.
+
+        :param dfp: Parser for the Dockerfile.
+        :param parents: One image pullspec or stage name per FROM instruction, in order.
+        """
+        platforms = KonfluxRebaser._from_platforms(dfp)
+        if len(platforms) != len(parents):
+            raise ValueError(f"Dockerfile has {len(platforms)} FROM instructions but {len(parents)} parents were given")
+        dfp.parent_images = [
+            f"--platform={platform} {parent}" if platform else parent for platform, parent in zip(platforms, parents)
+        ]
+
+    async def _pin_parent_to_platform(self, pullspec: str, platform: str) -> str:
+        """
+        Return the single-arch digest pullspec of pullspec for platform.
+
+        Konflux rejects one image reference used with different --platform values, so every
+        FROM --platform stage must reference its own per-arch manifest digest.
+
+        :param pullspec: Resolved parent pullspec, usually a manifest list.
+        :param platform: The FROM --platform value, e.g. linux/arm64.
+        """
+        registry_config = getattr(self._runtime, "registry_config", None) or os.getenv("QUAY_AUTH_FILE")
+        info = await oc_image_info_for_arch_async(pullspec, go_arch=platform, registry_config=registry_config)
+        digest = info.get("digest")
+        if not digest:
+            raise IOError(f"Could not resolve the {platform} digest of parent image {pullspec}")
+        repo = pullspec.split("@", 1)[0]
+        name_start = repo.rfind("/") + 1
+        tag_sep = repo.rfind(":")
+        if tag_sep >= name_start:
+            repo = repo[:tag_sep]
+        return f"{repo}@{digest}"
+
+    @staticmethod
+    def _apply_downstream_parents(metadata: ImageMetadata, dfp: DockerfileParser, parents: List[str]):
+        """
+        Write the resolved parents into the Dockerfile's FROM instructions.
+
+        Only images with konflux.allow_cross_platform_images: true keep their --platform flags;
+        every other image keeps the dockerfile_parse behavior, which drops them.
+
+        :param metadata: Image metadata.
+        :param dfp: Parser for the Dockerfile.
+        :param parents: One image pullspec or stage name per FROM instruction, in order.
+        """
+        if KonfluxRebaser._allows_cross_platform(metadata):
+            KonfluxRebaser._set_parent_images_preserving_platform(dfp, parents)
+        else:
+            dfp.parent_images = parents
+
     @start_as_current_span_async(TRACER, "rebase.resolve_parents")
     async def _resolve_parents(self, metadata: ImageMetadata, dfp: DockerfileParser):
         """
@@ -524,6 +602,22 @@ class KonfluxRebaser:
                 # This is an actual base image - use the resolved pullspec
                 downstream_parents.append(mapped_images[resolved_idx][0])
                 resolved_idx += 1
+
+        if self._allows_cross_platform(metadata):
+            for i, platform in enumerate(self._from_platforms(dfp)):
+                if platform and "$" in platform:
+                    raise ValueError(
+                        f"{metadata.distgit_key} sets konflux.allow_cross_platform_images but FROM --platform={platform} "
+                        "uses a build variable; only literal platforms such as linux/arm64 are supported"
+                    )
+                if platform and not is_stage_ref[i]:
+                    if self.uuid_tag and downstream_parents[i].endswith(f"-{self.uuid_tag}"):
+                        raise IOError(
+                            f"{metadata.distgit_key}: FROM --platform={platform} parent {downstream_parents[i]} is "
+                            "built in this same run and has no per-arch digest yet; build it first, or rebase this "
+                            "image alone with --latest-parent-version"
+                        )
+                    downstream_parents[i] = await self._pin_parent_to_platform(downstream_parents[i], platform)
 
         private_fix = any(private_fix for _, private_fix in mapped_images)
         return downstream_parents, private_fix
@@ -1318,7 +1412,7 @@ class KonfluxRebaser:
         dfp.labels['io.openshift.maintainer.component'] = jira_component
 
         if 'from' in metadata.config and downstream_parents is not None:
-            dfp.parent_images = downstream_parents.copy()
+            self._apply_downstream_parents(metadata, dfp, downstream_parents.copy())
 
         # Set image name in case it has changed
         dfp.labels["name"] = metadata.config.name

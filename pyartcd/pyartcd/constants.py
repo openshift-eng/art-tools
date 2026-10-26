@@ -21,6 +21,8 @@ MIRROR_CLIENTS = {
 
 OCP_BUILD_DATA_URL = 'https://github.com/openshift-eng/ocp-build-data'
 
+CDN_BINARIES = ("openshift-install",)
+
 # This is the URL that buildvm itself uses to resolve Jenkins
 # an alternative to JENKINS_URL env var set by Jenkins
 JENKINS_SERVER_URL = 'https://art-jenkins.apps.prod-stable-spoke1-dc-iad2.itup.redhat.com'

@@ -3,6 +3,7 @@ import unittest
 from types import SimpleNamespace
 from unittest import mock
 
+import click
 from artcommonlib.konflux.konflux_build_record import (
     KonfluxBuildOutcome,
     KonfluxBuildRecord,
@@ -1084,3 +1085,51 @@ class TestKonfluxBuildCliStandaloneStageRelease(unittest.IsolatedAsyncioTestCase
 
         self.assertIsNone(result)
         mock_handler._create_release_from_snapshot.assert_not_called()
+
+
+class TestKonfluxBuildCliBuildArgs(unittest.TestCase):
+    """Tests for the --build-arg override of beta:images:konflux:build."""
+
+    def _make_cli(self, extra_build_args):
+        return KonfluxBuildCli(
+            runtime=mock.Mock(spec=Runtime),
+            konflux_kubeconfig=None,
+            konflux_context=None,
+            konflux_namespace="test-namespace",
+            image_repo="test-repo",
+            registry_auth_file=None,
+            skip_checks=False,
+            dry_run=True,
+            plr_template="test-template",
+            build_priority="auto",
+            extra_build_args=extra_build_args,
+        )
+
+    def test_valid_build_args_are_kept_in_order(self):
+        cli = self._make_cli(("RELEASE_VERSION=4.22.18", "DIGEST_MULTI=sha256:abc", "EMPTY="))
+        self.assertEqual(cli.extra_build_args, ("RELEASE_VERSION=4.22.18", "DIGEST_MULTI=sha256:abc", "EMPTY="))
+
+    def test_no_build_args_by_default(self):
+        cli = self._make_cli(())
+        self.assertEqual(cli.extra_build_args, ())
+
+    def test_build_arg_without_equals_is_rejected(self):
+        with self.assertRaises(click.BadParameter) as ctx:
+            self._make_cli(("RELEASE_VERSION",))
+        self.assertIn("RELEASE_VERSION", str(ctx.exception))
+
+    def test_build_arg_with_invalid_key_is_rejected(self):
+        with self.assertRaises(click.BadParameter):
+            self._make_cli(("1BAD=value",))
+
+    def test_build_arg_with_newline_or_control_char_is_rejected(self):
+        for value in ("RELEASE_VERSION=4.22.18\n", "RELEASE_VERSION=4.22\nEVIL=1", "RELEASE_VERSION=4.22\t18"):
+            with self.assertRaises(click.BadParameter):
+                self._make_cli((value,))
+
+    def test_build_arg_flag_is_repeatable_on_the_command(self):
+        from doozerlib.cli.images_konflux import images_konflux_build
+
+        option = next(p for p in images_konflux_build.params if p.name == "build_args")
+        self.assertEqual(option.opts, ["--build-arg"])
+        self.assertTrue(option.multiple)

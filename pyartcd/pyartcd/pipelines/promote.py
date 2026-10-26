@@ -152,6 +152,7 @@ class PromotePipeline:
         self.multi_only = multi_only
         self.use_multi_hack = use_multi_hack
         self._multi_enabled = False
+        self._binaries_cdn_enabled = False
         if not self.skip_signing and not signing_env:
             raise ValueError("--signing-env is required unless --skip-signing is set")
         if not self.skip_sigstore and not signing_env:
@@ -271,6 +272,9 @@ class PromotePipeline:
         justifications = []
         try:
             self._multi_enabled = group_config.get("multi_arch", {}).get("enabled", False)
+            self._binaries_cdn_enabled = bool(
+                ((group_config.get("binaries") or {}).get("cdn") or {}).get("enabled", False)
+            )
             if self.multi_only and not self._multi_enabled:
                 raise ValueError("Can't promote a multi payload: multi_arch.enabled is not set in group config")
             # Get arches
@@ -540,6 +544,7 @@ class PromotePipeline:
                 message_digests = []
                 if not self.skip_mirror_binaries:
                     message_digests = await self.extract_and_publish_clients("ocp-dev-preview", release_infos)
+                    self._trigger_binaries_cdn_release(release_name, "ocp-dev-preview")
                 if not self.skip_signing:
                     await self.sign_artifacts(release_name, "ocp-dev-preview", release_infos, message_digests)
             else:
@@ -608,6 +613,7 @@ class PromotePipeline:
                 message_digests = []
                 if not self.skip_mirror_binaries:
                     message_digests = await self.extract_and_publish_clients(client_type, release_infos)
+                    self._trigger_binaries_cdn_release(release_name, client_type)
                 if not self.skip_signing:
                     if not self.runtime.dry_run:
                         lock = Lock.SIGNING
@@ -775,6 +781,40 @@ class PromotePipeline:
             raise ValueError("A justification is required to permit issue %s.", code)
         self._logger.warn("Issue %s is permitted with justification: %s", err, justification)
         return justification
+
+    def _trigger_binaries_cdn_release(self, release_name: str, client_type: str):
+        """
+        Queue one binaries-cdn-release job per binary in CDN_BINARIES, which ships it through the Konflux CDN.
+
+        A failure here only logs an error: the mirror.openshift.com publishing above is not affected.
+
+        :param release_name: Promoted release name, e.g. 4.22.18.
+        :param client_type: ocp or ocp-dev-preview, the same value used for the mirror clients.
+        """
+        if not getattr(self, "_binaries_cdn_enabled", False):
+            self._logger.info("binaries.cdn.enabled is not true for %s; not starting binaries-cdn-release", self.group)
+            return
+        try:
+            major, minor = isolate_major_minor_in_group(self.group)
+        except Exception as err:
+            self._logger.error("Not starting binaries-cdn-release: cannot parse a version from %s: %s", self.group, err)
+            return
+        if major is None or minor is None:
+            self._logger.error("Not starting binaries-cdn-release: cannot parse a version from %s", self.group)
+            return
+        for binary in constants.CDN_BINARIES:
+            try:
+                jenkins.start_binaries_cdn_release(
+                    binary=binary,
+                    build_version=f"{major}.{minor}",
+                    assembly=self.assembly,
+                    release_name=release_name,
+                    client_type=client_type,
+                    dry_run=self.runtime.dry_run,
+                    block_until_building=False,
+                )
+            except Exception as err:
+                self._logger.error("Failed to start binaries-cdn-release %s for %s: %s", binary, release_name, err)
 
     async def extract_and_publish_clients(self, client_type: str, release_infos: Dict):
         logger = self._logger
