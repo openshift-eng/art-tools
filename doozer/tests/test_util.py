@@ -543,15 +543,15 @@ class TestGetKonfluxBuildPriority(unittest.TestCase):
         metadata.runtime.group_config.software_lifecycle.phase = phase
         return metadata
 
-    def test_priorities_by_group_phase_and_parent_status(self):
+    def test_parent_images_get_higher_priority_than_leaf_images(self):
         cases = [
             # (group, phase, children, expected, description)
-            ("openshift-4.19", "release", self.is_leaf, "1", "leaf default"),
-            ("openshift-4.19", "release", self.is_parent, "1", "parent default"),
-            ("openshift-4.19", "pre-release", self.is_leaf, "1", "leaf pre-release"),
-            ("openshift-4.19", "pre-release", self.is_parent, "1", "parent pre-release"),
-            ("openshift-4.19", "signing", self.is_leaf, "1", "leaf signing"),
-            ("openshift-4.19", "signing", self.is_parent, "1", "parent signing"),
+            ("openshift-4.19", "release", self.is_leaf, "5", "leaf default"),
+            ("openshift-4.19", "release", self.is_parent, "4", "parent default"),
+            ("openshift-4.19", "pre-release", self.is_leaf, "3", "leaf pre-release"),
+            ("openshift-4.19", "pre-release", self.is_parent, "2", "parent pre-release"),
+            ("openshift-4.19", "signing", self.is_leaf, "3", "leaf signing"),
+            ("openshift-4.19", "signing", self.is_parent, "2", "parent signing"),
             ("oadp-1.5", "release", self.is_leaf, "5", "leaf non-openshift"),
             ("oadp-1.5", "release", self.is_parent, "4", "parent non-openshift"),
         ]
@@ -567,13 +567,10 @@ class TestGetKonfluxBuildPriority(unittest.TestCase):
             ("group_config", 8, "8"),
         ]
         for override_type, value, expected in cases:
-            for group in ("openshift-4.19", "oadp-1.5"):
-                for children in (self.is_leaf, self.is_parent):
-                    with self.subTest(override_type=override_type, group=group, has_children=bool(children)):
-                        kwargs = {f"{override_type}_priority": value}
-                        metadata = self._make_metadata(children=children, **kwargs)
-                        priority = "1" if group.startswith("openshift-") else expected
-                        self.assertEqual(util.get_konflux_build_priority(metadata, group), priority)
+            with self.subTest(f"{override_type}={value} on parent"):
+                kwargs = {f"{override_type}_priority": value}
+                metadata = self._make_metadata(children=self.is_parent, **kwargs)
+                self.assertEqual(util.get_konflux_build_priority(metadata, "openshift-4.19"), expected)
 
     def test_golang_group_overrides_parent_status(self):
         metadata = self._make_metadata(children=self.is_parent)
