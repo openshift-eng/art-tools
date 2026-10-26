@@ -2695,6 +2695,12 @@ class PromotePipeline:
                 + candidate_pr_note
             )
             extraSlackComment = "automatically approved"
+        elif release_info.get("live_url"):
+            pr_messages = (
+                f"Please merge immediately. This PR does not need to wait for an advisory to ship, but the associated advisory is {release_info['live_url']} ."
+                + candidate_pr_note
+            )
+            extraSlackComment = "automatically approved"
         elif assembly_type in [AssemblyTypes.PREVIEW, AssemblyTypes.CANDIDATE]:
             pr_messages = (
                 "This is a release candidate. There is no advisory associated. \nPlease merge immediately."
