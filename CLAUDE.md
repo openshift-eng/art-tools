@@ -87,35 +87,6 @@ make gen-shipment-schema
 
 ## Git Conventions
 
-### Secret Scanning with rh-pre-commit
-
-Before preparing a PR, install and authenticate `rh-pre-commit` using the
-[Red Hat setup instructions](https://source.redhat.com/departments/it/it-information-security/leaktk/leaktk_components/rh_pre_commit).
-Initial setup and pattern downloads require Red Hat network access.
-
-Reuse a working existing integration, including `rh-multi-pre-commit` configured to
-run `rh-pre-commit`. For a clone or linked worktree without an existing hook:
-
-```bash
-rh-pre-commit configure
-rh-pre-commit install --path .
-# Optional: add scan attestation to commit messages
-rh-pre-commit --hook-type commit-msg install --path .
-```
-
-Check `git rev-parse --git-path hooks` to confirm Git uses the installed hooks.
-Linked worktrees share their repository's hooks. Preserve unrelated hooks rather
-than overwriting them with `--force`.
-
-For every new or amended commit, stage the intended changes and run
-`rh-pre-commit` before committing. Require the `check-secrets` task to run and
-succeed; resolve findings, authentication failures, or scanner errors before
-continuing. Do not bypass the scan with `--no-verify` or disabled checks.
-A scan with nothing staged does not validate changes already committed.
-
-Before opening or updating a PR, confirm that every new or amended commit passed
-the scan and include the scan result in the PR's validation notes.
-
 ### Branch Workflow
 
 **IMPORTANT: Always work in topic branches. Never commit directly to `main`.**
