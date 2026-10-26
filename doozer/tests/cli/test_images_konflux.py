@@ -10,6 +10,7 @@ from artcommonlib.konflux.konflux_build_record import (
 )
 from artcommonlib.model import Model
 from artcommonlib.variants import BuildVariant
+from doozerlib import constants
 from doozerlib.cli.images_konflux import (
     BundleStageReleaseRelatedImagesCli,
     KonfluxBuildCli,
@@ -20,6 +21,15 @@ from doozerlib.cli.images_konflux import (
 from doozerlib.exceptions import DoozerFatalError, ParentRebaseFailedError
 from doozerlib.runtime import Runtime
 from doozerlib.source_resolver import SourceResolver
+
+
+class TestKueueProductPolicies(unittest.TestCase):
+    def test_canonical_product_selects_existing_policies(self):
+        """Select existing Kueue policies by canonical product name without an old alias."""
+        for policies in (constants.PRODUCT_EC_POLICY_MAP, constants.PRODUCT_TEST_EC_POLICY_MAP):
+            with self.subTest(policies=policies):
+                self.assertEqual(policies.get("kueue"), "rhtap-releng-tenant/registry-art-kueue-stage")
+                self.assertNotIn("kueue-operator", policies)
 
 
 class TestKonfluxBundleCli(unittest.IsolatedAsyncioTestCase):

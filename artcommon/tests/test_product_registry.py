@@ -16,6 +16,19 @@ from artcommonlib.variants import ProductId
 
 
 class TestProductCatalog(unittest.TestCase):
+    def test_kueue_canonical_product_preserves_cpe_and_release_configuration(self):
+        """Resolve canonical Kueue without changing its CPE or release configuration."""
+        config = get_product_config("kueue")
+
+        self.assertIs(config.product_id, ProductId.KUEUE)
+        self.assertEqual(config.product_name, "kueue")
+        self.assertEqual(config.cpe_product_name, "kueue_operator")
+        self.assertEqual(config.cpe_name, "kueue_operator")
+        self.assertEqual(config.namespace, "art-kueue-tenant")
+        self.assertEqual(config.base_image_release.release_plan, "kueue-images-base-silent")
+        self.assertEqual(config.fbc_stage_release_plans[(1, 4)], "kueue-advisory-stage-1-4")
+        self.assertIsNone(find_product_config("kueue-operator"))
+
     def test_product_config_is_a_frozen_dataclass(self):
         """Represent product configuration as an immutable dataclass."""
         config = get_product_config("ocp")

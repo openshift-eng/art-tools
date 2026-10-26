@@ -849,7 +849,9 @@ class TestExtractRelatedImagesFromFBC(unittest.TestCase):
         )
 
     def test_get_registry_namespace_pattern(self):
+        """Match each product's registry namespace, including canonical Kueue."""
         self.assertEqual(get_registry_namespace_pattern("ocp"), r"openshift\d+")
+        self.assertEqual(get_registry_namespace_pattern("kueue"), "kueue")
         self.assertEqual(get_registry_namespace_pattern("oadp"), "oadp")
 
     @patch('artcommonlib.util.cmd_gather_async', new_callable=AsyncMock)
@@ -1464,6 +1466,43 @@ class TestExtractVersionedRelatedImagesFromFBC(unittest.TestCase):
         mock_file = MagicMock()
         mock_file.__enter__.return_value.read.return_value = catalog_content
         mock_open.return_value = mock_file
+
+    @patch('artcommonlib.util.cmd_gather_async', new_callable=AsyncMock)
+    @patch('builtins.open', new_callable=MagicMock)
+    @patch('os.path.exists')
+    @patch('os.listdir')
+    def test_kueue_extraction_uses_canonical_registry_namespace(self, mock_listdir, mock_exists, mock_open, mock_cmd):
+        """Rewrite canonical Kueue images while preserving unrelated registry images."""
+        unchanged = [
+            'registry.redhat.io/rhel9/base@sha256:333',
+            'registry.redhat.io/kueue-operator/operator@sha256:444',
+        ]
+        raw_images = [
+            'registry.redhat.io/kueue/kueue-rhel9-operator@sha256:111',
+            'registry.redhat.io/kueue/kueue-operator-bundle@sha256:222',
+            *unchanged,
+        ]
+        catalog_content = json.dumps(
+            {
+                'schema': 'olm.bundle',
+                'name': 'kueue-operator.v1.0.0',
+                'relatedImages': [{'name': f'image-{index}', 'image': image} for index, image in enumerate(raw_images)],
+            }
+        )
+        for extractor in (extract_related_images_from_fbc, extract_versioned_related_images_from_fbc):
+            with self.subTest(extractor=extractor.__name__):
+                self._mock_catalog_extraction(mock_listdir, mock_exists, mock_open, mock_cmd, catalog_content)
+                result = asyncio.run(extractor(self.fbc_pullspec, 'kueue'))
+                self.assertEqual(
+                    sorted(result),
+                    sorted(
+                        [
+                            'quay.io/redhat-user-workloads/ocp-art-tenant/art-images@sha256:111',
+                            'quay.io/redhat-user-workloads/ocp-art-tenant/art-images@sha256:222',
+                            *unchanged,
+                        ]
+                    ),
+                )
 
     @patch('artcommonlib.util.cmd_gather_async', new_callable=AsyncMock)
     @patch('builtins.open', new_callable=MagicMock)
