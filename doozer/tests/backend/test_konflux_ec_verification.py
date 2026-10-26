@@ -1,7 +1,7 @@
 """Tests for EC verification gating logic in KonfluxImageBuilder.build().
 
-Verifies that enterprise-contract verification is only triggered for releasable
-images whose product and lifecycle have a policy and are not explicitly skipped.
+Verifies build-time EC and custom ITS eligibility, including the per-image
+override, without bypassing other prerequisites or explicit skips.
 """
 
 import asyncio
@@ -10,6 +10,7 @@ from unittest import IsolatedAsyncioTestCase
 from unittest.mock import AsyncMock, MagicMock, patch
 
 from artcommonlib.konflux.konflux_build_record import KonfluxBuildOutcome
+from artcommonlib.model import Model
 from artcommonlib.variants import BuildVariant
 from doozerlib import constants
 from doozerlib.backend.konflux_client import CustomIntegrationTestResult, ECVerificationResult
@@ -73,6 +74,7 @@ def _make_metadata(distgit_key="test-image", for_release=True, is_base_image=Fal
     metadata.image_name_short = distgit_key
     metadata.is_olm_operator = False
     metadata.for_release = for_release
+    metadata.config = Model({})
     metadata.is_base_image.return_value = is_base_image
     metadata.has_source.return_value = True
     metadata.get_konflux_build_attempts.return_value = 1
@@ -115,6 +117,7 @@ class TestEcVerificationGating(IsolatedAsyncioTestCase):
         blocking_custom_its=None,
         completed_plr_info=None,
         expect_build_error=False,
+        build_outcome=KonfluxBuildOutcome.SUCCESS,
     ):
         """Helper: run build() with all heavy methods mocked, return verify_enterprise_contract mock."""
         if ec_result is None:
@@ -158,7 +161,7 @@ class TestEcVerificationGating(IsolatedAsyncioTestCase):
                 with patch.object(
                     KonfluxBuildOutcome,
                     "extract_from_pipelinerun_succeeded_condition",
-                    return_value=KonfluxBuildOutcome.SUCCESS,
+                    return_value=build_outcome,
                 ):
                     if expect_build_error:
                         with self.assertRaises(KonfluxImageBuildError):
@@ -167,6 +170,172 @@ class TestEcVerificationGating(IsolatedAsyncioTestCase):
                         await builder.build(metadata)
 
         return builder._konflux_client.verify_enterprise_contract
+
+    async def test_image_its_enabled_eligibility(self, mock_kc_init):
+        for for_release, its_enabled, expected in (
+            (False, None, False),
+            (False, "unset", False),
+            (False, False, False),
+            (False, True, True),
+            (True, None, True),
+            (True, "unset", True),
+            (True, False, False),
+            (True, True, True),
+        ):
+            with self.subTest(for_release=for_release, its_enabled=its_enabled):
+                config = _make_config(integration_test_scenarios=("qe-test",))
+                metadata = _make_metadata(for_release=for_release)
+                if its_enabled == "unset":
+                    metadata.config = Model({"konflux": {"its": {}}})
+                elif its_enabled is not None:
+                    metadata.config = Model({"konflux": {"its": {"enabled": its_enabled}}})
+                metadata.runtime.group_config.konflux.its.enabled = not expected
+
+                verify_ec = await self._run_build_and_get_ec_calls(config, metadata, mock_kc_init)
+
+                self.assertEqual(verify_ec.await_count, int(expected))
+                self.assertEqual(
+                    self.last_builder._konflux_client.run_integration_test_scenarios.await_count, int(expected)
+                )
+                self.assertEqual(metadata.for_release, for_release)
+
+    async def test_its_enabled_runs_for_non_release_base_image(self, mock_kc_init):
+        config = _make_config(integration_test_scenarios=("qe-test",))
+        metadata = _make_metadata(for_release=False, is_base_image=True)
+        metadata.config = Model({"base_only": True, "konflux": {"its": {"enabled": True}}})
+
+        verify_ec = await self._run_build_and_get_ec_calls(config, metadata, mock_kc_init)
+
+        verify_ec.assert_awaited_once()
+        self.last_builder._konflux_client.run_integration_test_scenarios.assert_awaited_once()
+        self.assertFalse(metadata.for_release)
+        self.assertTrue(metadata.config.base_only)
+
+    async def test_its_enabled_preserves_independent_explicit_skips(self, mock_kc_init):
+        for skip_ec, skip_custom in ((True, False), (False, True), (True, True)):
+            with self.subTest(skip_ec=skip_ec, skip_custom=skip_custom):
+                config = _make_config(
+                    integration_test_scenarios=("qe-test",), skip_ec_verify=skip_ec, skip_custom_its=skip_custom
+                )
+                metadata = _make_metadata(for_release=False)
+                metadata.config = Model({"konflux": {"its": {"enabled": True}}})
+
+                verify_ec = await self._run_build_and_get_ec_calls(config, metadata, mock_kc_init)
+
+                self.assertEqual(verify_ec.await_count, int(not skip_ec))
+                self.assertEqual(
+                    self.last_builder._konflux_client.run_integration_test_scenarios.await_count, int(not skip_custom)
+                )
+
+    async def test_its_enabled_preserves_policy_and_scenario_prerequisites(self, mock_kc_init):
+        for policy, scenarios, variant, phase, expected_ec, expected_custom in (
+            (None, ("qe-test",), BuildVariant.OCP, "release", False, True),
+            (None, ("qe-test",), BuildVariant.OCP, "pre-release", False, True),
+            ("policy", (), BuildVariant.OCP, "release", True, False),
+            ("policy", ("qe-test",), BuildVariant.OKD, "release", False, True),
+        ):
+            with self.subTest(policy=policy, scenarios=scenarios, variant=variant, phase=phase):
+                config = _make_config(
+                    ec_policy_configuration=policy,
+                    prega_ec_policy_configuration=policy,
+                    integration_test_scenarios=scenarios,
+                )
+                metadata = _make_metadata(for_release=False, variant=variant)
+                metadata.config = Model({"konflux": {"its": {"enabled": True}}})
+                metadata.runtime.group_config.software_lifecycle.phase = phase
+
+                verify_ec = await self._run_build_and_get_ec_calls(config, metadata, mock_kc_init)
+
+                self.assertEqual(verify_ec.await_count, int(expected_ec))
+                self.assertEqual(
+                    self.last_builder._konflux_client.run_integration_test_scenarios.await_count, int(expected_custom)
+                )
+
+    async def test_its_enabled_preserves_policy_selection_and_effective_time(self, mock_kc_init):
+        for phase, expected_policy in (("release", "release-policy"), ("pre-release", "prega-policy")):
+            with self.subTest(phase=phase):
+                config = _make_config(
+                    ec_policy_configuration="release-policy",
+                    prega_ec_policy_configuration="prega-policy",
+                    effective_time="2026-04-10T00:00:00Z",
+                )
+                metadata = _make_metadata(for_release=False)
+                metadata.config = Model({"konflux": {"its": {"enabled": True}}})
+                metadata.runtime.group_config.software_lifecycle.phase = phase
+
+                verify_ec = await self._run_build_and_get_ec_calls(config, metadata, mock_kc_init)
+
+                verify_ec.assert_awaited_once()
+                self.assertEqual(verify_ec.call_args.kwargs["ec_policy"], expected_policy)
+                self.assertEqual(verify_ec.call_args.kwargs["effective_time"], config.effective_time)
+
+    async def test_its_enabled_requires_pullspec_results(self, mock_kc_init):
+        for missing_results in (("IMAGE_URL",), ("IMAGE_DIGEST",), ("IMAGE_URL", "IMAGE_DIGEST")):
+            with self.subTest(missing_results=missing_results):
+                config = _make_config(integration_test_scenarios=("qe-test",))
+                metadata = _make_metadata(for_release=False)
+                metadata.config = Model({"konflux": {"its": {"enabled": True}}})
+                completed = _make_successful_pipelinerun_info()
+                results = completed.to_dict.return_value["status"]["results"]
+                completed.to_dict.return_value["status"]["results"] = [
+                    result for result in results if result["name"] not in missing_results
+                ]
+
+                verify_ec = await self._run_build_and_get_ec_calls(
+                    config, metadata, mock_kc_init, completed_plr_info=completed
+                )
+
+                verify_ec.assert_not_awaited()
+                self.last_builder._konflux_client.run_integration_test_scenarios.assert_not_awaited()
+
+    async def test_its_enabled_requires_successful_build(self, mock_kc_init):
+        config = _make_config(integration_test_scenarios=("qe-test",))
+        metadata = _make_metadata(for_release=False)
+        metadata.config = Model({"konflux": {"its": {"enabled": True}}})
+
+        verify_ec = await self._run_build_and_get_ec_calls(
+            config, metadata, mock_kc_init, build_outcome=KonfluxBuildOutcome.BUILD_ERROR, expect_build_error=True
+        )
+
+        verify_ec.assert_not_awaited()
+        self.last_builder._konflux_client.run_integration_test_scenarios.assert_not_awaited()
+
+    async def test_its_enabled_preserves_failure_outcomes(self, mock_kc_init):
+        failed_url = "https://example.com/pipelineruns/verification-failed"
+        for failure in ("ec", "blocking-custom", "optional-custom"):
+            with self.subTest(failure=failure):
+                blocking_failed = failure == "blocking-custom"
+                expect_error = failure != "optional-custom"
+                config = _make_config(dry_run=False, integration_test_scenarios=("qe-test",))
+                metadata = _make_metadata(for_release=False)
+                metadata.config = Model({"konflux": {"its": {"enabled": True}}})
+                metadata.should_trigger_base_image_release.return_value = False
+                metadata.should_create_golang_builder_shipment.return_value = False
+
+                verify_ec = await self._run_build_and_get_ec_calls(
+                    config,
+                    metadata,
+                    mock_kc_init,
+                    ec_result=_ec_failed_result() if failure == "ec" else _ec_passed_result(),
+                    custom_its_result=CustomIntegrationTestResult(
+                        blocking_failed, failed_url if blocking_failed else "", [failed_url]
+                    ),
+                    blocking_custom_its={"qe-test"} if blocking_failed else set(),
+                    expect_build_error=expect_error,
+                )
+
+                verify_ec.assert_awaited_once()
+                self.assertEqual(
+                    self.last_builder._konflux_client.run_integration_test_scenarios.await_count,
+                    int(failure != "ec"),
+                )
+                completion = self.last_builder.update_konflux_db.await_args_list[-1]
+                expected_outcome = KonfluxBuildOutcome.ITS_ERROR if expect_error else KonfluxBuildOutcome.SUCCESS
+                self.assertEqual(completion.args[3], expected_outcome)
+                if blocking_failed:
+                    self.assertEqual(completion.kwargs["ec_pipeline_url"], failed_url)
+                elif failure == "ec":
+                    self.assertEqual(completion.kwargs["ec_pipeline_url"], _ec_failed_result().ec_pipeline_url)
 
     async def test_custom_its_preflight_stores_explicit_blocking_scenarios(self, mock_kc_init):
         config = _make_config(integration_test_scenarios=("qe-optional", "qe-blocking"))

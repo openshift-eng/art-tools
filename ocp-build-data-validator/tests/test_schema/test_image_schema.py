@@ -7,6 +7,44 @@ from validator.schema import image_schema
 
 
 class TestImageSchema(unittest.TestCase):
+    def test_its_enabled_boolean_and_merge_variants(self):
+        for its_key in ("its", "its!", "its?"):
+            for enabled_key in ("enabled", "enabled!", "enabled?"):
+                for value in (True, False):
+                    with self.subTest(its_key=its_key, enabled_key=enabled_key, value=value):
+                        data = {
+                            "from": {},
+                            "name": "test-image",
+                            "for_release": False,
+                            "konflux": {its_key: {enabled_key: value}},
+                        }
+                        self.assertIsNone(image_schema.validate("images/test-image.yml", data))
+                        self.assertFalse(data["for_release"])
+
+    def test_its_enabled_rejects_non_boolean_types(self):
+        for value in ("true", "false", 0, 1, None, [], {}):
+            with self.subTest(value=value):
+                data = {"from": {}, "name": "test-image", "konflux": {"its": {"enabled": value}}}
+                error = image_schema.validate("images/test-image.yml", data)
+                self.assertIsNotNone(error)
+                self.assertIn("is not of type 'boolean'", error)
+
+    def test_its_rejects_non_object_and_unknown_fields(self):
+        for value in (True, None, [], {"unknown": True}):
+            with self.subTest(value=value):
+                data = {"from": {}, "name": "test-image", "konflux": {"its": value}}
+                self.assertIsNotNone(image_schema.validate("images/test-image.yml", data))
+
+    def test_its_removal_merge_variants(self):
+        for its in ({"its-": None}, {"its": {"enabled-": None}}):
+            with self.subTest(its=its):
+                data = {"from": {}, "name": "test-image", "for_release": False, "konflux": its}
+                self.assertIsNone(image_schema.validate("images/test-image.yml", data))
+
+    def test_its_enabled_does_not_exempt_release_image_from_delivery_requirements(self):
+        data = {"from": {}, "name": "test-image", "for_release": True, "konflux": {"its": {"enabled": False}}}
+        self.assertIn("delivery.delivery_repo_names", image_schema.validate("images/test-image.yml", data))
+
     def setUp(self):
         self.temp_dir = tempfile.mkdtemp()
 

@@ -389,12 +389,13 @@ class KonfluxImageBuilder:
                 else:
                     ec_policy = self._config.ec_policy_configuration
 
+                its_eligible = metadata.config.get("konflux", {}).get("its", {}).get("enabled", metadata.for_release)
                 should_run_ec = (
                     outcome is KonfluxBuildOutcome.SUCCESS
                     and metadata.runtime.variant is not BuildVariant.OKD
                     and ec_policy is not None
                     and not self._config.skip_ec_verify
-                    and metadata.for_release
+                    and its_eligible
                     and definitive_image_pullspec is not None
                 )
                 if should_run_ec:
@@ -436,9 +437,9 @@ class KonfluxImageBuilder:
                             metadata.distgit_key,
                             self._config.group_name,
                         )
-                    elif not metadata.for_release:
+                    elif not its_eligible:
                         logger.info(
-                            "Skipping EC verification for %s: image is not for_release",
+                            "Skipping EC verification for %s: konflux.its.enabled is false or image is not for_release",
                             metadata.distgit_key,
                         )
 
@@ -446,7 +447,7 @@ class KonfluxImageBuilder:
                     outcome is KonfluxBuildOutcome.SUCCESS
                     and bool(self._config.integration_test_scenarios)
                     and not self._config.skip_custom_its
-                    and metadata.for_release
+                    and its_eligible
                     and definitive_image_pullspec is not None
                 )
                 if should_run_custom_its:
