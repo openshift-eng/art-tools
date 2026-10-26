@@ -41,7 +41,9 @@
 #                                 unset at that point.
 
 # ---------------------------------------------------------------------------
-# The baseline: what the shim does to an ordinary RPM `go build`.
+# The baseline: what the shim does to an ordinary RPM `go build`. Unless a
+# case says otherwise, go_real_version defaults to go1.24.0 -- a toolchain
+# with no built-in FIPS module -- so these describe the libopenssl path.
 # ---------------------------------------------------------------------------
 
 - name: plain_build_gets_the_full_compliance_treatment
@@ -355,3 +357,295 @@
   cwd_files: [cmd/coverage_server.go]
   expect:
     args: [build, -cover, -covermode=atomic, -tags, strictfipsruntime, ./cmd/coverage_server.go, ./cmd/main.go]
+
+# ---------------------------------------------------------------------------
+# Built-in FIPS module selection: Go >=1.26 ships a built-in, FIPS-validated
+# crypto module. Whether the shim selects it over the legacy libopenssl
+# backend depends on the compiler version in the buildroot and, for 1.26
+# specifically, corroboration from __doozer_group that the OCP group being
+# built is 5.1+. doozerlib/rpm_builder.py bakes __doozer_group into the
+# generated shim.
+# ---------------------------------------------------------------------------
+
+- name: go127_qualifies_on_its_own
+  description: >
+    Go 1.27 always gets the built-in FIPS module, regardless of OCP group.
+  args: [build, ./...]
+  env: {__doozer_group: openshift-4.20}
+  go_real_version: go1.27.0
+  expect:
+    env: {GOFIPS140: v1.26.0}
+    tags_include: [no_openssl]
+
+- name: go128_newer_minor_qualifies_on_its_own
+  description: >
+    A newer 1.x minor than 1.27 also always qualifies on its own.
+  args: [build, ./...]
+  env: {__doozer_group: openshift-4.20}
+  go_real_version: go1.28.0
+  expect:
+    env: {GOFIPS140: v1.26.0}
+
+- name: go2_future_major_qualifies_on_its_own
+  description: >
+    A hypothetical future major version also qualifies on its own.
+  args: [build, ./...]
+  env: {__doozer_group: openshift-4.20}
+  go_real_version: go2.0.0
+  expect:
+    env: {GOFIPS140: v1.26.0}
+
+- name: go126_with_ocp_5_1_qualifies
+  description: >
+    Go 1.26 qualifies when __doozer_group corroborates OCP 5.1.
+  args: [build, ./...]
+  env: {__doozer_group: openshift-5.1}
+  go_real_version: go1.26.0
+  expect:
+    env: {GOFIPS140: v1.26.0}
+    tags_include: [no_openssl]
+
+- name: go126_with_ocp_5_2_qualifies
+  description: >
+    Go 1.26 qualifies for any OCP minor at or after 5.1, not just 5.1 itself.
+  args: [build, ./...]
+  env: {__doozer_group: openshift-5.2}
+  go_real_version: go1.26.0
+  expect:
+    env: {GOFIPS140: v1.26.0}
+
+- name: go126_with_ocp_6_0_qualifies
+  description: >
+    Go 1.26 qualifies for any OCP major after 5, not just minor 5.1+.
+  args: [build, ./...]
+  env: {__doozer_group: openshift-6.0}
+  go_real_version: go1.26.0
+  expect:
+    env: {GOFIPS140: v1.26.0}
+
+- name: go126_with_ocp_5_0_falls_back
+  description: >
+    Go 1.26 on OCP 5.0 (just before the cutoff) stays on libopenssl, even
+    though the same toolchain would qualify one minor later.
+  args: [build, ./...]
+  env: {__doozer_group: openshift-5.0}
+  go_real_version: go1.26.0
+  expect:
+    env: {GOFIPS140: "off"}
+    tags_exclude: [no_openssl]
+
+- name: go126_with_ocp_4_19_falls_back
+  description: >
+    Go 1.26 on an older OCP major (4.x) stays on libopenssl.
+  args: [build, ./...]
+  env: {__doozer_group: openshift-4.19}
+  go_real_version: go1.26.0
+  expect:
+    env: {GOFIPS140: "off"}
+    tags_exclude: [no_openssl]
+
+- name: go126_with_an_unparseable_group_falls_back
+  description: >
+    A group name that is not an OCP version cannot corroborate anything, so
+    it is treated conservatively as pre-5.1.
+  args: [build, ./...]
+  env: {__doozer_group: rhel-9}
+  go_real_version: go1.26.0
+  expect:
+    env: {GOFIPS140: "off"}
+
+- name: go126_with_no_doozer_group_falls_back
+  description: >
+    No __doozer_group at all can't be corroborated as OCP 5.1+, so 1.26
+    stays on libopenssl even though the toolchain has a built-in module.
+    This is also what an RPM built by an older doozer gets, since nothing
+    baked the group into the shim then.
+  args: [build, ./...]
+  go_real_version: go1.26.0
+  expect:
+    env: {GOFIPS140: "off"}
+
+- name: go125_has_no_builtin_module_regardless_of_group
+  description: >
+    Go 1.25 has no built-in module at all, even on a qualifying OCP group.
+  args: [build, ./...]
+  env: {__doozer_group: openshift-6.0}
+  go_real_version: go1.25.0
+  expect:
+    env: {GOFIPS140: "off"}
+
+- name: go124_well_below_1_26_falls_back
+  description: >
+    A much older Go release stays on libopenssl even on a qualifying group.
+  args: [build, ./...]
+  env: {__doozer_group: openshift-5.1}
+  go_real_version: go1.24.0
+  expect:
+    env: {GOFIPS140: "off"}
+
+- name: malformed_goversion_falls_back_to_openssl
+  description: >
+    A devel toolchain string with no parseable major.minor must not be
+    mistaken for a qualifying release -- the safe default is libopenssl,
+    the behavior every OCP release before this feature already used.
+  args: [build, ./...]
+  env: {__doozer_group: openshift-5.1}
+  go_real_version: "devel go1.28-deadbeef"
+  expect:
+    env: {GOFIPS140: "off"}
+
+- name: goversion_suffix_does_not_break_parsing
+  description: >
+    GOVERSION can carry a trailing build-tag annotation (e.g. from a
+    toolchain already built with strictfipsruntime); the version parse must
+    still find 1.26 underneath it.
+  args: [build, ./...]
+  env: {__doozer_group: openshift-5.1}
+  go_real_version: "go1.26.0 X:strictfipsruntime"
+  expect:
+    env: {GOFIPS140: v1.26.0}
+
+- name: the_version_is_probed_with_gotoolchain_already_pinned
+  description: >
+    GOTOOLCHAIN=local is forced before the version is probed, not after.
+    Otherwise a go.mod `go` directive could make the probe report a
+    downloaded toolchain rather than the one in the buildroot, and the
+    built-in module decision would be made about the wrong compiler.
+  args: [build, ./...]
+  env: {GOTOOLCHAIN: auto}
+  expect:
+    probed_goversion_toolchain: local
+
+# ---------------------------------------------------------------------------
+# What selecting the built-in module actually changes: it's pure Go, so cgo
+# is only needed to reach libopenssl, and forcing cgo on is what breaks
+# static linking. The legacy libopenssl path still forces both.
+# ---------------------------------------------------------------------------
+
+- name: builtin_module_build_asserts_gofips140_and_no_openssl
+  description: >
+    GOFIPS140 alone doesn't select the built-in module -- its companion
+    build tag no_openssl has to be injected too, alongside the orthogonal,
+    backend-independent strictfipsruntime tag.
+  args: [build, ./...]
+  env: {__doozer_group: openshift-5.1}
+  go_real_version: go1.26.0
+  expect:
+    args: [build, -tags, "strictfipsruntime,no_openssl", ./...]
+    env: {GOFIPS140: v1.26.0}
+
+- name: builtin_module_build_leaves_cgo_alone
+  description: >
+    cgo is only needed to reach libopenssl, so on the built-in-module path
+    the RPM's own choice stands -- including CGO_ENABLED=0, which is no
+    longer non-compliant.
+  args: [build, ./...]
+  env: {__doozer_group: openshift-5.1, CGO_ENABLED: "0"}
+  go_real_version: go1.26.0
+  expect:
+    env: {CGO_ENABLED: "0"}
+
+- name: builtin_module_build_does_not_report_cgo_disabled_as_non_compliant
+  description: >
+    The complaint about CGO_ENABLED=0 goes with the forcing: where cgo is
+    not needed there is nothing to complain about.
+  args: [build, ./...]
+  env: {__doozer_group: openshift-5.1, CGO_ENABLED: "0"}
+  go_real_version: go1.26.0
+  expect:
+    stderr_contains: "permitting CGO_ENABLED=0 because the built-in FIPS module needs no cgo"
+
+- name: builtin_module_build_leaves_static_linking_alone
+  description: >
+    -extldflags "-static" was only ever rewritten because forced cgo made it
+    fail; with cgo left alone it survives untouched.
+  args: [build, -ldflags, '-extldflags "-static"', ./...]
+  env: {__doozer_group: openshift-5.1}
+  go_real_version: go1.26.0
+  expect:
+    args_contains: ['-extldflags "-static"']
+    args_not_contains: ['-extldflags "-lc"']
+
+- name: builtin_module_build_does_not_scrub_no_openssl
+  description: >
+    On the built-in-module path no_openssl is exactly what's wanted, so a
+    caller-supplied one must survive un-scrubbed.
+  args: [build, -tags, no_openssl, ./...]
+  env: {__doozer_group: openshift-5.1}
+  go_real_version: go1.26.0
+  expect:
+    tags_include: [no_openssl]
+    tags_exclude: [shim_prevented_no_openssl]
+
+- name: builtin_module_build_merges_its_tags_into_an_existing_list
+  description: >
+    Both injected tags are merged into a tag list the RPM already has,
+    rather than only the first of them.
+  args: [build, "-tags=foo", ./...]
+  env: {__doozer_group: openshift-5.1}
+  go_real_version: go1.26.0
+  expect:
+    args: [build, "-tags=foo,strictfipsruntime,no_openssl", ./...]
+
+- name: builtin_module_build_merges_its_tags_into_a_space_delimited_list
+  description: >
+    The comma-delimited injected list is translated to spaces where the
+    RPM's own list is space delimited, rather than mixing the two
+    delimiters in one value.
+  args: [build, -tags, foo bar, ./...]
+  env: {__doozer_group: openshift-5.1}
+  go_real_version: go1.26.0
+  expect:
+    args: [build, -tags, foo bar strictfipsruntime no_openssl, ./...]
+
+- name: builtin_module_build_still_gets_strictfipsruntime_goexperiment
+  description: >
+    GOEXPERIMENT is orthogonal to the choice of backend, so it is set the
+    same way on both paths.
+  args: [build, ./...]
+  env: {__doozer_group: openshift-5.1}
+  go_real_version: go1.26.0
+  expect:
+    env: {GOEXPERIMENT: strictfipsruntime}
+
+- name: builtin_module_build_displaces_boringcrypto_as_ever
+  description: >
+    boringcrypto cannot be combined with the built-in module. The container
+    shim has to filter it out explicitly; this one does not, because it
+    assigns GOEXPERIMENT outright -- which is worth pinning on the path
+    where it now matters.
+  args: [build, ./...]
+  env: {__doozer_group: openshift-5.1, GOEXPERIMENT: boringcrypto}
+  go_real_version: go1.26.0
+  expect:
+    env: {GOEXPERIMENT: strictfipsruntime, GOFIPS140: v1.26.0}
+
+- name: legacy_openssl_build_explicitly_disables_the_builtin_module
+  description: >
+    The libopenssl path sets GOFIPS140=off rather than leaving it unset, so
+    that a toolchain defaulting it to 'certified' cannot quietly enable the
+    built-in module behind the shim's back.
+  args: [build, ./...]
+  env: {__doozer_group: openshift-4.20}
+  go_real_version: go1.24.0
+  expect:
+    env: {GOFIPS140: "off"}
+
+- name: a_caller_set_gofips140_does_not_survive_the_legacy_path
+  description: >
+    An RPM cannot opt itself into the built-in module by setting GOFIPS140
+    in its %build section; the shim's decision is the one that counts.
+  args: [build, ./...]
+  env: {__doozer_group: openshift-4.20, GOFIPS140: v1.26.0}
+  go_real_version: go1.24.0
+  expect:
+    env: {GOFIPS140: "off"}
+
+- name: a_caller_set_gofips140_does_not_survive_the_builtin_path_either
+  description: >
+    Nor can it pin a different module version on the built-in path.
+  args: [build, ./...]
+  env: {__doozer_group: openshift-5.1, GOFIPS140: v1.0.0}
+  go_real_version: go1.26.0
+  expect:
+    env: {GOFIPS140: v1.26.0}
