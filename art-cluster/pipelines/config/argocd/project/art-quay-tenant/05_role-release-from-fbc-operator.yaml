@@ -6,11 +6,11 @@ metadata:
 rules:
   - apiGroups: ["tekton.dev"]
     resources: ["pipelines"]
-    resourceNames: ["release-from-fbc", "trigger-prod-release", "layered-products-scan", "build-layered-products", "olm-bundle-konflux", "build-fbc", "schedule-layered-products-scan"]
+    resourceNames: ["release-from-fbc", "trigger-prod-release", "layered-products-scan", "build-layered-products", "olm-bundle-konflux", "build-fbc", "schedule-layered-products-scan", "lp-unified-fbc"]
     verbs: ["get", "list"]
   - apiGroups: ["tekton.dev"]
     resources: ["tasks"]
-    resourceNames: ["artcd", "lp-scan", "lp-release", "lp-trigger-prod-release"]
+    resourceNames: ["artcd", "lp-scan", "lp-release", "lp-trigger-prod-release", "artcd-lp-unified-fbc"]
     verbs: ["get"]
   - apiGroups: ["tekton.dev"]
     resources: ["pipelineruns"]
