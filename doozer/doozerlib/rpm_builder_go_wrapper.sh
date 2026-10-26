@@ -7,6 +7,18 @@ echoerr() {
   cat <<< "$@" 1>&2
 }
 
+# Neutralise the no_openssl build tag, which would otherwise disable the
+# openssl crypto backend that FORCE_OPENSSL exists to mandate. Operates in
+# place on the caller's "arg" variable rather than returning the new value,
+# so that both tag spellings can share it.
+scrub_no_openssl() {
+  pre_arg="${arg}"
+  arg=$(echo "${arg}" | sed 's/no_openssl/shim_prevented_no_openssl/g')
+  if [[ "${pre_arg}" != "${arg}" ]]; then
+    echoerr "non-compliant: eliminated no_openssl"
+  fi
+}
+
 set -o xtrace
 
 echo 1>&2
@@ -167,6 +179,15 @@ for arg in "$@"; do
       fi
     fi
 
+    # A tag list reaches us in one of two spellings: attached to the flag as
+    # "-tags=<list>" (handled here), or as the argument following a bare
+    # "-tags" (handled by the IN_TAGS block below). Both have to be scrubbed,
+    # and the scrub is independent of whether we are also adding tags of our
+    # own.
+    if [[ ( "${arg}" == "-tags="* || "${arg}" == "--tags="* ) && "${FORCE_OPENSSL}" == "1" && "${GO_BUILTIN_FIPS}" == "0" ]]; then
+      scrub_no_openssl
+    fi
+
     if [[ "${IN_TAGS}" == "1" ]]; then
       if [[ -n "${SHIM_TAGS}" ]]; then
         echoerr "adding ${SHIM_TAGS} tags to ${arg} (IN_TAGS=${IN_TAGS})"
@@ -178,14 +199,8 @@ for arg in "$@"; do
           arg="${arg},${SHIM_TAGS}"
         fi
       fi
-      # Only relevant to the libopenssl backend: from Go 1.26 the built-in
-      # module supersedes it and no_openssl is asserted, not stripped.
       if [[ "${FORCE_OPENSSL}" == "1" && "${GO_BUILTIN_FIPS}" == "0" ]]; then
-        pre_arg="${arg}"
-        arg=$(echo "${arg}" | sed 's/no_openssl/shim_prevented_no_openssl/g')
-        if [[ "${pre_arg}" != "${arg}" ]]; then
-          echoerr "non-compliant: eliminated no_openssl"
-        fi
+        scrub_no_openssl
       fi
       IN_TAGS=0
     fi
