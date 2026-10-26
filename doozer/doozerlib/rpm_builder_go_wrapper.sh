@@ -44,6 +44,15 @@ fi
 FORCE_FOD_MODE=1
 FORCE_OPENSSL=1
 FORCE_DYNAMIC=1
+
+# Build tags the shim injects, as a single comma-delimited list so that the
+# three places which splice tags into the command line do not each have to
+# know what the list is made of.
+SHIM_TAGS=""
+if [[ "${FORCE_FOD_MODE}" == "1" ]]; then
+  SHIM_TAGS="strictfipsruntime"
+fi
+
 IN_RUN=0
 IN_BUILD=0
 IN_TAGS=0
@@ -77,33 +86,33 @@ for arg in "$@"; do
         ARGS+=("-covermode=atomic")
       fi
 
-      if [[ "${FORCE_FOD_MODE}" == "1" && "${HAS_TAGS}" == "0" ]]; then
+      if [[ -n "${SHIM_TAGS}" && "${HAS_TAGS}" == "0" ]]; then
         ARGS+=("-tags")
-        ARGS+=("strictfipsruntime")
+        ARGS+=("${SHIM_TAGS}")
       fi
       continue  # We've already added 'build' or 'install', so don't reach the bottom of the loop where it would be added again.
     fi
 
-    if [[ ( "${arg}" == "-tags="* || "${arg}" == "--tags="* ) && "${FORCE_FOD_MODE}" == "1" ]]; then
-      echoerr "adding strictfipsruntime tag to \"${arg}\""
+    if [[ ( "${arg}" == "-tags="* || "${arg}" == "--tags="* ) && -n "${SHIM_TAGS}" ]]; then
+      echoerr "adding ${SHIM_TAGS} tags to \"${arg}\""
       arg=$(echo "${arg}" | tr -d "'" | tr -d "\"")  # Delete any quotes which get passed in literally. grafana managed this.
       if [[ "${arg}" == *" "* ]]; then  # If the tags parameter is space delimited
-        arg="${arg} strictfipsruntime"
+        arg="${arg} ${SHIM_TAGS//,/ }"
       else
         # Assume comma delimited
-        arg="${arg},strictfipsruntime"
+        arg="${arg},${SHIM_TAGS}"
       fi
     fi
 
     if [[ "${IN_TAGS}" == "1" ]]; then
-      if [[ "${FORCE_FOD_MODE}" == "1" ]]; then
-        echoerr "adding strictfipsruntime tag to ${arg} (IN_TAGS=${IN_TAGS})"
+      if [[ -n "${SHIM_TAGS}" ]]; then
+        echoerr "adding ${SHIM_TAGS} tags to ${arg} (IN_TAGS=${IN_TAGS})"
         arg=$(echo "${arg}" | tr -d "'" | tr -d "\"")  # Delete any quotes which get passed in literally. prom-label-proxy managed this.
         if [[ "${arg}" == *" "* ]]; then  # If the tags parameter is space delimited
-          arg="${arg} strictfipsruntime"
+          arg="${arg} ${SHIM_TAGS//,/ }"
         else
           # Assume comma delimited
-          arg="${arg},strictfipsruntime"
+          arg="${arg},${SHIM_TAGS}"
         fi
       fi
       if [[ "${FORCE_OPENSSL}" == "1" ]]; then
