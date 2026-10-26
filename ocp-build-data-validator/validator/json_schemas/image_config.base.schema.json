@@ -1617,6 +1617,31 @@
           "$ref": "#/properties/konflux/properties/build_attempts"
         },
         "build_attempts-": {},
+        "its": {
+          "description": "Image-level build-time EC and custom IntegrationTestScenario eligibility. When enabled is absent, for_release determines eligibility.",
+          "type": "object",
+          "properties": {
+            "enabled": {
+              "description": "Override for_release to enable or disable build-time EC and configured custom IntegrationTestScenarios. Existing prerequisites and explicit skip flags still apply.",
+              "type": "boolean"
+            },
+            "enabled?": {
+              "$ref": "#/properties/konflux/properties/its/properties/enabled"
+            },
+            "enabled!": {
+              "$ref": "#/properties/konflux/properties/its/properties/enabled"
+            },
+            "enabled-": {}
+          },
+          "additionalProperties": false
+        },
+        "its!": {
+          "$ref": "#/properties/konflux/properties/its"
+        },
+        "its?": {
+          "$ref": "#/properties/konflux/properties/its"
+        },
+        "its-": {},
         "skip_validate_slsa": {
           "description": "Skip SLSA attestation and source image signature validation after a successful Konflux build",
           "type": "boolean"
