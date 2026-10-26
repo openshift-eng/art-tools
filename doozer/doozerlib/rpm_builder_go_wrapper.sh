@@ -13,7 +13,7 @@ echoerr() {
 # so that both tag spellings can share it.
 scrub_no_openssl() {
   pre_arg="${arg}"
-  arg=$(echo "${arg}" | sed 's/no_openssl/shim_prevented_no_openssl/g')
+  arg=$(echo "${arg}" | sed 's/\bno_openssl\b/shim_prevented_no_openssl/g')
   if [[ "${pre_arg}" != "${arg}" ]]; then
     echoerr "non-compliant: eliminated no_openssl"
   fi

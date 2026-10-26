@@ -281,6 +281,16 @@
     tags_include: [shim_prevented_no_openssl, other, strictfipsruntime]
     tags_exclude: [no_openssl]
 
+- name: no_openssl_scrub_leaves_an_unrelated_tag_that_contains_it_alone
+  description: >
+    Only the whole tag is a problem. A tag that merely has no_openssl
+    inside its name is someone else's, and mangling it would break a build
+    for no compliance benefit.
+  args: [build, -tags, vendor_no_openssl_shim, ./...]
+  expect:
+    tags_include: [vendor_no_openssl_shim]
+    tags_exclude: [vendor_shim_prevented_no_openssl_shim]
+
 # ---------------------------------------------------------------------------
 # Static linking: forcing cgo on is incompatible with -extldflags "-static",
 # because the static libraries to link against are not present in the
