@@ -271,6 +271,16 @@
     tags_exclude: [no_openssl]
     stderr_contains: "non-compliant: eliminated no_openssl"
 
+- name: caller_supplied_no_openssl_tag_is_neutralised_in_the_equals_form
+  description: >
+    The `-tags=no_openssl` spelling is scrubbed just like the two-argument
+    form; an RPM cannot opt out of the openssl backend by picking the other
+    way of writing the same flag.
+  args: [build, "-tags=no_openssl,other", ./...]
+  expect:
+    tags_include: [shim_prevented_no_openssl, other, strictfipsruntime]
+    tags_exclude: [no_openssl]
+
 # ---------------------------------------------------------------------------
 # Static linking: forcing cgo on is incompatible with -extldflags "-static",
 # because the static libraries to link against are not present in the
