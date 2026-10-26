@@ -25,7 +25,7 @@ from doozerlib.source_resolver import SourceResolver
 
 class TestKueueProductPolicies(unittest.TestCase):
     def test_canonical_product_selects_existing_policies(self):
-        """Select existing Kueue policies by canonical product name without an old alias."""
+        """Select existing Kueue policies by canonical name without legacy policy-map keys."""
         for policies in (constants.PRODUCT_EC_POLICY_MAP, constants.PRODUCT_TEST_EC_POLICY_MAP):
             with self.subTest(policies=policies):
                 self.assertEqual(policies.get("kueue"), "rhtap-releng-tenant/registry-art-kueue-stage")

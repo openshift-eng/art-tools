@@ -97,6 +97,7 @@ PRODUCT_CATALOG: tuple[ProductConfig, ...] = (
     # konflux-release-data. Reviewers must confirm these exist or create them.
     ProductConfig(
         product_id=ProductId.KUEUE,
+        aliases=("kueue-operator",),
         namespace="art-kueue-tenant",
         kubeconfig_env="KUEUE_KONFLUX_SA_KUBECONFIG",
         base_image_release=ReleaseTarget(
