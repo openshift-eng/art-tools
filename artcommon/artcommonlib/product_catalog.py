@@ -142,6 +142,7 @@ PRODUCT_CATALOG: tuple[ProductConfig, ...] = (
             fbc_policy="rhtap-releng-tenant/fbc-art-acm-stage",
         ),
         fbc_stage_release_plans={
+            (2, 6): "mce-advisory-stage-auto-2-6",
             (2, 8): "mce-advisory-stage-auto-2-8",
             (2, 9): "mce-advisory-stage-auto-2-9",
             (2, 10): "mce-advisory-stage-auto-2-10",
