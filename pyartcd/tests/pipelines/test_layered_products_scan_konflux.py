@@ -453,6 +453,29 @@ class TestScanForMissingBundlesFbcs(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(pipeline.ocp_target_versions, ['4.14', '4.15'])
 
     @patch('pyartcd.pipelines.layered_products_scan_konflux.load_group_config', new_callable=AsyncMock)
+    async def test_version_prefer_group_config_over_group_name(self, mock_load_group_config):
+        """group.yml version must win over MAJOR.MINOR from the group name (FBC NVR source)."""
+        mock_load_group_config.return_value = {'version': '1.4.4', 'OCP_TARGET_VERSIONS': ['4.19']}
+        pipeline = self._make_pipeline(group='kueue-1.4')
+        self.assertEqual(pipeline.version, '1.4')  # provisional from group name
+
+        await pipeline.load_ocp_target_versions()
+
+        self.assertEqual(pipeline.version, '1.4.4')
+        self.assertEqual(pipeline.ocp_target_versions, ['4.19'])
+
+    @patch('pyartcd.pipelines.layered_products_scan_konflux.load_group_config', new_callable=AsyncMock)
+    async def test_version_fallback_to_group_name(self, mock_load_group_config):
+        """When group.yml omits version, keep MAJOR.MINOR derived from the group name."""
+        mock_load_group_config.return_value = {'OCP_TARGET_VERSIONS': ['4.14']}
+        pipeline = self._make_pipeline(group='oadp-1.5')
+        self.assertEqual(pipeline.version, '1.5')
+
+        await pipeline.load_ocp_target_versions()
+
+        self.assertEqual(pipeline.version, '1.5')
+
+    @patch('pyartcd.pipelines.layered_products_scan_konflux.load_group_config', new_callable=AsyncMock)
     async def test_ocp_target_versions_not_set(self, mock_load_group_config):
         """When OCP_TARGET_VERSIONS is not in group config, ocp_target_versions should be empty."""
         mock_load_group_config.return_value = {'some_other_key': 'value'}
@@ -461,7 +484,6 @@ class TestScanForMissingBundlesFbcs(unittest.IsolatedAsyncioTestCase):
         await pipeline.load_ocp_target_versions()
 
         self.assertEqual(pipeline.ocp_target_versions, [])
-
     @patch('pyartcd.pipelines.layered_products_scan_konflux.load_group_config', new_callable=AsyncMock)
     async def test_ocp_target_versions_load_failure_raises(self, mock_load_group_config):
         """If loading group config fails, the exception should propagate."""
@@ -495,7 +517,7 @@ class TestScanForMissingBundlesFbcs(unittest.IsolatedAsyncioTestCase):
     @patch('pyartcd.pipelines.layered_products_scan_konflux.load_group_config', new_callable=AsyncMock)
     async def test_scan_loads_ocp_target_versions(self, mock_load_group_config):
         """scan_for_missing_bundles_fbcs should call load_ocp_target_versions."""
-        mock_load_group_config.return_value = {'OCP_TARGET_VERSIONS': ['4.14']}
+        mock_load_group_config.return_value = {'version': '1.5.8', 'OCP_TARGET_VERSIONS': ['4.14']}
         pipeline = self._make_pipeline()
 
         with (
@@ -505,6 +527,7 @@ class TestScanForMissingBundlesFbcs(unittest.IsolatedAsyncioTestCase):
             await pipeline.scan_for_missing_bundles_fbcs()
 
         self.assertEqual(pipeline.ocp_target_versions, ['4.14'])
+        self.assertEqual(pipeline.version, '1.5.8')
 
 
 class TestDeduplication(unittest.IsolatedAsyncioTestCase):
@@ -880,6 +903,8 @@ class TestTriggerBuilds(unittest.TestCase):
     def test_trigger_fbc_builds_tekton_single_target_version(self, _mock_ctx, mock_start, mock_annotate):
         """With a single OCP target version, one PipelineRun is created with ocp-target-version."""
         pipeline = self._make_pipeline()
+        # Simulate post-load_ocp_target_versions state (group.yml version, not group-name MAJOR.MINOR)
+        pipeline.version = '1.5.8'
         pipeline.ocp_target_versions = ['4.14']
         operators = [_make_operator(nvr='op-1')]
 
@@ -888,7 +913,7 @@ class TestTriggerBuilds(unittest.TestCase):
         mock_start.assert_called_once_with(
             pipeline_name='build-fbc',
             params={
-                'version': '1.5',
+                'version': '1.5.8',
                 'assembly': 'stream',
                 'group': 'oadp-1.5',
                 'operator-nvrs': 'op-1',
