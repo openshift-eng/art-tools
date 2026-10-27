@@ -865,6 +865,7 @@ class TestTriggerBuilds(unittest.TestCase):
             group='oadp-1.5',
             doozer_data_path='https://github.com/openshift-eng/ocp-build-data',
             doozer_data_gitref='',
+            force_release=False,
         )
 
     @patch('pyartcd.pipelines.layered_products_scan_konflux.tekton.annotate_current_pipelinerun')
@@ -1195,6 +1196,266 @@ class TestCheckFbcExists(unittest.IsolatedAsyncioTestCase):
         # All versions have pending FBCs, none missing → returns pending record
         self.assertIsNotNone(result)
         self.assertEqual(result.outcome, KonfluxBuildOutcome.PENDING)
+
+
+class TestStageReleaseGate(unittest.IsolatedAsyncioTestCase):
+    """Tests for holding back FBC builds until the bundle reached the stage registry."""
+
+    def setUp(self):
+        self.runtime = MagicMock(spec=Runtime)
+        self.runtime.dry_run = True
+        self.runtime.working_dir = MagicMock()
+        self.runtime.working_dir.__truediv__ = lambda self, x: MagicMock()
+
+        # Mock KonfluxDb to prevent real BigQuery connections
+        patcher = patch('pyartcd.pipelines.layered_products_scan_konflux.KonfluxDb')
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
+    def _make_pipeline(self, group='acm-5.0', assembly='stream'):
+        return LayeredProductsScanPipeline(
+            runtime=self.runtime,
+            group=group,
+            data_path='https://github.com/openshift-eng/ocp-build-data',
+            assembly=assembly,
+            data_gitref='',
+            image_list='',
+        )
+
+    async def test_stage_missing_queues_force_release_and_no_fbc(self):
+        pipeline = self._make_pipeline()
+        pipeline._check_stage_release = True
+        operator = _make_operator(name='multiclusterhub-operator', nvr='mch-5.0-1')
+
+        with (
+            patch.object(pipeline, 'check_bundle_exists', new_callable=AsyncMock, return_value=_make_bundle()),
+            patch.object(pipeline, 'check_stage_registry', new_callable=AsyncMock, return_value=False),
+            patch.object(pipeline, 'check_fbc_exists', new_callable=AsyncMock) as mock_fbc,
+        ):
+            await pipeline.check_operator(MagicMock(), MagicMock(), operator)
+
+        self.assertIn(operator, pipeline.operators_needing_stage_release)
+        self.assertEqual(pipeline.operators_without_fbcs, [])
+        mock_fbc.assert_not_called()
+
+    async def test_stage_present_checks_fbc(self):
+        pipeline = self._make_pipeline()
+        pipeline._check_stage_release = True
+        operator = _make_operator(name='multiclusterhub-operator', nvr='mch-5.0-1')
+
+        with (
+            patch.object(pipeline, 'check_bundle_exists', new_callable=AsyncMock, return_value=_make_bundle()),
+            patch.object(pipeline, 'check_stage_registry', new_callable=AsyncMock, return_value=True),
+            patch.object(pipeline, 'check_fbc_exists', new_callable=AsyncMock, return_value=None),
+        ):
+            await pipeline.check_operator(MagicMock(), MagicMock(), operator)
+
+        self.assertEqual(pipeline.operators_needing_stage_release, [])
+        self.assertIn(operator, pipeline.operators_without_fbcs)
+
+    async def test_stage_inconclusive_does_nothing(self):
+        pipeline = self._make_pipeline()
+        pipeline._check_stage_release = True
+        operator = _make_operator(name='multiclusterhub-operator', nvr='mch-5.0-1')
+
+        with (
+            patch.object(pipeline, 'check_bundle_exists', new_callable=AsyncMock, return_value=_make_bundle()),
+            patch.object(pipeline, 'check_stage_registry', new_callable=AsyncMock, return_value=None),
+            patch.object(pipeline, 'check_fbc_exists', new_callable=AsyncMock) as mock_fbc,
+        ):
+            await pipeline.check_operator(MagicMock(), MagicMock(), operator)
+
+        self.assertEqual(pipeline.operators_needing_stage_release, [])
+        self.assertEqual(pipeline.operators_without_fbcs, [])
+        mock_fbc.assert_not_called()
+
+    async def test_stage_check_disabled_skips_registry(self):
+        pipeline = self._make_pipeline()
+        pipeline._check_stage_release = False
+        operator = _make_operator(name='multiclusterhub-operator', nvr='mch-5.0-1')
+
+        with (
+            patch.object(pipeline, 'check_bundle_exists', new_callable=AsyncMock, return_value=_make_bundle()),
+            patch.object(pipeline, 'check_stage_registry', new_callable=AsyncMock) as mock_stage,
+            patch.object(pipeline, 'check_fbc_exists', new_callable=AsyncMock, return_value=None),
+        ):
+            await pipeline.check_operator(MagicMock(), MagicMock(), operator)
+
+        mock_stage.assert_not_called()
+        self.assertIn(operator, pipeline.operators_without_fbcs)
+
+    async def test_rebuilding_operator_skips_stage_check(self):
+        pipeline = self._make_pipeline()
+        pipeline._check_stage_release = True
+        pipeline.rebuilding_images = ['multiclusterhub-operator']
+        operator = _make_operator(name='multiclusterhub-operator', nvr='mch-5.0-1')
+
+        with (
+            patch.object(pipeline, 'check_bundle_exists', new_callable=AsyncMock) as mock_bundle,
+            patch.object(pipeline, 'check_stage_registry', new_callable=AsyncMock) as mock_stage,
+        ):
+            await pipeline.check_operator(MagicMock(), MagicMock(), operator)
+
+        mock_bundle.assert_not_called()
+        mock_stage.assert_not_called()
+        self.assertEqual(pipeline.operators_needing_stage_release, [])
+
+    async def test_check_stage_registry_passes_delivery_repo_and_pullspec(self):
+        pipeline = self._make_pipeline()
+        pipeline.delivery_repo_by_operator = {'multiclusterhub-operator': 'rhacm2/acm-operator-bundle'}
+        operator = _make_operator(name='multiclusterhub-operator', nvr='mch-5.0-1')
+        bundle = _make_bundle()
+        bundle.image_pullspec = 'quay.io/redhat-user-workloads/ocp-art-tenant/art-images@sha256:abc123'
+
+        with patch(
+            'pyartcd.pipelines.layered_products_scan_konflux.check_bundle_in_stage_registry',
+            new_callable=AsyncMock,
+            return_value=True,
+        ) as mock_check:
+            result = await pipeline.check_stage_registry(operator, bundle)
+
+        self.assertTrue(result)
+        mock_check.assert_awaited_once_with(
+            'rhacm2/acm-operator-bundle',
+            'quay.io/redhat-user-workloads/ocp-art-tenant/art-images@sha256:abc123',
+            'mch-5.0-1',
+            pipeline.logger,
+        )
+
+    @patch('pyartcd.pipelines.layered_products_scan_konflux.exectools.cmd_gather_async', new_callable=AsyncMock)
+    async def test_load_operator_names_reads_delivery_repo(self, mock_cmd):
+        pipeline = self._make_pipeline()
+        mock_cmd.return_value = (
+            0,
+            'multiclusterhub-operator\tacm-operator-bundle\trhacm2/acm-operator-bundle\nother-operator\tother-bundle\t',
+            '',
+        )
+
+        names = await pipeline.load_operator_names()
+
+        self.assertEqual(names, {'multiclusterhub-operator', 'other-operator'})
+        self.assertEqual(pipeline.delivery_repo_by_operator, {'multiclusterhub-operator': 'rhacm2/acm-operator-bundle'})
+
+    @patch('pyartcd.pipelines.layered_products_scan_konflux.load_group_config', new_callable=AsyncMock)
+    async def test_init_enables_gate_for_group_with_plan(self, mock_load):
+        mock_load.return_value = {'product': 'rhacm2'}
+        pipeline = self._make_pipeline()
+
+        await pipeline._init_stage_release_check()
+
+        self.assertTrue(pipeline._check_stage_release)
+
+    @patch('pyartcd.pipelines.layered_products_scan_konflux.load_group_config', new_callable=AsyncMock)
+    async def test_init_disables_gate_without_plan(self, mock_load):
+        mock_load.return_value = {}
+        pipeline = self._make_pipeline(group='oadp-1.5')
+
+        await pipeline._init_stage_release_check()
+
+        self.assertFalse(pipeline._check_stage_release)
+
+    @patch('pyartcd.pipelines.layered_products_scan_konflux.load_group_config', new_callable=AsyncMock)
+    async def test_init_disables_gate_for_non_stream_assembly(self, mock_load):
+        pipeline = self._make_pipeline(assembly='5.0.1')
+
+        await pipeline._init_stage_release_check()
+
+        self.assertFalse(pipeline._check_stage_release)
+        mock_load.assert_not_called()
+
+    async def test_scan_triggers_force_release_instead_of_fbc(self):
+        pipeline = self._make_pipeline()
+        operator = _make_operator(name='multiclusterhub-operator', nvr='mch-5.0-1')
+
+        with (
+            patch(
+                'pyartcd.pipelines.layered_products_scan_konflux.load_group_config',
+                new_callable=AsyncMock,
+                return_value={'product': 'rhacm2', 'OCP_TARGET_VERSIONS': ['5.0']},
+            ),
+            patch.object(
+                pipeline, 'load_operator_names', new_callable=AsyncMock, return_value={'multiclusterhub-operator'}
+            ),
+            patch.object(pipeline, 'get_latest_operator_builds', new_callable=AsyncMock, return_value=[operator]),
+            patch.object(pipeline, 'check_bundle_exists', new_callable=AsyncMock, return_value=_make_bundle()),
+            patch.object(pipeline, 'check_stage_registry', new_callable=AsyncMock, return_value=False),
+            patch.object(pipeline, 'trigger_bundle_builds') as mock_trigger_bundle,
+            patch.object(pipeline, 'trigger_fbc_builds') as mock_trigger_fbc,
+        ):
+            await pipeline.scan_for_missing_bundles_fbcs()
+
+        mock_trigger_bundle.assert_called_once_with([operator], force_release=True)
+        mock_trigger_fbc.assert_not_called()
+
+
+class TestTriggerForceRelease(unittest.TestCase):
+    """Tests for force-release bundle triggers."""
+
+    def setUp(self):
+        self.runtime = MagicMock(spec=Runtime)
+        self.runtime.dry_run = False
+        self.runtime.working_dir = MagicMock()
+        self.runtime.working_dir.__truediv__ = lambda self, x: MagicMock()
+
+        # Mock KonfluxDb to prevent real BigQuery connections
+        patcher = patch('pyartcd.pipelines.layered_products_scan_konflux.KonfluxDb')
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
+    def _make_pipeline(self):
+        return LayeredProductsScanPipeline(
+            runtime=self.runtime,
+            group='acm-5.0',
+            data_path='https://github.com/openshift-eng/ocp-build-data',
+            assembly='stream',
+            data_gitref='',
+            image_list='',
+        )
+
+    @patch('pyartcd.pipelines.layered_products_scan_konflux.tekton.annotate_current_pipelinerun')
+    @patch(
+        'pyartcd.pipelines.layered_products_scan_konflux.tekton.start_pipeline_run',
+        return_value='olm-bundle-konflux-acm-5-0-abc',
+    )
+    @patch('pyartcd.pipelines.layered_products_scan_konflux.tekton.is_tekton_context', return_value=True)
+    def test_force_release_tekton(self, _mock_ctx, mock_start, mock_annotate):
+        pipeline = self._make_pipeline()
+
+        pipeline.trigger_bundle_builds([_make_operator(nvr='op-1')], force_release=True)
+
+        mock_start.assert_called_once_with(
+            pipeline_name='olm-bundle-konflux',
+            params={
+                'version': '5.0',
+                'assembly': 'stream',
+                'group': 'acm-5.0',
+                'operator-nvrs': 'op-1',
+                'data-path': 'https://github.com/openshift-eng/ocp-build-data',
+                'data-gitref': '',
+                'dry-run': 'false',
+                'force-release': 'true',
+            },
+        )
+        mock_annotate.assert_called_once_with(
+            {'art.openshift.io/triggered-olm-bundle-konflux-force-release': 'olm-bundle-konflux-acm-5-0-abc'}
+        )
+
+    @patch('pyartcd.pipelines.layered_products_scan_konflux.jenkins.start_olm_bundle_konflux')
+    @patch('pyartcd.pipelines.layered_products_scan_konflux.tekton.is_tekton_context', return_value=False)
+    def test_force_release_jenkins(self, _mock_ctx, mock_jenkins_start):
+        pipeline = self._make_pipeline()
+
+        pipeline.trigger_bundle_builds([_make_operator(nvr='op-1')], force_release=True)
+
+        mock_jenkins_start.assert_called_once_with(
+            build_version='5.0',
+            assembly='stream',
+            operator_nvrs=['op-1'],
+            group='acm-5.0',
+            doozer_data_path='https://github.com/openshift-eng/ocp-build-data',
+            doozer_data_gitref='',
+            force_release=True,
+        )
 
 
 if __name__ == '__main__':

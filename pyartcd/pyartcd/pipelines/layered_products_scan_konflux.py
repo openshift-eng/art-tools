@@ -20,6 +20,7 @@ from pyartcd import constants, jenkins, locks, tekton, util
 from pyartcd.cli import cli, click_coroutine, pass_runtime
 from pyartcd.locks import Lock
 from pyartcd.runtime import Runtime
+from pyartcd.stage_registry import check_bundle_in_stage_registry, resolve_stage_release_plan
 from pyartcd.util import load_group_config
 
 
@@ -45,9 +46,17 @@ class LayeredProductsScanPipeline:
         # Track operators needing bundle/FBC builds
         self.operators_without_bundles: List[KonfluxBuildRecord] = []
         self.operators_without_fbcs: List[KonfluxBuildRecord] = []
+        self.operators_needing_stage_release: List[KonfluxBuildRecord] = []  # Bundles built but not stage-released
 
         # Populated by load_operator_names(): distgit_key -> bundle short name
         self.bundle_names_by_operator: Dict[str, str] = {}
+
+        # Populated by load_operator_names(): distgit_key -> bundle delivery repo name
+        self.delivery_repo_by_operator: Dict[str, str] = {}
+
+        # Resolved in _init_stage_release_check(): True when assembly is 'stream'
+        # and the product has an FBC advisory-stage ReleasePlan for this version.
+        self._check_stage_release = False
 
         # OCP target versions for FBC builds (loaded from group config)
         self.ocp_target_versions: List[str] = []
@@ -225,6 +234,9 @@ class LayeredProductsScanPipeline:
             self.logger.info('No operators found in group %s; skipping bundle/FBC scan', self.group)
             return
 
+        # FBCs must only reference bundles that already reached the stage registry
+        await self._init_stage_release_check()
+
         operator_builds = await self.get_latest_operator_builds(operator_db, operator_names)
         self.logger.info('Found %d operators with latest successful builds', len(operator_builds))
 
@@ -254,6 +266,13 @@ class LayeredProductsScanPipeline:
                 trigger_errors.append(e)
                 self.logger.error('Failed to trigger bundle builds: %s', e)
 
+        if self.operators_needing_stage_release:
+            try:
+                self.trigger_bundle_builds(self.operators_needing_stage_release, force_release=True)
+            except Exception as e:
+                trigger_errors.append(e)
+                self.logger.error('Failed to trigger force-release bundle builds: %s', e)
+
         if self.operators_without_fbcs:
             try:
                 self.trigger_fbc_builds(self.operators_without_fbcs)
@@ -270,21 +289,50 @@ class LayeredProductsScanPipeline:
 
         Returns distgit keys (metadata names) like 'oadp-operator'.
         Populates ``self.bundle_names_by_operator`` with each operator's
-        bundle short name (honoring any ``bundle_name_override`` config).
+        bundle short name (honoring any ``bundle_name_override`` config),
+        and ``self.delivery_repo_by_operator`` with each operator's bundle
+        delivery repo name (e.g. 'rhacm2/acm-operator-bundle').
         """
 
         cmd = self.doozer_base_command + ['olm-bundle:list-olm-operators', '--output-format', 'delivery-info']
 
         _, out, _ = await exectools.cmd_gather_async(cmd, stderr=None)
         self.bundle_names_by_operator = {}
+        self.delivery_repo_by_operator = {}
         for line in out.strip().split('\n') if out.strip() else []:
             parts = line.split('\t')
             if len(parts) >= 2:
                 distgit_key, bundle_name = parts[0], parts[1]
                 if distgit_key and bundle_name:
                     self.bundle_names_by_operator[distgit_key] = bundle_name
+            if len(parts) >= 3:
+                distgit_key, delivery_repo = parts[0], parts[2]
+                if distgit_key and delivery_repo:
+                    self.delivery_repo_by_operator[distgit_key] = delivery_repo
 
         return set(self.bundle_names_by_operator.keys())
+
+    async def _init_stage_release_check(self):
+        """Enable the stage delivery gate when this group's bundles are stage-released.
+
+        Only ``stream`` bundles are stage-released, and only for products with an
+        FBC advisory-stage ReleasePlan. When enabled, ``check_operator`` holds back
+        the FBC build of any bundle missing from the stage registry and re-runs its
+        stage release instead.
+        """
+        self._check_stage_release = False
+
+        if self.assembly != 'stream':
+            self.logger.info("Assembly is '%s' (not 'stream'); skipping stage release checks", self.assembly)
+            return
+
+        group_config = await load_group_config(
+            group=self.group,
+            assembly=self.assembly,
+            doozer_data_path=self.data_path,
+            doozer_data_gitref=self.data_gitref,
+        )
+        self._check_stage_release = bool(resolve_stage_release_plan(self.group, group_config, self.logger))
 
     async def load_ocp_target_versions(self):
         """Load group.yml fields needed for bundle/FBC triggers.
@@ -377,10 +425,35 @@ class LayeredProductsScanPipeline:
         if bundle is None or bundle.outcome.is_failure():
             self.operators_without_bundles.append(operator)
         elif bundle.outcome == KonfluxBuildOutcome.SUCCESS:
+            if self._check_stage_release:
+                is_released = await self.check_stage_registry(operator, bundle)
+                if is_released is False:
+                    self.operators_needing_stage_release.append(operator)
+                    # Stage release is a prerequisite for FBC; skip FBC check
+                    return
+                if is_released is None:
+                    # An unavailable registry is not proof that release happened.
+                    return
+
             fbc = await self.check_fbc_exists(fbc_db, operator, bundle)
             if fbc is None or fbc.outcome.is_failure():
                 self.operators_without_fbcs.append(operator)
         # If bundle.outcome == PENDING, do nothing (auto-triggers when complete)
+
+    async def check_stage_registry(
+        self, operator: KonfluxBuildRecord, bundle: KonfluxBundleBuildRecord
+    ) -> Optional[bool]:
+        """Check if the operator's bundle image exists in the stage registry.
+
+        Returns ``True`` if the image exists, ``False`` if confirmed missing,
+        or ``None`` if the check is inconclusive.
+        """
+        return await check_bundle_in_stage_registry(
+            self.delivery_repo_by_operator.get(operator.name),
+            bundle.image_pullspec,
+            operator.nvr,
+            self.logger,
+        )
 
     async def check_bundle_exists(
         self, bundle_db: KonfluxDb, operator: KonfluxBuildRecord
@@ -589,31 +662,41 @@ class LayeredProductsScanPipeline:
         self.logger.info('  FBC builds for %s exist for all target versions', operator.nvr)
         return success_record
 
-    def trigger_bundle_builds(self, operators: List[KonfluxBuildRecord]):
-        """Trigger bundle builds for multiple operators in one job."""
+    def trigger_bundle_builds(self, operators: List[KonfluxBuildRecord], force_release: bool = False):
+        """Trigger bundle builds for multiple operators in one job.
+
+        :param operators: Operator builds whose bundles to build
+        :param force_release: Re-run the related-images stage release even when the bundles already exist
+        """
 
         nvrs = [op.nvr for op in operators]
+        label = ' (force-release)' if force_release else ''
 
         if self.runtime.dry_run:
-            self.logger.info('[DRY-RUN] Would trigger bundle builds for %d operators: %s', len(nvrs), ', '.join(nvrs))
+            self.logger.info(
+                '[DRY-RUN] Would trigger bundle builds%s for %d operators: %s', label, len(nvrs), ', '.join(nvrs)
+            )
             return
 
-        self.logger.info('Triggering bundle builds for %d operators', len(nvrs))
+        self.logger.info('Triggering bundle builds%s for %d operators', label, len(nvrs))
         if tekton.is_tekton_context():
-            created_name = tekton.start_pipeline_run(
-                pipeline_name='olm-bundle-konflux',
-                params={
-                    'version': self.version,
-                    'assembly': self.assembly,
-                    'group': self.group,
-                    'operator-nvrs': ','.join(nvrs),
-                    'data-path': self.data_path or '',
-                    'data-gitref': self.data_gitref or '',
-                    'dry-run': 'false',
-                },
-            )
+            params = {
+                'version': self.version,
+                'assembly': self.assembly,
+                'group': self.group,
+                'operator-nvrs': ','.join(nvrs),
+                'data-path': self.data_path or '',
+                'data-gitref': self.data_gitref or '',
+                'dry-run': 'false',
+            }
+            if force_release:
+                params['force-release'] = 'true'
+            created_name = tekton.start_pipeline_run(pipeline_name='olm-bundle-konflux', params=params)
             if created_name:
-                tekton.annotate_current_pipelinerun({'art.openshift.io/triggered-olm-bundle-konflux': created_name})
+                annotation = 'art.openshift.io/triggered-olm-bundle-konflux'
+                if force_release:
+                    annotation += '-force-release'
+                tekton.annotate_current_pipelinerun({annotation: created_name})
         else:
             jenkins.start_olm_bundle_konflux(
                 build_version=self.version,
@@ -622,6 +705,7 @@ class LayeredProductsScanPipeline:
                 group=self.group,
                 doozer_data_path=self.data_path or '',
                 doozer_data_gitref=self.data_gitref or '',
+                force_release=force_release,
             )
 
     def trigger_fbc_builds(self, operators: List[KonfluxBuildRecord]):

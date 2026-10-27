@@ -1,6 +1,5 @@
 import asyncio
 import logging
-import os
 from typing import Dict, List, Optional, Set
 
 import click
@@ -12,20 +11,14 @@ from artcommonlib.konflux.konflux_build_record import (
     KonfluxFbcBuildRecord,
 )
 from artcommonlib.konflux.konflux_db import KonfluxDb
-from artcommonlib.util import (
-    product_version_from_group_name,
-    resolve_konflux_fbc_stage_release_plan,
-    uses_konflux_imagestream_override,
-)
+from artcommonlib.util import uses_konflux_imagestream_override
 
 from pyartcd import constants, jenkins, locks
 from pyartcd.cli import cli, click_coroutine, pass_runtime
 from pyartcd.locks import Lock
 from pyartcd.runtime import Runtime
+from pyartcd.stage_registry import check_bundle_in_stage_registry, resolve_stage_release_plan
 from pyartcd.util import load_group_config
-
-# The registry targeted by advisory-stage ReleasePlanAdmissions.
-STAGE_REGISTRY = "registry.stage.redhat.io"
 
 
 class ScanOperatorPipeline:
@@ -174,41 +167,7 @@ class ScanOperatorPipeline:
             doozer_data_path=self.data_path,
             doozer_data_gitref=self.data_gitref,
         )
-        product = group_config.get('product') or 'ocp'
-
-        # Resolve product version from group name (preferred) or group config
-        group_version = product_version_from_group_name(self.group)
-        if group_version:
-            product_major, product_minor = group_version
-        else:
-            version_str = group_config.get('version')
-            if version_str:
-                parts = str(version_str).split('.')
-                product_major, product_minor = int(parts[0]), int(parts[1])
-            else:
-                vars_section = group_config.get('vars', {})
-                product_major = int(vars_section.get('MAJOR', 0))
-                product_minor = int(vars_section.get('MINOR', 0))
-
-        plan = resolve_konflux_fbc_stage_release_plan(product, product_major, product_minor)
-
-        if not plan:
-            self.logger.info(
-                "No stage release plan configured for product '%s' (%d.%d); skipping stage release checks",
-                product,
-                product_major,
-                product_minor,
-            )
-            return
-
-        self._check_stage_release = True
-        self.logger.info(
-            "Stage release plan '%s' found for product '%s' (%d.%d); will check stage registry for bundle delivery",
-            plan,
-            product,
-            product_major,
-            product_minor,
-        )
+        self._check_stage_release = bool(resolve_stage_release_plan(self.group, group_config, self.logger))
 
     def check_params(self):
         """Validate pipeline parameters."""
@@ -392,56 +351,15 @@ class ScanOperatorPipeline:
     ) -> Optional[bool]:
         """Check if a bundle image exists in the stage registry.
 
-        Extracts the digest from the bundle's ``image_pullspec`` and checks
-        the ``{{ digest_sha }}`` tag configured by the stage RPA using
-        ``skopeo inspect --raw``.
-
         Returns ``True`` if the image exists, ``False`` if confirmed missing,
         or ``None`` if the check is inconclusive.
         """
-        delivery_repo = self.delivery_repo_by_operator.get(operator.name)
-        if not delivery_repo:
-            self.logger.warning('  No delivery repo configured for %s; skipping stage release check', operator.name)
-            return None
-
-        if not bundle.image_pullspec or '@' not in bundle.image_pullspec:
-            self.logger.warning(
-                '  No image digest in bundle pullspec for %s; skipping stage release check', operator.nvr
-            )
-            return None
-
-        digest = bundle.image_pullspec.split('@', 1)[-1]
-        if not digest.startswith('sha256:'):
-            self.logger.warning('  Invalid bundle digest for %s: %s', operator.nvr, digest)
-            return None
-        digest_sha = digest.removeprefix('sha256:')
-        stage_pullspec = f"docker://{STAGE_REGISTRY}/{delivery_repo}:{digest_sha}"
-        cmd = ['skopeo', 'inspect', '--raw']
-        if auth_file := os.environ.get('REGISTRY_AUTH_FILE'):
-            cmd.extend(['--authfile', auth_file])
-        cmd.append(stage_pullspec)
-
-        try:
-            rc, _, err = await exectools.cmd_gather_async(
-                cmd,
-                check=False,
-            )
-            if rc == 0:
-                self.logger.info(
-                    '  Stage release for %s exists: %s/%s:%s', operator.nvr, STAGE_REGISTRY, delivery_repo, digest_sha
-                )
-                return True
-            if 'manifest unknown' in (err or '').lower():
-                self.logger.info(
-                    '  Stage release MISSING for %s: %s/%s:%s', operator.nvr, STAGE_REGISTRY, delivery_repo, digest_sha
-                )
-                return False
-            self.logger.warning('  Stage registry check inconclusive for %s (rc=%s): %s', operator.nvr, rc, err)
-            return None
-
-        except Exception as e:
-            self.logger.warning('  Failed to check stage registry for %s: %s', operator.nvr, e)
-            return None
+        return await check_bundle_in_stage_registry(
+            self.delivery_repo_by_operator.get(operator.name),
+            bundle.image_pullspec,
+            operator.nvr,
+            self.logger,
+        )
 
     def trigger_bundle_builds(self, operators: List[KonfluxBuildRecord], force_release: bool = False):
         """Trigger bundle builds for multiple operators in one job."""
