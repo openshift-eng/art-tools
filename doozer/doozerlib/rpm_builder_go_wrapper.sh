@@ -99,9 +99,12 @@ fi
 echoerr "GOOS is $GOOS, CGO_ENABLED is ${CGO_ENABLED}"
 
 HAS_TAGS=0
-if cat <<< "$@" | grep "\-tags" > /dev/null; then
-  HAS_TAGS="1"
-fi
+for arg in "$@"; do
+  if [[ "${arg}" =~ ^-?-tags($|=) ]]; then
+    HAS_TAGS="1"
+    break
+  fi
+done
 
 FORCE_FOD_MODE=1
 FORCE_OPENSSL=1
