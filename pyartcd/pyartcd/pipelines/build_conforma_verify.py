@@ -1,4 +1,5 @@
 import asyncio
+import hashlib
 import json
 import os
 import re
@@ -37,6 +38,22 @@ from pyartcd.slack import SlackClient
 LOGGER = logutil.get_logger(__name__)
 
 BATCH_SIZE = 10
+
+
+def _integration_test_scenario_name(application_name: str, policy: str) -> str:
+    """Return a valid, policy-specific IntegrationTestScenario name."""
+    policy_name = policy.rsplit('/', 1)[-1]
+    name = f'{application_name}-ec-{policy_name}'
+    if re.fullmatch(r'[a-z0-9-]+(?:/[a-z0-9-]+)?', policy) and len(name) <= 63:
+        return name
+
+    policy_name = re.sub(r'\.ya?ml$', '', policy_name.split('?', 1)[0], flags=re.IGNORECASE)
+    policy_name = re.sub(r'[^a-z0-9-]+', '-', policy_name.lower()).strip('-') or 'policy'
+    policy_hash = hashlib.sha256(policy.encode()).hexdigest()[:10]
+    max_application_length = 63 - len('-ec-') - len('-') - len(policy_hash) - 1
+    prefix = f"{application_name[:max_application_length].rstrip('-')}-ec-"
+    max_policy_length = 63 - len(prefix) - len(policy_hash) - 1
+    return f"{prefix}{policy_name[:max_policy_length].rstrip('-')}-{policy_hash}"
 
 
 class BuildConformaVerifyPipeline:
@@ -408,8 +425,7 @@ class BuildConformaVerifyPipeline:
             for record in records
         ]
 
-        policy_suffix = ec_policy.split('/')[-1]
-        its_name = f"{application_name}-ec-{policy_suffix}"
+        its_name = _integration_test_scenario_name(application_name, ec_policy)
         self.logger.info("[%s] Ensuring IntegrationTestScenario %s exists...", build_type, its_name)
         await konflux_client.ensure_integration_test_scenario(
             name=its_name,
