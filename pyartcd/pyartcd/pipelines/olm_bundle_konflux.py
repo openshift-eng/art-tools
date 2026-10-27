@@ -345,7 +345,7 @@ async def olm_bundle_konflux(
             )
 
         # A force-release retry with existing bundles only needs to restore stage delivery.
-        # The scanner will trigger an FBC build separately if one is missing.
+        # The scanners trigger the FBC build once the bundle is found on the stage registry.
         if force_release and not bundles_were_built:
             runtime.logger.info('Skipping FBC builds — force-release reused all existing bundles')
         # Check if this is a non-openshift group and if OCP_TARGET_VERSIONS is configured
