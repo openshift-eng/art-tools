@@ -1,9 +1,14 @@
 import asyncio
+import json
 import os
 import unittest
 from unittest.mock import AsyncMock, MagicMock, patch
 
-from pyartcd.pipelines.build_conforma_verify import BuildConformaVerifyPipeline, _integration_test_scenario_name
+from pyartcd.pipelines.build_conforma_verify import (
+    BuildConformaVerifyPipeline,
+    _integration_test_scenario_name,
+    _resolve_ec_policy_configuration,
+)
 
 SAMPLE_EC_REPORT_LOG = """\
 Enterprise Contract Verification Results
@@ -237,26 +242,56 @@ class TestPolicySelection(unittest.TestCase):
             'openshift-5-0-ec-registry-ocp-art-stage',
         )
 
-    def test_url_policy_is_forwarded_unchanged_to_ec(self):
+    def test_url_policy_is_passed_as_inline_configuration(self):
         policy = 'https://gitlab.cee.redhat.com/releng/konflux-release-data/-/raw/c7ae37e1/policy.yaml'
-        pipeline = _make_pipeline(dry_run=True, ec_policy=policy)
+        pipeline = _make_pipeline(ec_policy=policy)
         record = MagicMock()
         record.get_konflux_application_name.return_value = 'openshift-5-0'
         record.get_konflux_component_name.return_value = 'ose-5-0-rhcos-node-image'
+        record.image_pullspec = 'quay.io/example/image@sha256:abc'
+        record.rebase_repo_url = 'https://github.com/example/source'
+        record.rebase_commitish = 'abc123'
         client = MagicMock()
         client.ensure_integration_test_scenario = AsyncMock()
+        client._create = AsyncMock(side_effect=RuntimeError('stop after manifest'))
+        response = MagicMock()
+        response.text = (
+            'kind: EnterpriseContractPolicy\nspec:\n  sources:\n    - policy: [oci::example.com/policy:latest]\n'
+        )
 
         with (
             patch.dict(os.environ, {'KONFLUX_SA_KUBECONFIG': '/tmp/kubeconfig'}),
             patch('pyartcd.pipelines.build_conforma_verify.KonfluxClient.from_kubeconfig', return_value=client),
+            patch('pyartcd.pipelines.build_conforma_verify.requests.get', return_value=response) as get_policy,
         ):
-            asyncio.run(pipeline._verify_records([record]))
+            with self.assertRaisesRegex(RuntimeError, 'stop after manifest'):
+                asyncio.run(pipeline._verify_records([record]))
 
-        self.assertEqual(client.ensure_integration_test_scenario.await_args.kwargs['policy_configuration'], policy)
+        get_policy.assert_called_once_with(policy, timeout=30)
+        inline_policy = client.ensure_integration_test_scenario.await_args.kwargs['policy_configuration']
+        self.assertEqual(
+            json.loads(inline_policy),
+            {'sources': [{'policy': ['oci::example.com/policy:latest']}]},
+        )
+        params = client._create.await_args.args[0]['spec']['params']
+        self.assertIn({'name': 'POLICY_CONFIGURATION', 'value': inline_policy}, params)
         self.assertRegex(
             client.ensure_integration_test_scenario.await_args.kwargs['name'],
             r'^openshift-5-0-ec-policy-[0-9a-f]{10}$',
         )
+
+    def test_namespaced_policy_is_not_downloaded(self):
+        policy = 'rhtap-releng-tenant/registry-ocp-art-stage'
+        with patch('pyartcd.pipelines.build_conforma_verify.requests.get') as get_policy:
+            self.assertEqual(asyncio.run(_resolve_ec_policy_configuration(policy)), policy)
+        get_policy.assert_not_called()
+
+    def test_remote_policy_requires_valid_configuration(self):
+        response = MagicMock()
+        response.text = '<html>Sign in</html>'
+        with patch('pyartcd.pipelines.build_conforma_verify.requests.get', return_value=response):
+            with self.assertRaisesRegex(ValueError, 'did not return a policy document'):
+                asyncio.run(_resolve_ec_policy_configuration('https://example.com/policy.yaml'))
 
     def test_image_uses_ec_policy(self):
         p = _make_pipeline(
