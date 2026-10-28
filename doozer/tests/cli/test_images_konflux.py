@@ -3,6 +3,7 @@ import unittest
 from types import SimpleNamespace
 from unittest import mock
 
+from artcommonlib.conforma import resolve_stage_policy
 from artcommonlib.konflux.konflux_build_record import (
     KonfluxBuildOutcome,
     KonfluxBuildRecord,
@@ -30,6 +31,45 @@ class TestKueueProductPolicies(unittest.TestCase):
             with self.subTest(policies=policies):
                 self.assertEqual(policies.get("kueue"), "rhtap-releng-tenant/registry-art-kueue-stage")
                 self.assertNotIn("kueue-operator", policies)
+
+    def test_quay_test_mapping_is_no_longer_missing(self):
+        self.assertEqual(constants.PRODUCT_TEST_EC_POLICY_MAP["quay"], "rhtap-releng-tenant/registry-art-quay-stage")
+
+
+class TestKonfluxBuildStagePolicies(unittest.IsolatedAsyncioTestCase):
+    async def test_cli_passes_one_resolved_policy_to_builder(self):
+        for product, assembly, phase in (
+            ("ocp", "stream", "release"),
+            ("ocp", "stream", "pre-release"),
+            ("ocp", "test", "release"),
+            ("ocp", "test", "pre-release"),
+            ("quay", "test", "release"),
+            ("mirror_gui", "stream", "release"),
+            ("unknown", "stream", "release"),
+        ):
+            with self.subTest(product=product, assembly=assembly, phase=phase):
+                runtime = mock.MagicMock(spec=Runtime)
+                runtime.working_dir = "/tmp"
+                runtime.group = "openshift-4.23"
+                runtime.assembly = assembly
+                runtime.product = product
+                runtime.variant = BuildVariant.OCP
+                runtime.group_config = Model({"software_lifecycle": {"phase": phase}})
+                runtime.ordered_image_metas.return_value = []
+                runtime.source_resolver = mock.Mock()
+                runtime.konflux_db = mock.Mock()
+                runtime.record_logger = mock.Mock()
+                runtime.logger = mock.Mock()
+                builder = mock.MagicMock()
+                builder.validate_custom_integration_test_scenarios = mock.AsyncMock()
+                builder._konflux_client = mock.AsyncMock()
+                with mock.patch("doozerlib.cli.images_konflux.KonfluxImageBuilder", return_value=builder) as factory:
+                    cli = KonfluxBuildCli(runtime, None, None, "test", "test", None, False, True, None, "auto")
+                    await cli.run()
+                self.assertEqual(
+                    factory.call_args.kwargs["config"].ec_policy_configuration,
+                    resolve_stage_policy(product, assembly=assembly, lifecycle_phase=phase),
+                )
 
 
 class TestKonfluxBundleCli(unittest.IsolatedAsyncioTestCase):

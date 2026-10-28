@@ -31,10 +31,16 @@ class ConformaPolicies:
     Arg(s):
         image_policy: Image policy resource.
         fbc_policy: FBC policy resource, if configured.
+        pre_release_image_policy: Optional pre-release image/bundle policy.
+        test_image_policy: Transitional test-assembly image/bundle policy.
+        test_pre_release_image_policy: Transitional pre-release test policy.
     """
 
     image_policy: str
     fbc_policy: str | None = None
+    pre_release_image_policy: str | None = None
+    test_image_policy: str | None = None
+    test_pre_release_image_policy: str | None = None
 
 
 @dataclass(frozen=True, slots=True)

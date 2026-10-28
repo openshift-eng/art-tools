@@ -45,7 +45,6 @@ class TestKonfluxImageBuilder(unittest.IsolatedAsyncioTestCase):
                 plr_template="test-template",
                 build_priority="5",
                 ec_policy_configuration=doozer_constants.KONFLUX_DEFAULT_EC_POLICY_CONFIGURATION,
-                prega_ec_policy_configuration=doozer_constants.KONFLUX_PREGA_EC_POLICY_CONFIGURATION,
             )
         )
 

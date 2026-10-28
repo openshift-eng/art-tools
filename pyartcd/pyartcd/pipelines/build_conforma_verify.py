@@ -12,6 +12,7 @@ import click
 import requests
 import yaml
 from artcommonlib import exectools, logutil
+from artcommonlib.conforma import resolve_stage_policy
 from artcommonlib.constants import KONFLUX_DEFAULT_NAMESPACE
 from artcommonlib.konflux.konflux_build_record import (
     Engine,
@@ -27,7 +28,6 @@ from artcommonlib.util import oc_image_info_async
 from doozerlib.backend.konflux_client import KonfluxClient, get_common_runtime_watcher_labels
 from doozerlib.backend.pipelinerun_utils import PipelineRunInfo
 from doozerlib.constants import (
-    KONFLUX_DEFAULT_EC_POLICY_CONFIGURATION,
     KONFLUX_EC_PIPELINE_GIT_URL,
     KONFLUX_EC_PIPELINE_PATH,
     KONFLUX_EC_PIPELINE_REVISION,
@@ -113,6 +113,7 @@ class BuildConformaVerifyPipeline:
         self.slack_client = slack_client
         self.dry_run = runtime.dry_run
         self.logger = LOGGER
+        self._group_config = None
 
         self.working_dir = self.runtime.working_dir / "conforma_verify"
         self.working_dir.mkdir(parents=True, exist_ok=True)
@@ -146,14 +147,35 @@ class BuildConformaVerifyPipeline:
             f'--data-path={self.data_path}',
         ]
 
+    async def _load_group_config(self):
+        if self._group_config is None:
+            self._group_config = await util.load_group_config(
+                group=self.group,
+                assembly=self.assembly,
+                doozer_data_path=self.data_path,
+                doozer_data_gitref=self.data_gitref,
+            )
+        return self._group_config
+
+    async def _resolve_stage_policy(self, build_type):
+        overridden = self.ec_policy or (build_type == 'fbc' and self.fbc_ec_policy)
+        group_config = {} if overridden else await self._load_group_config()
+        product = 'ocp' if self.group.startswith('openshift-') else group_config.get('product', '')
+        policy = resolve_stage_policy(
+            product,
+            lifecycle_phase=group_config.get('software_lifecycle', {}).get('phase'),
+            assembly=self.assembly,
+            build_type=build_type,
+            ec_policy=self.ec_policy,
+            fbc_ec_policy=self.fbc_ec_policy,
+        )
+        if policy is None:
+            raise ValueError(f"No Conforma {build_type} stage policy for group '{self.group}' product '{product}'")
+        return policy
+
     async def _resolve_layered_product_settings(self):
         """Load group config to resolve the Konflux namespace and kubeconfig for this group."""
-        group_config = await util.load_group_config(
-            group=self.group,
-            assembly=self.assembly,
-            doozer_data_path=self.data_path,
-            doozer_data_gitref=self.data_gitref,
-        )
+        group_config = await self._load_group_config()
         product = group_config.get('product')
         if not product:
             raise ValueError(f"No product configured for layered-product group '{self.group}'")
@@ -425,10 +447,7 @@ class BuildConformaVerifyPipeline:
             dry_run=self.dry_run,
         )
 
-        if build_type == "fbc":
-            ec_policy = self.fbc_ec_policy or self.ec_policy or KONFLUX_DEFAULT_EC_POLICY_CONFIGURATION
-        else:
-            ec_policy = self.ec_policy or KONFLUX_DEFAULT_EC_POLICY_CONFIGURATION
+        ec_policy = await self._resolve_stage_policy(build_type)
 
         application_name = records[0].get_konflux_application_name()
 

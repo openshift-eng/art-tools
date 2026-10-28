@@ -113,6 +113,21 @@ class TestRunFor(unittest.IsolatedAsyncioTestCase):
                 await scheduler.run_for("unknown-1.0", runtime)
         start_build.assert_not_called()
 
+    async def test_mapping_corrections_and_lifecycle_fallback(self):
+        for group, config, expected in (
+            ("quay-3.16", {"product": "quay"}, "rhtap-releng-tenant/registry-art-quay-stage"),
+            (
+                "mirror-gui-1.0",
+                {"product": "mirror_gui"},
+                "rhtap-releng-tenant/registry-art-oc-mirror-mirror-gui-stage",
+            ),
+            ("openshift-4.23", {"software_lifecycle": {"phase": "unknown"}}, KONFLUX_RELEASE_EC_POLICY_CONFIGURATION),
+            ("openshift-4.23", {}, KONFLUX_RELEASE_EC_POLICY_CONFIGURATION),
+        ):
+            with self.subTest(group=group, config=config):
+                _, _, start_build = await self._run(group, config)
+                self.assertEqual(start_build.call_args.kwargs["ec_policy"], expected)
+
     async def test_freeze_skips_without_loading_config_or_starting_jenkins(self):
         runtime = _runtime()
         with (

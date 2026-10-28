@@ -1,3 +1,4 @@
+from artcommonlib.conforma import resolve_stage_policy
 from artcommonlib.constants import KONFLUX_DEFAULT_FBC_REPO, KONFLUX_DEFAULT_IMAGE_REPO  # noqa: F401
 
 RC_BASE_URL = "https://{arch}.ocp.releases.ci.openshift.org"
@@ -68,65 +69,42 @@ ART_BUILD_FAILURES_URL = 'https://art-build-failures-art-build-failures.apps.art
 KONFLUX_EC_PIPELINE_GIT_URL = "https://github.com/conforma/cli"
 KONFLUX_EC_PIPELINE_REVISION = "main"
 KONFLUX_EC_PIPELINE_PATH = "pipelines/enterprise-contract/0.1/enterprise-contract.yaml"
-# https://gitlab.cee.redhat.com/releng/konflux-release-data/-/blob/main/tenants-config/cluster/kflux-ocp-p01/tenants/ocp-art-tenant/ecp-build-stage.yaml
-KONFLUX_DEFAULT_EC_POLICY_CONFIGURATION = "ocp-art-tenant/conforma-build-stage"
-# PreGA (PREVIEW assembly) EC policy: same as stage but allows unsigned RPMs
-# https://gitlab.cee.redhat.com/releng/konflux-release-data/-/blob/main/tenants-config/cluster/kflux-ocp-p01/tenants/ocp-art-tenant/ecp-build-ec-stage.yaml
-KONFLUX_PREGA_EC_POLICY_CONFIGURATION = "ocp-art-tenant/conforma-build-ec-stage"
+# Compatibility names; canonical stage policies live in the product catalog.
+KONFLUX_DEFAULT_EC_POLICY_CONFIGURATION = resolve_stage_policy("ocp")
+KONFLUX_PREGA_EC_POLICY_CONFIGURATION = resolve_stage_policy("ocp", lifecycle_phase="pre-release")
 # Test assembly EC policies: base images are not released for test assemblies, so the
 # art-images base image registry rule is permanently excluded for build-time ITSs to pass.
-# https://gitlab.cee.redhat.com/releng/konflux-release-data/-/merge_requests/19219
-KONFLUX_TEST_EC_POLICY_CONFIGURATION = "ocp-art-tenant/conforma-build-stage-test"
-KONFLUX_TEST_PREGA_EC_POLICY_CONFIGURATION = "ocp-art-tenant/conforma-build-ec-stage-test"
+KONFLUX_TEST_EC_POLICY_CONFIGURATION = resolve_stage_policy("ocp", assembly="test")
+KONFLUX_TEST_PREGA_EC_POLICY_CONFIGURATION = resolve_stage_policy("ocp", assembly="test", lifecycle_phase="pre-release")
 
 # Product-to-EC-policy mappings for build-time ITS verification.
 # Maps product name -> "namespace/policy-name" for each assembly type.
-PRODUCT_EC_POLICY_MAP = {
-    "cert-manager": "rhtap-releng-tenant/registry-art-oap-stage",
-    "cluster-observability-operator": "rhtap-releng-tenant/registry-art-coo-stage",
-    "external-secrets-operator": "rhtap-releng-tenant/registry-art-oap-stage",
-    "kueue": "rhtap-releng-tenant/registry-art-kueue-stage",
-    "logging": "rhtap-releng-tenant/registry-art-logging-stage",
-    "mirror_gui": "rhtap-releng-tenant/registry-art-oc-mirror-mirror-gui-stage",
-    "mta": "rhtap-releng-tenant/registry-art-mta-stage",
-    "multicluster-engine": "rhtap-releng-tenant/registry-art-acm-stage",
-    "oadp": "rhtap-releng-tenant/registry-art-oadp-stage",
-    "oc-mirror": "rhtap-releng-tenant/registry-standard",
-    "ocp": KONFLUX_DEFAULT_EC_POLICY_CONFIGURATION,
-    "openshift-logging": "rhtap-releng-tenant/registry-art-logging-stage",
-    "openshift-opentelemetry-operator": "rhtap-releng-tenant/registry-art-rhosdt-stage",
-    "quay": "rhtap-releng-tenant/registry-art-quay-stage",
-    "rhacm2": "rhtap-releng-tenant/registry-art-acm-stage",
-    "rhmtc": "rhtap-releng-tenant/registry-art-mtc-stage",
-    "zero-trust-workload-identity-manager": "rhtap-releng-tenant/registry-art-oap-stage",
-}
+_PRODUCT_EC_POLICY_NAMES = (
+    "cert-manager",
+    "cluster-observability-operator",
+    "external-secrets-operator",
+    "kueue",
+    "logging",
+    "mirror_gui",
+    "mta",
+    "multicluster-engine",
+    "oadp",
+    "oc-mirror",
+    "ocp",
+    "openshift-logging",
+    "openshift-opentelemetry-operator",
+    "quay",
+    "rhacm2",
+    "rhmtc",
+    "zero-trust-workload-identity-manager",
+)
 
+PRODUCT_EC_POLICY_MAP = {product: resolve_stage_policy(product) for product in _PRODUCT_EC_POLICY_NAMES}
 PRODUCT_TEST_EC_POLICY_MAP = {
-    "cert-manager": "rhtap-releng-tenant/registry-art-oap-stage",
-    "cluster-observability-operator": "rhtap-releng-tenant/registry-art-coo-stage",
-    "external-secrets-operator": "rhtap-releng-tenant/registry-art-oap-stage",
-    "kueue": "rhtap-releng-tenant/registry-art-kueue-stage",
-    "logging": "rhtap-releng-tenant/registry-art-logging-stage",
-    "mirror_gui": "rhtap-releng-tenant/registry-art-oc-mirror-mirror-gui-stage",
-    "mta": "rhtap-releng-tenant/registry-art-mta-stage",
-    "multicluster-engine": "rhtap-releng-tenant/registry-art-acm-stage",
-    "oadp": "rhtap-releng-tenant/registry-art-oadp-stage",
-    "oc-mirror": "rhtap-releng-tenant/registry-standard",
-    "ocp": KONFLUX_TEST_EC_POLICY_CONFIGURATION,
-    "openshift-logging": "rhtap-releng-tenant/registry-art-logging-stage",
-    "openshift-opentelemetry-operator": "rhtap-releng-tenant/registry-art-rhosdt-stage",
-    "rhacm2": "rhtap-releng-tenant/registry-art-acm-stage",
-    "rhmtc": "rhtap-releng-tenant/registry-art-mtc-stage",
-    "zero-trust-workload-identity-manager": "rhtap-releng-tenant/registry-art-oap-stage",
+    product: resolve_stage_policy(product, assembly="test") for product in _PRODUCT_EC_POLICY_NAMES
 }
-
-PRODUCT_PREGA_EC_POLICY_MAP = {
-    "ocp": KONFLUX_PREGA_EC_POLICY_CONFIGURATION,
-}
-
-PRODUCT_TEST_PREGA_EC_POLICY_MAP = {
-    "ocp": KONFLUX_TEST_PREGA_EC_POLICY_CONFIGURATION,
-}
+PRODUCT_PREGA_EC_POLICY_MAP = {"ocp": KONFLUX_PREGA_EC_POLICY_CONFIGURATION}
+PRODUCT_TEST_PREGA_EC_POLICY_MAP = {"ocp": KONFLUX_TEST_PREGA_EC_POLICY_CONFIGURATION}
 
 # Base image release EC policies (ReleasePlanAdmission policy name suffix). Selection is by
 # software_lifecycle.phase in resolve_konflux_base_image_release_targets — ART-19498.
@@ -135,9 +113,9 @@ KONFLUX_BASE_IMAGE_EC_POLICY_CONFIGURATION = "rhtap-releng-tenant/registry-ocp-a
 KONFLUX_BASE_IMAGE_PREGA_EC_POLICY_CONFIGURATION = "rhtap-releng-tenant/registry-ocp-art-base-ec-prod"
 
 # Release-time EC policies for conforma verification (used by scheduled build-conforma-verify)
-KONFLUX_RELEASE_EC_POLICY_CONFIGURATION = "rhtap-releng-tenant/registry-ocp-art-stage"
-KONFLUX_RELEASE_PREGA_EC_POLICY_CONFIGURATION = "rhtap-releng-tenant/registry-ocp-art-ec-stage"
-KONFLUX_RELEASE_FBC_EC_POLICY_CONFIGURATION = "rhtap-releng-tenant/fbc-ocp-art-stage"
+KONFLUX_RELEASE_EC_POLICY_CONFIGURATION = KONFLUX_DEFAULT_EC_POLICY_CONFIGURATION
+KONFLUX_RELEASE_PREGA_EC_POLICY_CONFIGURATION = KONFLUX_PREGA_EC_POLICY_CONFIGURATION
+KONFLUX_RELEASE_FBC_EC_POLICY_CONFIGURATION = resolve_stage_policy("ocp", build_type="fbc")
 
 ART_IMAGES_BASE_APPLICATION = "art-images-base"
 ART_IMAGES_GOLANG_BUILDER_APPLICATION = "golang-builder"

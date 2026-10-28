@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import Dict, List, Optional, Sequence, Tuple
 
 import click
+from artcommonlib.conforma import resolve_stage_policy
 from artcommonlib.constants import KONFLUX_DEFAULT_NAMESPACE
 from artcommonlib.konflux.konflux_build_record import (
     KonfluxBuildOutcome,
@@ -359,13 +360,11 @@ class KonfluxBuildCli:
         else:
             group = runtime.group
 
-        product = runtime.product
-        if runtime.assembly == "test":
-            ec_policy = constants.PRODUCT_TEST_EC_POLICY_MAP.get(product)
-            prega_ec_policy = constants.PRODUCT_TEST_PREGA_EC_POLICY_MAP.get(product, ec_policy)
-        else:
-            ec_policy = constants.PRODUCT_EC_POLICY_MAP.get(product)
-            prega_ec_policy = constants.PRODUCT_PREGA_EC_POLICY_MAP.get(product, ec_policy)
+        ec_policy = resolve_stage_policy(
+            runtime.product,
+            lifecycle_phase=runtime.group_config.get("software_lifecycle", {}).get("phase"),
+            assembly=runtime.assembly,
+        )
 
         integration_test_scenarios = runtime.group_config.get("konflux", {}).get("integration_test_scenarios", [])
         if integration_test_scenarios is Missing or integration_test_scenarios is None:
@@ -418,7 +417,6 @@ class KonfluxBuildCli:
             plr_template=self.plr_template,
             build_priority=self.build_priority,
             ec_policy_configuration=ec_policy,
-            prega_ec_policy_configuration=prega_ec_policy,
             skip_ec_verify=self.skip_ec_verify,
             effective_time=self.effective_time,
             integration_test_scenarios=tuple(dict.fromkeys(integration_test_scenarios)),

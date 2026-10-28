@@ -124,6 +124,45 @@ def _make_pipeline(**kwargs):
 
 
 class TestPipelineInit(unittest.TestCase):
+    def test_shared_policy_defaults_and_overrides(self):
+        for group, product, assembly, phase, build_type, generic, fbc, expected in (
+            ("openshift-4.23", "ocp", "stream", "release", "image", None, None, "registry-ocp-art-stage"),
+            ("openshift-4.23", "ocp", "preview", "release", "bundle", None, None, "registry-ocp-art-stage"),
+            ("openshift-4.23", "ocp", "stream", "pre-release", "bundle", None, None, "registry-ocp-art-ec-stage"),
+            ("openshift-4.23", "ocp", "test", "release", "image", None, None, "conforma-build-stage-test"),
+            ("openshift-4.23", "ocp", "test", "pre-release", "bundle", None, None, "conforma-build-ec-stage-test"),
+            ("openshift-4.23", "ocp", "stream", "pre-release", "fbc", None, None, "fbc-ocp-art-stage"),
+            ("oadp-1.5", "oadp", "stream", "release", "fbc", None, None, "fbc-art-oadp-stage"),
+            ("quay-3.16", "quay", "test", "release", "image", None, None, "registry-art-quay-stage"),
+            (
+                "mirror-gui-1.0",
+                "mirror_gui",
+                "stream",
+                "release",
+                "image",
+                None,
+                None,
+                "registry-art-oc-mirror-mirror-gui-stage",
+            ),
+            ("openshift-4.23", "ocp", "stream", "release", "fbc", "custom/generic", None, "generic"),
+            ("openshift-4.23", "ocp", "stream", "release", "fbc", "custom/generic", "custom/fbc", "fbc"),
+            ("openshift-4.23", "ocp", "stream", "release", "image", "custom/generic", "custom/fbc", "generic"),
+        ):
+            with self.subTest(
+                group=group, assembly=assembly, phase=phase, build_type=build_type, generic=generic, fbc=fbc
+            ):
+                pipeline = _make_pipeline(group=group, assembly=assembly, ec_policy=generic, fbc_ec_policy=fbc)
+                pipeline._group_config = {"product": product, "software_lifecycle": {"phase": phase}}
+                policy = asyncio.run(pipeline._resolve_stage_policy(build_type))
+                self.assertEqual(policy.rsplit("/", 1)[-1], expected)
+
+    def test_missing_product_or_fbc_policy_does_not_fall_back_to_ocp(self):
+        for product, build_type in (("unknown", "image"), ("mirror_gui", "fbc")):
+            pipeline = _make_pipeline(group=f"{product}-1.0")
+            pipeline._group_config = {"product": product}
+            with self.assertRaisesRegex(ValueError, "No Conforma"):
+                asyncio.run(pipeline._resolve_stage_policy(build_type))
+
     def test_default_values(self):
         p = _make_pipeline()
         self.assertEqual(p.effective_time, "now")

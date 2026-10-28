@@ -6,6 +6,8 @@ from unittest import IsolatedAsyncioTestCase
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import yaml
+from artcommonlib.assembly import AssemblyTypes
+from artcommonlib.conforma import resolve_stage_policy
 from artcommonlib.konflux.konflux_build_record import KonfluxBuildOutcome, KonfluxBundleBuildRecord
 from artcommonlib.konflux.konflux_db import Engine
 from artcommonlib.model import Model
@@ -14,6 +16,7 @@ from doozerlib import constants
 from doozerlib.backend.konflux_client import ImageBuildParams
 from doozerlib.backend.konflux_olm_bundler import (
     KonfluxOlmBundleBuilder,
+    KonfluxOlmBundleBuildError,
     KonfluxOlmBundleRebaseError,
     KonfluxOlmBundleRebaser,
     _replace_pullspec,
@@ -1719,6 +1722,87 @@ spec:
 
 
 class TestKonfluxOlmBundleBuilder(IsolatedAsyncioTestCase):
+    async def test_build_stage_policy_and_eligibility(self):
+        for group, assembly, assembly_type, phase, skip, outcome in (
+            ("openshift-4.23", "stream", AssemblyTypes.PREVIEW, "release", False, KonfluxBuildOutcome.SUCCESS),
+            ("openshift-4.23", "stream", AssemblyTypes.STANDARD, "pre-release", False, KonfluxBuildOutcome.SUCCESS),
+            ("openshift-4.23", "test", AssemblyTypes.PREVIEW, "release", False, KonfluxBuildOutcome.SUCCESS),
+            ("openshift-4.23", "test", AssemblyTypes.STANDARD, "pre-release", False, KonfluxBuildOutcome.SUCCESS),
+            ("openshift-4.23", "stream", AssemblyTypes.STANDARD, "release", True, KonfluxBuildOutcome.SUCCESS),
+            ("logging-6.2", "stream", AssemblyTypes.STANDARD, "release", False, KonfluxBuildOutcome.SUCCESS),
+            ("openshift-4.23", "stream", AssemblyTypes.STANDARD, "release", False, KonfluxBuildOutcome.FAILURE),
+        ):
+            with self.subTest(
+                group=group, assembly=assembly, assembly_type=assembly_type, phase=phase, skip=skip, outcome=outcome
+            ):
+                self.builder.group = group
+                self.builder.assembly = assembly
+                self.builder.assembly_type = assembly_type
+                self.builder.skip_ec_verify = skip
+                metadata = MagicMock()
+                metadata.runtime.group = group
+                metadata.runtime.group_config = Model({"software_lifecycle": {"phase": phase}})
+                metadata.get_olm_bundle_short_name.return_value = "test-bundle"
+                metadata.get_konflux_build_attempts.return_value = 1
+                repo = MagicMock(commit_hash="commit", url="https://example.com/bundle")
+                plr = MagicMock(name="bundle-plr")
+                plr.to_dict.return_value = {
+                    "status": {
+                        "results": [
+                            {"name": "IMAGE_URL", "value": "quay.io/example/bundle:tag"},
+                            {"name": "IMAGE_DIGEST", "value": "sha256:123"},
+                        ]
+                    }
+                }
+                self.konflux_client.wait_for_pipelinerun.return_value = plr
+                self.konflux_client.verify_enterprise_contract.reset_mock()
+                self.konflux_client.verify_enterprise_contract.return_value = MagicMock(
+                    ec_failed=False, ec_pipeline_url="ec-url"
+                )
+                bundle_file = MagicMock()
+                bundle_file.__aenter__.return_value.read = AsyncMock(
+                    return_value=yaml.safe_dump(
+                        {
+                            "package_name": "package",
+                            "csv_name": "csv",
+                            "operator": {"nvr": "operator-1-1"},
+                            "operands": {},
+                        }
+                    )
+                )
+                with (
+                    patch("pathlib.Path.exists", return_value=True),
+                    patch(
+                        "doozerlib.backend.konflux_olm_bundler.BuildRepo.from_local_dir",
+                        new=AsyncMock(return_value=repo),
+                    ),
+                    patch("doozerlib.backend.konflux_olm_bundler.DockerfileParser") as parser,
+                    patch("doozerlib.backend.konflux_olm_bundler.aiofiles.open", return_value=bundle_file),
+                    patch("doozerlib.backend.konflux_olm_bundler.get_reporter") as reporter,
+                    patch("doozerlib.backend.konflux_olm_bundler.sync_to_quay", new=AsyncMock()),
+                    patch.object(self.builder, "_start_build", new=AsyncMock(return_value=(plr, "url"))),
+                    patch.object(self.builder, "_update_konflux_db", new=AsyncMock()),
+                    patch.object(
+                        KonfluxBuildOutcome, "extract_from_pipelinerun_succeeded_condition", return_value=outcome
+                    ),
+                ):
+                    parser.return_value.labels = {"com.redhat.component": "bundle", "version": "1", "release": "1"}
+                    reporter.return_value.component.return_value = AsyncMock()
+                    if outcome is KonfluxBuildOutcome.FAILURE:
+                        with self.assertRaises(KonfluxOlmBundleBuildError):
+                            await self.builder.build(metadata)
+                    else:
+                        await self.builder.build(metadata)
+                verify = self.konflux_client.verify_enterprise_contract
+                if group.startswith("openshift-") and not skip and outcome is KonfluxBuildOutcome.SUCCESS:
+                    verify.assert_awaited_once()
+                    self.assertEqual(
+                        verify.call_args.kwargs["ec_policy"],
+                        resolve_stage_policy("ocp", lifecycle_phase=phase, assembly=assembly),
+                    )
+                else:
+                    verify.assert_not_awaited()
+
     def setUp(self):
         self.base_dir = Path("/path/to/base/dir")
         self.group = "test-group"

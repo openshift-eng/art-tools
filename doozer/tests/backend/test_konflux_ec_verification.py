@@ -9,6 +9,7 @@ from pathlib import Path
 from unittest import IsolatedAsyncioTestCase
 from unittest.mock import AsyncMock, MagicMock, patch
 
+from artcommonlib.conforma import resolve_stage_policy
 from artcommonlib.konflux.konflux_build_record import KonfluxBuildOutcome
 from artcommonlib.model import Model
 from artcommonlib.variants import BuildVariant
@@ -31,7 +32,6 @@ def _make_config(**overrides) -> KonfluxImageBuilderConfig:
         build_priority="5",
         skip_ec_verify=False,
         ec_policy_configuration=constants.KONFLUX_DEFAULT_EC_POLICY_CONFIGURATION,
-        prega_ec_policy_configuration=constants.KONFLUX_PREGA_EC_POLICY_CONFIGURATION,
     )
     defaults.update(overrides)
     return KonfluxImageBuilderConfig(**defaults)
@@ -237,7 +237,6 @@ class TestEcVerificationGating(IsolatedAsyncioTestCase):
             with self.subTest(policy=policy, scenarios=scenarios, variant=variant, phase=phase):
                 config = _make_config(
                     ec_policy_configuration=policy,
-                    prega_ec_policy_configuration=policy,
                     integration_test_scenarios=scenarios,
                 )
                 metadata = _make_metadata(for_release=False, variant=variant)
@@ -255,8 +254,7 @@ class TestEcVerificationGating(IsolatedAsyncioTestCase):
         for phase, expected_policy in (("release", "release-policy"), ("pre-release", "prega-policy")):
             with self.subTest(phase=phase):
                 config = _make_config(
-                    ec_policy_configuration="release-policy",
-                    prega_ec_policy_configuration="prega-policy",
+                    ec_policy_configuration=expected_policy,
                     effective_time="2026-04-10T00:00:00Z",
                 )
                 metadata = _make_metadata(for_release=False)
@@ -380,9 +378,7 @@ class TestEcVerificationGating(IsolatedAsyncioTestCase):
 
     async def test_ec_skipped_when_no_policy_configured(self, mock_kc_init):
         """EC verification should be skipped when no EC policy is configured for the product."""
-        config = _make_config(
-            group_name="logging-6.2", ec_policy_configuration=None, prega_ec_policy_configuration=None
-        )
+        config = _make_config(group_name="logging-6.2", ec_policy_configuration=None)
         metadata = _make_metadata(for_release=True)
 
         verify_ec = await self._run_build_and_get_ec_calls(config, metadata, mock_kc_init)
@@ -397,7 +393,7 @@ class TestEcVerificationGating(IsolatedAsyncioTestCase):
         verify_ec.assert_not_called()
 
     async def test_ec_skipped_when_prega_policy_is_not_configured(self, mock_kc_init):
-        config = _make_config(prega_ec_policy_configuration=None)
+        config = _make_config(ec_policy_configuration=None)
         metadata = _make_metadata(for_release=True)
         metadata.runtime.group_config.software_lifecycle.phase = "pre-release"
 
@@ -408,7 +404,6 @@ class TestEcVerificationGating(IsolatedAsyncioTestCase):
     async def test_custom_its_runs_independently_of_ec(self, mock_kc_init):
         config = _make_config(
             ec_policy_configuration=None,
-            prega_ec_policy_configuration=None,
             integration_test_scenarios=("qe-test",),
             integration_test_snapshot_annotations={"pac.test.appstudio.openshift.io/branch": "release-4.18"},
         )
@@ -461,7 +456,6 @@ class TestEcVerificationGating(IsolatedAsyncioTestCase):
         config = _make_config(
             dry_run=False,
             ec_policy_configuration=None,
-            prega_ec_policy_configuration=None,
             integration_test_scenarios=("qe-test",),
         )
         metadata = _make_metadata(for_release=True)
@@ -486,7 +480,6 @@ class TestEcVerificationGating(IsolatedAsyncioTestCase):
         config = _make_config(
             dry_run=False,
             ec_policy_configuration=None,
-            prega_ec_policy_configuration=None,
             integration_test_scenarios=("qe-test",),
         )
         metadata = _make_metadata(for_release=True)
@@ -512,7 +505,6 @@ class TestEcVerificationGating(IsolatedAsyncioTestCase):
         config = _make_config(
             dry_run=False,
             ec_policy_configuration=None,
-            prega_ec_policy_configuration=None,
             integration_test_scenarios=("qe-test",),
         )
         metadata = _make_metadata(for_release=True)
@@ -643,7 +635,7 @@ class TestEcVerificationGating(IsolatedAsyncioTestCase):
 
     async def test_ec_uses_prega_policy_for_pre_release_phase(self, mock_kc_init):
         """Pre-release lifecycle phase uses the prega policy from config."""
-        config = _make_config(group_name="openshift-4.18")
+        config = _make_config(ec_policy_configuration=resolve_stage_policy("ocp", lifecycle_phase="pre-release"))
         metadata = _make_metadata(for_release=True)
         metadata.runtime.group_config.software_lifecycle.phase = "pre-release"
 
@@ -657,7 +649,6 @@ class TestEcVerificationGating(IsolatedAsyncioTestCase):
         config = _make_config(
             group_name="openshift-4.18",
             ec_policy_configuration=constants.KONFLUX_TEST_EC_POLICY_CONFIGURATION,
-            prega_ec_policy_configuration=constants.KONFLUX_TEST_PREGA_EC_POLICY_CONFIGURATION,
         )
         metadata = _make_metadata(for_release=True)
         metadata.runtime.group_config.software_lifecycle.phase = "release"
@@ -671,8 +662,7 @@ class TestEcVerificationGating(IsolatedAsyncioTestCase):
         """Test assembly builds with pre-release lifecycle use the test prega policy from config."""
         config = _make_config(
             group_name="openshift-4.18",
-            ec_policy_configuration=constants.KONFLUX_TEST_EC_POLICY_CONFIGURATION,
-            prega_ec_policy_configuration=constants.KONFLUX_TEST_PREGA_EC_POLICY_CONFIGURATION,
+            ec_policy_configuration=resolve_stage_policy("ocp", assembly="test", lifecycle_phase="pre-release"),
         )
         metadata = _make_metadata(for_release=True)
         metadata.runtime.group_config.software_lifecycle.phase = "pre-release"
