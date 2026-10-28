@@ -36,6 +36,7 @@ from doozerlib.runtime import Runtime
 @click.option('--registry-auth', type=click.Path(exists=True), envvar='QUAY_AUTH_FILE')
 @click.option('--plr-template', default=constants.KONFLUX_DEFAULT_FBC_BUILD_PLR_TEMPLATE_URL)
 @click.option('--skip-checks', is_flag=True, help='Skip post-build checks.')
+@click.option('--skip-rebase', is_flag=True, help='Build the existing unified FBC source branch without rebasing.')
 @click.option('--skip-task', 'skip_tasks', multiple=True)
 @click.option('--dry-run', is_flag=True, help='Render and validate locally without remote writes.')
 @click.option('--output-file', type=click.Path(dir_okay=False), help='Write the JSON build result to this file.')
@@ -52,6 +53,7 @@ async def fbc_merge_layered(
     registry_auth: str | None,
     plr_template: str,
     skip_checks: bool,
+    skip_rebase: bool,
     skip_tasks: tuple[str, ...],
     dry_run: bool,
     output_file: str | None,
@@ -76,8 +78,9 @@ async def fbc_merge_layered(
         skip_checks=skip_checks,
         skip_tasks=skip_tasks,
     )
-    await merger.prepare(builds)
-    result = await merger.merge(image_repo)
+    if not skip_rebase:
+        await merger.prepare(builds)
+    result = await merger.merge(image_repo, skip_rebase=skip_rebase)
     output = json.dumps(result, indent=2) + '\n'
     if output_file:
         destination = Path(output_file)

@@ -94,6 +94,29 @@ GitHub App credentials, and build-database credentials. Overrides include
 `--skip-task`. ARTCD exposes `--kubeconfig`; Doozer exposes
 `--konflux-kubeconfig`, `--konflux-context`, and `--konflux-namespace`.
 
+### Build an existing source branch
+
+Pass `--skip-rebase` to ARTCD or Doozer to build the current remote unified FBC
+branch, for example `art-quay-fbc-unified-4-21` for Quay targeting OCP 4.21.
+This supports rebuilding after manual catalog fixes committed to that branch.
+Without the flag, sources are regenerated as before.
+
+The flag skips input catalog rendering, production baseline merging, source
+generation, commits and pushes. It uses a fresh checkout and builds that exact
+commit, preserving the Dockerfile, catalogs, mirror sets and provenance. The NVR,
+release and source bundle NVRs come from the committed Dockerfile and provenance;
+rebuilding reuses the existing NVR and image tag. The branch must already contain
+consistent unified FBC metadata for the requested product, target and execution
+group. Missing branches and mismatched metadata fail before a build starts.
+
+Continue supplying `--fbc-build` inputs so ARTCD can infer and validate the source
+group and obtain its product configuration. Use inputs from the same execution
+group as the committed branch. The committed branch determines catalog content;
+the supplied images are not re-rendered in this mode. The existing product/target
+lock, architecture lookup, build retries and result recording still apply.
+Combining `--skip-rebase` with `--dry-run` checks the branch and metadata without
+starting Konflux builds or writing database records.
+
 This command builds the unified fragment. Shipment generation and production
 release orchestration are separate work. A fragment reflects its recorded
 production baseline; independently releasing older fragments later can still

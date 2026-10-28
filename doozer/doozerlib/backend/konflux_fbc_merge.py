@@ -324,6 +324,57 @@ class LayeredFbcMerger(KonfluxFbcFragmentMerger):
     async def _render_catalog(self, fragments):
         return self.catalog
 
+    def _get_bundle_nvrs(self) -> list[str]:
+        if self.inputs:
+            return sorted(source.bundle.nvr for source in self.inputs)
+        return sorted(source['bundle_nvr'] for source in self.provenance['inputs'])
+
+    async def _prepare_existing_source(self):
+        """Read build metadata from the remote branch without regenerating any files."""
+        self._set_product_identity()
+        self._logger.warning('Skipping rebase; building existing FBC branch %s', self.fbc_git_branch)
+        build_repo = BuildRepo(
+            url=self.fbc_git_repo,
+            branch=self.fbc_git_branch,
+            local_dir=self.working_dir,
+            username=self.fbc_git_username,
+            password=self.fbc_git_password,
+            logger=self._logger,
+        )
+        # Always fetch the remote branch, even when a previous checkout exists locally.
+        await build_repo.ensure_source(upcycle=True, strict=True)
+        dockerfile = build_repo.local_dir / 'catalog.Dockerfile'
+        provenance_file = build_repo.local_dir / 'unified-provenance.json'
+        if not dockerfile.is_file() or not provenance_file.is_file():
+            raise ValueError(f'{self.fbc_git_branch} has no unified FBC Dockerfile or provenance; rebase it first')
+        provenance = json.loads(provenance_file.read_text())
+        dfp = DockerfileParser(str(dockerfile))
+        if (
+            provenance.get('product') != self.product
+            or provenance.get('ocp_target_version') != self.target_version
+            or provenance.get('execution_group') != self.group
+            or dfp.envs.get('__doozer_group') != self.group
+            or dfp.envs.get('__doozer_version') != self.version
+            or dfp.labels.get('com.redhat.art.name') != self.name
+        ):
+            raise ValueError(f'{self.fbc_git_branch} metadata does not match the requested product, target and group')
+        release = dfp.envs.get('__doozer_release', '')
+        nvr = dfp.labels.get('com.redhat.art.nvr')
+        if not release.endswith(f'.ocp{self.target_version}') or nvr != f'{self.name}-{self.version}-{release}':
+            raise ValueError(f'{self.fbc_git_branch} has inconsistent unified FBC NVR metadata')
+        self.inputs = []
+        self.provenance = provenance
+        if not provenance.get('inputs') or self._get_bundle_nvrs() != sorted(
+            dfp.envs.get('__doozer_bundle_nvrs', '').split(',')
+        ):
+            raise ValueError(f'{self.fbc_git_branch} has inconsistent source bundle metadata')
+        self.release = release
+        self.nvr = nvr
+        self._build_arches = await get_target_fbc_arches(
+            self.runtime.data_path, self.major_minor_override, self._logger
+        )
+        self.build_source = build_repo
+
     async def _merge_idms(self, fragments):
         def fetch_mirrors(record):
             url = urlparse(record.rebase_repo_url)
@@ -376,7 +427,7 @@ class LayeredFbcMerger(KonfluxFbcFragmentMerger):
             '__doozer_group': self.group,
             '__doozer_version': self.version,
             '__doozer_release': self.release,
-            '__doozer_bundle_nvrs': ','.join(sorted(source.bundle.nvr for source in self.inputs)),
+            '__doozer_bundle_nvrs': ','.join(self._get_bundle_nvrs()),
         }
         (build_repo.local_dir / 'unified-provenance.json').write_text(json.dumps(self.provenance, indent=2) + '\n')
 
@@ -407,7 +458,7 @@ class LayeredFbcMerger(KonfluxFbcFragmentMerger):
             image_pullspec=pullspec,
             image_tag=self.nvr if pullspec else None,
             art_job_url=os.environ.get('BUILD_URL', ''),
-            bundle_nvrs=sorted(source.bundle.nvr for source in self.inputs),
+            bundle_nvrs=self._get_bundle_nvrs(),
             arches=self._get_build_arches(),
             build_variant=get_build_variant_for_product(self.product),
             start_time=datetime.fromisoformat(status['startTime'].replace('Z', '+00:00'))
@@ -438,8 +489,14 @@ class LayeredFbcMerger(KonfluxFbcFragmentMerger):
             except Exception:
                 self._logger.exception('Failed to clean up unified FBC git-auth secret')
 
-    async def merge(self, image_repo: str) -> dict:
-        plr_info = await self.run([source.record.image_pullspec for source in self.inputs], f'{image_repo}:{self.nvr}')
+    async def merge(self, image_repo: str, skip_rebase: bool = False) -> dict:
+        if skip_rebase:
+            await self._prepare_existing_source()
+            plr_info = await self._build(self.build_source, f'{image_repo}:{self.nvr}', None)
+        else:
+            plr_info = await self.run(
+                [source.record.image_pullspec for source in self.inputs], f'{image_repo}:{self.nvr}'
+            )
         result = {
             'nvr': self.nvr,
             'pullspec': None,

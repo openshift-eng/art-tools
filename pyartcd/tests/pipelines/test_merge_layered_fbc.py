@@ -54,6 +54,13 @@ class TestMergeLayeredFbcPipeline(unittest.IsolatedAsyncioTestCase):
         self.assertIn('/tmp/quay-kubeconfig', cmd)
         self.assertIn('clair-scan', cmd)
         self.assertNotIn('--dry-run', cmd)
+        self.assertNotIn('--skip-rebase', cmd)
+
+    async def test_passes_skip_rebase_to_doozer(self):
+        self.pipeline.skip_rebase = True
+        with patch('pyartcd.pipelines.merge_layered_fbc.exectools.cmd_assert_async', new=AsyncMock()) as command:
+            await self.pipeline._build()
+        self.assertIn('--skip-rebase', command.await_args.args[0])
 
     async def test_lock_uses_product_and_target(self):
         async def run_locked(**kwargs):
