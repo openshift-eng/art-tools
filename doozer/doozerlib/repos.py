@@ -447,6 +447,7 @@ class Repos(object):
         :param respect_repo_arches: Opt into intersected plashet limits and empty-arch repos for Konflux.
         """
         self._arches = arches
+        self._respect_repo_arches = respect_repo_arches
         self._repos: Dict[str, Repo] = {}
         repotypes = []
         names = []
@@ -492,6 +493,12 @@ class Repos(object):
 
     def items(self):
         return self._repos.items()
+
+    def repos_for_arch(self, names: set[str], arch: str) -> set[str]:
+        """Omit known unsupported repos on opt-in; retain unknown names for existing error handling."""
+        if not self._respect_repo_arches:
+            return set(names)
+        return {name for name in names if name not in self._repos or arch in self._repos[name].arches}
 
     def values(self):
         return self._repos.values()
@@ -641,6 +648,7 @@ class Repos(object):
         return result
 
     def validate_content_sets(self):
+        """Validate available content sets, respecting repo arches only for opted-in collections."""
         # Determine repos that have no content sets defined at all; we will give these a pass if nothing tries to use them.
         # This is one reason to accept it if no content_set is defined at all: https://github.com/openshift-eng/ocp-build-data/pull/594
 
@@ -655,6 +663,8 @@ class Repos(object):
         for arch in self._arches:
             cs_names = {}
             for name, repo in self._repos.items():
+                if self._respect_repo_arches and arch not in repo.arches:
+                    continue
                 if content_set_defined[name]:
                     cs = repo.content_set(arch)
                     cs_names[name] = cs
