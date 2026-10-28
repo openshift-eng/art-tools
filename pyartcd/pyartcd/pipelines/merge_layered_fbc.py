@@ -31,6 +31,7 @@ class MergeLayeredFbcPipeline:
         registry_auth: str | None = None,
         plr_template: str | None = None,
         skip_checks: bool = False,
+        skip_rebase: bool = False,
         skip_tasks: tuple[str, ...] = (),
         output_file: str | None = None,
     ):
@@ -49,6 +50,7 @@ class MergeLayeredFbcPipeline:
             '--plr-template': plr_template,
         }
         self.skip_checks = skip_checks
+        self.skip_rebase = skip_rebase
         self.skip_tasks = skip_tasks
 
     async def _resolve_groups(self) -> list[str]:
@@ -121,6 +123,8 @@ class MergeLayeredFbcPipeline:
             cmd.append('--dry-run')
         if self.skip_checks:
             cmd.append('--skip-checks')
+        if self.skip_rebase:
+            cmd.append('--skip-rebase')
         for task in self.skip_tasks:
             cmd.extend(['--skip-task', task])
         self.runtime.logger.info('Building unified FBC for %s OCP %s', self.group, self.target)
@@ -149,6 +153,7 @@ class MergeLayeredFbcPipeline:
 @click.option('--registry-auth', type=click.Path(exists=True), envvar='QUAY_AUTH_FILE')
 @click.option('--plr-template', help='Full URL of the Konflux FBC PipelineRun template.')
 @click.option('--skip-checks', is_flag=True)
+@click.option('--skip-rebase', is_flag=True, help='Build the existing unified FBC source branch without rebasing.')
 @click.option('--skip-task', 'skip_tasks', multiple=True)
 @click.option('--output-file', type=click.Path(dir_okay=False))
 @pass_runtime

@@ -267,6 +267,132 @@ class TestLayeredFbcMerger(unittest.IsolatedAsyncioTestCase):
         self.assertTrue((directory / 'catalog' / 'quay' / 'catalog.yaml').is_file())
         self.assertFalse((directory / 'catalog' / 'catalog.yaml').exists())
 
+    def _existing_source(self):
+        directory = self.merger.working_dir
+        directory.mkdir(parents=True)
+        (directory / 'catalog').mkdir()
+        (directory / 'catalog' / 'catalog.yaml').write_text('manually corrected catalog\n')
+        (directory / '.tekton').mkdir()
+        (directory / '.tekton' / 'images-mirror-set.yaml').write_text('existing mirrors\n')
+        dfp = DockerfileParser(str(directory / 'catalog.Dockerfile'))
+        dfp.content = 'FROM scratch\n'
+        dfp.labels = {
+            'com.redhat.art.name': self.merger.name,
+            'com.redhat.art.nvr': f'{self.merger.name}-4.20-20261028010000.ocp4.20',
+        }
+        dfp.envs = {
+            '__doozer_group': self.runtime.group,
+            '__doozer_version': '4.20',
+            '__doozer_release': '20261028010000.ocp4.20',
+            '__doozer_bundle_nvrs': self.merger.inputs[0].bundle.nvr,
+        }
+        provenance = {
+            'product': 'quay',
+            'ocp_target_version': '4.20',
+            'execution_group': self.runtime.group,
+            'inputs': [{'bundle_nvr': self.merger.inputs[0].bundle.nvr}],
+        }
+        (directory / 'unified-provenance.json').write_text(json.dumps(provenance))
+        return SimpleNamespace(
+            local_dir=directory,
+            https_url='https://github.com/openshift-priv/art-fbc',
+            commit_hash='c' * 40,
+            ensure_source=AsyncMock(),
+            commit=AsyncMock(),
+            push=AsyncMock(),
+        )
+
+    async def test_skip_rebase_preserves_source_and_dry_run_has_no_writes(self):
+        repo = self._existing_source()
+        before = {path: path.read_bytes() for path in repo.local_dir.rglob('*') if path.is_file()}
+        with (
+            patch('doozerlib.backend.konflux_fbc_merge.BuildRepo', return_value=repo) as build_repo,
+            patch.object(self.merger, 'run', new_callable=AsyncMock) as rebase,
+            patch('doozerlib.backend.konflux_fbc_merge.opm.render', new_callable=AsyncMock) as render,
+        ):
+            result = await self.merger.merge('quay.io/test/fbc', skip_rebase=True)
+        self.assertEqual(build_repo.call_args.kwargs['branch'], 'art-quay-fbc-unified-4-20')
+        repo.ensure_source.assert_awaited_once_with(upcycle=True, strict=True)
+        rebase.assert_not_awaited()
+        render.assert_not_awaited()
+        repo.commit.assert_not_awaited()
+        repo.push.assert_not_awaited()
+        self.assertEqual(before, {path: path.read_bytes() for path in before})
+        self.assertEqual(result['nvr'], 'quay-fbc-unified-4.20-20261028010000.ocp4.20')
+        self.assertTrue(result['dry_run'])
+        self.assertIsNone(result['pullspec'])
+        self.merger._konflux_client.ensure_git_auth_secret.assert_not_called()
+        self.merger._konflux_client.start_pipeline_run_for_image_build.assert_not_called()
+        self.merger.db.add_build.assert_not_called()
+
+    async def test_skip_rebase_builds_and_records_existing_revision_and_metadata(self):
+        repo = self._existing_source()
+        bundle_nvrs = [self.merger.inputs[0].bundle.nvr]
+        self.merger.dry_run = False
+        plr = Mock()
+        plr.to_dict.return_value = {
+            'status': {
+                'results': [
+                    {'name': 'IMAGE_URL', 'value': 'quay.io/test/fbc:tag'},
+                    {'name': 'IMAGE_DIGEST', 'value': 'sha256:' + 'd' * 64},
+                ]
+            }
+        }
+        with (
+            patch('doozerlib.backend.konflux_fbc_merge.BuildRepo', return_value=repo),
+            patch.object(self.merger, '_build', new=AsyncMock(return_value=plr)) as build,
+        ):
+            result = await self.merger.merge('quay.io/test/fbc', skip_rebase=True)
+        build.assert_awaited_once_with(repo, 'quay.io/test/fbc:quay-fbc-unified-4.20-20261028010000.ocp4.20', None)
+        await self.merger._record_build(repo, plr, KonfluxBuildOutcome.SUCCESS)
+        record = self.merger.db.add_build.call_args.args[0]
+        self.assertEqual(record.nvr, result['nvr'])
+        self.assertEqual(record.release, '20261028010000.ocp4.20')
+        self.assertEqual(record.rebase_commitish, repo.commit_hash)
+        self.assertEqual(record.bundle_nvrs, bundle_nvrs)
+        self.assertEqual(record.arches, ['x86_64'])
+        self.assertEqual(result['provenance_url'], f'{repo.https_url}/blob/{repo.commit_hash}/unified-provenance.json')
+        self.assertEqual(result['pullspec'], 'quay.io/test/fbc@sha256:' + 'd' * 64)
+        repo.commit.assert_not_awaited()
+        repo.push.assert_not_awaited()
+
+    async def test_skip_rebase_requires_existing_branch(self):
+        repo = self._existing_source()
+        repo.ensure_source.side_effect = ChildProcessError('remote branch not found')
+        with (
+            patch('doozerlib.backend.konflux_fbc_merge.BuildRepo', return_value=repo),
+            patch.object(self.merger, '_build', new_callable=AsyncMock) as build,
+        ):
+            with self.assertRaisesRegex(ChildProcessError, 'remote branch not found'):
+                await self.merger.merge('quay.io/test/fbc', skip_rebase=True)
+        build.assert_not_awaited()
+
+    async def test_skip_rebase_rejects_missing_source_metadata(self):
+        repo = self._existing_source()
+        (repo.local_dir / 'unified-provenance.json').unlink()
+        with patch('doozerlib.backend.konflux_fbc_merge.BuildRepo', return_value=repo):
+            with self.assertRaisesRegex(ValueError, 'rebase it first'):
+                await self.merger.merge('quay.io/test/fbc', skip_rebase=True)
+        self.merger._konflux_client.start_pipeline_run_for_image_build.assert_not_called()
+
+    async def test_skip_rebase_rejects_mismatched_target_group_and_nvr(self):
+        repo = self._existing_source()
+        dockerfile = repo.local_dir / 'catalog.Dockerfile'
+        original = dockerfile.read_text()
+        for key, value, error in (
+            ('__doozer_version', '5.0', 'does not match'),
+            ('__doozer_group', 'quay-3.19', 'does not match'),
+            ('__doozer_release', 'different.ocp4.20', 'inconsistent unified FBC NVR'),
+            ('__doozer_bundle_nvrs', 'different-bundle', 'inconsistent source bundle'),
+        ):
+            with self.subTest(key=key):
+                dockerfile.write_text(original)
+                DockerfileParser(str(dockerfile)).envs[key] = value
+                with patch('doozerlib.backend.konflux_fbc_merge.BuildRepo', return_value=repo):
+                    with self.assertRaisesRegex(ValueError, error):
+                        await self.merger.merge('quay.io/test/fbc', skip_rebase=True)
+        self.merger._konflux_client.start_pipeline_run_for_image_build.assert_not_called()
+
     async def test_replaces_previous_package_catalog_without_stale_files(self):
         for operator in ('quay-operator', 'container-security-operator'):
             with self.subTest(operator=operator):
