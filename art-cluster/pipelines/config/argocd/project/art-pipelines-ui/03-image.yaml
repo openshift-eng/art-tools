@@ -10,6 +10,10 @@ metadata:
   name: art-pipelines-ui
   namespace: art-pipelines-ui
 spec:
+  runPolicy: Serial
+  nodeSelector: null
+  resources: {}
+  postCommit: {}
   source:
     type: Git
     git:
@@ -26,4 +30,3 @@ spec:
       name: art-pipelines-ui:latest
   successfulBuildsHistoryLimit: 5
   failedBuildsHistoryLimit: 3
-  triggers: []
