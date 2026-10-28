@@ -7,6 +7,20 @@ signing otherwise, and supplies the email configuration used by promotion.
 `dry-run` defaults to `true`. `no-multi` and `multi-only` are mutually exclusive.
 Parameters are passed as arguments to the Python wrapper.
 
+## Sustaining team access
+
+The `art-sustaining-team-members` group can view pipelines and logs through the
+existing `lp-pipeline-viewer` binding. The `promote-assembly-operator` Role and
+RoleBinding additionally allow members to create PipelineRuns in
+`art-openshift-tenant`.
+
+The admission policy limits these requests to the local `promote-assembly`
+Pipeline with the default or `pipeline` service account. It rejects inline
+pipelines, remote resolvers, task overrides, workspace bindings, and pod template
+overrides. Argo CD installs the policy and its binding before granting creation
+access. Members can start and rerun promotions from the OpenShift console;
+`dry-run` defaults to `true`.
+
 The shared `artcd` Task mounts promotion secrets optionally, and the wrapper
 reports missing credentials before invoking promotion. Supply the credentials
 below before running this pipeline. Jenkins credentials are needed for RHCOS
@@ -127,6 +141,17 @@ both files when `dry-run=false` and `skip-signing=false`.
    does not install the missing `gsutil` executable in an old image.
 
 ## Testing plan
+
+1. After Argo CD sync, use `oc auth can-i create pipelineruns` with a sustaining
+   member's identity in `art-openshift-tenant`. Confirm the member can read
+   pipelines and logs, and cannot create TaskRuns or read Secrets.
+2. As that member, submit a server dry-run PipelineRun referencing
+   `promote-assembly` with a `version` parameter and `dry-run=true`. Confirm
+   requests for another pipeline, an inline pipeline, a remote resolver, or
+   task, workspace, service account, and pod template overrides are denied.
+   Then start a promotion with `dry-run=true` and verify its logs are visible.
+
+For promotion behavior and credentials:
 
 1. Parse all tenant YAML and compile embedded Python. Check parameter forwarding,
    flag mapping, signing selection, conflicting multi options, and missing secret
