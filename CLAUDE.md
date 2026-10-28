@@ -97,7 +97,6 @@ git checkout -b your-feature-or-bug-name
 
 # Make your changes, commit, and disover rebase errors before pushing:
 git add .
-rh-pre-commit
 git commit -m "Your commit message"
 git fetch origin
 git rebase origin/main
@@ -126,14 +125,14 @@ gh pr create --base main
    git switch -C descriptive-name origin/main
    ```
 
-2. **Development**: Set up the secret-scanning hook, stage changes, run `rh-pre-commit`, and commit to your feature branch only after the scan succeeds.
+2. **Development**: Make and validate changes, stage them, and commit to your feature branch.
 
 3. **Push Changes**: Push to `dev` remote only. Pushing with `--force` is allowed.
    ```bash
    git push dev descriptive-name
    ```
 
-4. **Pull Request**: Confirm all new or amended commits passed secret scanning, then create or update the PR against `main` and include the scan result in its validation notes.
+4. **Pull Request**: Create or update the PR against `main` and include validation results in its notes.
 
 5. **Never**:
    - Commit directly to `main`
