@@ -200,6 +200,78 @@ class TestPipelineInit(unittest.TestCase):
 
 
 class TestProductSettings(unittest.TestCase):
+    def test_ocp_image_and_bundle_defaults_share_selected_group_config(self):
+        pipeline = _make_pipeline(
+            assembly="test",
+            data_path="https://example.test/ocp-build-data",
+            data_gitref="feature-branch",
+        )
+
+        async def resolve_policies():
+            return [await pipeline._resolve_stage_policy(build_type) for build_type in ("image", "bundle", "fbc")]
+
+        with patch(
+            "pyartcd.pipelines.build_conforma_verify.util.load_group_config",
+            new=AsyncMock(return_value={"software_lifecycle": {"phase": "pre-release"}}),
+        ) as load_group_config:
+            policies = asyncio.run(resolve_policies())
+
+        load_group_config.assert_awaited_once_with(
+            group="openshift-4.18",
+            assembly="test",
+            doozer_data_path="https://example.test/ocp-build-data",
+            doozer_data_gitref="feature-branch",
+        )
+        self.assertEqual(
+            policies,
+            [
+                "ocp-art-tenant/conforma-build-ec-stage-test",
+                "ocp-art-tenant/conforma-build-ec-stage-test",
+                "rhtap-releng-tenant/fbc-ocp-art-stage",
+            ],
+        )
+
+    def test_overrides_and_ocp_fbc_default_do_not_read_group_config(self):
+        for build_type, generic, fbc, expected in (
+            ("image", "tenant/image", None, "tenant/image"),
+            ("bundle", "tenant/image", "tenant/fbc", "tenant/image"),
+            ("fbc", "tenant/image", None, "tenant/image"),
+            ("fbc", "tenant/image", "tenant/fbc", "tenant/fbc"),
+            ("fbc", None, "tenant/fbc", "tenant/fbc"),
+            ("fbc", None, None, "rhtap-releng-tenant/fbc-ocp-art-stage"),
+        ):
+            with self.subTest(build_type=build_type, generic=generic, fbc=fbc):
+                pipeline = _make_pipeline(ec_policy=generic, fbc_ec_policy=fbc)
+                with patch(
+                    "pyartcd.pipelines.build_conforma_verify.util.load_group_config",
+                    new=AsyncMock(side_effect=AssertionError("unexpected config read")),
+                ) as load_group_config:
+                    self.assertEqual(asyncio.run(pipeline._resolve_stage_policy(build_type)), expected)
+                load_group_config.assert_not_awaited()
+
+    def test_layered_settings_and_defaults_reuse_group_config(self):
+        pipeline = _make_pipeline(group="oadp-1.5")
+
+        async def resolve_settings_and_policies():
+            await pipeline._resolve_layered_product_settings()
+            return [await pipeline._resolve_stage_policy(build_type) for build_type in ("image", "fbc")]
+
+        with patch(
+            "pyartcd.pipelines.build_conforma_verify.util.load_group_config",
+            new=AsyncMock(return_value={"product": "oadp"}),
+        ) as load_group_config:
+            policies = asyncio.run(resolve_settings_and_policies())
+
+        load_group_config.assert_awaited_once()
+        self.assertEqual(pipeline.namespace, "art-oadp-tenant")
+        self.assertEqual(
+            policies,
+            [
+                "rhtap-releng-tenant/registry-art-oadp-stage",
+                "rhtap-releng-tenant/fbc-art-oadp-stage",
+            ],
+        )
+
     def test_lp_settings_use_product_and_selected_data(self):
         p = _make_pipeline(
             group="oadp-1.5",
