@@ -9,9 +9,7 @@ from artcommonlib.product_catalog import PRODUCT_CATALOG
 @pytest.mark.parametrize("build_type", ["image", "bundle", "fbc"])
 def test_acm_delivery_alias_preserves_stage_policies(product, assembly, phase, build_type):
     expected = (
-        "rhtap-releng-tenant/fbc-art-acm-stage"
-        if build_type == "fbc"
-        else "rhtap-releng-tenant/registry-art-acm-stage"
+        "rhtap-releng-tenant/fbc-art-acm-stage" if build_type == "fbc" else "rhtap-releng-tenant/registry-art-acm-stage"
     )
     policy = resolve_stage_policy(product, assembly=assembly, lifecycle_phase=phase, build_type=build_type)
     assert policy == expected

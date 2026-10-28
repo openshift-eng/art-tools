@@ -865,9 +865,13 @@ class TestExtractRelatedImagesFromFBC(unittest.TestCase):
         self.assertEqual(get_registry_namespace_pattern("ocp"), r"openshift\d+")
         self.assertEqual(get_registry_namespace_pattern("kueue"), "kueue")
         self.assertEqual(get_registry_namespace_pattern("oadp"), "oadp")
-        for product_name in ("rhacm2", "rhacm5", "multicluster-engine"):
+        for product_name, expected_pattern in (
+            ("rhacm2", "rhacm2"),
+            ("rhacm5", "rhacm5"),
+            ("multicluster-engine", r"multicluster\-engine"),
+        ):
             with self.subTest(product_name=product_name):
-                self.assertEqual(get_registry_namespace_pattern(product_name), product_name)
+                self.assertEqual(get_registry_namespace_pattern(product_name), expected_pattern)
 
     @patch('artcommonlib.util.cmd_gather_async', new_callable=AsyncMock)
     @patch('builtins.open', new_callable=MagicMock)
