@@ -484,6 +484,7 @@ class TestScanForMissingBundlesFbcs(unittest.IsolatedAsyncioTestCase):
         await pipeline.load_ocp_target_versions()
 
         self.assertEqual(pipeline.ocp_target_versions, [])
+
     @patch('pyartcd.pipelines.layered_products_scan_konflux.load_group_config', new_callable=AsyncMock)
     async def test_ocp_target_versions_load_failure_raises(self, mock_load_group_config):
         """If loading group config fails, the exception should propagate."""
