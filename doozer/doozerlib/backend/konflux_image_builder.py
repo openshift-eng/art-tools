@@ -240,8 +240,22 @@ class KonfluxImageBuilder:
                 # Golang builder metadata moved from versioned component names such as
                 # openshift-golang-builder-1-26-container to the shared
                 # openshift-golang-builder-container component.
+                # A mid-flight distgit.component rename (same distgit key, new package name)
+                # also mismatches the previous stream build — treat that as a rename so the
+                # first stream build under the new name can proceed.
                 # compare_nvr returns: 1 if target > latest, 0 if equal, -1 if target < latest
-                ignore_name = metadata.runtime.assembly == "test" or metadata.is_golang_builder()
+                component_renamed = target_nvr_dict["name"] != latest_nvr_dict["name"]
+                ignore_name = (
+                    metadata.runtime.assembly == "test" or metadata.is_golang_builder() or component_renamed
+                )
+                if component_renamed:
+                    logger.warning(
+                        "Component package renamed for %s: latest build package %s -> target %s; "
+                        "ignoring package name for NVR ordering",
+                        metadata.distgit_key,
+                        latest_nvr_dict["name"],
+                        target_nvr_dict["name"],
+                    )
                 if compare_nvr(target_nvr_dict, latest_nvr_dict, ignore_name=ignore_name) <= 0:
                     ignore_incorrect_nvr = (
                         metadata.config.ignore_incorrect_nvr or metadata.runtime.group_config.ignore_incorrect_nvr

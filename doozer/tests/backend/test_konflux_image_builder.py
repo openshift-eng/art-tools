@@ -235,6 +235,50 @@ class TestKonfluxImageBuilder(unittest.IsolatedAsyncioTestCase):
 
         metadata.is_golang_builder.assert_called_once_with()
 
+    async def test_build_allows_stream_component_package_rename(self):
+        """When distgit.component is renamed, allow the first stream build under the new package name."""
+        metadata = self._metadata()
+        metadata.runtime.assembly = "stream"
+        metadata.is_golang_builder.return_value = False
+        metadata.get_latest_build.return_value = MagicMock(
+            nvr="kueue-must-gather-1.4.4-202610272022.p2.g3a45f49.assembly.stream.el9",
+            image_pullspec="quay.io/example/image@sha256:old",
+        )
+        dest_dir = self.builder._config.base_dir.joinpath(metadata.qualified_key)
+        dest_dir.mkdir(parents=True)
+
+        class NvrCheckComplete(Exception):
+            pass
+
+        with (
+            patch(
+                "doozerlib.backend.konflux_image_builder.BuildRepo.from_local_dir",
+                new=AsyncMock(return_value=MagicMock()),
+            ),
+            patch.object(
+                self.builder,
+                "_parse_dockerfile",
+                return_value=(
+                    "test-uuid",
+                    "kueue-must-gather-container",
+                    "1.4.4",
+                    "202610281200.p2.g3a45f49.assembly.stream.el9",
+                ),
+            ),
+            patch.object(
+                self.builder,
+                "_get_successful_image_build_by_nvr",
+                new=AsyncMock(return_value=None),
+            ),
+            patch.object(
+                self.builder,
+                "_wait_for_parent_members",
+                new=AsyncMock(side_effect=NvrCheckComplete),
+            ),
+        ):
+            with self.assertRaises(NvrCheckComplete):
+                await self.builder.build(metadata)
+
     async def _assert_build_validates_slsa(self, group_name, variant):
         self.builder._config.group_name = group_name
         metadata = self._metadata()
