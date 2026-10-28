@@ -1,11 +1,12 @@
 import React, { useEffect, useState } from 'react';
+import { sortIncidentsNewestFirst } from './incidentUtils';
 
 export const INCIDENT_BANNER_CYCLE_MS = 8000;
 
 export function activeBannerIncidents(incidents = []) {
-  return incidents.filter((incident) =>
+  return sortIncidentsNewestFirst(incidents.filter((incident) =>
     !['resolved', 'deleted'].includes(incident.status) && incident.showOnBanner !== false
-  );
+  ));
 }
 
 export function nextBannerIndex(index, count) {
@@ -47,7 +48,8 @@ export default function IncidentBanner({ incidents = [], error = '' }) {
     </div>;
   }
 
-  return <div className="incident-announcement" role="region" aria-label="Active incident announcements">
+  const severity = ['info', 'warning', 'danger'].includes(incident.severity) ? incident.severity : 'warning';
+  return <div className={`incident-announcement severity-${severity}`} role="region" aria-label="Active incident announcements">
     <span className="incident-announcement-icon" aria-hidden="true">ⓘ</span>
     <span className="incident-announcement-message" aria-live="polite">{incident.message}</span>
     {incident.links?.map((link) => <a key={`${incident.id}-${link.label}-${link.url}`} href={link.url} target="_blank" rel="noopener noreferrer">{link.label}</a>)}

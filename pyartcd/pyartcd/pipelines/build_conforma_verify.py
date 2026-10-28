@@ -1,12 +1,16 @@
 import asyncio
+import hashlib
 import json
 import os
 import re
 import sys
 from collections import defaultdict
 from typing import List, Optional
+from urllib.parse import urlparse
 
 import click
+import requests
+import yaml
 from artcommonlib import exectools, logutil
 from artcommonlib.constants import KONFLUX_DEFAULT_NAMESPACE
 from artcommonlib.konflux.konflux_build_record import (
@@ -37,6 +41,40 @@ from pyartcd.slack import SlackClient
 LOGGER = logutil.get_logger(__name__)
 
 BATCH_SIZE = 10
+
+
+def _integration_test_scenario_name(application_name: str, policy: str) -> str:
+    """Return a valid, policy-specific IntegrationTestScenario name."""
+    policy_name = policy.rsplit('/', 1)[-1]
+    name = f'{application_name}-ec-{policy_name}'
+    if re.fullmatch(r'[a-z0-9-]+(?:/[a-z0-9-]+)?', policy) and len(name) <= 63:
+        return name
+
+    policy_name = re.sub(r'\.ya?ml$', '', policy_name.split('?', 1)[0], flags=re.IGNORECASE)
+    policy_name = re.sub(r'[^a-z0-9-]+', '-', policy_name.lower()).strip('-') or 'policy'
+    policy_hash = hashlib.sha256(policy.encode()).hexdigest()[:10]
+    max_application_length = 63 - len('-ec-') - len('-') - len(policy_hash) - 1
+    prefix = f"{application_name[:max_application_length].rstrip('-')}-ec-"
+    max_policy_length = 63 - len(prefix) - len(policy_hash) - 1
+    return f"{prefix}{policy_name[:max_policy_length].rstrip('-')}-{policy_hash}"
+
+
+async def _resolve_ec_policy_configuration(policy: str) -> str:
+    """Load a remote policy file as inline JSON for Conforma."""
+    parsed_url = urlparse(policy)
+    if parsed_url.scheme != 'https' or not parsed_url.path.endswith(('.yaml', '.yml', '.json')):
+        return policy
+
+    response = await exectools.to_thread(requests.get, policy, timeout=30)
+    response.raise_for_status()
+    document = yaml.safe_load(response.text)
+    if not isinstance(document, dict):
+        raise ValueError(f'EC policy URL did not return a policy document: {policy}')
+
+    spec = document.get('spec') if document.get('kind') == 'EnterpriseContractPolicy' else document
+    if not isinstance(spec, dict) or not isinstance(spec.get('sources'), list):
+        raise ValueError(f'EC policy URL did not return a valid policy configuration: {policy}')
+    return json.dumps(spec, separators=(',', ':'))
 
 
 class BuildConformaVerifyPipeline:
@@ -408,13 +446,13 @@ class BuildConformaVerifyPipeline:
             for record in records
         ]
 
-        policy_suffix = ec_policy.split('/')[-1]
-        its_name = f"{application_name}-ec-{policy_suffix}"
+        its_name = _integration_test_scenario_name(application_name, ec_policy)
+        policy_configuration = await _resolve_ec_policy_configuration(ec_policy)
         self.logger.info("[%s] Ensuring IntegrationTestScenario %s exists...", build_type, its_name)
         await konflux_client.ensure_integration_test_scenario(
             name=its_name,
             application_name=application_name,
-            policy_configuration=ec_policy,
+            policy_configuration=policy_configuration,
         )
 
         batches = [components[i : i + BATCH_SIZE] for i in range(0, len(components), BATCH_SIZE)]
@@ -478,7 +516,7 @@ class BuildConformaVerifyPipeline:
                         ],
                     },
                     "params": [
-                        {"name": "POLICY_CONFIGURATION", "value": ec_policy},
+                        {"name": "POLICY_CONFIGURATION", "value": policy_configuration},
                         {"name": "SINGLE_COMPONENT", "value": "false"},
                         {"name": "SNAPSHOT", "value": snapshot_json},
                         {"name": "EFFECTIVE_TIME", "value": self.effective_time},

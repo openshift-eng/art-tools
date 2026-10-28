@@ -10,12 +10,31 @@ from artcommonlib.product_catalog import (
     find_product_config,
     get_kubeconfig_env_vars,
     get_product_config,
+    get_product_id_for_product,
 )
 from artcommonlib.product_models import ConformaPolicies, ProductConfig, ReleaseTarget
 from artcommonlib.variants import ProductId
 
 
 class TestProductCatalog(unittest.TestCase):
+    def test_kueue_canonical_product_preserves_cpe_and_release_configuration(self):
+        """Resolve canonical and legacy Kueue names without changing CPE or release configuration."""
+        config = get_product_config("kueue")
+
+        self.assertEqual(ProductId.KUEUE.value, "kueue")
+        for product_name in ("kueue", "kueue-operator"):
+            with self.subTest(product_name=product_name):
+                self.assertIs(get_product_config(product_name), config)
+                self.assertIs(find_product_config(product_name), config)
+                self.assertIs(get_product_id_for_product(product_name), ProductId.KUEUE)
+        self.assertIs(config.product_id, ProductId.KUEUE)
+        self.assertEqual(config.product_name, "kueue")
+        self.assertEqual(config.cpe_product_name, "kueue_operator")
+        self.assertEqual(config.cpe_name, "kueue_operator")
+        self.assertEqual(config.namespace, "art-kueue-tenant")
+        self.assertEqual(config.base_image_release.release_plan, "kueue-images-base-silent")
+        self.assertEqual(config.fbc_stage_release_plans[(1, 4)], "kueue-advisory-stage-1-4")
+
     def test_product_config_is_a_frozen_dataclass(self):
         """Represent product configuration as an immutable dataclass."""
         config = get_product_config("ocp")
