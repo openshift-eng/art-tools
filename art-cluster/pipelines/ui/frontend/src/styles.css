@@ -109,6 +109,9 @@ button { cursor: pointer; }
 .empty { padding: 70px 20px; text-align: center; color: var(--ui-muted); background: var(--ui-surface); border: 1px dashed var(--ui-line); border-radius: 7px; }
 .notice { margin: 10px 0 20px; }
 .incident-announcement { min-height: 30px; display: flex; align-items: center; justify-content: center; flex-wrap: wrap; gap: 4px 9px; padding: 4px 16px; background: #f5d66f; color: #242424; font-size: 13px; line-height: 1.45; }
+.incident-announcement.severity-info { background: #cfe8ff; color: #102a43; }
+.incident-announcement.severity-warning { background: #f5d66f; color: #242424; }
+.incident-announcement.severity-danger { background: #f8c1c3; color: #4a1115; }
 .incident-announcement a { color: #173e62; text-decoration: underline; text-underline-offset: 2px; }
 .incident-announcement-icon { flex: 0 0 auto; font-size: 14px; line-height: 1; }
 .incident-announcement-message { overflow-wrap: anywhere; }
@@ -135,6 +138,8 @@ button { cursor: pointer; }
 .incident-history li::before { position: absolute; top: 4px; left: -24px; width: 8px; height: 8px; border: 2px solid var(--ui-surface); border-radius: 50%; background: var(--ui-muted); content: ''; }
 .incident-history time { color: var(--ui-muted); font-size: 12px; }
 .incident-history li p { margin: 3px 0 0; font-size: 13px; }
+.incident-history-note { display: block; margin-top: 3px; font-size: 13px; }
+.incident-history a { color: #175a8c; text-decoration: underline; text-underline-offset: 2px; overflow-wrap: anywhere; }
 .incident-actions, .incident-heading-actions { display: flex; align-items: center; flex-wrap: wrap; gap: 9px; }
 .incident-actions { margin-top: 14px; }
 .incident-banner-toggle { display: flex; align-items: flex-start; gap: 10px; padding: 12px; border: 1px solid var(--ui-line); border-radius: 5px; background: var(--ui-page); }

@@ -86,7 +86,9 @@ class IncidentApiTests(unittest.IsolatedAsyncioTestCase):
         incident = response.json()["incidents"][0]
         self.assertEqual(incident["id"], "kerberos-1")
         self.assertTrue(incident["showOnBanner"])
-        self.assertEqual(incident["history"], [{"timestamp": INCIDENT["started"], "note": "Incident created."}])
+        self.assertEqual(
+            incident["history"], [{"timestamp": INCIDENT["started"], "note": "Incident created.", "details": ""}]
+        )
 
     async def test_create_records_start_and_update_times(self):
         self.allow_admin()
@@ -250,6 +252,7 @@ class IncidentApiTests(unittest.IsolatedAsyncioTestCase):
                     "title": "Updated issue",
                     "message": "Still intermittent",
                     "status": "identified",
+                    "description": "Detailed investigation update.",
                     "showOnBanner": False,
                     "updateNote": "  Kerberos renewal is still intermittent.  ",
                     "history": [{"timestamp": "caller-supplied", "note": "Not an accepted event"}],
@@ -263,9 +266,42 @@ class IncidentApiTests(unittest.IsolatedAsyncioTestCase):
         self.assertIsNone(updated["resolvedAt"])
         self.assertNotEqual(updated["updated"], INCIDENT["updated"])
         self.assertEqual(updated["history"][-1]["note"], "Kerberos renewal is still intermittent.")
+        self.assertEqual(updated["history"][-1]["details"], "Detailed investigation update.")
         self.assertEqual(updated["history"][-1]["timestamp"], updated["updated"])
         self.assertEqual(len(updated["history"]), 2)
         self.assertFalse(updated["showOnBanner"])
+
+    async def test_resolved_incident_can_be_reopened_and_records_update_details(self):
+        resolved = {
+            **INCIDENT,
+            "status": "resolved",
+            "resolvedAt": "2026-10-14T10:00:00Z",
+            "history": [{"timestamp": "2026-10-14T10:00:00Z", "note": "Incident closed."}],
+        }
+        configmap = {
+            "metadata": {"resourceVersion": "12"},
+            "data": {"incidents.json": json.dumps({"incidents": [resolved]})},
+        }
+        self.gateway.kube_json = AsyncMock(side_effect=[configmap, {"metadata": {"resourceVersion": "13"}}])
+        with patch.object(api.Path, "read_text", return_value='{"incidents":[]}'):
+            response = await self.client.put(
+                "/api/incidents/kerberos-1",
+                headers={"x-csrf-token": "csrf-token"},
+                json={
+                    "title": "Kerberos issue reopened",
+                    "message": "Scans may still fail",
+                    "status": "investigating",
+                    "description": "Renewal errors have returned.",
+                    "updateNote": "Reopened after failures returned",
+                },
+            )
+
+        self.assertEqual(response.status_code, 200)
+        reopened = response.json()["incidents"][0]
+        self.assertEqual(reopened["status"], "investigating")
+        self.assertIsNone(reopened["resolvedAt"])
+        self.assertEqual(reopened["history"][-1]["note"], "Reopened after failures returned")
+        self.assertEqual(reopened["history"][-1]["details"], "Renewal errors have returned.")
 
     async def test_update_preserves_banner_opt_out_when_field_is_omitted(self):
         configmap = {

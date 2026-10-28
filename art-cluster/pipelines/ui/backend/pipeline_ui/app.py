@@ -72,6 +72,7 @@ class IncidentLink(BaseModel):
 class IncidentHistoryEntry(BaseModel):
     timestamp: str = ""
     note: str = Field(min_length=1, max_length=500)
+    details: str = Field(default="", max_length=4000)
 
 
 class Incident(BaseModel):
@@ -425,7 +426,7 @@ async def create_incident(request: Request, body: IncidentCreate):
                 id=str(uuid4()),
                 started=now,
                 updated=now,
-                history=[IncidentHistoryEntry(timestamp=now, note="Incident created.")],
+                history=[IncidentHistoryEntry(timestamp=now, note="Incident created.", details=body.description)],
                 **body.model_dump(),
             )
         )
@@ -446,7 +447,8 @@ async def update_incident(request: Request, incident_id: str, body: IncidentUpda
                     {
                         "showOnBanner": incident.showOnBanner if body.showOnBanner is None else body.showOnBanner,
                         "history": append_incident_history(
-                            incident.history, IncidentHistoryEntry(timestamp=now, note=body.updateNote)
+                            incident.history,
+                            IncidentHistoryEntry(timestamp=now, note=body.updateNote, details=body.description),
                         ),
                         "updated": now,
                         "resolvedAt": None,
