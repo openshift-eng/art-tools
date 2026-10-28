@@ -52,7 +52,8 @@ class LayeredProductsScanPipeline:
         # OCP target versions for FBC builds (loaded from group config)
         self.ocp_target_versions: List[str] = []
 
-        # Extract version from group name (e.g. 'oadp-1.5' -> '1.5')
+        # Provisional MAJOR.MINOR from group name; overridden by group.yml
+        # ``version`` in load_ocp_target_versions() (same source BLP uses for NVRs).
         version_tuple = product_version_from_group_name(self.group)
         self.version: Optional[str] = f'{version_tuple[0]}.{version_tuple[1]}' if version_tuple else None
 
@@ -200,8 +201,11 @@ class LayeredProductsScanPipeline:
         skipped (deduplication).
         """
 
+        # Load group.yml (OCP_TARGET_VERSIONS + authoritative product version) first
+        await self.load_ocp_target_versions()
+
         if not self.version:
-            self.logger.info('Could not extract version from group %s; skipping bundle/FBC scan', self.group)
+            self.logger.info('Could not determine version for group %s; skipping bundle/FBC scan', self.group)
             return
 
         # Initialize Konflux DB clients
@@ -220,9 +224,6 @@ class LayeredProductsScanPipeline:
         if not operator_names:
             self.logger.info('No operators found in group %s; skipping bundle/FBC scan', self.group)
             return
-
-        # Load OCP target versions for multi-version FBC builds
-        await self.load_ocp_target_versions()
 
         operator_builds = await self.get_latest_operator_builds(operator_db, operator_names)
         self.logger.info('Found %d operators with latest successful builds', len(operator_builds))
@@ -286,12 +287,12 @@ class LayeredProductsScanPipeline:
         return set(self.bundle_names_by_operator.keys())
 
     async def load_ocp_target_versions(self):
-        """Load OCP_TARGET_VERSIONS from group config for multi-version FBC builds.
+        """Load group.yml fields needed for bundle/FBC triggers.
 
-        Layered product groups (e.g. oadp-1.5) may define ``OCP_TARGET_VERSIONS``
-        in their group.yml to specify which OCP versions they target.  When set,
-        ``trigger_fbc_builds`` creates a separate ``build-fbc`` PipelineRun for
-        each target version (mirroring the olm-bundle-konflux pattern).
+        Prefer ``version`` from group config (same source BLP uses) so rescheduled
+        FBC builds get the full semver (e.g. kueue ``1.4.4``) rather than the
+        group-name MAJOR.MINOR padded to ``.0``. Also loads ``OCP_TARGET_VERSIONS``
+        for multi-version FBC builds.
         """
 
         try:
@@ -301,6 +302,16 @@ class LayeredProductsScanPipeline:
                 doozer_data_path=self.data_path,
                 doozer_data_gitref=self.data_gitref,
             )
+
+            cfg_version = group_config.get('version')
+            if cfg_version:
+                self.version = str(cfg_version)
+                self.logger.info('Using version %s from group config', self.version)
+            elif self.version:
+                self.logger.info('No version in group config; keeping %s from group name', self.version)
+            else:
+                self.logger.warning('No version in group config or group name for %s', self.group)
+
             ocp_versions = group_config.get('OCP_TARGET_VERSIONS')
             if ocp_versions:
                 # Handle string values: wrap in a list to avoid iterating characters
