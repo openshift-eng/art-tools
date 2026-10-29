@@ -1,13 +1,11 @@
 import os
-import re
 import sys
 from dataclasses import dataclass
-from typing import List, Optional, Set
+from time import perf_counter
+from typing import Optional
 
-import aiohttp
 import click
 from artcommonlib import logutil
-from artcommonlib.constants import OCP_RPA_BASE_URL, OCP_RPA_ENVS, OCP_RPA_KINDS
 from artcommonlib.util import (
     get_utc_now_formatted_str,
     new_roundtrip_yaml_handler,
@@ -16,6 +14,7 @@ from artcommonlib.util import (
     resolve_konflux_namespace_by_product,
     validate_k8s_dns_label,
 )
+from doozerlib import opm
 from doozerlib.backend.konflux_client import (
     API_VERSION,
     KIND_APPLICATION,
@@ -36,81 +35,167 @@ yaml = new_roundtrip_yaml_handler()
 LOGGER = logutil.get_logger(__name__)
 
 
-async def fetch_rpa(rpa_name: str) -> dict:
-    url = f"{OCP_RPA_BASE_URL}/{rpa_name}.yaml"
-    headers = {}
-    gitlab_token = os.environ.get("GITLAB_TOKEN")
-    if gitlab_token:
-        headers["Private-Token"] = gitlab_token
-
-    timeout = aiohttp.ClientTimeout(total=30, sock_read=10)
-    async with aiohttp.ClientSession(timeout=timeout) as session:
-        async with session.get(url, headers=headers) as response:
-            if response.status != 200:
-                error_msg = f"Failed to fetch RPA from {url}: HTTP {response.status}"
-                if response.status == 403:
-                    error_msg += ". 403 Forbidden may indicate missing GITLAB_TOKEN environment variable."
-                raise ValueError(error_msg)
-            content = await response.text()
-
-    rpa_data = yaml.load(content)
-    if not rpa_data:
-        raise ValueError(f"RPA file {rpa_name}.yaml is empty or invalid")
-    return rpa_data
+def _extract_fbc_packages(blobs: list[dict]) -> set[str]:
+    """Extract declared package names from a rendered FBC fragment."""
+    packages = set()
+    for blob in blobs:
+        if not isinstance(blob, dict):
+            raise ValueError("Invalid catalog entry while extracting FBC packages")
+        if blob.get("schema") != "olm.package":
+            continue
+        name = blob.get("name")
+        if not isinstance(name, str) or not name.strip():
+            raise ValueError("FBC catalog has an invalid olm.package name")
+        packages.add(name)
+    if not packages:
+        raise ValueError("FBC catalog has no declared olm.package entries")
+    return packages
 
 
-async def _validate_snapshot_against_single_rpa(kind: str, rpa_name: str, snapshot_components: List[str]) -> None:
-    LOGGER.info("Validating %s shipment components against RPA %s...", kind, rpa_name)
-    rpa_data = await fetch_rpa(rpa_name)
+async def _render_fbc_packages(
+    shipment: Shipment, registry_auth_file: Optional[str]
+) -> list[tuple[str, str, set[str]]]:
+    """Render each distinct snapshot image once and retain its component context."""
+    auth_file = registry_auth_file or os.environ.get("QUAY_AUTH_FILE") or os.environ.get("IMAGE_REPO_PULL_SECRET")
+    auth = opm.OpmRegistryAuth(path=auth_file) if auth_file else None
+    packages_by_image = {}
+    component_packages = []
+    for component in shipment.snapshot.spec.components:
+        pullspec = component.containerImage
+        if pullspec not in packages_by_image:
+            start = perf_counter()
+            try:
+                blobs = await opm.render(pullspec, auth=auth)
+                packages_by_image[pullspec] = _extract_fbc_packages(blobs or [])
+            except Exception as exc:
+                raise ValueError(
+                    f"Cannot read FBC packages for component {component.name!r} ({pullspec}): {exc}"
+                ) from exc
+            LOGGER.info("Rendered FBC component %s in %.2f seconds", component.name, perf_counter() - start)
+        component_packages.append((component.name, pullspec, packages_by_image[pullspec]))
+    return component_packages
 
-    allowed_names: Set[str] = set()
-    components = rpa_data.get("spec", {}).get("data", {}).get("mapping", {}).get("components", [])
-    for comp in components:
-        if isinstance(comp, dict) and "name" in comp:
-            allowed_names.add(comp["name"])
 
-    if not allowed_names:
-        raise ValueError(f"RPA {rpa_name} has no components/allowedPackages defined")
+async def validate_snapshot_against_rpa(
+    shipment: Shipment,
+    env: str,
+    kind: str,
+    konflux_client: Optional[KonfluxClient] = None,
+    registry_auth_file: Optional[str] = None,
+) -> None:
+    """Check components against the deployed RPA referenced by each configured RP.
 
-    snapshot_names = set(snapshot_components)
-    missing = snapshot_names - allowed_names
-    if missing:
-        raise ValueError(
-            f"The following {kind} shipment components are not listed in RPA {rpa_name} "
-            f"and would be silently filtered out during release: {sorted(missing)}"
+    Validate both environments, starting with the requested one, so missing
+    production components are caught during stage preparation. An intentionally
+    skipped stage is omitted when validating production. All resource lookups
+    are read-only and respect the product's kubeconfig and tenant namespace.
+    """
+    is_fbc = shipment.metadata.fbc or kind == "fbc"
+    component_packages = None
+
+    environments = shipment.environments.model_dump()
+    if env not in environments:
+        raise ValueError(f"Unsupported release env for RPA validation: {env!r}")
+    if not shipment.snapshot or not shipment.snapshot.spec.components:
+        raise ValueError("Shipment config has no snapshot components to validate")
+
+    if konflux_client is None:
+        konflux_client = KonfluxClient.from_kubeconfig(
+            default_namespace=resolve_konflux_namespace_by_product(shipment.metadata.product),
+            config_file=resolve_konflux_kubeconfig_by_product(shipment.metadata.product),
+            context=None,
+            dry_run=True,
         )
 
-    LOGGER.info(
-        "All %d snapshot components of %s shipment validated against RPA %s",
-        len(snapshot_names),
-        kind,
-        rpa_name,
-    )
-
-
-async def validate_snapshot_against_rpa(group: str, env: str, kind: str, snapshot_components: List[str]) -> None:
-    match = re.fullmatch(r"openshift-(\d+)\.(\d+)", group)
-    if group.startswith("openshift-") and not match:
-        raise ValueError(f"Unrecognized openshift group format, refusing to skip RPA validation: {group!r}")
-    if not match:
-        return
-    major, minor = match.group(1), match.group(2)
-
-    # FBC allowedPackages use OLM package names which don't match Konflux component names
-    if kind == "fbc":
-        LOGGER.info("Skipping RPA validation for FBC releases (different naming scheme)")
-        return
-
-    if kind not in OCP_RPA_KINDS:
-        raise ValueError(f"Unsupported release kind for RPA validation: {kind!r}. Supported: {sorted(OCP_RPA_KINDS)}")
-
-    if env not in OCP_RPA_ENVS:
-        raise ValueError(f"Unsupported release env for RPA validation: {env!r}. Supported: {OCP_RPA_ENVS}")
-
-    envs_to_check = [env] + [e for e in OCP_RPA_ENVS if e != env]
+    snapshot_names = {component.name for component in shipment.snapshot.spec.components}
+    envs_to_check = [env] + [other for other in environments if other != env]
     for check_env in envs_to_check:
-        rpa_name = f"{OCP_RPA_KINDS[kind]}-{check_env}-{major}-{minor}"
-        await _validate_snapshot_against_single_rpa(kind, rpa_name, snapshot_components)
+        release_plan = environments[check_env]["releasePlan"]
+        if is_release_plan_skipped(release_plan) and check_env == "stage" and check_env != env:
+            LOGGER.info("Skipping RPA validation for intentionally skipped %s environment", check_env)
+            continue
+        if not release_plan.strip() or release_plan.strip().casefold() in ("n/a", "skipped"):
+            raise ValueError(f"Cannot validate {check_env}: releasePlan is unresolved or skipped: {release_plan!r}")
+
+        try:
+            rp = (await konflux_client._get(API_VERSION, KIND_RELEASE_PLAN, release_plan)).to_dict()
+            labels = rp.get("metadata", {}).get("labels", {}) or {}
+            rpa_name = labels.get("release.appstudio.openshift.io/releasePlanAdmission")
+            target = rp.get("spec", {}).get("target")
+            if not isinstance(rpa_name, str) or not rpa_name.strip():
+                raise ValueError(f"ReleasePlan {release_plan!r} has no releasePlanAdmission label")
+            if not isinstance(target, str) or not target.strip():
+                raise ValueError(f"ReleasePlan {release_plan!r} has no spec.target namespace")
+            if rp.get("spec", {}).get("application") != shipment.metadata.application:
+                raise ValueError(
+                    f"ReleasePlan {release_plan!r} does not target application {shipment.metadata.application!r}"
+                )
+            rpa = (await konflux_client._get(API_VERSION, "ReleasePlanAdmission", rpa_name, namespace=target)).to_dict()
+        except Exception as exc:
+            raise ValueError(f"Cannot resolve {check_env} RPA from ReleasePlan {release_plan!r}: {exc}") from exc
+
+        rpa_labels = rpa.get("metadata", {}).get("labels", {}) or {}
+        if rpa_labels.get("release.appstudio.openshift.io/block-releases") == "true":
+            raise ValueError(f"{check_env} RPA {target}/{rpa_name} has block-releases set to true")
+
+        rpa_spec = rpa.get("spec", {})
+        applications = rpa_spec.get("applications")
+        if not isinstance(applications, list) or shipment.metadata.application not in applications:
+            LOGGER.warning(
+                "%s RPA %s/%s spec.applications does not include shipment application %r; "
+                "continuing with the RPA explicitly referenced by ReleasePlan %r",
+                check_env,
+                target,
+                rpa_name,
+                shipment.metadata.application,
+                release_plan,
+            )
+        origin_namespace = rp.get("metadata", {}).get("namespace") or konflux_client.default_namespace
+        if rpa_spec.get("origin") != origin_namespace:
+            raise ValueError(
+                f"{check_env} RPA {target}/{rpa_name} spec.origin {rpa_spec.get('origin')!r} "
+                f"does not match ReleasePlan {release_plan!r} namespace {origin_namespace!r}"
+            )
+
+        LOGGER.info("Validating %s shipment components against %s RPA %s/%s", kind, check_env, target, rpa_name)
+        if is_fbc:
+            allowed = rpa.get("spec", {}).get("data", {}).get("fbc", {}).get("allowedPackages")
+            if (
+                not isinstance(allowed, list)
+                or not allowed
+                or any(not isinstance(p, str) or not p.strip() for p in allowed)
+            ):
+                raise ValueError(f"{check_env} RPA {target}/{rpa_name} must define a nonempty allowedPackages list")
+            if component_packages is None:
+                component_packages = await _render_fbc_packages(shipment, registry_auth_file)
+            allowed_packages = set(allowed)
+            for component, pullspec, packages in component_packages:
+                missing = packages - allowed_packages
+                if missing:
+                    raise ValueError(
+                        f"FBC component {component!r} ({pullspec}) has packages not listed in {check_env} RPA "
+                        f"{target}/{rpa_name} allowedPackages: {sorted(missing)}"
+                    )
+            LOGGER.info("All FBC packages validated against %s RPA %s/%s", check_env, target, rpa_name)
+            continue
+
+        components = rpa.get("spec", {}).get("data", {}).get("mapping", {}).get("components", [])
+        allowed_names = {comp["name"] for comp in components if isinstance(comp, dict) and "name" in comp}
+        if not allowed_names:
+            raise ValueError(f"RPA {target}/{rpa_name} has no components defined")
+        missing = snapshot_names - allowed_names
+        if missing:
+            raise ValueError(
+                f"The following {kind} shipment components are not listed in {check_env} RPA {target}/{rpa_name} "
+                f"and would be silently filtered out during release: {sorted(missing)}"
+            )
+        LOGGER.info(
+            "All %d snapshot components of %s shipment validated against RPA %s/%s",
+            len(snapshot_names),
+            kind,
+            target,
+            rpa_name,
+        )
 
 
 @dataclass
@@ -129,7 +214,7 @@ class CreateReleaseCli:
         config_path: str,
         release_env: str,
         konflux_config: dict,
-        image_repo_pull_secret: dict,
+        image_repo_pull_secret: Optional[str],
         dry_run: bool,
         kind: str,
         job_url: str = None,
@@ -241,10 +326,15 @@ class CreateReleaseCli:
             )
 
         # Validate snapshot components against RPA before creating anything
-        if self.runtime.group.startswith("openshift-") and config.shipment.snapshot:
+        if config.shipment.snapshot:
             LOGGER.info("Validating snapshot components against RPA...")
-            component_names = [c.name for c in config.shipment.snapshot.spec.components]
-            await validate_snapshot_against_rpa(self.runtime.group, self.release_env, self.kind, component_names)
+            await validate_snapshot_against_rpa(
+                config.shipment,
+                self.release_env,
+                self.kind,
+                self.konflux_client,
+                registry_auth_file=self.image_repo_pull_secret,
+            )
 
         # Create snapshot first using the spec from shipment config
         LOGGER.info("Creating snapshot from shipment config...")
@@ -523,7 +613,7 @@ async def new_release_cli(
     '--kind',
     metavar='KIND',
     required=True,
-    type=click.Choice(["image", "metadata", "extras"]),
+    type=click.Choice(["image", "metadata", "extras", "microshift-bootc", "fbc"]),
     help='The kind of release',
 )
 @click.pass_obj
@@ -533,8 +623,10 @@ async def validate_rpa_cli(runtime: Runtime, config, env, kind):
     Validate that all snapshot components in a shipment config are present in the
     ReleasePlanAdmission (RPA) for the given environment and kind.
 
-    Components not listed in the RPA are silently filtered out during release,
-    which can cause builds to be missed without any error.
+    Image components are checked against the RPA component mapping. FBC images
+    are rendered once per distinct pullspec and their declared packages are
+    checked against allowedPackages. Registry authentication uses QUAY_AUTH_FILE
+    or IMAGE_REPO_PULL_SECRET for this standalone command.
 
     \b
     $ elliott -g openshift-4.18 --assembly 4.18.2 --shipment-path \\
@@ -556,5 +648,5 @@ async def validate_rpa_cli(runtime: Runtime, config, env, kind):
     component_names = [c.name for c in shipment_config.shipment.snapshot.spec.components]
     LOGGER.info("Validating %d components against RPA for %s/%s...", len(component_names), env, kind)
 
-    await validate_snapshot_against_rpa(runtime.group, env, kind, component_names)
+    await validate_snapshot_against_rpa(shipment_config.shipment, env, kind)
     LOGGER.info("Validation passed: all components are present in the RPA")

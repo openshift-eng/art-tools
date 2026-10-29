@@ -690,8 +690,7 @@ class PrepareReleaseKonfluxPipeline:
         # Validate snapshot components against RPA before finalizing
         for kind, shipment in shipments_by_kind.items():
             if shipment.shipment.snapshot and shipment.shipment.snapshot.spec.components:
-                component_names = [c.name for c in shipment.shipment.snapshot.spec.components]
-                await validate_snapshot_against_rpa(self.group, env, kind, component_names)
+                await validate_snapshot_against_rpa(shipment.shipment, env, kind)
 
         # Update shipment MR with found builds
         await self.update_shipment_mr(shipments_by_kind, env, shipment_url)

@@ -618,6 +618,12 @@ class TestPrepareReleaseLPBundleScoping(unittest.TestCase):
 class TestPrepareReleaseLPRun(unittest.TestCase):
     """Integration-level tests for the run() method with mocked externals."""
 
+    def setUp(self):
+        # These tests isolate MR/build orchestration; validator integration is covered separately.
+        self.enterContext(
+            patch("pyartcd.pipelines.prepare_release_lp.validate_snapshot_against_rpa", new_callable=AsyncMock)
+        )
+
     def _make_pipeline(self, tmp_dir, **overrides):
         from pathlib import Path
 
