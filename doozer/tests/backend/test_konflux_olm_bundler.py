@@ -7,7 +7,6 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import yaml
 from artcommonlib.assembly import AssemblyTypes
-from artcommonlib.conforma import resolve_stage_policy
 from artcommonlib.konflux.konflux_build_record import KonfluxBuildOutcome, KonfluxBundleBuildRecord
 from artcommonlib.konflux.konflux_db import Engine
 from artcommonlib.model import Model
@@ -1723,17 +1722,63 @@ spec:
 
 class TestKonfluxOlmBundleBuilder(IsolatedAsyncioTestCase):
     async def test_build_stage_policy_and_eligibility(self):
-        for group, assembly, assembly_type, phase, skip, outcome in (
-            ("openshift-4.23", "stream", AssemblyTypes.PREVIEW, "release", False, KonfluxBuildOutcome.SUCCESS),
-            ("openshift-4.23", "stream", AssemblyTypes.STANDARD, "pre-release", False, KonfluxBuildOutcome.SUCCESS),
-            ("openshift-4.23", "test", AssemblyTypes.PREVIEW, "release", False, KonfluxBuildOutcome.SUCCESS),
-            ("openshift-4.23", "test", AssemblyTypes.STANDARD, "pre-release", False, KonfluxBuildOutcome.SUCCESS),
-            ("openshift-4.23", "stream", AssemblyTypes.STANDARD, "release", True, KonfluxBuildOutcome.SUCCESS),
-            ("logging-6.2", "stream", AssemblyTypes.STANDARD, "release", False, KonfluxBuildOutcome.SUCCESS),
-            ("openshift-4.23", "stream", AssemblyTypes.STANDARD, "release", False, KonfluxBuildOutcome.FAILURE),
+        ocp_policies = {
+            ("stream", "release"): "rhtap-releng-tenant/registry-ocp-art-stage",
+            ("stream", "pre-release"): "rhtap-releng-tenant/registry-ocp-art-ec-stage",
+            ("test", "release"): "ocp-art-tenant/conforma-build-stage-test",
+            ("test", "pre-release"): "ocp-art-tenant/conforma-build-ec-stage-test",
+        }
+        for group, assembly, assembly_type, phase, skip, outcome, product in (
+            ("openshift-4.23", "stream", AssemblyTypes.PREVIEW, "release", False, KonfluxBuildOutcome.SUCCESS, None),
+            (
+                "openshift-4.23",
+                "stream",
+                AssemblyTypes.STANDARD,
+                "pre-release",
+                False,
+                KonfluxBuildOutcome.SUCCESS,
+                "ocp",
+            ),
+            ("openshift-4.23", "test", AssemblyTypes.PREVIEW, "release", False, KonfluxBuildOutcome.SUCCESS, None),
+            (
+                "openshift-4.23",
+                "test",
+                AssemblyTypes.STANDARD,
+                "pre-release",
+                False,
+                KonfluxBuildOutcome.SUCCESS,
+                "ocp",
+            ),
+            ("openshift-4.23", "stream", AssemblyTypes.STANDARD, "release", True, KonfluxBuildOutcome.SUCCESS, None),
+            ("logging-6.2", "stream", AssemblyTypes.STANDARD, "release", False, KonfluxBuildOutcome.SUCCESS, "logging"),
+            ("openshift-4.23", "stream", AssemblyTypes.STANDARD, "release", False, KonfluxBuildOutcome.FAILURE, None),
+            (
+                "openshift-4.23",
+                "stream",
+                AssemblyTypes.STANDARD,
+                "release",
+                False,
+                KonfluxBuildOutcome.SUCCESS,
+                "openshift-logging",
+            ),
+            (
+                "openshift-4.23",
+                "test",
+                AssemblyTypes.PREVIEW,
+                "pre-release",
+                False,
+                KonfluxBuildOutcome.SUCCESS,
+                "logging",
+            ),
         ):
             with self.subTest(
-                group=group, assembly=assembly, assembly_type=assembly_type, phase=phase, skip=skip, outcome=outcome
+                group=group,
+                assembly=assembly,
+                assembly_type=assembly_type,
+                phase=phase,
+                skip=skip,
+                outcome=outcome,
+                product=product,
             ):
                 self.builder.group = group
                 self.builder.assembly = assembly
@@ -1741,7 +1786,8 @@ class TestKonfluxOlmBundleBuilder(IsolatedAsyncioTestCase):
                 self.builder.skip_ec_verify = skip
                 metadata = MagicMock()
                 metadata.runtime.group = group
-                metadata.runtime.group_config = Model({"software_lifecycle": {"phase": phase}})
+                metadata.runtime.group_config = Model({"product": product, "software_lifecycle": {"phase": phase}})
+                metadata.runtime.product = metadata.runtime.group_config.product or "ocp"
                 metadata.get_olm_bundle_short_name.return_value = "test-bundle"
                 metadata.get_konflux_build_attempts.return_value = 1
                 repo = MagicMock(commit_hash="commit", url="https://example.com/bundle")
@@ -1798,7 +1844,9 @@ class TestKonfluxOlmBundleBuilder(IsolatedAsyncioTestCase):
                     verify.assert_awaited_once()
                     self.assertEqual(
                         verify.call_args.kwargs["ec_policy"],
-                        resolve_stage_policy("ocp", lifecycle_phase=phase, assembly=assembly),
+                        "rhtap-releng-tenant/registry-art-logging-stage"
+                        if product in ("logging", "openshift-logging")
+                        else ocp_policies[(assembly, phase)],
                     )
                 else:
                     verify.assert_not_awaited()

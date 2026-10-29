@@ -812,12 +812,14 @@ class BuildConformaVerifyPipeline:
 @click.option(
     "--ec-policy",
     default=None,
-    help="EnterpriseContractPolicy CR reference (namespace/name). Defaults to ocp-art-tenant/conforma-build-stage",
+    help="EnterpriseContractPolicy CR reference (namespace/name). "
+    "Defaults to the stage policy for the product, lifecycle, assembly and build type",
 )
 @click.option(
     "--fbc-ec-policy",
     default=None,
-    help="EnterpriseContractPolicy CR reference for FBC builds (namespace/name). Falls back to --ec-policy if unset",
+    help="EnterpriseContractPolicy CR reference for FBC builds (namespace/name). "
+    "Falls back to --ec-policy, then the product's FBC stage policy",
 )
 @click.option(
     "--effective-time",

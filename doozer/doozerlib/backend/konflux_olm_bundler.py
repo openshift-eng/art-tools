@@ -1228,7 +1228,7 @@ class KonfluxOlmBundleBuilder:
                         source_url = artlib_util.convert_remote_git_to_https(bundle_build_repo.url)
 
                         ec_policy = resolve_stage_policy(
-                            "ocp",
+                            metadata.runtime.product,
                             lifecycle_phase=metadata.runtime.group_config.get("software_lifecycle", {}).get("phase"),
                             assembly=self.assembly,
                             build_type="bundle",

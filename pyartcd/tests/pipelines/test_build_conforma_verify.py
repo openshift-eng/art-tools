@@ -4,10 +4,12 @@ import os
 import unittest
 from unittest.mock import AsyncMock, MagicMock, patch
 
+from click.testing import CliRunner
 from pyartcd.pipelines.build_conforma_verify import (
     BuildConformaVerifyPipeline,
     _integration_test_scenario_name,
     _resolve_ec_policy_configuration,
+    build_conforma_verify,
 )
 
 SAMPLE_EC_REPORT_LOG = """\
@@ -121,6 +123,22 @@ def _make_pipeline(**kwargs):
     }
     defaults.update(kwargs)
     return BuildConformaVerifyPipeline(**defaults)
+
+
+class TestCliHelp(unittest.TestCase):
+    def test_policy_help_describes_dynamic_defaults_and_fbc_precedence(self):
+        result = CliRunner().invoke(build_conforma_verify, ["--help"], terminal_width=160)
+
+        self.assertEqual(result.exit_code, 0, result.output)
+        help_text = " ".join(result.output.split())
+        self.assertIn("--ec-policy", help_text)
+        self.assertIn("Defaults to the stage policy for the product, lifecycle, assembly and build type", help_text)
+        self.assertIn("--fbc-ec-policy", help_text)
+        self.assertIn("Falls back to --ec-policy, then the product's FBC stage policy", help_text)
+        self.assertNotIn("ocp-art-tenant/conforma-build-stage", help_text)
+        options = {parameter.name: parameter for parameter in build_conforma_verify.params}
+        self.assertIsNone(options["ec_policy"].default)
+        self.assertIsNone(options["fbc_ec_policy"].default)
 
 
 class TestPipelineInit(unittest.TestCase):
