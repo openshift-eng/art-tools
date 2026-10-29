@@ -52,7 +52,14 @@ class TestLPPreparationRPAValidation(IsolatedAsyncioTestCase):
                     "spec": {"target": "managed", "application": "oadp-1-5"},
                 }
             else:
-                data = {"spec": {"data": {"mapping": {"components": [{"name": name} for name in self.allowed[env]]}}}}
+                data = {
+                    "spec": {
+                        "data": {
+                            "mapping": {"components": [{"name": name} for name in self.allowed[env]]},
+                            "fbc": {"allowedPackages": self.allowed[env]},
+                        }
+                    }
+                }
             return ResourceInstance(None, {"apiVersion": version, "kind": kind, **data})
 
         self.client = MagicMock()
@@ -110,6 +117,14 @@ class TestLPPreparationRPAValidation(IsolatedAsyncioTestCase):
             pipeline.write_shipment_files_locally = AsyncMock()
             publish = pipeline.create_shipment_mr
             write = pipeline.write_shipment_files_locally
+            if fbc_only:
+                fbc_nvr = "oadp-operator-fbc-1.5.8-1.ocp5.0"
+                pipeline.fbc_pullspecs = [config.shipment.snapshot.spec.components[0].containerImage]
+                pipeline.extra_image_nvrs = []
+                pipeline.extract_fbc_nvr = MagicMock(return_value=fbc_nvr)
+                pipeline._load_ignore_patch_version_from_group_config = AsyncMock(return_value=False)
+                pipeline.validate_fbc_related_images = AsyncMock(return_value=[])
+                pipeline.categorize_nvrs = MagicMock(return_value={"image": [], "fbc": [fbc_nvr], "external": []})
         return pipeline, publish, write
 
     async def test_both_pipelines_validate_configured_rpas_before_publishing(self):
@@ -180,8 +195,26 @@ class TestLPPreparationRPAValidation(IsolatedAsyncioTestCase):
                 reconcile.assert_not_awaited()
                 publish.assert_not_awaited()
 
-    async def test_numbered_fbc_shipments_retain_the_explicit_skip(self):
-        pipeline, publish, _ = self.make_pipeline("prepare-release-lp", fbc_only=True)
-        await pipeline.run()
-        self.assertEqual(list(publish.await_args.args[0]), ["fbc01"])
-        self.factory.assert_not_called()
+    @patch("doozerlib.opm.render", new_callable=AsyncMock)
+    async def test_numbered_fbc_shipments_validate_packages_before_publication(self, render):
+        render.return_value = [{"schema": "olm.package", "name": "oadp-operator"}]
+        for name in ("prepare-release-lp", "release-from-fbc"):
+            with self.subTest(pipeline=name):
+                render.reset_mock()
+                self.client._get.reset_mock()
+                pipeline, publish, _ = self.make_pipeline(name, fbc_only=True)
+                await pipeline.run()
+                self.assertEqual(list(publish.await_args.args[0]), ["fbc01"])
+                render.assert_awaited_once()
+                self.assertEqual(self.client._get.await_count, 4)
+
+    @patch("doozerlib.opm.render", new_callable=AsyncMock)
+    async def test_missing_fbc_package_blocks_shipment_mr(self, render):
+        render.return_value = [{"schema": "olm.package", "name": "missing-operator"}]
+        for name in ("prepare-release-lp", "release-from-fbc"):
+            with self.subTest(pipeline=name):
+                pipeline, publish, write = self.make_pipeline(name, fbc_only=True)
+                with self.assertRaisesRegex(ValueError, "missing-operator"):
+                    await pipeline.run()
+                publish.assert_not_awaited()
+                write.assert_not_awaited()

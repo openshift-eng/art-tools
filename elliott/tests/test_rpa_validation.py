@@ -5,7 +5,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 from click.testing import CliRunner
 from doozerlib.backend.konflux_client import API_VERSION, KIND_RELEASE_PLAN, KonfluxClient
-from elliottlib.cli.konflux_release_cli import validate_rpa_cli, validate_snapshot_against_rpa
+from elliottlib.cli.konflux_release_cli import CreateReleaseCli, validate_rpa_cli, validate_snapshot_against_rpa
 from elliottlib.shipment_model import Shipment
 from kubernetes.dynamic import ResourceInstance
 
@@ -145,9 +145,177 @@ class TestRPAValidation(IsolatedAsyncioTestCase):
                 with self.assertRaisesRegex(ValueError, "prod"):
                     await self.validate()
 
-    async def test_fbc_remains_explicitly_skipped(self):
+    def configure_fbc(self):
+        self.shipment.metadata.fbc = True
+        self.shipment.data = None
+        for env in ("stage", "prod"):
+            self.resources[("ReleasePlanAdmission", f"unusual-{env}-admission", f"managed-{env}")]["spec"]["data"] = {
+                "fbc": {"allowedPackages": ["actual-operator", "extra-operator"]}
+            }
+
+    @patch("doozerlib.opm.render", new_callable=AsyncMock)
+    async def test_fbc_uses_rendered_package_names_and_renders_once_for_both_environments(self, render):
+        self.configure_fbc()
+        render.return_value = [{"schema": "olm.package", "name": "actual-operator"}]
+        with patch.dict(os.environ, {"QUAY_AUTH_FILE": "/tmp/job-auth"}):
+            await self.validate(kind="fbc")
+        render.assert_awaited_once()
+        self.assertEqual(render.await_args.args, ("quay.io/test/image@sha256:abc",))
+        self.assertEqual(render.await_args.kwargs["auth"].path, "/tmp/job-auth")
+        self.assertEqual(self.client._get.await_count, 4)
+
+    @patch("doozerlib.opm.render", new_callable=AsyncMock)
+    async def test_missing_fbc_package_is_rejected_in_either_environment(self, render):
+        self.configure_fbc()
+        render.return_value = [{"schema": "olm.package", "name": "actual-operator"}]
+        for env in ("stage", "prod"):
+            with self.subTest(env=env):
+                allowed = self.resources[("ReleasePlanAdmission", f"unusual-{env}-admission", f"managed-{env}")][
+                    "spec"
+                ]["data"]["fbc"]["allowedPackages"]
+                allowed.remove("actual-operator")
+                with self.assertRaisesRegex(ValueError, f"{env}.*actual-operator"):
+                    await self.validate(kind="fbc")
+                allowed.append("actual-operator")
+
+    @patch("doozerlib.opm.render", new_callable=AsyncMock)
+    async def test_fbc_checks_all_packages_and_deduplicates_identical_images(self, render):
+        self.configure_fbc()
+        duplicate = self.shipment.snapshot.spec.components[0].model_copy(update={"name": "second-fragment"})
+        self.shipment.snapshot.spec.components.append(duplicate)
+        render.return_value = [
+            {"schema": "olm.package", "name": "actual-operator"},
+            {"schema": "olm.package", "name": "missing-operator"},
+        ]
+        with self.assertRaisesRegex(ValueError, "test-component.*missing-operator"):
+            await self.validate(kind="fbc")
+        render.return_value[1]["name"] = "extra-operator"
+        render.reset_mock()
         await self.validate(kind="fbc")
-        self.client._get.assert_not_awaited()
+        render.assert_awaited_once()
+
+    @patch("doozerlib.opm.render", new_callable=AsyncMock)
+    async def test_each_distinct_fbc_image_is_validated(self, render):
+        self.configure_fbc()
+        second = self.shipment.snapshot.spec.components[0].model_copy(
+            update={"name": "second-fragment", "containerImage": "quay.io/test/second@sha256:def"}
+        )
+        self.shipment.snapshot.spec.components.append(second)
+        render.side_effect = [
+            [{"schema": "olm.package", "name": "actual-operator"}],
+            [{"schema": "olm.package", "name": "missing-operator"}],
+        ]
+        with self.assertRaisesRegex(ValueError, "second-fragment.*missing-operator"):
+            await self.validate(kind="fbc")
+
+    @patch("doozerlib.opm.render", new_callable=AsyncMock)
+    async def test_duplicate_component_names_cannot_hide_disallowed_packages(self, render):
+        self.configure_fbc()
+        second = self.shipment.snapshot.spec.components[0].model_copy(
+            update={"containerImage": "quay.io/test/second@sha256:def"}
+        )
+        self.shipment.snapshot.spec.components.append(second)
+        render.side_effect = [
+            [{"schema": "olm.package", "name": "missing-operator"}],
+            [{"schema": "olm.package", "name": "actual-operator"}],
+        ]
+        with self.assertRaisesRegex(ValueError, "test-component.*missing-operator"):
+            await self.validate(kind="fbc")
+
+    @patch("doozerlib.opm.render", new_callable=AsyncMock)
+    async def test_fbc_rejects_missing_empty_or_malformed_allowlist(self, render):
+        self.configure_fbc()
+        fbc = self.resources[("ReleasePlanAdmission", "unusual-stage-admission", "managed-stage")]["spec"]["data"][
+            "fbc"
+        ]
+        for value in (None, [], "actual-operator", [None], [""]):
+            with self.subTest(value=value):
+                fbc["allowedPackages"] = value
+                with self.assertRaisesRegex(ValueError, "allowedPackages"):
+                    await self.validate(kind="fbc")
+        render.assert_not_awaited()
+
+    @patch("doozerlib.opm.render", new_callable=AsyncMock)
+    async def test_fbc_rejects_catalogs_without_valid_packages(self, render):
+        self.configure_fbc()
+        for blobs in (
+            [],
+            [{"schema": "olm.bundle", "package": "actual-operator"}],
+            [{"schema": "olm.package"}],
+            [{"schema": "olm.package", "name": ""}],
+            [{"schema": "olm.package", "name": 42}],
+        ):
+            with self.subTest(blobs=blobs):
+                render.return_value = blobs
+                with self.assertRaisesRegex(ValueError, "test-component.*package"):
+                    await self.validate(kind="fbc")
+
+    @patch("doozerlib.opm.render", new_callable=AsyncMock)
+    async def test_fbc_render_failure_has_component_context(self, render):
+        self.configure_fbc()
+        render.side_effect = IOError("registry unauthorized")
+        with self.assertRaisesRegex(ValueError, "test-component.*registry unauthorized"):
+            await self.validate(kind="fbc")
+
+    @patch("doozerlib.opm.render", new_callable=AsyncMock)
+    async def test_fbc_explicit_registry_auth_takes_precedence(self, render):
+        self.configure_fbc()
+        render.return_value = [{"schema": "olm.package", "name": "actual-operator"}]
+        with patch.dict(os.environ, {"QUAY_AUTH_FILE": "/tmp/job-auth"}):
+            await validate_snapshot_against_rpa(
+                self.shipment, "stage", "fbc", self.client, registry_auth_file="/tmp/release-ci-auth"
+            )
+        self.assertEqual(render.await_args.kwargs["auth"].path, "/tmp/release-ci-auth")
+
+    @patch("doozerlib.opm.render", new_callable=AsyncMock)
+    async def test_release_creation_passes_pull_secret_and_rejects_missing_fbc_package_before_writes(self, render):
+        self.configure_fbc()
+        render.return_value = [{"schema": "olm.package", "name": "missing-operator"}]
+        original_get = self.client._get.side_effect
+
+        async def get(version, kind, name, namespace=None):
+            if kind == "Application":
+                return ResourceInstance(None, {"apiVersion": version, "kind": kind, "metadata": {"name": name}})
+            return await original_get(version, kind, name, namespace)
+
+        self.client._get.side_effect = get
+        self.client.verify_connection = MagicMock()
+        runtime = MagicMock()
+        runtime.product = self.shipment.metadata.product
+        runtime.group = self.shipment.metadata.group
+        runtime.assembly = self.shipment.metadata.assembly
+        runtime.shipment_gitdata.load_yaml_file.return_value = {"shipment": self.shipment.model_dump(exclude_none=True)}
+        with patch.object(KonfluxClient, "from_kubeconfig", autospec=True, return_value=self.client):
+            command = CreateReleaseCli(
+                runtime,
+                "shipment.yaml",
+                "prod",
+                {"namespace": "tenant", "kubeconfig": None, "context": None},
+                image_repo_pull_secret="/tmp/release-ci-auth",
+                dry_run=True,
+                kind="fbc",
+            )
+            with self.assertRaisesRegex(ValueError, "missing-operator"):
+                await command.run()
+        self.client._create.assert_not_awaited()
+        self.assertEqual(render.await_args.kwargs["auth"].path, "/tmp/release-ci-auth")
+
+    @patch("doozerlib.opm.render", new_callable=AsyncMock)
+    def test_standalone_fbc_command_uses_registry_environment_credentials(self, render):
+        self.configure_fbc()
+        render.return_value = [{"schema": "olm.package", "name": "actual-operator"}]
+        runtime = MagicMock()
+        runtime.shipment_gitdata.load_yaml_file.return_value = {"shipment": self.shipment.model_dump(exclude_none=True)}
+        with (
+            patch.dict(os.environ, {"QUAY_AUTH_FILE": "", "IMAGE_REPO_PULL_SECRET": "/tmp/ci-auth"}),
+            patch.object(KonfluxClient, "from_kubeconfig", autospec=True, return_value=self.client),
+        ):
+            result = CliRunner().invoke(
+                validate_rpa_cli, ["--config", "shipment.yaml", "--env", "prod", "--kind", "fbc"], obj=runtime
+            )
+        self.assertEqual(result.exit_code, 0, str(result.exception))
+        render.assert_awaited_once()
+        self.assertEqual(render.await_args.kwargs["auth"].path, "/tmp/ci-auth")
 
     async def test_invalid_environment_fails(self):
         with self.assertRaisesRegex(ValueError, "env"):

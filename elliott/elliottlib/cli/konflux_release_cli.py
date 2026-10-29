@@ -1,5 +1,7 @@
+import os
 import sys
 from dataclasses import dataclass
+from time import perf_counter
 from typing import Optional
 
 import click
@@ -12,6 +14,7 @@ from artcommonlib.util import (
     resolve_konflux_namespace_by_product,
     validate_k8s_dns_label,
 )
+from doozerlib import opm
 from doozerlib.backend.konflux_client import (
     API_VERSION,
     KIND_APPLICATION,
@@ -32,8 +35,53 @@ yaml = new_roundtrip_yaml_handler()
 LOGGER = logutil.get_logger(__name__)
 
 
+def _extract_fbc_packages(blobs: list[dict]) -> set[str]:
+    """Extract declared package names from a rendered FBC fragment."""
+    packages = set()
+    for blob in blobs:
+        if not isinstance(blob, dict):
+            raise ValueError("Invalid catalog entry while extracting FBC packages")
+        if blob.get("schema") != "olm.package":
+            continue
+        name = blob.get("name")
+        if not isinstance(name, str) or not name.strip():
+            raise ValueError("FBC catalog has an invalid olm.package name")
+        packages.add(name)
+    if not packages:
+        raise ValueError("FBC catalog has no declared olm.package entries")
+    return packages
+
+
+async def _render_fbc_packages(
+    shipment: Shipment, registry_auth_file: Optional[str]
+) -> list[tuple[str, str, set[str]]]:
+    """Render each distinct snapshot image once and retain its component context."""
+    auth_file = registry_auth_file or os.environ.get("QUAY_AUTH_FILE") or os.environ.get("IMAGE_REPO_PULL_SECRET")
+    auth = opm.OpmRegistryAuth(path=auth_file) if auth_file else None
+    packages_by_image = {}
+    component_packages = []
+    for component in shipment.snapshot.spec.components:
+        pullspec = component.containerImage
+        if pullspec not in packages_by_image:
+            start = perf_counter()
+            try:
+                blobs = await opm.render(pullspec, auth=auth)
+                packages_by_image[pullspec] = _extract_fbc_packages(blobs or [])
+            except Exception as exc:
+                raise ValueError(
+                    f"Cannot read FBC packages for component {component.name!r} ({pullspec}): {exc}"
+                ) from exc
+            LOGGER.info("Rendered FBC component %s in %.2f seconds", component.name, perf_counter() - start)
+        component_packages.append((component.name, pullspec, packages_by_image[pullspec]))
+    return component_packages
+
+
 async def validate_snapshot_against_rpa(
-    shipment: Shipment, env: str, kind: str, konflux_client: Optional[KonfluxClient] = None
+    shipment: Shipment,
+    env: str,
+    kind: str,
+    konflux_client: Optional[KonfluxClient] = None,
+    registry_auth_file: Optional[str] = None,
 ) -> None:
     """Check components against the deployed RPA referenced by each configured RP.
 
@@ -42,9 +90,8 @@ async def validate_snapshot_against_rpa(
     skipped stage is omitted when validating production. All resource lookups
     are read-only and respect the product's kubeconfig and tenant namespace.
     """
-    if kind == "fbc":
-        LOGGER.info("Skipping RPA validation for FBC releases (different naming scheme)")
-        return
+    is_fbc = shipment.metadata.fbc or kind == "fbc"
+    component_packages = None
 
     environments = shipment.environments.model_dump()
     if env not in environments:
@@ -88,6 +135,27 @@ async def validate_snapshot_against_rpa(
             raise ValueError(f"Cannot resolve {check_env} RPA from ReleasePlan {release_plan!r}: {exc}") from exc
 
         LOGGER.info("Validating %s shipment components against %s RPA %s/%s", kind, check_env, target, rpa_name)
+        if is_fbc:
+            allowed = rpa.get("spec", {}).get("data", {}).get("fbc", {}).get("allowedPackages")
+            if (
+                not isinstance(allowed, list)
+                or not allowed
+                or any(not isinstance(p, str) or not p.strip() for p in allowed)
+            ):
+                raise ValueError(f"{check_env} RPA {target}/{rpa_name} must define a nonempty allowedPackages list")
+            if component_packages is None:
+                component_packages = await _render_fbc_packages(shipment, registry_auth_file)
+            allowed_packages = set(allowed)
+            for component, pullspec, packages in component_packages:
+                missing = packages - allowed_packages
+                if missing:
+                    raise ValueError(
+                        f"FBC component {component!r} ({pullspec}) has packages not listed in {check_env} RPA "
+                        f"{target}/{rpa_name} allowedPackages: {sorted(missing)}"
+                    )
+            LOGGER.info("All FBC packages validated against %s RPA %s/%s", check_env, target, rpa_name)
+            continue
+
         components = rpa.get("spec", {}).get("data", {}).get("mapping", {}).get("components", [])
         allowed_names = {comp["name"] for comp in components if isinstance(comp, dict) and "name" in comp}
         if not allowed_names:
@@ -123,7 +191,7 @@ class CreateReleaseCli:
         config_path: str,
         release_env: str,
         konflux_config: dict,
-        image_repo_pull_secret: dict,
+        image_repo_pull_secret: Optional[str],
         dry_run: bool,
         kind: str,
         job_url: str = None,
@@ -237,7 +305,13 @@ class CreateReleaseCli:
         # Validate snapshot components against RPA before creating anything
         if config.shipment.snapshot:
             LOGGER.info("Validating snapshot components against RPA...")
-            await validate_snapshot_against_rpa(config.shipment, self.release_env, self.kind, self.konflux_client)
+            await validate_snapshot_against_rpa(
+                config.shipment,
+                self.release_env,
+                self.kind,
+                self.konflux_client,
+                registry_auth_file=self.image_repo_pull_secret,
+            )
 
         # Create snapshot first using the spec from shipment config
         LOGGER.info("Creating snapshot from shipment config...")
@@ -516,7 +590,7 @@ async def new_release_cli(
     '--kind',
     metavar='KIND',
     required=True,
-    type=click.Choice(["image", "metadata", "extras", "microshift-bootc"]),
+    type=click.Choice(["image", "metadata", "extras", "microshift-bootc", "fbc"]),
     help='The kind of release',
 )
 @click.pass_obj
@@ -526,8 +600,10 @@ async def validate_rpa_cli(runtime: Runtime, config, env, kind):
     Validate that all snapshot components in a shipment config are present in the
     ReleasePlanAdmission (RPA) for the given environment and kind.
 
-    Components not listed in the RPA are silently filtered out during release,
-    which can cause builds to be missed without any error.
+    Image components are checked against the RPA component mapping. FBC images
+    are rendered once per distinct pullspec and their declared packages are
+    checked against allowedPackages. Registry authentication uses QUAY_AUTH_FILE
+    or IMAGE_REPO_PULL_SECRET for this standalone command.
 
     \b
     $ elliott -g openshift-4.18 --assembly 4.18.2 --shipment-path \\
