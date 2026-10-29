@@ -1,3 +1,4 @@
+import asyncio
 import unittest
 from pathlib import Path
 from tempfile import TemporaryDirectory
@@ -239,8 +240,18 @@ class TestOlmBundleKonfluxStageReleaseGating(unittest.IsolatedAsyncioTestCase):
         mock_jenkins,
     ):
         """New OCP bundles must be stage-released before triggering FBC builds."""
-        mock_stage_release.return_value = []
-        mock_jenkins.start_build_fbc.side_effect = lambda **kwargs: mock_stage_release.assert_awaited_once()
+        stage_release_completed = asyncio.Event()
+
+        async def stage_release(**kwargs):
+            await asyncio.sleep(0)
+            stage_release_completed.set()
+            return []
+
+        def start_fbc(**kwargs):
+            self.assertTrue(stage_release_completed.is_set())
+
+        mock_stage_release.side_effect = stage_release
+        mock_jenkins.start_build_fbc.side_effect = start_fbc
         self._write_bundle_record(status='0', operator_nvr='op-1-1', bundle_nvr='op-bundle-1-1')
 
         await self._run_pipeline(
