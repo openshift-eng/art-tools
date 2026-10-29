@@ -2,6 +2,7 @@ import unittest
 from typing import Dict, Iterable, List, cast
 from unittest.mock import AsyncMock, Mock, PropertyMock, patch
 
+from artcommonlib.assembly import AssemblyTypes
 from elliottlib import constants
 from elliottlib.bzutil import Bug, BugzillaBug
 from elliottlib.cli.attach_cve_flaws_cli import AttachCveFlaws
@@ -541,6 +542,45 @@ class TestAttachCVEFlawsCLI(unittest.IsolatedAsyncioTestCase):
 
                 # Type should be converted to RHBA
                 self.assertEqual(release_notes.type, "RHBA")
+
+    def test_update_release_notes_reconcile_advisory_type(self) -> None:
+        """
+        Preserve GA enhancement advisories and restore the correct type after CVEs are removed.
+        """
+        cases = [
+            (AssemblyTypes.STANDARD, "5.0.0", "RHEA"),
+            (AssemblyTypes.STANDARD, "5.0.1", "RHBA"),
+            (AssemblyTypes.CUSTOM, "5.0.0", "RHBA"),
+            (AssemblyTypes.STREAM, "stream", "RHBA"),
+        ]
+        for assembly_type, assembly, expected_type in cases:
+            for original_type in ("RHEA", "RHBA", "RHSA"):
+                with self.subTest(assembly=assembly, assembly_type=assembly_type, original_type=original_type):
+                    self.mock_runtime.assembly_type = assembly_type
+                    self.mock_runtime.assembly = assembly
+                    release_notes = ReleaseNotes(type=original_type)
+                    pipeline = AttachCveFlaws(
+                        self.mock_runtime,
+                        advisory_id=0,
+                        into_default_advisories=False,
+                        default_advisory_type="image",
+                        output="yaml",
+                        noop=False,
+                        reconcile=True,
+                    )
+                    boilerplate = dict.fromkeys(("synopsis", "topic", "description", "solution"), expected_type)
+                    with patch(
+                        "elliottlib.cli.attach_cve_flaws_cli.get_advisory_boilerplate", return_value=boilerplate
+                    ) as get_boilerplate:
+                        pipeline.update_release_notes(release_notes, [], [], {})
+
+                    self.assertEqual(release_notes.type, expected_type)
+                    if original_type == expected_type:
+                        get_boilerplate.assert_not_called()
+                    else:
+                        self.assertEqual(get_boilerplate.call_args.kwargs["errata_type"], expected_type)
+                        self.assertEqual(release_notes.synopsis, expected_type)
+                        self.assertIsNone(release_notes.cves)
 
 
 if __name__ == '__main__':
