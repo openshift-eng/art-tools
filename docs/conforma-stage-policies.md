@@ -20,8 +20,8 @@ whether verification is eligible or enabled.
   precede defaults. Unknown products have no default policy. Image ITS keeps
   its no-policy guard; verification pipelines reject missing policies clearly.
 
-The former build-time policy maps are compatibility views derived from the
-catalog. Quay now has its existing stage policy in the test-assembly view too,
+Stage-policy consumers use the shared resolver directly, without compatibility
+constants or policy maps. Quay uses its existing stage policy for test assemblies too,
 so otherwise-eligible Quay test image builds receive verification rather than
 being skipped due to a missing map entry. No eligibility gates change.
 

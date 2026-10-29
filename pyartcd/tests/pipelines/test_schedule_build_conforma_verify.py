@@ -2,11 +2,6 @@ import unittest
 from datetime import datetime, timezone
 from unittest.mock import AsyncMock, MagicMock, patch
 
-from doozerlib.constants import (
-    KONFLUX_RELEASE_EC_POLICY_CONFIGURATION,
-    KONFLUX_RELEASE_FBC_EC_POLICY_CONFIGURATION,
-    KONFLUX_RELEASE_PREGA_EC_POLICY_CONFIGURATION,
-)
 from pyartcd.pipelines.scheduled import schedule_build_conforma_verify as scheduler
 
 
@@ -36,8 +31,8 @@ class TestRunFor(unittest.IsolatedAsyncioTestCase):
 
         load_config.assert_awaited_once_with(group="openshift-4.23", assembly="stream")
         self.assertEqual(start_build.call_args.kwargs["group"], "openshift-4.23")
-        self.assertEqual(start_build.call_args.kwargs["ec_policy"], KONFLUX_RELEASE_PREGA_EC_POLICY_CONFIGURATION)
-        self.assertEqual(start_build.call_args.kwargs["fbc_ec_policy"], KONFLUX_RELEASE_FBC_EC_POLICY_CONFIGURATION)
+        self.assertEqual(start_build.call_args.kwargs["ec_policy"], "rhtap-releng-tenant/registry-ocp-art-ec-stage")
+        self.assertEqual(start_build.call_args.kwargs["fbc_ec_policy"], "rhtap-releng-tenant/fbc-ocp-art-stage")
         self.assertTrue(start_build.call_args.kwargs["include_bundles"])
         self.assertTrue(start_build.call_args.kwargs["include_fbcs"])
         self.assertTrue(start_build.call_args.kwargs["include_corresponding_bundles"])
@@ -49,8 +44,8 @@ class TestRunFor(unittest.IsolatedAsyncioTestCase):
             {"product": "ocp", "software_lifecycle": {"phase": "release"}},
         )
 
-        self.assertEqual(start_build.call_args.kwargs["ec_policy"], KONFLUX_RELEASE_EC_POLICY_CONFIGURATION)
-        self.assertEqual(start_build.call_args.kwargs["fbc_ec_policy"], KONFLUX_RELEASE_FBC_EC_POLICY_CONFIGURATION)
+        self.assertEqual(start_build.call_args.kwargs["ec_policy"], "rhtap-releng-tenant/registry-ocp-art-stage")
+        self.assertEqual(start_build.call_args.kwargs["fbc_ec_policy"], "rhtap-releng-tenant/fbc-ocp-art-stage")
 
     async def test_oadp_uses_product_policies_and_full_group(self):
         with patch.object(scheduler, "datetime") as datetime_mock:
@@ -121,8 +116,12 @@ class TestRunFor(unittest.IsolatedAsyncioTestCase):
                 {"product": "mirror_gui"},
                 "rhtap-releng-tenant/registry-art-oc-mirror-mirror-gui-stage",
             ),
-            ("openshift-4.23", {"software_lifecycle": {"phase": "unknown"}}, KONFLUX_RELEASE_EC_POLICY_CONFIGURATION),
-            ("openshift-4.23", {}, KONFLUX_RELEASE_EC_POLICY_CONFIGURATION),
+            (
+                "openshift-4.23",
+                {"software_lifecycle": {"phase": "unknown"}},
+                "rhtap-releng-tenant/registry-ocp-art-stage",
+            ),
+            ("openshift-4.23", {}, "rhtap-releng-tenant/registry-ocp-art-stage"),
         ):
             with self.subTest(group=group, config=config):
                 _, _, start_build = await self._run(group, config)

@@ -13,7 +13,6 @@ from artcommonlib.conforma import resolve_stage_policy
 from artcommonlib.konflux.konflux_build_record import KonfluxBuildOutcome
 from artcommonlib.model import Model
 from artcommonlib.variants import BuildVariant
-from doozerlib import constants
 from doozerlib.backend.konflux_client import CustomIntegrationTestResult, ECVerificationResult
 from doozerlib.backend.konflux_image_builder import (
     KonfluxImageBuilder,
@@ -31,7 +30,7 @@ def _make_config(**overrides) -> KonfluxImageBuilderConfig:
         dry_run=True,
         build_priority="5",
         skip_ec_verify=False,
-        ec_policy_configuration=constants.KONFLUX_DEFAULT_EC_POLICY_CONFIGURATION,
+        ec_policy_configuration=resolve_stage_policy("ocp"),
     )
     defaults.update(overrides)
     return KonfluxImageBuilderConfig(**defaults)
@@ -631,7 +630,7 @@ class TestEcVerificationGating(IsolatedAsyncioTestCase):
         verify_ec = await self._run_build_and_get_ec_calls(config, metadata, mock_kc_init)
         verify_ec.assert_called_once()
         call_kwargs = verify_ec.call_args
-        self.assertEqual(call_kwargs.kwargs["ec_policy"], constants.KONFLUX_DEFAULT_EC_POLICY_CONFIGURATION)
+        self.assertEqual(call_kwargs.kwargs["ec_policy"], "rhtap-releng-tenant/registry-ocp-art-stage")
 
     async def test_ec_uses_prega_policy_for_pre_release_phase(self, mock_kc_init):
         """Pre-release lifecycle phase uses the prega policy from config."""
@@ -642,13 +641,13 @@ class TestEcVerificationGating(IsolatedAsyncioTestCase):
         verify_ec = await self._run_build_and_get_ec_calls(config, metadata, mock_kc_init)
         verify_ec.assert_called_once()
         call_kwargs = verify_ec.call_args
-        self.assertEqual(call_kwargs.kwargs["ec_policy"], constants.KONFLUX_PREGA_EC_POLICY_CONFIGURATION)
+        self.assertEqual(call_kwargs.kwargs["ec_policy"], "rhtap-releng-tenant/registry-ocp-art-ec-stage")
 
     async def test_ec_uses_test_policy_from_config(self, mock_kc_init):
         """Test assembly builds use the test-specific EC policy passed via config."""
         config = _make_config(
             group_name="openshift-4.18",
-            ec_policy_configuration=constants.KONFLUX_TEST_EC_POLICY_CONFIGURATION,
+            ec_policy_configuration=resolve_stage_policy("ocp", assembly="test"),
         )
         metadata = _make_metadata(for_release=True)
         metadata.runtime.group_config.software_lifecycle.phase = "release"
@@ -656,7 +655,7 @@ class TestEcVerificationGating(IsolatedAsyncioTestCase):
         verify_ec = await self._run_build_and_get_ec_calls(config, metadata, mock_kc_init)
         verify_ec.assert_called_once()
         call_kwargs = verify_ec.call_args
-        self.assertEqual(call_kwargs.kwargs["ec_policy"], constants.KONFLUX_TEST_EC_POLICY_CONFIGURATION)
+        self.assertEqual(call_kwargs.kwargs["ec_policy"], "ocp-art-tenant/conforma-build-stage-test")
 
     async def test_ec_uses_test_prega_policy_for_pre_release(self, mock_kc_init):
         """Test assembly builds with pre-release lifecycle use the test prega policy from config."""
@@ -670,4 +669,4 @@ class TestEcVerificationGating(IsolatedAsyncioTestCase):
         verify_ec = await self._run_build_and_get_ec_calls(config, metadata, mock_kc_init)
         verify_ec.assert_called_once()
         call_kwargs = verify_ec.call_args
-        self.assertEqual(call_kwargs.kwargs["ec_policy"], constants.KONFLUX_TEST_PREGA_EC_POLICY_CONFIGURATION)
+        self.assertEqual(call_kwargs.kwargs["ec_policy"], "ocp-art-tenant/conforma-build-ec-stage-test")

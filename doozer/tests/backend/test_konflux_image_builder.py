@@ -5,6 +5,7 @@ from pathlib import Path
 from threading import Event
 from unittest.mock import AsyncMock, MagicMock, patch
 
+from artcommonlib.conforma import resolve_stage_policy
 from artcommonlib.konflux.konflux_build_record import (
     ArtifactType,
     Engine,
@@ -35,8 +36,6 @@ class TestKonfluxImageBuilder(unittest.IsolatedAsyncioTestCase):
         self.mock_konflux_client_factory.return_value = self.mock_konflux_client
         self.mock_konflux_client.resource_url.return_value = "https://example.com/pipelinerun"
 
-        from doozerlib import constants as doozer_constants
-
         self.builder = KonfluxImageBuilder(
             KonfluxImageBuilderConfig(
                 base_dir=Path(self.temp_dir.name),
@@ -44,7 +43,7 @@ class TestKonfluxImageBuilder(unittest.IsolatedAsyncioTestCase):
                 namespace="test-namespace",
                 plr_template="test-template",
                 build_priority="5",
-                ec_policy_configuration=doozer_constants.KONFLUX_DEFAULT_EC_POLICY_CONFIGURATION,
+                ec_policy_configuration=resolve_stage_policy("ocp"),
             )
         )
 
@@ -893,7 +892,6 @@ class TestKonfluxImageBuilder(unittest.IsolatedAsyncioTestCase):
     async def test_ec_policy_selection_missing_lifecycle_phase(self):
         """Test that default EC policy is used when lifecycle phase is Missing."""
         from artcommonlib.model import Missing
-        from doozerlib import constants
 
         metadata = self._metadata()
         # Set lifecycle phase to Missing
@@ -952,7 +950,7 @@ class TestKonfluxImageBuilder(unittest.IsolatedAsyncioTestCase):
         # Verify that default EC policy was used (not the pre-GA policy)
         mock_verify_ec.assert_awaited_once()
         call_kwargs = mock_verify_ec.await_args[1]
-        self.assertEqual(call_kwargs['ec_policy'], constants.KONFLUX_DEFAULT_EC_POLICY_CONFIGURATION)
+        self.assertEqual(call_kwargs['ec_policy'], "rhtap-releng-tenant/registry-ocp-art-stage")
 
     async def test_update_konflux_db_success_keeps_konflux_digest_after_base_release_completion(self):
         """Final SUCCESS after base-image release keeps Konflux digest in DB for SBOM (not RH tag)."""

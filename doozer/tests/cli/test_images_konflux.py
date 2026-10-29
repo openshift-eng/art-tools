@@ -11,7 +11,6 @@ from artcommonlib.konflux.konflux_build_record import (
 )
 from artcommonlib.model import Model
 from artcommonlib.variants import BuildVariant
-from doozerlib import constants
 from doozerlib.cli.images_konflux import (
     BundleStageReleaseRelatedImagesCli,
     KonfluxBuildCli,
@@ -26,14 +25,16 @@ from doozerlib.source_resolver import SourceResolver
 
 class TestKueueProductPolicies(unittest.TestCase):
     def test_canonical_product_selects_existing_policies(self):
-        """Select existing Kueue policies by canonical name without legacy policy-map keys."""
-        for policies in (constants.PRODUCT_EC_POLICY_MAP, constants.PRODUCT_TEST_EC_POLICY_MAP):
-            with self.subTest(policies=policies):
-                self.assertEqual(policies.get("kueue"), "rhtap-releng-tenant/registry-art-kueue-stage")
-                self.assertNotIn("kueue-operator", policies)
+        """Resolve canonical and legacy Kueue names through the shared catalog."""
+        for assembly in ("stream", "test"):
+            for product in ("kueue", "kueue-operator"):
+                with self.subTest(assembly=assembly, product=product):
+                    self.assertEqual(
+                        resolve_stage_policy(product, assembly=assembly), "rhtap-releng-tenant/registry-art-kueue-stage"
+                    )
 
     def test_quay_test_mapping_is_no_longer_missing(self):
-        self.assertEqual(constants.PRODUCT_TEST_EC_POLICY_MAP["quay"], "rhtap-releng-tenant/registry-art-quay-stage")
+        self.assertEqual(resolve_stage_policy("quay", assembly="test"), "rhtap-releng-tenant/registry-art-quay-stage")
 
 
 class TestKonfluxBuildStagePolicies(unittest.IsolatedAsyncioTestCase):
