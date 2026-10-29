@@ -1723,12 +1723,17 @@ spec:
 class TestKonfluxOlmBundleBuilder(IsolatedAsyncioTestCase):
     async def test_build_stage_policy_and_eligibility(self):
         ocp_policies = {
+            ("stream", None): "rhtap-releng-tenant/registry-ocp-art-stage",
+            ("test", None): "ocp-art-tenant/conforma-build-stage-test",
             ("stream", "release"): "rhtap-releng-tenant/registry-ocp-art-stage",
             ("stream", "pre-release"): "rhtap-releng-tenant/registry-ocp-art-ec-stage",
             ("test", "release"): "ocp-art-tenant/conforma-build-stage-test",
             ("test", "pre-release"): "ocp-art-tenant/conforma-build-ec-stage-test",
         }
         for group, assembly, assembly_type, phase, skip, outcome, product in (
+            ("openshift-4.23", "stream", AssemblyTypes.STANDARD, None, False, KonfluxBuildOutcome.SUCCESS, "ocp"),
+            ("openshift-4.23", "test", AssemblyTypes.STANDARD, None, False, KonfluxBuildOutcome.SUCCESS, "ocp"),
+            ("openshift-4.23", "stream", AssemblyTypes.STANDARD, None, False, KonfluxBuildOutcome.SUCCESS, "logging"),
             ("openshift-4.23", "stream", AssemblyTypes.PREVIEW, "release", False, KonfluxBuildOutcome.SUCCESS, None),
             (
                 "openshift-4.23",
@@ -1786,7 +1791,9 @@ class TestKonfluxOlmBundleBuilder(IsolatedAsyncioTestCase):
                 self.builder.skip_ec_verify = skip
                 metadata = MagicMock()
                 metadata.runtime.group = group
-                metadata.runtime.group_config = Model({"product": product, "software_lifecycle": {"phase": phase}})
+                metadata.runtime.group_config = Model(
+                    {"product": product, "software_lifecycle": None if phase is None else {"phase": phase}}
+                )
                 metadata.runtime.product = metadata.runtime.group_config.product or "ocp"
                 metadata.get_olm_bundle_short_name.return_value = "test-bundle"
                 metadata.get_konflux_build_attempts.return_value = 1

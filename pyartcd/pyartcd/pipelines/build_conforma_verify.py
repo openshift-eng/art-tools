@@ -162,9 +162,10 @@ class BuildConformaVerifyPipeline:
         is_ocp_group = self.group.startswith('openshift-')
         group_config = await self._load_group_config() if not overridden else {}
         product = group_config.get('product') or ('ocp' if is_ocp_group else '')
+        lifecycle = group_config.get('software_lifecycle')
         policy = resolve_stage_policy(
             product,
-            lifecycle_phase=group_config.get('software_lifecycle', {}).get('phase'),
+            lifecycle_phase=lifecycle.get('phase') if lifecycle is not None else None,
             assembly=self.assembly,
             build_type=build_type,
             ec_policy=self.ec_policy,

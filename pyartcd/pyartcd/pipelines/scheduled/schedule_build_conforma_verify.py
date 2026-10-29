@@ -22,7 +22,8 @@ async def run_for(group: str, runtime: Runtime, serial: bool = False):
     group_config = await util.load_group_config(group=group, assembly='stream')
 
     product = group_config.get('product') or ('ocp' if group.startswith('openshift-') else '')
-    phase_name = group_config.get('software_lifecycle', {}).get('phase')
+    lifecycle = group_config.get('software_lifecycle')
+    phase_name = lifecycle.get('phase') if lifecycle is not None else None
     ec_policy = resolve_stage_policy(product, lifecycle_phase=phase_name)
     fbc_ec_policy = resolve_stage_policy(product, lifecycle_phase=phase_name, build_type='fbc')
     if ec_policy is None:

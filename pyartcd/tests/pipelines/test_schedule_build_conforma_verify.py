@@ -13,6 +13,45 @@ def _runtime():
 
 
 class TestRunFor(unittest.IsolatedAsyncioTestCase):
+    async def test_optional_lifecycle_defaults(self):
+        for lifecycle_config in (
+            {},
+            {"software_lifecycle": None},
+            {"software_lifecycle": {}},
+            {"software_lifecycle": {"phase": None}},
+            {"software_lifecycle": {"phase": "release"}},
+            {"software_lifecycle": {"phase": "pre-release"}},
+        ):
+            for product in ("ocp", "logging"):
+                with self.subTest(config=lifecycle_config, product=product):
+                    _, load_config, start_build = await self._run(
+                        "openshift-4.23", {"product": product, **lifecycle_config}
+                    )
+                    phase = (lifecycle_config.get("software_lifecycle") or {}).get("phase")
+                    expected = (
+                        "rhtap-releng-tenant/registry-art-logging-stage"
+                        if product == "logging"
+                        else (
+                            "rhtap-releng-tenant/registry-ocp-art-ec-stage"
+                            if phase == "pre-release"
+                            else "rhtap-releng-tenant/registry-ocp-art-stage"
+                        )
+                    )
+                    load_config.assert_awaited_once()
+                    self.assertEqual(start_build.call_args.kwargs["ec_policy"], expected)
+                    self.assertEqual(
+                        start_build.call_args.kwargs["fbc_ec_policy"],
+                        "rhtap-releng-tenant/fbc-stage"
+                        if product == "logging"
+                        else "rhtap-releng-tenant/fbc-ocp-art-stage",
+                    )
+
+    async def test_nonmapping_lifecycle_is_not_coerced(self):
+        for lifecycle in (False, "", [], "invalid", 1):
+            with self.subTest(lifecycle=lifecycle):
+                with self.assertRaises(AttributeError):
+                    await self._run("openshift-4.23", {"software_lifecycle": lifecycle})
+
     async def _run(self, group, group_config, serial=False):
         runtime = _runtime()
         with (

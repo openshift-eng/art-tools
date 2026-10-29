@@ -1227,9 +1227,10 @@ class KonfluxOlmBundleBuilder:
                         image_with_digest = f"{image_pullspec.split(':')[0]}@{image_digest}"
                         source_url = artlib_util.convert_remote_git_to_https(bundle_build_repo.url)
 
+                        lifecycle = metadata.runtime.group_config.get("software_lifecycle")
                         ec_policy = resolve_stage_policy(
                             metadata.runtime.product,
-                            lifecycle_phase=metadata.runtime.group_config.get("software_lifecycle", {}).get("phase"),
+                            lifecycle_phase=lifecycle.get("phase") if lifecycle is not None else None,
                             assembly=self.assembly,
                             build_type="bundle",
                         )

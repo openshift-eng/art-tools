@@ -218,6 +218,50 @@ class TestPipelineInit(unittest.TestCase):
 
 
 class TestProductSettings(unittest.TestCase):
+    def test_optional_lifecycle_defaults(self):
+        for lifecycle_config in (
+            {},
+            {"software_lifecycle": None},
+            {"software_lifecycle": {}},
+            {"software_lifecycle": {"phase": None}},
+            {"software_lifecycle": {"phase": "release"}},
+            {"software_lifecycle": {"phase": "pre-release"}},
+        ):
+            for product in ("ocp", "logging"):
+                for assembly in ("stream", "test"):
+                    with self.subTest(config=lifecycle_config, product=product, assembly=assembly):
+                        pipeline = _make_pipeline(assembly=assembly)
+                        phase = (lifecycle_config.get("software_lifecycle") or {}).get("phase")
+                        if product == "logging":
+                            image_policy = "rhtap-releng-tenant/registry-art-logging-stage"
+                            fbc_policy = "rhtap-releng-tenant/fbc-stage"
+                        else:
+                            image_policy = {
+                                ("stream", False): "rhtap-releng-tenant/registry-ocp-art-stage",
+                                ("stream", True): "rhtap-releng-tenant/registry-ocp-art-ec-stage",
+                                ("test", False): "ocp-art-tenant/conforma-build-stage-test",
+                                ("test", True): "ocp-art-tenant/conforma-build-ec-stage-test",
+                            }[(assembly, phase == "pre-release")]
+                            fbc_policy = "rhtap-releng-tenant/fbc-ocp-art-stage"
+
+                        async def resolve_policies():
+                            return [await pipeline._resolve_stage_policy(kind) for kind in ("image", "bundle", "fbc")]
+
+                        with patch(
+                            "pyartcd.pipelines.build_conforma_verify.util.load_group_config",
+                            new=AsyncMock(return_value={"product": product, **lifecycle_config}),
+                        ) as load_config:
+                            self.assertEqual(asyncio.run(resolve_policies()), [image_policy, image_policy, fbc_policy])
+                        load_config.assert_awaited_once()
+
+    def test_nonmapping_lifecycle_is_not_coerced(self):
+        for lifecycle in (False, "", [], "invalid", 1):
+            with self.subTest(lifecycle=lifecycle):
+                pipeline = _make_pipeline()
+                pipeline._group_config = {"software_lifecycle": lifecycle}
+                with self.assertRaises(AttributeError):
+                    asyncio.run(pipeline._resolve_stage_policy("image"))
+
     def test_ocp_image_and_bundle_defaults_share_selected_group_config(self):
         pipeline = _make_pipeline(
             assembly="test",

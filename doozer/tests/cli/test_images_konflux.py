@@ -47,6 +47,9 @@ class TestKonfluxBuildStagePolicies(unittest.IsolatedAsyncioTestCase):
             ("quay", "test", "release"),
             ("mirror_gui", "stream", "release"),
             ("unknown", "stream", "release"),
+            ("ocp", "stream", None),
+            ("ocp", "test", None),
+            ("logging", "stream", None),
         ):
             with self.subTest(product=product, assembly=assembly, phase=phase):
                 runtime = mock.MagicMock(spec=Runtime)
@@ -55,7 +58,7 @@ class TestKonfluxBuildStagePolicies(unittest.IsolatedAsyncioTestCase):
                 runtime.assembly = assembly
                 runtime.product = product
                 runtime.variant = BuildVariant.OCP
-                runtime.group_config = Model({"software_lifecycle": {"phase": phase}})
+                runtime.group_config = Model({"software_lifecycle": None if phase is None else {"phase": phase}})
                 runtime.ordered_image_metas.return_value = []
                 runtime.source_resolver = mock.Mock()
                 runtime.konflux_db = mock.Mock()
@@ -69,7 +72,17 @@ class TestKonfluxBuildStagePolicies(unittest.IsolatedAsyncioTestCase):
                     await cli.run()
                 self.assertEqual(
                     factory.call_args.kwargs["config"].ec_policy_configuration,
-                    resolve_stage_policy(product, assembly=assembly, lifecycle_phase=phase),
+                    (
+                        "rhtap-releng-tenant/registry-art-logging-stage"
+                        if product == "logging"
+                        else (
+                            "ocp-art-tenant/conforma-build-stage-test"
+                            if assembly == "test"
+                            else "rhtap-releng-tenant/registry-ocp-art-stage"
+                        )
+                    )
+                    if phase is None
+                    else resolve_stage_policy(product, assembly=assembly, lifecycle_phase=phase),
                 )
 
 

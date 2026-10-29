@@ -360,9 +360,10 @@ class KonfluxBuildCli:
         else:
             group = runtime.group
 
+        lifecycle = runtime.group_config.get("software_lifecycle")
         ec_policy = resolve_stage_policy(
             runtime.product,
-            lifecycle_phase=runtime.group_config.get("software_lifecycle", {}).get("phase"),
+            lifecycle_phase=lifecycle.get("phase") if lifecycle is not None else None,
             assembly=runtime.assembly,
         )
 
