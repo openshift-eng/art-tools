@@ -218,6 +218,7 @@ PRODUCT_CATALOG: tuple[ProductConfig, ...] = (
             (3, 17): "quay-advisory-stage-auto-3-17",
             (3, 18): "quay-advisory-stage-auto-3-18",
             (5, 0): "quay-advisory-stage-auto-5-0",
+            (5, 1): "quay-advisory-stage-auto-5-1",
         },
     ),
     ProductConfig(
