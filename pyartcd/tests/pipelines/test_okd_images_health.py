@@ -1,8 +1,18 @@
 import json
+from contextlib import redirect_stdout
+from io import StringIO
 from unittest import IsolatedAsyncioTestCase
 from unittest.mock import AsyncMock, MagicMock, patch
 
+from artcommonlib.konflux.konflux_build_record import KonfluxBuildOutcome
+from artcommonlib.model import Model
+from artcommonlib.variants import BuildVariant
+from click.testing import CliRunner
+from doozerlib import Runtime
+from doozerlib.cli.images import images_print
 from doozerlib.cli.images_health import ConcernCode
+from doozerlib.cli.images_health import ImagesHealthPipeline as DoozerImagesHealthPipeline
+from doozerlib.image import ImageMetadata
 from pyartcd.pipelines.okd_images_health import ImagesHealthPipeline
 
 DATA_PATH = "https://github.com/openshift-eng/ocp-build-data"
@@ -22,6 +32,44 @@ def _make_concern(image_name, group, code, **kwargs):
 
 
 class TestNotifyOkdChannel(IsolatedAsyncioTestCase):
+    async def test_failure_summary_links_to_okd_dashboard(self):
+        """Render the OKD dashboard filter without changing failure counts or duplicating slashes."""
+        for base_url in ('https://dashboard.example.test', 'https://dashboard.example.test/'):
+            with self.subTest(base_url=base_url):
+                runtime = MagicMock()
+                runtime.new_slack_client.return_value.say = AsyncMock()
+                pipeline = ImagesHealthPipeline(
+                    runtime=runtime,
+                    versions='5.1',
+                    send_to_release_channel=False,
+                    send_to_okd_channel=True,
+                    ping_chai_bot=False,
+                    data_path=DATA_PATH,
+                    data_gitref='',
+                    image_list='',
+                    assembly='stream',
+                )
+                pipeline.report = [
+                    _make_concern('base-image', 'okd-5.1', ConcernCode.LATEST_ATTEMPT_FAILED.value),
+                    _make_concern('other-image', 'okd-5.1', ConcernCode.LATEST_ATTEMPT_FAILED.value),
+                    _make_concern('healthy-image', 'okd-5.1', ConcernCode.LATEST_BUILD_SUCCEEDED.value),
+                ]
+                pipeline.rebase_failures = {'5.1': {'rebase-image': {'failure_count': 3}}}
+
+                with patch('pyartcd.pipelines.okd_images_health.ART_BUILD_FAILURES_URL', base_url):
+                    await pipeline.notify_okd_channel()
+
+                pipeline.slack_client.say.assert_awaited_once()
+                message = pipeline.slack_client.say.await_args.args[0]
+                self.assertIn('<https://dashboard.example.test/?variant=okd|ART Build Failures Dashboard>', message)
+                self.assertIn('2 images with build failures', message)
+                self.assertIn('1 image with rebase failures', message)
+                self.assertNotIn('All OKD images are healthy', message)
+                self.assertEqual(
+                    pipeline.slack_client.say.await_args.kwargs,
+                    {'link_build_url': False, 'unfurl_links': False, 'unfurl_media': False},
+                )
+
     async def test_no_concerns_after_filtering(self):
         runtime = MagicMock()
         runtime.working_dir = MagicMock()
@@ -142,6 +190,116 @@ class TestGetReport(IsolatedAsyncioTestCase):
         mock_cmd.assert_not_called()
         self.assertEqual(len(pipeline.report), 0)
         self.assertIn('4.21', pipeline.scanned_versions)
+
+    @patch('pyartcd.pipelines.okd_images_health.exectools.cmd_gather_async', new_callable=AsyncMock)
+    @patch('pyartcd.pipelines.okd_images_health.util.get_counter_failures', new_callable=AsyncMock)
+    async def test_non_release_base_failure_reaches_summary(self, mock_get_failures, mock_cmd):
+        """An OKD-only base failure survives real enumeration, classification and summary reporting."""
+        image_name = 'openshift-enterprise-base-rhel10'
+        doozer_runtime = MagicMock(spec=Runtime)
+        doozer_runtime.group = 'openshift-5.1'
+        doozer_runtime.variant = BuildVariant.OKD
+        doozer_runtime.branch = 'openshift-5.1'
+        doozer_runtime.assembly = 'stream'
+        doozer_runtime.assembly_basis_event = None
+        doozer_runtime.group_config = Model({})
+        doozer_runtime.get_releases_config.return_value = Model({})
+        doozer_runtime.load_disabled = False
+        image_meta = ImageMetadata(
+            doozer_runtime,
+            Model(
+                {
+                    'key': image_name,
+                    'filename': f'{image_name}.yml',
+                    'data': {
+                        'name': f'openshift/{image_name}',
+                        'mode': 'disabled',
+                        'okd': {'mode': 'enabled'},
+                        'base_only': True,
+                        'for_release': False,
+                        'for_payload': False,
+                    },
+                }
+            ),
+        )
+        self.assertFalse(image_meta.enabled)
+        doozer_runtime.image_metas.return_value = [image_meta]
+        doozer_runtime.konflux_db = MagicMock()
+        doozer_runtime.konflux_db._ensure_group_cached = AsyncMock()
+        failed_build = MagicMock(outcome=KonfluxBuildOutcome.FAILURE)
+        doozer_runtime.konflux_db.cache.get_builds_by_name.return_value = [failed_build]
+        mock_get_failures.return_value = {image_name: {'failure_count': 1}}
+
+        async def run_doozer(cmd, **kwargs):
+            if 'images:print' in cmd:
+                result = CliRunner().invoke(images_print, cmd[cmd.index('images:print') + 1 :], obj=doozer_runtime)
+                self.assertEqual(result.exit_code, 0, result.output)
+                self.assertEqual(result.output.strip(), image_name)
+                return 0, result.output, ''
+            self.assertIn(f'--images={image_name}', cmd)
+            health = DoozerImagesHealthPipeline(
+                runtime=doozer_runtime, limit=100, group='okd-5.1', assembly='stream', variant=BuildVariant.OKD
+            )
+            output = StringIO()
+            with redirect_stdout(output):
+                await health.run()
+            return 0, output.getvalue(), ''
+
+        mock_cmd.side_effect = run_doozer
+        pipeline = self._make_pipeline(versions='5.1')
+        pipeline._resolve_versions = AsyncMock(return_value=['5.1'])
+        pipeline.get_rebase_failures = AsyncMock()
+        pipeline.send_to_okd_channel = True
+        pipeline.slack_client.say = AsyncMock()
+
+        await pipeline.run()
+
+        enumeration_cmd = mock_cmd.await_args_list[0].args[0]
+        self.assertIn('--show-base', enumeration_cmd)
+        self.assertIn('--show-non-release', enumeration_cmd)
+        doozer_runtime.konflux_db.cache.get_builds_by_name.assert_called_once_with(
+            name=image_name, group='okd-5.1', assembly='stream', limit=100
+        )
+        self.assertEqual(len(pipeline.report), 1)
+        self.assertEqual(pipeline.report[0]['image_name'], image_name)
+        self.assertEqual(pipeline.report[0]['code'], ConcernCode.LATEST_ATTEMPT_FAILED.value)
+        self.assertFalse(pipeline.report[0]['for_release'])
+        message = pipeline.slack_client.say.await_args.args[0]
+        self.assertIn('1 image with build failures', message)
+        self.assertNotIn('All OKD images are healthy', message)
+
+    @patch('pyartcd.pipelines.okd_images_health.exectools.cmd_gather_async', new_callable=AsyncMock)
+    @patch('pyartcd.pipelines.okd_images_health.util.get_counter_failures', new_callable=AsyncMock)
+    async def test_metadata_enumeration_failure_stops_notifications(self, mock_get_failures, mock_cmd):
+        mock_get_failures.return_value = {'base-image': {'failure_count': 1}}
+        mock_cmd.side_effect = ChildProcessError('metadata enumeration failed after partial output')
+        pipeline = self._make_pipeline()
+        pipeline._resolve_versions = AsyncMock(return_value=['4.21'])
+        pipeline.send_to_okd_channel = True
+        pipeline.send_to_release_channel = True
+        pipeline.slack_client.say = AsyncMock()
+
+        with self.assertRaisesRegex(ChildProcessError, 'metadata enumeration failed'):
+            await pipeline.run()
+
+        self.assertEqual(pipeline.scanned_versions, [])
+        pipeline.slack_client.say.assert_not_awaited()
+
+    @patch('pyartcd.pipelines.okd_images_health.exectools.cmd_gather_async', new_callable=AsyncMock)
+    @patch('pyartcd.pipelines.okd_images_health.util.get_rebase_failures', new_callable=AsyncMock)
+    async def test_rebase_metadata_failure_stops_notifications(self, mock_rebase_failures, mock_cmd):
+        mock_rebase_failures.return_value = {'base-image': {'failure_count': 1}}
+        mock_cmd.side_effect = ChildProcessError('metadata enumeration failed')
+        pipeline = self._make_pipeline()
+        pipeline._resolve_versions = AsyncMock(return_value=['4.21'])
+        pipeline.get_report = AsyncMock()
+        pipeline.send_to_okd_channel = True
+        pipeline.slack_client.say = AsyncMock()
+
+        with self.assertRaisesRegex(ChildProcessError, 'metadata enumeration failed'):
+            await pipeline.run()
+
+        pipeline.slack_client.say.assert_not_awaited()
 
     @patch("pyartcd.pipelines.okd_images_health.util.is_okd_version_enabled", new_callable=AsyncMock)
     async def test_filters_disabled_versions(self, mock_is_enabled):

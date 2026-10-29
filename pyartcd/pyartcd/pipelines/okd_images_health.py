@@ -238,21 +238,15 @@ class ImagesHealthPipeline:
             group_param,
             'images:print',
             '--short',
+            '--show-base',
+            '--show-non-release',
             '{distgit_key}',
         ]
 
-        try:
-            _, out, _ = await exectools.cmd_gather_async(cmd, stderr=None)
-            # Parse the output - one image name per line
-            valid_images = {line.strip() for line in out.strip().split('\n') if line.strip()}
-            self.runtime.logger.info('Found %d valid OKD images for openshift-%s', len(valid_images), version)
-            return valid_images
-        except Exception as e:
-            self.runtime.logger.warning(
-                'Failed to fetch valid OKD images for openshift-%s: %s. Proceeding without filtering.', version, e
-            )
-            # On failure, return empty set to fail safe (don't process any images from Redis)
-            return set()
+        _, out, _ = await exectools.cmd_gather_async(cmd, stderr=None)
+        valid_images = {line.strip() for line in out.strip().split('\n') if line.strip()}
+        self.runtime.logger.info('Found %d valid OKD images for openshift-%s', len(valid_images), version)
+        return valid_images
 
     async def notify_release_channel(self, version):
         """
@@ -384,7 +378,7 @@ class ImagesHealthPipeline:
                     message_parts.append(f'- {item}')
 
         # Link to art-build-failures dashboard
-        dashboard_url = ART_BUILD_FAILURES_URL
+        dashboard_url = f'{ART_BUILD_FAILURES_URL.rstrip("/")}/?variant=okd'
         message_parts.append(
             f'\nFor detailed information, please check the {self.url_text(dashboard_url, "ART Build Failures Dashboard")}'
         )
