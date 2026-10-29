@@ -1815,6 +1815,12 @@ class TestRunWithTemplate(unittest.TestCase):
 class TestOcpOptionalMode(unittest.TestCase):
     """Tests for OCP optional-operator mode (--ocp-optional)."""
 
+    def setUp(self):
+        # These tests isolate MR/build orchestration; validator integration is covered separately.
+        self.enterContext(
+            patch("pyartcd.pipelines.release_from_fbc.validate_snapshot_against_rpa", new_callable=AsyncMock)
+        )
+
     def _make_pipeline(
         self, ocp_optional=False, exclude_nvr_components=None, group="openshift-4.22", assembly="4.22.0"
     ):
