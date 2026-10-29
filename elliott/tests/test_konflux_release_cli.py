@@ -741,7 +741,13 @@ class TestCreateReleaseCli(IsolatedAsyncioTestCase):
         mock_runtime.return_value = self.runtime
         mock_konflux_client_init.return_value = self.konflux_client
 
-        rpa_data = {"spec": {"data": {"mapping": {"components": [{"name": "test-rpm"}]}}}}
+        rpa_data = {
+            "spec": {
+                "applications": ["openshift-4-18"],
+                "origin": "test-namespace",
+                "data": {"mapping": {"components": [{"name": "test-rpm"}]}},
+            }
+        }
 
         shipment_config = ShipmentConfig(
             shipment=Shipment(
@@ -790,9 +796,10 @@ class TestCreateReleaseCli(IsolatedAsyncioTestCase):
                         "apiVersion": api_version,
                         "kind": kind,
                         "metadata": {
+                            "namespace": "test-namespace",
                             "labels": {
                                 "release.appstudio.openshift.io/releasePlanAdmission": "actual-rpa",
-                            }
+                            },
                         },
                         "spec": {"application": "openshift-4-18", "target": "managed-namespace"},
                     },

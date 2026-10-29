@@ -134,6 +134,29 @@ async def validate_snapshot_against_rpa(
         except Exception as exc:
             raise ValueError(f"Cannot resolve {check_env} RPA from ReleasePlan {release_plan!r}: {exc}") from exc
 
+        rpa_labels = rpa.get("metadata", {}).get("labels", {}) or {}
+        if rpa_labels.get("release.appstudio.openshift.io/block-releases") == "true":
+            raise ValueError(f"{check_env} RPA {target}/{rpa_name} has block-releases set to true")
+
+        rpa_spec = rpa.get("spec", {})
+        applications = rpa_spec.get("applications")
+        if not isinstance(applications, list) or shipment.metadata.application not in applications:
+            LOGGER.warning(
+                "%s RPA %s/%s spec.applications does not include shipment application %r; "
+                "continuing with the RPA explicitly referenced by ReleasePlan %r",
+                check_env,
+                target,
+                rpa_name,
+                shipment.metadata.application,
+                release_plan,
+            )
+        origin_namespace = rp.get("metadata", {}).get("namespace") or konflux_client.default_namespace
+        if rpa_spec.get("origin") != origin_namespace:
+            raise ValueError(
+                f"{check_env} RPA {target}/{rpa_name} spec.origin {rpa_spec.get('origin')!r} "
+                f"does not match ReleasePlan {release_plan!r} namespace {origin_namespace!r}"
+            )
+
         LOGGER.info("Validating %s shipment components against %s RPA %s/%s", kind, check_env, target, rpa_name)
         if is_fbc:
             allowed = rpa.get("spec", {}).get("data", {}).get("fbc", {}).get("allowedPackages")
