@@ -70,13 +70,13 @@ class TestAssemblyParamsValidation(TestCase):
         params = _make_params(kernel_nvrs=(), image_nvrs=("ose-installer-container-v4.17.0-202502110000.p0.el9",))
         self.assertEqual(params.kernel_nvrs, ())
 
-    def test_both_empty_pins_rejected(self):
+    def test_both_empty_pins_allowed(self):
         """
-        Both kernel_nvrs and image_nvrs empty raises ValidationError.
+        An assembly can inherit its basis without overriding any builds.
         """
-        with self.assertRaises(ValidationError) as ctx:
-            _make_params(kernel_nvrs=(), image_nvrs=())
-        self.assertIn("At least one --kernel-nvr or --image-nvr must be provided", str(ctx.exception))
+        params = _make_params(kernel_nvrs=(), image_nvrs=())
+        self.assertEqual(params.kernel_nvrs, ())
+        self.assertEqual(params.image_nvrs, ())
 
     def test_valid_params(self):
         """
@@ -267,6 +267,28 @@ class TestFindDtkBuildBrew(TestCase):
 
 
 class TestBuildAssemblyDefinition(TestCase):
+    def test_inheritance_only_ga_assembly(self):
+        """
+        An RC can become GA without changing its inherited builds.
+        """
+        cli = _make_cli(
+            assembly_name="5.0.0",
+            basis_assembly="rc.8",
+            kernel_nvrs=(),
+            image_nvrs=(),
+            bug_ids=(),
+            cve_ids=(),
+            release_date="2026-Nov-03",
+        )
+        assembly = cli._build_assembly_definition()["releases"]["5.0.0"]["assembly"]
+        self.assertEqual(assembly["type"], "standard")
+        self.assertEqual(assembly["basis"], {"assembly": "rc.8", "reference_releases!": {}})
+        self.assertEqual(assembly["members"], {})
+        self.assertEqual(assembly["rhcos"], {})
+        self.assertEqual(assembly["issues"], {})
+        self.assertNotIn("dependencies", assembly["group"])
+        self.assertEqual(assembly["group"]["release_date"], "2026-Nov-03")
+
     def test_assembly_definition_structure(self):
         """
         Assembly definition has correct structure with basis, issues, kernel/DTK pins, and RHCOS.

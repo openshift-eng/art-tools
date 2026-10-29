@@ -45,7 +45,7 @@ from artcommonlib.rhcos import (
 )
 from artcommonlib.rpm_utils import parse_nvr
 from artcommonlib.util import get_inflight, new_roundtrip_yaml_handler, normalize_release_date
-from pydantic import BaseModel, field_validator, model_validator
+from pydantic import BaseModel, field_validator
 from tenacity import retry, stop_after_attempt, wait_exponential
 
 from doozerlib.cli import click_coroutine, pass_runtime
@@ -99,15 +99,9 @@ class AssemblyParams(BaseModel, frozen=True):
             return None
         return normalize_release_date(v)
 
-    @model_validator(mode="after")
-    def _validate_has_target_content(self) -> "AssemblyParams":
-        if not self.kernel_nvrs and not self.image_nvrs:
-            raise ValueError("At least one --kernel-nvr or --image-nvr must be provided.")
-        return self
-
 
 @releases_gen_assembly.command(
-    "from-targeted", short_help="Outputs targeted assembly metadata with kernel and/or image pins"
+    "from-targeted", short_help="Outputs assembly metadata inheriting from a basis, with optional kernel/image pins"
 )
 @click.option(
     "--basis-assembly",
