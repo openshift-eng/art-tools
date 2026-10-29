@@ -379,7 +379,11 @@ class AttachCveFlaws:
         attached_components: Set[str] = None,
     ):
         """
-        Update the release notes to convert it to an RHSA type. Also adds CVE associations and flaw bugs.
+        Promote release notes to RHSA and add CVE associations and flaw bugs for eligible flaws.
+
+        When reconciling without eligible flaws, preserve existing non-security types or
+        restore RHSA to RHEA for standard .0 GA assemblies and RHBA otherwise, removing
+        flaw bugs and CVE associations.
         """
         formatter = SafeFormatter()
         if flaw_bugs:
@@ -730,7 +734,12 @@ class AttachCveFlaws:
     "--into-default-advisories", is_flag=True, help='Run for all advisories values defined in [group|releases].yml'
 )
 @click.option(
-    "--reconcile", is_flag=True, help='Converts RHSA back to RHBA, removes flaw bugs and CVE associations if applicable'
+    "--reconcile",
+    is_flag=True,
+    help=(
+        'Converts RHSA back to RHEA for standard .0 GA assemblies or RHBA for other assemblies '
+        'when no eligible flaws remain; removes flaw bugs and CVE associations if applicable'
+    ),
 )
 @click.option('--output', default='json', type=click.Choice(['yaml', 'json']), help='Output format')
 @click.pass_obj

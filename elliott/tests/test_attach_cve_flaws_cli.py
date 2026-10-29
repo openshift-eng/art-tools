@@ -3,9 +3,11 @@ from typing import Dict, Iterable, List, cast
 from unittest.mock import AsyncMock, Mock, PropertyMock, patch
 
 from artcommonlib.assembly import AssemblyTypes
+from click.testing import CliRunner
 from elliottlib import constants
 from elliottlib.bzutil import Bug, BugzillaBug
 from elliottlib.cli.attach_cve_flaws_cli import AttachCveFlaws
+from elliottlib.cli.common import cli
 from elliottlib.errata_async import AsyncErrataAPI
 from elliottlib.exceptions import ElliottFatalError
 from elliottlib.shipment_model import ReleaseNotes
@@ -659,6 +661,22 @@ class TestAttachCVEFlawsCLI(unittest.IsolatedAsyncioTestCase):
 
                 # Type should be converted to RHBA
                 self.assertEqual(release_notes.type, "RHBA")
+
+
+class TestAttachCVEFlawsHelp(unittest.TestCase):
+    def test_reconcile_help_explains_advisory_types(self):
+        """Registered CLI help describes GA reconciliation without initializing services."""
+        with patch('elliottlib.cli.common.Runtime') as runtime:
+            result = CliRunner().invoke(cli, ['attach-cve-flaws', '--help'])
+
+        self.assertEqual(result.exit_code, 0, result.output)
+        help_text = ' '.join(result.output.split())
+        self.assertIn('--reconcile', help_text)
+        self.assertIn('RHEA for standard .0 GA assemblies', help_text)
+        self.assertIn('RHBA for other assemblies', help_text)
+        self.assertIn('when no eligible flaws remain', help_text)
+        self.assertIn('removes flaw bugs and CVE associations if applicable', help_text)
+        runtime.return_value.initialize.assert_not_called()
 
 
 if __name__ == '__main__':
