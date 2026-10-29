@@ -160,9 +160,8 @@ class BuildConformaVerifyPipeline:
     async def _resolve_stage_policy(self, build_type):
         overridden = self.ec_policy or (build_type == 'fbc' and self.fbc_ec_policy)
         is_ocp_group = self.group.startswith('openshift-')
-        needs_group_config = not overridden and (not is_ocp_group or build_type != 'fbc')
-        group_config = await self._load_group_config() if needs_group_config else {}
-        product = 'ocp' if is_ocp_group else group_config.get('product', '')
+        group_config = await self._load_group_config() if not overridden else {}
+        product = group_config.get('product') or ('ocp' if is_ocp_group else '')
         policy = resolve_stage_policy(
             product,
             lifecycle_phase=group_config.get('software_lifecycle', {}).get('phase'),

@@ -26,7 +26,7 @@ class TestRunFor(unittest.IsolatedAsyncioTestCase):
     async def test_ocp_pre_release_uses_prega_policies(self):
         _, load_config, start_build = await self._run(
             "openshift-4.23",
-            {"product": "openshift-logging", "software_lifecycle": {"phase": "pre-release"}},
+            {"product": "ocp", "software_lifecycle": {"phase": "pre-release"}},
         )
 
         load_config.assert_awaited_once_with(group="openshift-4.23", assembly="stream")
@@ -46,6 +46,43 @@ class TestRunFor(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(start_build.call_args.kwargs["ec_policy"], "rhtap-releng-tenant/registry-ocp-art-stage")
         self.assertEqual(start_build.call_args.kwargs["fbc_ec_policy"], "rhtap-releng-tenant/fbc-ocp-art-stage")
+
+    async def test_openshift_group_honors_configured_product(self):
+        for product in ("openshift-logging", "logging"):
+            for phase in ("release", "pre-release"):
+                with self.subTest(product=product, phase=phase):
+                    _, load_config, start_build = await self._run(
+                        "openshift-4.23", {"product": product, "software_lifecycle": {"phase": phase}}
+                    )
+                    load_config.assert_awaited_once()
+                    kwargs = start_build.call_args.kwargs
+                    self.assertEqual(kwargs["group"], "openshift-4.23")
+                    self.assertEqual(kwargs["ec_policy"], "rhtap-releng-tenant/registry-art-logging-stage")
+                    self.assertEqual(kwargs["fbc_ec_policy"], "rhtap-releng-tenant/fbc-stage")
+                    self.assertTrue(kwargs["include_bundles"])
+                    self.assertTrue(kwargs["include_fbcs"])
+
+    async def test_ocp_missing_product_fallback(self):
+        for product_config in ({}, {"product": None}, {"product": ""}):
+            for phase, expected in (
+                ("release", "rhtap-releng-tenant/registry-ocp-art-stage"),
+                ("pre-release", "rhtap-releng-tenant/registry-ocp-art-ec-stage"),
+            ):
+                with self.subTest(product_config=product_config, phase=phase):
+                    _, _, start_build = await self._run(
+                        "openshift-4.23", {**product_config, "software_lifecycle": {"phase": phase}}
+                    )
+                    self.assertEqual(start_build.call_args.kwargs["ec_policy"], expected)
+                    self.assertEqual(
+                        start_build.call_args.kwargs["fbc_ec_policy"], "rhtap-releng-tenant/fbc-ocp-art-stage"
+                    )
+
+    async def test_unsupported_configured_product_never_defaults_to_ocp(self):
+        for group, products in (("openshift-4.23", ("unknown",)), ("logging-6.7", (None, "", "unknown"))):
+            for product in products:
+                with self.subTest(group=group, product=product):
+                    with self.assertRaisesRegex(ValueError, "Unsupported layered-product group"):
+                        await self._run(group, {"product": product})
 
     async def test_oadp_uses_product_policies_and_full_group(self):
         with patch.object(scheduler, "datetime") as datetime_mock:

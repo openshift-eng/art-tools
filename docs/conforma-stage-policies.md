@@ -5,6 +5,14 @@
 verification and ad-hoc `build-conforma-verify`. Policy selection does not decide
 whether verification is eligible or enabled.
 
+Scheduled and ad-hoc verification honor a non-empty configured group `product`,
+including catalog aliases, even for `openshift-*` groups. Only those groups fall
+back to `ocp` when product is missing, `None` or empty; other groups require a
+supported configured product. Ad-hoc default selection loads and caches the group
+configuration for all artifact types, including FBCs. A usable explicit policy
+override avoids that read. Product selection does not change group-based namespace
+or kubeconfig routing.
+
 - OCP images and bundles use `rhtap-releng-tenant/registry-ocp-art-stage`, or
   `rhtap-releng-tenant/registry-ocp-art-ec-stage` when `software_lifecycle.phase`
   is `pre-release`. Assembly type, including preview, does not determine preGA.
