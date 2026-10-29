@@ -594,14 +594,16 @@ class KonfluxImageBuilder:
             raise
 
         finally:
-            await report.finish_checks()
-            if self._record_logger:
-                if 'okd' in self._config.group_name:
-                    key = 'image_build_okd'
-                else:
-                    key = 'image_build_konflux'
-                self._record_logger.add_record(key, **record)
-            metadata.build_event.set()
+            try:
+                await report.finish_checks()
+                if self._record_logger:
+                    if 'okd' in self._config.group_name:
+                        key = 'image_build_okd'
+                    else:
+                        key = 'image_build_konflux'
+                    self._record_logger.add_record(key, **record)
+            finally:
+                metadata.build_event.set()
         return nvr, pipelinerun_name, pipelinerun_info.to_dict()
 
     @staticmethod
