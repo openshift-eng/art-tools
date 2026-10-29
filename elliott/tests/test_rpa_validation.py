@@ -47,6 +47,7 @@ class TestRPAValidation(IsolatedAsyncioTestCase):
             self.resources[(KIND_RELEASE_PLAN, f"custom-{env}-plan", None)] = {
                 "metadata": {
                     "name": f"custom-{env}-plan",
+                    "namespace": "tenant",
                     "labels": {
                         "release.appstudio.openshift.io/releasePlanAdmission": f"unusual-{env}-admission",
                     },
@@ -55,7 +56,11 @@ class TestRPAValidation(IsolatedAsyncioTestCase):
             }
             self.resources[("ReleasePlanAdmission", f"unusual-{env}-admission", f"managed-{env}")] = {
                 "metadata": {"name": f"unusual-{env}-admission", "namespace": f"managed-{env}"},
-                "spec": {"data": {"mapping": {"components": [{"name": "test-component"}]}}},
+                "spec": {
+                    "applications": ["openshift-5-0"],
+                    "origin": "tenant",
+                    "data": {"mapping": {"components": [{"name": "test-component"}]}},
+                },
             }
 
         async def get(api_version, kind, name, namespace=None):
@@ -347,3 +352,78 @@ class TestRPAValidation(IsolatedAsyncioTestCase):
         factory.assert_called_once_with(
             default_namespace="art-mta-tenant", config_file="/tmp/mta-job-kubeconfig", context=None, dry_run=True
         )
+
+    async def test_rpa_application_mismatch_warns_in_both_environments(self):
+        for env in ("stage", "prod"):
+            spec = self.resources[("ReleasePlanAdmission", f"unusual-{env}-admission", f"managed-{env}")]["spec"]
+            for applications in (None, [], ["different-app"], "openshift-5-0"):
+                with self.subTest(env=env, applications=applications):
+                    spec["applications"] = applications
+                    with self.assertLogs("art_tools.elliottlib.cli.konflux_release_cli", level="WARNING") as logs:
+                        await self.validate()
+                    self.assertRegex("\n".join(logs.output), f"{env}.*applications.*openshift-5-0")
+            spec["applications"] = ["openshift-5-0"]
+
+    @patch("doozerlib.opm.render", new_callable=AsyncMock)
+    async def test_fbc_application_warning_does_not_skip_package_validation(self, render):
+        self.configure_fbc()
+        render.return_value = [{"schema": "olm.package", "name": "missing-operator"}]
+        self.resources[("ReleasePlanAdmission", "unusual-stage-admission", "managed-stage")]["spec"]["applications"] = [
+            "other-app"
+        ]
+        with self.assertLogs("art_tools.elliottlib.cli.konflux_release_cli", level="WARNING") as logs:
+            with self.assertRaisesRegex(ValueError, "missing-operator"):
+                await self.validate(kind="fbc")
+        self.assertIn("applications", "\n".join(logs.output))
+
+    async def test_rpa_origin_must_match_release_plan_namespace_in_both_environments(self):
+        for env in ("stage", "prod"):
+            spec = self.resources[("ReleasePlanAdmission", f"unusual-{env}-admission", f"managed-{env}")]["spec"]
+            for origin in (None, "", "other-tenant"):
+                with self.subTest(env=env, origin=origin):
+                    spec["origin"] = origin
+                    with self.assertRaisesRegex(ValueError, f"{env}.*origin.*tenant"):
+                        await self.validate()
+            spec["origin"] = "tenant"
+
+    async def test_binding_uses_rp_namespace_and_allows_multiple_applications(self):
+        for env in ("stage", "prod"):
+            self.resources[(KIND_RELEASE_PLAN, f"custom-{env}-plan", None)]["metadata"]["namespace"] = "custom-tenant"
+            spec = self.resources[("ReleasePlanAdmission", f"unusual-{env}-admission", f"managed-{env}")]["spec"]
+            spec["origin"] = "custom-tenant"
+            spec["applications"] = ["another-app", "openshift-5-0"]
+        await self.validate()
+
+    @patch("doozerlib.opm.render", new_callable=AsyncMock)
+    async def test_fbc_binding_failure_prevents_rendering(self, render):
+        self.configure_fbc()
+        self.resources[("ReleasePlanAdmission", "unusual-stage-admission", "managed-stage")]["spec"]["origin"] = (
+            "other-tenant"
+        )
+        with self.assertRaisesRegex(ValueError, "origin"):
+            await self.validate(kind="fbc")
+        render.assert_not_awaited()
+
+    @patch("doozerlib.opm.render", new_callable=AsyncMock)
+    async def test_blocked_rpa_fails_for_image_and_fbc_before_rendering(self, render):
+        for env in ("stage", "prod"):
+            rpa = self.resources[("ReleasePlanAdmission", f"unusual-{env}-admission", f"managed-{env}")]
+            rpa["metadata"]["labels"] = {"release.appstudio.openshift.io/block-releases": "true"}
+            for kind in ("image", "fbc"):
+                with self.subTest(env=env, kind=kind):
+                    with self.assertRaisesRegex(ValueError, f"{env}.*block-releases"):
+                        await self.validate(env=env, kind=kind)
+            del rpa["metadata"]["labels"]
+        render.assert_not_awaited()
+
+    async def test_absent_or_false_block_label_allows_validation(self):
+        for value in (None, "false"):
+            with self.subTest(value=value):
+                for env in ("stage", "prod"):
+                    metadata = self.resources[("ReleasePlanAdmission", f"unusual-{env}-admission", f"managed-{env}")][
+                        "metadata"
+                    ]
+                    metadata["labels"] = (
+                        {} if value is None else {"release.appstudio.openshift.io/block-releases": value}
+                    )
+                await self.validate()

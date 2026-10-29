@@ -48,16 +48,21 @@ class TestLPPreparationRPAValidation(IsolatedAsyncioTestCase):
             env = name.rsplit("-", 1)[-1]
             if kind == "ReleasePlan":
                 data = {
-                    "metadata": {"labels": {"release.appstudio.openshift.io/releasePlanAdmission": f"admission-{env}"}},
+                    "metadata": {
+                        "namespace": "art-oadp-tenant",
+                        "labels": {"release.appstudio.openshift.io/releasePlanAdmission": f"admission-{env}"},
+                    },
                     "spec": {"target": "managed", "application": "oadp-1-5"},
                 }
             else:
                 data = {
                     "spec": {
+                        "applications": ["oadp-1-5"],
+                        "origin": "art-oadp-tenant",
                         "data": {
                             "mapping": {"components": [{"name": name} for name in self.allowed[env]]},
                             "fbc": {"allowedPackages": self.allowed[env]},
-                        }
+                        },
                     }
                 }
             return ResourceInstance(None, {"apiVersion": version, "kind": kind, **data})
