@@ -37,7 +37,7 @@ class TestScheduleStageTestingScan(unittest.IsolatedAsyncioTestCase):
         with self.assertLogs("pyartcd.pipelines.scheduled.schedule_stage_testing_scan", level="INFO") as logs:
             await scan_and_trigger(self.runtime)
 
-        mock_get_image_info.assert_called_once_with("quay.io/openshift-release-dev/ocp-release:4.22.9-x86_64")
+        mock_get_image_info.assert_called_once_with("quay.io/openshift-release-dev/ocp-release:4.22.9-x86_64", registry_config=None)
         mock_jenkins.start_verify_stage_testing.assert_not_called()
         self.assertIn("[DRY-RUN] MR !42 — would queue verify-stage-testing for 4.22/4.22.9", "\n".join(logs.output))
 
@@ -58,7 +58,7 @@ class TestScheduleStageTestingScan(unittest.IsolatedAsyncioTestCase):
         mock_client.list_merge_requests.assert_called_once_with(
             "hybrid-platforms/art/ocp-shipment-data", state="opened", labels=["stage-release-success"], per_page=100
         )
-        mock_get_image_info.assert_called_once_with("quay.io/openshift-release-dev/ocp-release:4.22.9-x86_64")
+        mock_get_image_info.assert_called_once_with("quay.io/openshift-release-dev/ocp-release:4.22.9-x86_64", registry_config=None)
         mock_jenkins.start_verify_stage_testing.assert_called_once_with(
             version="4.22", assembly="4.22.9", block_until_building=False
         )
@@ -77,7 +77,7 @@ class TestScheduleStageTestingScan(unittest.IsolatedAsyncioTestCase):
 
         await scan_and_trigger(self.runtime)
 
-        mock_get_image_info.assert_called_once_with("quay.io/openshift-release-dev/ocp-release:4.22.9-x86_64")
+        mock_get_image_info.assert_called_once_with("quay.io/openshift-release-dev/ocp-release:4.22.9-x86_64", registry_config=None)
         mock_jenkins.start_verify_stage_testing.assert_not_called()
 
     @patch(
@@ -181,7 +181,7 @@ class TestScheduleStageTestingScan(unittest.IsolatedAsyncioTestCase):
 
         await scan_and_trigger(self.runtime)
 
-        mock_get_image_info.assert_called_once_with("quay.io/openshift-release-dev/ocp-release:5.0.0-rc.6-x86_64")
+        mock_get_image_info.assert_called_once_with("quay.io/openshift-release-dev/ocp-release:5.0.0-rc.6-x86_64", registry_config=None)
         mock_jenkins.start_verify_stage_testing.assert_called_once_with(
             version="5.0", assembly="rc.6", block_until_building=False
         )
