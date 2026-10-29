@@ -12,6 +12,7 @@ from doozerlib import Runtime
 from doozerlib.cli.images import images_print
 from doozerlib.cli.images_health import ConcernCode
 from doozerlib.cli.images_health import ImagesHealthPipeline as DoozerImagesHealthPipeline
+from doozerlib.image import ImageMetadata
 from pyartcd.pipelines.okd_images_health import ImagesHealthPipeline
 
 DATA_PATH = "https://github.com/openshift-eng/ocp-build-data"
@@ -155,30 +156,35 @@ class TestGetReport(IsolatedAsyncioTestCase):
     @patch('pyartcd.pipelines.okd_images_health.exectools.cmd_gather_async', new_callable=AsyncMock)
     @patch('pyartcd.pipelines.okd_images_health.util.get_counter_failures', new_callable=AsyncMock)
     async def test_non_release_base_failure_reaches_summary(self, mock_get_failures, mock_cmd):
+        """An OKD-only base failure survives real enumeration, classification and summary reporting."""
         image_name = 'openshift-enterprise-base-rhel10'
-        image_meta = MagicMock()
-        image_meta.distgit_key = image_name
-        image_meta.name = image_name
-        image_meta.namespace = 'containers'
-        image_meta.image_name = f'openshift/{image_name}'
-        image_meta.image_name_short = image_name
-        image_meta.mode = 'enabled'
-        image_meta.enabled = True
-        image_meta.base_only = True
-        image_meta.for_release = False
-        image_meta.get_component_name.return_value = f'{image_name}-container'
-        image_meta.get_default_push_names.return_value = []
-        image_meta.config = Model(
-            {
-                'base_only': True,
-                'for_release': False,
-                'for_payload': False,
-                'content': {'source': {'git': {'url': None}}},
-            }
-        )
         doozer_runtime = MagicMock(spec=Runtime)
         doozer_runtime.group = 'openshift-5.1'
+        doozer_runtime.variant = BuildVariant.OKD
+        doozer_runtime.branch = 'openshift-5.1'
+        doozer_runtime.assembly = 'stream'
+        doozer_runtime.assembly_basis_event = None
+        doozer_runtime.group_config = Model({})
+        doozer_runtime.get_releases_config.return_value = Model({})
         doozer_runtime.load_disabled = False
+        image_meta = ImageMetadata(
+            doozer_runtime,
+            Model(
+                {
+                    'key': image_name,
+                    'filename': f'{image_name}.yml',
+                    'data': {
+                        'name': f'openshift/{image_name}',
+                        'mode': 'disabled',
+                        'okd': {'mode': 'enabled'},
+                        'base_only': True,
+                        'for_release': False,
+                        'for_payload': False,
+                    },
+                }
+            ),
+        )
+        self.assertFalse(image_meta.enabled)
         doozer_runtime.image_metas.return_value = [image_meta]
         doozer_runtime.konflux_db = MagicMock()
         doozer_runtime.konflux_db._ensure_group_cached = AsyncMock()
