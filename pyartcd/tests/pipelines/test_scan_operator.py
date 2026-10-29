@@ -188,7 +188,7 @@ class TestScanOperatorPipeline(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(pipeline.operators_without_fbcs), 0)
 
 
-@patch.dict('os.environ', {'REGISTRY_AUTH_FILE': ''})
+@patch.dict('os.environ', {'REGISTRY_AUTH_FILE': '', 'QUAY_AUTH_FILE': ''})
 class TestCheckStageRegistry(unittest.IsolatedAsyncioTestCase):
     """Tests for the check_stage_registry method."""
 
@@ -234,7 +234,7 @@ class TestCheckStageRegistry(unittest.IsolatedAsyncioTestCase):
                 'skopeo',
                 'inspect',
                 '--raw',
-                'docker://registry.stage.redhat.io/openshift4/ose-test-operator-bundle:abc123',
+                'docker://registry.stage.redhat.io/openshift4/ose-test-operator-bundle@sha256:abc123',
             ],
             check=False,
         )
@@ -410,7 +410,7 @@ class TestInitStageReleaseCheck(unittest.IsolatedAsyncioTestCase):
         self.addCleanup(patcher.stop)
 
     @patch('pyartcd.pipelines.scan_operator.load_group_config', new_callable=AsyncMock)
-    @patch('pyartcd.pipelines.scan_operator.resolve_konflux_fbc_stage_release_plan')
+    @patch('pyartcd.stage_registry.resolve_konflux_fbc_stage_release_plan')
     async def test_stage_release_check_enabled_with_plan(self, mock_resolve_plan, mock_load_config):
         """When a stage release plan exists, _check_stage_release should be True."""
         mock_load_config.return_value = {'product': 'ocp'}
@@ -428,7 +428,7 @@ class TestInitStageReleaseCheck(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(pipeline._check_stage_release)
 
     @patch('pyartcd.pipelines.scan_operator.load_group_config', new_callable=AsyncMock)
-    @patch('pyartcd.pipelines.scan_operator.resolve_konflux_fbc_stage_release_plan')
+    @patch('pyartcd.stage_registry.resolve_konflux_fbc_stage_release_plan')
     async def test_stage_release_check_disabled_no_plan(self, mock_resolve_plan, mock_load_config):
         """When no stage release plan exists, _check_stage_release should be False."""
         mock_load_config.return_value = {'product': 'ocp'}
