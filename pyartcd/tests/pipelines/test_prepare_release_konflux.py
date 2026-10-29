@@ -809,8 +809,12 @@ class TestPrepareReleaseKonfluxPipeline(unittest.IsolatedAsyncioTestCase):
         mock_get_snapshot.assert_any_call(['fbc-nvr'])
         self.assertEqual(mock_get_snapshot.call_count, 4)
 
-        # Verify RPA validation was called for each shipment kind
-        self.assertTrue(mock_validate_rpa.await_count > 0, "validate_snapshot_against_rpa should have been called")
+        # Pass the shipment itself so validation uses its configured ReleasePlans.
+        self.assertEqual(mock_validate_rpa.await_count, 4)
+        mock_validate_rpa.assert_any_await(mock_shipment_image.shipment, "prod", "image")
+        mock_validate_rpa.assert_any_await(mock_shipment_extras.shipment, "prod", "extras")
+        mock_validate_rpa.assert_any_await(mock_shipment_metadata.shipment, "prod", "metadata")
+        mock_validate_rpa.assert_any_await(mock_shipment_fbc.shipment, "prod", "fbc")
 
         # copy and modify mocks to what is expected after init and build finding, i.e., at create shipment MR time
         mock_shipment_image_create = copy.deepcopy(mock_shipment_image)

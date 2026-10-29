@@ -22,6 +22,7 @@ from artcommonlib.github_auth import build_git_auth_env, get_github_client_for_o
 from artcommonlib.gitlab import GitLabClient
 from artcommonlib.rpm_utils import parse_nvr
 from artcommonlib.util import new_roundtrip_yaml_handler
+from elliottlib.cli.konflux_release_cli import validate_snapshot_against_rpa
 from elliottlib.shipment_model import (
     Data,
     Environments,
@@ -1649,6 +1650,11 @@ class ReleaseFromFbcPipeline:
 
         # Create MR if requested
         if self.create_mr and shipments_by_kind:
+            for config in shipments_by_kind.values():
+                shipment = config.shipment
+                kind = "fbc" if shipment.metadata.fbc else image_key
+                await validate_snapshot_against_rpa(shipment, "prod", kind)
+
             if self.ocp_optional:
                 try:
                     mr_url = await self.create_shipment_mr(shipments_by_kind, env="prod")

@@ -25,6 +25,7 @@ from artcommonlib.util import (
     resolve_konflux_kubeconfig_by_product,
     resolve_konflux_namespace_by_product,
 )
+from elliottlib.cli.konflux_release_cli import validate_snapshot_against_rpa
 from elliottlib.shipment_model import (
     Data,
     Environments,
@@ -1044,6 +1045,11 @@ class PrepareReleaseLPPipeline:
 
         if shipments_by_kind:
             if self.create_mr:
+                for config in shipments_by_kind.values():
+                    shipment = config.shipment
+                    kind = "fbc" if shipment.metadata.fbc else "image"
+                    await validate_snapshot_against_rpa(shipment, "prod", kind)
+
                 if existing_mr:
                     # Revalidate around the draft transition because CI or MR state may have changed
                     # since the initial check performed before the expensive build work.

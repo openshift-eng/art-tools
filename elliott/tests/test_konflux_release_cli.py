@@ -3,7 +3,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 from artcommonlib.model import Model
 from doozerlib.backend.konflux_client import API_VERSION, KIND_APPLICATION, KIND_RELEASE, KIND_RELEASE_PLAN
-from elliottlib.cli.konflux_release_cli import CreateReleaseCli, ReleaseConfig, validate_snapshot_against_rpa
+from elliottlib.cli.konflux_release_cli import CreateReleaseCli, ReleaseConfig
 from elliottlib.cli.konflux_release_watch_cli import WatchReleaseCli
 from elliottlib.shipment_model import (
     ComponentSource,
@@ -20,6 +20,7 @@ from elliottlib.shipment_model import (
     SnapshotComponent,
     SnapshotSpec,
 )
+from kubernetes.dynamic import ResourceInstance
 
 
 class TestWatchReleaseCli(IsolatedAsyncioTestCase):
@@ -733,109 +734,14 @@ class TestCreateReleaseCli(IsolatedAsyncioTestCase):
         # assert that release did not get created
         self.assertEqual(self.konflux_client._create.call_count, 0)
 
-    @patch("elliottlib.cli.konflux_release_cli.fetch_rpa", new_callable=AsyncMock)
-    async def test_validate_rpa_success(self, mock_fetch_rpa):
-        rpa_data = {
-            "spec": {
-                "data": {
-                    "mapping": {
-                        "components": [{"name": "test-rpm"}, {"name": "test-container"}, {"name": "extra-component"}]
-                    }
-                }
-            }
-        }
-        mock_fetch_rpa.return_value = rpa_data
-
-        await validate_snapshot_against_rpa("openshift-4.18", "prod", "image", ["test-rpm", "test-container"])
-        self.assertEqual(mock_fetch_rpa.await_count, 2)
-        mock_fetch_rpa.assert_any_await("ocp-art-advisory-prod-4-18")
-        mock_fetch_rpa.assert_any_await("ocp-art-advisory-stage-4-18")
-
-    @patch("elliottlib.cli.konflux_release_cli.fetch_rpa", new_callable=AsyncMock)
-    async def test_validate_rpa_missing_components(self, mock_fetch_rpa):
-        rpa_data = {"spec": {"data": {"mapping": {"components": [{"name": "test-rpm"}]}}}}
-        mock_fetch_rpa.return_value = rpa_data
-
-        with self.assertRaises(ValueError) as ctx:
-            await validate_snapshot_against_rpa("openshift-4.18", "prod", "image", ["test-rpm", "missing-component"])
-
-        self.assertIn("missing-component", str(ctx.exception))
-        self.assertIn("silently filtered out", str(ctx.exception))
-
-    @patch("elliottlib.cli.konflux_release_cli.fetch_rpa", new_callable=AsyncMock)
-    async def test_validate_rpa_fbc_skipped(self, mock_fetch_rpa):
-        await validate_snapshot_against_rpa("openshift-4.18", "prod", "fbc", ["fbc-ose-4-18-sriov-network-operator"])
-        mock_fetch_rpa.assert_not_called()
-
-    @patch("elliottlib.cli.konflux_release_cli.fetch_rpa", new_callable=AsyncMock)
-    async def test_validate_rpa_fetch_failure(self, mock_fetch_rpa):
-        mock_fetch_rpa.side_effect = ValueError("HTTP 404")
-
-        with self.assertRaises(ValueError) as ctx:
-            await validate_snapshot_against_rpa("openshift-4.18", "prod", "image", ["comp1"])
-
-        self.assertIn("HTTP 404", str(ctx.exception))
-
-    @patch("elliottlib.cli.konflux_release_cli.fetch_rpa", new_callable=AsyncMock)
-    async def test_validate_rpa_checks_both_envs_stage_first(self, mock_fetch_rpa):
-        rpa_data = {"spec": {"data": {"mapping": {"components": [{"name": "comp1"}]}}}}
-        mock_fetch_rpa.return_value = rpa_data
-
-        await validate_snapshot_against_rpa("openshift-4.18", "stage", "image", ["comp1"])
-        self.assertEqual(mock_fetch_rpa.await_count, 2)
-        # When env is "stage", stage is checked first, then prod
-        calls = [c.args[0] for c in mock_fetch_rpa.await_args_list]
-        self.assertEqual(calls, ["ocp-art-advisory-stage-4-18", "ocp-art-advisory-prod-4-18"])
-
-    @patch("elliottlib.cli.konflux_release_cli.fetch_rpa", new_callable=AsyncMock)
-    async def test_validate_rpa_lp_oadp_success(self, mock_fetch_rpa):
-        rpa_data = {"spec": {"data": {"mapping": {"components": [{"name": "oadp-1-5-oadp-operator"}]}}}}
-        mock_fetch_rpa.return_value = rpa_data
-
-        await validate_snapshot_against_rpa("oadp-1.5", "prod", "image", ["oadp-1-5-oadp-operator"])
-        self.assertEqual(mock_fetch_rpa.await_count, 2)
-        mock_fetch_rpa.assert_any_await("oadp-advisory-prod-1-5")
-        mock_fetch_rpa.assert_any_await("oadp-advisory-stage-1-5")
-
-    @patch("elliottlib.cli.konflux_release_cli.fetch_rpa", new_callable=AsyncMock)
-    async def test_validate_rpa_lp_mta_success(self, mock_fetch_rpa):
-        rpa_data = {"spec": {"data": {"mapping": {"components": [{"name": "mta-8-2-mta-operator"}]}}}}
-        mock_fetch_rpa.return_value = rpa_data
-
-        await validate_snapshot_against_rpa("mta-8.2", "stage", "image", ["mta-8-2-mta-operator"])
-        self.assertEqual(mock_fetch_rpa.await_count, 2)
-        calls = [c.args[0] for c in mock_fetch_rpa.await_args_list]
-        self.assertEqual(calls, ["mta-advisory-stage-8-2", "mta-advisory-prod-8-2"])
-
-    @patch("elliottlib.cli.konflux_release_cli.fetch_rpa", new_callable=AsyncMock)
-    async def test_validate_rpa_lp_logging_success(self, mock_fetch_rpa):
-        rpa_data = {"spec": {"data": {"mapping": {"components": [{"name": "logging-6-6-logging-operator"}]}}}}
-        mock_fetch_rpa.return_value = rpa_data
-
-        await validate_snapshot_against_rpa("logging-6.6", "prod", "image", ["logging-6-6-logging-operator"])
-        self.assertEqual(mock_fetch_rpa.await_count, 2)
-        mock_fetch_rpa.assert_any_await("logging-advisory-prod-6-6")
-
-    @patch("elliottlib.cli.konflux_release_cli.fetch_rpa", new_callable=AsyncMock)
-    async def test_validate_rpa_lp_unsupported_product_skipped(self, mock_fetch_rpa):
-        await validate_snapshot_against_rpa("unknown-product-1.0", "prod", "image", ["comp1"])
-        mock_fetch_rpa.assert_not_called()
-
-    @patch("elliottlib.cli.konflux_release_cli.fetch_rpa", new_callable=AsyncMock)
-    async def test_validate_rpa_lp_invalid_format_skipped(self, mock_fetch_rpa):
-        await validate_snapshot_against_rpa("invalid_group_format", "prod", "image", ["comp1"])
-        mock_fetch_rpa.assert_not_called()
-
-    @patch("elliottlib.cli.konflux_release_cli.fetch_rpa", new_callable=AsyncMock)
     @patch("elliottlib.cli.konflux_release_cli.get_utc_now_formatted_str", return_value="timestamp")
     @patch("doozerlib.backend.konflux_client.KonfluxClient.from_kubeconfig")
     @patch("elliottlib.runtime.Runtime")
-    async def test_run_validates_rpa_before_snapshot(self, mock_runtime, mock_konflux_client_init, _, mock_fetch_rpa):
+    async def test_run_validates_rpa_before_snapshot(self, mock_runtime, mock_konflux_client_init, _):
         mock_runtime.return_value = self.runtime
         mock_konflux_client_init.return_value = self.konflux_client
 
         rpa_data = {"spec": {"data": {"mapping": {"components": [{"name": "test-rpm"}]}}}}
-        mock_fetch_rpa.return_value = rpa_data
 
         shipment_config = ShipmentConfig(
             shipment=Shipment(
@@ -875,7 +781,25 @@ class TestCreateReleaseCli(IsolatedAsyncioTestCase):
         )
         self.runtime.shipment_gitdata.load_yaml_file.return_value = shipment_config.model_dump(exclude_none=True)
         self.konflux_client._get_api.return_value = MagicMock()
-        self.konflux_client._get.return_value = MagicMock()
+
+        async def get_resource(api_version, kind, name, namespace=None):
+            if kind == KIND_RELEASE_PLAN:
+                return ResourceInstance(
+                    None,
+                    {
+                        "apiVersion": api_version,
+                        "kind": kind,
+                        "metadata": {
+                            "labels": {
+                                "release.appstudio.openshift.io/releasePlanAdmission": "actual-rpa",
+                            }
+                        },
+                        "spec": {"application": "openshift-4-18", "target": "managed-namespace"},
+                    },
+                )
+            return ResourceInstance(None, {"apiVersion": api_version, "kind": kind, **rpa_data})
+
+        self.konflux_client._get.side_effect = get_resource
 
         cli = CreateReleaseCli(
             runtime=self.runtime,
@@ -887,11 +811,19 @@ class TestCreateReleaseCli(IsolatedAsyncioTestCase):
             kind="image",
         )
 
-        with self.assertRaises(ValueError) as ctx:
-            await cli.run()
-
-        self.assertIn("unauthorized-component", str(ctx.exception))
-        self.assertEqual(self.konflux_client._create.call_count, 0)
+        for product, group in (("ocp", "openshift-4.18"), ("oadp", "oadp-1.5"), ("logging", "logging-6.6")):
+            with self.subTest(product=product):
+                self.runtime.product = product
+                self.runtime.group = group
+                shipment_config.shipment.metadata.product = product
+                shipment_config.shipment.metadata.group = group
+                self.runtime.shipment_gitdata.load_yaml_file.return_value = shipment_config.model_dump(
+                    exclude_none=True
+                )
+                with self.assertRaises(ValueError) as ctx:
+                    await cli.run()
+                self.assertIn("unauthorized-component", str(ctx.exception))
+                self.assertEqual(self.konflux_client._create.call_count, 0)
 
     @patch("elliottlib.cli.konflux_release_cli.get_utc_now_formatted_str", return_value="timestamp")
     @patch("doozerlib.backend.konflux_client.KonfluxClient.from_kubeconfig")
