@@ -33,11 +33,12 @@ def _url(value):
 
 
 def _checks(value, terminal):
-    """Validate optional check reports without discarding native build results."""
+    """Normalize checks and distinguish report gaps from blocking uncertainty."""
     if not isinstance(value, list):
-        return [], True
+        return [], True, True
     checks = []
     partial = False
+    blocking_incomplete = False
     for check in value:
         if (
             not isinstance(check, dict)
@@ -46,6 +47,7 @@ def _checks(value, terminal):
             or type(check.get('blocking')) is not bool
         ):
             partial = True
+            blocking_incomplete |= not isinstance(check, dict) or check.get('blocking') is not False
             continue
         status = _status(check.get('status'), terminal)
         if status not in {'Pending', 'Running', 'Succeeded', 'Failed', 'Cancelled', 'Skipped', 'DryRun'}:
@@ -64,7 +66,7 @@ def _checks(value, terminal):
                 ),
             }
         )
-    return checks, partial
+    return checks, partial, blocking_incomplete
 
 
 def _result_status(status, checks):
@@ -109,7 +111,7 @@ def component_details(run):
             if not isinstance(build, dict) or not isinstance(build.get("name"), str):
                 partial = True
                 continue
-            checks, check_partial = _checks(build.get('checks', []), terminal)
+            checks, check_partial, _ = _checks(build.get('checks', []), terminal)
             partial |= check_partial
             builds.append(
                 {
@@ -123,10 +125,10 @@ def component_details(run):
                 }
             )
         outcome = _status(entry.get("status"), terminal)
-        checks, check_partial = _checks(entry.get('checks', []), terminal)
+        checks, check_partial, blocking_incomplete = _checks(entry.get('checks', []), terminal)
         partial |= check_partial
         result_status = _result_status(outcome, checks)
-        if check_partial and result_status in {'Succeeded', 'Running'}:
+        if blocking_incomplete and result_status in {'Succeeded', 'Running'}:
             result_status = 'Unknown'
         reason = str(entry.get("reason") or "")
         if terminal and outcome == "Unknown":

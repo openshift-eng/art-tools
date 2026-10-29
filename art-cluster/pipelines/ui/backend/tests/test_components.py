@@ -51,6 +51,38 @@ class ComponentTests(unittest.TestCase):
             component = component_details(run_with(checks=checks))['components'][0]
             self.assertEqual(component['resultStatus'], expected)
 
+    def test_incomplete_optional_check_preserves_success(self):
+        for terminal in (False, True):
+            for status in ('Pending', 'Running', 'Unknown', 'invalid'):
+                with self.subTest(terminal=terminal, status=status):
+                    checks = [
+                        {'kind': 'conforma', 'name': 'Conforma', 'blocking': True, 'status': 'Succeeded'},
+                        {'kind': 'custom', 'name': 'optional-qe', 'blocking': False, 'status': status},
+                    ]
+                    result = component_details(run_with(checks=checks, terminal=terminal))
+                    component = result['components'][0]
+                    expected_status = 'Unknown' if terminal or status not in ('Pending', 'Running') else status
+                    self.assertEqual(component['status'], 'Succeeded')
+                    self.assertEqual(component['resultStatus'], 'Succeeded')
+                    self.assertEqual(component['checks'][1]['status'], expected_status)
+                    self.assertEqual(result['componentReporting']['partial'], expected_status == 'Unknown')
+
+    def test_malformed_check_only_blocks_if_it_might_be_blocking(self):
+        for check, expected in (
+            ({'blocking': False}, 'Succeeded'),
+            ({'blocking': True}, 'Unknown'),
+            ({'blocking': 'false'}, 'Unknown'),
+            ({}, 'Unknown'),
+        ):
+            with self.subTest(check=check):
+                checks = [
+                    {'kind': 'conforma', 'name': 'Conforma', 'blocking': True, 'status': 'Succeeded'},
+                    check,
+                ]
+                result = component_details(run_with(checks=checks, terminal=True))
+                self.assertEqual(result['components'][0]['resultStatus'], expected)
+                self.assertTrue(result['componentReporting']['partial'])
+
     def test_unfinished_blocking_check_prevents_success(self):
         for terminal, expected in ((False, 'Running'), (True, 'Unknown')):
             result = component_details(
