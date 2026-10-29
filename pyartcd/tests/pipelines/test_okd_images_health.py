@@ -32,6 +32,44 @@ def _make_concern(image_name, group, code, **kwargs):
 
 
 class TestNotifyOkdChannel(IsolatedAsyncioTestCase):
+    async def test_failure_summary_links_to_okd_dashboard(self):
+        """Render the OKD dashboard filter without changing failure counts or duplicating slashes."""
+        for base_url in ('https://dashboard.example.test', 'https://dashboard.example.test/'):
+            with self.subTest(base_url=base_url):
+                runtime = MagicMock()
+                runtime.new_slack_client.return_value.say = AsyncMock()
+                pipeline = ImagesHealthPipeline(
+                    runtime=runtime,
+                    versions='5.1',
+                    send_to_release_channel=False,
+                    send_to_okd_channel=True,
+                    ping_chai_bot=False,
+                    data_path=DATA_PATH,
+                    data_gitref='',
+                    image_list='',
+                    assembly='stream',
+                )
+                pipeline.report = [
+                    _make_concern('base-image', 'okd-5.1', ConcernCode.LATEST_ATTEMPT_FAILED.value),
+                    _make_concern('other-image', 'okd-5.1', ConcernCode.LATEST_ATTEMPT_FAILED.value),
+                    _make_concern('healthy-image', 'okd-5.1', ConcernCode.LATEST_BUILD_SUCCEEDED.value),
+                ]
+                pipeline.rebase_failures = {'5.1': {'rebase-image': {'failure_count': 3}}}
+
+                with patch('pyartcd.pipelines.okd_images_health.ART_BUILD_FAILURES_URL', base_url):
+                    await pipeline.notify_okd_channel()
+
+                pipeline.slack_client.say.assert_awaited_once()
+                message = pipeline.slack_client.say.await_args.args[0]
+                self.assertIn('<https://dashboard.example.test/?variant=okd|ART Build Failures Dashboard>', message)
+                self.assertIn('2 images with build failures', message)
+                self.assertIn('1 image with rebase failures', message)
+                self.assertNotIn('All OKD images are healthy', message)
+                self.assertEqual(
+                    pipeline.slack_client.say.await_args.kwargs,
+                    {'link_build_url': False, 'unfurl_links': False, 'unfurl_media': False},
+                )
+
     async def test_no_concerns_after_filtering(self):
         runtime = MagicMock()
         runtime.working_dir = MagicMock()

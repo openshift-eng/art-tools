@@ -378,7 +378,7 @@ class ImagesHealthPipeline:
                     message_parts.append(f'- {item}')
 
         # Link to art-build-failures dashboard
-        dashboard_url = ART_BUILD_FAILURES_URL
+        dashboard_url = f'{ART_BUILD_FAILURES_URL.rstrip("/")}/?variant=okd'
         message_parts.append(
             f'\nFor detailed information, please check the {self.url_text(dashboard_url, "ART Build Failures Dashboard")}'
         )
