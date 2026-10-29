@@ -150,11 +150,11 @@ class TestImagesHealthOKDModeFiltering(unittest.IsolatedAsyncioTestCase):
             # Image should NOT be skipped, so get_concerns should be called once
             mock_get_concerns.assert_called_once_with(image_meta)
 
-    async def test_okd_variant_non_payload_image_skipped(self):
+    async def test_okd_variant_non_payload_image_included(self):
         """
         Test OKD variant with non-payload image (for_payload=False).
 
-        Expected: Image should be skipped even if mode is enabled.
+        Expected: Buildable non-payload images should be monitored.
         """
         image_meta = self._create_image_meta('test-image', 'enabled', for_payload=False)
         self.mock_runtime.image_metas.return_value = [image_meta]
@@ -163,8 +163,46 @@ class TestImagesHealthOKDModeFiltering(unittest.IsolatedAsyncioTestCase):
 
         with patch.object(pipeline, 'get_concerns', new=MagicMock()) as mock_get_concerns:
             await pipeline.run()
-            # Non-payload image should be skipped for OKD
-            mock_get_concerns.assert_not_called()
+            mock_get_concerns.assert_called_once_with(image_meta)
+
+    async def test_okd_variant_missing_payload_flag_included(self):
+        image_meta = self._create_image_meta('base-image', 'enabled')
+        del image_meta.config['for_payload']
+        self.mock_runtime.image_metas.return_value = [image_meta]
+        pipeline = ImagesHealthPipeline(runtime=self.mock_runtime, limit=100, variant=BuildVariant.OKD)
+
+        with patch.object(pipeline, 'get_concerns') as mock_get_concerns:
+            await pipeline.run()
+
+        mock_get_concerns.assert_called_once_with(image_meta)
+
+    async def test_disabled_okd_base_images_remain_excluded(self):
+        images = [
+            self._create_image_meta('disabled-base', 'disabled', for_payload=False),
+            self._create_image_meta('okd-disabled-base', 'enabled', okd_mode='disabled', for_payload=False),
+        ]
+        for image_meta in images:
+            image_meta.config.base_only = True
+            image_meta.config.for_release = False
+        self.mock_runtime.image_metas.return_value = images
+        pipeline = ImagesHealthPipeline(runtime=self.mock_runtime, limit=100, variant=BuildVariant.OKD)
+
+        with patch.object(pipeline, 'get_concerns') as mock_get_concerns:
+            await pipeline.run()
+
+        mock_get_concerns.assert_not_called()
+
+    async def test_ocp_non_payload_filtering_unchanged(self):
+        enabled_image = self._create_image_meta('ocp-base', 'enabled', for_payload=False)
+        disabled_image = self._create_image_meta('konflux-disabled-base', 'enabled', for_payload=False)
+        disabled_image.config.konflux.mode = 'disabled'
+        self.mock_runtime.image_metas.return_value = [enabled_image, disabled_image]
+        pipeline = ImagesHealthPipeline(runtime=self.mock_runtime, limit=100, variant=BuildVariant.OCP)
+
+        with patch.object(pipeline, 'get_concerns') as mock_get_concerns:
+            await pipeline.run()
+
+        mock_get_concerns.assert_called_once_with(enabled_image)
 
     async def test_okd_variant_payload_image_not_skipped(self):
         """
@@ -204,16 +242,16 @@ class TestImagesHealthOKDModeFiltering(unittest.IsolatedAsyncioTestCase):
             mock_get_concerns.assert_any_call(image2)
             mock_get_concerns.assert_any_call(image4)
 
-    async def test_multiple_images_with_payload_filtering(self):
+    async def test_multiple_images_include_buildable_non_payload_images(self):
         """
         Test OKD variant with multiple images including non-payload ones.
 
-        Expected: Only payload images with effective mode 'enabled' should be processed.
+        Expected: All images with effective mode 'enabled' should be processed.
         """
         image1 = self._create_image_meta('image-1', 'enabled', for_payload=True)  # Should NOT skip (payload + enabled)
-        image2 = self._create_image_meta('image-2', 'enabled', for_payload=False)  # Should skip (non-payload)
+        image2 = self._create_image_meta('image-2', 'enabled', for_payload=False)
         image3 = self._create_image_meta('image-3', 'disabled', okd_mode='enabled', for_payload=True)  # Should NOT skip
-        image4 = self._create_image_meta('image-4', 'disabled', okd_mode='enabled', for_payload=False)  # Should skip
+        image4 = self._create_image_meta('image-4', 'disabled', okd_mode='enabled', for_payload=False)
 
         self.mock_runtime.image_metas.return_value = [image1, image2, image3, image4]
 
@@ -221,10 +259,9 @@ class TestImagesHealthOKDModeFiltering(unittest.IsolatedAsyncioTestCase):
 
         with patch.object(pipeline, 'get_concerns', new=MagicMock()) as mock_get_concerns:
             await pipeline.run()
-            # Only image1 and image3 should be processed (both are payload images with effective mode 'enabled')
-            self.assertEqual(mock_get_concerns.call_count, 2)
-            mock_get_concerns.assert_any_call(image1)
-            mock_get_concerns.assert_any_call(image3)
+            self.assertEqual(mock_get_concerns.call_count, 4)
+            for image_meta in [image1, image2, image3, image4]:
+                mock_get_concerns.assert_any_call(image_meta)
 
 
 class TestGetConcernsFailureCodeSelection(unittest.TestCase):
