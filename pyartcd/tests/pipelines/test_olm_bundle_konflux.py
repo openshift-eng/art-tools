@@ -238,13 +238,24 @@ class TestOlmBundleKonfluxStageReleaseGating(unittest.IsolatedAsyncioTestCase):
         mock_locks,
         mock_jenkins,
     ):
-        """When bundles are actually built (record.log has entries), stage release runs."""
+        """New OCP bundles must be stage-released before triggering FBC builds."""
         mock_stage_release.return_value = []
+        mock_jenkins.start_build_fbc.side_effect = lambda **kwargs: mock_stage_release.assert_awaited_once()
         self._write_bundle_record(status='0', operator_nvr='op-1-1', bundle_nvr='op-bundle-1-1')
 
-        await self._run_pipeline(mock_stage_release, mock_load_group_config, mock_locks, mock_jenkins, nvrs='')
+        await self._run_pipeline(
+            mock_stage_release,
+            mock_load_group_config,
+            mock_locks,
+            mock_jenkins,
+            nvrs='',
+            product='ocp',
+            group='openshift-4.18',
+            group_config_extra={'vars': {'MAJOR': '4', 'MINOR': '18'}},
+        )
 
-        mock_stage_release.assert_called_once()
+        mock_stage_release.assert_awaited_once()
+        mock_jenkins.start_build_fbc.assert_called_once()
 
     @mock.patch("pyartcd.pipelines.olm_bundle_konflux.jenkins")
     @mock.patch("pyartcd.pipelines.olm_bundle_konflux.locks")
