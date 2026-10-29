@@ -1,4 +1,5 @@
 import logging
+import os
 import re
 
 from artcommonlib.constants import REDHAT_GITLAB_URL, SHIPMENT_DATA_URL_TEMPLATE
@@ -48,7 +49,8 @@ async def scan_and_trigger(runtime: Runtime):
         release_name = f"{major}.{minor}.{patch}-{suffix}" if suffix else assembly
         pullspec = f"{RELEASE_IMAGE_REPO}:{release_name}-x86_64"
         try:
-            info = await get_image_info(pullspec)
+            registry_config = os.getenv("QUAY_AUTH_FILE")
+            info = await get_image_info(pullspec, registry_config=registry_config)
         except Exception:
             LOGGER.exception("MR !%s — failed to check image availability for %s", mr.iid, pullspec)
             continue
