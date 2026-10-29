@@ -2,12 +2,14 @@ import unittest
 from typing import Dict, Iterable, List, cast
 from unittest.mock import AsyncMock, Mock, PropertyMock, patch
 
+from artcommonlib.assembly import AssemblyTypes
 from elliottlib import constants
 from elliottlib.bzutil import Bug, BugzillaBug
 from elliottlib.cli.attach_cve_flaws_cli import AttachCveFlaws
 from elliottlib.errata_async import AsyncErrataAPI
 from elliottlib.exceptions import ElliottFatalError
 from elliottlib.shipment_model import ReleaseNotes
+from parameterized import parameterized
 
 
 class TestAttachCVEFlawsCLI(unittest.IsolatedAsyncioTestCase):
@@ -487,6 +489,122 @@ class TestAttachCVEFlawsCLI(unittest.IsolatedAsyncioTestCase):
 
                 # Type should be converted to RHSA
                 self.assertEqual(release_notes.type, "RHSA")
+
+    @parameterized.expand(
+        [
+            ('rhea_ga', 'RHEA', AssemblyTypes.STANDARD, '4.99.0', True, 'RHEA'),
+            ('rhea_zstream', 'RHEA', AssemblyTypes.STANDARD, '4.99.1', True, 'RHEA'),
+            ('rhea_no_assembly', 'RHEA', AssemblyTypes.STREAM, None, True, 'RHEA'),
+            ('rhsa_ga', 'RHSA', AssemblyTypes.STANDARD, '4.99.0', True, 'RHEA'),
+            ('rhsa_zstream', 'RHSA', AssemblyTypes.STANDARD, '4.99.1', True, 'RHBA'),
+            ('rhsa_candidate', 'RHSA', AssemblyTypes.CANDIDATE, '4.99.0', True, 'RHBA'),
+            ('rhsa_preview', 'RHSA', AssemblyTypes.PREVIEW, '4.99.0', True, 'RHBA'),
+            ('rhsa_stream', 'RHSA', AssemblyTypes.STREAM, 'stream', True, 'RHBA'),
+            ('rhsa_no_assembly', 'RHSA', AssemblyTypes.STREAM, None, True, 'RHBA'),
+            ('rhsa_standard_no_assembly', 'RHSA', AssemblyTypes.STANDARD, None, True, 'RHBA'),
+            ('rhsa_prerelease', 'RHSA', AssemblyTypes.STANDARD, '4.99.0-ec.1', True, 'RHBA'),
+            ('rhba_ga', 'RHBA', AssemblyTypes.STANDARD, '4.99.0', True, 'RHBA'),
+            ('rhba_zstream', 'RHBA', AssemblyTypes.STANDARD, '4.99.1', True, 'RHBA'),
+            ('disabled_rhea', 'RHEA', AssemblyTypes.STANDARD, '4.99.0', False, 'RHEA'),
+            ('disabled_rhsa_ga', 'RHSA', AssemblyTypes.STANDARD, '4.99.0', False, 'RHSA'),
+            ('disabled_rhsa_zstream', 'RHSA', AssemblyTypes.STANDARD, '4.99.1', False, 'RHSA'),
+        ]
+    )
+    def test_update_release_notes_without_flaws(
+        self, name, initial_type, assembly_type, assembly, reconcile, expected_type
+    ):
+        self.mock_runtime.assembly_type = assembly_type
+        self.mock_runtime.assembly = assembly
+        release_notes = ReleaseNotes(
+            type=initial_type,
+            synopsis='Original synopsis',
+            topic='Original topic',
+            description='{IMAGE_ADVISORY} description',
+            solution='{x864_DIGEST} solution',
+            cves=[{'key': 'CVE-2099-0001', 'component': 'example-component'}],
+        )
+        original_notes = release_notes.model_copy(deep=True)
+        boilerplate = {
+            'synopsis': 'Reconciled synopsis {MAJOR}.{MINOR}.{PATCH}',
+            'topic': 'Reconciled topic',
+            'description': 'Reconciled description',
+            'solution': 'Reconciled solution',
+        }
+        pipeline = AttachCveFlaws(
+            self.mock_runtime,
+            advisory_id=0,
+            into_default_advisories=False,
+            default_advisory_type='image',
+            output='json',
+            noop=False,
+            reconcile=reconcile,
+        )
+        with (
+            patch(
+                'elliottlib.cli.attach_cve_flaws_cli.get_advisory_boilerplate', return_value=boilerplate
+            ) as get_boilerplate,
+            patch('elliottlib.cli.attach_cve_flaws_cli.set_bugzilla_bug_ids') as set_bug_ids,
+        ):
+            pipeline.update_release_notes(release_notes, [], [], {})
+
+        self.assertEqual(release_notes.type, expected_type)
+        if reconcile and initial_type == 'RHSA':
+            get_boilerplate.assert_called_once_with(
+                runtime=self.mock_runtime, et_data={}, art_advisory_key='image', errata_type=expected_type
+            )
+            set_bug_ids.assert_called_once_with(release_notes, [])
+            self.assertIsNone(release_notes.cves)
+            self.assertEqual(release_notes.synopsis, 'Reconciled synopsis 4.4.42')
+            self.assertEqual(release_notes.topic, boilerplate['topic'])
+            self.assertEqual(release_notes.description, boilerplate['description'])
+            self.assertEqual(release_notes.solution, boilerplate['solution'])
+        else:
+            self.assertEqual(release_notes, original_notes)
+            get_boilerplate.assert_not_called()
+            set_bug_ids.assert_not_called()
+
+    @parameterized.expand([(True,), (False,)])
+    def test_update_release_notes_promotes_rhea_with_flaws(self, reconcile):
+        self.mock_runtime.assembly_type = AssemblyTypes.STANDARD
+        self.mock_runtime.assembly = '4.99.0'
+        release_notes = ReleaseNotes(type='RHEA', synopsis='Synopsis', topic='Topic', description='', solution='')
+        flaw_bugs = [Mock(id=123, alias=['CVE-2099-0001'], severity='high', summary='CVE-2099-0001 example flaw')]
+        boilerplate = {
+            'synopsis': '{IMPACT} security update',
+            'topic': '{IMPACT} topic',
+            'description': '{CVES}',
+            'solution': 'Example solution',
+        }
+        pipeline = AttachCveFlaws(
+            self.mock_runtime,
+            advisory_id=0,
+            into_default_advisories=False,
+            default_advisory_type='image',
+            output='json',
+            noop=False,
+            reconcile=reconcile,
+        )
+        with (
+            patch(
+                'elliottlib.cli.attach_cve_flaws_cli.get_advisory_boilerplate', return_value=boilerplate
+            ) as get_boilerplate,
+            patch.object(
+                AttachCveFlaws, 'get_cve_component_mapping', return_value={'CVE-2099-0001': ['example-component']}
+            ),
+            patch('elliottlib.cli.attach_cve_flaws_cli.set_bugzilla_bug_ids') as set_bug_ids,
+        ):
+            pipeline.update_release_notes(release_notes, flaw_bugs, [], {})
+
+        self.assertEqual(release_notes.type, 'RHSA')
+        self.assertEqual(
+            [(cve.key, cve.component) for cve in release_notes.cves], [('CVE-2099-0001', 'example-component')]
+        )
+        self.assertEqual(release_notes.synopsis, 'Important security update')
+        self.assertIn('CVE-2099-0001', release_notes.description)
+        get_boilerplate.assert_called_once_with(
+            runtime=self.mock_runtime, et_data={}, art_advisory_key='image', errata_type='RHSA'
+        )
+        set_bug_ids.assert_called_once_with(release_notes, [123])
 
     def test_update_release_notes_reconcile_preserves_real_values(self):
         """

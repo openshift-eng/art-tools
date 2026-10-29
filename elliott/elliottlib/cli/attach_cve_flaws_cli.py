@@ -7,7 +7,7 @@ from typing import Dict, Iterable, List, Optional, Set
 
 import click
 from artcommonlib import arch_util
-from artcommonlib.assembly import assembly_config_struct
+from artcommonlib.assembly import AssemblyTypes, assembly_config_struct
 from artcommonlib.gitdata import SafeFormatter
 from artcommonlib.rpm_utils import parse_nvr
 from artcommonlib.util import is_ocp_delivery_repo, new_roundtrip_yaml_handler
@@ -436,13 +436,18 @@ class AttachCveFlaws:
                 release_notes.description = formatter.format(cve_boilerplate['description'], **self._replace_vars)
 
         elif self.reconcile:
-            # Convert RHSA back to RHBA
-            if release_notes.type == 'RHBA':
-                self.logger.info("Advisory is already RHBA, skipping reconciliation")
+            if release_notes.type != 'RHSA':
+                self.logger.info("Advisory is already %s, skipping reconciliation", release_notes.type)
                 return
 
-            self.logger.info("Converting RHSA back to RHBA")
-            release_notes.type = 'RHBA'
+            is_ga = (
+                self.runtime.assembly_type == AssemblyTypes.STANDARD
+                and self.runtime.assembly
+                and self.runtime.assembly.endswith(".0")
+            )
+            errata_type = 'RHEA' if is_ga else 'RHBA'
+            self.logger.info("Converting RHSA back to %s", errata_type)
+            release_notes.type = errata_type
 
             # Remove CVE associations
             self.logger.info("Removing CVE associations")
@@ -457,7 +462,7 @@ class AttachCveFlaws:
                 runtime=self.runtime,
                 et_data=self.errata_config,
                 art_advisory_key=self.advisory_kind,
-                errata_type='RHBA',
+                errata_type=errata_type,
             )
             release_notes.synopsis = formatter.format(boilerplate['synopsis'], **self._replace_vars)
             release_notes.topic = formatter.format(boilerplate['topic'], **self._replace_vars)
