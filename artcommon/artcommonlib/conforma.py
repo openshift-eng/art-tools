@@ -1,9 +1,13 @@
-"""Shared Conforma stage-policy selection, independent of verification eligibility."""
+"""Shared Conforma pipeline defaults and stage-policy selection, independent of eligibility."""
 
 from typing import Literal
 
 from artcommonlib.product_catalog import find_product_config
 from artcommonlib.release_util import SoftwareLifecyclePhase
+
+KONFLUX_EC_PIPELINE_GIT_URL = "https://github.com/conforma/cli"
+KONFLUX_EC_PIPELINE_REVISION = "main"
+KONFLUX_EC_PIPELINE_PATH = "pipelines/enterprise-contract/0.1/enterprise-contract.yaml"
 
 
 def resolve_stage_policy(

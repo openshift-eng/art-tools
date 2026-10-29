@@ -64,15 +64,5 @@ BREW_REGISTRY_BASE_URL = "brew.registry.redhat.io"
 ART_BUILD_HISTORY_URL = 'https://art-build-history-art-build-history.apps.artc2023.pc3z.p1.openshiftapps.com'
 ART_BUILD_FAILURES_URL = 'https://art-build-failures-art-build-failures.apps.artc2023.pc3z.p1.openshiftapps.com'
 
-# Enterprise Contract (EC) verification pipeline constants
-KONFLUX_EC_PIPELINE_GIT_URL = "https://github.com/conforma/cli"
-KONFLUX_EC_PIPELINE_REVISION = "main"
-KONFLUX_EC_PIPELINE_PATH = "pipelines/enterprise-contract/0.1/enterprise-contract.yaml"
-# Base image release EC policies (ReleasePlanAdmission policy name suffix). Selection is by
-# software_lifecycle.phase in resolve_konflux_base_image_release_targets — ART-19498.
-# Prod: registry-ocp-art-base-prod | Pre-release: registry-ocp-art-base-ec-prod
-KONFLUX_BASE_IMAGE_EC_POLICY_CONFIGURATION = "rhtap-releng-tenant/registry-ocp-art-base-prod"
-KONFLUX_BASE_IMAGE_PREGA_EC_POLICY_CONFIGURATION = "rhtap-releng-tenant/registry-ocp-art-base-ec-prod"
-
 ART_IMAGES_BASE_APPLICATION = "art-images-base"
 ART_IMAGES_GOLANG_BUILDER_APPLICATION = "golang-builder"

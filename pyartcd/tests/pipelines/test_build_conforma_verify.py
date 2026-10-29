@@ -404,6 +404,16 @@ class TestPolicySelection(unittest.TestCase):
         )
         params = client._create.await_args.args[0]['spec']['params']
         self.assertIn({'name': 'POLICY_CONFIGURATION', 'value': inline_policy}, params)
+        pipeline_ref = client._create.await_args.args[0]['spec']['pipelineRef']
+        self.assertEqual(pipeline_ref['resolver'], 'git')
+        self.assertEqual(
+            {param['name']: param['value'] for param in pipeline_ref['params']},
+            {
+                'url': 'https://github.com/conforma/cli',
+                'revision': 'main',
+                'pathInRepo': 'pipelines/enterprise-contract/0.1/enterprise-contract.yaml',
+            },
+        )
         self.assertRegex(
             client.ensure_integration_test_scenario.await_args.kwargs['name'],
             r'^openshift-5-0-ec-policy-[0-9a-f]{10}$',

@@ -12,7 +12,12 @@ import click
 import requests
 import yaml
 from artcommonlib import exectools, logutil
-from artcommonlib.conforma import resolve_stage_policy
+from artcommonlib.conforma import (
+    KONFLUX_EC_PIPELINE_GIT_URL,
+    KONFLUX_EC_PIPELINE_PATH,
+    KONFLUX_EC_PIPELINE_REVISION,
+    resolve_stage_policy,
+)
 from artcommonlib.constants import KONFLUX_DEFAULT_NAMESPACE
 from artcommonlib.konflux.konflux_build_record import (
     Engine,
@@ -27,11 +32,6 @@ from artcommonlib.product_catalog import find_product_config
 from artcommonlib.util import oc_image_info_async
 from doozerlib.backend.konflux_client import KonfluxClient, get_common_runtime_watcher_labels
 from doozerlib.backend.pipelinerun_utils import PipelineRunInfo
-from doozerlib.constants import (
-    KONFLUX_EC_PIPELINE_GIT_URL,
-    KONFLUX_EC_PIPELINE_PATH,
-    KONFLUX_EC_PIPELINE_REVISION,
-)
 
 from pyartcd import constants, util
 from pyartcd.cli import cli, click_coroutine, pass_runtime
