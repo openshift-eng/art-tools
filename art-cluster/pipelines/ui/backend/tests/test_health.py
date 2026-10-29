@@ -106,6 +106,57 @@ class HealthTests(unittest.TestCase):
             {item["uid"] for item in result["currentChain"]["stages"][3]["runs"]}, {"uid-fbc-419", retry["uid"]}
         )
 
+    def test_scan_triggered_fbc_recovery_preserves_original_chain(self):
+        runs = complete_chain()
+        runs[-1]["status"] = "Failed"
+        runs[2]["triggered"] = [runs[3]["name"], runs[4]["name"]]
+        retry = run(
+            "retry-fbc",
+            PIPELINES[3],
+            parent=runs[2]["name"],
+            rebuiltFrom=runs[-1]["uid"],
+            target="4.20",
+            created="2026-10-08T12:00:00Z",
+        )
+        later_scan = health_run(
+            {
+                "metadata": {"annotations": {"art.openshift.io/recovered-abc": retry["name"]}},
+                "spec": {"params": [{"name": "group", "value": "acm-2.15"}]},
+                "status": {"conditions": [{"type": "Succeeded", "status": "True"}]},
+            },
+            run("later-scan", PIPELINES[0], created="2026-10-08T12:00:00Z"),
+        )
+        result = build_health(runs + [later_scan, retry])[0]
+        self.assertEqual(result["health"], "Succeeded")
+        self.assertEqual(result["latestScan"]["name"], "later-scan")
+        self.assertEqual(result["currentChain"]["root"]["name"], "scan")
+        self.assertEqual(result["currentChain"]["issues"], [])
+        self.assertIn(runs[-1]["uid"], {item["uid"] for item in result["currentChain"]["attempts"]})
+
+    def test_bundle_recovery_uses_its_new_fbc_children_for_all_targets(self):
+        runs = complete_chain()
+        runs[2]["status"] = "Failed"
+        retry = run(
+            "retry-bundle",
+            PIPELINES[2],
+            parent="images",
+            rebuiltFrom=runs[2]["uid"],
+            created="2026-10-08T12:00:00Z",
+        )
+        children = [
+            run(
+                f"retry-fbc-{target}", PIPELINES[3], parent=retry["name"], target=target, created="2026-10-08T13:00:00Z"
+            )
+            for target in ("4.19", "4.20")
+        ]
+        retry["triggered"] = [child["name"] for child in children]
+        self.assertNotEqual(build_health(runs + [retry] + children[:1])[0]["health"], "Succeeded")
+        result = build_health(runs + [retry] + children)[0]
+        self.assertEqual(result["health"], "Succeeded")
+        self.assertEqual(
+            {item["uid"] for item in result["currentChain"]["stages"][3]["runs"]}, {child["uid"] for child in children}
+        )
+
     def test_running_retry_preserves_the_last_completed_result(self):
         for original_status in ("Succeeded", "Failed"):
             with self.subTest(original_status=original_status):

@@ -1,3 +1,8 @@
+import json
+from unittest.mock import MagicMock, patch
+
+import pytest
+
 from pyartcd import tekton
 
 
@@ -64,3 +69,52 @@ class TestGetCurrentPipelineRunName:
         """Return None when TEKTON_PIPELINERUN_NAME is empty string."""
         monkeypatch.setenv("TEKTON_PIPELINERUN_NAME", "")
         assert tekton.get_current_pipelinerun_name() is None
+
+
+class TestStartPipelineRunLineage:
+    @pytest.fixture(autouse=True)
+    def context(self, monkeypatch):
+        monkeypatch.setenv('TASKRUN_NAMESPACE', 'art-test-tenant')
+        monkeypatch.setenv('TEKTON_PIPELINERUN_NAME', 'new-scan')
+        monkeypatch.setenv('TEKTON_PIPELINE_NAME', 'layered-products-scan')
+        monkeypatch.setenv('TEKTON_CONSOLE_URL', 'https://console.example')
+
+    def create(self, **kwargs):
+        with patch.object(tekton.subprocess, 'run', return_value=MagicMock(stdout='build-fbc-retry created')) as oc:
+            assert tekton.start_pipeline_run('build-fbc', {'group': 'test-1.0'}, **kwargs) == 'build-fbc-retry'
+        return json.loads(oc.call_args.kwargs['input'])['metadata']
+
+    def test_normal_trigger_still_uses_current_parent(self):
+        metadata = self.create()
+        assert metadata['labels']['art.openshift.io/parent-pipelinerun'] == 'new-scan'
+        assert metadata['labels']['art.openshift.io/parent-pipeline'] == 'layered-products-scan'
+
+    def test_recovery_uses_original_parent_and_retry_uid(self):
+        parent = {
+            'metadata': {'name': 'original-bundle', 'namespace': 'art-test-tenant'},
+            'spec': {'pipelineRef': {'name': 'olm-bundle-konflux'}},
+        }
+        original = {
+            'metadata': {'name': 'failed-fbc', 'namespace': 'art-test-tenant', 'uid': 'original-uid'},
+            'spec': {'pipelineRef': {'name': 'build-fbc'}},
+        }
+        metadata = self.create(parent_run=parent, rebuilt_from=original, use_current_parent=False)
+        assert metadata['labels']['art.openshift.io/parent-pipelinerun'] == 'original-bundle'
+        assert metadata['labels']['art.openshift.io/parent-pipeline'] == 'olm-bundle-konflux'
+        assert metadata['annotations'] == {
+            'art.openshift.io/parent-pipelinerun-console-url': 'https://console.example/k8s/ns/art-test-tenant/tekton.dev~v1~PipelineRun/original-bundle',
+            'art.openshift.io/rebuilt-from': 'original-uid',
+            'art.openshift.io/rebuilt-from-name': 'failed-fbc',
+            'art.openshift.io/recovery-scan': 'new-scan',
+        }
+
+    def test_unresolved_recovery_does_not_use_scan_as_parent(self):
+        metadata = self.create(use_current_parent=False)
+        assert 'art.openshift.io/parent-pipelinerun' not in metadata['labels']
+        assert metadata['annotations']['art.openshift.io/recovery-scan'] == 'new-scan'
+        assert metadata['annotations']['art.openshift.io/recovery-lineage'] == 'unresolved'
+
+    def test_cross_namespace_parent_is_rejected_before_create(self):
+        with patch.object(tekton.subprocess, 'run') as oc, pytest.raises(ValueError, match='namespace'):
+            self.create(parent_run={'metadata': {'namespace': 'other'}})
+        oc.assert_not_called()

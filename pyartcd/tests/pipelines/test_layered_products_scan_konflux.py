@@ -1,3 +1,4 @@
+import hashlib
 import os
 import unittest
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -18,6 +19,11 @@ def _make_operator(name: str = 'oadp-operator', nvr: str = 'oadp-operator-1.5-1'
     op.name = name
     op.nvr = nvr
     return op
+
+
+def _recovered_annotation(name):
+    suffix = hashlib.sha256(name.encode()).hexdigest()[:12]
+    return {f'art.openshift.io/recovered-{suffix}': name}
 
 
 def _make_bundle(
@@ -743,6 +749,7 @@ class TestCheckOperator(unittest.IsolatedAsyncioTestCase):
 
         self.assertNotIn(operator, pipeline.operators_without_bundles)
         self.assertIn(operator, pipeline.operators_without_fbcs)
+        self.assertIs(pipeline.bundles_by_operator[operator.nvr], bundle)
 
     async def test_check_operator_success_bundle_and_fbc(self):
         """Operator with both bundle and FBC should not be tracked."""
@@ -836,10 +843,11 @@ class TestTriggerBuilds(unittest.TestCase):
                 'data-gitref': '',
                 'dry-run': 'false',
             },
+            parent_run=None,
+            rebuilt_from=None,
+            use_current_parent=False,
         )
-        mock_annotate.assert_called_once_with(
-            {'art.openshift.io/triggered-olm-bundle-konflux': 'olm-bundle-konflux-oadp-1-5-abc'}
-        )
+        mock_annotate.assert_called_once_with(_recovered_annotation('olm-bundle-konflux-oadp-1-5-abc'))
 
     def test_trigger_fbc_builds_no_target_versions_raises(self):
         """When ocp_target_versions is empty, trigger_fbc_builds raises RuntimeError."""
@@ -892,9 +900,9 @@ class TestTriggerBuilds(unittest.TestCase):
             self.assertEqual(call_params['force'], 'true')
 
         self.assertEqual(mock_annotate.call_count, 3)
-        mock_annotate.assert_any_call({'art.openshift.io/triggered-build-fbc-4.14': 'build-fbc-oadp-1-5-v414'})
-        mock_annotate.assert_any_call({'art.openshift.io/triggered-build-fbc-4.15': 'build-fbc-oadp-1-5-v415'})
-        mock_annotate.assert_any_call({'art.openshift.io/triggered-build-fbc-4.16': 'build-fbc-oadp-1-5-v416'})
+        mock_annotate.assert_any_call(_recovered_annotation('build-fbc-oadp-1-5-v414'))
+        mock_annotate.assert_any_call(_recovered_annotation('build-fbc-oadp-1-5-v415'))
+        mock_annotate.assert_any_call(_recovered_annotation('build-fbc-oadp-1-5-v416'))
 
     @patch('pyartcd.pipelines.layered_products_scan_konflux.tekton.annotate_current_pipelinerun')
     @patch(
@@ -925,8 +933,11 @@ class TestTriggerBuilds(unittest.TestCase):
                 'ocp-target-version': '4.14',
                 'force': 'true',
             },
+            parent_run=None,
+            rebuilt_from=None,
+            use_current_parent=False,
         )
-        mock_annotate.assert_called_once_with({'art.openshift.io/triggered-build-fbc-4.14': 'build-fbc-oadp-1-5-v414'})
+        mock_annotate.assert_called_once_with(_recovered_annotation('build-fbc-oadp-1-5-v414'))
 
     def test_trigger_fbc_builds_jenkins_no_target_versions_raises(self):
         """Jenkins fallback: no target versions raises RuntimeError."""
@@ -1435,10 +1446,11 @@ class TestTriggerForceRelease(unittest.TestCase):
                 'dry-run': 'false',
                 'force-release': 'true',
             },
+            parent_run=None,
+            rebuilt_from=None,
+            use_current_parent=False,
         )
-        mock_annotate.assert_called_once_with(
-            {'art.openshift.io/triggered-olm-bundle-konflux-force-release': 'olm-bundle-konflux-acm-5-0-abc'}
-        )
+        mock_annotate.assert_called_once_with(_recovered_annotation('olm-bundle-konflux-acm-5-0-abc'))
 
     @patch('pyartcd.pipelines.layered_products_scan_konflux.jenkins.start_olm_bundle_konflux')
     @patch('pyartcd.pipelines.layered_products_scan_konflux.tekton.is_tekton_context', return_value=False)
