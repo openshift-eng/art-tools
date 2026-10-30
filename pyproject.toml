@@ -92,6 +92,8 @@ dependencies = [
 [tool.uv]
 # Require CA bundles that distrust the compromised eMudhra intermediates.
 constraint-dependencies = [
+    "brotli>=1.2.1",
+    "brotlicffi>=1.2.1.0",
     "certifi>=2026.10.19",
     "pip>=26.2.2",
 ]
