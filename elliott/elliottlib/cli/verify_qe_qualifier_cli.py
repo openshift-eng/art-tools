@@ -187,6 +187,11 @@ async def verify_qe_qualifier_cli(runtime, output, stable, nightly):
                 f"Assembly {runtime.assembly} has no reference_releases in basis config - skipping nightly check"
             )
             nightly = False
+            if not stable:
+                raise click.UsageError(
+                    f"Assembly {runtime.assembly} has no reference_releases (no nightly builds) "
+                    "and --no-stable was specified. Cannot perform any checks."
+                )
         elif "x86_64" not in reference_releases:
             raise click.UsageError(f"Assembly {runtime.assembly} has no x86_64 reference release.")
         else:
