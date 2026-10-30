@@ -1852,6 +1852,7 @@ class TestResolveKonfluxFbcStageReleasePlan(unittest.TestCase):
             ("multicluster-engine", 2, 11): "mce-advisory-stage-auto-2-11",
             ("multicluster-engine", 2, 17): "mce-advisory-stage-auto-2-17",
             ("multicluster-engine", 5, 0): "mce-advisory-stage-auto-5-0",
+            ("multicluster-engine", 5, 1): "mce-advisory-stage-auto-5-1",
             ("ocp", 4, 12): "ocp-art-advisory-stage-auto-4-12",
             ("ocp", 4, 13): "ocp-art-advisory-stage-auto-4-13",
             ("ocp", 4, 14): "ocp-art-advisory-stage-auto-4-14",

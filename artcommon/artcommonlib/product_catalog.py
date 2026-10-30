@@ -156,6 +156,7 @@ PRODUCT_CATALOG: tuple[ProductConfig, ...] = (
             (2, 11): "mce-advisory-stage-auto-2-11",
             (2, 17): "mce-advisory-stage-auto-2-17",
             (5, 0): "mce-advisory-stage-auto-5-0",
+            (5, 1): "mce-advisory-stage-auto-5-1",
         },
         cpe_product_name="multicluster_engine",
     ),
