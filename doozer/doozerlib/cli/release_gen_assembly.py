@@ -328,7 +328,7 @@ class GenAssemblyCli:
         self.rhcos_version = release_info["displayVersions"]["machine-os"]["Version"]
 
         # Only look at payload tags that were included in the invocation to speed up testing
-        payload_names = [meta.get_payload_tag_info()[0] for meta in self.runtime.image_metas() if meta.is_payload]
+        payload_names = [meta.get_payload_tag_info() for meta in self.runtime.image_metas() if meta.is_payload]
         payload_names.extend(rhcos_tag_names)
 
         for component_tag in release_info.references.spec.tags:
@@ -370,28 +370,21 @@ class GenAssemblyCli:
                 # We want the releases to be populated with identical builds.
                 existing_nvr = self.component_image_builds[package_name].get_nvr()
                 if build_nvr != existing_nvr:
-                    # Ignore possible outdated payload tag if one is explicitly defined
                     image_meta = build_inspector.get_image_meta()
-                    payload_name, explicit = image_meta.get_payload_tag_info()
-                    if explicit:
-                        if payload_name != payload_tag_name:
-                            self.logger.warning(
-                                f'Ignoring payload tag {payload_tag_name} since payload_name={payload_name} is '
-                                'explicitly defined in image config'
-                            )
-                            continue
-                        else:
-                            # override the build for this package
-                            self.logger.warning(
-                                f'Selecting payload tag {payload_tag_name} since payload_name={payload_name} is '
-                                'explicitly defined in image config'
-                            )
-                            self.component_image_builds[package_name] = build_inspector
-                    else:
-                        self._exit_with_error(
-                            'Found disparate nvrs between releases; '
-                            f'{existing_nvr} in processed and {build_nvr} in {pullspec}'
+                    payload_name = image_meta.get_payload_tag_info()
+                    if payload_name != payload_tag_name:
+                        self.logger.warning(
+                            f'Ignoring payload tag {payload_tag_name} since payload_name={payload_name} is '
+                            'explicitly defined in image config'
                         )
+                        continue
+                    else:
+                        # override the build for this package
+                        self.logger.warning(
+                            f'Selecting payload tag {payload_tag_name} since payload_name={payload_name} is '
+                            'explicitly defined in image config'
+                        )
+                        self.component_image_builds[package_name] = build_inspector
             else:
                 # Otherwise, record the build as the first time we've seen an NVR for this
                 # package.
