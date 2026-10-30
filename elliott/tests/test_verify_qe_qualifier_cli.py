@@ -1,12 +1,17 @@
+import asyncio
 import json
 from unittest import IsolatedAsyncioTestCase, TestCase
 from unittest.mock import AsyncMock, MagicMock, patch
 
+import click
+from click.testing import CliRunner
+from elliottlib.cli.common import Runtime
 from elliottlib.cli.verify_qe_qualifier_cli import (
     QualifierCheckResult,
     VerifyQeQualifierResult,
     check_qe_qualifier,
     verify_qe_qualifier,
+    verify_qe_qualifier_cli,
 )
 from elliottlib.verify_common import render_verify_result
 
@@ -336,6 +341,87 @@ class TestRenderResult(TestCase):
         text = render_verify_result(result, "text")
         self.assertIn("ERROR", text)
         self.assertIn("release not found", text)
+
+
+class TestVerifyQeQualifierCLIOptions(TestCase):
+    """Test verify-qe-qualifier CLI option handling for z-stream releases without nightly builds."""
+
+    def setUp(self):
+        self.loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(self.loop)
+        self.addCleanup(asyncio.set_event_loop, None)
+        self.addCleanup(self.loop.close)
+        self.runtime = MagicMock(spec=Runtime)
+        self.runtime.assembly = "4.22.9"
+        self.runner = CliRunner()
+        basis_patch = patch("elliottlib.cli.verify_qe_qualifier_cli.assembly_basis")
+        self.mock_basis = basis_patch.start()
+        self.addCleanup(basis_patch.stop)
+        verifier_patch = patch("elliottlib.cli.verify_qe_qualifier_cli.verify_qe_qualifier", new_callable=AsyncMock)
+        self.mock_verify = verifier_patch.start()
+        self.addCleanup(verifier_patch.stop)
+        self.mock_verify.return_value = VerifyQeQualifierResult(
+            assembly=self.runtime.assembly,
+            stable_results=[QualifierCheckResult(release_tag=self.runtime.assembly, arch="amd64", badge_earned=True)],
+        )
+
+    def test_empty_reference_releases_skips_nightly(self):
+        self.assert_stable_only({"reference_releases": {}})
+
+    def test_missing_reference_releases_skips_nightly(self):
+        self.assert_stable_only({})
+
+    def assert_stable_only(self, basis):
+        self.mock_basis.return_value = basis
+
+        result = self.runner.invoke(verify_qe_qualifier_cli, [], obj=self.runtime)
+
+        self.assertEqual(result.exit_code, 0, result.output)
+        self.assertIn("Overall: PASS", result.output)
+        self.mock_verify.assert_awaited_once_with(
+            assembly="4.22.9",
+            arches=["x86_64"],
+            nightly_tags={},
+            check_stable=True,
+            check_nightly=False,
+        )
+        self.runtime.initialize.assert_called_once_with()
+        self.mock_basis.assert_called_once_with(self.runtime.get_releases_config.return_value, self.runtime.assembly)
+
+    def test_empty_reference_releases_requires_stable_enabled(self):
+        self.mock_basis.return_value = {"reference_releases": {}}
+
+        result = self.runner.invoke(verify_qe_qualifier_cli, ["--no-stable"], obj=self.runtime, standalone_mode=False)
+
+        self.assertEqual(result.exit_code, 1)
+        self.assertIsInstance(result.exception, click.UsageError)
+        self.assertIn("--no-stable was specified. Cannot perform any checks.", str(result.exception))
+        self.mock_verify.assert_not_called()
+
+    def test_nonempty_reference_releases_requires_x86_64(self):
+        self.mock_basis.return_value = {"reference_releases": {"aarch64": "some-build"}}
+
+        result = self.runner.invoke(verify_qe_qualifier_cli, [], obj=self.runtime, standalone_mode=False)
+
+        self.assertEqual(result.exit_code, 1)
+        self.assertIsInstance(result.exception, click.UsageError)
+        self.assertEqual(str(result.exception), "Assembly 4.22.9 has no x86_64 reference release.")
+        self.mock_verify.assert_not_called()
+
+    def test_nonempty_reference_releases_checks_stable_and_nightly(self):
+        nightly_tag = "4.22.0-0.nightly-2026-08-05-104816"
+        self.mock_basis.return_value = {"reference_releases": {"x86_64": nightly_tag, "aarch64": "other-build"}}
+
+        result = self.runner.invoke(verify_qe_qualifier_cli, [], obj=self.runtime)
+
+        self.assertEqual(result.exit_code, 0, result.output)
+        self.mock_verify.assert_awaited_once_with(
+            assembly="4.22.9",
+            arches=["x86_64"],
+            nightly_tags={"x86_64": nightly_tag},
+            check_stable=True,
+            check_nightly=True,
+        )
 
     def test_json_output(self):
         result = VerifyQeQualifierResult(
