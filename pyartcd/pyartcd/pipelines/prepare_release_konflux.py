@@ -1677,16 +1677,13 @@ class PrepareReleaseKonfluxPipeline:
         new_releases_config = self.releases_config.copy()
         updated_group_config = self.updated_assembly_group_config.primitive()
 
-        # If this assembly has a basis assembly, use the override marker (!) for shipment and advisories
-        # to prevent inheritance from causing deletion markers to be lost on subsequent runs
+        # Restore override markers consumed while resolving the assembly so saving it
+        # cannot reintroduce parent shipment URLs or advisories on subsequent runs.
         assembly_def = new_releases_config["releases"][self.assembly]["assembly"]
         if assembly_def.get("basis", {}).get("assembly"):
-            # Use override markers to ensure these fields completely replace parent values
-            # This prevents issues where deletion markers (like url-:) are lost after merge
-            if "shipment" in updated_group_config:
-                updated_group_config["shipment!"] = updated_group_config.pop("shipment")
-            if "advisories" in updated_group_config:
-                updated_group_config["advisories!"] = updated_group_config.pop("advisories")
+            for key in ("shipment", "advisories", "microshift_bootc_shipment"):
+                if key in updated_group_config:
+                    updated_group_config[f"{key}!"] = updated_group_config.pop(key)
 
         new_releases_config["releases"][self.assembly]["assembly"]["group"] = updated_group_config
 

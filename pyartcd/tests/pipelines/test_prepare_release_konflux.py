@@ -9,7 +9,7 @@ from artcommonlib.constants import SHIPMENT_DATA_URL_TEMPLATE
 from artcommonlib.github_auth import build_git_auth_env
 from artcommonlib.jira_config import JIRA_DOMAIN_NAME
 from artcommonlib.model import Model
-from artcommonlib.util import convert_remote_git_to_ssh
+from artcommonlib.util import convert_remote_git_to_ssh, new_roundtrip_yaml_handler
 from elliottlib.errata_async import AsyncErrataAPI
 from elliottlib.shipment_model import (
     ComponentSource,
@@ -158,6 +158,54 @@ class TestPrepareReleaseKonfluxPipeline(unittest.IsolatedAsyncioTestCase):
         # Verify config parsing
         self.assertEqual(pipeline.releases_config, {'releases_key': 'releases_value'})
         self.assertEqual(pipeline.group_config, {'group_key': 'group_value'})
+
+    async def test_update_build_data_preserves_microshift_bootc_inheritance(self) -> None:
+        """
+        Saving an assembly repeatedly must not restore its parent's bootc shipment URL.
+        """
+        yaml = new_roundtrip_yaml_handler()
+        parent_group = {
+            "microshift_bootc_shipment": {"url": "https://gitlab.example.com/shipments/parent"},
+            "shipment": {"url": "https://gitlab.example.com/shipments/ocp-parent"},
+            "advisories": {"rpm": 123},
+        }
+        for has_basis in (True, False):
+            for shipment in ({}, {"url": "https://gitlab.example.com/shipments/child"}):
+                with self.subTest(has_basis=has_basis, shipment=shipment):
+                    pipeline = PrepareReleaseKonfluxPipeline(
+                        slack_client=self.mock_slack_client,
+                        runtime=self.runtime,
+                        group=self.group,
+                        assembly=self.assembly,
+                    )
+                    shipment_key = "microshift_bootc_shipment!" if has_basis else "microshift_bootc_shipment"
+                    assembly_def = {"group": {shipment_key: copy.deepcopy(shipment)}}
+                    if has_basis:
+                        assembly_def["basis"] = {"assembly": "parent"}
+                    pipeline.releases_config = {
+                        "releases": {
+                            "parent": {"assembly": {"group": copy.deepcopy(parent_group)}},
+                            self.assembly: {"assembly": assembly_def},
+                        }
+                    }
+                    pipeline.build_data_repo = AsyncMock(spec=GitRepository)
+                    pipeline.build_data_repo.does_branch_exist_on_remote.return_value = False
+                    pipeline.build_data_repo.commit_push.return_value = True
+                    expected_group = pipeline.assembly_group_config.primitive()
+
+                    # Resolve and save again to cover subsequent prepare-release runs.
+                    for _ in range(2):
+                        pipeline.updated_assembly_group_config = Model(pipeline.assembly_group_config.copy())
+                        self.assertTrue(await pipeline.update_build_data("update-assembly"))
+                        filename, content = pipeline.build_data_repo.write_file.call_args.args
+                        self.assertEqual(filename, "releases.yml")
+                        pipeline.releases_config = yaml.load(content)
+                        saved_group = pipeline.releases_config["releases"][self.assembly]["assembly"]["group"]
+                        self.assertEqual(saved_group[shipment_key], shipment)
+                        self.assertEqual(pipeline.assembly_group_config.primitive(), expected_group)
+                        self.assertEqual(
+                            pipeline.releases_config["releases"]["parent"]["assembly"]["group"], parent_group
+                        )
 
     async def test_validate_assembly_valid(self):
         pipeline = PrepareReleaseKonfluxPipeline(
