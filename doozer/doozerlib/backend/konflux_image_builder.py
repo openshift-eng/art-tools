@@ -378,7 +378,6 @@ class KonfluxImageBuilder:
                         raise IOError("PipelineRun succeeded but IMAGE_URL or IMAGE_DIGEST missing from results")
 
                 # Run enterprise-contract (EC) verification after a successful build
-                # TODO: Expose EC failure links (ITS/PLR URLs) via Slack notification or dashboard column
                 ec_policy = self._config.ec_policy_configuration
 
                 its_eligible = metadata.config.get("konflux", {}).get("its", {}).get("enabled", metadata.for_release)
