@@ -181,12 +181,16 @@ async def verify_qe_qualifier_cli(runtime, output, stable, nightly):
 
         reference_releases = basis.get("reference_releases", {})
         if not reference_releases:
-            raise click.UsageError(f"Assembly {runtime.assembly} has no reference_releases in its basis config.")
-
-        if "x86_64" not in reference_releases:
+            # Z-stream releases without nightly builds (empty reference_releases) are valid.
+            # They only have stable builds to check, no nightly reference builds.
+            LOGGER.info(
+                f"Assembly {runtime.assembly} has no reference_releases in basis config - skipping nightly check"
+            )
+            nightly = False
+        elif "x86_64" not in reference_releases:
             raise click.UsageError(f"Assembly {runtime.assembly} has no x86_64 reference release.")
-
-        nightly_tags = {"x86_64": reference_releases["x86_64"]}
+        else:
+            nightly_tags = {"x86_64": reference_releases["x86_64"]}
 
     result = await verify_qe_qualifier(
         assembly=runtime.assembly,
