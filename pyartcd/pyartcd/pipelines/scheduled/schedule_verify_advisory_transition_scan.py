@@ -32,6 +32,9 @@ async def scan_and_trigger(runtime: Runtime):
         major, minor, patch, suffix = match.groups()
         version = f"{major}.{minor}"
         assembly = suffix if suffix else f"{major}.{minor}.{patch}"
+        if assembly.startswith(("rc.", "ec.")):
+            LOGGER.info("MR !%s (%s) is an RC/EC shipment, skipping advisory transition", mr.iid, mr.title)
+            continue
         if (version, assembly) in releases:
             continue
         releases.add((version, assembly))

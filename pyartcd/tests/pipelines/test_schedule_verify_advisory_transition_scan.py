@@ -21,6 +21,7 @@ class TestScheduleVerifyAdvisoryTransitionScan(unittest.IsolatedAsyncioTestCase)
             make_mr("Shipment for 4.22.9", state="closed"),
             make_mr("Shipment for 4.22.10 (ship date: 2026-10-23)", state="merged"),
             make_mr("Draft: Shipment for 5.0.0-rc.6"),
+            make_mr("Shipment for 5.0.0-ec.2", state="merged"),
         ]
         await scan_and_trigger(self.runtime)
         self.gitlab.list_merge_requests.assert_called_once_with(
@@ -34,9 +35,15 @@ class TestScheduleVerifyAdvisoryTransitionScan(unittest.IsolatedAsyncioTestCase)
             [
                 call(version="4.22", assembly="4.22.9", block_until_building=False),
                 call(version="4.22", assembly="4.22.10", block_until_building=False),
-                call(version="5.0", assembly="rc.6", block_until_building=False),
             ],
         )
+
+    async def test_skips_eligible_rc_and_ec_shipments(self):
+        for assembly in ("rc.6", "ec.2"):
+            with self.subTest(assembly=assembly):
+                self.gitlab.list_merge_requests.return_value = [make_mr(f"Shipment for 5.0.0-{assembly}")]
+                await scan_and_trigger(self.runtime)
+                self.trigger.assert_not_called()
 
     async def test_skips_completed_unverified_and_non_ocp_releases(self):
         self.gitlab.list_merge_requests.return_value = [
