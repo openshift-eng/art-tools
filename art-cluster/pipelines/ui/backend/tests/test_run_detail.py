@@ -62,6 +62,16 @@ class RunDetailTests(unittest.IsolatedAsyncioTestCase):
                         "name": "operator",
                         "pipelineRuns": [],
                         "status": "Succeeded",
+                        "checks": [
+                            {
+                                "kind": "conforma",
+                                "name": "Conforma",
+                                "blocking": True,
+                                "status": "Failed",
+                                "url": "https://konflux.example/check",
+                                "reason": "Policy failed",
+                            }
+                        ],
                     }
                 ),
             }
@@ -72,6 +82,8 @@ class RunDetailTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(response.status_code, 200)
             self.assertEqual(response.json()["source"], source)
             self.assertEqual(response.json()["components"][0]["status"], "Succeeded")
+            self.assertEqual(response.json()["components"][0]["resultStatus"], "Failed")
+            self.assertEqual(response.json()["components"][0]["checks"][0]["url"], "https://konflux.example/check")
             self.assertTrue(response.json()["componentReporting"]["available"])
 
 

@@ -382,6 +382,107 @@ class TestEnsureIntegrationTestScenario(IsolatedAsyncioTestCase):
 
 
 class TestCustomIntegrationTestScenarios(IsolatedAsyncioTestCase):
+    async def _run_reported(self, client, **kwargs):
+        callback = AsyncMock()
+        result = await KonfluxClient.run_integration_test_scenarios(
+            client,
+            ['qe'],
+            application_name='app',
+            component_name='component',
+            image_pullspec='quay.io/example/image@sha256:abc',
+            source_url='https://github.com/example/repo',
+            commit_sha='commit',
+            poll_interval_seconds=0,
+            on_check_update=callback,
+            **kwargs,
+        )
+        return result, callback
+
+    async def test_reports_each_scenario_without_changing_optional_gating(self):
+        for native_status, blocking, expected, failed in (
+            ('TestPassed', True, 'Succeeded', False),
+            ('TestWarning', True, 'Succeeded', False),
+            ('TestFail', True, 'Failed', True),
+            ('TestFail', False, 'Failed', False),
+        ):
+            with self.subTest(native_status=native_status, blocking=blocking):
+                client = self._client()
+                client._create = AsyncMock(return_value=self._snapshot([]))
+                client._trigger_integration_test_scenario = AsyncMock(
+                    return_value=self._snapshot(
+                        [
+                            {
+                                'scenario': 'qe',
+                                'status': native_status,
+                                'testPipelineRunName': 'qe-run',
+                                'details': 'details',
+                            }
+                        ]
+                    )
+                )
+                result, callback = await self._run_reported(client, blocking_scenario_names=['qe'] if blocking else [])
+                self.assertEqual(result.blocking_failed, failed)
+                self.assertEqual(callback.await_args.args, ('qe', expected))
+                self.assertTrue(callback.await_args.kwargs['url'].endswith('/pipelineruns/qe-run'))
+                self.assertEqual(callback.await_args.kwargs['reason'], 'details')
+
+    async def test_reports_running_then_passed(self):
+        client = self._client()
+        client._create = AsyncMock(return_value=self._snapshot([]))
+        client._trigger_integration_test_scenario = AsyncMock(
+            return_value=self._snapshot([{'scenario': 'qe', 'status': 'InProgress', 'testPipelineRunName': 'qe-run'}])
+        )
+        client._get = AsyncMock(
+            return_value=self._snapshot([{'scenario': 'qe', 'status': 'TestPassed', 'testPipelineRunName': 'qe-run'}])
+        )
+        result, callback = await self._run_reported(client)
+        self.assertFalse(result.blocking_failed)
+        self.assertIn(('qe', 'Running'), [call.args for call in callback.await_args_list])
+        self.assertEqual(callback.await_args.args, ('qe', 'Succeeded'))
+
+    async def test_reports_startup_failure_without_fabricated_link(self):
+        client = self._client()
+        client._create = AsyncMock(side_effect=RuntimeError('Snapshot creation failed'))
+        result, callback = await self._run_reported(client, blocking_scenario_names=['qe'])
+        self.assertTrue(result.blocking_failed)
+        callback.assert_awaited_once_with('qe', 'Failed', url='', reason='Snapshot creation failed')
+
+    async def test_reports_timeout_with_existing_link(self):
+        client = self._client()
+        client._create = AsyncMock(return_value=self._snapshot([]))
+        client._trigger_integration_test_scenario = AsyncMock(
+            return_value=self._snapshot([{'scenario': 'qe', 'status': 'InProgress', 'testPipelineRunName': 'qe-run'}])
+        )
+        result, callback = await self._run_reported(
+            client,
+            blocking_scenario_names=['qe'],
+            completion_timeout_seconds=0,
+        )
+        self.assertTrue(result.blocking_failed)
+        self.assertEqual(callback.await_args.args, ('qe', 'Failed'))
+        self.assertIn('Timed out', callback.await_args.kwargs['reason'])
+        self.assertTrue(callback.await_args.kwargs['url'].endswith('/pipelineruns/qe-run'))
+
+    async def test_reports_trigger_failure_and_skips_unstarted_scenarios(self):
+        client = self._client()
+        client._create = AsyncMock(return_value=self._snapshot([]))
+        client._trigger_integration_test_scenario = AsyncMock(side_effect=TimeoutError('trigger timed out'))
+        callback = AsyncMock()
+        result = await KonfluxClient.run_integration_test_scenarios(
+            client,
+            ['qe', 'later'],
+            application_name='app',
+            component_name='component',
+            image_pullspec='image',
+            source_url='source',
+            commit_sha='commit',
+            blocking_scenario_names=['qe'],
+            on_check_update=callback,
+        )
+        self.assertTrue(result.blocking_failed)
+        self.assertEqual(callback.await_args_list[0].args, ('qe', 'Failed'))
+        self.assertEqual(callback.await_args_list[-1].args, ('later', 'Skipped'))
+
     @staticmethod
     def _client():
         client = MagicMock(spec=KonfluxClient)
@@ -1018,6 +1119,57 @@ class TestEnsureIntegrationTestScenarioNotFound(IsolatedAsyncioTestCase):
 
 
 class TestVerifyEnterpriseContract(IsolatedAsyncioTestCase):
+    async def _run_reported(self, client, callback):
+        return await KonfluxClient.verify_enterprise_contract(
+            client,
+            namespace='tenant',
+            application_name='app',
+            component_name='component',
+            image_pullspec='image',
+            source_url='source',
+            commit_sha='commit',
+            ec_policy='tenant/policy',
+            logger=logging.getLogger('test'),
+            on_check_update=callback,
+        )
+
+    async def test_reports_conforma_failure_after_build(self):
+        client = self._make_client_with_ec_result(is_success=False)
+        callback = AsyncMock()
+        result = await self._run_reported(client, callback)
+        self.assertTrue(result.ec_failed)
+        self.assertEqual(callback.await_args_list[0].args, ('Conforma', 'Running'))
+        self.assertEqual(callback.await_args.args, ('Conforma', 'Failed'))
+        self.assertEqual(callback.await_args.kwargs['url'], 'https://example.com/plr/test')
+
+    async def test_wait_error_reports_created_link_without_changing_retry_result(self):
+        client = self._make_client_with_ec_result(is_success=True)
+        client.wait_for_pipelinerun.side_effect = TimeoutError('wait timed out')
+        callback = AsyncMock()
+        result = await self._run_reported(client, callback)
+        self.assertTrue(result.ec_failed)
+        self.assertEqual(result.ec_pipeline_url, '')
+        callback.assert_awaited_with(
+            'Conforma',
+            'Failed',
+            url='https://example.com/plr/test',
+            reason='wait timed out',
+        )
+
+    async def test_callback_failure_does_not_fail_conforma(self):
+        client = self._make_client_with_ec_result(is_success=True)
+        callback = AsyncMock(side_effect=RuntimeError('reporting unavailable'))
+        result = await self._run_reported(client, callback)
+        self.assertFalse(result.ec_failed)
+
+    async def test_reports_cancelled_conforma(self):
+        client = self._make_client_with_ec_result(is_success=False)
+        client.wait_for_pipelinerun.return_value.find_condition.return_value.reason = 'Cancelled'
+        callback = AsyncMock()
+        result = await self._run_reported(client, callback)
+        self.assertTrue(result.ec_failed)
+        self.assertEqual(callback.await_args.args, ('Conforma', 'Cancelled'))
+
     def _make_client_with_ec_result(self, is_success: bool):
         """Create a mocked KonfluxClient that returns the given EC outcome."""
         from artcommonlib.util import KubeCondition

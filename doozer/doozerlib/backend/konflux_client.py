@@ -85,6 +85,15 @@ _COMMON_RUNTIME_LABEL_VALUE = None
 _COMMON_RUNTIME_LABEL_LOCK = threading.Lock()
 
 
+async def _report_check(callback, name, status, *, url='', reason=''):
+    """Keep optional reporting failures out of verification decisions."""
+    if callback is not None:
+        try:
+            await callback(name, status, url=url, reason=reason)
+        except Exception:
+            LOGGER.warning('Check reporting is incomplete')
+
+
 def get_common_runtime_watcher_labels() -> Dict[str, str]:
     """
     Get the common runtime watcher labels that identify PipelineRuns for this doozer invocation.
@@ -1271,6 +1280,7 @@ class KonfluxClient:
         trigger_timeout_seconds: int = 10 * 60,
         completion_timeout_seconds: int = 6 * 60 * 60,
         poll_interval_seconds: int = 10,
+        on_check_update=None,
     ) -> CustomIntegrationTestResult:
         """Create a Snapshot, explicitly trigger configured scenarios, and wait for completion."""
         namespace = namespace or self.default_namespace
@@ -1286,6 +1296,48 @@ class KonfluxClient:
             return CustomIntegrationTestResult(False, "", [])
         statuses_by_scenario: Dict[str, dict] = {}
         trigger_failed_scenarios = set()
+        trigger_errors = {}
+        timed_out_scenarios = set()
+        failure_reason = ''
+
+        async def publish_checks(*, final=False):
+            if on_check_update is None:
+                return
+            for name in scenario_names:
+                entry = statuses_by_scenario.get(name, {})
+                native_status = str(entry.get('status') or '')
+                status = (
+                    'Succeeded'
+                    if native_status in {'TestPassed', 'TestWarning'}
+                    else 'Pending'
+                    if native_status in {'', 'Pending'}
+                    else 'Running'
+                    if native_status in {'InProgress', 'BuildPLRInProgress'}
+                    else 'Failed'
+                )
+                reason = str(entry.get('details') or native_status or '')
+                if name in trigger_failed_scenarios:
+                    status, reason = 'Failed', trigger_errors[name]
+                elif name in timed_out_scenarios:
+                    status, reason = 'Failed', 'Timed out waiting for IntegrationTestScenario completion'
+                elif failure_reason and status in {'Pending', 'Running'}:
+                    status, reason = 'Failed', failure_reason
+                elif final and status in {'Pending', 'Running'}:
+                    status, reason = (
+                        ('Skipped', 'Not run because an earlier check failed')
+                        if status == 'Pending' and not entry.get('testPipelineRunName')
+                        else ('Unknown', 'Stopped waiting before a final check result was recorded')
+                    )
+                await _report_check(
+                    on_check_update,
+                    name,
+                    status,
+                    url=self._custom_integration_test_pipeline_url(
+                        namespace, application_name, entry.get('testPipelineRunName', '')
+                    ),
+                    reason=reason,
+                )
+
         try:
             snapshot_manifest = self._new_custom_integration_test_snapshot(
                 namespace=namespace,
@@ -1309,8 +1361,9 @@ class KonfluxClient:
                         trigger_timeout_seconds,
                         poll_interval_seconds,
                     )
-                except Exception:
+                except Exception as exc:
                     trigger_failed_scenarios.add(scenario_name)
+                    trigger_errors[scenario_name] = str(exc)
                     if scenario_name in blocking_scenario_names:
                         self._logger.exception(
                             "Failed to trigger release-blocking custom IntegrationTestScenario %s",
@@ -1333,6 +1386,7 @@ class KonfluxClient:
                     )
                     continue
                 statuses_by_scenario = self._snapshot_test_statuses(snapshot)
+                await publish_checks()
 
             monitored_scenario_names = tuple(name for name in scenario_names if name not in trigger_failed_scenarios)
             if not monitored_scenario_names:
@@ -1341,6 +1395,7 @@ class KonfluxClient:
             completion_deadline = time.monotonic() + completion_timeout_seconds
             reported_failures = set()
             while True:
+                await publish_checks()
                 pipeline_urls = [
                     self._custom_integration_test_pipeline_url(
                         namespace,
@@ -1403,6 +1458,7 @@ class KonfluxClient:
                             )
                     return CustomIntegrationTestResult(False, "", pipeline_urls)
                 if time.monotonic() >= completion_deadline:
+                    timed_out_scenarios.update(pending_scenario_names)
                     blocking_pending_name = next(
                         (name for name in pending_scenario_names if name in blocking_scenario_names),
                         None,
@@ -1435,7 +1491,8 @@ class KonfluxClient:
                 statuses_by_scenario = {
                     name: all_statuses[name] for name in monitored_scenario_names if name in all_statuses
                 }
-        except Exception:
+        except Exception as exc:
+            failure_reason = str(exc)
             passed_blocking_scenario_names = {
                 name
                 for name in blocking_scenario_names
@@ -1471,6 +1528,8 @@ class KonfluxClient:
                 "",
             )
             return CustomIntegrationTestResult(blocking_failed, blocking_pipeline_url, pipeline_urls)
+        finally:
+            await publish_checks(final=True)
 
     @staticmethod
     def _new_ec_pipelinerun(
@@ -1629,6 +1688,7 @@ class KonfluxClient:
         ec_policy: str,
         logger: logging.Logger,
         effective_time: str = "now",
+        on_check_update=None,
     ) -> ECVerificationResult:
         """Run enterprise-contract verification for a built image.
 
@@ -1639,8 +1699,10 @@ class KonfluxClient:
         from artcommonlib.konflux.konflux_build_record import KonfluxBuildOutcome
 
         ec_pipeline_url = ''
+        check_pipeline_url = ''
         ec_failed = False
 
+        await _report_check(on_check_update, 'Conforma', 'Running')
         try:
             policy_suffix = ec_policy.split('/')[-1]
             its_name = f"{application_name}-ec-{policy_suffix}"
@@ -1665,6 +1727,12 @@ class KonfluxClient:
                 effective_time=effective_time,
             )
             ec_plr_name = ec_plr_info.name
+            if on_check_update is not None:
+                try:
+                    check_pipeline_url = self.resource_url(ec_plr_info.to_dict())
+                except Exception:
+                    LOGGER.warning('Check PipelineRun link reporting is incomplete')
+                await _report_check(on_check_update, 'Conforma', 'Running', url=check_pipeline_url)
 
             logger.info("Waiting for EC PipelineRun %s to complete...", ec_plr_name)
             ec_plr_info = await self.wait_for_pipelinerun(ec_plr_name, namespace=namespace)
@@ -1677,10 +1745,22 @@ class KonfluxClient:
                 ec_failed = True
             else:
                 logger.info("EC verification passed. PLR: %s", ec_pipeline_url)
+            check_status = 'Failed' if ec_failed else 'Succeeded'
+            check_reason = getattr(ec_condition, 'reason', '') or ''
+            if ec_failed and 'cancel' in str(check_reason).lower():
+                check_status = 'Cancelled'
+            await _report_check(
+                on_check_update,
+                'Conforma',
+                check_status,
+                url=ec_pipeline_url,
+                reason=getattr(ec_condition, 'message', '') or check_reason,
+            )
 
-        except Exception:
+        except Exception as exc:
             logger.exception("EC verification error")
             ec_failed = True
+            await _report_check(on_check_update, 'Conforma', 'Failed', url=check_pipeline_url, reason=str(exc))
 
         return ECVerificationResult(ec_pipeline_url=ec_pipeline_url, ec_failed=ec_failed)
 

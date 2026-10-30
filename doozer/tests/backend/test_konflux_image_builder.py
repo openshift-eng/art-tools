@@ -3,7 +3,7 @@ import tempfile
 import unittest
 from pathlib import Path
 from threading import Event
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, create_autospec, patch
 
 from artcommonlib.conforma import resolve_stage_policy
 from artcommonlib.konflux.konflux_build_record import (
@@ -12,6 +12,7 @@ from artcommonlib.konflux.konflux_build_record import (
     KonfluxBuildOutcome,
     KonfluxBuildRecord,
 )
+from artcommonlib.pipeline_report import ComponentReport
 from artcommonlib.variants import BuildVariant
 from doozerlib.backend.konflux_image_builder import (
     KonfluxImageBuilder,
@@ -72,6 +73,22 @@ class TestKonfluxImageBuilder(unittest.IsolatedAsyncioTestCase):
         metadata.should_trigger_base_image_release.return_value = False
         metadata.is_golang_builder = MagicMock(return_value=False)
         return metadata
+
+    async def test_build_signals_dependents_when_report_cleanup_is_cancelled(self):
+        metadata = self._metadata()
+        metadata.build_event = asyncio.Event()
+        report = create_autospec(ComponentReport, instance=True)
+        report.configure_checks.side_effect = ValueError('Preparation failed')
+        report.finish_checks.side_effect = asyncio.CancelledError('Cleanup cancelled')
+        reporter = MagicMock()
+        reporter.component.return_value = report
+
+        with patch('doozerlib.backend.konflux_image_builder.get_reporter', return_value=reporter):
+            with self.assertRaises(asyncio.CancelledError):
+                await self.builder.build(metadata)
+
+        report.finish_checks.assert_awaited_once()
+        self.assertTrue(metadata.build_event.is_set())
 
     @patch.dict("os.environ", {"RHCOS_QUAY_AUTH_FILE": "/tmp/rhcos-auth.json"}, clear=False)
     def test_registry_auth_file_for_image_uses_rhcos_credentials_only_for_rhcos_repo(self):
