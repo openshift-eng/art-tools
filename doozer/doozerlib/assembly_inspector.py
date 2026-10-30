@@ -1,3 +1,4 @@
+import asyncio
 from typing import Any, Dict, List, Optional, cast
 
 import artcommonlib.util as artutil
@@ -16,7 +17,7 @@ from artcommonlib.rpm_utils import compare_nvr, parse_nvr
 from koji import ClientSession
 
 from doozerlib import Runtime, brew
-from doozerlib.build_info import BuildRecordInspector
+from doozerlib.build_info import BrewBuildRecordInspector, BuildRecordInspector, KonfluxBuildRecordInspector
 from doozerlib.plashet import PlashetBuilder
 from doozerlib.rhcos import RHCOSBuildFinder, RHCOSBuildInspector
 from doozerlib.rpm_delivery import RPMDeliveries, RPMDelivery
@@ -381,7 +382,87 @@ class AssemblyInspector:
 
         return issues
 
-    def check_group_image_consistency(
+    def _external_rpm_binary_names(
+        self, inspector: BuildRecordInspector, installed_build: Dict, package_rpm_finder: Optional[PackageRpmFinder]
+    ) -> Optional[Dict[str, set[str]]]:
+        """Map installed source-build binaries to possible arches, or return unknown."""
+        if isinstance(inspector, BrewBuildRecordInspector):
+            if not installed_build.get("id"):
+                return None
+            binaries = {}
+            for archive in inspector.get_image_inspectors():
+                arch = archive.image_arch()
+                for rpm in archive.get_installed_rpm_dicts():
+                    if not rpm.get("build_id"):
+                        return None
+                    if rpm["build_id"] == installed_build["id"]:
+                        if not rpm.get("name") or rpm.get("arch") not in (arch, "noarch"):
+                            return None
+                        binaries.setdefault(arch, set()).add(rpm["name"])
+            return binaries or None
+        if isinstance(inspector, KonfluxBuildRecordInspector) and package_rpm_finder:
+            record = inspector.get_build_obj()
+            if not record.installed_rpms or not record.arches:
+                return None
+            installed_nvrs = {
+                (parsed["name"], parsed["version"], parsed["release"])
+                for parsed in (parse_nvr(nvr) for nvr in record.installed_rpms)
+            }
+            names = set()
+            for rpm in package_rpm_finder.get_rpms_in_pkg_build(installed_build["nvr"]):
+                if not all(rpm.get(key) for key in ("name", "version", "release", "arch")):
+                    return None
+                if rpm["arch"] in ("src", "nosrc"):
+                    continue
+                if (rpm["name"], rpm["version"], rpm["release"]) in installed_nvrs:
+                    names.add(rpm["name"])
+            if names:
+                return {brew_arch_for_go_arch(arch): names for arch in record.arches}
+        return None
+
+    async def _external_rpm_is_unavailable(
+        self,
+        inspector: BuildRecordInspector,
+        installed_build: Dict,
+        expected_nvr: str,
+        package_rpm_finder: Optional[PackageRpmFinder],
+    ) -> bool:
+        """Prove absence; incomplete inventory or source linkage cannot waive a conflict.
+
+        Konflux records union binary NVRs across architectures. Check every possible
+        build architecture rather than inferring where an individual binary was installed.
+        """
+        enabled_repos = inspector.get_image_meta().get_enabled_repos()
+        if not enabled_repos:
+            return True
+        binaries = self._external_rpm_binary_names(inspector, installed_build, package_rpm_finder)
+        if not binaries:
+            return False
+        for arch, names in binaries.items():
+            repodatas = await asyncio.gather(
+                *(
+                    self.runtime.repos[name].get_repodata_threadsafe(arch)
+                    for name in sorted(enabled_repos)
+                    if arch in self.runtime.repos[name].arches
+                )
+            )
+            for repodata in repodatas:
+                for rpm in repodata.primary_rpms:
+                    if rpm.name in names and rpm.arch in (arch, "noarch"):
+                        if not rpm.sourcerpm or not rpm.sourcerpm.endswith((".src.rpm", ".nosrc.rpm")):
+                            return False
+                        source_nvr = rpm.sourcerpm.rsplit(".", 2)[0]
+                        try:
+                            source = parse_nvr(source_nvr)
+                        except ValueError:
+                            return False
+                        if "/" in source_nvr or source["epoch"]:
+                            return False
+                        if source_nvr == expected_nvr:
+                            return False
+        return True
+
+    async def check_group_image_consistency(
         self, build_record_inspector: BuildRecordInspector, package_rpm_finder: Optional[PackageRpmFinder]
     ) -> List[AssemblyIssue]:
         """
@@ -430,16 +511,11 @@ class AssemblyInspector:
                 build_dict = external_rpms.get(entry["tag"], {}).get(package_name)
                 if not build_dict:
                     continue
+                if entry["condition"] not in ("match", "greater_equal"):
+                    raise ValueError(f'Unknown check_external_packages condition: {entry["condition"]}')
+                if package_name in all_package_overrides:
+                    continue
                 installed_rpm = installed_packages.get(package_name)
-                if installed_rpm and installed_rpm["nvr"] != build_dict["nvr"]:
-                    if not self._is_installed_rpm_in_tag(installed_rpm, entry["tag"]):
-                        image_meta.logger.info(
-                            "Installed rpm %s in image %s is not tagged in %s; skipping check_external_packages complaint",
-                            installed_rpm["nvr"],
-                            dgk,
-                            entry["tag"],
-                        )
-                        continue
                 if entry["condition"] == "match":
                     desired_packages[package_name] = build_dict["nvr"]
                 elif entry["condition"] == "greater_equal":
@@ -454,8 +530,17 @@ class AssemblyInspector:
                             brew_tag,
                         )
                         desired_packages[package_name] = installed_rpm["nvr"]
-                else:
-                    raise ValueError(f'Unknown check_external_packages condition: {entry["condition"]}')
+                if installed_rpm and installed_rpm["nvr"] != desired_packages[package_name]:
+                    if await self._external_rpm_is_unavailable(
+                        build_record_inspector, installed_rpm, build_dict["nvr"], package_rpm_finder
+                    ):
+                        image_meta.logger.info(
+                            "Expected source build %s has no relevant binary available in enabled repos %s for image %s",
+                            build_dict["nvr"],
+                            sorted(image_meta.get_enabled_repos()),
+                            dgk,
+                        )
+                        del desired_packages[package_name]
 
         """
         If an image contains an RPM from the doozer group, make sure it is the current
