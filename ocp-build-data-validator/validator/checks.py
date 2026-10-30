@@ -27,6 +27,7 @@ def load_mapping(path: Path) -> dict:
 
 
 def validate_image(data: dict) -> list[str]:
+    """Validate ownership, release delivery names and source paths for an enabled image."""
     errors = []
     owners = data.get('owners')
     if (
@@ -41,26 +42,39 @@ def validate_image(data: dict) -> list[str]:
             errors.append('name must match an entry in delivery.delivery_repo_names')
         elif len(repos) != len(set(repos)):
             errors.append('delivery.delivery_repo_names must not contain duplicates')
-    source = data.get('content', {}).get('source', {})
-    for key in ('path', 'dockerfile'):
-        value = source.get(key)
-        if value is not None and (
-            not isinstance(value, str)
-            or not value.strip()
-            or value.startswith('/')
-            or (key == 'dockerfile' and posixpath.normpath(value) == '.')
-            or posixpath.normpath(value) == '..'
-            or posixpath.normpath(value).startswith('../')
-        ):
-            errors.append(f'content.source.{key} must be a nonempty relative path inside the repository')
+    errors.extend(validate_source_paths(data))
     return errors
 
 
+def relative_path(value: str, *, directory: bool = False) -> bool:
+    """Accept repository-relative paths whose normalized form stays inside the repository."""
+    if not isinstance(value, str) or not value.strip() or value.startswith('/') or '\x00' in value:
+        return False
+    normalized = posixpath.normpath(value)
+    return normalized != '..' and not normalized.startswith('../') and (directory or normalized != '.')
+
+
+def validate_source_paths(data: dict, *, image: bool = True) -> list[str]:
+    """Check all metadata paths before source validation makes authenticated requests."""
+    source = data.get('content', {}).get('source', {})
+    paths = [('content.source.path', source.get('path'), True)]
+    if image:
+        paths.append(('content.source.dockerfile', source.get('dockerfile'), False))
+    paths.append(('update-csv.manifests-dir', data.get('update-csv', {}).get('manifests-dir'), True))
+    return [
+        f'{name} must be a nonempty relative path inside the repository'
+        for name, value, directory in paths
+        if value is not None and not relative_path(value, directory=directory)
+    ]
+
+
 def validate_references(images: dict[str, dict], streams: dict, variables: dict | None = None) -> list[str]:
+    """Check member and stream references and detect cycles across the active image graph."""
     errors = []
     edges = {}
 
     def resolve(value):
+        """Expand configured group variables in a metadata reference."""
         return value.format_map(variables) if variables is not None else value
 
     stream_names = set()
@@ -110,18 +124,21 @@ def validate_references(images: dict[str, dict], streams: dict, variables: dict 
 
 
 def repository_url(url: str) -> str:
+    """Normalize supported SSH and HTTPS repository URLs for mapping comparisons."""
     url = url.removesuffix('.git').rstrip('/')
     return url.replace('git@github.com:', 'https://github.com/')
 
 
 def repository_name(url: str) -> str:
+    """Extract a GitHub owner/repository pair without credentials or ambiguous URL segments."""
     match = re.fullmatch(r'https://github\.com/([A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+)', repository_url(url))
-    if not match:
+    if not match or any(part in {'.', '..'} for part in match[1].split('/')):
         raise ValueError('source repositories must use a GitHub URL without credentials or query parameters')
     return match[1]
 
 
 def source_repositories(data: dict, group: dict) -> list[tuple[str, str | None]]:
+    """Return private and public sources using the most specific configured upstream mapping."""
     source = data.get('content', {}).get('source', {}).get('git', {})
     if not source.get('url'):
         return []
@@ -148,6 +165,7 @@ class GitHubClient:
     """Read-only GitHub API client. Never send credentials to metadata-supplied hosts."""
 
     def __init__(self, session=None, token: str | None = None):
+        """Configure bounded retries and optional authentication for GitHub API requests."""
         self.session = session or requests.Session()
         self.session.headers.update({'Accept': 'application/vnd.github+json'})
         if token:
@@ -157,6 +175,12 @@ class GitHubClient:
         self.cache = {}
 
     def exists(self, repository: str, path: str | None, ref: str, *, kind: str | None = None) -> bool:
+        """Check a branch or typed contents entry, caching successful authoritative responses."""
+        repository = repository_name(f'https://github.com/{repository}')
+        if path is not None:
+            if not relative_path(path, directory=kind == 'dir'):
+                raise ValueError('GitHub contents path must stay inside the repository')
+            path = posixpath.normpath(path)
         key = (repository, path, ref, kind)
         if key not in self.cache:
             endpoint = f'https://api.github.com/repos/{repository}/'
@@ -187,6 +211,9 @@ class GitHubClient:
 
 
 def validate_sources(data: dict, group: dict, client: GitHubClient, image: bool = True) -> list[str]:
+    """Check source refs, Dockerfiles and manifests in private and configured public repositories."""
+    if errors := validate_source_paths(data, image=image):
+        return errors
     source = data.get('content', {}).get('source', {})
     git = source.get('git', {})
     if not git.get('url'):
@@ -195,6 +222,7 @@ def validate_sources(data: dict, group: dict, client: GitHubClient, image: bool 
     variables = group.get('vars', {})
 
     def resolve(value):
+        """Expand configured group variables in a metadata reference."""
         if not isinstance(value, str) or not value.strip():
             return None
         return value.format_map(variables)
@@ -228,6 +256,7 @@ def validate_sources(data: dict, group: dict, client: GitHubClient, image: bool 
 
 
 def component_name(application: str, image: str, data: dict, *, bundle: bool = False) -> str:
+    """Match Doozer component naming, including explicit image and bundle overrides."""
     override_key = 'bundle_name_override' if bundle else 'name_override'
     override = data.get('konflux', {}).get('component', {}).get(override_key)
     if override:

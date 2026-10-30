@@ -2,24 +2,27 @@
 
 import argparse
 import json
+import re
 import subprocess
 from pathlib import Path
 
 from ruamel.yaml import YAML
 from ruamel.yaml.error import YAMLError
 
-from . import checks, schema
+from . import checks, releases, schema
 
 ROOT_FILES = {'group.yml', 'streams.yml', 'releases.yml', 'erratatool.yml', 'bug.yml', 'bugzilla.yml'}
 
 
 def metadata_file(path: Path) -> bool:
+    """Recognize supported root and component metadata files relative to the checkout."""
     return str(path) in ROOT_FILES or (
         path.parts[0] in {'images', 'rpms', 'repos'} and path.suffix in {'.yml', '.yaml'}
     )
 
 
 def all_files(root: Path) -> list[Path]:
+    """List all supported metadata files in deterministic order."""
     candidates = [root / name for name in ROOT_FILES]
     for directory in ('images', 'rpms', 'repos'):
         candidates.extend((root / directory).rglob('*'))
@@ -29,10 +32,22 @@ def all_files(root: Path) -> list[Path]:
 
 
 def select_files(root: Path, base: str | None = None) -> list[Path]:
+    """Select changed metadata against a single commit, expanding shared edits to a full pass."""
     if not base:
         return all_files(root)
+    if not re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9._/~^@{}-]*', base):
+        raise ValueError('--base-ref must be a single git commit revision')
+    revision = (
+        subprocess.run(
+            ['git', '-C', str(root), 'rev-parse', '--verify', '--end-of-options', f'{base}^{{commit}}'],
+            capture_output=True,
+            check=True,
+        )
+        .stdout.decode()
+        .strip()
+    )
     result = subprocess.run(
-        ['git', '-C', str(root), 'diff', '--name-only', '-z', base, 'HEAD', '--'], capture_output=True, check=True
+        ['git', '-C', str(root), 'diff', '--name-only', '-z', revision, 'HEAD', '--'], capture_output=True, check=True
     )
     changed = [Path(path) for path in result.stdout.decode().split('\0') if path and metadata_file(Path(path))]
     if any(
@@ -44,6 +59,7 @@ def select_files(root: Path, base: str | None = None) -> list[Path]:
 
 
 def read_metadata(root: Path, relative: Path) -> dict:
+    """Load a metadata mapping while preventing symlinks from escaping the checkout."""
     path = root / relative
     if not path.resolve().is_relative_to(root):
         raise ValueError('metadata symlink escapes the checkout')
@@ -58,6 +74,7 @@ def validate(
     rpa_root: Path | None,
     application: str | None,
 ) -> list[str]:
+    """Collect file and repository errors while keeping WIP findings nonblocking."""
     errors = []
     if not selected:
         return errors
@@ -104,6 +121,9 @@ def validate(
             error = schema.validate(str(relative), data, str(root / 'images'))
             if error:
                 raise ValueError(error)
+            if relative == Path('releases.yml'):
+                if semantic_error := releases.validate(data, group_config=group):
+                    file_errors.append(semantic_error)
             if relative.parts[0] == 'images':
                 semantic_errors = checks.validate_image(data)
                 file_errors.extend(semantic_errors)
@@ -132,6 +152,7 @@ def validate(
 
 
 def main(argv=None) -> int:
+    """Run validation and write the JSON artifact for both success and handled failures."""
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--repo', type=Path, default=Path.cwd())
     parser.add_argument(

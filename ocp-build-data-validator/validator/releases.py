@@ -3,13 +3,14 @@ from typing import List, Optional
 from . import support
 
 
-def validate(data: dict) -> Optional[str]:
-    self_referential_upgrades = get_self_referential_upgrades(data)
+def validate(data: dict, group_config: Optional[dict] = None) -> Optional[str]:
+    """Reject upgrade paths that include the assembly being released."""
+    self_referential_upgrades = get_self_referential_upgrades(data, group_config)
     if self_referential_upgrades:
         return f"The following releases contain references to themselves in their respective 'upgrades': {', '.join(self_referential_upgrades)}"
 
 
-def get_self_referential_upgrades(releases_config: dict) -> List[str]:
+def get_self_referential_upgrades(releases_config: dict, group_config: Optional[dict] = None) -> List[str]:
     """
     Get a list of releases which contain themselves in their 'upgrades'
     """
@@ -19,7 +20,8 @@ def get_self_referential_upgrades(releases_config: dict) -> List[str]:
 
         if release.startswith('ec') or release.startswith('rc'):
             # Construct full release name
-            group_config = support.load_group_config_for('releases.yml')
+            if group_config is None:
+                group_config = support.load_group_config_for('releases.yml')
             full_release = f"{group_config['vars']['MAJOR']}.{group_config['vars']['MINOR']}.0-{release}"
 
         upgrades_releases_str = release_config.get('assembly', {}).get('group', {}).get('upgrades', "")
