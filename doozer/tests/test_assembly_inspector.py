@@ -146,7 +146,14 @@ class TestRepoAwareImageConsistency(IsolatedAsyncioTestCase):
     def add_repo(self, name, rpms=(), enabled=True, options=None):
         repo = Repo(
             name,
-            {"conf": {"baseurl": "https://example.invalid/repo/", "enabled": enabled, "extra_options": options or {}}},
+            {
+                "conf": {
+                    "baseurl": "https://example.invalid/repo/",
+                    "enabled": enabled,
+                    "extra_options": options or {},
+                },
+                "content_set": {"optional": True},
+            },
             ["x86_64", "aarch64"],
         )
         self.runtime.repos[name] = repo
@@ -255,7 +262,7 @@ class TestRepoAwareImageConsistency(IsolatedAsyncioTestCase):
         self.loader.assert_not_awaited()
 
     async def test_missing_source_linkage_retains_conflict(self):
-        for source in ("", "malformed", "malformed.src.rpm"):
+        for source in (None, "", "malformed", "malformed.src.rpm", "path/kernel-2-1.src.rpm", "kernel-1:2-1.src.rpm"):
             with self.subTest(source=source):
                 self.add_repo("packages", [self.rpm(source=source)])
                 await self.assert_conflict()
@@ -283,6 +290,7 @@ class TestRepoAwareImageConsistency(IsolatedAsyncioTestCase):
                 issues = await self.assert_conflict()
                 self.assertIn("kernel-3-1", str(issues[0]))
         self.loader.assert_not_awaited()
+
         self.build.get_all_installed_package_build_dicts.return_value = {}
         issues = await self.issues()
         self.assertEqual([issue.code for issue in issues], [AssemblyIssueCode.MISSING_INHERITED_DEPENDENCY])
@@ -351,3 +359,6 @@ class TestRepoAwareImageConsistency(IsolatedAsyncioTestCase):
         issues = await self.inspector.check_group_image_consistency(build, finder)
         self.assertEqual([issue.code for issue in issues], [AssemblyIssueCode.CONFLICTING_INHERITED_DEPENDENCY])
         self.loader.assert_not_awaited()
+        record.installed_rpms = ["malformed"]
+        with self.assertRaises(ValueError):
+            await self.inspector.check_group_image_consistency(build, finder)

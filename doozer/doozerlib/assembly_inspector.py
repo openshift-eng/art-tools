@@ -444,12 +444,14 @@ class AssemblyInspector:
             for repodata in repodatas:
                 for rpm in repodata.primary_rpms:
                     if rpm.name in names and rpm.arch in (arch, "noarch"):
-                        if not rpm.sourcerpm.endswith((".src.rpm", ".nosrc.rpm")):
+                        if not rpm.sourcerpm or not rpm.sourcerpm.endswith((".src.rpm", ".nosrc.rpm")):
                             return False
                         source_nvr = rpm.sourcerpm.rsplit(".", 2)[0]
                         try:
-                            parse_nvr(source_nvr)
+                            source = parse_nvr(source_nvr)
                         except ValueError:
+                            return False
+                        if "/" in source_nvr or source["epoch"]:
                             return False
                         if source_nvr == expected_nvr:
                             return False
