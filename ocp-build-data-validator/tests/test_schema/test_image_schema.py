@@ -631,3 +631,13 @@ class TestImageSchema(unittest.TestCase):
             'delivery': {'delivery_repo_names': ['foo', 'bar']},
         }
         self.assertIn("'yes' is not of type 'boolean'", image_schema.validate('filename', invalid_data))
+
+
+def test_layered_product_jira_ownership_is_valid():
+    data = {
+        'from': {},
+        'name': 'product/operator',
+        'for_release': False,
+        'jira': {'project': 'ZTWIM', 'component': 'Zero Trust Workload Identity Manager'},
+    }
+    assert image_schema.validate('images/operator.yml', data) is None
