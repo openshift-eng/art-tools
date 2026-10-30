@@ -90,7 +90,6 @@ class ScanOperatorPipeline:
         self.skipped = False
         self.logger.info(f'Scanning version {self.version}, assembly {self.assembly}')
 
-        # TODO: Deprecate art-images-share check on Oct 31st 2026
         # Check if it's a valid version
         if not uses_konflux_imagestream_override(self.version):
             self.logger.info(f'Version {self.version} is not a valid version')
