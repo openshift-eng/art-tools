@@ -111,7 +111,15 @@ def get_build_path():
     """
 
     url = get_build_url()
-    return '/'.join(url.split('/')[3:]) if url else None
+    if not url:
+        return None
+    # Display URLs can use the ART UI while Redis keeps Kubernetes resource identities.
+    fragment_path = urlparse(urlparse(url).fragment).path
+    parts = fragment_path.strip('/').split('/')
+    if len(parts) == 3 and parts[0] == 'run':
+        namespace, run_name = parts[1:]
+        return f'k8s/ns/{namespace}/tekton.dev~v1~PipelineRun/{run_name}'
+    return '/'.join(url.split('/')[3:])
 
 
 def get_build_path_or_random():

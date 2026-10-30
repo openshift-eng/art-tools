@@ -7,7 +7,21 @@ from aioredlock import Aioredlock, LockError
 from artcommonlib import redis
 from tenacity import TryAgain, retry, retry_if_exception_type, stop_after_attempt, wait_fixed
 
-from pyartcd import constants
+from pyartcd import constants, tekton
+from pyartcd.tekton_locks import parse_k8s_lock_path
+
+
+def _lock_owner_url(lock_id):
+    """Format an owner for logs without changing its stored Redis identity."""
+    parsed = parse_k8s_lock_path(lock_id or '')
+    if parsed:
+        namespace, name, kind = parsed
+        if kind == 'PipelineRun':
+            return tekton._build_console_pipelinerun_url(name, namespace)
+        return f'{tekton._get_console_url()}/{lock_id}'
+    if lock_id and lock_id.startswith('job/'):
+        return f'{constants.JENKINS_UI_URL}/{lock_id}'
+    return lock_id
 
 
 # Defines the pipeline locks managed by Redis
@@ -274,7 +288,7 @@ class LockManager(Aioredlock):
         if locked:
             resource = resource_or_lock.resource if hasattr(resource_or_lock, 'resource') else resource_or_lock
             lock_id = await self.get_lock_id(resource)
-            self.logger.info('Resource %s is currently locked by %s', resource, lock_id)
+            self.logger.info('Resource %s is currently locked by %s', resource, _lock_owner_url(lock_id))
         return locked
 
     async def get_lock_id(self, resource) -> str:
@@ -344,7 +358,7 @@ async def run_with_lock(coro: coroutine, lock: Lock, lock_name: str, lock_id: st
     try:
         if skip_if_locked and await lock_manager.is_locked(lock_name):
             blocked_on_build_path = await lock_manager.get_lock_id(lock_name)
-            blocked_on_build_url = f'{constants.JENKINS_UI_URL}/{blocked_on_build_path}'
+            blocked_on_build_url = _lock_owner_url(blocked_on_build_path)
             lock_manager.logger.info(
                 f'Cannot acquire {lock_name}, which is acquired by {blocked_on_build_url} -- skipping'
             )

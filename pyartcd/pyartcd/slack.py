@@ -1,6 +1,7 @@
 import logging
 import re
 from typing import Optional
+from urllib.parse import urlsplit
 
 from slack_sdk.web.async_client import AsyncWebClient
 
@@ -70,9 +71,13 @@ class SlackClient:
     ):
         attachments = []
         if self.build_url and link_build_url:
+            if "/job/" in urlsplit(self.build_url).path:
+                title = f"Job: {self.job_name} <{self.build_url}/consoleFull|{self.build_id}>"
+            else:
+                title = f"Run: <{self.build_url}|View run>"
             attachments.append(
                 {
-                    "title": f"Job: {self.job_name} <{self.build_url}/consoleFull|{self.build_id}>",
+                    "title": title,
                     "color": "#439FE0",
                 }
             )

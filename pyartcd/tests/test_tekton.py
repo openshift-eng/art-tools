@@ -102,7 +102,7 @@ class TestStartPipelineRunLineage:
         assert metadata['labels']['art.openshift.io/parent-pipelinerun'] == 'original-bundle'
         assert metadata['labels']['art.openshift.io/parent-pipeline'] == 'olm-bundle-konflux'
         assert metadata['annotations'] == {
-            'art.openshift.io/parent-pipelinerun-console-url': 'https://console.example/k8s/ns/art-test-tenant/tekton.dev~v1~PipelineRun/original-bundle',
+            'art.openshift.io/parent-pipelinerun-console-url': 'https://art-pipelines-ui-art-pipelines-ui.apps.artc2023.pc3z.p1.openshiftapps.com/#/run/art-test-tenant/original-bundle?tab=logs',
             'art.openshift.io/rebuilt-from': 'original-uid',
             'art.openshift.io/rebuilt-from-name': 'failed-fbc',
             'art.openshift.io/recovery-scan': 'new-scan',
