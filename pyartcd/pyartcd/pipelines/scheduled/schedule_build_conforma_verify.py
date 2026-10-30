@@ -2,13 +2,7 @@ import asyncio
 from datetime import datetime, timedelta, timezone
 
 import click
-from artcommonlib.product_catalog import find_product_config
-from artcommonlib.release_util import SoftwareLifecyclePhase
-from doozerlib.constants import (
-    KONFLUX_RELEASE_EC_POLICY_CONFIGURATION,
-    KONFLUX_RELEASE_FBC_EC_POLICY_CONFIGURATION,
-    KONFLUX_RELEASE_PREGA_EC_POLICY_CONFIGURATION,
-)
+from artcommonlib.conforma import resolve_stage_policy
 
 from pyartcd import jenkins, util
 from pyartcd.cli import cli, click_coroutine, pass_runtime
@@ -27,27 +21,13 @@ async def run_for(group: str, runtime: Runtime, serial: bool = False):
 
     group_config = await util.load_group_config(group=group, assembly='stream')
 
-    if group.startswith('openshift-'):
-        # OCP group: select EC policy based on software lifecycle phase
-        phase_name = group_config.get('software_lifecycle', {}).get('phase', '')
-        try:
-            phase = SoftwareLifecyclePhase.from_name(phase_name) if phase_name else None
-        except ValueError:
-            phase = None
-
-        if phase == SoftwareLifecyclePhase.PRE_RELEASE:
-            ec_policy = KONFLUX_RELEASE_PREGA_EC_POLICY_CONFIGURATION
-        else:
-            ec_policy = KONFLUX_RELEASE_EC_POLICY_CONFIGURATION
-        fbc_ec_policy = KONFLUX_RELEASE_FBC_EC_POLICY_CONFIGURATION
-    else:
-        product = group_config.get('product')
-        config = find_product_config(product) if product else None
-        if config is None or config.conforma_stage_policies is None:
-            raise ValueError(f"Unsupported layered-product group '{group}' product '{product}'")
-        ec_policy = config.conforma_stage_policies.image_policy
-        fbc_ec_policy = config.conforma_stage_policies.fbc_policy
-        phase_name = 'n/a'
+    product = group_config.get('product') or ('ocp' if group.startswith('openshift-') else '')
+    lifecycle = group_config.get('software_lifecycle')
+    phase_name = lifecycle.get('phase') if lifecycle is not None else None
+    ec_policy = resolve_stage_policy(product, lifecycle_phase=phase_name)
+    fbc_ec_policy = resolve_stage_policy(product, lifecycle_phase=phase_name, build_type='fbc')
+    if ec_policy is None:
+        raise ValueError(f"Unsupported layered-product group '{group}' product '{product}'")
 
     effective_time = (datetime.now(timezone.utc) + timedelta(days=EFFECTIVE_TIME_OFFSET_DAYS)).strftime(
         '%Y-%m-%dT%H:%M:%SZ'

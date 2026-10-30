@@ -101,7 +101,6 @@ class KonfluxImageBuilderConfig:
     dry_run: bool = False
     build_priority: Optional[str] = None
     ec_policy_configuration: Optional[str] = None
-    prega_ec_policy_configuration: Optional[str] = None
     skip_ec_verify: bool = False
     effective_time: str = "now"
     integration_test_scenarios: tuple[str, ...] = ()
@@ -379,15 +378,7 @@ class KonfluxImageBuilder:
                         raise IOError("PipelineRun succeeded but IMAGE_URL or IMAGE_DIGEST missing from results")
 
                 # Run enterprise-contract (EC) verification after a successful build
-                # TODO: Expose EC failure links (ITS/PLR URLs) via Slack notification or dashboard column
-                lifecycle_phase = metadata.runtime.group_config.software_lifecycle.phase
-                if (
-                    lifecycle_phase is not Missing
-                    and SoftwareLifecyclePhase.from_name(lifecycle_phase) == SoftwareLifecyclePhase.PRE_RELEASE
-                ):
-                    ec_policy = self._config.prega_ec_policy_configuration
-                else:
-                    ec_policy = self._config.ec_policy_configuration
+                ec_policy = self._config.ec_policy_configuration
 
                 its_eligible = metadata.config.get("konflux", {}).get("its", {}).get("enabled", metadata.for_release)
                 should_run_ec = (

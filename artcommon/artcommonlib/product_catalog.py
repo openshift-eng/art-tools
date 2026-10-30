@@ -13,6 +13,13 @@ PRODUCT_CATALOG: tuple[ProductConfig, ...] = (
         product_id=ProductId.OCP,
         namespace="ocp-art-tenant",
         kubeconfig_env="KONFLUX_SA_KUBECONFIG",
+        conforma_stage_policies=ConformaPolicies(
+            image_policy="rhtap-releng-tenant/registry-ocp-art-stage",
+            fbc_policy="rhtap-releng-tenant/fbc-ocp-art-stage",
+            pre_release_image_policy="rhtap-releng-tenant/registry-ocp-art-ec-stage",
+            test_image_policy="ocp-art-tenant/conforma-build-stage-test",
+            test_pre_release_image_policy="ocp-art-tenant/conforma-build-ec-stage-test",
+        ),
         base_image_release=ReleaseTarget(
             release_plan="ocp-art-images-base-silent",
             application="art-images-base",
@@ -275,7 +282,7 @@ PRODUCT_CATALOG: tuple[ProductConfig, ...] = (
         namespace="art-oc-mirror-tenant",
         kubeconfig_env="OC_MIRROR_KONFLUX_SA_KUBECONFIG",
         conforma_stage_policies=ConformaPolicies(
-            image_policy="rhtap-releng-tenant/registry-standard",
+            image_policy="rhtap-releng-tenant/registry-art-oc-mirror-mirror-gui-stage",
         ),
         fbc_stage_release_plans={(1, 0): "mirror-gui-stage"},
     ),

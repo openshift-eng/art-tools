@@ -16,6 +16,7 @@ from artcommonlib import exectools
 from artcommonlib import util as artlib_util
 from artcommonlib.assembly import AssemblyTypes
 from artcommonlib.build_visibility import is_nvr_embargoed
+from artcommonlib.conforma import resolve_stage_policy
 from artcommonlib.constants import KONFLUX_DEFAULT_IMAGE_SHARE_REPO
 from artcommonlib.konflux.konflux_build_record import (
     KonfluxBuildOutcome,
@@ -1226,19 +1227,13 @@ class KonfluxOlmBundleBuilder:
                         image_with_digest = f"{image_pullspec.split(':')[0]}@{image_digest}"
                         source_url = artlib_util.convert_remote_git_to_https(bundle_build_repo.url)
 
-                        is_test_assembly = self.assembly == "test"
-                        if self.assembly_type == AssemblyTypes.PREVIEW:
-                            ec_policy = (
-                                constants.KONFLUX_TEST_PREGA_EC_POLICY_CONFIGURATION
-                                if is_test_assembly
-                                else constants.KONFLUX_PREGA_EC_POLICY_CONFIGURATION
-                            )
-                        else:
-                            ec_policy = (
-                                constants.KONFLUX_TEST_EC_POLICY_CONFIGURATION
-                                if is_test_assembly
-                                else constants.KONFLUX_DEFAULT_EC_POLICY_CONFIGURATION
-                            )
+                        lifecycle = metadata.runtime.group_config.get("software_lifecycle")
+                        ec_policy = resolve_stage_policy(
+                            metadata.runtime.product,
+                            lifecycle_phase=lifecycle.get("phase") if lifecycle is not None else None,
+                            assembly=self.assembly,
+                            build_type="bundle",
+                        )
 
                         ec_result = await konflux_client.verify_enterprise_contract(
                             namespace=self.konflux_namespace,

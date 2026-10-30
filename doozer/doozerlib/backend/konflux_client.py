@@ -19,6 +19,11 @@ from urllib.parse import parse_qs, urlparse
 import jinja2
 from artcommonlib import exectools
 from artcommonlib import util as art_util
+from artcommonlib.conforma import (
+    KONFLUX_EC_PIPELINE_GIT_URL,
+    KONFLUX_EC_PIPELINE_PATH,
+    KONFLUX_EC_PIPELINE_REVISION,
+)
 from artcommonlib.constants import KONFLUX_DEFAULT_NAMESPACE
 from artcommonlib.github_auth import get_github_app_token_for_org
 from async_lru import alru_cache
@@ -997,9 +1002,9 @@ class KonfluxClient:
         application_name: str,
         application_uid: str,
         policy_configuration: str,
-        ec_pipeline_url: str = constants.KONFLUX_EC_PIPELINE_GIT_URL,
-        ec_pipeline_revision: str = constants.KONFLUX_EC_PIPELINE_REVISION,
-        ec_pipeline_path: str = constants.KONFLUX_EC_PIPELINE_PATH,
+        ec_pipeline_url: str = KONFLUX_EC_PIPELINE_GIT_URL,
+        ec_pipeline_revision: str = KONFLUX_EC_PIPELINE_REVISION,
+        ec_pipeline_path: str = KONFLUX_EC_PIPELINE_PATH,
     ) -> dict:
         """Create an IntegrationTestScenario manifest for enterprise-contract verification.
 
@@ -1477,9 +1482,9 @@ class KonfluxClient:
         its_name: str,
         policy_configuration: str,
         watch_labels: dict,
-        ec_pipeline_url: str = constants.KONFLUX_EC_PIPELINE_GIT_URL,
-        ec_pipeline_revision: str = constants.KONFLUX_EC_PIPELINE_REVISION,
-        ec_pipeline_path: str = constants.KONFLUX_EC_PIPELINE_PATH,
+        ec_pipeline_url: str = KONFLUX_EC_PIPELINE_GIT_URL,
+        ec_pipeline_revision: str = KONFLUX_EC_PIPELINE_REVISION,
+        ec_pipeline_path: str = KONFLUX_EC_PIPELINE_PATH,
         effective_time: str = "now",
     ) -> dict:
         """Create a PipelineRun manifest for enterprise-contract verification.

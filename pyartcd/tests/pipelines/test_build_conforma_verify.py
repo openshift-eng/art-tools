@@ -4,10 +4,12 @@ import os
 import unittest
 from unittest.mock import AsyncMock, MagicMock, patch
 
+from click.testing import CliRunner
 from pyartcd.pipelines.build_conforma_verify import (
     BuildConformaVerifyPipeline,
     _integration_test_scenario_name,
     _resolve_ec_policy_configuration,
+    build_conforma_verify,
 )
 
 SAMPLE_EC_REPORT_LOG = """\
@@ -123,7 +125,62 @@ def _make_pipeline(**kwargs):
     return BuildConformaVerifyPipeline(**defaults)
 
 
+class TestCliHelp(unittest.TestCase):
+    def test_policy_help_describes_dynamic_defaults_and_fbc_precedence(self):
+        result = CliRunner().invoke(build_conforma_verify, ["--help"], terminal_width=160)
+
+        self.assertEqual(result.exit_code, 0, result.output)
+        help_text = " ".join(result.output.split())
+        self.assertIn("--ec-policy", help_text)
+        self.assertIn("Defaults to the stage policy for the product, lifecycle, assembly and build type", help_text)
+        self.assertIn("--fbc-ec-policy", help_text)
+        self.assertIn("Falls back to --ec-policy, then the product's FBC stage policy", help_text)
+        self.assertNotIn("ocp-art-tenant/conforma-build-stage", help_text)
+        options = {parameter.name: parameter for parameter in build_conforma_verify.params}
+        self.assertIsNone(options["ec_policy"].default)
+        self.assertIsNone(options["fbc_ec_policy"].default)
+
+
 class TestPipelineInit(unittest.TestCase):
+    def test_shared_policy_defaults_and_overrides(self):
+        for group, product, assembly, phase, build_type, generic, fbc, expected in (
+            ("openshift-4.23", "ocp", "stream", "release", "image", None, None, "registry-ocp-art-stage"),
+            ("openshift-4.23", "ocp", "preview", "release", "bundle", None, None, "registry-ocp-art-stage"),
+            ("openshift-4.23", "ocp", "stream", "pre-release", "bundle", None, None, "registry-ocp-art-ec-stage"),
+            ("openshift-4.23", "ocp", "test", "release", "image", None, None, "conforma-build-stage-test"),
+            ("openshift-4.23", "ocp", "test", "pre-release", "bundle", None, None, "conforma-build-ec-stage-test"),
+            ("openshift-4.23", "ocp", "stream", "pre-release", "fbc", None, None, "fbc-ocp-art-stage"),
+            ("oadp-1.5", "oadp", "stream", "release", "fbc", None, None, "fbc-art-oadp-stage"),
+            ("quay-3.16", "quay", "test", "release", "image", None, None, "registry-art-quay-stage"),
+            (
+                "mirror-gui-1.0",
+                "mirror_gui",
+                "stream",
+                "release",
+                "image",
+                None,
+                None,
+                "registry-art-oc-mirror-mirror-gui-stage",
+            ),
+            ("openshift-4.23", "ocp", "stream", "release", "fbc", "custom/generic", None, "generic"),
+            ("openshift-4.23", "ocp", "stream", "release", "fbc", "custom/generic", "custom/fbc", "fbc"),
+            ("openshift-4.23", "ocp", "stream", "release", "image", "custom/generic", "custom/fbc", "generic"),
+        ):
+            with self.subTest(
+                group=group, assembly=assembly, phase=phase, build_type=build_type, generic=generic, fbc=fbc
+            ):
+                pipeline = _make_pipeline(group=group, assembly=assembly, ec_policy=generic, fbc_ec_policy=fbc)
+                pipeline._group_config = {"product": product, "software_lifecycle": {"phase": phase}}
+                policy = asyncio.run(pipeline._resolve_stage_policy(build_type))
+                self.assertEqual(policy.rsplit("/", 1)[-1], expected)
+
+    def test_missing_product_or_fbc_policy_does_not_fall_back_to_ocp(self):
+        for product, build_type in (("unknown", "image"), ("mirror_gui", "fbc")):
+            pipeline = _make_pipeline(group=f"{product}-1.0")
+            pipeline._group_config = {"product": product}
+            with self.assertRaisesRegex(ValueError, "No Conforma"):
+                asyncio.run(pipeline._resolve_stage_policy(build_type))
+
     def test_default_values(self):
         p = _make_pipeline()
         self.assertEqual(p.effective_time, "now")
@@ -161,6 +218,195 @@ class TestPipelineInit(unittest.TestCase):
 
 
 class TestProductSettings(unittest.TestCase):
+    def test_optional_lifecycle_defaults(self):
+        for lifecycle_config in (
+            {},
+            {"software_lifecycle": None},
+            {"software_lifecycle": {}},
+            {"software_lifecycle": {"phase": None}},
+            {"software_lifecycle": {"phase": "release"}},
+            {"software_lifecycle": {"phase": "pre-release"}},
+        ):
+            for product in ("ocp", "logging"):
+                for assembly in ("stream", "test"):
+                    with self.subTest(config=lifecycle_config, product=product, assembly=assembly):
+                        pipeline = _make_pipeline(assembly=assembly)
+                        phase = (lifecycle_config.get("software_lifecycle") or {}).get("phase")
+                        if product == "logging":
+                            image_policy = "rhtap-releng-tenant/registry-art-logging-stage"
+                            fbc_policy = "rhtap-releng-tenant/fbc-stage"
+                        else:
+                            image_policy = {
+                                ("stream", False): "rhtap-releng-tenant/registry-ocp-art-stage",
+                                ("stream", True): "rhtap-releng-tenant/registry-ocp-art-ec-stage",
+                                ("test", False): "ocp-art-tenant/conforma-build-stage-test",
+                                ("test", True): "ocp-art-tenant/conforma-build-ec-stage-test",
+                            }[(assembly, phase == "pre-release")]
+                            fbc_policy = "rhtap-releng-tenant/fbc-ocp-art-stage"
+
+                        async def resolve_policies():
+                            return [await pipeline._resolve_stage_policy(kind) for kind in ("image", "bundle", "fbc")]
+
+                        with patch(
+                            "pyartcd.pipelines.build_conforma_verify.util.load_group_config",
+                            new=AsyncMock(return_value={"product": product, **lifecycle_config}),
+                        ) as load_config:
+                            self.assertEqual(asyncio.run(resolve_policies()), [image_policy, image_policy, fbc_policy])
+                        load_config.assert_awaited_once()
+
+    def test_nonmapping_lifecycle_is_not_coerced(self):
+        for lifecycle in (False, "", [], "invalid", 1):
+            with self.subTest(lifecycle=lifecycle):
+                pipeline = _make_pipeline()
+                pipeline._group_config = {"software_lifecycle": lifecycle}
+                with self.assertRaises(AttributeError):
+                    asyncio.run(pipeline._resolve_stage_policy("image"))
+
+    def test_ocp_image_and_bundle_defaults_share_selected_group_config(self):
+        pipeline = _make_pipeline(
+            assembly="test",
+            data_path="https://example.test/ocp-build-data",
+            data_gitref="feature-branch",
+        )
+
+        async def resolve_policies():
+            return [await pipeline._resolve_stage_policy(build_type) for build_type in ("image", "bundle", "fbc")]
+
+        with patch(
+            "pyartcd.pipelines.build_conforma_verify.util.load_group_config",
+            new=AsyncMock(return_value={"software_lifecycle": {"phase": "pre-release"}}),
+        ) as load_group_config:
+            policies = asyncio.run(resolve_policies())
+
+        load_group_config.assert_awaited_once_with(
+            group="openshift-4.18",
+            assembly="test",
+            doozer_data_path="https://example.test/ocp-build-data",
+            doozer_data_gitref="feature-branch",
+        )
+        self.assertEqual(
+            policies,
+            [
+                "ocp-art-tenant/conforma-build-ec-stage-test",
+                "ocp-art-tenant/conforma-build-ec-stage-test",
+                "rhtap-releng-tenant/fbc-ocp-art-stage",
+            ],
+        )
+
+    def test_openshift_configured_product_defaults_and_cache(self):
+        for product in ("openshift-logging", "logging"):
+            with self.subTest(product=product):
+                pipeline = _make_pipeline(assembly="test")
+
+                async def resolve_policies():
+                    return [await pipeline._resolve_stage_policy(kind) for kind in ("fbc", "image", "bundle", "fbc")]
+
+                with patch(
+                    "pyartcd.pipelines.build_conforma_verify.util.load_group_config",
+                    new=AsyncMock(return_value={"product": product, "software_lifecycle": {"phase": "pre-release"}}),
+                ) as load_config:
+                    self.assertEqual(
+                        asyncio.run(resolve_policies()),
+                        [
+                            "rhtap-releng-tenant/fbc-stage",
+                            "rhtap-releng-tenant/registry-art-logging-stage",
+                            "rhtap-releng-tenant/registry-art-logging-stage",
+                            "rhtap-releng-tenant/fbc-stage",
+                        ],
+                    )
+                load_config.assert_awaited_once()
+                self.assertEqual(pipeline.namespace, "ocp-art-tenant")
+
+    def test_ocp_product_fallback_lifecycle_and_assembly(self):
+        for product_config in ({}, {"product": None}, {"product": ""}):
+            for assembly, phase, expected in (
+                ("stream", "release", "rhtap-releng-tenant/registry-ocp-art-stage"),
+                ("stream", "pre-release", "rhtap-releng-tenant/registry-ocp-art-ec-stage"),
+                ("test", "release", "ocp-art-tenant/conforma-build-stage-test"),
+                ("test", "pre-release", "ocp-art-tenant/conforma-build-ec-stage-test"),
+            ):
+                with self.subTest(product_config=product_config, assembly=assembly, phase=phase):
+                    pipeline = _make_pipeline(assembly=assembly)
+
+                    async def resolve_policies():
+                        return [await pipeline._resolve_stage_policy(kind) for kind in ("image", "bundle", "fbc")]
+
+                    with patch(
+                        "pyartcd.pipelines.build_conforma_verify.util.load_group_config",
+                        new=AsyncMock(return_value={**product_config, "software_lifecycle": {"phase": phase}}),
+                    ) as load_config:
+                        self.assertEqual(
+                            asyncio.run(resolve_policies()),
+                            [expected, expected, "rhtap-releng-tenant/fbc-ocp-art-stage"],
+                        )
+                    load_config.assert_awaited_once()
+
+    def test_missing_layered_or_unknown_configured_product_has_no_default(self):
+        for group, products in (("openshift-4.18", ("unknown",)), ("logging-6.7", (None, "", "unknown"))):
+            for product in products:
+                for build_type in ("image", "bundle", "fbc"):
+                    with self.subTest(group=group, product=product, build_type=build_type):
+                        pipeline = _make_pipeline(group=group)
+                        with patch(
+                            "pyartcd.pipelines.build_conforma_verify.util.load_group_config",
+                            new=AsyncMock(return_value={"product": product}),
+                        ):
+                            with self.assertRaisesRegex(ValueError, "No Conforma .* stage policy"):
+                                asyncio.run(pipeline._resolve_stage_policy(build_type))
+
+    def test_fbc_override_does_not_override_image_default(self):
+        pipeline = _make_pipeline(fbc_ec_policy="tenant/fbc")
+        with patch(
+            "pyartcd.pipelines.build_conforma_verify.util.load_group_config",
+            new=AsyncMock(return_value={"product": "logging"}),
+        ) as load_config:
+            self.assertEqual(
+                asyncio.run(pipeline._resolve_stage_policy("image")),
+                "rhtap-releng-tenant/registry-art-logging-stage",
+            )
+        load_config.assert_awaited_once()
+
+    def test_explicit_overrides_do_not_read_group_config(self):
+        for build_type, generic, fbc, expected in (
+            ("image", "tenant/image", None, "tenant/image"),
+            ("bundle", "tenant/image", "tenant/fbc", "tenant/image"),
+            ("fbc", "tenant/image", None, "tenant/image"),
+            ("fbc", "tenant/image", "tenant/fbc", "tenant/fbc"),
+            ("fbc", None, "tenant/fbc", "tenant/fbc"),
+        ):
+            for group in ("openshift-4.18", "logging-6.7"):
+                with self.subTest(group=group, build_type=build_type, generic=generic, fbc=fbc):
+                    pipeline = _make_pipeline(group=group, ec_policy=generic, fbc_ec_policy=fbc)
+                    with patch(
+                        "pyartcd.pipelines.build_conforma_verify.util.load_group_config",
+                        new=AsyncMock(side_effect=AssertionError("unexpected config read")),
+                    ) as load_group_config:
+                        self.assertEqual(asyncio.run(pipeline._resolve_stage_policy(build_type)), expected)
+                    load_group_config.assert_not_awaited()
+
+    def test_layered_settings_and_defaults_reuse_group_config(self):
+        pipeline = _make_pipeline(group="oadp-1.5")
+
+        async def resolve_settings_and_policies():
+            await pipeline._resolve_layered_product_settings()
+            return [await pipeline._resolve_stage_policy(build_type) for build_type in ("image", "fbc")]
+
+        with patch(
+            "pyartcd.pipelines.build_conforma_verify.util.load_group_config",
+            new=AsyncMock(return_value={"product": "oadp"}),
+        ) as load_group_config:
+            policies = asyncio.run(resolve_settings_and_policies())
+
+        load_group_config.assert_awaited_once()
+        self.assertEqual(pipeline.namespace, "art-oadp-tenant")
+        self.assertEqual(
+            policies,
+            [
+                "rhtap-releng-tenant/registry-art-oadp-stage",
+                "rhtap-releng-tenant/fbc-art-oadp-stage",
+            ],
+        )
+
     def test_lp_settings_use_product_and_selected_data(self):
         p = _make_pipeline(
             group="oadp-1.5",
@@ -275,6 +521,16 @@ class TestPolicySelection(unittest.TestCase):
         )
         params = client._create.await_args.args[0]['spec']['params']
         self.assertIn({'name': 'POLICY_CONFIGURATION', 'value': inline_policy}, params)
+        pipeline_ref = client._create.await_args.args[0]['spec']['pipelineRef']
+        self.assertEqual(pipeline_ref['resolver'], 'git')
+        self.assertEqual(
+            {param['name']: param['value'] for param in pipeline_ref['params']},
+            {
+                'url': 'https://github.com/conforma/cli',
+                'revision': 'main',
+                'pathInRepo': 'pipelines/enterprise-contract/0.1/enterprise-contract.yaml',
+            },
+        )
         self.assertRegex(
             client.ensure_integration_test_scenario.await_args.kwargs['name'],
             r'^openshift-5-0-ec-policy-[0-9a-f]{10}$',

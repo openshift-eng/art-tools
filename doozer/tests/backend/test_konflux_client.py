@@ -191,6 +191,25 @@ class TestParseGitHubApiUrl(TestCase):
 
 
 class TestNewIntegrationTestScenario(TestCase):
+    def test_explicit_pipeline_reference_overrides(self):
+        manifest = KonfluxClient._new_integration_test_scenario(
+            name="test-its",
+            application_name="test-app",
+            application_uid="test-uid",
+            policy_configuration="tenant/policy",
+            ec_pipeline_url="https://example.com/custom-pipeline",
+            ec_pipeline_revision="custom-revision",
+            ec_pipeline_path="custom/pipeline.yaml",
+        )
+        self.assertEqual(
+            {param["name"]: param["value"] for param in manifest["spec"]["resolverRef"]["params"]},
+            {
+                "url": "https://example.com/custom-pipeline",
+                "revision": "custom-revision",
+                "pathInRepo": "custom/pipeline.yaml",
+            },
+        )
+
     def test_manifest_structure(self):
         manifest = KonfluxClient._new_integration_test_scenario(
             name="openshift-4-21-ec-registry-ocp-art-stage",
@@ -249,6 +268,29 @@ class TestNewIntegrationTestScenarioPreGA(TestCase):
 
 
 class TestNewEcPipelinerun(TestCase):
+    def test_explicit_pipeline_reference_overrides(self):
+        manifest = KonfluxClient._new_ec_pipelinerun(
+            generate_name="test-ec-",
+            namespace="test-tenant",
+            application_name="test-app",
+            component_name="test-component",
+            snapshot_json="{}",
+            its_name="test-its",
+            policy_configuration="tenant/policy",
+            watch_labels={},
+            ec_pipeline_url="https://example.com/custom-pipeline",
+            ec_pipeline_revision="custom-revision",
+            ec_pipeline_path="custom/pipeline.yaml",
+        )
+        self.assertEqual(
+            {param["name"]: param["value"] for param in manifest["spec"]["pipelineRef"]["params"]},
+            {
+                "url": "https://example.com/custom-pipeline",
+                "revision": "custom-revision",
+                "pathInRepo": "custom/pipeline.yaml",
+            },
+        )
+
     def test_manifest_structure(self):
         snapshot_spec = {
             "application": "openshift-4-21",
@@ -296,6 +338,7 @@ class TestNewEcPipelinerun(TestCase):
         self.assertEqual(pipeline_ref["resolver"], "git")
         ref_params = {p["name"]: p["value"] for p in pipeline_ref["params"]}
         self.assertEqual(ref_params["url"], "https://github.com/conforma/cli")
+        self.assertEqual(ref_params["revision"], "main")
         self.assertEqual(ref_params["pathInRepo"], "pipelines/enterprise-contract/0.1/enterprise-contract.yaml")
 
         # params
