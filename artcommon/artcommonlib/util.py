@@ -291,6 +291,11 @@ def is_future_release_date(date_str):
     raise ValueError(f"Unable to parse date string '{date_str}' with any of the supported formats: {formats}")
 
 
+def _release_name_matches_task(release_name: str, task_name: str) -> bool:
+    """Match a literal release token, excluding version, prerelease and build continuations."""
+    return re.search(rf'(?<![\w.+-]){re.escape(release_name)}(?![\w.+-])', task_name) is not None
+
+
 def get_assembly_release_date(assembly, group, date=None):
     """
     Get assembly release release date from release schedule API.
@@ -324,7 +329,7 @@ def get_assembly_release_date(assembly, group, date=None):
     try:
         data = response.json()
         for release in data['all_ga_tasks']:
-            if assembly in release['name']:
+            if _release_name_matches_task(assembly, release['name']):
                 # convert date format for advisory usage, 2024-02-13 -> 2024-Feb-13
                 return datetime.strptime(release['date_start'], "%Y-%m-%d").strftime("%Y-%b-%d")
     except KeyError:
@@ -349,7 +354,7 @@ async def get_assembly_release_date_async(release_name: str):
             response.raise_for_status()
             data = await response.json()
             for release in data['all_ga_tasks']:
-                if release_name in release['name']:
+                if _release_name_matches_task(release_name, release['name']):
                     # convert date format for advisory usage, 2024-02-13 -> 2024-Feb-13
                     return datetime.strptime(release['date_start'], "%Y-%m-%d").strftime("%Y-%b-%d")
     raise ValueError(f'Assembly release date not found for {release_name}')

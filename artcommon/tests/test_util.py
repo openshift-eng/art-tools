@@ -1624,6 +1624,79 @@ class TestExtractVersionedRelatedImagesFromFBC(unittest.TestCase):
         self.assertEqual(len(result), 2)
 
 
+class TestGetAssemblyReleaseDate(unittest.TestCase):
+    def _get_date(self, tasks, asynchronous, release_name='4.18.1'):
+        if asynchronous:
+            with patch('artcommonlib.util.aiohttp.ClientSession') as mock_session:
+                session = mock_session.return_value.__aenter__.return_value
+                session.post = AsyncMock()
+                session.get = MagicMock()
+                response = session.get.return_value.__aenter__.return_value
+                response.raise_for_status = MagicMock()
+                response.json = AsyncMock(return_value={'all_ga_tasks': tasks})
+                return asyncio.run(util.get_assembly_release_date_async(release_name))
+        with patch('artcommonlib.util.requests.Session') as mock_session:
+            mock_session.return_value.get.return_value.json.return_value = {'all_ga_tasks': tasks}
+            return util.get_assembly_release_date(release_name, 'openshift-4.18')
+
+    def test_does_not_confuse_patch_version_prefixes(self):
+        tasks = [
+            {'name': '4.18.10 in Fast Channel', 'date_start': '2026-10-20'},
+            {'name': '4.18.1 in Fast Channel', 'date_start': '2026-09-01'},
+        ]
+        for asynchronous in (False, True):
+            with self.subTest(asynchronous=asynchronous):
+                self.assertEqual(self._get_date(tasks, asynchronous), '2026-Sep-01')
+
+    def test_near_versions_do_not_satisfy_missing_release(self):
+        for title in (
+            '4.18.10 in Fast Channel',
+            '14.18.1 in Fast Channel',
+            '4.18.11 in Fast Channel',
+            '4x18x1 in Fast Channel',
+            '4.18.1.1 in Fast Channel',
+            '4.18.1-rc.1 in Fast Channel',
+            '4.18.1+build.1 in Fast Channel',
+            'prefix4.18.1 in Fast Channel',
+            '4.18.1suffix in Fast Channel',
+        ):
+            for asynchronous in (False, True):
+                with self.subTest(title=title, asynchronous=asynchronous):
+                    tasks = [{'name': title, 'date_start': '2026-10-20'}]
+                    with self.assertRaisesRegex(ValueError, 'Assembly release date not found for 4.18.1'):
+                        self._get_date(tasks, asynchronous)
+
+    def test_matches_exact_and_decorated_titles(self):
+        for title in ('4.18.1', '4.18.1 in Fast Channel', 'OpenShift (4.18.1): GA', '[4.18.1], release'):
+            for asynchronous in (False, True):
+                with self.subTest(title=title, asynchronous=asynchronous):
+                    tasks = [{'name': title, 'date_start': '2026-09-01'}]
+                    self.assertEqual(self._get_date(tasks, asynchronous), '2026-Sep-01')
+
+    def test_matches_complete_prerelease_and_build_names(self):
+        for release_name in ('4.18.1-rc.1', '4.18.1+build.1'):
+            for asynchronous in (False, True):
+                with self.subTest(release_name=release_name, asynchronous=asynchronous):
+                    tasks = [
+                        {'name': f'{release_name}0 in Fast Channel', 'date_start': '2026-10-20'},
+                        {'name': f'{release_name} in Fast Channel', 'date_start': '2026-09-01'},
+                    ]
+                    self.assertEqual(self._get_date(tasks, asynchronous, release_name), '2026-Sep-01')
+
+    def test_empty_schedule_raises(self):
+        for asynchronous in (False, True):
+            with self.subTest(asynchronous=asynchronous):
+                with self.assertRaisesRegex(ValueError, 'Assembly release date not found for 4.18.1'):
+                    self._get_date([], asynchronous)
+
+    @patch('artcommonlib.util.requests.Session')
+    def test_explicit_date_does_not_query_schedule(self, mock_session):
+        for date in ('2026-09-01', '2026-Sep-01'):
+            with self.subTest(date=date):
+                self.assertEqual(util.get_assembly_release_date('4.18.1', 'openshift-4.18', date), '2026-Sep-01')
+        mock_session.assert_not_called()
+
+
 class TestGetInflight(unittest.TestCase):
     """Tests for get_inflight() — ART-18958 fix."""
 
