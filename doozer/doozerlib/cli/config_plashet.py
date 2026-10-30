@@ -66,13 +66,10 @@ def compare_nvr_openshift_aware(nvre_obj1, nvre_obj2, target_openshift_version=N
         raise ValueError(f"Package names don't match: {nvre_obj1['name']}, {nvre_obj2['name']}")
 
     # Compare epoch first
-    epoch1 = nvre_obj1.get("epoch") or ""
-    epoch2 = nvre_obj2.get("epoch") or ""
+    epoch1 = int(nvre_obj1.get("epoch") or 0)
+    epoch2 = int(nvre_obj2.get("epoch") or 0)
     if epoch1 != epoch2:
-        # Convert to int for comparison, treating empty as 0
-        e1 = int(epoch1) if epoch1 else 0
-        e2 = int(epoch2) if epoch2 else 0
-        return 1 if e1 > e2 else -1
+        return 1 if epoch1 > epoch2 else -1
 
     # Compare version
     version1 = nvre_obj1["version"]
