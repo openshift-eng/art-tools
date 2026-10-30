@@ -233,6 +233,37 @@
             ]
           }
         ]
+      },
+      {
+        "if": {
+          "anyOf": [
+            {
+              "required": ["for_payload"],
+              "properties": {"for_payload": {"const": true}}
+            },
+            {
+              "required": ["for_payload?"],
+              "properties": {"for_payload?": {"const": true}}
+            },
+            {
+              "required": ["for_payload!"],
+              "properties": {"for_payload!": {"const": true}}
+            }
+          ]
+        },
+        "then": {
+          "anyOf": [
+            {
+              "required": ["payload_name"]
+            },
+            {
+              "required": ["payload_name?"]
+            },
+            {
+              "required": ["payload_name!"]
+            }
+          ]
+        }
       }
     ]
   }
