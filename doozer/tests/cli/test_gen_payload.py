@@ -1101,6 +1101,7 @@ class TestGenPayloadCli(IsolatedAsyncioTestCase):
         self.assertEqual(gpcli.assembly_issues, [])
 
     async def test_detect_inconsistent_images(self):
+        """Payload detection awaits consistency inspection before recording issues."""
         gpcli = rgp_cli.GenPayloadCli()
         bbii = flexmock(Mock(BrewBuildRecordInspector))
         ai = MagicMock(AssemblyInspector)
@@ -1112,6 +1113,7 @@ class TestGenPayloadCli(IsolatedAsyncioTestCase):
         self.assertEqual(gpcli.assembly_issues, ["stuff"])
 
     async def test_detect_inconsistent_images_propagates_metadata_failure(self):
+        """Metadata failures from the async inspector reach the payload consumer."""
         gpcli = rgp_cli.GenPayloadCli()
         ai = MagicMock(AssemblyInspector)
         ai.get_group_release_images.return_value = {"missing": None, "image": Mock(BrewBuildRecordInspector)}

@@ -2,6 +2,9 @@ from unittest import IsolatedAsyncioTestCase
 from unittest.mock import AsyncMock, MagicMock, patch
 
 from artcommonlib.assembly import AssemblyIssueCode, AssemblyTypes
+from artcommonlib.config.plashet import PlashetConfig
+from artcommonlib.config.repo import ContentSet, PlashetRepo
+from artcommonlib.config.repo import Repo as RepoConf
 from artcommonlib.model import Model
 from doozerlib.assembly_inspector import AssemblyInspector
 from doozerlib.build_info import BrewBuildRecordInspector, KonfluxBuildRecordInspector
@@ -110,7 +113,10 @@ class TestAssemblyInspector(IsolatedAsyncioTestCase):
 
 
 class TestRepoAwareImageConsistency(IsolatedAsyncioTestCase):
+    """Exercise image dependency policy with real filtered, cached repositories."""
+
     def setUp(self):
+        """Model an installed kernel older than the externally selected source build."""
         self.runtime = MagicMock(group_config=Model({"check_external_packages": []}), assembly_basis_event=123)
         self.runtime.repos = {}
         self.inspector = AssemblyInspector(self.runtime, MagicMock())
@@ -144,6 +150,7 @@ class TestRepoAwareImageConsistency(IsolatedAsyncioTestCase):
         self.loader.side_effect = lambda name, url: self.repodatas[name]
 
     def add_repo(self, name, rpms=(), enabled=True, options=None):
+        """Select a real repository and supply metadata without network access."""
         repo = Repo(
             name,
             {
@@ -163,21 +170,26 @@ class TestRepoAwareImageConsistency(IsolatedAsyncioTestCase):
         return repo
 
     def rpm(self, name="kernel-core", source="kernel-2-1.src.rpm", arch="x86_64"):
+        """Create a binary with independently selectable source linkage and arch."""
         return Rpm(name, 0, "2", "checksum", 1, "package.rpm", source, "1", arch)
 
     async def issues(self):
+        """Run the async image consistency consumer against the fixture build."""
         return await self.inspector.check_group_image_consistency(self.build, None)
 
     async def assert_conflict(self):
+        """Require exactly one inherited-dependency conflict and return its details."""
         issues = await self.issues()
         self.assertEqual([issue.code for issue in issues], [AssemblyIssueCode.CONFLICTING_INHERITED_DEPENDENCY])
         return issues
 
     async def test_no_enabled_repos(self):
+        """An image with no enabled repositories cannot obtain the expected RPM."""
         self.assertEqual(await self.issues(), [])
         self.loader.assert_not_awaited()
 
     async def test_relevant_expected_binary_in_any_enabled_repo(self):
+        """Repository names and candidate tagging must not hide an eligible mismatch."""
         for repo_name in ("ose", "dedicated", "arbitrary-name"):
             with self.subTest(repo=repo_name):
                 self.runtime.repos.clear()
@@ -187,11 +199,13 @@ class TestRepoAwareImageConsistency(IsolatedAsyncioTestCase):
         self.inspector.brew_session.listTags.assert_not_called()
 
     async def test_rhel_only_and_dedicated_without_expected_kernel(self):
+        """Older RHEL packages and unrelated dedicated packages do not prove eligibility."""
         self.add_repo("rhel", [self.rpm(source="kernel-1-1.src.rpm")])
         self.add_repo("dedicated", [self.rpm(name="ironic")])
         self.assertEqual(await self.issues(), [])
 
     async def test_unrelated_subpackage_or_wrong_source_or_arch_is_not_eligible(self):
+        """Eligibility requires the installed binary, selected source build and matching arch."""
         self.add_repo(
             "packages",
             [self.rpm(name="kernel-devel"), self.rpm(source="kernel-3-1.src.rpm"), self.rpm(arch="aarch64")],
@@ -199,10 +213,12 @@ class TestRepoAwareImageConsistency(IsolatedAsyncioTestCase):
         self.assertEqual(await self.issues(), [])
 
     async def test_noarch_binary_is_eligible(self):
+        """An expected noarch binary is obtainable on an architecture-specific image."""
         self.add_repo("packages", [self.rpm(arch="noarch")])
         await self.assert_conflict()
 
     async def test_brew_archive_arches_are_not_deduplicated(self):
+        """A binary present on either image architecture must retain the mismatch."""
         self.add_repo("packages", [self.rpm(arch="aarch64")])
         other_archive = MagicMock()
         other_archive.image_arch.return_value = "aarch64"
@@ -211,6 +227,7 @@ class TestRepoAwareImageConsistency(IsolatedAsyncioTestCase):
         await self.assert_conflict()
 
     async def test_global_and_image_enablement(self):
+        """Only repositories enabled both globally and by the image are queried."""
         self.add_repo("globally-disabled", [self.rpm()], enabled=False)
         self.add_repo("not-selected", [self.rpm()])
         self.meta.config.enabled_repos.remove("not-selected")
@@ -218,13 +235,59 @@ class TestRepoAwareImageConsistency(IsolatedAsyncioTestCase):
         self.assertEqual(await self.issues(), [])
         self.assertEqual([call.args[0] for call in self.loader.await_args_list], ["selected-x86_64"])
 
+    def add_arch_limited_plashet_repo(self, rpms=()):
+        """Enable a real aarch64-only plashet for a two-architecture image."""
+        repo = Repo.from_repo_config(
+            RepoConf(
+                name="limited",
+                type="plashet",
+                plashet=PlashetRepo(arches=["aarch64"], source={"type": "brew", "from_tags": []}),
+                content_set=ContentSet(optional=True),
+            ),
+            ["x86_64", "aarch64"],
+            plashet_config=PlashetConfig(base_dir="test", plashet_dir="test", base_url="https://example.invalid"),
+        )
+        self.assertEqual(repo.arches, ["aarch64"])
+        self.runtime.repos[repo.name] = repo
+        self.meta.config.enabled_repos.append(repo.name)
+        self.repodatas["limited-aarch64"] = Repodata("limited-aarch64", list(rpms))
+        other_archive = MagicMock()
+        other_archive.image_arch.return_value = "aarch64"
+        other_archive.get_installed_rpm_dicts.return_value = [{"name": "kernel-core", "arch": "aarch64", "build_id": 1}]
+        self.build.get_image_inspectors.return_value.append(other_archive)
+
+    async def test_arch_limited_plashet_without_expected_binary(self):
+        """Unsupported image arches must not be requested when proving absence."""
+        self.add_arch_limited_plashet_repo()
+        self.assertEqual(await self.issues(), [])
+        self.loader.assert_awaited_once()
+        self.assertEqual(self.loader.await_args.args[0], "limited-aarch64")
+
+    async def test_arch_limited_plashet_with_expected_binary(self):
+        """An eligible binary on a supported arch must retain the conflict."""
+        self.add_arch_limited_plashet_repo([self.rpm(arch="aarch64")])
+        await self.assert_conflict()
+        self.loader.assert_awaited_once()
+        self.assertEqual(self.loader.await_args.args[0], "limited-aarch64")
+
+    async def test_arch_limited_plashet_metadata_failure_propagates(self):
+        """Skipping unsupported arches must not hide supported-arch fetch failures."""
+        self.add_arch_limited_plashet_repo()
+        self.loader.side_effect = RuntimeError("metadata unavailable")
+        with self.assertRaisesRegex(RuntimeError, "metadata unavailable"):
+            await self.issues()
+        self.loader.assert_awaited_once()
+        self.assertEqual(self.loader.await_args.args[0], "limited-aarch64")
+
     async def test_dedicated_repo_include_and_exclude_filters(self):
+        """Dedicated repositories cannot provide packages removed by their filters."""
         for options in ({"exclude": "kernel*"}, {"includepkgs": "ironic*"}, {"exclude": "kernel*", "includepkgs": "*"}):
             with self.subTest(options=options):
                 self.add_repo("dedicated", [self.rpm()], options=options)
                 self.assertEqual(await self.issues(), [])
 
     async def test_consistent_or_irrelevant_cases_do_not_fetch_metadata(self):
+        """Consistent builds and inapplicable external checks retain the no-I/O fast path."""
         self.add_repo("packages", [self.rpm()])
         self.build.get_all_installed_package_build_dicts.return_value = {"kernel": self.expected}
         self.assertEqual(await self.issues(), [])
@@ -239,6 +302,7 @@ class TestRepoAwareImageConsistency(IsolatedAsyncioTestCase):
         self.loader.assert_not_awaited()
 
     async def test_greater_equal_satisfied_does_not_fetch(self):
+        """Only an unsatisfied minimum-version check needs eligibility metadata."""
         self.add_repo("packages", [self.rpm()])
         self.meta.config.check_external_packages[0]["condition"] = "greater_equal"
         self.build.get_all_installed_package_build_dicts.return_value = {
@@ -250,6 +314,7 @@ class TestRepoAwareImageConsistency(IsolatedAsyncioTestCase):
         await self.assert_conflict()
 
     async def test_unknown_inventory_retains_conflict_without_fetch(self):
+        """Missing or invalid installed binary identities cannot waive a mismatch."""
         self.add_repo("packages", [])
         for rpms in (
             [],
@@ -262,28 +327,33 @@ class TestRepoAwareImageConsistency(IsolatedAsyncioTestCase):
         self.loader.assert_not_awaited()
 
     async def test_missing_source_linkage_retains_conflict(self):
+        """Ambiguous or malformed source RPM metadata must fail closed."""
         for source in (None, "", "malformed", "malformed.src.rpm", "path/kernel-2-1.src.rpm", "kernel-1:2-1.src.rpm"):
             with self.subTest(source=source):
                 self.add_repo("packages", [self.rpm(source=source)])
                 await self.assert_conflict()
 
     async def test_nosrc_source_build_is_eligible(self):
+        """A nosrc source filename can identify the expected source build."""
         self.add_repo("packages", [self.rpm(source="kernel-2-1.nosrc.rpm")])
         await self.assert_conflict()
 
     async def test_metadata_failure_propagates(self):
+        """A repository retrieval error must not become a successful consistency check."""
         self.add_repo("packages", [])
         self.loader.side_effect = RuntimeError("metadata unavailable")
         with self.assertRaisesRegex(RuntimeError, "metadata unavailable"):
             await self.issues()
 
     async def test_repo_metadata_cache_is_reused(self):
+        """Repeated consistency checks reuse the repository's existing metadata cache."""
         self.add_repo("packages", [])
         self.assertEqual(await self.issues(), [])
         self.assertEqual(await self.issues(), [])
         self.loader.assert_awaited_once()
 
     async def test_explicit_pins_are_not_repo_gated_or_overwritten(self):
+        """Explicit member and group pins remain mandatory, including missing dependencies."""
         for member in ({}, {"kernel": "kernel-3-1"}):
             with self.subTest(member=member):
                 self.meta.get_assembly_rpm_package_dependencies.return_value = (member, {"kernel": "kernel-3-1"})
@@ -296,6 +366,7 @@ class TestRepoAwareImageConsistency(IsolatedAsyncioTestCase):
         self.assertEqual([issue.code for issue in issues], [AssemblyIssueCode.MISSING_INHERITED_DEPENDENCY])
 
     async def test_managed_rpm_mismatch_is_not_repo_gated(self):
+        """ART-managed RPM policy remains independent of external repository availability."""
         self.inspector.get_group_rpm_build_dicts.return_value = {
             "kernel": {"package_name": "kernel", "nvr": "kernel-3-1"}
         }
@@ -303,6 +374,7 @@ class TestRepoAwareImageConsistency(IsolatedAsyncioTestCase):
         self.assertEqual([issue.code for issue in issues], [AssemblyIssueCode.CONFLICTING_GROUP_RPM_INSTALLED])
 
     async def test_rhcos_tag_logic_and_mandatory_checks_are_unchanged(self):
+        """RHCOS keeps its tag checks, explicit pins and managed RPM policy unchanged."""
         tag = "rhaos-4.18-rhel-9-candidate"
         self.runtime.group_config = Model(
             {
@@ -336,6 +408,7 @@ class TestRepoAwareImageConsistency(IsolatedAsyncioTestCase):
         self.loader.assert_not_awaited()
 
     async def test_konflux_uses_installed_binaries_not_all_source_outputs(self):
+        """Konflux checks installed binary identities conservatively across possible arches."""
         self.add_repo("packages", [self.rpm(name="kernel-devel")])
         build = MagicMock(spec=KonfluxBuildRecordInspector)
         build.get_image_meta.return_value = self.meta

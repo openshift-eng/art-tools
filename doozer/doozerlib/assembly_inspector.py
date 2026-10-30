@@ -385,6 +385,7 @@ class AssemblyInspector:
     def _external_rpm_binary_names(
         self, inspector: BuildRecordInspector, installed_build: Dict, package_rpm_finder: Optional[PackageRpmFinder]
     ) -> Optional[Dict[str, set[str]]]:
+        """Map installed source-build binaries to possible arches, or return unknown."""
         if isinstance(inspector, BrewBuildRecordInspector):
             if not installed_build.get("id"):
                 return None
@@ -439,7 +440,11 @@ class AssemblyInspector:
             return False
         for arch, names in binaries.items():
             repodatas = await asyncio.gather(
-                *(self.runtime.repos[name].get_repodata_threadsafe(arch) for name in sorted(enabled_repos))
+                *(
+                    self.runtime.repos[name].get_repodata_threadsafe(arch)
+                    for name in sorted(enabled_repos)
+                    if arch in self.runtime.repos[name].arches
+                )
             )
             for repodata in repodatas:
                 for rpm in repodata.primary_rpms:
