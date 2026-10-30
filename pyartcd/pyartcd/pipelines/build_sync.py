@@ -240,6 +240,8 @@ class BuildSyncPipeline:
             res = await redis.delete_key(self.fail_count_name)
             if res:
                 self.runtime.logger.debug('Fail count "%s" deleted', self.fail_count_name)
+        elif self.assembly == 'stream':
+            self.runtime.logger.warning('[DRY RUN] Would delete failure counter %s', self.fail_count_name)
 
     @start_as_current_span_async(TRACER, "build-sync.retrigger-current-nightlies")
     async def _retrigger_current_nightlies(self):
@@ -589,7 +591,10 @@ class BuildSyncPipeline:
         self.runtime.logger.info('Failure count for %s: %s', self.version, fail_count)
 
         # Update fail counter on Redis
-        await redis.set_value(self.fail_count_name, fail_count)
+        if not self.runtime.dry_run:
+            await redis.set_value(self.fail_count_name, fail_count)
+        else:
+            self.runtime.logger.warning('[DRY RUN] Would update failure counter %s', self.fail_count_name)
 
         unpermissable_issues = self.get_unpermissable_assembly_issues()
         if unpermissable_issues['assembly_issues']:
