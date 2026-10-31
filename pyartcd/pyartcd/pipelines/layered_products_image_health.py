@@ -8,7 +8,7 @@ variants and an aggregated Slack report.
 
 import asyncio
 import json
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from urllib.parse import quote
 
@@ -21,6 +21,7 @@ from doozerlib.constants import ART_BUILD_FAILURES_URL, ART_BUILD_HISTORY_URL
 from pyartcd import util
 from pyartcd.cli import cli, click_coroutine, pass_runtime
 from pyartcd.constants import OCP_BUILD_DATA_URL
+from pyartcd.fbc_health import FbcHealthReport, collect_fbc_health
 from pyartcd.runtime import Runtime
 from pyartcd.slack import SlackClient
 
@@ -59,6 +60,7 @@ class LayeredProductHealthReport:
     release_failures: dict[str, dict]
     rebase_failures: dict[str, dict]
     error: str | None = None
+    fbc_health: FbcHealthReport = field(default_factory=FbcHealthReport)
 
 
 class LayeredProductsImageHealthPipeline:
@@ -186,6 +188,7 @@ class LayeredProductsImageHealthPipeline:
         if self.image_list:
             failure_images &= set(self.image_list)
 
+        fbc_health = await collect_fbc_health(group, self.runtime.logger)
         build_concerns = await self._get_build_concerns(group, variant, failure_images)
         return LayeredProductHealthReport(
             group=group,
@@ -196,6 +199,7 @@ class LayeredProductsImageHealthPipeline:
             its_failures=its_failures,
             release_failures=release_failures,
             rebase_failures=rebase_failures,
+            fbc_health=fbc_health,
         )
 
     async def _get_build_concerns(
@@ -314,6 +318,8 @@ class LayeredProductsImageHealthPipeline:
             Slack-formatted group details.
         """
         sections = [f"*{report.group}*"]
+        if report.fbc_health.summary():
+            sections.append(report.fbc_health.details())
         build_concerns = self._get_failure_concerns(report.build_concerns)
         if build_concerns:
             lines = [f"*Build Failures ({len(build_concerns)}):*"]
@@ -340,6 +346,8 @@ class LayeredProductsImageHealthPipeline:
             Failure categories with their counts.
         """
         failure_parts = []
+        if report.fbc_health.summary():
+            failure_parts.append(report.fbc_health.summary())
         build_concerns = self._get_failure_concerns(report.build_concerns)
         if build_concerns:
             failure_parts.append(f"{len(build_concerns)} build failure(s)")

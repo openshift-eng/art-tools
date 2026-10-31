@@ -668,6 +668,10 @@ class FbcRebaseAndBuildCli:
                 self._logger.info(f"Found existing FBC build: {existing_fbc_build.nvr}")
                 if not self.force:
                     await report.set_status('Reused', reason='Existing successful FBC reused')
+                    if self.runtime.record_logger:
+                        self.runtime.record_logger.add_record(
+                            'skip_fbc_konflux', name=operator_meta.distgit_key, status=0
+                        )
                     return existing_fbc_build.nvr, existing_fbc_build.image_pullspec or ""
                 self._logger.info("Force flag is set, rebuilding FBC")
 
@@ -714,6 +718,8 @@ class FbcRebaseAndBuildCli:
                     .set_status('Skipped', reason='No successful bundle build found')
                 )
                 self._logger.warning(f"Bundle build not found for {dgk_operator_builds[dgk].nvr}. Will skip it.")
+                if runtime.record_logger:
+                    runtime.record_logger.add_record('skip_fbc_konflux', name=dgk, status=0)
         dgk_bundle_builds = {
             dgk: bundle_build for dgk, bundle_build in dgk_bundle_builds.items() if bundle_build is not None
         }
@@ -811,6 +817,8 @@ class FbcRebaseAndBuildCli:
             for dgk, result in zip(dgk_bundle_builds, results):
                 if isinstance(result, Exception):
                     failed_tasks.append(dgk)
+                    if runtime.record_logger:
+                        runtime.record_logger.add_record('failed_fbc_konflux', name=dgk, status=1)
                     stack_trace = ''.join(traceback.TracebackException.from_exception(result).format())
                     error_msg = f"Failed to rebase/build FBC for {dgk}: {result}"
                     error_details = {

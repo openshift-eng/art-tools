@@ -251,6 +251,7 @@ class TestFbcRebaseAndBuildCli(unittest.IsolatedAsyncioTestCase):
 
         mock_rebaser.rebase.assert_not_called()
         mock_builder.build.assert_not_called()
+        self.runtime.record_logger.add_record.assert_any_call('skip_fbc_konflux', name='test-operator', status=0)
 
     @mock.patch("doozerlib.cli.fbc.KonfluxFbcImporter")
     @mock.patch("doozerlib.cli.fbc.KonfluxFbcBuilder")
@@ -390,6 +391,29 @@ class TestFbcRebaseAndBuildCli(unittest.IsolatedAsyncioTestCase):
 
         with self.assertRaises(DoozerFatalError):
             await self.fbc_cli.run()
+        self.runtime.record_logger.add_record.assert_any_call('skip_fbc_konflux', name='test-operator', status=0)
+
+    @mock.patch('doozerlib.cli.fbc.KonfluxFbcImporter')
+    @mock.patch('doozerlib.cli.fbc.KonfluxFbcBuilder')
+    @mock.patch('doozerlib.cli.fbc.KonfluxFbcRebaser')
+    async def test_run_records_failure_before_rebase(self, _mock_rebaser, mock_builder, _mock_importer):
+        operator_build = self._create_mock_operator_build('test-operator', 'test-operator-1.0.0-1')
+        bundle_build = self._create_mock_bundle_build(
+            'test-operator-bundle', 'test-operator-bundle-1.0.0-1', 'test-operator-1.0.0-1'
+        )
+        self.runtime.konflux_db.get_build_records_by_nvrs.return_value = [operator_build]
+        self.runtime.images = ['test-operator']
+        self.runtime.image_map = {'test-operator': mock.Mock(is_olm_operator=True, distgit_key='test-operator')}
+        self._setup_database_mocks(bundle_builds=[bundle_build], fbc_builds=[])
+        mock_builder.return_value = mock.AsyncMock()
+        self.fbc_cli.operator_nvrs = ('test-operator-1.0.0-1',)
+        self.fbc_cli._rebase_and_build = mock.AsyncMock(side_effect=RuntimeError('import failed'))
+
+        with self.assertRaises(SystemExit) as caught:
+            await self.fbc_cli.run()
+
+        self.assertEqual(caught.exception.code, 1)
+        self.runtime.record_logger.add_record.assert_any_call('failed_fbc_konflux', name='test-operator', status=1)
 
     async def test_get_operator_builds_by_nvrs(self):
         operator_build = self._create_mock_operator_build("test-operator", "test-operator-1.0.0-1")

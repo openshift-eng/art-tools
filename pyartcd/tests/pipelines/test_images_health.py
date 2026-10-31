@@ -664,6 +664,7 @@ class TestSyncJiraIntegration(IsolatedAsyncioTestCase):
     @patch.object(ImagesHealthPipeline, "get_release_failures", new_callable=AsyncMock)
     async def test_skips_jira_sync_for_non_stream_assembly(self, _mock_release, _mock_ec, _mock_rebase, _mock_report):
         pipeline = self._make_pipeline(assembly="4.18.5")
+        pipeline.get_fbc_health = AsyncMock()
         pipeline.report = [
             _make_concern("ironic", "openshift-5.0", ConcernCode.FAILING_AT_LEAST_FOR.value),
         ]
@@ -681,6 +682,7 @@ class TestSyncJiraIntegration(IsolatedAsyncioTestCase):
     @patch.object(ImagesHealthPipeline, "get_release_failures", new_callable=AsyncMock)
     async def test_jira_failure_does_not_block_notifications(self, _mock_release, _mock_ec, _mock_rebase, _mock_report):
         pipeline = self._make_pipeline()
+        pipeline.get_fbc_health = AsyncMock()
         pipeline.report = []
         pipeline.send_to_release_channel = True
         pipeline.scanned_versions = ["5.0"]
@@ -887,6 +889,7 @@ class TestNotifyChaiBot(IsolatedAsyncioTestCase):
         pipeline.get_rebase_failures = AsyncMock()
         pipeline.get_ec_failures = AsyncMock()
         pipeline.get_release_failures = AsyncMock()
+        pipeline.get_fbc_health = AsyncMock()
         pipeline.notify_chai_bot = AsyncMock()
         pipeline.report = [
             _make_concern('ironic', 'openshift-4.18', ConcernCode.LATEST_ATTEMPT_FAILED.value, latest_success_idx=3),
@@ -909,6 +912,7 @@ class TestNotifyChaiBot(IsolatedAsyncioTestCase):
         pipeline.get_rebase_failures = AsyncMock()
         pipeline.get_ec_failures = AsyncMock()
         pipeline.get_release_failures = AsyncMock()
+        pipeline.get_fbc_health = AsyncMock()
         pipeline.notify_chai_bot = AsyncMock()
         pipeline.report = [
             _make_concern('ironic', 'openshift-4.18', ConcernCode.LATEST_ATTEMPT_FAILED.value, latest_success_idx=3),
