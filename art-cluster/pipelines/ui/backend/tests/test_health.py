@@ -43,6 +43,39 @@ def complete_chain(prefix="", **values):
 
 
 class HealthTests(unittest.TestCase):
+    def test_partial_lp_failure_makes_completed_chain_warning(self):
+        runs = complete_chain()
+        runs[1]['status'] = 'Warning'
+        result = build_health(runs)[0]
+        self.assertEqual(result['health'], 'Warning')
+        self.assertEqual(result['lastCompletedChain']['status'], 'Warning')
+        self.assertIsNone(result['lastSuccessfulChain'])
+        runs[-1]['status'] = 'Failed'
+        self.assertEqual(build_health(runs)[0]['health'], 'Failed')
+
+    def test_successful_retry_recovers_warning_and_running_retry_preserves_it(self):
+        runs = complete_chain()
+        runs[1]['status'] = 'Warning'
+        retry = run(
+            'retry-images', PIPELINES[1], status='Running', rebuiltFrom=runs[1]['uid'], created='2026-10-08T12:00:00Z'
+        )
+        runs[2]['parent'] = retry['name']
+        result = build_health(runs + [retry])[0]
+        self.assertEqual(result['health'], 'Warning')
+        self.assertEqual(result['currentChain']['status'], 'Running')
+        retry.update(status='Succeeded', completed=retry['created'])
+        self.assertEqual(build_health(runs + [retry])[0]['health'], 'Succeeded')
+
+    def test_lp_warning_survives_native_health_normalization(self):
+        raw = {
+            'metadata': {'annotations': {'art.openshift.io/rebase-warning': 'Partial LP build failure'}},
+            'spec': {'pipelineRef': {'name': 'build-layered-products'}},
+            'status': {'conditions': [{'type': 'Succeeded', 'status': 'True', 'reason': 'Succeeded'}]},
+        }
+        self.assertEqual(health_run(raw, {'status': 'Warning'})['status'], 'Warning')
+        raw['status']['conditions'][0].update(status='False', reason='Failed')
+        self.assertEqual(health_run(raw, {'status': 'Failed'})['status'], 'Failed')
+
     def test_every_stage_and_fbc_target_must_succeed(self):
         runs = complete_chain()
         result = build_health(runs)[0]

@@ -86,6 +86,38 @@ class RunDetailTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(response.json()["components"][0]["checks"][0]["url"], "https://konflux.example/check")
             self.assertTrue(response.json()["componentReporting"]["available"])
 
+    async def test_lp_warning_in_live_and_archived_run_details(self):
+        warning = 'Images excluded after rebase failure: must-gather'
+        self.run['metadata']['annotations']['art.openshift.io/rebase-warning'] = warning
+        for pipeline in ('build-layered-products', 'olm-bundle-konflux', 'build-fbc', 'build'):
+            self.run['spec']['pipelineRef']['name'] = pipeline
+            for native_status, reason in (
+                ('True', 'Succeeded'),
+                ('True', 'Completed'),
+                ('False', 'Failed'),
+                ('False', 'Cancelled'),
+                ('Unknown', 'Running'),
+            ):
+                self.run['status']['conditions'] = [{'type': 'Succeeded', 'status': native_status, 'reason': reason}]
+                for source in ('live', 'archive'):
+                    with (
+                        self.subTest(pipeline=pipeline, status=native_status, source=source, reason=reason),
+                        patch.object(api, 'find_run', new=AsyncMock(return_value=(self.run, source, None))),
+                    ):
+                        response = await self.client.get(f'/api/runs/{NAMESPACE}/rebuilt-run?uid=rebuilt-uid')
+                    expected_warning = pipeline == 'build-layered-products' and native_status == 'True'
+                    self.assertEqual(response.status_code, 200)
+                    self.assertEqual(response.json()['status'], 'Warning' if expected_warning else reason)
+                    self.assertEqual(response.json()['message'], warning if expected_warning else '')
+
+    async def test_success_without_valid_lp_warning_stays_successful(self):
+        self.run['spec']['pipelineRef']['name'] = 'build-layered-products'
+        self.run['status']['conditions'] = [{'type': 'Succeeded', 'status': 'True', 'reason': 'Succeeded'}]
+        for warning in (None, '', '  ', [], {}):
+            with self.subTest(warning=warning):
+                self.run['metadata']['annotations']['art.openshift.io/rebase-warning'] = warning
+                self.assertEqual(api.run_summary(self.run, 'live')['status'], 'Succeeded')
+
 
 if __name__ == "__main__":
     unittest.main()

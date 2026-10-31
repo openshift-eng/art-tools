@@ -259,10 +259,10 @@ button { cursor: pointer; }
 .health-rail-node.health-succeeded { color: #216e43; }
 .health-rail-node.health-failed, .health-table a.health-failure-link { color: #b42318; }
 .health-rail-node.health-running { color: var(--ui-link); }
-.health-rail-node.health-cancelled { color: #875b16; }
+.health-rail-node.health-cancelled, .health-rail-node.health-warning { color: #875b16; }
 :root[data-theme="dark"] .health-rail-node.health-succeeded { color: #8bd9ab; }
 :root[data-theme="dark"] .health-rail-node.health-failed, :root[data-theme="dark"] .health-table a.health-failure-link { color: #ffaaa3; }
-:root[data-theme="dark"] .health-rail-node.health-cancelled { color: #f0cc85; }
+:root[data-theme="dark"] .health-rail-node.health-cancelled, :root[data-theme="dark"] .health-rail-node.health-warning { color: #f0cc85; }
 .health-arrow { color: var(--ui-control); }
 .health-rail-node:is(a, button):hover { text-decoration: underline; }
 .health-attention { display: flex; flex-direction: column; gap: 6px; }

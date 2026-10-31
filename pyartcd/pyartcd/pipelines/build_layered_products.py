@@ -265,6 +265,13 @@ class BuildLayeredProductsPipeline:
         else:
             build_image_list = None
 
+        if excluded and tekton.is_tekton_context() and not self.runtime.dry_run:
+            tekton.annotate_current_pipelinerun(
+                {
+                    "art.openshift.io/rebase-warning": ("Images excluded after rebase failure: " + ', '.join(excluded)),
+                }
+            )
+
         try:
             await self._build(strategy, build_image_list, excluded, product, image_repo, build_variant)
         finally:
