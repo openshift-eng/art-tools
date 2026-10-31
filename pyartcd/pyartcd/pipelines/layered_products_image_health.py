@@ -120,29 +120,41 @@ class LayeredProductsImageHealthPipeline:
             A successful group report or a report containing the collection error.
         """
         fbc_health = await collect_fbc_health(group, self.runtime.logger)
+        context = LayeredProductHealthReport(
+            group=group,
+            product='unknown',
+            variant=None,
+            build_concerns=[],
+            build_failures={},
+            its_failures={},
+            release_failures={},
+            rebase_failures={},
+            fbc_health=FbcHealthReport(
+                {key: entry for key, entry in fbc_health.failures.items() if entry['variant'] == 'unknown'},
+                error=True,
+            ),
+        )
         try:
-            return await self._collect_group(group, fbc_health)
+            return await self._collect_group(group, fbc_health, context=context)
         except Exception:
             self.runtime.logger.exception("Failed to collect layered product health for %s", group)
-            return LayeredProductHealthReport(
-                group=group,
-                product="unknown",
-                variant=None,
-                build_concerns=[],
-                build_failures={},
-                its_failures={},
-                release_failures={},
-                rebase_failures={},
-                error='Image collection incomplete',
-                fbc_health=fbc_health,
-            )
+            context.error = 'Image collection incomplete'
+            return context
 
-    async def _collect_group(self, group: str, fbc_health: FbcHealthReport | None = None) -> LayeredProductHealthReport:
+    async def _collect_group(
+        self,
+        group: str,
+        fbc_health: FbcHealthReport | None = None,
+        *,
+        context: LayeredProductHealthReport | None = None,
+    ) -> LayeredProductHealthReport:
         """
         Collect variant-aware health data for one layered-product group.
 
         Args:
             group: Layered-product group name.
+            fbc_health: Unmodified group-wide FBC snapshot, collected independently.
+            context: Per-group fallback updated only with established scope.
 
         Returns:
             Health data collected for the group.
@@ -158,10 +170,20 @@ class LayeredProductsImageHealthPipeline:
         product = group_config.get("product")
         if not product:
             raise ValueError(f"No product found in group config for {group}")
+        if context is not None:
+            context.product = product
         variant = get_build_variant_for_product(product)
-        fbc_health.failures = {
-            key: entry for key, entry in fbc_health.failures.items() if entry['variant'] in {variant.value, 'unknown'}
-        }
+        fbc_health = FbcHealthReport(
+            {
+                key: entry
+                for key, entry in fbc_health.failures.items()
+                if entry['variant'] in {variant.value, 'unknown'}
+            },
+            error=fbc_health.error,
+        )
+        if context is not None:
+            context.variant = variant
+            context.fbc_health = fbc_health
 
         build_failures, its_failures, release_failures, rebase_failures = await asyncio.gather(
             util.get_counter_failures(
