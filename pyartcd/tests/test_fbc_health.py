@@ -20,6 +20,12 @@ from pyartcd.pipelines.layered_products_image_health import (
 )
 from pyartcd.slack import SlackClient
 
+EXECUTION_URLS = (
+    'https://build.ci.internal.invalid/private/job/build/1',
+    'https://test-user:test-password@example.invalid/private/build/2?token=test-token',
+    'https://legacy.example.invalid/job/build/3',
+)
+
 
 class TestFbcCounters(unittest.IsolatedAsyncioTestCase):
     def setUp(self):
@@ -206,7 +212,7 @@ class TestFbcCounters(unittest.IsolatedAsyncioTestCase):
         report = await collect_fbc_health('openshift-4.18', self.logger)
         self.assertTrue(report.error)
 
-    async def test_metadata_read_error_does_not_leave_incomplete_entry(self):
+    async def test_unused_metadata_read_outage_does_not_affect_counts(self):
         await self.update({'build_failure': [{'name': 'operator'}]})
         original_get = self.redis['get_value'].side_effect
 
@@ -217,9 +223,24 @@ class TestFbcCounters(unittest.IsolatedAsyncioTestCase):
 
         self.redis['get_value'].side_effect = failing_get
         report = await collect_fbc_health('openshift-4.18', self.logger)
-        self.assertTrue(report.error)
-        self.assertEqual(report.failures, {})
-        self.assertIn('unavailable', report.details())
+        self.assertFalse(report.error)
+        self.assertEqual(len(report.failures), 1)
+        self.assertIn('Failed 1 time(s)', report.details())
+        self.redis['get_value'].assert_awaited_once_with(f'{self.prefix}:operator:operator:failure')
+
+    async def test_legacy_execution_urls_are_not_collected(self):
+        await self.update({'build_failure': [{'name': 'operator'}]})
+        for url in EXECUTION_URLS:
+            with self.subTest(url=url):
+                self.values[f'{self.prefix}:operator:operator:jenkins_url'] = url
+                self.redis['get_value'].reset_mock()
+                report = await collect_fbc_health('openshift-4.18', self.logger)
+                self.assertFalse(report.error)
+                self.assertEqual(len(report.failures), 1)
+                self.assertNotIn('url', next(iter(report.failures.values())))
+                self.assertIn('Failed 1 time(s)', report.details())
+                self.assertNotIn(url, repr(report))
+                self.redis['get_value'].assert_awaited_once_with(f'{self.prefix}:operator:operator:failure')
 
     async def test_disappeared_count_is_not_a_failure(self):
         self.redis['get_keys'].return_value = [f'{self.prefix}:operator:operator:failure']
@@ -468,6 +489,41 @@ class TestFbcReporting(unittest.IsolatedAsyncioTestCase):
             self.assertIn('OCP target `4.18`', message)
             self.assertIn('assembly `release`', message)
         self.assertFalse(any('All images are healthy' in message for message in messages))
+
+    async def test_execution_urls_never_reach_general_fbc_reports(self):
+        for url in EXECUTION_URLS:
+            with self.subTest(url=url):
+                self.runtime.new_slack_client.return_value.say.reset_mock()
+                self.report.failures['key']['url'] = url
+                details = self.report.details()
+                self.assertEqual(
+                    details,
+                    '*FBC Failures (1):*\n'
+                    '- operator `operator` (assembly `release`, build version `1.0`, '
+                    'OCP target `4.18`): Failed 1 time(s)',
+                )
+                pipeline = self.ocp_pipeline()
+                pipeline.fbc_health = {'4.18': self.report}
+                await pipeline.notify_release_channel('4.18')
+                await pipeline.notify_public_channel()
+                await self.layered_pipeline()._notify_slack([self.layered_report(self.report)])
+                messages = [call.args[0] for call in pipeline.slack_client.say.await_args_list]
+                self.assertEqual(len(messages), 6)
+                for message in messages:
+                    self.assertNotIn(url, message)
+                    for marker in (
+                        'internal.invalid',
+                        'test-user',
+                        'test-password',
+                        'test-token',
+                        'legacy.example.invalid',
+                        '/private/',
+                    ):
+                        self.assertNotIn(marker, message)
+                for message in (messages[0], messages[4]):
+                    self.assertIn('1 FBC failure(s)', message)
+                for message in (messages[1], messages[3], messages[5]):
+                    self.assertIn(details, message)
 
     async def test_ocp_read_failure_is_not_reported_healthy(self):
         pipeline = self.ocp_pipeline()
