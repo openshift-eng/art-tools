@@ -93,6 +93,73 @@ class HealthTests(unittest.TestCase):
             self.assertEqual(result["health"], "Unknown")
             self.assertIsNone(result["currentChain"])
 
+    def test_direct_scan_branches_contribute_to_health(self):
+        for pipeline in PIPELINES[2:]:
+            for status in ("Failed", "Cancelled", "Running", "Succeeded"):
+                with self.subTest(pipeline=pipeline, status=status):
+                    runs = complete_chain()
+                    runs.append(run("direct", pipeline, parent="scan", status=status, target="4.20"))
+                    result = build_health(runs)[0]
+                    chain = result["currentChain"]
+                    self.assertEqual(chain["issues"], [])
+                    self.assertIn(
+                        "uid-direct", [item["uid"] for item in chain["stages"][PIPELINES.index(pipeline)]["runs"]]
+                    )
+                    self.assertEqual(chain["status"], status)
+                    self.assertEqual(result["health"], "Unknown" if status == "Running" else status)
+
+    def test_direct_scan_only_work_is_visible_without_establishing_e2e_green(self):
+        for pipeline in PIPELINES[2:]:
+            with self.subTest(pipeline=pipeline):
+                runs = [run("scan", PIPELINES[0], triggered=["direct"]), run("direct", pipeline)]
+                result = build_health(runs)[0]
+                self.assertEqual(result["health"], "Unknown")
+                self.assertEqual(result["currentChain"]["status"], "Incomplete")
+                self.assertEqual(result["currentChain"]["issues"], [])
+
+    def test_scan_retry_recovers_direct_bundle_or_fbc_and_keeps_failure_history(self):
+        for pipeline in PIPELINES[2:]:
+            with self.subTest(pipeline=pipeline):
+                runs = complete_chain()
+                original = run("direct", pipeline, parent="scan", status="Failed", target="4.20", source="archive")
+                runs.append(original)
+                runs.append(run("later-scan", PIPELINES[0], created="2026-10-08T12:00:00Z"))
+                retry = run(
+                    "scan-retry",
+                    pipeline,
+                    parent="scan",
+                    status="Running",
+                    rebuiltFrom=original["uid"],
+                    target="4.20",
+                    created="2026-10-08T12:01:00Z",
+                )
+                runs.append(retry)
+                result = build_health(runs)[0]
+                self.assertEqual(result["health"], "Failed")
+                self.assertEqual(result["currentChain"]["status"], "Running")
+                self.assertEqual(result["currentChain"]["active"][0]["uid"], retry["uid"])
+                retry.update(status="Succeeded", completed="2026-10-08T12:05:00Z")
+                result = build_health(runs)[0]
+                chain = result["currentChain"]
+                self.assertEqual(result["health"], "Succeeded")
+                self.assertEqual(chain["issues"], [])
+                self.assertTrue(chain["recovered"])
+                self.assertIn(
+                    original["uid"], [item["uid"] for item in chain["attempts"] if item["status"] == "Failed"]
+                )
+                self.assertNotIn(original["uid"], [item["uid"] for stage in chain["stages"] for item in stage["runs"]])
+                self.assertEqual(result["latestScan"]["name"], "later-scan")
+
+    def test_invalid_pipeline_order_still_reports_an_issue(self):
+        for parent in ("images", "bundle"):
+            with self.subTest(parent=parent):
+                runs = complete_chain()
+                pipeline = PIPELINES[3] if parent == "images" else PIPELINES[1]
+                runs.append(run("invalid", pipeline, parent=parent))
+                chain = build_health(runs)[0]["currentChain"]
+                self.assertEqual(chain["issues"], ["Unexpected pipeline order in the build chain"])
+                self.assertEqual(chain["status"], "Incomplete")
+
     def test_later_scan_only_does_not_hide_a_failed_build(self):
         runs = complete_chain()[:2]
         runs[1]["status"] = "Failed"

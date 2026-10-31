@@ -126,7 +126,9 @@ def build_health(runs: list[dict], incomplete_namespaces: set[str] | None = None
             for child in children[effective["uid"]].values():
                 if before and (child["created"] or "") >= before:
                     continue
-                if PIPELINES.index(child["pipeline"]) == PIPELINES.index(effective["pipeline"]) + 1:
+                if effective["pipeline"] == PIPELINES[0] and child["pipeline"] in PIPELINES[1:]:
+                    pending.append(child)
+                elif PIPELINES.index(child["pipeline"]) == PIPELINES.index(effective["pipeline"]) + 1:
                     pending.append(child)
                 else:
                     chain_issues.add("Unexpected pipeline order in the build chain")
