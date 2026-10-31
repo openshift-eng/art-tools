@@ -28,6 +28,8 @@ count:fbc-failure:konflux:<group>:<assembly>:<build-version>:<ocp-target>:invoca
 ```
 
 Existing counter helpers store `:failure` and optional execution URL metadata.
+General FBC health reports neither read nor render execution URLs; they show
+operator or invocation identity, scope labels, and failure counts only.
 An operator failure increments once per invocation, even if multiple failure
 records exist. Only successful builds clear operator counters; successful rebase,
 skips, and builds of other operators or targets do not. An invocation fallback

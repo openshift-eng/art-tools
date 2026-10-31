@@ -66,6 +66,7 @@ class FbcHealthReport:
         return f'{len(self.failures)} FBC failure(s)' if self.failures else ''
 
     def details(self) -> str:
+        """Render failure identities and counts without execution URL metadata."""
         sections = []
         if self.error:
             sections.append(':warning: FBC health unavailable (Redis read failed); recovery cannot be determined.')
@@ -82,13 +83,12 @@ class FbcHealthReport:
                 else f"invocation `{failure['entity']}`"
             )
             line = f"- {entity} ({identity}): Failed {failure['failure_count']} time(s)"
-            if failure.get('url'):
-                line += f" (<{failure['url']}|Last failure>)"
             sections.append(line)
         return '\n'.join(sections)
 
 
 async def collect_fbc_health(group: str, logger: logging.Logger) -> FbcHealthReport:
+    """Collect failure counts for general reports without reading execution URLs."""
     report = FbcHealthReport()
     pattern = f'count:fbc-failure:konflux:{quote(group, safe="")}:*:failure'
     try:
@@ -102,9 +102,8 @@ async def collect_fbc_health(group: str, logger: logging.Logger) -> FbcHealthRep
             count = int(count)
             if count < 1:
                 continue
-            url = await redis.get_value(f'{key.removesuffix(":failure")}:jenkins_url')
             failure = dict(zip(('assembly', 'version', 'target', 'kind', 'entity'), map(unquote, parts[4:9])))
-            failure.update(failure_count=count, url=url)
+            failure.update(failure_count=count)
             report.failures[key] = failure
     except Exception:
         logger.exception('Failed to collect FBC health for %s', group)
