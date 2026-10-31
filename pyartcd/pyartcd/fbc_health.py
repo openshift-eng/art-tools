@@ -1,111 +1,248 @@
-import hashlib
-import json
+"""Bounded FBC outcome accounting shared by CLI and direct catalog producers."""
+
 import logging
+import os
 from dataclasses import dataclass, field
+from datetime import datetime, timezone
+from pathlib import Path
 from urllib.parse import quote, unquote
 
 from artcommonlib import redis
 
-from pyartcd import util
+from pyartcd.record import parse_record_log
+
+RETENTION_SECONDS = 30 * 24 * 60 * 60
+OUTCOMES = {'succeeded', 'failed', 'reused', 'skipped'}
 
 
-def counter_prefix(group: str, assembly: str, version: str, target: str) -> str:
+def prepare_evidence(path: Path, logger: logging.Logger) -> bool:
+    """Prevent stale outcomes from establishing recovery without failing the build."""
+    try:
+        path.unlink(missing_ok=True)
+        return True
+    except OSError:
+        logger.warning('Unable to clear previous FBC tracking evidence')
+        return False
+
+
+def counter_prefix(group: str, variant: str, assembly: str, target: str) -> str:
+    """Identify a recoverable scope independently of versions or selected artifacts."""
     return 'count:fbc-failure:konflux:' + ':'.join(
-        quote(str(value), safe='') for value in (group, assembly, version, target)
+        quote(str(value), safe='') for value in (group, variant, assembly, target)
     )
 
 
-def invocation_scope(**selection) -> str:
-    normalized = dict(selection)
-    for name in ('only', 'exclude', 'operator_nvrs'):
-        normalized[name] = sorted({part.strip() for part in (selection.get(name) or '').split(',') if part.strip()})
-    normalized['skip_tasks'] = sorted(set(selection.get('skip_tasks') or ()))
-    return hashlib.sha256(json.dumps(normalized, sort_keys=True, separators=(',', ':')).encode()).hexdigest()
+@dataclass
+class FbcEvidence:
+    """Terminal outcomes and coverage evidence from this invocation only."""
+
+    outcomes: dict[str, dict] = field(default_factory=dict)
+    complete: bool = False
+    unavailable: bool = False
+    target: str | None = None
+
+
+def read_evidence(path: Path) -> FbcEvidence:
+    """Preserve valid terminal records even when other records are malformed."""
+    evidence = FbcEvidence()
+    try:
+        with path.open() as stream:
+            records = parse_record_log(stream)
+        for entry in records.get('fbc_outcome', []):
+            name, outcome = entry.get('name'), entry.get('outcome')
+            if not name or outcome not in OUTCOMES or (outcome in {'reused', 'skipped'} and not entry.get('reason')):
+                evidence.unavailable = True
+                continue
+            if name in evidence.outcomes:
+                evidence.unavailable = True
+                if outcome == 'failed':
+                    evidence.outcomes[name] = entry
+                elif evidence.outcomes[name]['outcome'] == 'succeeded':
+                    evidence.outcomes.pop(name)
+                continue
+            evidence.outcomes[name] = entry
+        markers = records.get('fbc_invocation', [])
+        evidence.complete = (
+            len(markers) == 1
+            and markers[0].get('status') == 'complete'
+            and int(markers[0]['operators']) == len(evidence.outcomes)
+        )
+        if evidence.complete:
+            evidence.target = markers[0].get('target')
+    except (OSError, ValueError, KeyError, TypeError):
+        evidence.unavailable = True
+    evidence.unavailable |= not evidence.complete
+    return evidence
+
+
+@redis.handle_connection
+async def _store_state(conn, key: str, metadata: dict, increment: bool) -> None:
+    """Commit count, metadata and inactivity expiry as one Redis transaction."""
+    async with conn.pipeline(transaction=True) as transaction:
+        if increment:
+            transaction.hincrby(key, 'failure_count', 1)
+        transaction.hset(key, mapping=metadata)
+        transaction.expire(key, RETENTION_SECONDS)
+        await transaction.execute()
 
 
 async def update_counters(
     prefix: str,
-    scope: str,
-    records: dict[str, list[dict]] | None,
+    version: str,
+    artifacts: str,
+    evidence: FbcEvidence,
     failed: bool,
     dry_run: bool,
     logger: logging.Logger,
     url: str | None = None,
 ) -> None:
+    """Track failures best-effort without altering the producer's original result."""
     if dry_run:
         return
-    records = records or {}
-    successes = {entry['name'] for entry in records.get('build_success', [])}
-    failures = {entry['name'] for entry in records.get('build_failure', [])}
-    failures.update(entry['name'] for entry in records.get('fbc_failure', []))
-    failures.update(entry['name'].removesuffix('-fbc') for entry in records.get('rebase_failure', []))
-    successes -= failures
-    operations = [(f'{prefix}:operator:{quote(name, safe="")}', False) for name in sorted(successes)]
-    operations.extend((f'{prefix}:operator:{quote(name, safe="")}', True) for name in sorted(failures))
-    fallback = f'{prefix}:invocation:{scope}'
-    if not failures and (failed or not records.get('skipped')):
-        operations.append((fallback, failed or not successes))
-    for branch, increment in operations:
+    metadata = {
+        'build_version': version,
+        'operator_nvrs': artifacts,
+        'last_failure_at': datetime.now(timezone.utc).isoformat(),
+    }
+    if url:
+        metadata['jenkins_url'] = url
+    operations = []
+    attributable = False
+    operator_failures = False
+    for name, entry in evidence.outcomes.items():
+        outcome = entry['outcome']
+        if outcome not in {'succeeded', 'failed'}:
+            continue
+        if outcome == 'succeeded' and not entry.get('target'):
+            evidence.unavailable = True
+            continue
+        attributable = True
+        operator_failures |= outcome == 'failed'
+        artifact_metadata = {key: entry[key] for key in ('operator_nvr', 'bundle_nvr', 'fbc_nvr') if entry.get(key)}
+        operations.append(
+            (f'{prefix}:operator:{quote(name, safe="")}', outcome == 'failed', 'operator', artifact_metadata)
+        )
+    invocation = f'{prefix}:invocation:latest'
+    if failed and not operator_failures:
+        operations.append((invocation, True, 'invocation', {}))
+    elif evidence.complete and not evidence.unavailable and attributable:
+        operations.append((invocation, False, 'invocation', {}))
+    operations.append((f'{prefix}:tracking:latest', evidence.unavailable, 'tracking', {}))
+    for key, store, kind, artifact_metadata in operations:
         try:
-            if increment:
-                await util.increment_fail_counter(branch, jenkins_url=url)
-            else:
-                await util.reset_fail_counter(branch)
+            if store:
+                await _store_state(key, {**metadata, **artifact_metadata, 'kind': kind}, increment=kind != 'tracking')
+            elif kind != 'tracking' or evidence.complete:
+                await redis.delete_key(key)
         except Exception:
-            logger.exception('Failed to update FBC failure counter %s', branch)
+            logger.warning('Unable to update FBC tracking state')
+
+
+async def account_run(
+    path: Path,
+    group: str,
+    variant: str,
+    assembly: str,
+    target: str,
+    version: str,
+    artifacts: str,
+    failed: bool,
+    dry_run: bool,
+    logger: logging.Logger,
+    fresh: bool = True,
+) -> None:
+    """Read fresh producer evidence and account once at its owning entrypoint."""
+    if dry_run:
+        return
+    try:
+        evidence = read_evidence(path) if fresh else FbcEvidence(unavailable=True)
+        if target == 'default':
+            targets = {entry['target'] for entry in evidence.outcomes.values() if entry.get('target')}
+            target = evidence.target or (next(iter(targets)) if len(targets) == 1 else 'unknown')
+        for entry in evidence.outcomes.values():
+            if entry['outcome'] == 'succeeded' and entry.get('target') != target:
+                entry['outcome'] = 'reused'
+                evidence.unavailable = True
+        await update_counters(
+            counter_prefix(group, variant, assembly, target),
+            version,
+            artifacts,
+            evidence,
+            failed,
+            False,
+            logger,
+            url=os.getenv('BUILD_URL'),
+        )
+        if variant != 'unknown':
+            unresolved = counter_prefix(group, 'unknown', assembly, target)
+            for kind in ('invocation', 'tracking'):
+                await redis.delete_key(f'{unresolved}:{kind}:latest')
+    except Exception:
+        logger.warning('Unable to read FBC tracking evidence')
 
 
 @dataclass
 class FbcHealthReport:
+    """General report data deliberately excludes diagnostic URLs and artifacts."""
+
     failures: dict[str, dict] = field(default_factory=dict)
     error: bool = False
 
     def summary(self) -> str:
-        if self.error:
-            return 'FBC health unavailable (Redis read failed)'
-        return f'{len(self.failures)} FBC failure(s)' if self.failures else ''
+        parts = []
+        count = sum(entry['kind'] != 'tracking' for entry in self.failures.values())
+        if count:
+            parts.append(f'{count} tracked FBC failure(s)')
+        if self.error or any(entry['kind'] == 'tracking' for entry in self.failures.values()):
+            parts.append('FBC tracking unavailable')
+        return '; '.join(parts)
 
     def details(self) -> str:
-        """Render failure identities and counts without execution URL metadata."""
+        """Render counts and scope, never raw execution URL metadata."""
         sections = []
         if self.error:
-            sections.append(':warning: FBC health unavailable (Redis read failed); recovery cannot be determined.')
-        if self.failures:
-            sections.append(f'*FBC Failures ({len(self.failures)}):*')
-        for failure in self.failures.values():
-            identity = (
-                f"assembly `{failure['assembly']}`, build version `{failure['version']}`, "
-                f"OCP target `{failure['target']}`"
-            )
-            entity = (
-                f"operator `{failure['entity']}`"
-                if failure['kind'] == 'operator'
-                else f"invocation `{failure['entity']}`"
-            )
-            line = f"- {entity} ({identity}): Failed {failure['failure_count']} time(s)"
-            sections.append(line)
+            sections.append(':warning: FBC tracking unavailable; collection incomplete, recovery cannot be determined.')
+        for entry in self.failures.values():
+            scope = f"variant `{entry['variant']}`, assembly `{entry['assembly']}`, OCP target `{entry['target']}`"
+            if entry['kind'] == 'tracking':
+                sections.append(f'- FBC outcome evidence unavailable ({scope})')
+            else:
+                entity = f"operator `{entry['entity']}`" if entry['kind'] == 'operator' else 'unattributed invocation'
+                sections.append(
+                    f"- {entity} ({scope}, last build version `{entry['version']}`): "
+                    f"Failed {entry['failure_count']} time(s)"
+                )
         return '\n'.join(sections)
 
 
-async def collect_fbc_health(group: str, logger: logging.Logger) -> FbcHealthReport:
-    """Collect failure counts for general reports without reading execution URLs."""
+async def collect_fbc_health(group: str, logger: logging.Logger, variant: str | None = None) -> FbcHealthReport:
+    """Read current tracked evidence without refreshing retention or reading URLs."""
     report = FbcHealthReport()
-    pattern = f'count:fbc-failure:konflux:{quote(group, safe="")}:*:failure'
+    pattern = f'count:fbc-failure:konflux:{quote(group, safe="")}:*'
     try:
-        for key in sorted(await redis.get_keys(pattern)):
-            parts = key.split(':')
-            if len(parts) != 10 or parts[7] not in ('operator', 'invocation'):
-                raise ValueError('Malformed FBC failure key')
-            count = await redis.get_value(key)
-            if count is None:
-                continue
-            count = int(count)
-            if count < 1:
-                continue
-            failure = dict(zip(('assembly', 'version', 'target', 'kind', 'entity'), map(unquote, parts[4:9])))
-            failure.update(failure_count=count)
-            report.failures[key] = failure
+        keys = sorted(await redis.get_keys(pattern))
     except Exception:
-        logger.exception('Failed to collect FBC health for %s', group)
+        logger.warning('Unable to collect FBC tracking state')
         report.error = True
+        return report
+    for key in keys:
+        try:
+            parts = key.split(':')
+            if len(parts) != 9 or parts[7] not in {'operator', 'invocation', 'tracking'}:
+                raise ValueError('Malformed FBC state key')
+            values = dict(zip(('variant', 'assembly', 'target', 'kind', 'entity'), map(unquote, parts[4:])))
+            if variant is not None and values['variant'] != variant:
+                continue
+            count, version, timestamp = await redis.call(
+                'hmget', key, 'failure_count', 'build_version', 'last_failure_at'
+            )
+            if timestamp is None:
+                continue
+            values.update(failure_count=int(count or 0), version=version or '')
+            if values['kind'] != 'tracking' and values['failure_count'] < 1:
+                raise ValueError('Invalid FBC count')
+            report.failures[key] = values
+        except Exception:
+            logger.warning('Unable to collect an FBC tracking entry')
+            report.error = True
     return report
