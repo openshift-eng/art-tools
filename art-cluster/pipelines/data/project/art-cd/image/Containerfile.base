@@ -27,6 +27,13 @@ RUN dnf -y install python3.11 python3.11-pip python3.11-wheel python3.11-devel g
     && uv pip install --system --upgrade setuptools \
     && dnf clean all
 
+# Install manifest-tool (not available in the configured dnf repositories)
+RUN git clone --depth 1 https://github.com/estesp/manifest-tool.git /tmp/manifest-tool \
+    && cd /tmp/manifest-tool \
+    && make static \
+    && make install PREFIX=/usr/local \
+    && rm -rf /tmp/manifest-tool
+
 # Set ARG for OC_VERSION
 ARG OC_VERSION=latest
 
