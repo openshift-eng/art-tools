@@ -37,6 +37,8 @@ class Repo(object):
         gpgcheck: bool = True,
         plashet_config: Optional[PlashetConfig] = None,
         template_vars: Optional[Dict[str, str]] = None,
+        *,
+        respect_repo_arches: bool = False,
     ) -> 'Repo':
         """
         Create a Repo instance from a new-style RepoConf (Pydantic model).
@@ -46,6 +48,7 @@ class Repo(object):
         :param gpgcheck: Whether to enable GPG signature checking
         :param plashet_config: Global plashet configuration (required for plashet type repos)
         :param template_vars: Additional template variables for URL substitution (e.g., {'slug': 'el9-embargoed'})
+        :param respect_repo_arches: Intersect global and repository limits and retain empty repos for Konflux.
         :return: Repo instance
         """
         # Convert new-style RepoConf to old-style dict
@@ -59,9 +62,12 @@ class Repo(object):
             if not repo_config.plashet:
                 raise ValueError(f"Repo '{repo_config.name}' doesn't have required key `plashet`.")
 
-            if plashet_arches := repo_config.plashet.arches or plashet_config.arches:
-                plashet_arches = set(plashet_arches)
-                arches = [arch for arch in arches if arch in plashet_arches]
+            arch_limits = [repo_config.plashet.arches or plashet_config.arches]
+            if respect_repo_arches:
+                arch_limits = [plashet_config.arches, repo_config.plashet.arches]
+            for plashet_arches in arch_limits:
+                if plashet_arches:
+                    arches = [arch for arch in arches if arch in plashet_arches]
 
             # Build conf dict with baseurl for each architecture
             conf = repo_config.conf.copy() if repo_config.conf else {}
@@ -96,9 +102,11 @@ class Repo(object):
         if repo_config.reposync:
             repo_dict['reposync'] = repo_config.reposync.model_dump(exclude_none=True)
 
-        return Repo(repo_config.name, repo_dict, list(arches), gpgcheck)
+        return Repo(repo_config.name, repo_dict, list(arches), gpgcheck, allow_empty_arches=respect_repo_arches)
 
-    def __init__(self, name: str, data: Dict, valid_arches: List[str], gpgcheck: bool = True):
+    def __init__(
+        self, name: str, data: Dict, valid_arches: List[str], gpgcheck: bool = True, *, allow_empty_arches: bool = False
+    ):
         """
         Initialize a Repo instance.
 
@@ -106,6 +114,7 @@ class Repo(object):
         :param data: Repository configuration as old-style dict with 'conf' and 'content_set' keys
         :param valid_arches: List of valid architectures
         :param gpgcheck: Whether to enable GPG signature checking
+        :param allow_empty_arches: Retain inapplicable repos without looking up an initial architecture URL.
         """
         self.name = name
         self._valid_arches = valid_arches
@@ -147,7 +156,8 @@ class Repo(object):
         self.cs_optional = self._data.content_set.get('optional', False)
 
         self.repotypes = DEFAULT_REPOTYPES
-        self.baseurl(DEFAULT_REPOTYPES[0], self._valid_arches[0])  # run once just to populate self.repotypes
+        if self._valid_arches or not allow_empty_arches:
+            self.baseurl(DEFAULT_REPOTYPES[0], self._valid_arches[0])  # run once just to populate self.repotypes
         self.reposync_enabled = (
             True
             if self._data.reposync.enabled is Missing or self._data.reposync.enabled
@@ -423,6 +433,8 @@ class Repos(object):
         gpgcheck=True,
         plashet_config: Optional[PlashetConfig] = None,
         template_vars: Optional[Dict[str, str]] = None,
+        *,
+        respect_repo_arches: bool = False,
     ):
         """
         Initialize Repos collection.
@@ -432,8 +444,10 @@ class Repos(object):
         :param gpgcheck: Whether to enable GPG signature checking
         :param plashet_config: Global plashet configuration (required for plashet type repos)
         :param template_vars: Additional template variables for URL substitution
+        :param respect_repo_arches: Opt into intersected plashet limits and empty-arch repos for Konflux.
         """
         self._arches = arches
+        self._respect_repo_arches = respect_repo_arches
         self._repos: Dict[str, Repo] = {}
         repotypes = []
         names = []
@@ -456,13 +470,16 @@ class Repos(object):
                     gpgcheck=gpgcheck,
                     plashet_config=plashet_config,
                     template_vars=template_vars,
+                    respect_repo_arches=respect_repo_arches,
                 )
                 repotypes.extend(self._repos[repo_config.name].repotypes)
         else:
             # Old-style dict: pass directly to Repo constructor
             for name, repo in repos.items():
                 names.append(name)
-                self._repos[name] = Repo(name, repo, self._arches, gpgcheck=gpgcheck)
+                self._repos[name] = Repo(
+                    name, repo, self._arches, gpgcheck=gpgcheck, allow_empty_arches=respect_repo_arches
+                )
                 repotypes.extend(self._repos[name].repotypes)
 
         self.names = tuple(names)
@@ -476,6 +493,12 @@ class Repos(object):
 
     def items(self):
         return self._repos.items()
+
+    def repos_for_arch(self, names: set[str], arch: str) -> set[str]:
+        """Omit known unsupported repos on opt-in; retain unknown names for existing error handling."""
+        if not self._respect_repo_arches:
+            return set(names)
+        return {name for name in names if name not in self._repos or arch in self._repos[name].arches}
 
     def values(self):
         return self._repos.values()
@@ -527,10 +550,13 @@ class Repos(object):
 
         return result
 
-    def content_sets(self, enabled_repos=[], non_shipping_repos=[]):
+    def content_sets(self, enabled_repos=[], non_shipping_repos=[], *, respect_repo_arches=False):
         """Generates a valid content_sets.yml file based on the currently
         configured and enabled repos in the collection. Using the correct
-        name for each arch."""
+        name for each arch.
+
+        If respect_repo_arches is True, omit repositories on architectures they do not support.
+        """
         # check for missing repos
         missing_repos = set(enabled_repos) - self._repos.keys()
         if missing_repos:
@@ -545,6 +571,8 @@ class Repos(object):
         for a in sorted(self._arches):
             content_sets = []
             for r in shipping_repos:
+                if respect_repo_arches and a not in self._repos[r].arches:
+                    continue
                 cs = self._repos[r].content_set(a)
                 if cs:  # possible to be forced off by setting to null
                     content_sets.append(cs)
@@ -620,6 +648,7 @@ class Repos(object):
         return result
 
     def validate_content_sets(self):
+        """Validate available content sets, respecting repo arches only for opted-in collections."""
         # Determine repos that have no content sets defined at all; we will give these a pass if nothing tries to use them.
         # This is one reason to accept it if no content_set is defined at all: https://github.com/openshift-eng/ocp-build-data/pull/594
 
@@ -634,6 +663,8 @@ class Repos(object):
         for arch in self._arches:
             cs_names = {}
             for name, repo in self._repos.items():
+                if self._respect_repo_arches and arch not in repo.arches:
+                    continue
                 if content_set_defined[name]:
                     cs = repo.content_set(arch)
                     cs_names[name] = cs
