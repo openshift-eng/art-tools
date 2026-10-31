@@ -24,7 +24,11 @@ eligibility remain unchanged. FBC evidence does not create Jira tickets.
   `fbc_build.build_fbc_catalogs` owns accounting for its direct Doozer subprocesses,
   used by `prepare-release-lp` and FBC refresh in `release-from-fbc`.
   Neither entrypoint calls the other; each accounts once per actual invocation.
-  Previous log evidence is cleared before execution. If clearing fails, stale
+  `prepare-release-konflux` owns its additional direct FBC subprocess accounting
+  through the same `fbc_health.account_run` contract, retaining its partial results.
+  Direct subprocess logs live in `doozer-working-fbc-<target>` (or
+  `doozer-working-fbc-default`), separate from caller Doozer/Elliott logs.
+  Only the owned FBC log is cleared before execution. If clearing fails, stale
   evidence is not trusted and tracking cannot change the build result.
 * The two existing report pipelines retain FBC data when unrelated image,
   BigQuery or configuration collection fails. They publish available evidence
@@ -50,8 +54,9 @@ show only scope, identity, last build version and counts.
 
 An FBC-local Redis transaction increments the count, updates metadata and sets a
 **30-day inactivity TTL together**. Only another failure of the same entity
-refreshes its retention. Reports, unrelated builds and skips do not refresh its
-TTL. Retired operators, named assemblies and groups therefore age out without
+refreshes a failure hash's retention; another unavailable-evidence event refreshes
+its scoped tracking hash. Reports, unrelated builds and skips do not refresh
+failure TTLs. Retired operators, named assemblies and groups therefore age out without
 requiring a global cleanup service. Expiration means **evidence aged out**, not
 verified recovery; empty reports say **no tracked failures**, not that FBC is
 known healthy. This retention policy does not change report cadence.
@@ -71,6 +76,15 @@ complete valid evidence clears it. A product configuration failure before varian
 resolution is labeled `unknown`, not attributed to an invented operator.
 Resolving that configuration supersedes its unknown-variant invocation/tracking
 state for the same group, assembly and target, without clearing operator state.
+An implicit layered-product target remains `unknown` until configuration or
+executed-target evidence resolves it; product versions are never OCP targets.
+Resolution also supersedes only the matching unknown-target invocation/tracking
+scope, not operator state, other assemblies, variants or explicit targets.
+Repeated or malformed named outcomes permanently prevent recovery for that
+operator within the invocation, while unrelated valid outcomes remain usable.
+Conflicting executed targets cannot be attributed to the requested operator
+scope. A partial Redis hash is unavailable evidence; only a vanished hash may be
+ignored as an expiry/deletion race.
 All state is best effort: Redis update/read/reset errors never replace the
 producer result; read errors appear as unavailable, not healthy. Dry-run builds
 do not mutate Redis or post messages. This unshipped draft schema needs no
@@ -84,7 +98,10 @@ All regression services are mocked. Run focused suites separately by package:
 uv run pytest --verbose --color=yes pyartcd/tests/test_fbc_health.py \
   pyartcd/tests/test_fbc_build.py pyartcd/tests/pipelines/test_build_fbc.py \
   pyartcd/tests/pipelines/test_images_health.py \
-  pyartcd/tests/pipelines/test_layered_products_image_health.py
+  pyartcd/tests/pipelines/test_layered_products_image_health.py \
+  pyartcd/tests/pipelines/test_prepare_release_lp.py \
+  pyartcd/tests/pipelines/test_prepare_release_konflux.py \
+  pyartcd/tests/pipelines/test_release_from_fbc.py
 uv run pytest --verbose --color=yes doozer/tests/cli/test_fbc.py
 make format-check
 make lint

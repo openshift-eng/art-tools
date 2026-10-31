@@ -62,6 +62,7 @@ from tenacity import retry, stop_after_attempt, wait_fixed
 
 from pyartcd import constants, jenkins
 from pyartcd.cli import cli, click_coroutine, pass_runtime
+from pyartcd.fbc_health import account_run, prepare_evidence
 from pyartcd.git import GitRepository
 from pyartcd.jira_client import JIRAClient
 from pyartcd.runtime import Runtime
@@ -967,7 +968,11 @@ class PrepareReleaseKonfluxPipeline:
         release_str = datetime.now(timezone.utc).strftime('%Y%m%d%H%M%S')
         message = f"Rebase FBC segment with release {release_str}"
 
-        cmd = self._doozer_base_command + [
+        working_dir = self.working_dir / f'doozer-working-fbc-{version.replace(".", "-")}'
+        cmd = [
+            f'--working-dir={working_dir}' if argument.startswith('--working-dir=') else argument
+            for argument in self._doozer_base_command
+        ] + [
             f'--assembly={self.assembly}',
             "beta:fbc:rebase-and-build",
             f"--version={version}",
@@ -987,9 +992,27 @@ class PrepareReleaseKonfluxPipeline:
 
         # Run command and tolerate non-zero exit code
         # The doozer command returns partial results in JSON even on failure
-        _, stdout, _ = await exectools.cmd_gather_async(cmd, check=False, stderr=None)
-
-        output_data = json.loads(stdout)
+        record_path = working_dir / 'record.log'
+        fresh = prepare_evidence(record_path, self.logger) if not self.dry_run else False
+        failed = True
+        try:
+            return_code, stdout, _ = await exectools.cmd_gather_async(cmd, check=False, stderr=None)
+            output_data = json.loads(stdout)
+            failed = return_code != 0 or bool(output_data.get('errors')) or bool(output_data.get('failed_count'))
+        finally:
+            await account_run(
+                record_path,
+                self.group,
+                'ocp',
+                self.assembly,
+                version,
+                version,
+                ','.join(olm_operator_nvrs),
+                failed,
+                self.dry_run,
+                self.logger,
+                fresh=fresh,
+            )
         successful_nvrs = output_data.get("nvrs", [])
         errors = output_data.get("errors", [])
         failed_count = output_data.get("failed_count", 0)

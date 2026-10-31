@@ -93,8 +93,11 @@ class BuildFbcPipeline:
 
     async def run(self):
         """Account exactly once, retaining the build result if tracking is unavailable."""
-        self._fbc_target = self.major_minor or '.'.join(self.version.split('.')[:2])
         self._fbc_variant = 'ocp' if (self.group or '').startswith('openshift-') or not self.group else 'unknown'
+        self._fbc_target = self.major_minor or (
+            '.'.join(self.version.split('.')[:2]) if self._fbc_variant == 'ocp' else 'unknown'
+        )
+        self._fbc_target_resolved = False
         record_path = Path(self.runtime.doozer_working, 'record.log')
         self._fbc_fresh = prepare_evidence(record_path, self._logger)
         try:
@@ -119,6 +122,7 @@ class BuildFbcPipeline:
                 self.runtime.dry_run,
                 self._logger,
                 fresh=self._fbc_fresh,
+                resolve_unknown_target=self._fbc_target_resolved,
             )
         except Exception:
             self._logger.warning('Unable to track FBC outcomes')
@@ -132,6 +136,7 @@ class BuildFbcPipeline:
         group_vars = group_config.get('vars') or {}
         if not self.major_minor and group_vars.get('MAJOR') is not None and group_vars.get('MINOR') is not None:
             self._fbc_target = f"{group_vars['MAJOR']}.{group_vars['MINOR']}"
+            self._fbc_target_resolved = True
         product = group_config.get('product') or 'ocp'
         build_variant = get_build_variant_for_product(product)
         self._fbc_variant = build_variant.value
