@@ -90,6 +90,10 @@ def start_pipeline_run(
     pipeline_name: str,
     params: dict,
     namespace: Optional[str] = None,
+    *,
+    parent_run: Optional[dict] = None,
+    rebuilt_from: Optional[dict] = None,
+    use_current_parent: bool = True,
 ) -> Optional[str]:
     """Create a Tekton PipelineRun to trigger a downstream pipeline.
 
@@ -100,6 +104,10 @@ def start_pipeline_run(
     When running inside a Tekton PipelineRun, the child PipelineRun is
     labelled with the parent pipeline/pipelinerun name and annotated with
     a console URL back to the parent for build-chain traceability.
+
+    Recovery jobs can supply an explicit ``parent_run`` and ``rebuilt_from``
+    ART attempt. Set ``use_current_parent=False`` to keep the recovery scan
+    as provenance without making it the build-chain parent.
 
     Returns the created PipelineRun name, or None if it could not be parsed.
     """
@@ -118,15 +126,33 @@ def start_pipeline_run(
     if params.get("ocp-target-version"):
         labels["art.openshift.io/ocp-version"] = params["ocp-target-version"]
 
-    parent_pr_name = get_current_pipelinerun_name()
+    parent_pr_name = get_current_pipelinerun_name() if use_current_parent else None
+    parent_pipeline = os.environ.get("TEKTON_PIPELINE_NAME", "")
+    if parent_run is not None:
+        if parent_run["metadata"]["namespace"] != namespace:
+            raise ValueError("Parent PipelineRun must belong to the child's namespace")
+        parent_pr_name = parent_run["metadata"]["name"]
+        parent_pipeline = parent_run["spec"]["pipelineRef"]["name"]
     if parent_pr_name:
-        parent_pipeline = os.environ.get("TEKTON_PIPELINE_NAME", "")
         if parent_pipeline:
             labels["art.openshift.io/parent-pipeline"] = parent_pipeline
         labels["art.openshift.io/parent-pipelinerun"] = parent_pr_name
         annotations["art.openshift.io/parent-pipelinerun-console-url"] = _build_console_pipelinerun_url(
             parent_pr_name, namespace
         )
+
+    if rebuilt_from is not None:
+        if (
+            rebuilt_from["metadata"]["namespace"] != namespace
+            or rebuilt_from["spec"]["pipelineRef"]["name"] != pipeline_name
+        ):
+            raise ValueError("Retry source must belong to the same namespace and pipeline")
+        annotations["art.openshift.io/rebuilt-from"] = rebuilt_from["metadata"]["uid"]
+        annotations["art.openshift.io/rebuilt-from-name"] = rebuilt_from["metadata"]["name"]
+    if not use_current_parent and get_current_pipelinerun_name():
+        annotations["art.openshift.io/recovery-scan"] = get_current_pipelinerun_name()
+        if parent_run is None:
+            annotations["art.openshift.io/recovery-lineage"] = "unresolved"
 
     generate_name = pipeline_name
     if params.get("group"):

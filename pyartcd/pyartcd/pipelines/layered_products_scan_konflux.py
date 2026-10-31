@@ -1,4 +1,5 @@
 import asyncio
+import hashlib
 import logging
 import os
 import re
@@ -19,6 +20,7 @@ from artcommonlib.util import product_version_from_group_name
 from pyartcd import constants, jenkins, locks, tekton, util
 from pyartcd.cli import cli, click_coroutine, pass_runtime
 from pyartcd.locks import Lock
+from pyartcd.lp_recovery import RecoveryPlanner
 from pyartcd.runtime import Runtime
 from pyartcd.stage_registry import check_bundle_in_stage_registry, resolve_stage_release_plan
 from pyartcd.util import load_group_config
@@ -42,10 +44,12 @@ class LayeredProductsScanPipeline:
 
         # Track which images are being rebuilt due to source changes (for dedup)
         self.rebuilding_images: List[str] = []
+        self.rebuilding_operator_packages: Set[str] = set()
 
         # Track operators needing bundle/FBC builds
         self.operators_without_bundles: List[KonfluxBuildRecord] = []
         self.operators_without_fbcs: List[KonfluxBuildRecord] = []
+        self.bundles_by_operator: Dict[str, KonfluxBundleBuildRecord] = {}
         self.operators_needing_stage_release: List[KonfluxBuildRecord] = []  # Bundles built but not stage-released
 
         # Populated by load_operator_names(): distgit_key -> bundle short name
@@ -238,6 +242,9 @@ class LayeredProductsScanPipeline:
         await self._init_stage_release_check()
 
         operator_builds = await self.get_latest_operator_builds(operator_db, operator_names)
+        self.rebuilding_operator_packages = {
+            op.nvr.rsplit('-', 2)[0] for op in operator_builds if op.name in self.rebuilding_images
+        }
         self.logger.info('Found %d operators with latest successful builds', len(operator_builds))
 
         if not operator_builds:
@@ -425,6 +432,7 @@ class LayeredProductsScanPipeline:
         if bundle is None or bundle.outcome.is_failure():
             self.operators_without_bundles.append(operator)
         elif bundle.outcome == KonfluxBuildOutcome.SUCCESS:
+            self.bundles_by_operator[operator.nvr] = bundle
             if self._check_stage_release:
                 is_released = await self.check_stage_registry(operator, bundle)
                 if is_released is False:
@@ -691,12 +699,7 @@ class LayeredProductsScanPipeline:
             }
             if force_release:
                 params['force-release'] = 'true'
-            created_name = tekton.start_pipeline_run(pipeline_name='olm-bundle-konflux', params=params)
-            if created_name:
-                annotation = 'art.openshift.io/triggered-olm-bundle-konflux'
-                if force_release:
-                    annotation += '-force-release'
-                tekton.annotate_current_pipelinerun({annotation: created_name})
+            self.trigger_recovery_runs('olm-bundle-konflux', params, {op.nvr: op for op in operators})
         else:
             jenkins.start_olm_bundle_konflux(
                 build_version=self.version,
@@ -731,9 +734,9 @@ class LayeredProductsScanPipeline:
             for target_version in self.ocp_target_versions:
                 self.logger.info('Triggering build-fbc for ocp-target-version=%s', target_version)
                 if tekton.is_tekton_context():
-                    created_name = tekton.start_pipeline_run(
-                        pipeline_name='build-fbc',
-                        params={
+                    self.trigger_recovery_runs(
+                        'build-fbc',
+                        {
                             'version': self.version,
                             'assembly': self.assembly,
                             'group': self.group,
@@ -744,11 +747,8 @@ class LayeredProductsScanPipeline:
                             'ocp-target-version': target_version,
                             'force': 'true',
                         },
+                        {op.nvr: self.bundles_by_operator.get(op.nvr) for op in operators},
                     )
-                    if created_name:
-                        tekton.annotate_current_pipelinerun(
-                            {f'art.openshift.io/triggered-build-fbc-{target_version}': created_name}
-                        )
                 else:
                     jenkins.start_build_fbc(
                         version=self.version,
@@ -769,6 +769,19 @@ class LayeredProductsScanPipeline:
                 f'No OCP_TARGET_VERSIONS configured for group {self.group}; '
                 'cannot trigger FBC builds without target versions for non-OpenShift groups'
             )
+
+    def trigger_recovery_runs(self, pipeline_name: str, params: dict, parents: dict):
+        planner = RecoveryPlanner(self.group, self.assembly)
+        try:
+            for plan in planner.plan(pipeline_name, params, parents, self.rebuilding_operator_packages):
+                created_name = tekton.start_pipeline_run(**plan)
+                if created_name:
+                    # Recovery runs belong to the original build chain. Using triggered-*
+                    # here would falsely make this scan their parent in PipelineHealth.
+                    suffix = hashlib.sha256(created_name.encode()).hexdigest()[:12]
+                    tekton.annotate_current_pipelinerun({f'art.openshift.io/recovered-{suffix}': created_name})
+        finally:
+            planner.close()
 
     def get_bundle_name(self, operator_name: str) -> str:
         """Get bundle name from operator name.
