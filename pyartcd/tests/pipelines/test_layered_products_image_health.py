@@ -46,6 +46,17 @@ class TestCliRegistration(unittest.TestCase):
 
 
 class TestCollectGroup(unittest.IsolatedAsyncioTestCase):
+    def setUp(self):
+        from pyartcd.fbc_health import FbcHealthReport
+
+        collector_patch = patch(
+            'pyartcd.pipelines.layered_products_image_health.collect_fbc_health',
+            new_callable=AsyncMock,
+            return_value=FbcHealthReport(),
+        )
+        self.collect_fbc_health = collector_patch.start()
+        self.addCleanup(collector_patch.stop)
+
     def _make_pipeline(self):
         runtime = MagicMock()
         runtime.working_dir = Path("/tmp/layered-products-image-health-test")
