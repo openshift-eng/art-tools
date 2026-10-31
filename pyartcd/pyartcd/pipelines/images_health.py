@@ -14,6 +14,7 @@ from doozerlib.constants import ART_BUILD_FAILURES_URL, ART_BUILD_HISTORY_URL
 from pyartcd import util
 from pyartcd.cli import cli, click_coroutine, pass_runtime
 from pyartcd.constants import OCP_BUILD_DATA_URL
+from pyartcd.fbc_health import FbcHealthReport, collect_fbc_health
 from pyartcd.jira_client import JIRAClient
 from pyartcd.runtime import Runtime
 
@@ -53,6 +54,7 @@ class ImagesHealthPipeline:
         self.rebase_failures = {}  # version -> {image: {failure_count, url, build_system}}
         self.ec_failures = {}  # version -> {image: {failure_count, jenkins_url, nvr, pipeline_url, ...}}
         self.release_failures = {}  # version -> {image: {failure_count, jenkins_url, nvr, pipeline_url, ...}}
+        self.fbc_health: dict[str, FbcHealthReport] = {}
         self.jira_tickets: dict[tuple[str, str], str] = {}  # (image_name, group) -> ticket key
         self._valid_images_cache: dict[str, set[str]] = {}
 
@@ -62,6 +64,7 @@ class ImagesHealthPipeline:
             *(self.get_rebase_failures(v) for v in self.versions),
             *(self.get_ec_failures(v) for v in self.versions),
             *(self.get_release_failures(v) for v in self.versions),
+            *(self.get_fbc_health(v) for v in self.versions),
         )
         self.runtime.logger.info('Found %s concerns', len(self.report))
 
@@ -88,6 +91,9 @@ class ImagesHealthPipeline:
                     multi_build_failures.get(version, []),
                     multi_rebase_failures.get(version, {}),
                 )
+
+    async def get_fbc_health(self, version: str):
+        self.fbc_health[version] = await collect_fbc_health(f'openshift-{version}', self.runtime.logger)
 
     async def get_report(self, version: str) -> Optional[list]:
         doozer_working = f'{self.doozer_working}-{version}'
@@ -566,16 +572,25 @@ class ImagesHealthPipeline:
         rebase_failures = self.rebase_failures.get(version, {})
         ec_failures = self.ec_failures.get(version, {})
         release_failures = self.release_failures.get(version, {})
+        fbc_health = self.fbc_health.get(version, FbcHealthReport())
 
         version_tag = f'`openshift-{version}`'
         if self.assembly != 'stream':
             version_tag += f' (assembly `{self.assembly}`)'
 
-        if not concerns and not rebase_failures and not ec_failures and not release_failures:
+        if (
+            not concerns
+            and not rebase_failures
+            and not ec_failures
+            and not release_failures
+            and not fbc_health.summary()
+        ):
             await self.slack_client.say(f':white_check_mark: All images are healthy for {version_tag}')
             return
 
         summary_parts = []
+        if fbc_health.summary():
+            summary_parts.append(fbc_health.summary())
         if concerns:
             n = len(concerns)
             summary_parts.append(f'{n} image{"s" if n > 1 else ""} failed to build')
@@ -594,7 +609,7 @@ class ImagesHealthPipeline:
             f':alert: There are some issues to look into for {version_tag}:\n- {issues}'
         )
 
-        report = ''
+        report = fbc_health.details() + '\n' if fbc_health.summary() else ''
 
         if concerns:
             report += f'*Build Failures ({len(concerns)}):*\n'
@@ -658,6 +673,7 @@ class ImagesHealthPipeline:
             or any(self.ec_failures.values())
             or any(self.release_failures.values())
             or any(self.rebase_failures.values())
+            or any(report.summary() for report in self.fbc_health.values())
         )
 
         if not has_failures:
@@ -670,6 +686,7 @@ class ImagesHealthPipeline:
         all_groups.update(f'openshift-{v}' for v, f in self.ec_failures.items() if f)
         all_groups.update(f'openshift-{v}' for v, f in self.release_failures.items() if f)
         all_groups.update(f'openshift-{v}' for v, f in self.rebase_failures.items() if f)
+        all_groups.update(f'openshift-{v}' for v, report in self.fbc_health.items() if report.summary())
 
         # Send the main alert message with just the dashboard link
         dashboard_url = ART_BUILD_FAILURES_URL
@@ -725,10 +742,15 @@ class ImagesHealthPipeline:
                 group_summary.append(f'{n} image{"s" if n > 1 else ""} with rebase failures')
 
             # Send the group summary as a thread response
+            fbc_health = self.fbc_health.get(version, FbcHealthReport())
+            if fbc_health.summary():
+                group_summary.append(fbc_health.summary())
             if group_summary:
                 group_message = f'*{group}*:\n'
                 for item in group_summary:
                     group_message += f'- {item}\n'
+                if fbc_health.summary():
+                    group_message += '\n' + fbc_health.details()
 
                 await self.slack_client.say(
                     group_message.rstrip(),

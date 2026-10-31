@@ -14,10 +14,10 @@ from artcommonlib.variants import BuildVariant, get_build_variant_for_product
 from pyartcd import constants, jenkins, locks
 from pyartcd.cli import cli, click_coroutine, pass_runtime
 from pyartcd.fbc_build import generate_fbc_lock_name
+from pyartcd.fbc_health import counter_prefix, invocation_scope, update_counters
 from pyartcd.locks import Lock
 from pyartcd.record import parse_record_log
 from pyartcd.runtime import Runtime
-from pyartcd.slack import SlackClient
 from pyartcd.util import load_group_config
 
 
@@ -67,7 +67,6 @@ class BuildFbcPipeline:
         self.insert_missing_entry = insert_missing_entry
 
         self._logger = logging.getLogger(__name__)
-        self._slack_client = runtime.new_slack_client()
 
     async def _check_production_index_exists(self) -> bool:
         """Check if the production operator index image exists for the target OCP version.
@@ -93,19 +92,51 @@ class BuildFbcPipeline:
         return True
 
     async def run(self):
+        self._fbc_records = None
+        self._fbc_target = self.major_minor or '.'.join(self.version.split('.')[:2])
+        scope = invocation_scope(
+            only=self.only,
+            exclude=self.exclude,
+            operator_nvrs=self.operator_nvrs,
+            data_path=self.data_path,
+            data_gitref=self.data_gitref,
+            fbc_repo=self.fbc_repo,
+            skip_tasks=self.skip_tasks,
+            skip_checks=self.skip_checks,
+            reset_to_prod=self.reset_to_prod,
+            plr_template=self.plr_template,
+            insert_missing_entry=self.insert_missing_entry,
+        )
+        try:
+            completed = await self._run()
+        except Exception:
+            await self._update_fbc_counters(scope, failed=True)
+            raise
+        if completed:
+            await self._update_fbc_counters(scope, failed=False)
+
+    async def _update_fbc_counters(self, scope: str, failed: bool):
+        try:
+            prefix = counter_prefix(
+                self.group or f'openshift-{self.version}', self.assembly, self.version, self._fbc_target
+            )
+            await update_counters(
+                prefix, scope, self._fbc_records, failed, self.runtime.dry_run, self._logger, os.getenv('BUILD_URL')
+            )
+        except Exception:
+            self._logger.exception('Unable to track FBC outcomes')
+
+    async def _run(self):
         await get_reporter().note("Waiting for FBC selection")
-        # Bind Slack channel based on product field from group config
         group = f"openshift-{self.version}" if not self.group else self.group
         group_config = await load_group_config(
             group=group, assembly=self.assembly, doozer_data_path=self.data_path, doozer_data_gitref=self.data_gitref
         )
+        group_vars = group_config.get('vars') or {}
+        if not self.major_minor and group_vars.get('MAJOR') is not None and group_vars.get('MINOR') is not None:
+            self._fbc_target = f"{group_vars['MAJOR']}.{group_vars['MINOR']}"
         product = group_config.get('product') or 'ocp'
         build_variant = get_build_variant_for_product(product)
-        if product != 'ocp':
-            self._slack_client.bind_channel(SlackClient.DEFAULT_CHANNEL_LAYERED_OPERATORS)
-        else:
-            self._slack_client.bind_channel(self.version)
-        self._logger.info('Slack channel bound to %s (product: %s)', self._slack_client.channel, product)
 
         # Early check: verify the production operator index image exists for the target OCP version.
         # For new OCP versions (e.g. 5.0), neither the index image nor the base images are published yet,
@@ -136,10 +167,8 @@ class BuildFbcPipeline:
 
         except Exception as e:
             self._logger.error('Encountered error: %s', e)
-            await self._slack_client.say(
-                f'*:heavy_exclamation_mark: Error building FBC for {group} {self.version} assembly {self.assembly}*\n'
-            )
             raise
+        return True
 
     async def _run_doozer(self, opts: List[str], only: str, exclude: str, build_variant: BuildVariant | None = None):
         # If unspecified, assume it's for openshift
@@ -225,28 +254,39 @@ class BuildFbcPipeline:
             doozer_opts.append('--insert-missing-entry')
         if self.operator_nvrs:
             doozer_opts.extend([nvr for nvr in self.operator_nvrs.split(',')])
+        Path(self.runtime.doozer_working, 'record.log').unlink(missing_ok=True)
+        successful_build_records = []
         try:
             await self._run_doozer(doozer_opts, only=self.only, exclude=self.exclude, build_variant=build_variant)
         finally:
-            # Parse both rebase and build records from the combined operation
-            successful_rebase_records, failed_rebase_records = await self._parse_record_log('rebase_fbc_konflux')
-            successful_build_records, failed_build_records = await self._parse_record_log('build_fbc_konflux')
-
-            self._logger.info(
-                'Successfully rebased: %s', ', '.join([str(entry['name']) for entry in successful_rebase_records])
-            )
-            if failed_rebase_records:
-                self._logger.error(
-                    'Failed to rebase: %s', ', '.join([str(entry['name']) for entry in failed_rebase_records])
+            try:
+                successful_rebase_records, failed_rebase_records = await self._parse_record_log('rebase_fbc_konflux')
+                successful_build_records, failed_build_records = await self._parse_record_log('build_fbc_konflux')
+                skipped_records, _ = await self._parse_record_log('skip_fbc_konflux')
+                _, failed_fbc_records = await self._parse_record_log('failed_fbc_konflux')
+                self._fbc_records = {
+                    'rebase_failure': failed_rebase_records,
+                    'build_success': successful_build_records,
+                    'build_failure': failed_build_records,
+                    'skipped': skipped_records,
+                    'fbc_failure': failed_fbc_records,
+                }
+                self._logger.info(
+                    'Successfully rebased: %s', ', '.join(str(entry['name']) for entry in successful_rebase_records)
                 )
-
-            self._logger.info(
-                'Successfully built: %s', ', '.join([str(entry['name']) for entry in successful_build_records])
-            )
-            if failed_build_records:
-                self._logger.error(
-                    'Failed to build: %s', ', '.join([str(entry['name']) for entry in failed_build_records])
+                if failed_rebase_records:
+                    self._logger.error(
+                        'Failed to rebase: %s', ', '.join(str(entry['name']) for entry in failed_rebase_records)
+                    )
+                self._logger.info(
+                    'Successfully built: %s', ', '.join(str(entry['name']) for entry in successful_build_records)
                 )
+                if failed_build_records:
+                    self._logger.error(
+                        'Failed to build: %s', ', '.join(str(entry['name']) for entry in failed_build_records)
+                    )
+            except Exception:
+                self._logger.exception('Unable to read FBC outcomes from record.log')
 
         return successful_build_records
 
@@ -259,6 +299,8 @@ class BuildFbcPipeline:
         entries = record_log.get(entry_type, [])
         successful_records = [entry for entry in entries if entry and int(str(entry['status'])) == 0]
         failed_records = [entry for entry in entries if entry and int(str(entry['status'])) != 0]
+        if any(not isinstance(entry.get('name'), str) or not entry['name'] for entry in entries):
+            raise ValueError('FBC record has no operator name')
         return successful_records, failed_records
 
 
