@@ -66,9 +66,7 @@ class TestNotifyPublicChannel(IsolatedAsyncioTestCase):
 
         await pipeline.notify_public_channel()
 
-        mock_slack_client.say.assert_called_once_with(
-            ":white_check_mark: All images are healthy for all monitored releases"
-        )
+        mock_slack_client.say.assert_called_once_with(":white_check_mark: No tracked failures for monitored releases")
 
     async def test_with_build_concerns(self):
         mock_slack_client = self.mock_runtime.new_slack_client.return_value
@@ -188,9 +186,7 @@ class TestNotifyPublicChannel(IsolatedAsyncioTestCase):
 
         await pipeline.notify_public_channel()
 
-        mock_slack_client.say.assert_called_once_with(
-            ":white_check_mark: All images are healthy for all monitored releases"
-        )
+        mock_slack_client.say.assert_called_once_with(":white_check_mark: No tracked failures for monitored releases")
 
     async def test_only_its_failures(self):
         mock_slack_client = self.mock_runtime.new_slack_client.return_value
@@ -235,7 +231,7 @@ class TestNotifyReleaseChannel(IsolatedAsyncioTestCase):
         await pipeline.notify_release_channel("4.18")
 
         mock_slack_client.say.assert_called_once()
-        self.assertIn("healthy", mock_slack_client.say.call_args[0][0])
+        self.assertIn("No tracked failures", mock_slack_client.say.call_args[0][0])
 
     async def test_grouped_failure_summary(self):
         mock_slack_client = self.mock_runtime.new_slack_client.return_value

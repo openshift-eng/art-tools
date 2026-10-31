@@ -662,6 +662,7 @@ class FbcRebaseAndBuildCli:
         :return: Tuple of (NVR, pullspec) of the FBC build
         """
         report = get_reporter().component('fbc', operator_meta.distgit_key, dry_run=self.dry_run)
+        target = self.major_minor or f'{self.runtime.group_config.vars.MAJOR}.{self.runtime.group_config.vars.MINOR}'
         async with report.preparing():
             existing_fbc_build = await self._check_existing_fbc_build(operator_meta, bundle_build)
             if existing_fbc_build:
@@ -671,6 +672,16 @@ class FbcRebaseAndBuildCli:
                     if self.runtime.record_logger:
                         self.runtime.record_logger.add_record(
                             'skip_fbc_konflux', name=operator_meta.distgit_key, status=0
+                        )
+                        self.runtime.record_logger.add_record(
+                            'fbc_outcome',
+                            name=operator_meta.distgit_key,
+                            outcome='reused',
+                            reason='existing_build',
+                            target=target,
+                            operator_nvr=bundle_build.operator_nvr,
+                            bundle_nvr=bundle_build.nvr,
+                            fbc_nvr=existing_fbc_build.nvr,
                         )
                     return existing_fbc_build.nvr, existing_fbc_build.image_pullspec or ""
                 self._logger.info("Force flag is set, rebuilding FBC")
@@ -691,6 +702,16 @@ class FbcRebaseAndBuildCli:
             pullspec = f"{image_url.rsplit(':', 1)[0]}@{image_digest}" if image_url and image_digest else ""
             if not pullspec:
                 LOGGER.warning("Could not extract pullspec from pipelinerun results for %s", nvr)
+            if self.runtime.record_logger:
+                self.runtime.record_logger.add_record(
+                    'fbc_outcome',
+                    name=operator_meta.distgit_key,
+                    outcome='succeeded',
+                    target=target,
+                    operator_nvr=bundle_build.operator_nvr,
+                    bundle_nvr=bundle_build.nvr,
+                    fbc_nvr=nvr,
+                )
             return nvr, pullspec
 
     async def run(self):
@@ -705,6 +726,7 @@ class FbcRebaseAndBuildCli:
         assert runtime.konflux_db is not None, "konflux_db is not initialized. Doozer bug?"
         konflux_db = runtime.konflux_db
         konflux_db.bind(KonfluxBuildRecord)
+        target = self.major_minor or f'{runtime.group_config.vars.MAJOR}.{runtime.group_config.vars.MINOR}'
 
         # Get operator builds and corresponding bundle builds
         dgk_operator_builds = await self.get_operator_builds(self.operator_nvrs)
@@ -720,10 +742,22 @@ class FbcRebaseAndBuildCli:
                 self._logger.warning(f"Bundle build not found for {dgk_operator_builds[dgk].nvr}. Will skip it.")
                 if runtime.record_logger:
                     runtime.record_logger.add_record('skip_fbc_konflux', name=dgk, status=0)
+                    runtime.record_logger.add_record(
+                        'fbc_outcome',
+                        name=dgk,
+                        outcome='skipped',
+                        reason='no_bundle',
+                        target=target,
+                        operator_nvr=dgk_operator_builds[dgk].nvr,
+                    )
         dgk_bundle_builds = {
             dgk: bundle_build for dgk, bundle_build in dgk_bundle_builds.items() if bundle_build is not None
         }
         if not dgk_bundle_builds:
+            if runtime.record_logger:
+                runtime.record_logger.add_record(
+                    'fbc_invocation', status='complete', operators=len(dgk_operator_builds), target=target
+                )
             raise DoozerFatalError("No bundle builds found. Exiting.")
 
         assert runtime.source_resolver is not None, "source_resolver is not initialized. Doozer bug?"
@@ -819,6 +853,14 @@ class FbcRebaseAndBuildCli:
                     failed_tasks.append(dgk)
                     if runtime.record_logger:
                         runtime.record_logger.add_record('failed_fbc_konflux', name=dgk, status=1)
+                        runtime.record_logger.add_record(
+                            'fbc_outcome',
+                            name=dgk,
+                            outcome='failed',
+                            target=target,
+                            operator_nvr=dgk_operator_builds[dgk].nvr,
+                            bundle_nvr=dgk_bundle_builds[dgk].nvr,
+                        )
                     stack_trace = ''.join(traceback.TracebackException.from_exception(result).format())
                     error_msg = f"Failed to rebase/build FBC for {dgk}: {result}"
                     error_details = {
@@ -849,6 +891,11 @@ class FbcRebaseAndBuildCli:
                 )
             except Exception as e:
                 LOGGER.warning("Failed to cleanup git-auth secrets: %s", e)
+
+        if runtime.record_logger:
+            runtime.record_logger.add_record(
+                'fbc_invocation', status='complete', operators=len(dgk_operator_builds), target=target
+            )
 
         if self.output == 'json':
             output_data = {

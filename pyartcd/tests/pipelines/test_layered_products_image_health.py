@@ -295,7 +295,7 @@ class TestLayeredProductHealthReport(unittest.IsolatedAsyncioTestCase):
         details = pipeline._build_variant_message("oadp", [report])
 
         self.assertIn("oadp-1.5", details)
-        self.assertIn(":white_check_mark: healthy", details)
+        self.assertIn(":white_check_mark: no tracked failures", details)
         self.assertNotIn("*Build Failures (", details)
         self.assertNotIn("Rebase Failures", details)
 

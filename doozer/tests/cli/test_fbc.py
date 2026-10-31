@@ -173,6 +173,21 @@ class TestFbcRebaseAndBuildCli(unittest.IsolatedAsyncioTestCase):
 
         mock_rebaser.rebase.assert_called_once()
         mock_builder.build.assert_called_once()
+        outcomes = [
+            call.kwargs
+            for call in self.runtime.record_logger.add_record.call_args_list
+            if call.args[0] == 'fbc_outcome'
+        ]
+        self.assertEqual(len(outcomes), 1)
+        self.assertEqual(outcomes[0]['outcome'], 'succeeded')
+        self.assertIn('target', outcomes[0])
+        self.assertEqual(outcomes[0]['operator_nvr'], 'test-operator-1.0.0-1')
+        markers = [
+            call.kwargs
+            for call in self.runtime.record_logger.add_record.call_args_list
+            if call.args[0] == 'fbc_invocation'
+        ]
+        self.assertEqual(markers[0]['operators'], 1)
 
     @mock.patch("doozerlib.cli.fbc.KonfluxFbcImporter")
     @mock.patch("doozerlib.cli.fbc.KonfluxFbcBuilder")
@@ -252,6 +267,13 @@ class TestFbcRebaseAndBuildCli(unittest.IsolatedAsyncioTestCase):
         mock_rebaser.rebase.assert_not_called()
         mock_builder.build.assert_not_called()
         self.runtime.record_logger.add_record.assert_any_call('skip_fbc_konflux', name='test-operator', status=0)
+        outcomes = [
+            call.kwargs
+            for call in self.runtime.record_logger.add_record.call_args_list
+            if call.args[0] == 'fbc_outcome'
+        ]
+        self.assertEqual(outcomes[0]['outcome'], 'reused')
+        self.assertEqual(outcomes[0]['reason'], 'existing_build')
 
     @mock.patch("doozerlib.cli.fbc.KonfluxFbcImporter")
     @mock.patch("doozerlib.cli.fbc.KonfluxFbcBuilder")
@@ -414,6 +436,12 @@ class TestFbcRebaseAndBuildCli(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(caught.exception.code, 1)
         self.runtime.record_logger.add_record.assert_any_call('failed_fbc_konflux', name='test-operator', status=1)
+        outcomes = [
+            call.kwargs
+            for call in self.runtime.record_logger.add_record.call_args_list
+            if call.args[0] == 'fbc_outcome'
+        ]
+        self.assertEqual(outcomes[0]['outcome'], 'failed')
 
     async def test_get_operator_builds_by_nvrs(self):
         operator_build = self._create_mock_operator_build("test-operator", "test-operator-1.0.0-1")

@@ -2,64 +2,94 @@
 
 ## FBC failure health reporting
 
-`artcd build-fbc` records failed FBC outcomes in Redis rather than sending an
-immediate failure notification. Existing `images-health` and
-`layered-products-image-health` commands include these failures in their summary
-and detailed reports. Their existing invocation cadence is unchanged; no new
-scheduler is required. Counts are reported starting with the first failure.
+FBC builds record bounded Redis evidence instead of sending immediate failure
+messages. Existing OCP `images-health` and `layered-products-image-health`
+reports include counts and scoped details, beginning with the first failure.
+Their existing schedules, configured groups, product variants and OCP freeze
+eligibility remain unchanged. FBC evidence does not create Jira tickets.
 
-The build consumer path is `BuildFbcPipeline.run` → `_rebase_and_build` →
-`doozer beta:fbc:rebase-and-build`. Doozer writes `rebase_fbc_konflux` and
-`build_fbc_konflux` outcomes to `record.log`. The pipeline removes a previous log
-before invoking Doozer so stale outcomes cannot establish recovery, and processes
-partial outcomes even when Doozer exits unsuccessfully. Rebase record names have
-an added `-fbc` suffix; build record names are operator keys.
-`skip_fbc_konflux` records distinguish reused builds and missing-bundle skips from
-missing outcome records, so a successful no-op is not counted as a failure and
-does not clear an invocation fallback.
-Terminal `failed_fbc_konflux` records also identify operators whose tasks fail
-before rebase/build records are written, including partial multi-operator runs.
+### Responsibilities and evidence
 
-Counter branches have the following shape (components are percent-encoded):
+* Doozer preserves its existing output, exit codes and rebase/build log records.
+  It additionally emits `fbc_outcome` terminal records with operator `name` and
+  `outcome=succeeded|failed|reused|skipped`. Reused/skipped records include a
+  reason (`existing_build` or `no_bundle`). Actual successes include the executed
+  OCP target; available exact operator, bundle and FBC NVRs are metadata.
+  `fbc_invocation|status=complete|operators=N|target=X|` establishes coverage.
+* `fbc_health.py` owns parsing, accounting, retention and URL-free collection.
+  Valid partial outcomes survive malformed records. Missing/incomplete evidence
+  is tracking-unavailable, not an invented failed build. Conflicting records
+  cannot establish recovery.
+* `BuildFbcPipeline.run` owns accounting for `artcd build-fbc`.
+  `fbc_build.build_fbc_catalogs` owns accounting for its direct Doozer subprocesses,
+  used by `prepare-release-lp` and FBC refresh in `release-from-fbc`.
+  Neither entrypoint calls the other; each accounts once per actual invocation.
+  Previous log evidence is cleared before execution. If clearing fails, stale
+  evidence is not trusted and tracking cannot change the build result.
+* The two existing report pipelines retain FBC data when unrelated image,
+  BigQuery or configuration collection fails. They publish available evidence
+  and an incomplete-report warning before propagating the collection failure.
+  OCP groups that fail their freeze eligibility check are not FBC-scanned.
+
+### Redis contract
+
+Each percent-encoded scope is a Redis hash:
 
 ```text
-count:fbc-failure:konflux:<group>:<assembly>:<build-version>:<ocp-target>:operator:<operator>
-count:fbc-failure:konflux:<group>:<assembly>:<build-version>:<ocp-target>:invocation:<scope-sha256>
+count:fbc-failure:konflux:<group>:<variant>:<assembly>:<ocp-target>:operator:<operator>
+count:fbc-failure:konflux:<group>:<variant>:<assembly>:<ocp-target>:invocation:latest
+count:fbc-failure:konflux:<group>:<variant>:<assembly>:<ocp-target>:tracking:latest
 ```
 
-Existing counter helpers store `:failure` and optional execution URL metadata.
-General FBC health reports neither read nor render execution URLs; they show
-operator or invocation identity, scope labels, and failure counts only.
-An operator failure increments once per invocation, even if multiple failure
-records exist. Only successful builds clear operator counters; successful rebase,
-skips, and builds of other operators or targets do not. An invocation fallback
-captures errors without attributable failed-operator records, including missing
-or malformed logs. Its scope hashes canonicalized image/NVR selection and build
-configuration; only a successful build in that same scope clears it.
+Hashes contain `kind`, `last_failure_at`, `build_version`, requested
+`operator_nvrs` and available individual artifact NVRs. Failure hashes contain
+`failure_count`; tracking-unavailable hashes do not claim a failure count.
+The accounting API supports optional diagnostic `jenkins_url` metadata, but
+general report collection never reads URLs or exact artifacts. General reports
+show only scope, identity, last build version and counts.
 
-Reports include all stored assemblies and version targets for their configured
-group, with explicit assembly, build-version, and OCP-target labels. Redis read
-errors are reported as unavailable, not healthy. Counter updates are best effort
-and cannot replace a build exception or fail a successful build. Production-index
-skips leave counters untouched. Dry runs do not mutate counters or send external
-notifications. Recovery clears counters without a new immediate notification.
-FBC failures do not create Jira tickets.
+An FBC-local Redis transaction increments the count, updates metadata and sets a
+**30-day inactivity TTL together**. Only another failure of the same entity
+refreshes its retention. Reports, unrelated builds and skips do not refresh its
+TTL. Retired operators, named assemblies and groups therefore age out without
+requiring a global cleanup service. Expiration means **evidence aged out**, not
+verified recovery; empty reports say **no tracked failures**, not that FBC is
+known healthy. This retention policy does not change report cadence.
 
-### Validation plan
+Version, exact NVRs, selected operator sets and build options are not identity.
+A newer successful build deletes only its matching operator state, across build
+versions, while retaining isolation across groups, variants, assemblies and OCP
+targets. Rebase-only successes, reused builds and missing-bundle skips never
+establish operator recovery. Existing production-index probing and reuse lookup
+semantics are not reimplemented by the tracker.
 
-All regression services are mocked. Run the focused suite first:
+`invocation:latest` represents only a truly failed invocation without an
+attributable operator failure. A complete attributable invocation supersedes
+that uncertainty, including when it identifies operator failures. Skips/reuse
+alone do not clear it. `tracking:latest` records unavailable outcome evidence;
+complete valid evidence clears it. A product configuration failure before variant
+resolution is labeled `unknown`, not attributed to an invented operator.
+Resolving that configuration supersedes its unknown-variant invocation/tracking
+state for the same group, assembly and target, without clearing operator state.
+All state is best effort: Redis update/read/reset errors never replace the
+producer result; read errors appear as unavailable, not healthy. Dry-run builds
+do not mutate Redis or post messages. This unshipped draft schema needs no
+migration or compatibility reader.
+
+### Validation
+
+All regression services are mocked. Run focused suites separately by package:
 
 ```bash
 uv run pytest --verbose --color=yes pyartcd/tests/test_fbc_health.py \
-  pyartcd/tests/pipelines/test_build_fbc.py \
+  pyartcd/tests/test_fbc_build.py pyartcd/tests/pipelines/test_build_fbc.py \
   pyartcd/tests/pipelines/test_images_health.py \
   pyartcd/tests/pipelines/test_layered_products_image_health.py
 uv run pytest --verbose --color=yes doozer/tests/cli/test_fbc.py
-make unit-pyartcd
 make format-check
 make lint
 ```
 
-Repository CI installs dependencies using `make venv` and runs `make test`.
-Run the package-specific test commands separately to avoid collisions between
-their Python `tests` packages.
+Repository CI uses `make venv` and `make test`. Required signing, safety hooks
+and genuine applicable attestation requirements still apply; test success does
+not substitute for attestation.

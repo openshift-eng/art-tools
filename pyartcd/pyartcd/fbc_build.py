@@ -14,6 +14,7 @@ from artcommonlib.util import resolve_konflux_kubeconfig_by_product, resolve_kon
 from artcommonlib.variants import get_build_variant_for_product
 
 from pyartcd import constants, jenkins, locks
+from pyartcd.fbc_health import account_run, prepare_evidence
 from pyartcd.fbc_util import extract_ocp_version_from_nvr
 
 LOGGER = logging.getLogger(__name__)
@@ -247,15 +248,37 @@ async def build_fbc_catalogs(
             return FbcBuildResult(target_version, operator_nvrs, (), ())
 
         async def _run():
-            return_code, stdout, stderr = await exectools.cmd_gather_async(cmd, check=False, stderr=None)
-            return _validate_fbc_build_output(
-                target_version,
-                operator_nvrs,
-                return_code,
-                stdout,
-                stderr,
-                allow_partial=allow_partial,
-            )
+            record_path = working_dir / 'record.log'
+            fresh = prepare_evidence(record_path, LOGGER)
+            failed = True
+            try:
+                return_code, stdout, stderr = await exectools.cmd_gather_async(cmd, check=False, stderr=None)
+                failed = return_code != 0
+                return _validate_fbc_build_output(
+                    target_version,
+                    operator_nvrs,
+                    return_code,
+                    stdout,
+                    stderr,
+                    allow_partial=allow_partial,
+                )
+            except Exception:
+                failed = True
+                raise
+            finally:
+                await account_run(
+                    record_path,
+                    group,
+                    build_variant.value,
+                    assembly,
+                    target,
+                    version,
+                    ','.join(operator_nvrs),
+                    failed,
+                    runtime.dry_run,
+                    LOGGER,
+                    fresh=fresh,
+                )
 
         lock_name = generate_fbc_lock_name(group, target_version, allow_missing_target=True)
         return await locks.run_with_lock(

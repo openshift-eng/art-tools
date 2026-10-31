@@ -119,9 +119,10 @@ class LayeredProductsImageHealthPipeline:
         Returns:
             A successful group report or a report containing the collection error.
         """
+        fbc_health = await collect_fbc_health(group, self.runtime.logger)
         try:
-            return await self._collect_group(group)
-        except Exception as error:
+            return await self._collect_group(group, fbc_health)
+        except Exception:
             self.runtime.logger.exception("Failed to collect layered product health for %s", group)
             return LayeredProductHealthReport(
                 group=group,
@@ -132,10 +133,11 @@ class LayeredProductsImageHealthPipeline:
                 its_failures={},
                 release_failures={},
                 rebase_failures={},
-                error=str(error),
+                error='Image collection incomplete',
+                fbc_health=fbc_health,
             )
 
-    async def _collect_group(self, group: str) -> LayeredProductHealthReport:
+    async def _collect_group(self, group: str, fbc_health: FbcHealthReport | None = None) -> LayeredProductHealthReport:
         """
         Collect variant-aware health data for one layered-product group.
 
@@ -145,6 +147,8 @@ class LayeredProductsImageHealthPipeline:
         Returns:
             Health data collected for the group.
         """
+        if fbc_health is None:
+            fbc_health = await collect_fbc_health(group, self.runtime.logger)
         group_config = await util.load_group_config(
             group=group,
             assembly=self.assembly,
@@ -155,6 +159,9 @@ class LayeredProductsImageHealthPipeline:
         if not product:
             raise ValueError(f"No product found in group config for {group}")
         variant = get_build_variant_for_product(product)
+        fbc_health.failures = {
+            key: entry for key, entry in fbc_health.failures.items() if entry['variant'] in {variant.value, 'unknown'}
+        }
 
         build_failures, its_failures, release_failures, rebase_failures = await asyncio.gather(
             util.get_counter_failures(
@@ -188,8 +195,13 @@ class LayeredProductsImageHealthPipeline:
         if self.image_list:
             failure_images &= set(self.image_list)
 
-        fbc_health = await collect_fbc_health(group, self.runtime.logger)
-        build_concerns = await self._get_build_concerns(group, variant, failure_images)
+        error = None
+        try:
+            build_concerns = await self._get_build_concerns(group, variant, failure_images)
+        except Exception:
+            self.runtime.logger.warning('Image concerns unavailable for %s', group)
+            build_concerns = []
+            error = 'Image collection incomplete'
         return LayeredProductHealthReport(
             group=group,
             product=product,
@@ -200,6 +212,7 @@ class LayeredProductsImageHealthPipeline:
             release_failures=release_failures,
             rebase_failures=rebase_failures,
             fbc_health=fbc_health,
+            error=error,
         )
 
     async def _get_build_concerns(
@@ -281,14 +294,15 @@ class LayeredProductsImageHealthPipeline:
         message_parts = [f":alert: Layered product image health report for `{variant_name}`:"]
         for report in reports:
             if report.error:
-                message_parts.append(f"- `{report.group}`: :warning: incomplete ({report.error})")
+                fbc_summary = report.fbc_health.summary() or 'No tracked FBC failures'
+                message_parts.append(f"- `{report.group}`: :warning: incomplete ({report.error}); {fbc_summary}")
                 continue
 
             failure_parts = self._get_failure_parts(report)
             if failure_parts:
                 message_parts.append(f"- `{report.group}`: {', '.join(failure_parts)}")
             else:
-                message_parts.append(f"- `{report.group}`: :white_check_mark: healthy")
+                message_parts.append(f"- `{report.group}`: :white_check_mark: no tracked failures")
 
         message_parts.append(f"\nFor details, see <{ART_BUILD_FAILURES_URL}|ART Build Failures Dashboard>.")
         return "\n".join(message_parts)
@@ -304,7 +318,7 @@ class LayeredProductsImageHealthPipeline:
             Slack-formatted group details.
         """
         if report.error:
-            return f"*{report.group}*\n:warning: Report incomplete: {report.error}"
+            return f"*{report.group}*\n:warning: Report incomplete: {report.error}\n{report.fbc_health.details()}"
         return self._build_group_details(report)
 
     def _build_group_details(self, report: LayeredProductHealthReport) -> str:
