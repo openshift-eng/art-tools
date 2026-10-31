@@ -40,25 +40,38 @@ class FbcEvidence:
     complete: bool = False
     unavailable: bool = False
     target: str | None = None
+    ambiguous: set[str] = field(default_factory=set)
+    conflicting_targets: set[str] = field(default_factory=set)
 
 
 def read_evidence(path: Path) -> FbcEvidence:
     """Preserve valid terminal records even when other records are malformed."""
     evidence = FbcEvidence()
+    seen = set()
+    targets = {}
     try:
         with path.open() as stream:
             records = parse_record_log(stream)
         for entry in records.get('fbc_outcome', []):
             name, outcome = entry.get('name'), entry.get('outcome')
+            if name:
+                if name in seen:
+                    evidence.ambiguous.add(name)
+                    evidence.unavailable = True
+                seen.add(name)
+                if entry.get('target'):
+                    if name in targets and targets[name] != entry['target']:
+                        evidence.conflicting_targets.add(name)
+                    targets[name] = entry['target']
             if not name or outcome not in OUTCOMES or (outcome in {'reused', 'skipped'} and not entry.get('reason')):
                 evidence.unavailable = True
+                if name:
+                    evidence.ambiguous.add(name)
                 continue
             if name in evidence.outcomes:
                 evidence.unavailable = True
                 if outcome == 'failed':
                     evidence.outcomes[name] = entry
-                elif evidence.outcomes[name]['outcome'] == 'succeeded':
-                    evidence.outcomes.pop(name)
                 continue
             evidence.outcomes[name] = entry
         markers = records.get('fbc_invocation', [])
@@ -113,6 +126,8 @@ async def update_counters(
         outcome = entry['outcome']
         if outcome not in {'succeeded', 'failed'}:
             continue
+        if name in evidence.conflicting_targets or (outcome == 'succeeded' and name in evidence.ambiguous):
+            continue
         if outcome == 'succeeded' and not entry.get('target'):
             evidence.unavailable = True
             continue
@@ -150,6 +165,7 @@ async def account_run(
     dry_run: bool,
     logger: logging.Logger,
     fresh: bool = True,
+    resolve_unknown_target: bool = False,
 ) -> None:
     """Read fresh producer evidence and account once at its owning entrypoint."""
     if dry_run:
@@ -159,9 +175,10 @@ async def account_run(
         if target == 'default':
             targets = {entry['target'] for entry in evidence.outcomes.values() if entry.get('target')}
             target = evidence.target or (next(iter(targets)) if len(targets) == 1 else 'unknown')
-        for entry in evidence.outcomes.values():
-            if entry['outcome'] == 'succeeded' and entry.get('target') != target:
-                entry['outcome'] = 'reused'
+            resolve_unknown_target = target != 'unknown'
+        for name, entry in list(evidence.outcomes.items()):
+            if entry['outcome'] in {'succeeded', 'failed'} and entry.get('target') not in {None, target}:
+                del evidence.outcomes[name]
                 evidence.unavailable = True
         await update_counters(
             counter_prefix(group, variant, assembly, target),
@@ -173,8 +190,13 @@ async def account_run(
             logger,
             url=os.getenv('BUILD_URL'),
         )
+        unresolved_scopes = set()
         if variant != 'unknown':
-            unresolved = counter_prefix(group, 'unknown', assembly, target)
+            unresolved_scopes.add(counter_prefix(group, 'unknown', assembly, target))
+        if resolve_unknown_target and target != 'unknown':
+            unresolved_scopes.add(counter_prefix(group, variant, assembly, 'unknown'))
+            unresolved_scopes.add(counter_prefix(group, 'unknown', assembly, 'unknown'))
+        for unresolved in unresolved_scopes:
             for kind in ('invocation', 'tracking'):
                 await redis.delete_key(f'{unresolved}:{kind}:latest')
     except Exception:
@@ -236,8 +258,10 @@ async def collect_fbc_health(group: str, logger: logging.Logger, variant: str | 
             count, version, timestamp = await redis.call(
                 'hmget', key, 'failure_count', 'build_version', 'last_failure_at'
             )
-            if timestamp is None:
+            if count is None and version is None and timestamp is None:
                 continue
+            if not timestamp or version is None:
+                raise ValueError('Incomplete FBC state metadata')
             values.update(failure_count=int(count or 0), version=version or '')
             if values['kind'] != 'tracking' and values['failure_count'] < 1:
                 raise ValueError('Invalid FBC count')

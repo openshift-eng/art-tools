@@ -2,6 +2,7 @@ import fnmatch
 import json
 import tempfile
 import unittest
+from itertools import product
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -17,6 +18,9 @@ from pyartcd.fbc_health import (
 from pyartcd.pipelines.build_fbc import BuildFbcPipeline
 from pyartcd.pipelines.images_health import ImagesHealthPipeline
 from pyartcd.pipelines.layered_products_image_health import LayeredProductsImageHealthPipeline
+from pyartcd.pipelines.prepare_release_konflux import PrepareReleaseKonfluxPipeline
+from pyartcd.pipelines.prepare_release_lp import PrepareReleaseLPPipeline
+from pyartcd.pipelines.release_from_fbc import ReleaseFromFbcPipeline
 from pyartcd.slack import SlackClient
 
 from pyartcd import fbc_health
@@ -253,6 +257,268 @@ class TestFbcState(unittest.IsolatedAsyncioTestCase):
     def test_key_hardening(self):
         prefix = counter_prefix('group:*', 'variant?', 'release[]', '4.18')
         self.assertFalse(any(character in prefix for character in '*?[]'))
+
+    async def test_duplicate_terminal_sequences_never_recover_ambiguous_operator(self):
+        for length in (3, 4):
+            for sequence in product(('succeeded', 'failed', 'reused', 'skipped'), repeat=length):
+                with self.subTest(sequence=sequence):
+                    self.values.clear()
+                    await self.update(self.evidence(operator='failed', unrelated='failed'))
+                    records = [
+                        f'fbc_outcome|name=operator|outcome={outcome}|reason=test|target=4.18|\n'
+                        for outcome in sequence
+                    ]
+                    records += [
+                        'fbc_outcome|name=unrelated|outcome=succeeded|target=4.18|\n',
+                        'fbc_invocation|status=complete|operators=2|target=4.18|\n',
+                    ]
+                    self.path.write_text(''.join(records))
+                    await account_run(self.path, 'product', 'oadp', 'stream', '4.18', '2', '', True, False, self.logger)
+                    expected = '2' if 'failed' in sequence else '1'
+                    self.assertEqual(self.values[f'{self.prefix}:operator:operator']['failure_count'], expected)
+                    self.assertNotIn(f'{self.prefix}:operator:unrelated', self.values)
+
+    async def test_partial_hash_is_unavailable_but_vanished_hash_is_not(self):
+        key = f'{self.prefix}:operator:operator'
+        self.values[key] = {'failure_count': '3', 'build_version': '2'}
+        report = await collect_fbc_health('product', self.logger)
+        self.assertTrue(report.error)
+        self.assertIn('unavailable', report.summary())
+        self.values.clear()
+        self.keys.side_effect = None
+        self.keys.return_value = [key]
+        report = await collect_fbc_health('product', self.logger)
+        self.assertFalse(report.error)
+        self.assertEqual(report.failures, {})
+
+    async def test_malformed_named_outcome_and_conflicting_targets_never_recover(self):
+        for records in (
+            'fbc_outcome|name=operator|outcome=invalid|target=4.18|\n',
+            'fbc_outcome|name=operator|outcome=failed|target=4.19|\n',
+        ):
+            with self.subTest(records=records):
+                self.values.clear()
+                await self.update(self.evidence(operator='failed', unrelated='failed'))
+                self.path.write_text(
+                    records
+                    + 'fbc_outcome|name=operator|outcome=succeeded|target=4.18|\n'
+                    + 'fbc_outcome|name=operator|outcome=succeeded|target=4.18|\n'
+                    + 'fbc_outcome|name=unrelated|outcome=succeeded|target=4.18|\n'
+                    + 'fbc_invocation|status=complete|operators=2|target=4.18|\n'
+                )
+                await account_run(self.path, 'product', 'oadp', 'stream', '4.18', '2', '', True, False, self.logger)
+                self.assertEqual(self.values[f'{self.prefix}:operator:operator']['failure_count'], '1')
+                self.assertNotIn(f'{self.prefix}:operator:unrelated', self.values)
+                self.assertIn(f'{self.prefix}:tracking:latest', self.values)
+
+    async def test_direct_default_target_resolution_and_real_caller_evidence_ownership(self):
+        root = Path(self.directory.name)
+        runtime = MagicMock(dry_run=False, working_dir=root, config={})
+        operator_nvr = 'operator-container-1.8.1-1'
+        pullspec = 'quay.io/example/fbc:source'
+        parent_logs = [
+            root / 'record.log',
+            root / 'elliott-working/record.log',
+            root / 'doozer-working/record.log',
+            root / 'doozer-working-fbc-4-19/record.log',
+        ]
+        for path in parent_logs:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text('parent outcome evidence\n')
+
+        async def run_locked(coro, **kwargs):
+            return await coro
+
+        failed = True
+
+        async def command(cmd, **kwargs):
+            working_dir = Path(next(arg.split('=', 1)[1] for arg in cmd if arg.startswith('--working-dir=')))
+            self.assertIn(working_dir.name, {'doozer-working-fbc-default', 'doozer-working-fbc-4-18'})
+            path = working_dir / 'record.log'
+            self.assertFalse(path.exists(), 'Only the owned FBC log must be cleared before execution')
+            if failed:
+                return 1, '{}', ''
+            working_dir.mkdir(parents=True, exist_ok=True)
+            path.write_text(
+                'fbc_outcome|name=operator|outcome=succeeded|target=4.18|\n'
+                'fbc_invocation|status=complete|operators=1|target=4.18|\n'
+            )
+            return 0, json.dumps({'nvrs': ['operator-fbc-1.8.1-2.ocp4.18'], 'pullspecs': [pullspec]}), ''
+
+        with (
+            patch('pyartcd.fbc_build.locks.run_with_lock', new=AsyncMock(side_effect=run_locked)),
+            patch('pyartcd.fbc_build.jenkins.get_build_path_or_random', return_value='test'),
+            patch('pyartcd.fbc_build.resolve_konflux_namespace_by_product', return_value='test'),
+            patch('pyartcd.fbc_build.resolve_konflux_kubeconfig_by_product', return_value='test'),
+            patch('pyartcd.fbc_build.exectools.cmd_gather_async', new=AsyncMock(side_effect=command)),
+            patch('pyartcd.fbc_build.account_run', new=AsyncMock(wraps=account_run)) as account,
+        ):
+            for caller in ('prepare', 'release'):
+                with self.subTest(caller=caller):
+                    if caller == 'prepare':
+                        pipeline = PrepareReleaseLPPipeline(runtime, 'product', 'release', refresh_fbcs=True)
+                        pipeline.product = 'oadp'
+                        pipeline._load_ocp_target_versions = AsyncMock(return_value=[])
+
+                        async def invoke():
+                            return await pipeline._trigger_fbc_build([operator_nvr])
+
+                        scope = counter_prefix('product', 'oadp', 'release', 'unknown')
+                        target = 'default'
+                    else:
+                        pipeline = ReleaseFromFbcPipeline(runtime, 'product', 'release', [pullspec], refresh_fbcs=True)
+                        pipeline.product = 'oadp'
+                        pipeline._load_component_doozer_keys = AsyncMock(
+                            return_value={'operator-container': 'operator'}
+                        )
+                        pipeline._fbc_operator_by_pullspec = {pullspec: 'operator'}
+                        pipeline._fbc_related_nvrs_by_pullspec = {pullspec: [operator_nvr]}
+
+                        async def invoke():
+                            return await pipeline._refresh_fbc_pullspecs(['operator-fbc-1.8.1-1.ocp4.18'])
+
+                        scope = self.prefix.replace(':stream:', ':release:')
+                        target = '4-18'
+                    owned_log = root / f'doozer-working-fbc-{target}/record.log'
+                    owned_log.parent.mkdir(parents=True, exist_ok=True)
+                    owned_log.write_text('stale success must not recover\n')
+                    failed = True
+                    with self.assertRaises(RuntimeError):
+                        await invoke()
+                    self.assertIn(f'{scope}:invocation:latest', self.values)
+                    failed = False
+                    await invoke()
+                    self.assertNotIn(f'{scope}:invocation:latest', self.values)
+                    self.assertNotIn(f'{scope}:tracking:latest', self.values)
+                    for path in parent_logs:
+                        self.assertEqual(path.read_text(), 'parent outcome evidence\n')
+            self.assertEqual(account.await_count, 4)
+
+    async def test_mismatching_failed_target_retains_matching_partial_success(self):
+        await self.update(self.evidence(unrelated='failed'))
+        self.path.write_text(
+            'fbc_outcome|name=operator|outcome=failed|target=4.19|\n'
+            'fbc_outcome|name=unrelated|outcome=succeeded|target=4.18|\n'
+            'fbc_invocation|status=complete|operators=2|target=4.18|\n'
+        )
+        await account_run(self.path, 'product', 'oadp', 'stream', '4.18', '2', '', True, False, self.logger)
+        self.assertNotIn(f'{self.prefix}:operator:operator', self.values)
+        self.assertNotIn(f'{self.prefix}:operator:unrelated', self.values)
+        self.assertEqual(self.values[f'{self.prefix}:invocation:latest']['failure_count'], '1')
+        self.assertIn(f'{self.prefix}:tracking:latest', self.values)
+
+    async def test_prepare_release_konflux_direct_owner_preserves_parent_evidence_and_partial_results(self):
+        root = Path(self.directory.name)
+        runtime = MagicMock(dry_run=False, working_dir=root, config={})
+        slack = MagicMock()
+        slack.say.side_effect = AssertionError('No immediate FBC alert')
+        pipeline = PrepareReleaseKonfluxPipeline(slack, runtime, 'openshift-4.18', 'release')
+        pipeline.release_name = '4.18.3'
+        pipeline.filter_olm_operators = AsyncMock(return_value=['operator-1-1'])
+        parent_log = pipeline.doozer_working_dir / 'record.log'
+        parent_log.parent.mkdir(parents=True)
+        parent_log.write_text('parent outcomes needed after FBC\n')
+        owned_log = root / 'doozer-working-fbc-4-18/record.log'
+        owned_log.parent.mkdir()
+        owned_log.write_text('stale success\n')
+        scope = counter_prefix('openshift-4.18', 'ocp', 'release', '4.18')
+        failed = True
+        malformed = False
+
+        async def command(cmd, **kwargs):
+            self.assertIn(f'--working-dir={owned_log.parent}', cmd)
+            if not pipeline.dry_run:
+                self.assertFalse(owned_log.exists())
+                if not malformed:
+                    outcome = 'failed' if failed else 'succeeded'
+                    owned_log.write_text(
+                        f'fbc_outcome|name=operator|outcome={outcome}|target=4.18|\n'
+                        'fbc_invocation|status=complete|operators=1|target=4.18|\n'
+                    )
+            output = {'nvrs': ['good-fbc-1-1.ocp4.18'], 'errors': [{'operator': 'operator'}] if failed else []}
+            return int(failed), 'invalid JSON' if malformed else json.dumps(output), ''
+
+        with patch(
+            'pyartcd.pipelines.prepare_release_konflux.exectools.cmd_gather_async', new=AsyncMock(side_effect=command)
+        ):
+            result = await pipeline.find_or_build_fbc_builds(['operator-1-1'])
+            self.assertEqual(result, (['good-fbc-1-1.ocp4.18'], [{'operator': 'operator'}]))
+            self.assertEqual(self.values[f'{scope}:operator:operator']['failure_count'], '1')
+            failed = False
+            await pipeline.find_or_build_fbc_builds(['operator-2-1'])
+            self.assertNotIn(f'{scope}:operator:operator', self.values)
+            failed = True
+            execute = self.transaction.execute.side_effect
+            self.transaction.execute.side_effect = RuntimeError('Redis unavailable')
+            result = await pipeline.find_or_build_fbc_builds(['operator-2-1'])
+            self.assertEqual(result, (['good-fbc-1-1.ocp4.18'], [{'operator': 'operator'}]))
+            self.transaction.reset_mock()
+            self.transaction.execute.side_effect = execute
+            failed = False
+            malformed = True
+            with self.assertRaises(json.JSONDecodeError):
+                await pipeline.find_or_build_fbc_builds(['operator-2-1'])
+            self.assertIn(f'{scope}:invocation:latest', self.values)
+            self.assertIn(f'{scope}:tracking:latest', self.values)
+            malformed = False
+            pipeline.dry_run = True
+            self.store.reset_mock()
+            self.delete.reset_mock()
+            await pipeline.find_or_build_fbc_builds(['operator-2-1'])
+            self.store.assert_not_awaited()
+            self.delete.assert_not_awaited()
+        self.assertEqual(parent_log.read_text(), 'parent outcomes needed after FBC\n')
+        slack.say.assert_not_called()
+
+    async def test_layered_entrypoint_resolves_unknown_scope_without_product_version_identity(self):
+        runtime = MagicMock(dry_run=False, doozer_working=self.directory.name)
+        runtime.new_slack_client.side_effect = AssertionError('No immediate Slack')
+        pipeline = BuildFbcPipeline(
+            runtime, '1.8.1', 'stream', '', '', '', '', '', '', '', '', False, group='product-1.8'
+        )
+        pipeline._check_production_index_exists = AsyncMock(return_value=True)
+
+        async def run_doozer(*args, **kwargs):
+            self.path.write_text(
+                'fbc_outcome|name=operator|outcome=succeeded|target=4.18|\n'
+                'fbc_invocation|status=complete|operators=1|target=4.18|\n'
+            )
+            return []
+
+        pipeline._rebase_and_build = AsyncMock(side_effect=run_doozer)
+        with (
+            patch('pyartcd.pipelines.build_fbc.get_reporter') as reporter,
+            patch(
+                'pyartcd.pipelines.build_fbc.load_group_config',
+                new=AsyncMock(
+                    side_effect=[
+                        RuntimeError('configuration unavailable'),
+                        {'product': 'oadp', 'vars': {'MAJOR': 4, 'MINOR': 18}},
+                    ]
+                ),
+            ),
+        ):
+            reporter.return_value.note = AsyncMock()
+            with self.assertRaisesRegex(RuntimeError, 'configuration unavailable'):
+                await pipeline.run()
+            unknown = counter_prefix('product-1.8', 'unknown', 'stream', 'unknown')
+            self.assertIn(f'{unknown}:invocation:latest', self.values)
+            isolated = [
+                counter_prefix('product-1.8', 'unknown', 'release', 'unknown'),
+                counter_prefix('product-1.8', 'unknown', 'stream', '4.19'),
+                counter_prefix('product-1.8', 'rhmtc', 'stream', 'unknown'),
+            ]
+            for prefix in isolated:
+                await self.update(FbcEvidence(unavailable=True), prefix=prefix, failed=True)
+            operator_key = f'{unknown}:operator:untouched'
+            self.values[operator_key] = {'failure_count': '5'}
+            pipeline.version = '1.8.2'
+            await pipeline.run()
+        self.assertNotIn(f'{unknown}:invocation:latest', self.values)
+        self.assertNotIn(f'{unknown}:tracking:latest', self.values)
+        self.assertIn(operator_key, self.values)
+        for prefix in isolated:
+            self.assertIn(f'{prefix}:invocation:latest', self.values)
 
 
 class TestFbcProducers(unittest.IsolatedAsyncioTestCase):
