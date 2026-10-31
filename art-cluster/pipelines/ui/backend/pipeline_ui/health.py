@@ -2,6 +2,8 @@
 
 from collections import defaultdict
 
+from .messages import lp_rebase_warning
+
 PIPELINES = ("layered-products-scan", "build-layered-products", "olm-bundle-konflux", "build-fbc")
 LABEL_PREFIX = "art.openshift.io/"
 
@@ -17,6 +19,8 @@ def health_run(run: dict, summary: dict) -> dict:
     outcome = {"True": "Succeeded", "Unknown": "Running", "False": "Failed"}.get(condition.get("status"), "Unknown")
     if outcome == "Failed" and "cancel" in (condition.get("reason") or "").lower():
         outcome = "Cancelled"
+    if lp_rebase_warning(run):
+        outcome = "Warning"
     return {
         **summary,
         "status": outcome,
@@ -130,6 +134,7 @@ def build_health(runs: list[dict], incomplete_namespaces: set[str] | None = None
         failed = [run for run in effective_runs if run["status"] == "Failed"]
         cancelled = [run for run in effective_runs if run["status"] == "Cancelled"]
         active = [run for run in effective_runs if run["status"] == "Running"]
+        warnings = [run for run in effective_runs if run["status"] == "Warning"]
         complete = all(stages.values()) and all(run["status"] == "Succeeded" for run in effective_runs)
         if any(run["dryRun"] for run in effective_runs):
             chain_issues.add("Dry-run execution does not establish E2E health")
@@ -139,6 +144,8 @@ def build_health(runs: list[dict], incomplete_namespaces: set[str] | None = None
             status = "Cancelled"
         elif active:
             status = "Running"
+        elif warnings:
+            status = "Warning"
         elif complete and not chain_issues:
             status = "Succeeded"
         elif any(stages[name] for name in PIPELINES[1:]):
@@ -194,7 +201,8 @@ def build_health(runs: list[dict], incomplete_namespaces: set[str] | None = None
             )
             completed_versions.extend(chain(item["root"], before=timestamp) for timestamp in retry_times)
         last_completed = next(
-            (item for item in completed_versions if item["status"] in ("Succeeded", "Failed", "Cancelled")), None
+            (item for item in completed_versions if item["status"] in ("Succeeded", "Failed", "Cancelled", "Warning")),
+            None,
         )
         last_successful = next((item for item in completed_versions if item["status"] == "Succeeded"), None)
         health = last_completed["status"] if last_completed else "Unknown"

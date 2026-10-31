@@ -19,7 +19,7 @@ from pydantic import AnyHttpUrl, BaseModel, Field, ValidationError, field_valida
 from .cluster import Gateway, UpstreamError
 from .components import component_details
 from .health import build_health, health_run
-from .messages import status_message
+from .messages import lp_rebase_warning, status_message
 from .rebuild import (
     REBUILT_FROM_ANNOTATION,
     REBUILT_FROM_NAME_ANNOTATION,
@@ -188,13 +188,14 @@ def run_summary(run: dict, source: str) -> dict:
     reason = condition.get("reason") or "Unknown"
     if condition.get("status") == "Unknown":
         reason = "Running"
+    warning = lp_rebase_warning(run)
     return {
         "namespace": metadata.get("namespace"),
         "name": metadata.get("name"),
         "uid": metadata.get("uid"),
         "pipeline": pipeline_name(run),
-        "status": reason,
-        "message": status_message(condition.get("message")),
+        "status": "Warning" if warning else reason,
+        "message": warning or status_message(condition.get("message")),
         "created": metadata.get("creationTimestamp"),
         "started": status.get("startTime"),
         "completed": status.get("completionTime"),
