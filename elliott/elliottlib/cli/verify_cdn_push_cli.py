@@ -9,7 +9,7 @@ from elliottlib.cli.common import cli, click_coroutine
 from elliottlib.errata_async import AsyncErrataAPI
 from elliottlib.verify_common import (
     VerifyResultBase,
-    get_assembly_advisory_ids,
+    get_ocp_release_advisory_ids,
     handle_verify_result,
     verify_output_option,
 )
@@ -253,7 +253,7 @@ async def verify_cdn_push_cli(runtime, push, output):
         elliott --group openshift-4.18 --assembly 4.18.51 verify-cdn-push
     """
     runtime.initialize()
-    advisories = get_assembly_advisory_ids(runtime, include_types=CDN_PUSH_ADVISORY_TYPES)
+    advisories = get_ocp_release_advisory_ids(runtime, include_types=CDN_PUSH_ADVISORY_TYPES)
     if not advisories:
         raise click.UsageError(f"No advisory IDs found for {CDN_PUSH_ADVISORY_TYPES} in assembly config.")
 

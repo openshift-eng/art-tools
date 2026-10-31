@@ -204,3 +204,33 @@ class TestAddMrDependency(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestAddMrLabels(unittest.TestCase):
+    @patch("artcommonlib.gitlab.gitlab.Gitlab")
+    def test_adds_labels_without_replacing_existing_labels_or_fetching_mr(self, gitlab_class):
+        from artcommonlib.gitlab import GitLabClient
+
+        client = GitLabClient("https://gitlab.example.com", "fake-token")
+        project = gitlab_class.return_value.projects.get.return_value
+        result = client.add_mr_labels("https://gitlab.example.com/group/project/-/merge_requests/42", ["one", "two"])
+        project.mergerequests.update.assert_called_once_with(42, add_labels="one,two")
+        project.mergerequests.get.assert_not_called()
+        self.assertIs(result, project.mergerequests.update.return_value)
+
+    @patch("artcommonlib.gitlab.gitlab.Gitlab")
+    def test_dry_run_does_not_resolve_project_or_update_labels(self, gitlab_class):
+        from artcommonlib.gitlab import GitLabClient
+
+        client = GitLabClient("https://gitlab.example.com", "fake-token", dry_run=True)
+        client.add_mr_labels("https://gitlab.example.com/group/project/-/merge_requests/42", ["one"])
+        gitlab_class.return_value.projects.get.assert_not_called()
+
+    @patch("artcommonlib.gitlab.gitlab.Gitlab")
+    def test_api_failure_is_not_hidden(self, gitlab_class):
+        from artcommonlib.gitlab import GitLabClient
+
+        client = GitLabClient("https://gitlab.example.com", "fake-token")
+        gitlab_class.return_value.projects.get.return_value.mergerequests.update.side_effect = RuntimeError("403")
+        with self.assertRaisesRegex(RuntimeError, "403"):
+            client.add_mr_labels("https://gitlab.example.com/group/project/-/merge_requests/42", ["one"])
