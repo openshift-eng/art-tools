@@ -293,12 +293,9 @@ class LayeredProductsImageHealthPipeline:
         """
         message_parts = [f":alert: Layered product image health report for `{variant_name}`:"]
         for report in reports:
-            if report.error:
-                fbc_summary = report.fbc_health.summary() or 'No tracked FBC failures'
-                message_parts.append(f"- `{report.group}`: :warning: incomplete ({report.error}); {fbc_summary}")
-                continue
-
             failure_parts = self._get_failure_parts(report)
+            if report.error:
+                failure_parts.insert(0, f':warning: incomplete ({report.error})')
             if failure_parts:
                 message_parts.append(f"- `{report.group}`: {', '.join(failure_parts)}")
             else:
@@ -317,8 +314,6 @@ class LayeredProductsImageHealthPipeline:
         Returns:
             Slack-formatted group details.
         """
-        if report.error:
-            return f"*{report.group}*\n:warning: Report incomplete: {report.error}\n{report.fbc_health.details()}"
         return self._build_group_details(report)
 
     def _build_group_details(self, report: LayeredProductHealthReport) -> str:
@@ -332,6 +327,8 @@ class LayeredProductsImageHealthPipeline:
             Slack-formatted group details.
         """
         sections = [f"*{report.group}*"]
+        if report.error:
+            sections.append(f':warning: Report incomplete: {report.error}')
         if report.fbc_health.summary():
             sections.append(report.fbc_health.details())
         build_concerns = self._get_failure_concerns(report.build_concerns)
@@ -339,6 +336,15 @@ class LayeredProductsImageHealthPipeline:
             lines = [f"*Build Failures ({len(build_concerns)}):*"]
             lines.extend(self._format_build_concern(concern, report.group) for concern in build_concerns)
             sections.append("\n".join(lines))
+        unvalidated_build_failures = self._get_unvalidated_build_failures(report)
+        if unvalidated_build_failures:
+            lines = [f'*Redis-tracked build failures ({len(unvalidated_build_failures)}; unvalidated):*']
+            lines.extend(
+                f"- `{image_name}`: Failed {failure['failure_count']} time(s) "
+                '(Redis counter; current image/build status unvalidated)'
+                for image_name, failure in sorted(unvalidated_build_failures.items())
+            )
+            sections.append('\n'.join(lines))
         if report.its_failures:
             sections.append(self._format_counter_section("ITS Verification Failures", report.its_failures))
         if report.release_failures:
@@ -348,6 +354,17 @@ class LayeredProductsImageHealthPipeline:
         if len(sections) == 1:
             sections.append(":white_check_mark: Healthy")
         return "\n\n".join(sections)
+
+    def _get_unvalidated_build_failures(self, report: LayeredProductHealthReport) -> dict[str, dict]:
+        """Retain selected Redis counters without claiming missing current image/build evidence."""
+        if not report.error:
+            return {}
+        known_images = {concern['image_name'] for concern in report.build_concerns}
+        return {
+            image_name: failure
+            for image_name, failure in report.build_failures.items()
+            if image_name not in known_images and (not self.image_list or image_name in self.image_list)
+        }
 
     def _get_failure_parts(self, report: LayeredProductHealthReport) -> list[str]:
         """
@@ -365,6 +382,9 @@ class LayeredProductsImageHealthPipeline:
         build_concerns = self._get_failure_concerns(report.build_concerns)
         if build_concerns:
             failure_parts.append(f"{len(build_concerns)} build failure(s)")
+        unvalidated_build_failures = self._get_unvalidated_build_failures(report)
+        if unvalidated_build_failures:
+            failure_parts.append(f'{len(unvalidated_build_failures)} Redis-tracked build failure(s) (unvalidated)')
         if report.its_failures:
             failure_parts.append(f"{len(report.its_failures)} ITS failure(s)")
         if report.release_failures:
@@ -398,7 +418,7 @@ class LayeredProductsImageHealthPipeline:
                 unfurl_media=False,
             )
             for report in variant_reports:
-                if not self._get_failure_parts(report):
+                if not report.error and not self._get_failure_parts(report):
                     continue
                 await self.slack_client.say(
                     self._build_group_message(report),
