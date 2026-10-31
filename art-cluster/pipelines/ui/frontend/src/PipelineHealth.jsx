@@ -40,15 +40,15 @@ function ChainRail({ chain, onExpand }) {
   })}</div>;
 }
 
-function ChainDetails({ chain }) {
+export function ChainDetails({ chain }) {
   return <div className="health-chain-detail">
     <div className="health-chain-meta"><span>Scan-rooted chain · {date(chain.root.started || chain.root.created)}{chain.recovered && ' · Linked retries'}</span><RunLink run={chain.root}>Open root scan</RunLink></div>
     {chain.issues.length > 0 && <Alert variant="warning" title={chain.issues.join('. ')} isInline className="notice" />}
     <div className="health-step-grid">{chain.stages.map((stage, index) => <section className="health-step" key={stage.pipeline} aria-label={stageNames[index]}>
       <div className="health-step-number">STAGE {index + 1}</div><h3>{stageNames[index]}</h3>
-      {stage.runs.length === 0 ? <span className="health-subline">{chain.failures.length ? 'Blocked by upstream failure' : 'Not started'}</span> : index === 3 ? <div className="health-targets">{stage.runs.map((run) => <div className="health-target" key={run.uid}><RunLink run={run}>OCP {run.target || 'default'}</RunLink><HealthStatus status={run.status} /></div>)}</div> : stage.runs.map((run) => <div className="health-step-run" key={run.uid}><HealthStatus status={run.status} /><RunLink run={run} /><span className="health-subline">{date(run.started || run.created)}{run.rebuiltFrom && ' · Retry'}</span></div>)}
+      {stage.runs.length === 0 ? <span className="health-subline">{chain.stages.slice(index + 1).some((later) => later.runs.length) ? 'Not triggered by this scan' : chain.failures.length ? 'Blocked by upstream failure' : 'Not started'}</span> : index === 3 ? <div className="health-targets">{stage.runs.map((run) => <div className="health-target" key={run.uid}><div><RunLink run={run}>OCP {run.target || 'default'}{run.rebuiltFrom && ' · Retry'}</RunLink>{(run.parent === chain.root.name || chain.root.triggered?.includes(run.name)) && <span className="health-subline">Triggered directly by scan</span>}</div><HealthStatus status={run.status} /></div>)}</div> : stage.runs.map((run) => <div className="health-step-run" key={run.uid}><HealthStatus status={run.status} /><RunLink run={run} /><span className="health-subline">{date(run.started || run.created)}{run.rebuiltFrom && ' · Retry'}{index === 2 && (run.parent === chain.root.name || chain.root.triggered?.includes(run.name)) && ' · Triggered directly by scan'}</span></div>)}
     </section>)}</div>
-    {chain.recovered && <details className="health-history"><summary>Recovery history · {chain.attempts.filter((run) => run.pipeline !== 'build-fbc').length} scan, image, and bundle attempts</summary><div>{chain.attempts.filter((run) => run.pipeline !== 'build-fbc').map((run) => <div className="health-attempt" key={run.uid}><HealthStatus status={run.status} /><RunLink run={run} /><span>{run.rebuiltFrom ? 'Retry' : 'Original attempt'} · {date(run.created)}</span></div>)}</div></details>}
+    {chain.recovered && <details className="health-history"><summary>Recovery history · {chain.attempts.length} scan, image, bundle, and FBC attempts</summary><div>{chain.attempts.map((run) => <div className="health-attempt" key={run.uid}><HealthStatus status={run.status} /><RunLink run={run} /><span>{run.rebuiltFrom ? 'Retry' : 'Original attempt'} · {date(run.created)}</span></div>)}</div></details>}
   </div>;
 }
 
