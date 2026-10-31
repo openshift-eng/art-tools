@@ -653,10 +653,11 @@ class TestFbcConsumers(unittest.IsolatedAsyncioTestCase):
         collect.assert_not_awaited()
         self.assertEqual(pipeline.scanned_versions, [])
 
-    async def test_layered_config_or_image_exception_preserves_fbc(self):
+    async def test_layered_config_or_image_exception_preserves_only_qualified_fbc(self):
         for stage in ('configuration', 'images'):
             with self.subTest(stage=stage):
                 pipeline = LayeredProductsImageHealthPipeline(self.runtime, 'product', '', '', 'stream', '')
+                pipeline.slack_client.say.reset_mock()
                 pipeline._get_build_concerns = AsyncMock(side_effect=RuntimeError('query'))
                 with (
                     patch(
@@ -682,7 +683,11 @@ class TestFbcConsumers(unittest.IsolatedAsyncioTestCase):
                     with self.assertRaises(RuntimeError):
                         await pipeline.run()
                 messages = [call.args[0] for call in pipeline.slack_client.say.await_args_list]
-                self.assertTrue(any('3 time(s)' in message for message in messages))
+                if stage == 'configuration':
+                    self.assertTrue(all('3 time(s)' not in message for message in messages))
+                    self.assertTrue(all('FBC tracking unavailable' in message for message in messages))
+                else:
+                    self.assertTrue(any('3 time(s)' in message for message in messages))
                 self.assertTrue(any('incomplete' in message for message in messages))
 
     async def test_fbc_only_and_read_error_reach_summary_and_threads(self):

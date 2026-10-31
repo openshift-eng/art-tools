@@ -33,6 +33,10 @@ eligibility remain unchanged. FBC evidence does not create Jira tickets.
 * The two existing report pipelines retain FBC data when unrelated image,
   BigQuery or configuration collection fails. They publish available evidence
   and an incomplete-report warning before propagating the collection failure.
+  Layered-product FBC evidence is first qualified by the resolved group variant.
+  If variant resolution fails, only unknown-scope evidence is retained and
+  tracking is unavailable, not healthy. Later failures retain the resolved
+  variant's findings plus unknown-scope evidence, without other variants.
   OCP groups that fail their freeze eligibility check are not FBC-scanned.
 
 ### Redis contract
