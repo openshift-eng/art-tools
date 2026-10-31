@@ -3,6 +3,8 @@
 import json
 from urllib.parse import urlsplit
 
+from .messages import status_message
+
 PREFIX = "art.openshift.io/component-build-"
 REPORT = "art.openshift.io/component-report"
 STATUSES = {"Pending", "Running", "Succeeded", "Failed", "Cancelled", "Unknown", "Skipped", "Reused", "DryRun"}
@@ -60,8 +62,8 @@ def _checks(value, terminal):
                 'blocking': check['blocking'],
                 'status': status,
                 'url': _url(check.get('url')),
-                'reason': str(
-                    check.get('reason')
+                'reason': (
+                    status_message(check.get('reason'))
                     or ('ART run ended before a final check result was recorded' if status == 'Unknown' else '')
                 ),
             }
@@ -120,7 +122,7 @@ def component_details(run):
                     "url": _url(build.get("url")),
                     "status": _status(build.get("status"), terminal),
                     "attempt": build.get("attempt") if type(build.get("attempt")) is int else None,
-                    "reason": str(build.get("reason") or ""),
+                    "reason": status_message(build.get("reason")),
                     "checks": checks,
                 }
             )
@@ -130,7 +132,7 @@ def component_details(run):
         result_status = _result_status(outcome, checks)
         if blocking_incomplete and result_status in {'Succeeded', 'Running'}:
             result_status = 'Unknown'
-        reason = str(entry.get("reason") or "")
+        reason = status_message(entry.get("reason"))
         if terminal and outcome == "Unknown":
             partial = True
             reason = reason or "ART run ended before a final build result was recorded"
@@ -151,7 +153,7 @@ def component_details(run):
     available = REPORT in annotations or bool(components) or any(k.startswith(PREFIX) for k in annotations)
     if REPORT in annotations and (not isinstance(marker, dict) or marker.get("version") != 1):
         partial = True
-    reason = str(marker.get("reason") or "") if isinstance(marker, dict) else ""
+    reason = status_message(marker.get("reason")) if isinstance(marker, dict) else ""
     if (
         terminal
         and available
