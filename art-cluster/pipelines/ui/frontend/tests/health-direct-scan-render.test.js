@@ -62,4 +62,16 @@ test('health shows direct scan branches and retains failed FBC attempts during r
   assert.match(html, /retry-fbc\?uid=uid-retry-fbc/);
   assert.match(html, /Running/);
   assert.match(html, /Failed/);
+
+  root.triggered = [directBundle.name, retryFbc.name];
+  for (const parent of [undefined, null, 'another-parent']) {
+    directBundle.parent = parent;
+    retryFbc.parent = parent;
+    const annotatedHtml = renderToStaticMarkup(createElement(ChainDetails, { chain }));
+    assert.equal((annotatedHtml.match(/Triggered directly by scan/g) || []).length, 2);
+  }
+
+  root.triggered = ['unrelated-run'];
+  const unrelatedHtml = renderToStaticMarkup(createElement(ChainDetails, { chain }));
+  assert.doesNotMatch(unrelatedHtml, /Triggered directly by scan/);
 });
