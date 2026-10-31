@@ -4,6 +4,14 @@
   "title": "Image Configuration",
   "type": "object",
   "properties": {
+    "jira": {
+      "type": "object",
+      "properties": {
+        "project": {"type": "string", "minLength": 1},
+        "component": {"type": "string", "minLength": 1}
+      },
+      "additionalProperties": false
+    },
     "additional_tags": {
       "type": "array",
       "description": "Floating tags under which the resulting image can be pulled from regigistry-proxy.engineering.redhat.com",
