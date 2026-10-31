@@ -16,7 +16,12 @@ from tenacity import retry, stop_after_attempt, wait_fixed
 
 from pyartcd import jenkins
 from pyartcd.cli import cli, click_coroutine, pass_runtime
-from pyartcd.pipelines.update_golang import extract_and_validate_golang_nvrs, is_latest_and_available, move_golang_bugs
+from pyartcd.pipelines.update_golang import (
+    extract_and_validate_golang_nvrs,
+    extract_major_minor,
+    is_latest_and_available,
+    move_golang_bugs,
+)
 from pyartcd.runtime import Runtime
 
 try:
@@ -221,6 +226,7 @@ class RebuildGolangRPMsPipeline:
         if len(failed_rpms) < len(list_of_rpms):
             await move_golang_bugs(
                 ocp_version=self.ocp_version,
+                golang_major_minor=extract_major_minor(go_version, "golang version"),
                 cves=self.cves,
                 nvrs=self.go_nvrs if self.cves else None,
                 rpms_only=True,
