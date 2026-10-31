@@ -10,7 +10,7 @@ from datetime import date, datetime, timedelta, timezone
 from functools import lru_cache
 from json import JSONDecodeError
 from pathlib import Path
-from typing import Any, Callable, Dict, Iterable, List, Optional, OrderedDict, Tuple, Union
+from typing import Any, Callable, Dict, Iterable, List, Optional, Tuple, Union
 
 import aiohttp
 import requests
@@ -239,12 +239,15 @@ def merge_objects(a, b):
     """
     if not isinstance(a, dict) or not isinstance(b, dict):
         return a
-    c: OrderedDict = b.copy()
+    c = b.copy()
     for k, v in a.items():
         c[k] = merge_objects(v, b.get(k))
         if k not in b:
             # move new entry to the beginning
-            c.move_to_end(k, last=False)
+            if hasattr(c, 'move_to_end'):
+                c.move_to_end(k, last=False)
+            else:
+                c = {k: c[k], **c}
     return c
 
 

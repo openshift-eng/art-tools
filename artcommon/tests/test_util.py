@@ -1,6 +1,9 @@
 import asyncio
+import copy
+import io
 import json
 import unittest
+from collections import OrderedDict
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import yaml
@@ -265,6 +268,74 @@ class TestUtil(unittest.TestCase):
         self.assertEqual(8, util.isolate_rhel_major_from_distgit_branch('rhaos-4.16-rhel-8'))
         self.assertEqual(10, util.isolate_rhel_major_from_distgit_branch('rhaos-4.16-rhel-10'))
         self.assertEqual(None, util.isolate_rhel_major_from_distgit_branch('invalid'))
+
+    def test_merge_objects_into_empty_mapping(self):
+        assembly_definition = {'releases': {'4.21.1': {'assembly': {'type': 'standard'}}}}
+        self.assertEqual(util.merge_objects(assembly_definition, {}), assembly_definition)
+
+    def test_merge_objects_plain_dict_order_and_recursion(self):
+        dominant = {
+            'first': 1,
+            'second': 2,
+            'shared': {'first': 3, 'second': 4, 'existing': 5},
+            'existing': 6,
+        }
+        base = {'shared': {'existing': 0, 'retained': 7}, 'existing': 0}
+        original_dominant, original_base = copy.deepcopy(dominant), copy.deepcopy(base)
+        merged = util.merge_objects(dominant, base)
+        self.assertIs(type(merged), dict)
+        self.assertEqual(list(merged), ['second', 'first', 'shared', 'existing'])
+        self.assertEqual(list(merged['shared']), ['second', 'first', 'existing', 'retained'])
+        self.assertEqual(merged['shared'], {'first': 3, 'second': 4, 'existing': 5, 'retained': 7})
+        self.assertEqual(merged['existing'], 6)
+        self.assertEqual(dominant, original_dominant)
+        self.assertEqual(base, original_base)
+        output = io.StringIO()
+        util.new_roundtrip_yaml_handler().dump(merged, output)
+        self.assertEqual(yaml.safe_load(output.getvalue()), merged)
+        self.assertNotIn('!!omap', output.getvalue())
+
+    def test_merge_objects_preserves_ordered_dict(self):
+        base = OrderedDict(existing=0, retained=1)
+        dominant = OrderedDict(first=2, second=3, existing=4)
+        merged = util.merge_objects(dominant, base)
+        self.assertIs(type(merged), OrderedDict)
+        self.assertEqual(list(merged.items()), [('second', 3), ('first', 2), ('existing', 4), ('retained', 1)])
+        self.assertEqual(list(base.items()), [('existing', 0), ('retained', 1)])
+        self.assertEqual(list(dominant.items()), [('first', 2), ('second', 3), ('existing', 4)])
+
+    def test_merge_objects_preserves_roundtrip_yaml(self):
+        handler = util.new_roundtrip_yaml_handler()
+        base = handler.load(
+            '# release configuration\nreleases:\n  # existing assembly\n  "4.21.0":\n'
+            '    assembly:\n      type: "standard"  # retain type\n      note: \'keep\'\n'
+        )
+        dominant = {'releases': {'4.21.1': {'assembly': {'type': 'standard'}}, '4.21.0': {'assembly': {'new': 1}}}}
+        original_dominant = copy.deepcopy(dominant)
+        original_output = io.StringIO()
+        handler.dump(base, original_output)
+        merged = util.merge_objects(dominant, base)
+        self.assertIs(type(merged), type(base))
+        self.assertIs(type(merged['releases']), type(base['releases']))
+        self.assertIs(type(merged['releases']['4.21.0']['assembly']), type(base['releases']['4.21.0']['assembly']))
+        self.assertEqual(list(merged['releases']), ['4.21.1', '4.21.0'])
+        output = io.StringIO()
+        handler.dump(merged, output)
+        for preserved in (
+            '# release configuration',
+            '# existing assembly',
+            '# retain type',
+            '"4.21.0"',
+            '"standard"',
+            "'keep'",
+        ):
+            self.assertIn(preserved, output.getvalue())
+        self.assertNotIn('!!omap', output.getvalue())
+        self.assertEqual(yaml.safe_load(output.getvalue()), merged)
+        unchanged_output = io.StringIO()
+        handler.dump(base, unchanged_output)
+        self.assertEqual(unchanged_output.getvalue(), original_output.getvalue())
+        self.assertEqual(dominant, original_dominant)
 
     def test_merge_objects(self):
         yaml_data = """
