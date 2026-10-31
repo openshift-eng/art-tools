@@ -108,6 +108,41 @@ class TestImageSchema(unittest.TestCase):
         }
         self.assertIsNone(image_schema.validate('filename', valid_data))
 
+    def test_validate_with_valid_content_source_git_url_pull(self):
+        """url_pull is used for fork-based test builds and may be a plain (e.g. HTTPS) URL."""
+        valid_data = {
+            'content': {
+                'source': {
+                    'git': {
+                        'branch': {
+                            'target': 'test',
+                        },
+                        'url': 'git@github.com:openshift/csi-node-driver-registrar.git',
+                        'url_pull': 'https://github.com/some-fork/csi-node-driver-registrar',
+                    },
+                },
+            },
+            'name': '1234',
+            'from': {},
+            'for_payload': True,
+            'delivery': {'delivery_repo_names': ['foo', 'bar']},
+        }
+        self.assertIsNone(image_schema.validate('filename', valid_data))
+
+    def test_validate_with_invalid_content_source_git_url_pull_type(self):
+        invalid_data = {
+            'content': {
+                'source': {
+                    'git': {
+                        'url_pull': 123,
+                    },
+                },
+            },
+            'name': '1234',
+            'from': {},
+        }
+        self.assertIn("123 is not of type 'string'", image_schema.validate('filename', invalid_data))
+
     def test_validate_with_valid_subscription_label(self):
         data = {
             'from': {},

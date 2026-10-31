@@ -174,6 +174,17 @@
       "$ref": "#/properties/release_jira"
     },
     "release_jira-": {},
+    "use_source_fallback_branch": {
+      "type": "string",
+      "enum": ["yes", "always", "never"]
+    },
+    "use_source_fallback_branch!": {
+      "$ref": "#/properties/use_source_fallback_branch"
+    },
+    "use_source_fallback_branch?": {
+      "$ref": "#/properties/use_source_fallback_branch"
+    },
+    "use_source_fallback_branch-": {},
     "upgrades": {
       "type": "string"
     },
