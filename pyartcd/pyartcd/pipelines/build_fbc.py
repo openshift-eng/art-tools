@@ -14,7 +14,7 @@ from artcommonlib.variants import BuildVariant, get_build_variant_for_product
 from pyartcd import constants, jenkins, locks
 from pyartcd.cli import cli, click_coroutine, pass_runtime
 from pyartcd.fbc_build import generate_fbc_lock_name
-from pyartcd.fbc_health import counter_prefix, invocation_scope, update_counters
+from pyartcd.fbc_health import account_run, prepare_evidence
 from pyartcd.locks import Lock
 from pyartcd.record import parse_record_log
 from pyartcd.runtime import Runtime
@@ -92,39 +92,36 @@ class BuildFbcPipeline:
         return True
 
     async def run(self):
-        self._fbc_records = None
+        """Account exactly once, retaining the build result if tracking is unavailable."""
         self._fbc_target = self.major_minor or '.'.join(self.version.split('.')[:2])
-        scope = invocation_scope(
-            only=self.only,
-            exclude=self.exclude,
-            operator_nvrs=self.operator_nvrs,
-            data_path=self.data_path,
-            data_gitref=self.data_gitref,
-            fbc_repo=self.fbc_repo,
-            skip_tasks=self.skip_tasks,
-            skip_checks=self.skip_checks,
-            reset_to_prod=self.reset_to_prod,
-            plr_template=self.plr_template,
-            insert_missing_entry=self.insert_missing_entry,
-        )
+        self._fbc_variant = 'ocp' if (self.group or '').startswith('openshift-') or not self.group else 'unknown'
+        record_path = Path(self.runtime.doozer_working, 'record.log')
+        self._fbc_fresh = prepare_evidence(record_path, self._logger)
         try:
             completed = await self._run()
         except Exception:
-            await self._update_fbc_counters(scope, failed=True)
+            await self._update_fbc_counters(failed=True)
             raise
         if completed:
-            await self._update_fbc_counters(scope, failed=False)
+            await self._update_fbc_counters(failed=False)
 
-    async def _update_fbc_counters(self, scope: str, failed: bool):
+    async def _update_fbc_counters(self, failed: bool):
         try:
-            prefix = counter_prefix(
-                self.group or f'openshift-{self.version}', self.assembly, self.version, self._fbc_target
-            )
-            await update_counters(
-                prefix, scope, self._fbc_records, failed, self.runtime.dry_run, self._logger, os.getenv('BUILD_URL')
+            await account_run(
+                Path(self.runtime.doozer_working, 'record.log'),
+                self.group or f'openshift-{self.version}',
+                self._fbc_variant,
+                self.assembly,
+                self._fbc_target,
+                self.version,
+                self.operator_nvrs or '',
+                failed,
+                self.runtime.dry_run,
+                self._logger,
+                fresh=self._fbc_fresh,
             )
         except Exception:
-            self._logger.exception('Unable to track FBC outcomes')
+            self._logger.warning('Unable to track FBC outcomes')
 
     async def _run(self):
         await get_reporter().note("Waiting for FBC selection")
@@ -137,6 +134,7 @@ class BuildFbcPipeline:
             self._fbc_target = f"{group_vars['MAJOR']}.{group_vars['MINOR']}"
         product = group_config.get('product') or 'ocp'
         build_variant = get_build_variant_for_product(product)
+        self._fbc_variant = build_variant.value
 
         # Early check: verify the production operator index image exists for the target OCP version.
         # For new OCP versions (e.g. 5.0), neither the index image nor the base images are published yet,
@@ -254,7 +252,6 @@ class BuildFbcPipeline:
             doozer_opts.append('--insert-missing-entry')
         if self.operator_nvrs:
             doozer_opts.extend([nvr for nvr in self.operator_nvrs.split(',')])
-        Path(self.runtime.doozer_working, 'record.log').unlink(missing_ok=True)
         successful_build_records = []
         try:
             await self._run_doozer(doozer_opts, only=self.only, exclude=self.exclude, build_variant=build_variant)
@@ -262,15 +259,6 @@ class BuildFbcPipeline:
             try:
                 successful_rebase_records, failed_rebase_records = await self._parse_record_log('rebase_fbc_konflux')
                 successful_build_records, failed_build_records = await self._parse_record_log('build_fbc_konflux')
-                skipped_records, _ = await self._parse_record_log('skip_fbc_konflux')
-                _, failed_fbc_records = await self._parse_record_log('failed_fbc_konflux')
-                self._fbc_records = {
-                    'rebase_failure': failed_rebase_records,
-                    'build_success': successful_build_records,
-                    'build_failure': failed_build_records,
-                    'skipped': skipped_records,
-                    'fbc_failure': failed_fbc_records,
-                }
                 self._logger.info(
                     'Successfully rebased: %s', ', '.join(str(entry['name']) for entry in successful_rebase_records)
                 )
@@ -286,7 +274,7 @@ class BuildFbcPipeline:
                         'Failed to build: %s', ', '.join(str(entry['name']) for entry in failed_build_records)
                     )
             except Exception:
-                self._logger.exception('Unable to read FBC outcomes from record.log')
+                self._logger.warning('Unable to read FBC outcomes from record.log')
 
         return successful_build_records
 

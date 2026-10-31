@@ -9,6 +9,11 @@ from pyartcd.fbc_build import build_fbc_catalogs, generate_fbc_lock_name
 
 
 class TestFbcBuild(unittest.TestCase):
+    def setUp(self):
+        tracking = patch('pyartcd.fbc_build.account_run', new_callable=AsyncMock)
+        self.account_run = tracking.start()
+        self.addCleanup(tracking.stop)
+
     def test_generate_fbc_lock_name(self):
         self.assertEqual(generate_fbc_lock_name("openshift-4.20", "4.20"), "lock:fbc-build:openshift-4.20")
         self.assertEqual(generate_fbc_lock_name("mtc-1.8", "4.20"), "lock:fbc-build:mtc-1.8-ocp-4.20")

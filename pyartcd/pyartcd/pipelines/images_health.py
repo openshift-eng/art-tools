@@ -55,20 +55,33 @@ class ImagesHealthPipeline:
         self.ec_failures = {}  # version -> {image: {failure_count, jenkins_url, nvr, pipeline_url, ...}}
         self.release_failures = {}  # version -> {image: {failure_count, jenkins_url, nvr, pipeline_url, ...}}
         self.fbc_health: dict[str, FbcHealthReport] = {}
+        self.collection_errors: dict[str, bool] = {}
         self.jira_tickets: dict[tuple[str, str], str] = {}  # (image_name, group) -> ticket key
         self._valid_images_cache: dict[str, set[str]] = {}
 
     async def run(self):
-        await asyncio.gather(*(self.get_report(v) for v in self.versions))
-        await asyncio.gather(
-            *(self.get_rebase_failures(v) for v in self.versions),
-            *(self.get_ec_failures(v) for v in self.versions),
-            *(self.get_release_failures(v) for v in self.versions),
-            *(self.get_fbc_health(v) for v in self.versions),
-        )
+        """Publish independent evidence before propagating incomplete image collection."""
+        results = await asyncio.gather(*(self.get_report(v) for v in self.versions), return_exceptions=True)
+        for version, result in zip(self.versions, results):
+            if isinstance(result, Exception):
+                self.collection_errors[version] = True
+        tasks = [
+            (version, method)
+            for version in self.scanned_versions
+            for method in (
+                self.get_rebase_failures,
+                self.get_ec_failures,
+                self.get_release_failures,
+                self.get_fbc_health,
+            )
+        ]
+        results = await asyncio.gather(*(method(version) for version, method in tasks), return_exceptions=True)
+        for (version, _), result in zip(tasks, results):
+            if isinstance(result, Exception):
+                self.collection_errors[version] = True
         self.runtime.logger.info('Found %s concerns', len(self.report))
 
-        if self._sync_jira and self.assembly == "stream":
+        if self._sync_jira and self.assembly == "stream" and not self.collection_errors:
             try:
                 self.sync_jira()
             except Exception:
@@ -91,9 +104,11 @@ class ImagesHealthPipeline:
                     multi_build_failures.get(version, []),
                     multi_rebase_failures.get(version, {}),
                 )
+        if self.collection_errors:
+            raise RuntimeError('Image health collection incomplete; available FBC evidence was retained')
 
     async def get_fbc_health(self, version: str):
-        self.fbc_health[version] = await collect_fbc_health(f'openshift-{version}', self.runtime.logger)
+        self.fbc_health[version] = await collect_fbc_health(f'openshift-{version}', self.runtime.logger, variant='ocp')
 
     async def get_report(self, version: str) -> Optional[list]:
         doozer_working = f'{self.doozer_working}-{version}'
@@ -584,11 +599,14 @@ class ImagesHealthPipeline:
             and not ec_failures
             and not release_failures
             and not fbc_health.summary()
+            and not self.collection_errors.get(version)
         ):
-            await self.slack_client.say(f':white_check_mark: All images are healthy for {version_tag}')
+            await self.slack_client.say(f':white_check_mark: No tracked failures for {version_tag}')
             return
 
         summary_parts = []
+        if self.collection_errors.get(version):
+            summary_parts.append('Image collection incomplete; available FBC evidence retained')
         if fbc_health.summary():
             summary_parts.append(fbc_health.summary())
         if concerns:
@@ -610,6 +628,8 @@ class ImagesHealthPipeline:
         )
 
         report = fbc_health.details() + '\n' if fbc_health.summary() else ''
+        if self.collection_errors.get(version):
+            report += ':warning: Image collection incomplete; missing results do not establish recovery.\n'
 
         if concerns:
             report += f'*Build Failures ({len(concerns)}):*\n'
@@ -674,10 +694,11 @@ class ImagesHealthPipeline:
             or any(self.release_failures.values())
             or any(self.rebase_failures.values())
             or any(report.summary() for report in self.fbc_health.values())
+            or bool(self.collection_errors)
         )
 
         if not has_failures:
-            await self.slack_client.say(':white_check_mark: All images are healthy for all monitored releases')
+            await self.slack_client.say(':white_check_mark: No tracked failures for monitored releases')
             return
 
         # Collect all groups that have actual failures (skip versions with empty dicts)
@@ -687,6 +708,7 @@ class ImagesHealthPipeline:
         all_groups.update(f'openshift-{v}' for v, f in self.release_failures.items() if f)
         all_groups.update(f'openshift-{v}' for v, f in self.rebase_failures.items() if f)
         all_groups.update(f'openshift-{v}' for v, report in self.fbc_health.items() if report.summary())
+        all_groups.update(f'openshift-{version}' for version in self.collection_errors)
 
         # Send the main alert message with just the dashboard link
         dashboard_url = ART_BUILD_FAILURES_URL
@@ -716,6 +738,8 @@ class ImagesHealthPipeline:
         for group in sorted(all_groups, key=sort_key):
             version = group.replace('openshift-', '')
             group_summary = []
+            if self.collection_errors.get(version):
+                group_summary.append('Image collection incomplete; missing results do not establish recovery')
 
             # Build failures for this group
             build_fails = version_build_failures.get(group, [])
