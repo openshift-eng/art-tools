@@ -110,8 +110,23 @@ class GolangBuilderShipmentHandler:
         rebase_repo_url: str,
         rebase_commitish: str,
         env: Optional[str] = None,
+        distgit_key: Optional[str] = None,
     ) -> Optional[str]:
-        """Create shipment MR for one golang builder build (non-fatal inline path)."""
+        """
+        Create shipment MR for one golang builder build (inline path).
+
+        Failures while creating the MR are logged and return ``None``. A build that cannot be
+        mapped to its floating-tag component raises, so it never ships under a wrong tag.
+
+        :param nvr: Golang builder image NVR
+        :param container_image: Digest pullspec of the built image
+        :param rebase_repo_url: Rebase git URL for the snapshot source
+        :param rebase_commitish: Rebase commit for the snapshot source
+        :param env: Shipment environment key in GOLANG_BUILDER_SHIPMENT_RELEASE_PLAN_MAP (default prod)
+        :param distgit_key: Image config key that produced the build, checked against the floating tag
+        :raises GolangBuilderComponentNameError: when the build cannot be mapped to its floating-tag component
+        """
+        konflux_golang_builder_component_name(nvr, distgit_key=distgit_key)
         try:
             golang_group = derive_golang_group([nvr])
             env = env or _DEFAULT_ENV
