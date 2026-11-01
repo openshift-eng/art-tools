@@ -40,6 +40,18 @@ class TestKueueProductPolicies(unittest.TestCase):
 class TestKonfluxBuildStagePolicies(unittest.IsolatedAsyncioTestCase):
     async def test_cli_passes_one_resolved_policy_to_builder(self):
         for product, assembly, phase in (
+            ("rhacm2", "stream", "release"),
+            ("rhacm2", "stream", "pre-release"),
+            ("rhacm2", "test", "release"),
+            ("rhacm2", "test", "pre-release"),
+            ("rhacm5", "stream", "release"),
+            ("rhacm5", "stream", "pre-release"),
+            ("rhacm5", "test", "release"),
+            ("rhacm5", "test", "pre-release"),
+            ("multicluster-engine", "stream", "release"),
+            ("multicluster-engine", "stream", "pre-release"),
+            ("multicluster-engine", "test", "release"),
+            ("multicluster-engine", "test", "pre-release"),
             ("ocp", "stream", "release"),
             ("ocp", "stream", "pre-release"),
             ("ocp", "test", "release"),

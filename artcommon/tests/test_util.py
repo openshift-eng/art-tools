@@ -361,6 +361,18 @@ alternative_upstream:
             util.resolve_konflux_base_image_release_targets("openshift-logging"),
         )
 
+    def test_acm_delivery_alias_resolves_existing_konflux_configuration(self):
+        with patch.dict("os.environ", {"ACM_KONFLUX_SA_KUBECONFIG": "/test/acm-kubeconfig"}):
+            for product_name in ("rhacm2", "rhacm5"):
+                with self.subTest(product_name=product_name):
+                    self.assertEqual(util.resolve_konflux_namespace_by_product(product_name), "art-acm-tenant")
+                    self.assertEqual(util.resolve_konflux_kubeconfig_by_product(product_name), "/test/acm-kubeconfig")
+                    self.assertEqual(
+                        util.resolve_konflux_base_image_release_targets(product_name),
+                        ("acm-images-base-silent", "acm-images-base"),
+                    )
+        self.assertEqual(util.resolve_konflux_namespace_by_product("multicluster-engine"), "art-acm-tenant")
+
     def test_resolve_konflux_base_image_release_targets_unknown_defaults_to_ocp(self):
         self.assertEqual(
             util.resolve_konflux_base_image_release_targets("unknown-product"),
@@ -853,6 +865,13 @@ class TestExtractRelatedImagesFromFBC(unittest.TestCase):
         self.assertEqual(get_registry_namespace_pattern("ocp"), r"openshift\d+")
         self.assertEqual(get_registry_namespace_pattern("kueue"), "kueue")
         self.assertEqual(get_registry_namespace_pattern("oadp"), "oadp")
+        for product_name, expected_pattern in (
+            ("rhacm2", "rhacm2"),
+            ("rhacm5", "rhacm5"),
+            ("multicluster-engine", r"multicluster\-engine"),
+        ):
+            with self.subTest(product_name=product_name):
+                self.assertEqual(get_registry_namespace_pattern(product_name), expected_pattern)
 
     @patch('artcommonlib.util.cmd_gather_async', new_callable=AsyncMock)
     @patch('builtins.open', new_callable=MagicMock)
@@ -1871,6 +1890,7 @@ class TestResolveKonfluxFbcStageReleasePlan(unittest.TestCase):
             ("rhacm2", 2, 16): "acm-advisory-stage-auto-2-16",
             ("rhacm2", 2, 17): "acm-advisory-stage-auto-2-17",
             ("rhacm2", 5, 0): "acm-advisory-stage-auto-5-0",
+            ("rhacm5", 5, 0): "acm-advisory-stage-auto-5-0",
             ("openshift-opentelemetry-operator", 0, 158): "rhosdt-advisory-stage-auto-0-158",
             ("zero-trust-workload-identity-manager", 1, 0): "zt-advisory-stage-auto-1-0",
             ("zero-trust-workload-identity-manager", 1, 1): "zt-advisory-stage-auto-1-1",
