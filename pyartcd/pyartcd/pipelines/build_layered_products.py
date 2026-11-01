@@ -390,7 +390,10 @@ class BuildLayeredProductsPipeline:
 
         rebase_counter_context.failed_images = failed_images
         rebase_counter_context.skipped_due_to_parent = skipped_due_to_parent
-        await update_rebase_fail_counters(context=rebase_counter_context)
+        if not self.runtime.dry_run:
+            await update_rebase_fail_counters(context=rebase_counter_context)
+        else:
+            self._logger.warning('[DRY RUN] Would update rebase failure counters')
         return excluded
 
     def _update_build_description(self):
