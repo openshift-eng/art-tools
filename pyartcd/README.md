@@ -37,6 +37,11 @@ eligibility remain unchanged. FBC evidence does not create Jira tickets.
   If variant resolution fails, only unknown-scope evidence is retained and
   tracking is unavailable, not healthy. Later failures retain the resolved
   variant's findings plus unknown-scope evidence, without other variants.
+  Incomplete group/version notifications omit execution metadata/log links and
+  automatic Slack job attachments, including optional extra notifications.
+  Rendering helpers default to the existing complete-report link policy; their
+  `include_execution_links=False` option retains counts and identifiers without
+  execution links. Controlled dashboard/history links may remain.
   OCP groups that fail their freeze eligibility check are not FBC-scanned.
 
 ### Redis contract
@@ -52,9 +57,10 @@ count:fbc-failure:konflux:<group>:<variant>:<assembly>:<ocp-target>:tracking:lat
 Hashes contain `kind`, `last_failure_at`, `build_version`, requested
 `operator_nvrs` and available individual artifact NVRs. Failure hashes contain
 `failure_count`; tracking-unavailable hashes do not claim a failure count.
-The accounting API supports optional diagnostic `jenkins_url` metadata, but
-general report collection never reads URLs or exact artifacts. General reports
-show only scope, identity, last build version and counts.
+FBC accounting does not collect or persist execution URLs. General report
+collection never reads legacy URL fields or exact artifacts; it shows only scope,
+identity, last build version and counts. This does not erase historical fields
+already stored; no migration or live deletion is performed.
 
 An FBC-local Redis transaction increments the count, updates metadata and sets a
 **30-day inactivity TTL together**. Only another failure of the same entity

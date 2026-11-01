@@ -99,7 +99,6 @@ class TestFbcState(unittest.IsolatedAsyncioTestCase):
             failed,
             dry_run,
             self.logger,
-            url='https://execution.invalid/private?token=placeholder',
         )
 
     async def test_versions_nvrs_and_selections_do_not_strand_state(self):
@@ -111,6 +110,33 @@ class TestFbcState(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(self.values), 1)
         await self.update(self.evidence(operator='succeeded'), '52', 'op-52-1')
         self.assertEqual(self.values, {})
+
+    async def test_accounting_does_not_persist_environment_execution_url(self):
+        with (
+            patch.dict('os.environ', {'BUILD_URL': 'https://dummy:password@execution.invalid/?token=placeholder'}),
+            patch('pyartcd.fbc_health.read_evidence', return_value=self.evidence(operator='failed')),
+        ):
+            await fbc_health.account_run(
+                Path('/unused/record.log'),
+                'example-group',
+                'oadp',
+                'stream',
+                '4.18',
+                '2',
+                'operator-2-1',
+                True,
+                False,
+                self.logger,
+            )
+        self.assertTrue(self.values)
+        for metadata in self.values.values():
+            self.assertNotIn('jenkins_url', metadata)
+            self.assertNotIn('execution.invalid', repr(metadata))
+            self.assertEqual(metadata['build_version'], '2')
+            self.assertEqual(metadata['operator_nvrs'], 'operator-2-1')
+            self.assertIn('last_failure_at', metadata)
+            self.assertEqual(metadata['failure_count'], '1')
+        self.assertTrue(all(expiry == fbc_health.RETENTION_SECONDS for expiry in self.expiry.values()))
 
     async def test_partial_success_and_scope_isolation(self):
         scopes = [self.prefix] + [

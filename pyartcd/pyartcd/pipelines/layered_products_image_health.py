@@ -356,7 +356,10 @@ class LayeredProductsImageHealthPipeline:
         build_concerns = self._get_failure_concerns(report.build_concerns)
         if build_concerns:
             lines = [f"*Build Failures ({len(build_concerns)}):*"]
-            lines.extend(self._format_build_concern(concern, report.group) for concern in build_concerns)
+            lines.extend(
+                self._format_build_concern(concern, report.group, include_execution_links=not report.error)
+                for concern in build_concerns
+            )
             sections.append("\n".join(lines))
         unvalidated_build_failures = self._get_unvalidated_build_failures(report)
         if unvalidated_build_failures:
@@ -368,11 +371,23 @@ class LayeredProductsImageHealthPipeline:
             )
             sections.append('\n'.join(lines))
         if report.its_failures:
-            sections.append(self._format_counter_section("ITS Verification Failures", report.its_failures))
+            sections.append(
+                self._format_counter_section(
+                    "ITS Verification Failures", report.its_failures, include_execution_links=not report.error
+                )
+            )
         if report.release_failures:
-            sections.append(self._format_counter_section("Release to Authz Failures", report.release_failures))
+            sections.append(
+                self._format_counter_section(
+                    "Release to Authz Failures", report.release_failures, include_execution_links=not report.error
+                )
+            )
         if report.rebase_failures:
-            sections.append(self._format_counter_section("Rebase Failures", report.rebase_failures))
+            sections.append(
+                self._format_counter_section(
+                    "Rebase Failures", report.rebase_failures, include_execution_links=not report.error
+                )
+            )
         if len(sections) == 1:
             sections.append(":white_check_mark: Healthy")
         return "\n\n".join(sections)
@@ -445,6 +460,7 @@ class LayeredProductsImageHealthPipeline:
                 await self.slack_client.say(
                     self._build_group_message(report),
                     thread_ts=response["ts"],
+                    link_build_url=not report.error,
                     unfurl_links=False,
                     unfurl_media=False,
                 )
@@ -462,13 +478,14 @@ class LayeredProductsImageHealthPipeline:
         """
         return [concern for concern in concerns if concern.get("code") != ConcernCode.LATEST_BUILD_SUCCEEDED.value]
 
-    def _format_build_concern(self, concern: dict, group: str) -> str:
+    def _format_build_concern(self, concern: dict, group: str, include_execution_links: bool = True) -> str:
         """
         Format one build concern with history and optional log links.
 
         Args:
             concern: Doozer health concern.
             group: Layered-product group associated with the concern.
+            include_execution_links: Include metadata-derived logs only for complete reports.
 
         Returns:
             Slack-formatted build concern line.
@@ -479,7 +496,7 @@ class LayeredProductsImageHealthPipeline:
             return f"- `{image_name}`: No builds attempted during last {DELTA_DAYS} days"
 
         line = f"- `{image_name}`: {self._url_text(self._build_history_url(group, image_name), 'Build history')}"
-        logs_url = self._build_logs_url(concern)
+        logs_url = self._build_logs_url(concern) if include_execution_links else ''
         if logs_url:
             line += f" | {self._url_text(logs_url, 'Latest failure logs')}"
         if code == ConcernCode.FAILING_AT_LEAST_FOR.value:
@@ -489,13 +506,14 @@ class LayeredProductsImageHealthPipeline:
         return line
 
     @staticmethod
-    def _format_counter_section(title: str, failures: dict[str, dict]) -> str:
+    def _format_counter_section(title: str, failures: dict[str, dict], include_execution_links: bool = True) -> str:
         """
         Format a Redis failure-counter section.
 
         Args:
             title: Section title.
             failures: Image failure data keyed by image name.
+            include_execution_links: Retain legacy links unless collection is incomplete.
 
         Returns:
             Slack-formatted counter section.
@@ -505,7 +523,7 @@ class LayeredProductsImageHealthPipeline:
             count = failure.get("failure_count", 0)
             suffix = "" if count == 1 else "s"
             line = f"- `{image_name}`: Failed {count} time{suffix}"
-            url = failure.get("pipeline_url") or failure.get("jenkins_url")
+            url = (failure.get("pipeline_url") or failure.get("jenkins_url")) if include_execution_links else None
             if url:
                 line += f" ({LayeredProductsImageHealthPipeline._url_text(url, 'Last failure')})"
             lines.append(line)

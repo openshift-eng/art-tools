@@ -1,7 +1,6 @@
 """Bounded FBC outcome accounting shared by CLI and direct catalog producers."""
 
 import logging
-import os
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
@@ -107,7 +106,6 @@ async def update_counters(
     failed: bool,
     dry_run: bool,
     logger: logging.Logger,
-    url: str | None = None,
 ) -> None:
     """Track failures best-effort without altering the producer's original result."""
     if dry_run:
@@ -117,8 +115,6 @@ async def update_counters(
         'operator_nvrs': artifacts,
         'last_failure_at': datetime.now(timezone.utc).isoformat(),
     }
-    if url:
-        metadata['jenkins_url'] = url
     operations = []
     attributable = False
     operator_failures = False
@@ -188,7 +184,6 @@ async def account_run(
             failed,
             False,
             logger,
-            url=os.getenv('BUILD_URL'),
         )
         unresolved_scopes = set()
         if variant != 'unknown':
