@@ -37,6 +37,13 @@ class TestReleasesSchema(unittest.TestCase):
         self.assertIn("'sometimes' is not one of", error)
 
     def test_validate_with_valid_url_pull_in_assembly_member_image(self):
+        """
+        url_pull must remain accepted here: releases_schema.validate() (used for releases.yml's
+        assembly-scoped overrides) does not go through image_schema.validate()'s Python-level
+        rejection of url_pull, which is deliberately scoped to images/*.yml only. See
+        test_image_schema.py's test_validate_rejects_content_source_git_url_pull* tests for the
+        restriction this proves is not regressed here.
+        """
         valid_data = {
             "releases": {
                 "art2026103002": {

@@ -108,9 +108,34 @@ class TestImageSchema(unittest.TestCase):
         }
         self.assertIsNone(image_schema.validate('filename', valid_data))
 
-    def test_validate_with_valid_content_source_git_url_pull(self):
-        """url_pull is used for fork-based test builds and may be a plain (e.g. HTTPS) URL."""
+    def test_validate_with_valid_content_source_git_no_url_pull(self):
+        """A plain images/*.yml image that does not set url_pull should validate cleanly."""
         valid_data = {
+            'content': {
+                'source': {
+                    'git': {
+                        'branch': {
+                            'target': 'test',
+                        },
+                        'url': 'git@github.com:openshift/csi-node-driver-registrar.git',
+                    },
+                },
+            },
+            'name': '1234',
+            'from': {},
+            'for_payload': True,
+            'delivery': {'delivery_repo_names': ['foo', 'bar']},
+        }
+        self.assertIsNone(image_schema.validate('filename', valid_data))
+
+    def test_validate_rejects_content_source_git_url_pull(self):
+        """
+        url_pull must never be set permanently in images/*.yml: it would silently and permanently
+        redirect this component's real upstream source for every future stream build. It is only
+        a legitimate one-off override scoped to a specific isolated assembly in releases.yml (see
+        test_releases_schema.py for the still-accepted releases.yml override path).
+        """
+        invalid_data = {
             'content': {
                 'source': {
                     'git': {
@@ -127,7 +152,28 @@ class TestImageSchema(unittest.TestCase):
             'for_payload': True,
             'delivery': {'delivery_repo_names': ['foo', 'bar']},
         }
-        self.assertIsNone(image_schema.validate('filename', valid_data))
+        error = image_schema.validate('filename', invalid_data)
+        self.assertIsNotNone(error)
+        self.assertIn("must not be set permanently in images/*.yml", error)
+
+    def test_validate_rejects_content_source_git_url_pull_merge_variants(self):
+        for url_pull_key in ("url_pull", "url_pull!", "url_pull?", "url_pull-"):
+            with self.subTest(url_pull_key=url_pull_key):
+                data = {
+                    'content': {
+                        'source': {
+                            'git': {
+                                url_pull_key: 'https://github.com/some-fork/csi-node-driver-registrar',
+                            },
+                        },
+                    },
+                    'name': '1234',
+                    'from': {},
+                }
+                error = image_schema.validate('filename', data)
+                self.assertIsNotNone(error)
+                self.assertIn("must not be set permanently in images/*.yml", error)
+                self.assertIn(url_pull_key, error)
 
     def test_validate_with_invalid_content_source_git_url_pull_type(self):
         invalid_data = {
