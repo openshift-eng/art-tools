@@ -43,15 +43,21 @@ class OperatorSDKPipeline:
                 raise ValueError("Advisory status not in REL_PREP yet ...")
             if advisory.errata_state == "SHIPPED_LIVE":
                 self._logger.info("Advisory status already in SHIPPED_LIVE, update subtask 9 ...")
-                self._jira_client.complete_subtask(
-                    self.parent_jira_key,
-                    "pushes advisory content to production CDN",
-                    "Advisory status already in SHIPPED_LIVE",
-                )
+                if not self.runtime.dry_run:
+                    self._jira_client.complete_subtask(
+                        self.parent_jira_key,
+                        "pushes advisory content to production CDN",
+                        "Advisory status already in SHIPPED_LIVE",
+                    )
+                else:
+                    self._logger.warning('[DRY RUN] Would complete production CDN Jira subtask')
             self._logger.info("Advisory status already in post REL_PREP, update subtask 7 ...")
-            self._jira_client.complete_subtask(
-                self.parent_jira_key, "moves advisories to REL_PREP", "Advisory status already in REL_PREP"
-            )
+            if not self.runtime.dry_run:
+                self._jira_client.complete_subtask(
+                    self.parent_jira_key, "moves advisories to REL_PREP", "Advisory status already in REL_PREP"
+                )
+            else:
+                self._logger.warning('[DRY RUN] Would complete REL_PREP Jira subtask')
 
             sdk_build = [
                 b
@@ -60,11 +66,14 @@ class OperatorSDKPipeline:
             ]
             if not sdk_build:
                 self._logger.info("No SDK build to ship, update subtask 8 then close ...")
-                self._jira_client.complete_subtask(
-                    self.parent_jira_key,
-                    "operator-sdk",
-                    f"No SDK build to ship, operator_sdk_sync job: {jenkins.get_build_url()}",
-                )
+                if not self.runtime.dry_run:
+                    self._jira_client.complete_subtask(
+                        self.parent_jira_key,
+                        "operator-sdk",
+                        f"No SDK build to ship, operator_sdk_sync job: {jenkins.get_build_url()}",
+                    )
+                else:
+                    self._logger.warning('[DRY RUN] Would complete operator-sdk Jira subtask (no SDK build)')
                 return
             build = koji.ClientSession(BREW_HUB).getBuild(sdk_build[0])
         elif self.nvr:
@@ -77,9 +86,12 @@ class OperatorSDKPipeline:
         for arch in self.arches.split(','):
             self._extract_binaries(arch, sdkVersion, build['extra']['image']['index']['pull'][0])
         if self.assembly:
-            self._jira_client.complete_subtask(
-                self.parent_jira_key, "operator-sdk", f"operator_sdk_sync job: {jenkins.get_build_url()}"
-            )
+            if not self.runtime.dry_run:
+                self._jira_client.complete_subtask(
+                    self.parent_jira_key, "operator-sdk", f"operator_sdk_sync job: {jenkins.get_build_url()}"
+                )
+            else:
+                self._logger.warning('[DRY RUN] Would complete operator-sdk Jira subtask')
 
     def _get_sdkversion(self, build):
         build_log_res = requests.get(
