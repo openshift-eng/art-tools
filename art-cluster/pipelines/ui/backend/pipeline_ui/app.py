@@ -609,6 +609,7 @@ async def run_form(
 @app.get("/api/runs")
 async def runs(
     request: Request,
+    response: Response,
     namespace: str | None = None,
     pipeline: str = "",
     q: str = "",
@@ -641,6 +642,7 @@ async def runs(
         items = [item for item in items if (item["created"] or "") <= until]
     items.sort(key=lambda item: item["created"] or "", reverse=True)
     start = (page - 1) * page_size
+    response.headers["Cache-Control"] = "no-store"
     return {"items": items[start : start + page_size], "total": len(items), "page": page, "errors": errors}
 
 
