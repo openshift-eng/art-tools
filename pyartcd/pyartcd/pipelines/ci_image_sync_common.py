@@ -16,7 +16,6 @@ from artcommonlib import exectools
 from artcommonlib.constants import (
     KONFLUX_DEFAULT_FBC_REPO,
     KONFLUX_DEFAULT_IMAGE_REPO,
-    KONFLUX_DEFAULT_IMAGE_SHARE_REPO,
     REGISTRY_CI_OPENSHIFT,
     REGISTRY_QUAY_OCP_RELEASE_DEV,
     REGISTRY_QUAY_OPENSHIFT,
@@ -96,7 +95,6 @@ class CIImageSyncPipelineBase:
                 REGISTRY_CI_OPENSHIFT,
                 REGISTRY_QUAY_OCP_RELEASE_DEV,
                 KONFLUX_DEFAULT_IMAGE_REPO,
-                KONFLUX_DEFAULT_IMAGE_SHARE_REPO,
                 KONFLUX_DEFAULT_FBC_REPO,
                 REGISTRY_REDHAT_IO,
             ],

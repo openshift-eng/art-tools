@@ -18,7 +18,6 @@ import truststore
 from artcommonlib import exectools, git_helper
 from artcommonlib import util as artlib_util
 from artcommonlib.assembly import AssemblyTypes, assembly_config_struct, assembly_type
-from artcommonlib.constants import KONFLUX_DEFAULT_IMAGE_SHARE_REPO
 from artcommonlib.konflux.konflux_build_record import (
     Engine,
     KonfluxBuildOutcome,
@@ -34,7 +33,6 @@ from doozerlib import constants, opm, util
 from doozerlib.backend.build_repo import BuildRepo
 from doozerlib.backend.konflux_client import ImageBuildParams, KonfluxClient
 from doozerlib.backend.pipelinerun_utils import PipelineRunInfo
-from doozerlib.constants import KONFLUX_DEFAULT_IMAGE_REPO
 from doozerlib.image import ImageMetadata
 from doozerlib.record_logger import RecordLogger
 from elliottlib.shipment_utils import get_shipment_config_from_mr
@@ -1769,24 +1767,6 @@ class KonfluxFbcBuilder:
 
         return commits
 
-    async def _check_image_exists(self, pullspec: str, logger: Optional[logging.Logger] = None) -> bool:
-        """Check if an image exists in the registry.
-
-        :param pullspec: Image pullspec to check
-        :param logger: Logger instance
-        :return: True if image exists, False otherwise
-        """
-        logger = logger or self._logger
-        try:
-            logger.debug(f"Checking if image exists: {pullspec}")
-            registry_config = os.getenv("QUAY_AUTH_FILE")
-            await util.oc_image_info_for_arch_async(pullspec, registry_config=registry_config)
-            logger.debug(f"Image exists: {pullspec}")
-            return True
-        except Exception as e:
-            logger.debug(f"Image does not exist or is not accessible: {pullspec} - {e}")
-            return False
-
     async def _resolve_upstream_commit(self, labels: Dict[str, str], logger: logging.Logger) -> Optional[str]:
         """Resolve the upstream operator source SHA, independently of the build repo SHA.
 
@@ -1816,48 +1796,6 @@ class KonfluxFbcBuilder:
         if not isinstance(commit, str) or not re.fullmatch(r"[a-fA-F0-9]{40}", commit):
             raise ValueError(f"Invalid or missing upstream source commit SHA for FBC: {commit!r}")
         return commit.lower()
-
-    async def _sync_fbc_related_images_to_share(
-        self, fbc_pullspec: str, product: str, logger: Optional[logging.Logger] = None
-    ):
-        """Sync FBC related images to art-images-share repository if they don't exist.
-
-        :param fbc_pullspec: FBC image pullspec
-        :param product: Product name (e.g., 'openshift', 'oadp')
-        :param logger: Logger instance
-        """
-        logger = logger or self._logger
-
-        try:
-            # OCP share catch-up: use the non-versioned related-images path.
-            # Nightlies run with assembly=stream; do not use LP versioned extraction.
-            logger.info("Extracting related images from FBC...")
-            related_images = await artlib_util.extract_related_images_from_fbc(fbc_pullspec, product)
-            logger.info(f"Found {len(related_images)} related images in FBC")
-
-            if not related_images:
-                logger.info("No related images to sync")
-                return
-
-            # Check each image and sync if missing from art-images-share
-            for image_pullspec in related_images:
-                share_pullspec = image_pullspec.replace(KONFLUX_DEFAULT_IMAGE_REPO, KONFLUX_DEFAULT_IMAGE_SHARE_REPO)
-
-                if await self._check_image_exists(share_pullspec, logger):
-                    logger.info(f"Image already exists in art-images-share: {share_pullspec}")
-                else:
-                    logger.info(f"Syncing {image_pullspec} to art-images-share")
-                    try:
-                        destination_repo = share_pullspec.split('@')[0]  # Remove digest for destination
-                        await artlib_util.sync_to_quay(image_pullspec, destination_repo)
-                        logger.info(f"Successfully synced to art-images-share: {share_pullspec}")
-                    except Exception as e:
-                        logger.warning(f"Failed to sync {image_pullspec} to art-images-share: {e}")
-
-            logger.info("FBC related images sync complete")
-
-        except Exception:
-            logger.exception("Error while syncing FBC related images to art-images-share")
 
     async def _get_build_arches(self, metadata: ImageMetadata, logger: logging.Logger) -> list[str]:
         if not self.major_minor_override:
@@ -2031,35 +1969,6 @@ class KonfluxFbcBuilder:
                     metadata.build_status = True
                     record["message"] = "Success"
                     record["status"] = 0
-
-                    # Sync FBC related images to art-images-share (OCP groups only)
-                    if not self.group.startswith("openshift-"):
-                        logger.info(
-                            "Skipping FBC related images sync to art-images-share for non-OCP group '%s'", self.group
-                        )
-                    elif self.assembly == "stream":
-                        if not self.dry_run:
-                            try:
-                                results = pipelinerun_dict.get('status', {}).get('results', [])
-                                image_pullspec = next((r['value'] for r in results if r['name'] == 'IMAGE_URL'), None)
-                                image_digest = next((r['value'] for r in results if r['name'] == 'IMAGE_DIGEST'), None)
-
-                                if image_pullspec and image_digest:
-                                    fbc_pullspec = f"{image_pullspec.split(':')[0]}@{image_digest}"
-                                    await self._sync_fbc_related_images_to_share(
-                                        fbc_pullspec, self.product, logger=logger
-                                    )
-                                else:
-                                    logger.warning(
-                                        "Could not extract FBC pullspec from pipelinerun results, "
-                                        "skipping related images sync"
-                                    )
-                            except Exception as e:
-                                logger.warning(f"Failed to sync FBC related images: {e}")
-                        else:
-                            logger.info("Dry run: Would have synced FBC related images to art-images-share")
-                    else:
-                        logger.info(f"Skipping FBC related images sync for non-stream assembly '{self.assembly}'")
 
                     break
             if error:

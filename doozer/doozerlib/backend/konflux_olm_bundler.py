@@ -17,7 +17,6 @@ from artcommonlib import util as artlib_util
 from artcommonlib.assembly import AssemblyTypes
 from artcommonlib.build_visibility import is_nvr_embargoed
 from artcommonlib.conforma import resolve_stage_policy
-from artcommonlib.constants import KONFLUX_DEFAULT_IMAGE_SHARE_REPO
 from artcommonlib.konflux.konflux_build_record import (
     KonfluxBuildOutcome,
     KonfluxBuildRecord,
@@ -26,7 +25,6 @@ from artcommonlib.konflux.konflux_build_record import (
 from artcommonlib.konflux.konflux_db import Engine, KonfluxDb
 from artcommonlib.model import Model
 from artcommonlib.pipeline_report import get_reporter
-from artcommonlib.util import sync_to_quay
 from dockerfile_parse import DockerfileParser
 from doozerlib import constants, util
 from doozerlib.backend.build_repo import BuildRepo
@@ -1216,16 +1214,8 @@ class KonfluxOlmBundleBuilder:
                             f"pipelinerun {pipelinerun_name}"
                         )
 
-                    # Sync the bundle to art-images-share (OCP groups only)
-                    is_ocp_group = self.group.startswith("openshift-")
-                    if is_ocp_group:
-                        await sync_to_quay(
-                            f"{image_pullspec.split(':')[0]}@{image_digest}", KONFLUX_DEFAULT_IMAGE_SHARE_REPO
-                        )
-                    else:
-                        logger.info("Skipping bundle sync to art-images-share for non-OCP group '%s'", self.group)
-
                     # Run EC verification after a successful bundle build
+                    is_ocp_group = self.group.startswith("openshift-")
                     if outcome is KonfluxBuildOutcome.SUCCESS and is_ocp_group and not self.skip_ec_verify:
                         app_name = util.konflux_application_name(metadata.runtime.group)
                         component_name = metadata.get_konflux_bundle_component_name(app_name)
