@@ -1,3 +1,4 @@
+import asyncio
 import json
 import unittest
 from pathlib import Path
@@ -5,7 +6,9 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 from artcommonlib.variants import BuildVariant
 from click.testing import CliRunner
+from doozerlib.cli.images_health import ConcernCode
 from doozerlib.constants import ART_BUILD_HISTORY_URL
+from pyartcd.fbc_health import FbcHealthReport
 from pyartcd.pipelines.layered_products_image_health import (
     LayeredProductHealthReport,
     LayeredProductsImageHealthPipeline,
@@ -46,6 +49,17 @@ class TestCliRegistration(unittest.TestCase):
 
 
 class TestCollectGroup(unittest.IsolatedAsyncioTestCase):
+    def setUp(self):
+        from pyartcd.fbc_health import FbcHealthReport
+
+        collector_patch = patch(
+            'pyartcd.pipelines.layered_products_image_health.collect_fbc_health',
+            new_callable=AsyncMock,
+            return_value=FbcHealthReport(),
+        )
+        self.collect_fbc_health = collector_patch.start()
+        self.addCleanup(collector_patch.stop)
+
     def _make_pipeline(self):
         runtime = MagicMock()
         runtime.working_dir = Path("/tmp/layered-products-image-health-test")
@@ -111,6 +125,134 @@ class TestCollectGroup(unittest.IsolatedAsyncioTestCase):
 
         with self.assertRaisesRegex(ValueError, "No product found"):
             await pipeline._collect_group("oadp-1.5")
+
+    @staticmethod
+    def _mixed_fbc_health(error=False):
+        return FbcHealthReport(
+            {
+                variant: dict(
+                    variant=variant,
+                    assembly='stream',
+                    target='4.18',
+                    kind='tracking' if variant == 'unknown' else 'operator',
+                    entity=f'{variant}-operator',
+                    version='1',
+                    failure_count=7,
+                    jenkins_url='https://execution.invalid/raw',
+                )
+                for variant in ('oadp', 'openshift-logging', 'unknown')
+            },
+            error=error,
+        )
+
+    async def _run_collection_failure(self, pipeline):
+        pipeline.slack_client.say = AsyncMock(return_value={'ts': 'summary'})
+        notify = pipeline._notify_slack
+        pipeline._notify_slack = AsyncMock(wraps=notify)
+        with self.assertRaisesRegex(RuntimeError, 'Layered product health collection failed for:'):
+            await pipeline.run()
+        self.assertGreaterEqual(pipeline.slack_client.say.await_count, 2)
+        for call in pipeline.slack_client.say.await_args_list:
+            self.assertIn('incomplete', call.args[0])
+            self.assertIn('unavailable', call.args[0])
+            self.assertNotIn('Healthy', call.args[0])
+            self.assertNotIn('no tracked failures', call.args[0])
+            self.assertNotIn('execution.invalid', call.args[0])
+        return pipeline._notify_slack.await_args.args[0]
+
+    async def test_unresolved_variant_withholds_known_fbc_evidence_before_publication(self):
+        for config in (RuntimeError('config unavailable'), {}, {'product': 'not-a-product'}, {'product': []}):
+            with self.subTest(config=config):
+                pipeline = self._make_pipeline()
+                snapshot = self._mixed_fbc_health()
+                self.collect_fbc_health.return_value = snapshot
+                with patch(
+                    'pyartcd.pipelines.layered_products_image_health.util.load_group_config',
+                    new=AsyncMock(side_effect=config)
+                    if isinstance(config, Exception)
+                    else AsyncMock(return_value=config),
+                ) as load_config:
+                    reports = await self._run_collection_failure(pipeline)
+                load_config.assert_awaited_once()
+                self.assertIsNone(reports[0].variant)
+                self.assertEqual(set(reports[0].fbc_health.failures), {'unknown'})
+                self.assertTrue(reports[0].fbc_health.error)
+                self.assertEqual(len(snapshot.failures), 3)
+                for call in pipeline.slack_client.say.await_args_list:
+                    self.assertNotIn('tracked FBC failure(s)', call.args[0])
+                    self.assertNotIn('oadp-operator', call.args[0])
+                    self.assertNotIn('openshift-logging', call.args[0])
+
+    async def test_resolved_variant_survives_counter_failure_with_scoped_fbc_view(self):
+        for redis_error in (False, True):
+            with self.subTest(redis_error=redis_error):
+                pipeline = self._make_pipeline()
+                snapshot = self._mixed_fbc_health(error=redis_error)
+                self.collect_fbc_health.return_value = snapshot
+                with (
+                    patch(
+                        'pyartcd.pipelines.layered_products_image_health.util.load_group_config',
+                        new=AsyncMock(return_value={'product': 'oadp'}),
+                    ) as load_config,
+                    patch(
+                        'pyartcd.pipelines.layered_products_image_health.util.get_counter_failures',
+                        new=AsyncMock(side_effect=RuntimeError('counter unavailable')),
+                    ),
+                    patch(
+                        'pyartcd.pipelines.layered_products_image_health.util.get_rebase_failures',
+                        new=AsyncMock(return_value={}),
+                    ),
+                ):
+                    reports = await self._run_collection_failure(pipeline)
+                load_config.assert_awaited_once()
+                report = reports[0]
+                self.assertEqual(report.product, 'oadp')
+                self.assertIs(report.variant, BuildVariant.OADP)
+                self.assertEqual(set(report.fbc_health.failures), {'oadp', 'unknown'})
+                self.assertEqual(report.fbc_health.error, redis_error)
+                self.assertEqual(len(snapshot.failures), 3)
+                self.assertIn('1 tracked FBC failure(s)', pipeline.slack_client.say.await_args_list[0].args[0])
+                for call in pipeline.slack_client.say.await_args_list:
+                    self.assertNotIn('openshift-logging', call.args[0])
+                self.assertIn('`oadp-operator`', pipeline.slack_client.say.await_args.args[0])
+                self.assertIn('Failed 7 time(s)', pipeline.slack_client.say.await_args.args[0])
+
+    async def test_concurrent_groups_keep_independent_resolved_scope(self):
+        pipeline = self._make_pipeline()
+        pipeline.groups = ['oadp-1.5', 'logging-6.7']
+        snapshot = self._mixed_fbc_health()
+        self.collect_fbc_health.return_value = snapshot
+        both_loading = asyncio.Event()
+        loading = []
+
+        async def load_config(**kwargs):
+            loading.append(kwargs['group'])
+            if len(loading) == 2:
+                both_loading.set()
+            await both_loading.wait()
+            return {'product': 'oadp' if kwargs['group'] == 'oadp-1.5' else 'openshift-logging'}
+
+        with (
+            patch('pyartcd.pipelines.layered_products_image_health.util.load_group_config', side_effect=load_config),
+            patch(
+                'pyartcd.pipelines.layered_products_image_health.util.get_counter_failures',
+                new=AsyncMock(side_effect=RuntimeError('counter unavailable')),
+            ),
+            patch(
+                'pyartcd.pipelines.layered_products_image_health.util.get_rebase_failures',
+                new=AsyncMock(return_value={}),
+            ),
+        ):
+            reports = await self._run_collection_failure(pipeline)
+        self.assertCountEqual(loading, pipeline.groups)
+        for report in reports:
+            variant = 'oadp' if report.group == 'oadp-1.5' else 'openshift-logging'
+            self.assertEqual(report.product, variant)
+            self.assertEqual(report.variant.value, variant)
+            self.assertEqual(set(report.fbc_health.failures), {variant, 'unknown'})
+            foreign = 'openshift-logging' if variant == 'oadp' else 'oadp'
+            self.assertNotIn(f'`{foreign}-operator`', pipeline._build_group_message(report))
+        self.assertEqual(len(snapshot.failures), 3)
 
     @patch(
         "pyartcd.pipelines.layered_products_image_health.exectools",
@@ -284,9 +426,166 @@ class TestLayeredProductHealthReport(unittest.IsolatedAsyncioTestCase):
         details = pipeline._build_variant_message("oadp", [report])
 
         self.assertIn("oadp-1.5", details)
-        self.assertIn(":white_check_mark: healthy", details)
+        self.assertIn(":white_check_mark: no tracked failures", details)
         self.assertNotIn("*Build Failures (", details)
         self.assertNotIn("Rebase Failures", details)
+
+    def _incomplete_report(self, **overrides):
+        values = dict(
+            error='Image collection incomplete',
+            build_failures={'build-image': {'failure_count': 2, 'jenkins_url': 'https://execution.invalid/raw'}},
+            its_failures={'its-image': {'failure_count': 3}},
+            release_failures={'release-image': {'failure_count': 4}},
+            rebase_failures={'rebase-image': {'failure_count': 5}},
+            fbc_health=FbcHealthReport(
+                {
+                    'fbc': dict(
+                        variant='oadp',
+                        assembly='stream',
+                        target='4.18',
+                        kind='operator',
+                        entity='fbc-operator',
+                        version='1',
+                        failure_count=6,
+                        jenkins_url='https://execution.invalid/fbc',
+                    )
+                }
+            ),
+        )
+        values.update(overrides)
+        return self._make_report('oadp-1.5', 'oadp', BuildVariant.OADP, **values)
+
+    def _assert_collected_failures(self, summary, details):
+        for category in (
+            '1 Redis-tracked build failure(s) (unvalidated)',
+            '1 ITS failure(s)',
+            '1 release failure(s)',
+            '1 rebase failure(s)',
+            '1 tracked FBC failure(s)',
+        ):
+            self.assertIn(category, summary)
+        for name, count in (
+            ('build-image', 2),
+            ('its-image', 3),
+            ('release-image', 4),
+            ('rebase-image', 5),
+            ('fbc-operator', 6),
+        ):
+            self.assertIn(f'`{name}`', details)
+            self.assertRegex(details, rf'`{name}`[^\n]*Failed {count} time')
+        for message in (summary, details):
+            self.assertIn('incomplete', message)
+            self.assertIn('unvalidated', message)
+            self.assertNotIn('Healthy', message)
+            self.assertNotIn('execution.invalid', message)
+
+    def test_incomplete_report_retains_all_collected_failure_categories(self):
+        pipeline = self._make_pipeline()
+        report = self._incomplete_report()
+        self._assert_collected_failures(
+            pipeline._build_variant_message('oadp', [report]), pipeline._build_group_message(report)
+        )
+
+    async def test_incomplete_empty_and_fbc_only_reports_never_claim_health(self):
+        pipeline = self._make_pipeline()
+        for fbc_health in (FbcHealthReport(), FbcHealthReport(error=True), self._incomplete_report().fbc_health):
+            with self.subTest(fbc_health=fbc_health):
+                report = self._incomplete_report(
+                    build_failures={}, its_failures={}, release_failures={}, rebase_failures={}, fbc_health=fbc_health
+                )
+                messages = [
+                    pipeline._build_variant_message('oadp', [report]),
+                    pipeline._build_group_message(report),
+                    pipeline._build_group_details(report),
+                ]
+                for message in messages:
+                    self.assertIn('incomplete', message)
+                    self.assertNotIn('Healthy', message)
+                    self.assertNotIn('no tracked failures', message.lower())
+                if fbc_health.summary():
+                    self.assertIn(fbc_health.summary(), messages[0])
+                    self.assertIn(fbc_health.details(), messages[1])
+                    self.assertIn(fbc_health.details(), messages[2])
+                pipeline.slack_client.say = AsyncMock(return_value={'ts': 'summary'})
+                await pipeline._notify_slack([report])
+                self.assertEqual(pipeline.slack_client.say.await_count, 2)
+                self.assertIn('incomplete', pipeline.slack_client.say.await_args.args[0])
+
+    def test_unvalidated_build_fallback_deduplicates_concerns_and_preserves_complete_semantics(self):
+        pipeline = self._make_pipeline()
+        report = self._incomplete_report(
+            build_concerns=[
+                {'image_name': 'known-failed', 'code': ConcernCode.LATEST_ATTEMPT_FAILED.value},
+                {'image_name': 'known-succeeded', 'code': ConcernCode.LATEST_BUILD_SUCCEEDED.value},
+            ],
+            build_failures={
+                'known-failed': {'failure_count': 7},
+                'known-succeeded': {'failure_count': 8},
+                'build-image': {'failure_count': 2},
+            },
+        )
+        summary = pipeline._build_variant_message('oadp', [report])
+        details = pipeline._build_group_message(report)
+        self.assertIn('1 build failure(s)', summary)
+        self.assertIn('1 Redis-tracked build failure(s) (unvalidated)', summary)
+        self.assertEqual(details.count('`known-failed`'), 1)
+        self.assertEqual(details.count('`build-image`'), 1)
+        self.assertNotIn('known-succeeded', details)
+        report.error = None
+        self.assertNotIn('unvalidated', pipeline._build_variant_message('oadp', [report]))
+        self.assertNotIn('`build-image`', pipeline._build_group_message(report))
+        report.error = 'Image collection incomplete'
+        pipeline.image_list = ['known-failed']
+        self.assertNotIn('unvalidated', pipeline._build_variant_message('oadp', [report]))
+        self.assertNotIn('`build-image`', pipeline._build_group_message(report))
+
+    async def test_run_publishes_retained_counters_before_raising_real_query_failure(self):
+        pipeline = self._make_pipeline()
+        pipeline.groups = ['oadp-1.5']
+        retained = self._incomplete_report()
+        counters = {
+            'build-failure': retained.build_failures,
+            'ec-failure': retained.its_failures,
+            'release-failure': retained.release_failures,
+        }
+        published = []
+
+        async def publish(message, **kwargs):
+            published.append(message)
+            return {'ts': 'summary'}
+
+        pipeline.slack_client.say = AsyncMock(side_effect=publish)
+        pipeline._get_build_concerns = AsyncMock(side_effect=RuntimeError('BigQuery unavailable'))
+        with (
+            patch(
+                'pyartcd.pipelines.layered_products_image_health.collect_fbc_health',
+                new=AsyncMock(return_value=retained.fbc_health),
+            ),
+            patch(
+                'pyartcd.pipelines.layered_products_image_health.util.load_group_config',
+                new=AsyncMock(return_value={'product': 'oadp'}),
+            ),
+            patch(
+                'pyartcd.pipelines.layered_products_image_health.util.get_counter_failures',
+                new=AsyncMock(side_effect=lambda kind, **kwargs: counters[kind]),
+            ),
+            patch(
+                'pyartcd.pipelines.layered_products_image_health.util.get_rebase_failures',
+                new=AsyncMock(return_value=retained.rebase_failures),
+            ),
+        ):
+            with self.assertRaisesRegex(RuntimeError, 'Layered product health collection failed for: oadp-1.5'):
+                try:
+                    await pipeline.run()
+                except RuntimeError:
+                    self.assertEqual(len(published), 2)
+                    raise
+        self._assert_collected_failures(*published)
+        self.assertIn('`oadp`', published[0])
+        self.assertEqual(pipeline.slack_client.say.await_args_list[1].kwargs['thread_ts'], 'summary')
+        pipeline._get_build_concerns.assert_awaited_once_with(
+            'oadp-1.5', BuildVariant.OADP, {'build-image', 'its-image', 'release-image'}
+        )
 
     async def test_notify_slack_posts_variant_summaries_and_threads_failures(self):
         pipeline = self._make_pipeline()
