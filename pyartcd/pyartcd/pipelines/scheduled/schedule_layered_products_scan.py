@@ -32,6 +32,9 @@ async def run_for(group: str, runtime: Runtime, lock_manager: LockManager):
     # Schedule layered products scan
     runtime.logger.info('[%s] Scheduling layered-products-scan', group)
 
+    if runtime.dry_run:
+        runtime.logger.warning('[DRY RUN] Would trigger %s job for %s', 'layered-products-scan', group)
+        return
     if tekton.is_tekton_context():
         try:
             tekton.start_pipeline_run(

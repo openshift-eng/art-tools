@@ -15,6 +15,9 @@ async def run_for(group: str, runtime: Runtime):
         group: Layered product group (e.g., "logging-6.5")
         runtime: PyARTCD runtime instance
     """
+    if runtime.dry_run:
+        runtime.logger.warning('[DRY RUN] Would trigger %s job for %s', 'open-reconciliation-prs-layered', group)
+        return
     try:
         runtime.logger.info('[%s] Scheduling open-reconciliation-prs-layered', group)
         jenkins.start_open_reconciliation_prs_layered(group=group, block_until_complete=False)
