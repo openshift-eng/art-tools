@@ -166,3 +166,21 @@ class TestGroupSchema(unittest.TestCase):
             "el_target": -1,
         }
         self.assertIn("is less than the minimum of 1", group_schema.validate("group.yml", invalid_data))
+
+
+def test_layered_product_group_fields_are_valid():
+    from validator.schema import group_schema
+
+    assert (
+        group_schema.validate(
+            'group.yml',
+            {
+                'name': 'zero-trust-1.1',
+                'product': 'zero-trust-workload-identity-manager',
+                'version': '1.1.2',
+                'OCP_TARGET_VERSIONS': ['4.20', '5.0'],
+                'operator_index_mode': 'ga-plus',
+            },
+        )
+        == ''
+    )

@@ -4,6 +4,10 @@
   "title": "Assembly Group Configuration",
   "type": "object",
   "properties": {
+    "product": {"type": "string", "minLength": 1, "description": "Product identifier for layered-product build and release workflows."},
+    "version": {"type": "string", "minLength": 1, "description": "Layered-product release version; independent of OCP MAJOR/MINOR variables."},
+    "OCP_TARGET_VERSIONS": {"type": "array", "items": {"type": "string", "pattern": "^\\d+\\.\\d+$"}, "uniqueItems": true},
+
     "arches": {
       "type": "array",
       "items": {
@@ -193,6 +197,7 @@
       "additionalProperties": false,
       "type": "object",
       "properties": {
+        "mr": {"type": "string", "pattern": "^https://[^/]+/.+/-/merge_requests/\\d+$"},
         "url": {
           "type": "string"
         },
@@ -815,7 +820,7 @@
     "okd-": {},
     "operator_index_mode": {
       "type": "string",
-      "enum": ["pre-release", "pre-ga", "ga"]
+      "enum": ["pre-release", "pre-ga", "ga", "ga-plus"]
     },
     "release_date": {
       "type": "string"
