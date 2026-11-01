@@ -21,7 +21,7 @@ from doozerlib.backend.konflux_image_builder import (
     _normalize_version,
 )
 from doozerlib.backend.pipelinerun_utils import PipelineRunInfo
-from doozerlib.util import konflux_golang_builder_component_name
+from doozerlib.util import GolangBuilderComponentNameError, konflux_golang_builder_component_name
 
 
 class TestKonfluxImageBuilder(unittest.IsolatedAsyncioTestCase):
@@ -71,6 +71,7 @@ class TestKonfluxImageBuilder(unittest.IsolatedAsyncioTestCase):
         metadata.get_konflux_network_mode.return_value = "open"
         metadata.is_base_image.return_value = False
         metadata.should_trigger_base_image_release.return_value = False
+        metadata.should_create_golang_builder_shipment.return_value = False
         metadata.is_golang_builder = MagicMock(return_value=False)
         return metadata
 
@@ -1537,6 +1538,84 @@ class TestKonfluxImageBuilder(unittest.IsolatedAsyncioTestCase):
         call_kwargs = mock_shipment_handler.create_shipment.await_args
         self.assertIsNotNone(call_kwargs.kwargs.get("nvr"))
 
+    async def test_golang_builder_build_fails_when_shipment_refused(self):
+        """A build that cannot map to its floating tag fails as RELEASE_ERROR and is not rebuilt."""
+        metadata = self._metadata()
+        metadata.distgit_key = "openshift-golang-builder-1-25.rhel9-6"
+        metadata.get_konflux_build_attempts.return_value = 3
+        metadata.should_trigger_base_image_release = MagicMock(return_value=False)
+        metadata.should_create_golang_builder_shipment = MagicMock(return_value=True)
+        dest_dir = self.builder._config.base_dir.joinpath(metadata.qualified_key)
+        dest_dir.mkdir(parents=True)
+
+        build_repo = MagicMock()
+        build_repo.local_dir = dest_dir
+        build_repo.url = "https://github.com/test/repo.git"
+        build_repo.https_url = "https://github.com/test/repo.git"
+        build_repo.commit_hash = "abc123"
+
+        initial_pipelinerun = MagicMock()
+        initial_pipelinerun.name = "test-pipelinerun"
+        initial_pipelinerun.to_dict.return_value = {"metadata": {"name": "test-pipelinerun"}}
+
+        completed_pipelinerun = MagicMock()
+        completed_pipelinerun.name = "test-pipelinerun"
+        completed_pipelinerun.find_condition.return_value = {"status": "True"}
+        completed_pipelinerun.to_dict.return_value = {
+            "metadata": {"name": "test-pipelinerun"},
+            "status": {
+                "results": [
+                    {"name": "IMAGE_URL", "value": "quay.io/test/golang-builder:latest"},
+                    {"name": "IMAGE_DIGEST", "value": "sha256:abc123"},
+                ]
+            },
+        }
+        self.mock_konflux_client.wait_for_pipelinerun = AsyncMock(return_value=completed_pipelinerun)
+
+        with (
+            patch(
+                "doozerlib.backend.konflux_image_builder.BuildRepo.from_local_dir",
+                new=AsyncMock(return_value=build_repo),
+            ),
+            patch.object(self.builder, "_parse_dockerfile", return_value=("test-uuid", "test-component", "1.0", "1")),
+            patch.object(self.builder, "_wait_for_parent_members", new=AsyncMock(return_value=[])),
+            patch.object(
+                self.builder, "_start_build", new=AsyncMock(return_value=initial_pipelinerun)
+            ) as mock_start_build,
+            patch.object(
+                self.builder, "update_konflux_db", new=AsyncMock(return_value=MagicMock(record_id="1"))
+            ) as mock_update_db,
+            patch.object(self.builder, "_trigger_base_image_release", new=AsyncMock()),
+            patch.object(self.builder, "_validate_build_attestation_and_signature", new=AsyncMock()),
+            patch.object(
+                self.builder._konflux_client,
+                "verify_enterprise_contract",
+                new=AsyncMock(return_value=MagicMock(ec_pipeline_url="", ec_failed=False)),
+            ),
+            patch(
+                "doozerlib.backend.konflux_image_builder.KonfluxBuildOutcome.extract_from_pipelinerun_succeeded_condition",
+                return_value=KonfluxBuildOutcome.SUCCESS,
+            ),
+            patch(
+                "doozerlib.backend.konflux_image_builder.GolangBuilderShipmentHandler",
+            ) as mock_shipment_cls,
+        ):
+            mock_shipment_handler = AsyncMock()
+            mock_shipment_handler.create_shipment = AsyncMock(
+                side_effect=GolangBuilderComponentNameError("Refusing to map golang builder")
+            )
+            mock_shipment_cls.return_value = mock_shipment_handler
+
+            with self.assertRaisesRegex(KonfluxImageBuildError, "release_error: Refusing to map golang builder"):
+                await self.builder.build(metadata)
+
+        mock_start_build.assert_awaited_once()
+        self.assertEqual(
+            mock_shipment_handler.create_shipment.await_args.kwargs["distgit_key"],
+            "openshift-golang-builder-1-25.rhel9-6",
+        )
+        self.assertIs(mock_update_db.await_args.args[3], KonfluxBuildOutcome.RELEASE_ERROR)
+
     async def test_golang_builder_build_skips_shipment_on_gate_false(self):
         """When should_create_golang_builder_shipment() returns False, create_shipment() is not called."""
         metadata = self._metadata()
@@ -2017,12 +2096,68 @@ class TestKonfluxImageBuilderGolangComponent(unittest.TestCase):
                 result = konflux_golang_builder_component_name(nvr)
                 self.assertEqual(result, expected, f"Failed for NVR: {nvr}")
 
-    def test_get_golang_builder_component_name_no_el_version_defaults_to_rhel9(self):
-        """Test that missing RHEL version defaults to rhel9."""
-        nvr = "openshift-golang-builder-container-v1.25.8-202604081607.p0.g2aa6a05.unknown"
-        expected = "golang-builder-v1.25-rhel9"
-        result = konflux_golang_builder_component_name(nvr)
-        self.assertEqual(result, expected)
+    def test_get_golang_builder_component_name_el10(self):
+        """el10 maps to rhel10, not the rhel9 floating tag."""
+        nvr = "openshift-golang-builder-container-v1.26.2-202610011200.p2.gabc1234.el10"
+        self.assertEqual(konflux_golang_builder_component_name(nvr), "golang-builder-v1.26-rhel10")
+
+    def test_get_golang_builder_component_name_unknown_el_raises(self):
+        """Anything that is not exactly .el8/.el9/.el10 raises instead of defaulting to rhel9."""
+        nvrs = [
+            "openshift-golang-builder-container-v1.25.8-202604081607.p0.g2aa6a05.unknown",
+            "openshift-golang-builder-container-v1.25.8-202604081607.p0.g2aa6a05",
+            "openshift-golang-builder-container-v1.25.8-202604081607.p0.g2aa6a05.el7",
+            "openshift-golang-builder-container-v1.25.8-202604081607.p0.g2aa6a05.el11",
+            "openshift-golang-builder-container-v1.25.8-202604081607.p0.g2aa6a05.el9_6",
+            "openshift-golang-builder-container-v1.25.8-202604081607.p0.g2aa6a05.scos9",
+            "openshift-golang-builder-container-v1.25.8-202604081607.p0.g2aa6a05.el9.hotfix",
+        ]
+        for nvr in nvrs:
+            with self.subTest(nvr=nvr):
+                with self.assertRaisesRegex(GolangBuilderComponentNameError, "Cannot map golang builder NVR"):
+                    konflux_golang_builder_component_name(nvr)
+
+    def test_get_golang_builder_component_name_error_is_value_error(self):
+        """Callers that already catch ValueError keep working."""
+        with self.assertRaises(ValueError):
+            konflux_golang_builder_component_name("openshift-golang-builder-container-v1.25.8-1.p0.g2aa6a05.el7")
+
+    def test_get_golang_builder_component_name_plain_distgit_key(self):
+        """Plain openshift-golang-builder-X-Y.rhelN keys map normally."""
+        test_cases = [
+            (
+                "openshift-golang-builder-container-v1.25.8-1.p0.g2aa6a05.el8",
+                "openshift-golang-builder-1-25.rhel8",
+                "golang-builder-v1.25-rhel8",
+            ),
+            (
+                "openshift-golang-builder-container-v1.25.8-1.p0.g2aa6a05.el9",
+                "openshift-golang-builder-1-25.rhel9",
+                "golang-builder-v1.25-rhel9",
+            ),
+            (
+                "openshift-golang-builder-container-v1.26.2-1.p0.g2aa6a05.el10",
+                "openshift-golang-builder-1-26.rhel10",
+                "golang-builder-v1.26-rhel10",
+            ),
+        ]
+        for nvr, distgit_key, expected in test_cases:
+            with self.subTest(distgit_key=distgit_key):
+                self.assertEqual(konflux_golang_builder_component_name(nvr, distgit_key=distgit_key), expected)
+
+    def test_get_golang_builder_component_name_variant_distgit_key_raises(self):
+        """rhel9-4 / rhel9-6 variants build plain .el9 NVRs; the key keeps them off golang-builder-vX.Y-rhel9."""
+        nvr = "openshift-golang-builder-container-v1.25.8-202604081723.p0.gf28329a.el9"
+        for distgit_key in [
+            "openshift-golang-builder-1-25.rhel9-4",
+            "openshift-golang-builder-1-25.rhel9-6",
+            "openshift-golang-builder-1-25.rhel8",
+            "openshift-golang-builder-1-25.rhel10",
+            "test-image",
+        ]:
+            with self.subTest(distgit_key=distgit_key):
+                with self.assertRaisesRegex(GolangBuilderComponentNameError, "Refusing to map golang builder"):
+                    konflux_golang_builder_component_name(nvr, distgit_key=distgit_key)
 
     def test_get_golang_builder_component_name_version_without_v_prefix(self):
         """Test version without 'v' prefix."""
@@ -2055,12 +2190,10 @@ class TestKonfluxImageBuilderGolangComponent(unittest.TestCase):
                 self.assertEqual(result, expected)
 
     def test_get_golang_builder_component_name_multiple_el_patterns(self):
-        """Test theoretical edge case where both .el8 and .el9 appear in release."""
-        # This documents the expected behavior: .el8 override wins due to simplified logic
+        """A release with more than one EL token is ambiguous and raises."""
         nvr = "openshift-golang-builder-container-v1.25.8-202604081607.p0.g2aa6a05.el8.dependency.el9"
-        expected = "golang-builder-v1.25-rhel8"  # .el8 override takes precedence
-        result = konflux_golang_builder_component_name(nvr)
-        self.assertEqual(result, expected)
+        with self.assertRaises(GolangBuilderComponentNameError):
+            konflux_golang_builder_component_name(nvr)
 
 
 class TestGetInstalledPackages(unittest.IsolatedAsyncioTestCase):
