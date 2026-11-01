@@ -366,25 +366,19 @@ class ImageMetadata(Metadata):
             raise ValueError(f'{self.distgit_key} claims to be for_release and base_only')
         return val
 
-    def get_payload_tag_info(self) -> Tuple[str, bool]:
+    def get_payload_tag_info(self) -> str:
         """
         If this image is destined for the OpenShift release payload, it will have a tag name
         associated within it within the release payload's originating imagestream.
-        :return: Returns the tag name to use for this image in an
-                OpenShift release imagestream and whether the payload name was explicitly included in the
-                image metadata. See https://issues.redhat.com/browse/ART-2823 . i.e. (tag_name, explicitly_declared)
+        :return: Returns the tag name to use for this image in an OpenShift release imagestream.
         """
         if not self.is_payload:
             raise ValueError('Attempted to derive payload name for non-payload image: ' + self.distgit_key)
 
         payload_name = self.config.get("payload_name")
-        if payload_name:
-            return payload_name, True
-        else:
-            payload_name = (
-                self.image_name_short[4:] if self.image_name_short.startswith("ose-") else self.image_name_short
-            )  # it _should_ but... to be safe
-            return payload_name, False
+        if not payload_name:
+            raise ValueError(f'{self.distgit_key} is for_payload but does not declare a payload_name')
+        return payload_name
 
     def get_brew_image_name_short(self):
         # Get image name in the Brew pullspec. e.g. openshift3/ose-ansible --> openshift3-ose-ansible
