@@ -58,8 +58,10 @@ from pyartcd.pipelines import (
     tag_rpms,
     tarball_sources,
     update_golang,
+    verify_advisory_transition,
     verify_cdn_push,
     verify_release,
+    verify_stage_testing,
 )
 from pyartcd.pipelines.scheduled import (
     schedule_build_conforma_verify,
@@ -71,9 +73,10 @@ from pyartcd.pipelines.scheduled import (
     schedule_open_reconciliation_prs_layered,
     schedule_scan_operator,
     schedule_scan_plashet_rpms,
-    schedule_stage_testing_scan,
     schedule_sync_ci_images,
+    schedule_verify_advisory_transition_scan,
     schedule_verify_release_scan,
+    schedule_verify_stage_testing_scan,
 )
 
 __all__ = [
@@ -133,18 +136,21 @@ __all__ = [
     "tag_rpms",
     "tarball_sources",
     "update_golang",
+    "verify_advisory_transition",
     "verify_cdn_push",
     "verify_release",
+    "verify_stage_testing",
     "schedule_build_conforma_verify",
     "schedule_build_sync_multi",
     "schedule_layered_products_scan",
+    "schedule_verify_advisory_transition_scan",
     "schedule_ocp4_scan",
     "schedule_ocp4_scan_konflux",
     "schedule_open_reconciliation_prs",
     "schedule_open_reconciliation_prs_layered",
     "schedule_scan_operator",
     "schedule_scan_plashet_rpms",
-    "schedule_stage_testing_scan",
+    "schedule_verify_stage_testing_scan",
     "schedule_verify_release_scan",
     "schedule_sync_ci_images",
 ]

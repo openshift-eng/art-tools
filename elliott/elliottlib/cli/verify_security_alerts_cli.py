@@ -9,7 +9,7 @@ from elliottlib.cli.common import cli, click_coroutine
 from elliottlib.errata_async import AsyncErrataAPI
 from elliottlib.verify_common import (
     VerifyResultBase,
-    get_assembly_advisory_ids,
+    get_ocp_release_advisory_ids,
     handle_verify_result,
     verify_output_option,
 )
@@ -140,10 +140,6 @@ async def verify_security_alerts(advisories: dict[str, int]) -> VerifySecurityAl
     return result
 
 
-# microshift advisories are managed separately and don't go through ProdSec alert flow
-SKIPPED_IMPETUS = ("microshift",)
-
-
 @cli.command("verify-security-alerts", short_help="Check RHSA advisories for blocking security alerts")
 @verify_output_option
 @click.pass_obj
@@ -163,7 +159,7 @@ async def verify_security_alerts_cli(runtime, output):
         elliott --group openshift-4.18 --assembly 4.18.51 verify-security-alerts
     """
     runtime.initialize()
-    advisories = get_assembly_advisory_ids(runtime, exclude_types=SKIPPED_IMPETUS)
+    advisories = get_ocp_release_advisory_ids(runtime)
     if not advisories:
         raise click.UsageError("No advisory IDs found in assembly config.")
 
