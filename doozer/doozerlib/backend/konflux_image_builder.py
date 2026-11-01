@@ -262,7 +262,21 @@ class KonfluxImageBuilder:
                 # openshift-golang-builder-container component.
                 # compare_nvr returns: 1 if target > latest, 0 if equal, -1 if target < latest
                 ignore_name = metadata.runtime.assembly == "test" or metadata.is_golang_builder()
-                if compare_nvr(target_nvr_dict, latest_nvr_dict, ignore_name=ignore_name) <= 0:
+                try:
+                    cmp_result = compare_nvr(target_nvr_dict, latest_nvr_dict, ignore_name=ignore_name)
+                except ValueError as e:
+                    if "Package names" in str(e):
+                        logger.warning(
+                            "NVR name mismatch for %s: %s. This may be due to a Konflux component rename. "
+                            "Falling back to version-only comparison.",
+                            metadata.distgit_key,
+                            e,
+                        )
+                        cmp_result = compare_nvr(target_nvr_dict, latest_nvr_dict, ignore_name=True)
+                    else:
+                        raise
+
+                if cmp_result <= 0:
                     ignore_incorrect_nvr = (
                         metadata.config.ignore_incorrect_nvr or metadata.runtime.group_config.ignore_incorrect_nvr
                     )
