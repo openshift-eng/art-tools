@@ -1892,7 +1892,11 @@ class KonfluxRebaser:
 
         rc_path = dest_dir.joinpath('content_sets.yml')
         async with aiofiles.open(rc_path, 'w', encoding='utf-8') as rc:
-            await rc.write(repos.content_sets(enabled_repos=enabled_repos, non_shipping_repos=non_shipping_repos))
+            await rc.write(
+                repos.content_sets(
+                    enabled_repos=enabled_repos, non_shipping_repos=non_shipping_repos, respect_repo_arches=True
+                )
+            )
 
     @start_as_current_span_async(TRACER, "rebase.generate_config_digest")
     async def _generate_config_digest(self, metadata: ImageMetadata, dest_dir: Path):

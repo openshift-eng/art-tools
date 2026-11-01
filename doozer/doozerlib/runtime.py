@@ -735,7 +735,12 @@ class Runtime(GroupRuntime):
             repos_config = self._get_repos_config()
             plashet_config = self.get_plashet_config()
             self.repos = Repos(
-                repos_config, self.arches, self.gpgcheck, plashet_config=plashet_config, template_vars=replace_vars
+                repos_config,
+                self.arches,
+                self.gpgcheck,
+                plashet_config=plashet_config,
+                template_vars=replace_vars,
+                respect_repo_arches=self.build_system == 'konflux',
             )
             self.freeze_automation = self.group_config.freeze_automation or FREEZE_AUTOMATION_NO  # type: ignore
 
