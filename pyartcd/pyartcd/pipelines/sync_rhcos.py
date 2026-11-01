@@ -220,6 +220,9 @@ class SyncRhcosPipeline:
 
     async def _sign_sha256sum(self):
         """GPG-sign sha256sum.txt via RADAS/UMB and write sha256sum.txt.gpg."""
+        if self.runtime.dry_run:
+            self.logger.warning('[DRY RUN] Would sign sha256sum.txt for %s', self.version)
+            return
         cert_file = os.environ.get("SIGNING_CERT")
         key_file = os.environ.get("SIGNING_KEY")
         if not cert_file or not key_file:
