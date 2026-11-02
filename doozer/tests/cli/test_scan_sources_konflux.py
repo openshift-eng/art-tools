@@ -1,12 +1,13 @@
 import base64
 import json
+from datetime import datetime, timezone
 from unittest import IsolatedAsyncioTestCase
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import aiohttp
 import yaml
 from artcommonlib.konflux.konflux_build_record import KonfluxBuildRecord
-from artcommonlib.model import Missing
+from artcommonlib.model import Missing, Model
 from doozerlib.cli.scan_sources_konflux import ConfigScanSources
 from doozerlib.image import ImageMetadata
 from doozerlib.metadata import RebuildHintCode
@@ -1792,3 +1793,142 @@ class TestCheckChangingRpmsBuildRoot(TestScanSourcesKonflux):
             await self.scanner.check_changing_rpms()
 
         self.assertNotIn('test-rpm', self.scanner.changing_rpm_names)
+
+
+class TestScanBuildersChanges(TestScanSourcesKonflux):
+    FLOATING = 'registry.redhat.io/openshift/golang-builder:golang-builder-v1.25-rhel9'
+    PINNED = (
+        'registry.redhat.io/openshift/golang-builder:'
+        'openshift-golang-builder-container-v1.25.3-202510011200.p0.gabc1234.el9'
+    )
+    OLD_NVR = 'openshift-golang-builder-container-v1.25.3-202510011200.p0.gabc1234.el9'
+    NEW_NVR = 'openshift-golang-builder-container-v1.25.5-202510150900.p0.gdef5678.el9'
+    BASE_NVR = 'openshift-enterprise-base-rhel9-container-v4.23.0-202510160000.p0.g1111111.el9'
+
+    def setUp(self):
+        super().setUp()
+        self.image_meta.config = Model(
+            {'from': {'builder': [{'stream': 'golang'}], 'member': 'openshift-enterprise-base-rhel9'}}
+        )
+        self.image_meta.qualified_key = 'image:test-image'
+        self.image_meta.get_descendants.return_value = []
+        self.build_record.start_time = datetime(2026, 10, 10, tzinfo=timezone.utc)
+
+    async def _scan_async(self, pullspec, current_nvr, builder_start_time):
+        self.runtime.resolve_stream.return_value = Model({'image': pullspec})
+        nvr_mock = AsyncMock(return_value=current_nvr)
+        start_mock = AsyncMock(return_value=builder_start_time)
+        with (
+            patch.object(self.scanner, 'get_builder_build_nvr', nvr_mock),
+            patch.object(self.scanner, 'get_builder_build_start_time', start_mock),
+        ):
+            await self.scanner.scan_builders_changes(self.image_meta)
+        nvr_mock.assert_awaited_once_with(pullspec)
+        return start_mock
+
+    def _reason(self):
+        return self.scanner.assessment_reason['image:test-image+True']
+
+    def _code(self):
+        return self.scanner.assessment_code['image:test-image+True']
+
+    async def test_floating_tag_moved_triggers_rebuild(self):
+        self.build_record.parent_images = [self.OLD_NVR, self.BASE_NVR]
+        start_mock = await self._scan_async(self.FLOATING, self.NEW_NVR, datetime(2026, 10, 1, tzinfo=timezone.utc))
+
+        self.assertIn('test-image', self.scanner.changing_image_names)
+        self.assertEqual(self._code(), RebuildHintCode.BUILDER_CHANGING)
+        self.assertEqual(
+            self._reason(),
+            f'Floating builder tag {self.FLOATING} now points to {self.NEW_NVR}, '
+            f'but latest test-image build used {self.OLD_NVR}',
+        )
+        start_mock.assert_not_awaited()
+
+    async def test_floating_tag_unchanged_no_rebuild(self):
+        self.build_record.parent_images = [self.NEW_NVR, self.BASE_NVR]
+        start_mock = await self._scan_async(self.FLOATING, self.NEW_NVR, datetime(2026, 10, 20, tzinfo=timezone.utc))
+
+        self.assertNotIn('test-image', self.scanner.changing_image_names)
+        start_mock.assert_not_awaited()
+
+    async def test_floating_tag_mixed_recorded_nvrs_triggers_rebuild(self):
+        self.build_record.parent_images = [self.OLD_NVR, self.NEW_NVR, self.BASE_NVR]
+        start_mock = await self._scan_async(self.FLOATING, self.NEW_NVR, datetime(2026, 10, 1, tzinfo=timezone.utc))
+
+        self.assertIn('test-image', self.scanner.changing_image_names)
+        self.assertEqual(self._code(), RebuildHintCode.BUILDER_CHANGING)
+        self.assertEqual(
+            self._reason(),
+            f'Floating builder tag {self.FLOATING} now points to {self.NEW_NVR}, '
+            f'but latest test-image build used {", ".join(sorted([self.OLD_NVR, self.NEW_NVR]))}',
+        )
+        start_mock.assert_not_awaited()
+
+    async def test_floating_tag_without_recorded_nvr_uses_build_time(self):
+        self.build_record.parent_images = [self.FLOATING, self.BASE_NVR]
+        start_mock = await self._scan_async(self.FLOATING, self.NEW_NVR, datetime(2026, 10, 20, tzinfo=timezone.utc))
+
+        self.assertIn('test-image', self.scanner.changing_image_names)
+        self.assertEqual(self._code(), RebuildHintCode.BUILDER_CHANGING)
+        self.assertIn('is newer than latest test-image build', self._reason())
+        start_mock.assert_awaited_once_with(self.NEW_NVR)
+
+    async def test_floating_tag_other_stream_recorded_uses_build_time(self):
+        other_stream_nvr = 'openshift-golang-builder-container-v1.24.9-202510011200.p0.gabc1234.el9'
+        self.build_record.parent_images = [other_stream_nvr, self.FLOATING, self.BASE_NVR]
+        start_mock = await self._scan_async(self.FLOATING, self.NEW_NVR, datetime(2026, 10, 1, tzinfo=timezone.utc))
+
+        self.assertNotIn('test-image', self.scanner.changing_image_names)
+        start_mock.assert_awaited_once_with(self.NEW_NVR)
+
+    def test_builder_stream_key(self):
+        self.assertEqual(
+            ConfigScanSources.builder_stream_key(self.NEW_NVR),
+            ('openshift-golang-builder-container', '1.25', 'el9'),
+        )
+        self.assertEqual(
+            ConfigScanSources.builder_stream_key(self.OLD_NVR),
+            ConfigScanSources.builder_stream_key(self.NEW_NVR),
+        )
+        self.assertNotEqual(
+            ConfigScanSources.builder_stream_key(self.NEW_NVR.replace('.el9', '.el8')),
+            ConfigScanSources.builder_stream_key(self.NEW_NVR),
+        )
+        self.assertIsNone(ConfigScanSources.builder_stream_key('notannvr'))
+
+    async def test_non_floating_newer_builder_triggers_rebuild(self):
+        self.build_record.parent_images = [self.OLD_NVR, self.BASE_NVR]
+        start_mock = await self._scan_async(self.PINNED, self.OLD_NVR, datetime(2026, 10, 20, tzinfo=timezone.utc))
+
+        self.assertIn('test-image', self.scanner.changing_image_names)
+        self.assertEqual(
+            self._reason(),
+            f'A builder or parent image build {self.OLD_NVR} is newer than latest test-image build',
+        )
+        start_mock.assert_awaited_once_with(self.OLD_NVR)
+
+    async def test_non_floating_older_builder_ignores_recorded_nvr(self):
+        self.build_record.parent_images = [self.NEW_NVR, self.BASE_NVR]
+        start_mock = await self._scan_async(self.PINNED, self.OLD_NVR, datetime(2026, 10, 1, tzinfo=timezone.utc))
+
+        self.assertNotIn('test-image', self.scanner.changing_image_names)
+        start_mock.assert_awaited_once_with(self.OLD_NVR)
+
+    def test_is_floating_builder_tag(self):
+        self.assertTrue(ConfigScanSources.is_floating_builder_tag(self.FLOATING))
+        self.assertTrue(
+            ConfigScanSources.is_floating_builder_tag(
+                'registry.redhat.io/openshift/golang-builder:golang-builder-v1.26-rhel10'
+            )
+        )
+        self.assertFalse(ConfigScanSources.is_floating_builder_tag(self.PINNED))
+        self.assertFalse(ConfigScanSources.is_floating_builder_tag('registry.redhat.io/ubi9/ubi:latest'))
+        self.assertFalse(ConfigScanSources.is_floating_builder_tag(f'{self.FLOATING.split(":")[0]}@sha256:abc'))
+        self.assertFalse(
+            ConfigScanSources.is_floating_builder_tag(
+                f'{self.FLOATING}@sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855'
+            )
+        )
+        self.assertFalse(ConfigScanSources.is_floating_builder_tag('golang-builder-v1.25-rhel9'))
+        self.assertFalse(ConfigScanSources.is_floating_builder_tag(f'{self.FLOATING}-extra'))
