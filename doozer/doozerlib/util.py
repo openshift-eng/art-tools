@@ -22,6 +22,7 @@ from artcommonlib.arch_util import GO_ARCHES, brew_arch_for_go_arch, go_arch_for
 from artcommonlib.assembly import AssemblyTypes
 from artcommonlib.format_util import red_print
 from artcommonlib.model import Missing, Model
+from artcommonlib.release_util import isolate_el_version_in_release
 from artcommonlib.rpm_utils import parse_nvr
 from artcommonlib.util import (
     get_release_name,
@@ -563,9 +564,8 @@ def konflux_golang_builder_component_name(nvr: str) -> str:
     else:
         major_minor = version
 
-    el_suffix = "rhel9"
-    if ".el8" in release:
-        el_suffix = "rhel8"
+    el_version = isolate_el_version_in_release(release)
+    el_suffix = f"rhel{el_version}" if el_version else "rhel9"
 
     return f"golang-builder-{major_minor}-{el_suffix}"
 
