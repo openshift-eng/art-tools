@@ -14,6 +14,7 @@ from pyartcd.runtime import Runtime
 LOGGER = logging.getLogger(__name__)
 VERIFY_RELEASE_SUCCESS_LABEL = "verify-release-success"
 ADVISORY_TRANSITION_SUCCESS_LABEL = "advisory-transition-success"
+ADVISORY_TRANSITION_FAIL_LABEL = "advisory-transition-fail"
 
 
 class VerifyAdvisoryTransitionPipeline:
@@ -23,6 +24,16 @@ class VerifyAdvisoryTransitionPipeline:
         self.assembly = assembly
         self.group = f"openshift-{version}"
         self.working_dir = runtime.working_dir / "verify_advisory_transition"
+
+    @property
+    def _elliott_base(self) -> list[str]:
+        return [
+            "elliott",
+            f"--group={self.group}",
+            f"--assembly={self.assembly}",
+            f"--data-path={constants.OCP_BUILD_DATA_URL}",
+            f"--working-dir={self.working_dir / 'elliott-working'}",
+        ]
 
     async def run(self):
         # load_group_config resolves assembly inheritance through the standard tools.
@@ -34,6 +45,17 @@ class VerifyAdvisoryTransitionPipeline:
             raise ValueError(f"No shipment MR configured for {self.group}/{self.assembly}")
 
         gitlab_client = GitLabClient.from_url(mr_url)
+        try:
+            await self._run(gitlab_client, mr_url)
+        except Exception:
+            if not self.runtime.dry_run:
+                try:
+                    await exectools.cmd_assert_async(self._elliott_base + ["verify-advisory-status", "--mark-failed"])
+                except Exception:
+                    LOGGER.exception("Unable to mark advisory transition failure for %s", self.assembly)
+            raise
+
+    async def _run(self, gitlab_client: GitLabClient, mr_url: str):
         mr = gitlab_client.get_mr_from_url(mr_url)
         labels = set(mr.labels or [])
         if ADVISORY_TRANSITION_SUCCESS_LABEL in labels:
@@ -43,13 +65,7 @@ class VerifyAdvisoryTransitionPipeline:
             raise ValueError(f"Shipment MR must have {VERIFY_RELEASE_SUCCESS_LABEL}: {mr_url}")
 
         self.working_dir.mkdir(parents=True, exist_ok=True)
-        elliott_base = [
-            "elliott",
-            f"--group={self.group}",
-            f"--assembly={self.assembly}",
-            f"--data-path={constants.OCP_BUILD_DATA_URL}",
-            f"--working-dir={self.working_dir / 'elliott-working'}",
-        ]
+        elliott_base = self._elliott_base
         # Metadata accessibility belongs to this flow, not verify-release.
         await exectools.cmd_assert_async(elliott_base + ["verify-metadata-url"])
         # Elliott owns assembly selection (including MicroShift exclusion) and
@@ -95,9 +111,12 @@ async def verify_advisory_transition_cli(runtime: Runtime, version: str, assembl
     """Verify metadata URLs, move QE advisories (excluding MicroShift), and label the MR.
 
     Requires verify-release-success on the shipment MR. Only QE advisories are
-    transitioned. Elliott verifies the final states and adds advisory-transition-success
+    transitioned. Elliott manages both outcome labels, verifies final states and adds advisory-transition-success
     only after all active advisories have progressed past QE. No open-MR
-    requirement applies. Dry runs check metadata and use change-state --dry-run
-    without updating the MR.
+    requirement applies. Failed attempts add advisory-transition-fail, including
+    metadata and advisory errors. The scanner skips both outcome labels; retry
+    by running this command manually or removing the fail label. A successful
+    retry replaces fail with success. Dry runs check metadata and use
+    change-state --dry-run without updating the MR.
     """
     await VerifyAdvisoryTransitionPipeline(runtime, version, assembly).run()

@@ -234,3 +234,19 @@ class TestAddMrLabels(unittest.TestCase):
         gitlab_class.return_value.projects.get.return_value.mergerequests.update.side_effect = RuntimeError("403")
         with self.assertRaisesRegex(RuntimeError, "403"):
             client.add_mr_labels("https://gitlab.example.com/group/project/-/merge_requests/42", ["one"])
+
+    @patch("artcommonlib.gitlab.gitlab.Gitlab")
+    def test_replaces_outcome_in_one_update_preserving_unrelated_labels(self, gitlab_class):
+        from artcommonlib.gitlab import GitLabClient
+
+        client = GitLabClient("https://gitlab.example.com", "fake-token")
+        project = gitlab_class.return_value.projects.get.return_value
+        client.add_mr_labels(
+            "https://gitlab.example.com/group/project/-/merge_requests/42",
+            ["advisory-transition-success"],
+            remove_labels=["advisory-transition-fail"],
+        )
+        project.mergerequests.update.assert_called_once_with(
+            42, add_labels="advisory-transition-success", remove_labels="advisory-transition-fail"
+        )
+        project.mergerequests.get.assert_not_called()

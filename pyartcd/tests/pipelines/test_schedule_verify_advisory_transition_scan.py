@@ -7,7 +7,12 @@ MODULE = "pyartcd.pipelines.scheduled.schedule_verify_advisory_transition_scan"
 
 
 def make_mr(title="Shipment for 4.22.9", labels=None, state="opened", iid=42):
-    return MagicMock(iid=iid, title=title, state=state, labels=["verify-release-success"] if labels is None else labels)
+    return MagicMock(
+        iid=iid,
+        title=title,
+        state=state,
+        labels=["verify-release-success"] if labels is None else labels,
+    )
 
 
 class TestScheduleVerifyAdvisoryTransitionScan(unittest.IsolatedAsyncioTestCase):
@@ -45,9 +50,10 @@ class TestScheduleVerifyAdvisoryTransitionScan(unittest.IsolatedAsyncioTestCase)
                 await scan_and_trigger(self.runtime)
                 self.trigger.assert_not_called()
 
-    async def test_skips_completed_unverified_and_non_ocp_releases(self):
+    async def test_skips_completed_failed_unverified_and_non_ocp_releases(self):
         self.gitlab.list_merge_requests.return_value = [
             make_mr(labels=["verify-release-success", "advisory-transition-success"]),
+            make_mr(labels=["verify-release-success", "advisory-transition-fail"]),
             make_mr(labels=[]),
             make_mr("Shipment for logging 6.5.2"),
         ]
@@ -75,3 +81,17 @@ class TestScheduleVerifyAdvisoryTransitionScan(unittest.IsolatedAsyncioTestCase)
         self.gitlab.list_merge_requests.return_value = []
         await scan_and_trigger(self.runtime)
         self.trigger.assert_not_called()
+
+    async def test_failed_release_stays_excluded_on_repeated_scans(self):
+        mr = make_mr()
+        self.gitlab.list_merge_requests.return_value = [mr]
+        await scan_and_trigger(self.runtime)
+        self.trigger.assert_called_once()
+        mr.labels.append("advisory-transition-fail")
+        self.trigger.reset_mock()
+        await scan_and_trigger(self.runtime)
+        await scan_and_trigger(self.runtime)
+        self.trigger.assert_not_called()
+        mr.labels.remove("advisory-transition-fail")
+        await scan_and_trigger(self.runtime)
+        self.trigger.assert_called_once()

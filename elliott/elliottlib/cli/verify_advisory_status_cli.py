@@ -19,6 +19,7 @@ from elliottlib.verify_common import (
 
 LOGGER = logging.getLogger(__name__)
 ADVISORY_TRANSITION_SUCCESS_LABEL = "advisory-transition-success"
+ADVISORY_TRANSITION_FAIL_LABEL = "advisory-transition-fail"
 POST_QE_STATES = ("REL_PREP", "PUSH_READY", "IN_PUSH", "SHIPPED_LIVE")
 
 
@@ -74,6 +75,28 @@ class VerifyAdvisoryStatusResult(VerifyResultBase):
         return "\n".join(lines)
 
 
+@dataclass
+class MarkAdvisoryFailureResult(VerifyResultBase):
+    mr_url: str
+    label_added: bool = False
+    dry_run: bool = False
+    error: str | None = None
+
+    @property
+    def passed(self) -> bool:
+        return (self.label_added or self.dry_run) and not self.error
+
+    def to_dict(self) -> dict:
+        return dict(asdict(self), label=ADVISORY_TRANSITION_FAIL_LABEL, passed=self.passed)
+
+    def render_text(self) -> str:
+        action = "added" if self.label_added else ("would add" if self.dry_run else "not added")
+        lines = [f"Advisory transition failure label: {action}"]
+        if self.error:
+            lines.append(f"  Error: {self.error}")
+        return "\n".join(lines)
+
+
 async def verify_advisory_status(advisory_ids: list[int]) -> VerifyAdvisoryStatusResult:
     result = VerifyAdvisoryStatusResult()
     async with AsyncErrataAPI() as api:
@@ -99,19 +122,28 @@ async def verify_advisory_status(advisory_ids: list[int]) -> VerifyAdvisoryStatu
     is_flag=True,
     help="Add advisory-transition-success after all active advisories have passed QE.",
 )
-@click.option("--dry-run", is_flag=True, help="Check actual advisory states without adding the label.")
+@click.option(
+    "--mark-failed",
+    is_flag=True,
+    help="Record a failed transition attempt without checking advisory states; remove the success label.",
+)
+@click.option("--dry-run", is_flag=True, help="Do not update MR labels; verification still checks actual states.")
 @verify_output_option
 @click.pass_obj
 @click_coroutine
-async def verify_advisory_status_cli(runtime, mark, dry_run, output):
+async def verify_advisory_status_cli(runtime, mark, mark_failed, dry_run, output):
     """Verify that assembly advisories have progressed beyond QE.
 
     Resolve advisory IDs from the assembly build-data configuration, excluding
     MicroShift through the shared verify helper. REL_PREP, PUSH_READY, IN_PUSH
     and SHIPPED_LIVE pass. DROPPED_NO_SHIP is skipped. NEW_FILES, QE, unknown
     states and API errors fail. With --mark, add advisory-transition-success only
-    after all checks pass. Resolve the MR URL from the assembly configuration;
-    closed and merged MRs are supported. Dry runs still verify actual states.
+    after all checks pass, removing advisory-transition-fail in the same update.
+    With --mark-failed, record an orchestrator-reported failure without querying
+    Errata or selecting advisories, replacing success with fail. This operation
+    returns success when the label is recorded, not when advisories pass checks.
+    --mark and --mark-failed are mutually exclusive. Resolve the MR URL from the
+    assembly configuration; closed and merged MRs are supported.
 
     Examples:
 
@@ -119,10 +151,27 @@ async def verify_advisory_status_cli(runtime, mark, dry_run, output):
         elliott -g openshift-4.22 --assembly 4.22.9 verify-advisory-status
         elliott -g openshift-4.22 --assembly 4.22.9 verify-advisory-status --mark
     """
+    if mark and mark_failed:
+        raise click.UsageError("--mark and --mark-failed are mutually exclusive")
     if not runtime.group:
         raise click.UsageError("A group/assembly configuration is required")
     runtime.dry_run = dry_run
     runtime.initialize(no_group=False)
+    if mark_failed:
+        result = MarkAdvisoryFailureResult(mr_url=get_assembly_shipment_url(runtime, required=True), dry_run=dry_run)
+        if not dry_run:
+            try:
+                client = GitLabClient.from_url(result.mr_url)
+                client.add_mr_labels(
+                    result.mr_url,
+                    [ADVISORY_TRANSITION_FAIL_LABEL],
+                    remove_labels=[ADVISORY_TRANSITION_SUCCESS_LABEL],
+                )
+                result.label_added = True
+            except Exception as exc:
+                result.error = str(exc)
+        handle_verify_result(result, output)
+        return
     advisory_ids = tuple(get_ocp_release_advisory_ids(runtime).values())
     if not advisory_ids or any(a <= 0 for a in advisory_ids):
         raise click.UsageError("No valid advisory IDs selected")
@@ -140,7 +189,11 @@ async def verify_advisory_status_cli(runtime, mark, dry_run, output):
             else:
                 try:
                     client = GitLabClient.from_url(shipment_url)
-                    client.add_mr_labels(shipment_url, [ADVISORY_TRANSITION_SUCCESS_LABEL])
+                    client.add_mr_labels(
+                        shipment_url,
+                        [ADVISORY_TRANSITION_SUCCESS_LABEL],
+                        remove_labels=[ADVISORY_TRANSITION_FAIL_LABEL],
+                    )
                     result.label_added = True
                 except Exception as exc:
                     result.error = str(exc)

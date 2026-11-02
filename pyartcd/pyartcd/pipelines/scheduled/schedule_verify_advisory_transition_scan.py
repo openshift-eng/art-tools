@@ -6,7 +6,11 @@ from artcommonlib.gitlab import GitLabClient
 
 from pyartcd import jenkins
 from pyartcd.cli import cli, click_coroutine, pass_runtime
-from pyartcd.pipelines.verify_advisory_transition import ADVISORY_TRANSITION_SUCCESS_LABEL, VERIFY_RELEASE_SUCCESS_LABEL
+from pyartcd.pipelines.verify_advisory_transition import (
+    ADVISORY_TRANSITION_FAIL_LABEL,
+    ADVISORY_TRANSITION_SUCCESS_LABEL,
+    VERIFY_RELEASE_SUCCESS_LABEL,
+)
 from pyartcd.runtime import Runtime
 
 LOGGER = logging.getLogger(__name__)
@@ -23,7 +27,10 @@ async def scan_and_trigger(runtime: Runtime):
     releases = set()
     for mr in merge_requests:
         labels = set(mr.labels or [])
-        if VERIFY_RELEASE_SUCCESS_LABEL not in labels or ADVISORY_TRANSITION_SUCCESS_LABEL in labels:
+        if VERIFY_RELEASE_SUCCESS_LABEL not in labels or labels & {
+            ADVISORY_TRANSITION_SUCCESS_LABEL,
+            ADVISORY_TRANSITION_FAIL_LABEL,
+        }:
             continue
         match = RELEASE_NAME_PATTERN.search(mr.title)
         if not match:
@@ -53,9 +60,9 @@ async def scan_and_trigger(runtime: Runtime):
 @pass_runtime
 @click_coroutine
 async def schedule_verify_advisory_transition_scan(runtime: Runtime):
-    """Scan all MR states for verify-release-success without advisory-transition-success.
+    """Scan verified shipment MRs without advisory-transition-success or advisory-transition-fail.
 
-    Failures remain eligible for the next scheduled scan. The per-release
+    Failed attempts require a manual retry or removal of the fail label. The per-release
     Jenkins job locks each release and rechecks labels before doing work.
     Requires GITLAB_TOKEN and Jenkins credentials. Cadence is set in Jenkins.
     """

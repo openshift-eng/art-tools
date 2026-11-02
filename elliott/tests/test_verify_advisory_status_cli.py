@@ -90,7 +90,9 @@ class TestVerifyAdvisoryStatusCLI(TestCase):
         self.states[101] = "PUSH_READY"
         result = self.invoke("--mark")
         self.assertEqual(result.exit_code, 0, result.output)
-        self.update.assert_called_once_with(MR_URL, ["advisory-transition-success"])
+        self.update.assert_called_once_with(
+            MR_URL, ["advisory-transition-success"], remove_labels=["advisory-transition-fail"]
+        )
         self.assertTrue(json.loads(result.output)["label_added"])
         self.shipment_url.assert_called_once_with(self.runtime, required=True)
         self.client.get_mr_from_url.assert_not_called()
@@ -163,13 +165,17 @@ class TestVerifyAdvisoryStatusCLI(TestCase):
         self.assertEqual(result.exit_code, 0, result.output)
         data = json.loads(result.output)
         self.assertTrue(data["advisories"][1]["skipped"])
-        self.update.assert_called_once_with(MR_URL, ["advisory-transition-success"])
+        self.update.assert_called_once_with(
+            MR_URL, ["advisory-transition-success"], remove_labels=["advisory-transition-fail"]
+        )
 
     def test_all_dropped_advisories_allow_completion(self):
         self.states[100] = "DROPPED_NO_SHIP"
         result = self.invoke("--mark")
         self.assertEqual(result.exit_code, 0, result.output)
-        self.update.assert_called_once_with(MR_URL, ["advisory-transition-success"])
+        self.update.assert_called_once_with(
+            MR_URL, ["advisory-transition-success"], remove_labels=["advisory-transition-fail"]
+        )
 
     def test_dropped_advisory_does_not_hide_an_active_status_mismatch(self):
         self.assembly_ids.return_value = {"rpm": 100, "rhcos": 101}
@@ -178,3 +184,48 @@ class TestVerifyAdvisoryStatusCLI(TestCase):
         self.assertEqual(result.exit_code, 1, result.output)
         self.assertTrue(json.loads(result.output)["advisories"][1]["skipped"])
         self.gitlab_cls.from_url.assert_not_called()
+
+    def test_mark_failed_replaces_success_without_checking_advisories(self):
+        self.assembly_ids.side_effect = RuntimeError("advisory configuration invalid")
+        self.api.get_advisory_state.side_effect = RuntimeError("Errata unavailable")
+        result = self.invoke("--mark-failed")
+        self.assertEqual(result.exit_code, 0, result.output)
+        self.assembly_ids.assert_not_called()
+        self.api.get_advisory_state.assert_not_called()
+        self.update.assert_called_once_with(
+            MR_URL, ["advisory-transition-fail"], remove_labels=["advisory-transition-success"]
+        )
+        data = json.loads(result.output)
+        self.assertTrue(data["passed"])
+        self.assertTrue(data["label_added"])
+        self.assertEqual(data["label"], "advisory-transition-fail")
+
+    def test_mark_failed_dry_run_does_not_access_gitlab_or_errata(self):
+        result = self.invoke("--mark-failed", "--dry-run")
+        self.assertEqual(result.exit_code, 0, result.output)
+        data = json.loads(result.output)
+        self.assertTrue(data["dry_run"])
+        self.assertFalse(data["label_added"])
+        self.gitlab_cls.from_url.assert_not_called()
+        self.api.get_advisory_state.assert_not_called()
+
+    def test_mark_failed_reports_label_error(self):
+        self.update.side_effect = RuntimeError("403 Forbidden")
+        result = self.invoke("--mark-failed")
+        self.assertEqual(result.exit_code, 1, result.output)
+        self.assertFalse(json.loads(result.output)["passed"])
+        self.assertEqual(json.loads(result.output)["error"], "403 Forbidden")
+
+    def test_mark_failed_requires_configured_shipment(self):
+        self.shipment_url.side_effect = RuntimeError("No shipment URL found")
+        result = self.invoke("--mark-failed")
+        self.assertNotEqual(result.exit_code, 0)
+        self.update.assert_not_called()
+        self.api.get_advisory_state.assert_not_called()
+
+    def test_conflicting_mark_options_fail_before_initialization(self):
+        result = self.invoke("--mark", "--mark-failed")
+        self.assertEqual(result.exit_code, 2, result.output)
+        self.assertIn("mutually exclusive", result.output)
+        self.runtime.initialize.assert_not_called()
+        self.update.assert_not_called()
