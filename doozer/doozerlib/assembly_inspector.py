@@ -16,6 +16,7 @@ from artcommonlib.konflux.package_rpm_finder import PackageRpmFinder
 from artcommonlib.rhcos import RhcosMissingContainerException, get_container_configs
 from artcommonlib.rpm_utils import compare_nvr, parse_nvr
 from koji import ClientSession
+from tenacity import RetryError
 
 from doozerlib import Runtime, brew
 from doozerlib.build_info import BrewBuildRecordInspector, BuildRecordInspector, KonfluxBuildRecordInspector
@@ -449,6 +450,8 @@ class AssemblyInspector:
             )
             repodatas = []
             for repo, result in zip(repos, results):
+                if isinstance(result, RetryError):
+                    result = result.last_attempt.exception() or result
                 if isinstance(result, ClientResponseError) and result.status == 404 and repo.cs_optional is True:
                     self.runtime.logger.info(
                         "Skipping absent optional repository %s for %s (HTTP 404)", repo.name, arch

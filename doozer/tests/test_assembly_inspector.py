@@ -14,6 +14,7 @@ from doozerlib.image import ImageMetadata
 from doozerlib.repodata import Repodata, Rpm
 from doozerlib.repos import Repo
 from multidict import CIMultiDict, CIMultiDictProxy
+from tenacity import Future, RetryError
 from yarl import URL
 
 
@@ -411,6 +412,39 @@ class TestRepoAwareImageConsistency(IsolatedAsyncioTestCase):
         self.assertEqual(await self.issues(), [])
         self.assertEqual(await self.issues(), [])
         self.loader.assert_awaited_once()
+
+    async def test_optional_repo_wrapped_404_is_skipped(self):
+        """Wrapped optional 404s preserve absence and availability checks in other repos."""
+        for remaining in (None, False, True):
+            with self.subTest(remaining=remaining):
+                self.runtime.repos.clear()
+                missing = self.add_repo("a-missing")
+                attempt = Future(3)
+                attempt.set_exception(self.metadata_http_error(404))
+                missing.get_repodata_threadsafe = AsyncMock(side_effect=RetryError(attempt))
+                if remaining is not None:
+                    self.add_repo("z-remaining", [self.rpm()] if remaining else [])
+                if remaining:
+                    await self.assert_conflict()
+                else:
+                    self.assertEqual(await self.issues(), [])
+
+    async def test_wrapped_metadata_failures_propagate(self):
+        """Retry wrappers cannot waive required 404s or optional non-404 failures."""
+        self.add_repo("a-available", [self.rpm()])
+        for optional, error in (
+            (False, self.metadata_http_error(404)),
+            (True, self.metadata_http_error(503)),
+            (True, asyncio.TimeoutError("metadata timeout")),
+        ):
+            with self.subTest(optional=optional, error=type(error).__name__):
+                repo = self.add_repo("z-failing", optional=optional)
+                attempt = Future(3)
+                attempt.set_exception(error)
+                repo.get_repodata_threadsafe = AsyncMock(side_effect=RetryError(attempt))
+                with self.assertRaises(type(error)) as raised:
+                    await self.issues()
+                self.assertIs(raised.exception, error)
 
     async def test_explicit_pins_are_not_repo_gated_or_overwritten(self):
         """Explicit member and group pins remain mandatory, including missing dependencies."""

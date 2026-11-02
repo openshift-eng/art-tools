@@ -4,8 +4,12 @@ from unittest import IsolatedAsyncioTestCase, TestCase
 from unittest.mock import ANY, AsyncMock, MagicMock, Mock, patch
 
 import defusedxml.ElementTree as ET
+from aiohttp import ClientResponseError, RequestInfo
 from doozerlib.repodata import OutdatedRPMFinder, Repodata, RepodataLoader, Rpm, RpmModule
+from multidict import CIMultiDict, CIMultiDictProxy
 from ruamel.yaml import YAML
+from tenacity import wait_none
+from yarl import URL
 
 
 class TestRpm(TestCase):
@@ -898,6 +902,29 @@ data:
 
 
 class TestRepodataLoader(IsolatedAsyncioTestCase):
+    @patch("doozerlib.repodata.cmd_gather_async", new_callable=AsyncMock)
+    @patch("aiohttp.ClientSession", autospec=True)
+    async def test_load_reraises_http_error_after_retries(self, ClientSession: Mock, cmd_gather_async: AsyncMock):
+        """Exhausted real loader retries preserve the HTTP status for repository policy."""
+        repo_url = "https://example.invalid/repo/"
+        url = URL(f"{repo_url}repodata/repomd.xml")
+        request = RequestInfo(url, "GET", CIMultiDictProxy(CIMultiDict()), url)
+        error = ClientResponseError(request, (), status=404, message="metadata unavailable")
+        session = ClientSession.return_value.__aenter__.return_value = Mock(name="session")
+        response = Mock(name="response")
+        session.get.return_value = AsyncMock()
+        session.get.return_value.__aenter__.return_value = response
+        response.raise_for_status.side_effect = error
+        cmd_gather_async.return_value = (0, "", "")
+        with patch.object(RepodataLoader.load.retry, "wait", wait_none()):
+            with self.assertRaises(ClientResponseError) as raised:
+                await RepodataLoader().load("test-x86_64", repo_url)
+        self.assertIs(raised.exception, error)
+        self.assertEqual(raised.exception.status, 404)
+        self.assertEqual(session.get.call_count, 3)
+        session.get.assert_called_with(str(url))
+        self.assertEqual(response.raise_for_status.call_count, 3)
+
     @patch("doozerlib.repodata.RepodataLoader._fetch_remote_compressed", autospec=True)
     @patch("aiohttp.ClientSession", autospec=True)
     async def test_load(self, ClientSession: Mock, _fetch_remote_compressed: AsyncMock):
