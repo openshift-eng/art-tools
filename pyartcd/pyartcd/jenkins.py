@@ -929,14 +929,45 @@ def start_build_microshift_bootc(
     )
 
 
-def start_rhcos_sync(release_tag_or_pullspec: str, dry_run: bool, sign_only: bool = False, **kwargs) -> Optional[str]:
+def start_rhcos_sync(
+    release_tag_or_pullspec: str,
+    dry_run: bool,
+    sign_only: bool = False,
+    force: bool = False,
+    propagate_params: Optional[dict] = None,
+    **kwargs,
+) -> Optional[str]:
+    """Trigger the RHCOS_SYNC Jenkins job.
+
+    Args:
+        release_tag_or_pullspec: Release tag (e.g. ``4.19.54-x86_64``) or pullspec with a tag.
+        dry_run: Pass through to the job's ``DRY_RUN`` parameter.
+        sign_only: Only sign RHCOS container images; skip boot-image mirroring.
+        force: Forward to the job's ``FORCE`` parameter so the downstream job mirrors even
+            if its own needsHappening check would otherwise deem the sync unnecessary.
+        propagate_params: Optional parameters (e.g. ``ART_TOOLS_COMMIT``/``PLR_TEMPLATE_COMMIT``
+            from :func:`get_propagatable_params`) to forward to the downstream job so it runs
+            the same art-tools/PLR-template revision as this orchestrator.
+
+    Returns:
+        The queued build item URL, or None depending on ``start_build``.
+    """
+    params = {
+        'RELEASE_TAG': release_tag_or_pullspec,
+        'DRY_RUN': dry_run,
+        'SIGN_ONLY': sign_only,
+        'FORCE': force,
+    }
+
+    # Automatically propagate parameters if provided
+    # Note: params.update() will override existing parameter values if keys match
+    if propagate_params:
+        params.update(propagate_params)
+        logger.info("Propagating parameters to rhcos_sync: %s", propagate_params)
+
     return start_build(
         job=Jobs.RHCOS_SYNC,
-        params={
-            'RELEASE_TAG': release_tag_or_pullspec,
-            'DRY_RUN': dry_run,
-            'SIGN_ONLY': sign_only,
-        },
+        params=params,
         **kwargs,
     )
 
