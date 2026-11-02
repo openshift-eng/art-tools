@@ -214,7 +214,7 @@ class TestVerifyReleasePipeline(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(label_calls), 1)
 
     @patch("pyartcd.pipelines.verify_release.exectools.cmd_assert_async", new_callable=AsyncMock)
-    async def test_shipment_label_skipped_when_checks_fail(self, mock_assert):
+    async def test_failed_checks_mark_failure(self, mock_assert):
         def mock_side_effect(cmd, **kwargs):
             if "verify-signatures" in cmd:
                 raise ChildProcessError("Process exited with code 1.")
@@ -232,7 +232,9 @@ class TestVerifyReleasePipeline(unittest.IsolatedAsyncioTestCase):
 
         self.assertFalse(result.passed)
         label_steps = [s for s in result.steps if s.name == "shipment-label"]
-        self.assertEqual(len(label_steps), 0)
+        self.assertEqual(len(label_steps), 1)
+        self.assertEqual(label_steps[0].status, StepStatus.PASS)
+        self.assertEqual(mock_assert.call_args.args[0][-2:], ["verify-release", "--mark-failed"])
 
     @patch("pyartcd.pipelines.verify_release.exectools.cmd_assert_async", new_callable=AsyncMock)
     async def test_shipment_label_skip_by_user(self, mock_assert):
@@ -271,6 +273,77 @@ class TestVerifyReleasePipeline(unittest.IsolatedAsyncioTestCase):
         self.assertFalse(result.passed)
         label_step = [s for s in result.steps if s.name == "shipment-label"][0]
         self.assertEqual(label_step.status, StepStatus.FAIL)
+
+    @patch("pyartcd.pipelines.verify_release.exectools.cmd_assert_async", new_callable=AsyncMock)
+    async def test_failed_checks_forward_dry_run(self, command):
+        self.runtime.dry_run = True
+        command.side_effect = lambda cmd, **kwargs: self.raise_check_error() if "verify-signatures" in cmd else None
+        pipeline = VerifyReleasePipeline(self.runtime, "4.22", "4.22.9")
+        result = await pipeline.run()
+        self.assertFalse(result.passed)
+        self.assertEqual(command.call_args.args[0][-3:], ["verify-release", "--mark-failed", "--dry-run"])
+
+    @staticmethod
+    def raise_check_error():
+        raise ChildProcessError("signature check failed")
+
+    @patch("pyartcd.pipelines.verify_release.exectools.cmd_assert_async", new_callable=AsyncMock)
+    async def test_skip_shipment_label_suppresses_failure_marking(self, command):
+        command.side_effect = lambda cmd, **kwargs: self.raise_check_error() if "verify-signatures" in cmd else None
+        pipeline = VerifyReleasePipeline(self.runtime, "4.22", "4.22.9", skip_steps=["shipment-label"])
+        result = await pipeline.run()
+        self.assertFalse(result.passed)
+        self.assertFalse(any("verify-release" in c.args[0] for c in command.call_args_list))
+
+    @patch("pyartcd.pipelines.verify_release.exectools.cmd_assert_async", new_callable=AsyncMock)
+    async def test_missing_registry_credentials_marks_failure_and_preserves_error(self, command):
+        os.environ.pop("QUAY_AUTH_FILE", None)
+        pipeline = VerifyReleasePipeline(self.runtime, "4.22", "4.22.9")
+        with self.assertRaisesRegex(ValueError, "QUAY_AUTH_FILE"):
+            await pipeline.run()
+        command.assert_awaited_once()
+        self.assertEqual(command.call_args.args[0][-2:], ["verify-release", "--mark-failed"])
+
+    @patch("pyartcd.pipelines.verify_release.exectools.cmd_assert_async", new_callable=AsyncMock)
+    async def test_registry_setup_failure_is_marked(self, command):
+        self.mock_registry_config.return_value.__enter__.side_effect = RuntimeError("registry setup failed")
+        pipeline = VerifyReleasePipeline(self.runtime, "4.22", "4.22.9")
+        with self.assertRaisesRegex(RuntimeError, "registry setup failed"):
+            await pipeline.run()
+        self.assertEqual(command.call_args.args[0][-2:], ["verify-release", "--mark-failed"])
+
+    @patch("pyartcd.pipelines.verify_release.exectools.cmd_assert_async", new_callable=AsyncMock)
+    async def test_setup_error_is_preserved_if_failure_marking_fails(self, command):
+        os.environ.pop("QUAY_AUTH_FILE", None)
+        command.side_effect = ChildProcessError("GitLab unavailable")
+        pipeline = VerifyReleasePipeline(self.runtime, "4.22", "4.22.9")
+        with self.assertRaisesRegex(ValueError, "QUAY_AUTH_FILE"):
+            await pipeline.run()
+
+    @patch("pyartcd.pipelines.verify_release.exectools.cmd_assert_async", new_callable=AsyncMock)
+    async def test_setup_failure_with_skip_or_dry_run_never_marks(self, command):
+        os.environ.pop("QUAY_AUTH_FILE", None)
+        for dry_run, skips in ((True, []), (False, ["shipment-label"])):
+            with self.subTest(dry_run=dry_run, skips=skips):
+                self.runtime.dry_run = dry_run
+                pipeline = VerifyReleasePipeline(self.runtime, "4.22", "4.22.9", skip_steps=skips)
+                with self.assertRaises(ValueError):
+                    await pipeline.run()
+                command.assert_not_called()
+
+    @patch("pyartcd.pipelines.verify_release.exectools.cmd_assert_async", new_callable=AsyncMock)
+    async def test_failed_success_marking_also_attempts_fail_label(self, command):
+        def run(cmd, **kwargs):
+            if "verify-release" in cmd and "--mark" in cmd:
+                raise ChildProcessError("success marking failed")
+
+        command.side_effect = run
+        pipeline = VerifyReleasePipeline(self.runtime, "4.22", "4.22.9")
+        result = await pipeline.run()
+        self.assertFalse(result.passed)
+        labels = [c.args[0][-1] for c in command.call_args_list if "verify-release" in c.args[0]]
+        self.assertEqual(labels, ["--mark", "--mark-failed"])
+        self.assertEqual(result.steps[-1].name, "shipment-failure-label")
 
 
 if __name__ == "__main__":

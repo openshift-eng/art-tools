@@ -1,9 +1,11 @@
 import asyncio
+import json
 from unittest import TestCase
 from unittest.mock import MagicMock, patch
 
 from click.testing import CliRunner
 from elliottlib.cli.verify_release_cli import (
+    VERIFY_RELEASE_FAIL_LABEL,
     VERIFY_RELEASE_SUCCESS_LABEL,
     LabelCheckResult,
     MarkResult,
@@ -131,18 +133,19 @@ class TestHandleMark(TestCase):
     @patch("elliottlib.cli.verify_release_cli.handle_verify_result")
     @patch("elliottlib.cli.verify_release_cli.GitLabClient")
     def test_mark_success(self, mock_gitlab_cls, mock_handle):
-        mock_project = MagicMock()
         mock_client = MagicMock()
-        mock_client.get_project.return_value = mock_project
         mock_gitlab_cls.from_url.return_value = mock_client
-        mock_gitlab_cls._parse_mr_url.return_value = ("group/project", "42")
 
         runtime = MagicMock()
         runtime.dry_run = False
 
         _handle_mark(runtime, "https://gitlab/group/project/-/merge_requests/42", "text")
 
-        mock_project.mergerequests.update.assert_called_once_with(42, add_labels=VERIFY_RELEASE_SUCCESS_LABEL)
+        mock_client.add_mr_labels.assert_called_once_with(
+            "https://gitlab/group/project/-/merge_requests/42",
+            [VERIFY_RELEASE_SUCCESS_LABEL],
+            remove_labels=[VERIFY_RELEASE_FAIL_LABEL],
+        )
         result = mock_handle.call_args[0][0]
         self.assertIsInstance(result, MarkResult)
         self.assertTrue(result.label_added)
@@ -164,9 +167,8 @@ class TestHandleMark(TestCase):
     @patch("elliottlib.cli.verify_release_cli.GitLabClient")
     def test_mark_gitlab_error(self, mock_gitlab_cls, mock_handle):
         mock_client = MagicMock()
-        mock_client.get_project.side_effect = Exception("403 Forbidden")
+        mock_client.add_mr_labels.side_effect = Exception("403 Forbidden")
         mock_gitlab_cls.from_url.return_value = mock_client
-        mock_gitlab_cls._parse_mr_url.return_value = ("group/project", "42")
 
         runtime = MagicMock()
         runtime.dry_run = False
@@ -204,10 +206,65 @@ class TestVerifyReleaseCLI(TestCase):
         runtime = MagicMock(spec=["initialize", "dry_run"])
         runtime.initialize.side_effect = lambda **kwargs: self.assertFalse(runtime.dry_run)
         mock_shipment_url.return_value = "https://gitlab/group/project/-/merge_requests/42"
-        mock_gitlab_cls._parse_mr_url.return_value = ("group/project", "42")
 
         result = CliRunner().invoke(verify_release_cli, ["--mark"], obj=runtime)
 
         self.assertEqual(result.exit_code, 0, result.output)
-        mock_project = mock_gitlab_cls.from_url.return_value.get_project.return_value
-        mock_project.mergerequests.update.assert_called_once_with(42, add_labels=VERIFY_RELEASE_SUCCESS_LABEL)
+        mock_gitlab_cls.from_url.return_value.add_mr_labels.assert_called_once_with(
+            "https://gitlab/group/project/-/merge_requests/42",
+            [VERIFY_RELEASE_SUCCESS_LABEL],
+            remove_labels=[VERIFY_RELEASE_FAIL_LABEL],
+        )
+
+    @patch("elliottlib.cli.verify_release_cli.get_assembly_shipment_url")
+    @patch("elliottlib.cli.verify_release_cli.GitLabClient")
+    def test_mark_failed_replaces_success(self, gitlab_cls, shipment_url):
+        runtime = MagicMock()
+        shipment_url.return_value = "https://gitlab.example.com/group/project/-/merge_requests/42"
+        result = CliRunner().invoke(verify_release_cli, ["--mark-failed", "-o", "json"], obj=runtime)
+        self.assertEqual(result.exit_code, 0, result.output)
+        gitlab_cls.from_url.return_value.add_mr_labels.assert_called_once_with(
+            shipment_url.return_value, [VERIFY_RELEASE_FAIL_LABEL], remove_labels=[VERIFY_RELEASE_SUCCESS_LABEL]
+        )
+        data = json.loads(result.output)
+        self.assertTrue(data["passed"])
+        self.assertEqual(data["label"], VERIFY_RELEASE_FAIL_LABEL)
+
+    @patch("elliottlib.cli.verify_release_cli.get_assembly_shipment_url")
+    @patch("elliottlib.cli.verify_release_cli.GitLabClient")
+    def test_mark_failed_dry_run_does_not_update(self, gitlab_cls, shipment_url):
+        runtime = MagicMock()
+        result = CliRunner().invoke(verify_release_cli, ["--mark-failed", "--dry-run"], obj=runtime)
+        self.assertEqual(result.exit_code, 0, result.output)
+        gitlab_cls.from_url.assert_not_called()
+
+    def test_mark_options_are_mutually_exclusive(self):
+        runtime = MagicMock()
+        result = CliRunner().invoke(verify_release_cli, ["--mark", "--mark-failed"], obj=runtime)
+        self.assertEqual(result.exit_code, 2, result.output)
+        self.assertIn("mutually exclusive", result.output)
+        runtime.initialize.assert_not_called()
+
+    @patch("elliottlib.cli.verify_release_cli.get_assembly_shipment_url")
+    @patch("elliottlib.cli.verify_release_cli.GitLabClient")
+    def test_label_check_reports_failed_without_writing(self, gitlab_cls, shipment_url):
+        runtime = MagicMock()
+        shipment_url.return_value = "https://gitlab.example.com/group/project/-/merge_requests/42"
+        client = gitlab_cls.from_url.return_value
+        client.get_mr_from_url.return_value.labels = [VERIFY_RELEASE_FAIL_LABEL, "unrelated"]
+        result = CliRunner().invoke(verify_release_cli, ["-o", "json"], obj=runtime)
+        self.assertEqual(result.exit_code, 1, result.output)
+        self.assertEqual(json.loads(result.output)["state"], "failed")
+        client.add_mr_labels.assert_not_called()
+
+    @patch("elliottlib.cli.verify_release_cli.get_assembly_shipment_url")
+    @patch("elliottlib.cli.verify_release_cli.GitLabClient")
+    def test_mark_failed_reports_api_error(self, gitlab_cls, shipment_url):
+        runtime = MagicMock()
+        shipment_url.return_value = "https://gitlab.example.com/group/project/-/merge_requests/42"
+        gitlab_cls.from_url.return_value.add_mr_labels.side_effect = RuntimeError("403 Forbidden")
+        result = CliRunner().invoke(verify_release_cli, ["--mark-failed", "-o", "json"], obj=runtime)
+        self.assertEqual(result.exit_code, 1, result.output)
+        data = json.loads(result.output)
+        self.assertFalse(data["label_added"])
+        self.assertEqual(data["error"], "403 Forbidden")
