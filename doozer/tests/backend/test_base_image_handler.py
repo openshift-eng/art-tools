@@ -234,6 +234,52 @@ class TestBaseImageHandler(IsolatedAsyncioTestCase):
     @patch("doozerlib.backend.base_image_handler.KonfluxClient.from_kubeconfig")
     @patch("doozerlib.backend.base_image_handler.resolve_konflux_namespace_by_product")
     @patch("doozerlib.backend.base_image_handler.resolve_konflux_kubeconfig_by_product")
+    async def test_build_component_from_snapshot_input_golang_builder_uses_distgit_key(
+        self, mock_kubeconfig, mock_namespace, mock_konflux_client_init
+    ):
+        mock_namespace.return_value = "ocp-art-tenant"
+        mock_kubeconfig.return_value = "/path/to/kubeconfig"
+        mock_konflux_client_init.return_value = AsyncMock()
+
+        handler = BaseImageHandler(self.runtime, dry_run=True)
+
+        inp = BaseImageSnapshotInput(
+            nvr="openshift-golang-builder-container-v1.25.8-202604081607.p0.g2aa6a05.el9",
+            distgit_key="openshift-golang-builder-1-25.rhel9",
+            container_image="quay.io/test/golang-builder:latest",
+            is_golang_builder=True,
+        )
+
+        component = handler._build_component_from_snapshot_input(inp)
+        self.assertEqual(component["name"], "golang-builder-v1.25-rhel9")
+
+    @patch("doozerlib.backend.base_image_handler.KonfluxClient.from_kubeconfig")
+    @patch("doozerlib.backend.base_image_handler.resolve_konflux_namespace_by_product")
+    @patch("doozerlib.backend.base_image_handler.resolve_konflux_kubeconfig_by_product")
+    async def test_build_component_from_snapshot_input_golang_builder_variant_key_raises(
+        self, mock_kubeconfig, mock_namespace, mock_konflux_client_init
+    ):
+        from doozerlib.util import GolangBuilderComponentNameError
+
+        mock_namespace.return_value = "ocp-art-tenant"
+        mock_kubeconfig.return_value = "/path/to/kubeconfig"
+        mock_konflux_client_init.return_value = AsyncMock()
+
+        handler = BaseImageHandler(self.runtime, dry_run=True)
+
+        inp = BaseImageSnapshotInput(
+            nvr="openshift-golang-builder-container-v1.25.8-202604081607.p0.g2aa6a05.el9",
+            distgit_key="openshift-golang-builder-1-25.rhel9-6",
+            container_image="quay.io/test/golang-builder:latest",
+            is_golang_builder=True,
+        )
+
+        with self.assertRaises(GolangBuilderComponentNameError):
+            handler._build_component_from_snapshot_input(inp)
+
+    @patch("doozerlib.backend.base_image_handler.KonfluxClient.from_kubeconfig")
+    @patch("doozerlib.backend.base_image_handler.resolve_konflux_namespace_by_product")
+    @patch("doozerlib.backend.base_image_handler.resolve_konflux_kubeconfig_by_product")
     async def test_handler_pre_release_lifecycle_uses_ec_release_plan(
         self, mock_kubeconfig, mock_namespace, mock_konflux_client_init
     ):

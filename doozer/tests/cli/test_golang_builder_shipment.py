@@ -4,6 +4,7 @@ import unittest
 from unittest.mock import AsyncMock, MagicMock, patch
 
 from click.testing import CliRunner
+from doozerlib.util import GolangBuilderComponentNameError
 
 
 class TestGolangBuilderShipmentCli(unittest.IsolatedAsyncioTestCase):
@@ -33,6 +34,30 @@ class TestGolangBuilderShipmentCli(unittest.IsolatedAsyncioTestCase):
         )
         self.assertIn("https://gitlab.example.com/mr/1", result.output)
         mock_handler.create_shipment_from_nvrs.assert_called_once()
+
+    @patch("doozerlib.cli.golang_builder_shipment.GolangBuilderShipmentHandler")
+    def test_cli_refusal_exits_nonzero(self, mock_handler_cls):
+        mock_handler = mock_handler_cls.return_value
+        mock_handler.create_shipment_from_nvrs = AsyncMock(
+            side_effect=GolangBuilderComponentNameError("Refusing to map golang builder x")
+        )
+
+        runner = CliRunner()
+        from doozerlib.cli import cli
+
+        result = runner.invoke(
+            cli,
+            [
+                "--group",
+                "golang",
+                "golang-builder-shipment",
+                "openshift-golang-builder-container-v1.25.9-1.el9",
+            ],
+            obj=MagicMock(dry_run=False),
+        )
+        self.assertNotEqual(result.exit_code, 0)
+        self.assertIsInstance(result.exception, GolangBuilderComponentNameError)
+        self.assertNotIn("Shipment MR:", result.output)
 
     def test_cli_requires_nvrs(self):
         runner = CliRunner()

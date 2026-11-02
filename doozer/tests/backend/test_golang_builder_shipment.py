@@ -1,10 +1,12 @@
 import unittest
 from pathlib import Path
 from tempfile import TemporaryDirectory
+from types import SimpleNamespace
 from unittest import IsolatedAsyncioTestCase
 from unittest.mock import AsyncMock, MagicMock, Mock, patch
 
 from artcommonlib.github_auth import build_git_auth_env
+from artcommonlib.konflux.konflux_build_record import KonfluxBuildOutcome
 from artcommonlib.model import Model
 from doozerlib.backend.golang_builder_shipment import (
     GolangBuilderShipmentHandler,
@@ -12,6 +14,7 @@ from doozerlib.backend.golang_builder_shipment import (
     format_shipment_mr_title,
 )
 from doozerlib.constants import ART_IMAGES_BASE_APPLICATION
+from doozerlib.util import GolangBuilderComponentNameError
 
 SAMPLE_GOLANG_NVR = "openshift-golang-builder-container-v1.25.8-202604081607.p0.g2aa6a05.el9"
 
@@ -355,6 +358,10 @@ class TestCreateShipmentFromNvrs(IsolatedAsyncioTestCase):
         runtime.logger = Mock()
         runtime.group_config = Model({})
         runtime.working_dir = "/tmp"
+        runtime.konflux_db = Mock()
+        runtime.konflux_db.get_build_records_by_nvrs = AsyncMock(
+            return_value=[SimpleNamespace(name="openshift-golang-builder-1-25.rhel9")]
+        )
         handler = GolangBuilderShipmentHandler(runtime=runtime)
         handler._setup_repos = AsyncMock()
         handler._create_snapshot_via_elliott = AsyncMock(return_value=Mock(spec=["spec"]))
@@ -370,6 +377,80 @@ class TestCreateShipmentFromNvrs(IsolatedAsyncioTestCase):
         handler._setup_repos.assert_called_once()
         handler._create_snapshot_via_elliott.assert_called_once()
         handler._create_shipment_mr.assert_called_once()
+
+
+class TestCreateShipmentFromNvrsVariantGuard(IsolatedAsyncioTestCase):
+    def _handler(self, records):
+        runtime = Mock()
+        runtime.logger = Mock()
+        runtime.group_config = Model({})
+        runtime.working_dir = "/tmp"
+        runtime.konflux_db = Mock()
+        runtime.konflux_db.get_build_records_by_nvrs = AsyncMock(return_value=records)
+        handler = GolangBuilderShipmentHandler(runtime=runtime)
+        handler._setup_repos = AsyncMock()
+        handler._create_snapshot_via_elliott = AsyncMock(return_value=Mock(spec=["spec"]))
+        handler._build_shipment_config = Mock()
+        handler._create_shipment_mr = AsyncMock(return_value="https://gitlab.example.com/mr/1")
+        return handler
+
+    async def test_variant_key_from_db_refused_before_repo_setup(self):
+        handler = self._handler([SimpleNamespace(name="openshift-golang-builder-1-25.rhel9-6")])
+
+        with self.assertRaisesRegex(GolangBuilderComponentNameError, "Refusing to map golang builder"):
+            await handler.create_shipment_from_nvrs([SAMPLE_GOLANG_NVR])
+
+        handler._setup_repos.assert_not_awaited()
+        handler._create_snapshot_via_elliott.assert_not_awaited()
+        handler._create_shipment_mr.assert_not_awaited()
+
+    async def test_plain_key_from_db_creates_mr(self):
+        handler = self._handler([SimpleNamespace(name="openshift-golang-builder-1-25.rhel9")])
+
+        result = await handler.create_shipment_from_nvrs([SAMPLE_GOLANG_NVR])
+
+        self.assertEqual(result, "https://gitlab.example.com/mr/1")
+        handler.runtime.konflux_db.get_build_records_by_nvrs.assert_awaited_once_with(
+            [SAMPLE_GOLANG_NVR],
+            outcome=KonfluxBuildOutcome.SUCCESS,
+            where={"group": "golang", "engine": "konflux"},
+            strict=False,
+            exclude_large_columns=True,
+        )
+        handler.runtime.konflux_db.bind.assert_called_once()
+
+    async def test_missing_record_refused_before_repo_setup(self):
+        handler = self._handler([None])
+
+        with self.assertRaisesRegex(GolangBuilderComponentNameError, "no SUCCESS Konflux build record"):
+            await handler.create_shipment_from_nvrs([SAMPLE_GOLANG_NVR])
+
+        handler._setup_repos.assert_not_awaited()
+
+    async def test_db_unavailable_refused(self):
+        handler = self._handler([])
+        handler.runtime.konflux_db = None
+        handler.runtime.initialize_konflux_db = Mock()
+
+        with self.assertRaisesRegex(GolangBuilderComponentNameError, "Konflux DB is unavailable"):
+            await handler.create_shipment_from_nvrs([SAMPLE_GOLANG_NVR])
+
+        handler.runtime.initialize_konflux_db.assert_called_once()
+        handler._setup_repos.assert_not_awaited()
+
+    async def test_one_variant_among_several_refused(self):
+        el8_nvr = "openshift-golang-builder-container-v1.25.8-202604081607.p0.g2aa6a05.el8"
+        handler = self._handler(
+            [
+                SimpleNamespace(name="openshift-golang-builder-1-25.rhel8"),
+                SimpleNamespace(name="openshift-golang-builder-1-25.rhel9-4"),
+            ]
+        )
+
+        with self.assertRaisesRegex(GolangBuilderComponentNameError, "rhel9-4"):
+            await handler.create_shipment_from_nvrs([SAMPLE_GOLANG_NVR, el8_nvr])
+
+        handler._setup_repos.assert_not_awaited()
 
 
 class TestCreateShipmentInline(IsolatedAsyncioTestCase):
@@ -388,6 +469,46 @@ class TestCreateShipmentInline(IsolatedAsyncioTestCase):
             rebase_commitish="abc123",
         )
         self.assertIsNone(result)
+
+
+class TestCreateShipmentRefusesUnmappedBuilds(IsolatedAsyncioTestCase):
+    def _handler(self):
+        runtime = Mock()
+        runtime.logger = Mock()
+        runtime.group_config = Model({})
+        runtime.working_dir = "/tmp"
+        handler = GolangBuilderShipmentHandler(runtime=runtime)
+        handler._setup_repos = AsyncMock()
+        handler._create_shipment_mr = AsyncMock(return_value="https://gitlab.example.com/mr/1")
+        return handler
+
+    async def _create(self, handler, nvr, distgit_key=None):
+        return await handler.create_shipment(
+            nvr=nvr,
+            container_image="quay.io/test@sha256:abc",
+            rebase_repo_url="https://example.com/repo.git",
+            rebase_commitish="abc123",
+            distgit_key=distgit_key,
+        )
+
+    async def test_variant_distgit_key_raises_before_repo_setup(self):
+        handler = self._handler()
+        with self.assertRaises(GolangBuilderComponentNameError):
+            await self._create(handler, SAMPLE_GOLANG_NVR, distgit_key="openshift-golang-builder-1-25.rhel9-6")
+        handler._setup_repos.assert_not_awaited()
+        handler._create_shipment_mr.assert_not_awaited()
+
+    async def test_unknown_el_raises_before_repo_setup(self):
+        handler = self._handler()
+        with self.assertRaises(GolangBuilderComponentNameError):
+            await self._create(handler, "openshift-golang-builder-container-v1.25.8-202604081607.p0.g2aa6a05.el7")
+        handler._setup_repos.assert_not_awaited()
+
+    async def test_plain_distgit_key_creates_mr(self):
+        handler = self._handler()
+        result = await self._create(handler, SAMPLE_GOLANG_NVR, distgit_key="openshift-golang-builder-1-25.rhel9")
+        self.assertEqual(result, "https://gitlab.example.com/mr/1")
+        handler._setup_repos.assert_awaited_once()
 
 
 class TestBuildInlineSnapshot(unittest.TestCase):
@@ -435,6 +556,24 @@ class TestApplyRpaComponentNames(unittest.TestCase):
         )
         GolangBuilderShipmentHandler._apply_rpa_component_names(snapshot, [nvr])
         self.assertEqual(snapshot.spec.components[0].name, "golang-builder-v1.25-rhel9")
+
+
+class TestApplyRpaComponentNamesUnmapped(unittest.TestCase):
+    def test_unmapped_nvr_raises(self):
+        """The CLI path fails instead of shipping an el7 NVR under a guessed rhel9 tag."""
+        nvr = "openshift-golang-builder-container-v1.25.11-202607210212.p2.g6245b3b.el7"
+        snapshot = Mock()
+        snapshot.spec.components = [Mock(name="rhel-9-golang-1-25-openshift-golang-builder")]
+        with self.assertRaises(GolangBuilderComponentNameError):
+            GolangBuilderShipmentHandler._apply_rpa_component_names(snapshot, [nvr])
+
+    def test_el10_maps_to_rhel10(self):
+        nvr = "openshift-golang-builder-container-v1.26.2-202610011200.p2.gabc1234.el10"
+        component = Mock()
+        snapshot = Mock()
+        snapshot.spec.components = [component]
+        GolangBuilderShipmentHandler._apply_rpa_component_names(snapshot, [nvr])
+        self.assertEqual(component.name, "golang-builder-v1.26-rhel10")
 
 
 class TestDeriveGolangGroup(unittest.TestCase):
