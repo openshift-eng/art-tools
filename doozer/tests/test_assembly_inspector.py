@@ -122,7 +122,30 @@ class TestRepoAwareImageConsistency(IsolatedAsyncioTestCase):
 
     def setUp(self):
         """Model an installed kernel older than the externally selected source build."""
-        self.runtime = MagicMock(group_config=Model({"check_external_packages": []}), assembly_basis_event=123)
+        self.delivery_tag = "rhaos-4.16-rhel-9-candidate"
+        self.runtime = MagicMock(
+            group_config=Model(
+                {
+                    "check_external_packages": [],
+                    "vars": {"MAJOR": 4, "MINOR": 16},
+                    "rpm_deliveries": [
+                        {
+                            "packages": ["kernel", "kernel-rt"],
+                            "integration_tag": "integration",
+                            "stop_ship_tag": "stop-ship",
+                            "target_tag": "rhaos-{MAJOR}.{MINOR}-rhel-9-candidate",
+                        },
+                        {
+                            "packages": ["kernel"],
+                            "integration_tag": "integration",
+                            "stop_ship_tag": "stop-ship",
+                            "target_tag": "another-delivery-tag",
+                        },
+                    ],
+                }
+            ),
+            assembly_basis_event=123,
+        )
         self.runtime.repos = {}
         self.inspector = AssemblyInspector(self.runtime, MagicMock())
         self.installed = {"id": 1, "nvr": "kernel-1-1", "name": "kernel", "version": "1", "release": "1"}
@@ -254,7 +277,13 @@ class TestRepoAwareImageConsistency(IsolatedAsyncioTestCase):
             RepoConf(
                 name="limited",
                 type="plashet",
-                plashet=PlashetRepo(arches=["aarch64"], source={"type": "brew", "from_tags": []}),
+                plashet=PlashetRepo(
+                    arches=["aarch64"],
+                    source={
+                        "type": "brew",
+                        "from_tags": [{"name": self.delivery_tag, "product_version": "RHEL-9-OSE-4.16"}],
+                    },
+                ),
                 content_set=ContentSet(optional=True),
             ),
             ["x86_64", "aarch64"],
@@ -465,62 +494,76 @@ class TestRepoAwareImageConsistency(IsolatedAsyncioTestCase):
                     await self.issues()
                 self.assertIs(raised.exception, error)
 
-    async def test_inherited_override_without_ocp_plashet_is_suppressed(self):
+    async def test_inherited_override_with_external_only_repos_is_suppressed(self):
         self.meta.get_assembly_rpm_package_dependencies.return_value = ({}, {"kernel": "kernel-3-1"})
-        self.add_repo("rhel-baseos", [self.rpm(source="kernel-3-1.src.rpm")], baseurl="https://rhel.example.invalid/")
+        repo = self.add_repo("rhel-baseos")
+        repo.is_plashet = False
+        repo.plashet_source_tags = []
         self.assertEqual(await self.issues(), [])
         self.meta.logger.info.assert_called_once_with(
-            "Skipping inherited override dependency conflict for %s: image %s enables no OCP plashet repository",
+            "Skipping inherited override dependency conflict for %s: image %s enables no plashet connected to the delivery tag",
             "kernel",
             "image",
         )
         self.loader.assert_not_awaited()
 
-    async def test_inherited_override_without_enabled_repos_is_suppressed(self):
+    async def test_inherited_override_without_enabled_repos_is_not_suppressed(self):
         self.meta.get_assembly_rpm_package_dependencies.return_value = ({}, {"kernel": "kernel-3-1"})
-        self.assertEqual(await self.issues(), [])
+        await self.assert_conflict()
         self.loader.assert_not_awaited()
 
-    def test_ocp_plashet_heuristic_handles_missing_repo_urls(self):
-        repo = MagicMock(arches=["x86_64", "aarch64"])
-        repo.baseurl.side_effect = [None, ValueError("No baseurl available for arch aarch64"), None, None]
-        self.runtime.repos = {"missing-repo": None, "missing-urls": repo}
-        self.meta.get_enabled_repos.side_effect = None
-        self.meta.get_enabled_repos.return_value = ["unknown", "missing-repo", "missing-urls"]
-        self.assertFalse(self.inspector._image_enables_ocp_plashet(self.meta))
-        self.assertEqual(repo.baseurl.call_count, 4)
-        self.meta.get_enabled_repos.return_value = None
-        self.assertFalse(self.inspector._image_enables_ocp_plashet(self.meta))
-
-    async def test_inherited_override_with_ocp_plashet_is_not_suppressed(self):
+    async def test_inherited_override_with_matching_delivery_plashet_is_not_suppressed(self):
         self.meta.get_assembly_rpm_package_dependencies.return_value = ({}, {"kernel": "kernel-3-1"})
-        for name, baseurl in (
-            ("rhel-9-server-ose-rpms", "https://example.invalid/repo/"),
-            ("packages", "https://ocp-artifacts.example.invalid/repo/"),
-            (
-                "signed-packages",
-                {"unsigned": "https://example.invalid/repo/", "signed": {"aarch64": "https://ocp-artifacts.invalid/"}},
-            ),
-        ):
-            with self.subTest(name=name):
+        for tag in (self.delivery_tag, "another-delivery-tag"):
+            with self.subTest(tag=tag):
                 self.runtime.repos.clear()
                 self.meta.config.enabled_repos = []
-                self.add_repo(name, [self.rpm()], baseurl=baseurl)
+                repo = self.add_repo("packages", baseurl="https://example.invalid/")
+                repo.is_plashet = True
+                repo.plashet_source_tags = [tag]
                 issues = await self.assert_conflict()
                 self.assertIn("assembly override dependencies NVR kernel-3-1", str(issues[0]))
         self.loader.assert_not_awaited()
 
-    async def test_member_override_without_ocp_plashet_is_not_suppressed(self):
+    async def test_inherited_override_with_unrelated_plashet_is_suppressed(self):
+        self.meta.get_assembly_rpm_package_dependencies.return_value = ({}, {"kernel": "kernel-3-1"})
+        repo = self.add_repo("rhel-9-server-ose-ironic-rpms")
+        repo.is_plashet = True
+        repo.plashet_source_tags = ["ironic-candidate"]
+        self.assertEqual(await self.issues(), [])
+        self.loader.assert_not_awaited()
+
+    async def test_inherited_override_with_old_schema_is_not_suppressed(self):
+        self.meta.get_assembly_rpm_package_dependencies.return_value = ({}, {"kernel": "kernel-3-1"})
+        repo = self.add_repo("rhel-baseos", baseurl="https://rhel.example.invalid/")
+        self.assertIsNone(repo.is_plashet)
+        await self.assert_conflict()
+        self.loader.assert_not_awaited()
+
+    async def test_non_delivered_override_with_external_repos_is_not_suppressed(self):
+        self.meta.get_assembly_rpm_package_dependencies.return_value = ({}, {"kernel": "kernel-3-1"})
+        self.runtime.group_config.rpm_deliveries = []
+        self.inspector = AssemblyInspector(self.runtime, MagicMock())
+        self.inspector.get_group_rpm_build_dicts = MagicMock(return_value={})
+        repo = self.add_repo("rhel-baseos")
+        repo.is_plashet = False
+        repo.plashet_source_tags = []
+        await self.assert_conflict()
+        self.loader.assert_not_awaited()
+
+    async def test_member_override_with_external_repos_is_not_suppressed(self):
         self.meta.get_assembly_rpm_package_dependencies.return_value = (
             {"kernel": "kernel-3-1"},
             {"kernel": "kernel-3-1"},
         )
-        self.add_repo("rhel-baseos", [self.rpm()], baseurl="https://rhel.example.invalid/")
+        repo = self.add_repo("rhel-baseos", [self.rpm()], baseurl="https://rhel.example.invalid/")
+        repo.is_plashet = False
+        repo.plashet_source_tags = []
         issues = await self.assert_conflict()
         self.assertIn("assembly override dependencies NVR kernel-3-1", str(issues[0]))
         self.loader.assert_not_awaited()
 
-    async def test_missing_member_override_without_ocp_plashet_is_not_suppressed(self):
+    async def test_missing_member_override_is_not_suppressed(self):
         self.meta.get_assembly_rpm_package_dependencies.return_value = (
             {"kernel": "kernel-3-1"},
             {"kernel": "kernel-3-1"},
@@ -533,6 +576,9 @@ class TestRepoAwareImageConsistency(IsolatedAsyncioTestCase):
     async def test_managed_rpm_mismatch_is_not_repo_gated(self):
         """ART-managed RPM policy remains independent of external repository availability."""
         self.meta.config.check_external_packages = []
+        repo = self.add_repo("external")
+        repo.is_plashet = False
+        repo.plashet_source_tags = []
         self.inspector.get_group_rpm_build_dicts.return_value = {
             "kernel": {"package_name": "kernel", "nvr": "kernel-3-1"}
         }

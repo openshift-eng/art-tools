@@ -96,7 +96,12 @@ class Repo(object):
         if repo_config.reposync:
             repo_dict['reposync'] = repo_config.reposync.model_dump(exclude_none=True)
 
-        return Repo(repo_config.name, repo_dict, list(arches), gpgcheck)
+        repo = Repo(repo_config.name, repo_dict, list(arches), gpgcheck)
+        repo.is_plashet = repo_config.type == 'plashet'
+        repo.plashet_source_tags = []
+        if repo.is_plashet and repo_config.plashet.source.type == 'brew':
+            repo.plashet_source_tags = [tag.name for tag in repo_config.plashet.source.from_tags]
+        return repo
 
     def __init__(self, name: str, data: Dict, valid_arches: List[str], gpgcheck: bool = True):
         """
@@ -108,6 +113,8 @@ class Repo(object):
         :param gpgcheck: Whether to enable GPG signature checking
         """
         self.name = name
+        self.is_plashet: Optional[bool] = None
+        self.plashet_source_tags: Optional[List[str]] = None
         self._valid_arches = valid_arches
         self._invalid_cs_arches = set()
 

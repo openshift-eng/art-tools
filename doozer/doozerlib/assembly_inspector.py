@@ -22,7 +22,6 @@ from doozerlib import Runtime, brew
 from doozerlib.build_info import BrewBuildRecordInspector, BuildRecordInspector, KonfluxBuildRecordInspector
 from doozerlib.image import ImageMetadata
 from doozerlib.plashet import PlashetBuilder
-from doozerlib.repos import DEFAULT_REPOTYPES
 from doozerlib.rhcos import RHCOSBuildFinder, RHCOSBuildInspector
 from doozerlib.rpm_delivery import RPMDeliveries, RPMDelivery
 from doozerlib.rpmcfg import RPMMetadata
@@ -50,6 +49,14 @@ class AssemblyInspector:
         ] = {}  # Dict[tag] -> Dict[distgit_key] -> Optional[BuildDict]
         self._permits = assembly_permits(self.runtime.releases_config, self.runtime.group_config, self.runtime.assembly)
         self._rpm_deliveries: Dict[str, List[RPMDelivery]] = {}  # Dict[package_name] => list of RpmDelivery configs
+        self._delivery_brew_tags: Dict[str, set[str]] = {}
+        if self.runtime.group_config.rpm_deliveries:
+            variables = self.runtime.group_config.vars.primitive() if self.runtime.group_config.vars else {}
+            for delivery in RPMDeliveries.model_validate(self.runtime.group_config.rpm_deliveries.primitive()):
+                if delivery.target_tag:
+                    target_tag = delivery.target_tag.format(**variables)
+                    for package in delivery.packages:
+                        self._delivery_brew_tags.setdefault(package, set()).add(target_tag)
         self._release_build_record_inspectors: Dict[str, Optional[BuildRecordInspector]] = dict()
 
     async def initialize(self, lookup_mode: Optional[str] = "both"):
@@ -484,27 +491,20 @@ class AssemblyInspector:
                             return False
         return True
 
-    def _image_enables_ocp_plashet(self, image_meta: ImageMetadata) -> bool:
-        # This is a heuristic; an explicit is_plashet/type repo-config attribute,
-        # as in the new repos/ schema's type: plashet, would be a more robust signal.
+    def _image_enables_delivery_plashet(self, package_name: str, image_meta: ImageMetadata) -> Optional[bool]:
+        delivery_tags = self._delivery_brew_tags.get(package_name)
+        if not delivery_tags:
+            return None
+        structured_signal_available = False
         for name in image_meta.get_enabled_repos() or ():
-            if '-ose-' in name:
+            repo = self.runtime.repos[name]
+            if repo.is_plashet is None:
+                continue
+            structured_signal_available = True
+            if repo.is_plashet and delivery_tags.intersection(repo.plashet_source_tags or ()):
                 return True
-            try:
-                repo = self.runtime.repos[name]
-            except (KeyError, ValueError):
-                continue
-            if repo is None:
-                continue
-            for repotype in DEFAULT_REPOTYPES:
-                for arch in repo.arches or ():
-                    try:
-                        baseurl = repo.baseurl(repotype, arch)
-                    except ValueError:
-                        continue
-                    if baseurl and 'ocp-artifacts' in baseurl:
-                        return True
-        return False
+        # Only structured repos can waive conflicts; old-schema repos preserve the existing policy.
+        return False if structured_signal_available else None
 
     async def check_group_image_consistency(
         self, build_record_inspector: BuildRecordInspector, package_rpm_finder: Optional[PackageRpmFinder]
@@ -602,7 +602,6 @@ class AssemblyInspector:
                 assembly_nvr = assembly_rpm_build['nvr']
                 desired_packages[package_name] = assembly_nvr
 
-        image_enables_ocp_plashet = self._image_enables_ocp_plashet(image_meta)
         for package_name, desired_nvr in desired_packages.items():
             if package_name in required_packages and package_name not in installed_packages:
                 # A dependency was defined explicitly in an assembly member, but it is not installed.
@@ -622,9 +621,12 @@ class AssemblyInspector:
                 installed_nvr = installed_build_dict['nvr']
                 if installed_nvr != desired_nvr:
                     if package_name not in group_rpm_package_names:
-                        if package_name not in required_packages and not image_enables_ocp_plashet:
+                        if (
+                            package_name not in required_packages
+                            and self._image_enables_delivery_plashet(package_name, image_meta) is False
+                        ):
                             image_meta.logger.info(
-                                "Skipping inherited override dependency conflict for %s: image %s enables no OCP plashet repository",
+                                "Skipping inherited override dependency conflict for %s: image %s enables no plashet connected to the delivery tag",
                                 package_name,
                                 dgk,
                             )
