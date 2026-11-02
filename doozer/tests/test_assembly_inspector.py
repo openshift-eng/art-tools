@@ -154,13 +154,21 @@ class TestRepoAwareImageConsistency(IsolatedAsyncioTestCase):
         self.loader = self.enterContext(patch("doozerlib.repos.RepodataLoader.load", new_callable=AsyncMock))
         self.loader.side_effect = lambda name, url: self.repodatas[name]
 
-    def add_repo(self, name, rpms=(), enabled=True, options=None, optional=True):
+    def add_repo(
+        self,
+        name,
+        rpms=(),
+        enabled=True,
+        options=None,
+        optional=True,
+        baseurl="https://ocp-artifacts.example.invalid/repo/",
+    ):
         """Select a real repository and supply metadata without network access."""
         repo = Repo(
             name,
             {
                 "conf": {
-                    "baseurl": "https://example.invalid/repo/",
+                    "baseurl": baseurl,
                     "enabled": enabled,
                     "extra_options": options or {},
                 },
@@ -250,7 +258,7 @@ class TestRepoAwareImageConsistency(IsolatedAsyncioTestCase):
                 content_set=ContentSet(optional=True),
             ),
             ["x86_64", "aarch64"],
-            plashet_config=PlashetConfig(base_dir="test", plashet_dir="test", base_url="https://example.invalid"),
+            plashet_config=PlashetConfig(base_dir="test", plashet_dir="test", base_url="https://ocp-artifacts.invalid"),
         )
         self.assertEqual(repo.arches, ["aarch64"])
         self.runtime.repos[repo.name] = repo
@@ -367,7 +375,7 @@ class TestRepoAwareImageConsistency(IsolatedAsyncioTestCase):
                     await self.assert_conflict()
                 else:
                     self.assertEqual(await self.issues(), [])
-                self.assertEqual(missing.get_repodata_threadsafe.await_count, 2 if available else 1)
+                self.assertEqual(missing.get_repodata_threadsafe.await_count, 1)
                 missing.get_repodata_threadsafe.assert_awaited_with("x86_64")
                 self.assertIn("z-remaining-x86_64", [call.args[0] for call in self.loader.await_args_list])
 
@@ -457,56 +465,70 @@ class TestRepoAwareImageConsistency(IsolatedAsyncioTestCase):
                     await self.issues()
                 self.assertIs(raised.exception, error)
 
-    async def test_unavailable_override_dependency_is_suppressed(self):
+    async def test_inherited_override_without_ocp_plashet_is_suppressed(self):
         self.meta.get_assembly_rpm_package_dependencies.return_value = ({}, {"kernel": "kernel-3-1"})
-        self.add_repo("packages", [self.rpm()])
-        finder = MagicMock()
-        with patch.object(
-            self.inspector, "_external_rpm_is_unavailable", wraps=self.inspector._external_rpm_is_unavailable
-        ) as unavailable:
-            self.assertEqual(await self.inspector.check_group_image_consistency(self.build, finder), [])
-        unavailable.assert_awaited_once_with(self.build, self.installed, "kernel-3-1", finder)
+        self.add_repo("rhel-baseos", [self.rpm(source="kernel-3-1.src.rpm")], baseurl="https://rhel.example.invalid/")
+        self.assertEqual(await self.issues(), [])
         self.meta.logger.info.assert_called_once_with(
-            "Skipping inherited override dependency conflict for %s: expected %s unavailable from enabled repos %s for image %s",
+            "Skipping inherited override dependency conflict for %s: image %s enables no OCP plashet repository",
             "kernel",
-            "kernel-3-1",
-            ["packages"],
             "image",
         )
+        self.loader.assert_not_awaited()
 
-    async def test_available_override_dependency_is_not_suppressed(self):
+    async def test_inherited_override_without_enabled_repos_is_suppressed(self):
         self.meta.get_assembly_rpm_package_dependencies.return_value = ({}, {"kernel": "kernel-3-1"})
-        self.add_repo("packages", [self.rpm(source="kernel-3-1.src.rpm")])
-        issues = await self.assert_conflict()
-        self.assertIn("assembly override dependencies NVR kernel-3-1", str(issues[0]))
+        self.assertEqual(await self.issues(), [])
+        self.loader.assert_not_awaited()
 
-    async def test_unavailable_member_override_dependency_is_not_suppressed(self):
+    def test_ocp_plashet_heuristic_handles_missing_repo_urls(self):
+        repo = MagicMock(arches=["x86_64", "aarch64"])
+        repo.baseurl.side_effect = [None, ValueError("No baseurl available for arch aarch64"), None, None]
+        self.runtime.repos = {"missing-repo": None, "missing-urls": repo}
+        self.meta.get_enabled_repos.side_effect = None
+        self.meta.get_enabled_repos.return_value = ["unknown", "missing-repo", "missing-urls"]
+        self.assertFalse(self.inspector._image_enables_ocp_plashet(self.meta))
+        self.assertEqual(repo.baseurl.call_count, 4)
+        self.meta.get_enabled_repos.return_value = None
+        self.assertFalse(self.inspector._image_enables_ocp_plashet(self.meta))
+
+    async def test_inherited_override_with_ocp_plashet_is_not_suppressed(self):
+        self.meta.get_assembly_rpm_package_dependencies.return_value = ({}, {"kernel": "kernel-3-1"})
+        for name, baseurl in (
+            ("rhel-9-server-ose-rpms", "https://example.invalid/repo/"),
+            ("packages", "https://ocp-artifacts.example.invalid/repo/"),
+            (
+                "signed-packages",
+                {"unsigned": "https://example.invalid/repo/", "signed": {"aarch64": "https://ocp-artifacts.invalid/"}},
+            ),
+        ):
+            with self.subTest(name=name):
+                self.runtime.repos.clear()
+                self.meta.config.enabled_repos = []
+                self.add_repo(name, [self.rpm()], baseurl=baseurl)
+                issues = await self.assert_conflict()
+                self.assertIn("assembly override dependencies NVR kernel-3-1", str(issues[0]))
+        self.loader.assert_not_awaited()
+
+    async def test_member_override_without_ocp_plashet_is_not_suppressed(self):
         self.meta.get_assembly_rpm_package_dependencies.return_value = (
             {"kernel": "kernel-3-1"},
             {"kernel": "kernel-3-1"},
         )
-        self.add_repo("packages", [self.rpm()])
-        with patch.object(
-            self.inspector, "_external_rpm_is_unavailable", wraps=self.inspector._external_rpm_is_unavailable
-        ) as unavailable:
-            issues = await self.assert_conflict()
+        self.add_repo("rhel-baseos", [self.rpm()], baseurl="https://rhel.example.invalid/")
+        issues = await self.assert_conflict()
         self.assertIn("assembly override dependencies NVR kernel-3-1", str(issues[0]))
-        unavailable.assert_not_awaited()
         self.loader.assert_not_awaited()
 
-    async def test_available_explicit_pins_are_not_overwritten(self):
-        """Available member and group pins remain mandatory, including missing dependencies."""
-        self.add_repo("packages", [self.rpm(source="kernel-3-1.src.rpm")])
-        for member in ({}, {"kernel": "kernel-3-1"}):
-            with self.subTest(member=member):
-                self.meta.get_assembly_rpm_package_dependencies.return_value = (member, {"kernel": "kernel-3-1"})
-                issues = await self.assert_conflict()
-                self.assertIn("kernel-3-1", str(issues[0]))
-        self.loader.assert_awaited_once()
-
+    async def test_missing_member_override_without_ocp_plashet_is_not_suppressed(self):
+        self.meta.get_assembly_rpm_package_dependencies.return_value = (
+            {"kernel": "kernel-3-1"},
+            {"kernel": "kernel-3-1"},
+        )
         self.build.get_all_installed_package_build_dicts.return_value = {}
         issues = await self.issues()
         self.assertEqual([issue.code for issue in issues], [AssemblyIssueCode.MISSING_INHERITED_DEPENDENCY])
+        self.loader.assert_not_awaited()
 
     async def test_managed_rpm_mismatch_is_not_repo_gated(self):
         """ART-managed RPM policy remains independent of external repository availability."""
