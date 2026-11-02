@@ -21,6 +21,9 @@ class Metadata(StrictBaseModel):
     assembly: str  # associated build-data assembly
     fbc: Optional[bool] = False  # indicates if shipment is for an FBC release
     advisory_required: Optional[bool] = True  # when False, shipment-ci skips advisory URL check (registry-push-only)
+    docs_approval_required: Optional[bool] = (
+        True  # when False, elliott verify-docs-approval skips all docs cross-reference / payload SHA checks
+    )
 
 
 class GitSource(StrictBaseModel):

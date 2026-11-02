@@ -120,6 +120,22 @@ class TestShipmentModel(unittest.TestCase):
         self.assertIsNotNone(shipment.data)
         self.assertIsNotNone(shipment.data.releaseNotes)
 
+    def test_docs_approval_required_defaults_true_and_roundtrips(self):
+        """Test that docs_approval_required defaults to True and that setting it to False is accepted and round-trips"""
+        shipment_data = self._create_base_shipment_data(fbc=False)
+        shipment_data.update(self._create_release_notes_data())
+
+        # Defaults to True when unset
+        shipment = Shipment(**shipment_data)
+        self.assertTrue(shipment.metadata.docs_approval_required)
+
+        # Setting it to False is accepted and survives a model_dump -> re-validate round-trip
+        shipment_data["metadata"]["docs_approval_required"] = False
+        shipment = Shipment(**shipment_data)
+        self.assertFalse(shipment.metadata.docs_approval_required)
+        roundtripped = Shipment.model_validate(shipment.model_dump())
+        self.assertFalse(roundtripped.metadata.docs_approval_required)
+
     def test_regular_shipment_validation_unhappy_path(self):
         """Test that regular OpenShift shipment without data.releaseNotes fails validation"""
         # Use an OpenShift group to trigger the validation
