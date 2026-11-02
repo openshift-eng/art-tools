@@ -192,6 +192,38 @@ class TestJenkinsStartBuild(unittest.TestCase):
         self.assertEqual(params['OPERATOR_NVRS'], 'op-1-1')
 
     @mock.patch("pyartcd.jenkins.start_build")
+    def test_start_rhcos_sync_merges_propagate_params(self, start_build_mock):
+        # propagate_params (e.g. ART_TOOLS_COMMIT from get_propagatable_params) must be
+        # merged into the params dict passed to the downstream RHCOS_SYNC build, alongside
+        # the existing RELEASE_TAG/DRY_RUN/SIGN_ONLY/FORCE params.
+        jenkins.start_rhcos_sync(
+            "4.19.54-x86_64",
+            dry_run=False,
+            sign_only=False,
+            force=True,
+            propagate_params={"ART_TOOLS_COMMIT": "user@branch"},
+        )
+
+        self.assertEqual(start_build_mock.call_args.kwargs["job"], Jobs.RHCOS_SYNC)
+        params = start_build_mock.call_args.kwargs["params"]
+        self.assertEqual(params["RELEASE_TAG"], "4.19.54-x86_64")
+        self.assertEqual(params["DRY_RUN"], False)
+        self.assertEqual(params["SIGN_ONLY"], False)
+        self.assertEqual(params["FORCE"], True)
+        self.assertEqual(params["ART_TOOLS_COMMIT"], "user@branch")
+
+    @mock.patch("pyartcd.jenkins.start_build")
+    def test_start_rhcos_sync_without_propagate_params(self, start_build_mock):
+        # Without propagate_params, only the base params are passed (no extra keys).
+        jenkins.start_rhcos_sync("4.19.54-x86_64", dry_run=True)
+
+        params = start_build_mock.call_args.kwargs["params"]
+        self.assertEqual(
+            params,
+            {"RELEASE_TAG": "4.19.54-x86_64", "DRY_RUN": True, "SIGN_ONLY": False, "FORCE": False},
+        )
+
+    @mock.patch("pyartcd.jenkins.start_build")
     def test_start_olm_bundle_konflux_force_release_false_no_param(self, start_build_mock):
         jenkins.start_olm_bundle_konflux(
             build_version='4.18',
@@ -384,5 +416,5 @@ class TestTektonJenkinsStartBuild(unittest.TestCase):
         jenkins.start_rhcos_sync('4.20.42-x86_64', dry_run=True, sign_only=True)
         self.client.get_job.assert_called_once_with(Jobs.RHCOS_SYNC.value)
         self.job.invoke.assert_called_once_with(
-            build_params={'RELEASE_TAG': '4.20.42-x86_64', 'DRY_RUN': True, 'SIGN_ONLY': True}
+            build_params={'RELEASE_TAG': '4.20.42-x86_64', 'DRY_RUN': True, 'SIGN_ONLY': True, 'FORCE': False}
         )

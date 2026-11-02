@@ -24,6 +24,7 @@ import json
 import os
 import re
 import tempfile
+from contextlib import contextmanager
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 
@@ -250,17 +251,29 @@ class RhcosSyncPipeline:
         # Registry auth file path, set by RegistryConfig in run()
         self._registry_auth_file: str = ""
 
-    async def run(self):
-        """Execute the full RHCOS sync pipeline."""
+    @contextmanager
+    def _registry_auth(self):
+        """Set up registry authentication for oc, exactly as the pipeline requires.
+
+        This is the single auth-setup helper shared by ``run()`` and
+        ``check_needs_happening()``. It:
+
+          * prevents ``oc`` from using the default container ``auth.json`` by
+            dropping ``XDG_RUNTIME_DIR`` (all registry auth must come from
+            explicit Jenkins credentials or ``oc login`` to temp files — the
+            pattern established in ``ocp4_konflux.py``);
+          * reads the Jenkins credential env vars (``QUAY_AUTH_FILE``,
+            ``KUBECONFIG``);
+          * builds a ``RegistryConfig`` for the registries this pipeline needs
+            (``quay.io/openshift-release-dev`` for release payloads and
+            ``registry.ci.openshift.org`` for CI nightly payloads);
+          * records the resulting auth file path on ``self._registry_auth_file``;
+          * and yields that auth file path.
+        """
         # Prevent oc from using default container auth.json — all registry auth
         # must come from explicit Jenkins credentials or oc login to temp files.
         # Follows the pattern established in ocp4_konflux.py.
         os.environ.pop("XDG_RUNTIME_DIR", None)
-
-        self.logger.info("Starting RHCOS sync pipeline for release tag: %s", self.release_tag)
-
-        # Step 1: Parse release tag → arch, priv, pullspec (no oc calls, no auth needed)
-        self._parse_release_tag()
 
         # Read Jenkins credential env vars for registry authentication
         quay_auth_file = os.environ.get("QUAY_AUTH_FILE", "")
@@ -277,15 +290,69 @@ class RhcosSyncPipeline:
         with RegistryConfig(kubeconfig=kubeconfig, source_files=source_files, registries=registries) as auth_file:
             self._registry_auth_file = auth_file
             self.logger.info("Registry auth file: %s", auth_file)
+            yield auth_file
+
+    async def run(self):
+        """Execute the full RHCOS sync pipeline."""
+        self.logger.info("Starting RHCOS sync pipeline for release tag: %s", self.release_tag)
+
+        # Step 1: Parse release tag → arch, priv, pullspec (no oc calls, no auth needed)
+        self._parse_release_tag()
+
+        with self._registry_auth():
             await self._run_pipeline()
 
-    async def _run_pipeline(self):
-        """Core pipeline logic, called within a RegistryConfig context."""
+    async def check_needs_happening(self) -> bool:
+        """Run only the preamble + "needsHappening" check (no boot-image sync, no signing).
+
+        This drives the exact same preamble that ``run()`` uses — registry auth via
+        ``RegistryConfig``, ``_parse_release_tag``, ``_resolve_version_name`` and
+        ``_extract_rhcos_metadata`` — and then returns the result of
+        ``_check_needs_happening()``.
+
+        It is used by the fast-channel z-stream auto-detection pipeline
+        (``rhcos-sync-fast-channel``, ART-25059) to decide whether a boot-image
+        sync should be triggered for a z-stream release, WITHOUT performing any
+        mirroring or signing here. The actual publish is delegated to the existing
+        ``RHCOS_SYNC`` Jenkins job via ``jenkins.start_rhcos_sync(..., sign_only=False)``.
+
+        Returns:
+            True if a boot-image sync is needed (build id differs or not on
+            mirror, or ``force`` is set); False if the mirror is already current.
+        """
+        self.logger.info("Checking RHCOS needsHappening for release tag: %s", self.release_tag)
+
+        # Step 1: Parse release tag → arch, priv, pullspec (no oc calls, no auth needed)
+        self._parse_release_tag()
+
+        # Drive the exact same auth setup and preamble as run()/_run_pipeline(),
+        # then return the needsHappening result without mirroring or signing.
+        with self._registry_auth():
+            await self._run_preamble()
+            return await self._check_needs_happening()
+
+    async def _run_preamble(self):
+        """Resolve the version name and extract RHCOS metadata from the payload.
+
+        This is the shared preamble used by both ``check_needs_happening()`` and
+        ``_run_pipeline()``. It determines the release version name and mirror
+        prefix (``_resolve_version_name``) and extracts the RHCOS stream data and
+        build id from the release payload (``_extract_rhcos_metadata``). It
+        performs no boot-image mirroring, no signing, and no needsHappening check.
+
+        Must be called inside the ``_registry_auth()`` context: it relies on
+        ``self._registry_auth_file`` for authenticated ``oc`` calls.
+        """
         # Step 2: Determine version name and mirror prefix
         await self._resolve_version_name()
 
         # Step 3: Extract RHCOS metadata from the release payload
         await self._extract_rhcos_metadata()
+
+    async def _run_pipeline(self):
+        """Core pipeline logic, called within the _registry_auth() context."""
+        # Steps 2-3: shared preamble (resolve version name + extract RHCOS metadata)
+        await self._run_preamble()
 
         self.logger.info(
             "RHCOS sync parameters: arch=%s, rhcosBuild=%s, name=%s, mirrorPrefix=%s, ocpVersion=%s",
