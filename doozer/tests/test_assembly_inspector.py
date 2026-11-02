@@ -514,7 +514,7 @@ class TestRepoAwareImageConsistency(IsolatedAsyncioTestCase):
 
     async def test_inherited_override_with_matching_delivery_plashet_is_not_suppressed(self):
         self.meta.get_assembly_rpm_package_dependencies.return_value = ({}, {"kernel": "kernel-3-1"})
-        for tag in (self.delivery_tag, "another-delivery-tag"):
+        for tag in (self.delivery_tag, "rhaos-{MAJOR}.{MINOR}-rhel-9-candidate", "another-delivery-tag"):
             with self.subTest(tag=tag):
                 self.runtime.repos.clear()
                 self.meta.config.enabled_repos = []

@@ -50,11 +50,11 @@ class AssemblyInspector:
         self._permits = assembly_permits(self.runtime.releases_config, self.runtime.group_config, self.runtime.assembly)
         self._rpm_deliveries: Dict[str, List[RPMDelivery]] = {}  # Dict[package_name] => list of RpmDelivery configs
         self._delivery_brew_tags: Dict[str, set[str]] = {}
+        self._group_vars = self.runtime.group_config.vars.primitive() if self.runtime.group_config.vars else {}
         if self.runtime.group_config.rpm_deliveries:
-            variables = self.runtime.group_config.vars.primitive() if self.runtime.group_config.vars else {}
             for delivery in RPMDeliveries.model_validate(self.runtime.group_config.rpm_deliveries.primitive()):
                 if delivery.target_tag:
-                    target_tag = delivery.target_tag.format(**variables)
+                    target_tag = delivery.target_tag.format(**self._group_vars)
                     for package in delivery.packages:
                         self._delivery_brew_tags.setdefault(package, set()).add(target_tag)
         self._release_build_record_inspectors: Dict[str, Optional[BuildRecordInspector]] = dict()
@@ -501,8 +501,10 @@ class AssemblyInspector:
             if repo.is_plashet is None:
                 continue
             structured_signal_available = True
-            if repo.is_plashet and delivery_tags.intersection(repo.plashet_source_tags or ()):
-                return True
+            if repo.is_plashet:
+                source_tags = {tag.format(**self._group_vars) for tag in repo.plashet_source_tags or ()}
+                if delivery_tags.intersection(source_tags):
+                    return True
         # Only structured repos can waive conflicts; old-schema repos preserve the existing policy.
         return False if structured_signal_available else None
 
