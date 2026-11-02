@@ -32,7 +32,6 @@ from doozerlib.backend.konflux_client import ImageBuildParams, KonfluxClient
 from doozerlib.backend.pipelinerun_utils import PipelineRunInfo
 from doozerlib.exceptions import DoozerFatalError
 from doozerlib.image import ImageMetadata
-from doozerlib.olm.package_yaml import format_bundle_channels_label, resolve_package_channels
 from doozerlib.record_logger import RecordLogger
 from doozerlib.source_resolver import SourceResolution, SourceResolver
 
@@ -235,18 +234,22 @@ class KonfluxOlmBundleRebaser:
                 f"[{metadata.distgit_key}] No files found in bundle directory {operator_bundle_dir.relative_to(self.base_dir)}"
             )
 
-        # Get operator package name and channel(s) from its package YAML
+        # Get operator package name and channel from its package YAML
         # This info will be used to generate bundle's Dockerfile labels and metadata/annotations.yaml
-        # Single-channel package.yaml remains bit-identical to historical channels[0] behavior.
         file_path = glob.glob(f'{operator_manifests_dir}/*package.yaml')[0]
         async with aiofiles.open(file_path, 'r') as f:
             package_yaml = yaml.safe_load(await f.read())
-        resolved_channels = resolve_package_channels(package_yaml)
-        package_name = resolved_channels.package_name
-        channel_name = resolved_channels.primary_channel
-        csv_name = resolved_channels.csv_name
-        additional_channels = resolved_channels.additional_channels
-        package_default_channel = resolved_channels.default_channel
+        package_name = package_yaml['packageName']
+        channel = package_yaml['channels'][0]
+        channel_name = str(channel['name'])
+        csv_name = str(channel['currentCSV'])
+        # Preserve package.yaml order; skip duplicate names.
+        channel_names = []
+        for entry in package_yaml['channels']:
+            name = str(entry['name'])
+            if name not in channel_names:
+                channel_names.append(name)
+        package_default_channel = package_yaml.get('defaultChannel')
 
         # Read image references from the operator's image-references file.
         # Different operators place the file in different directories, so
@@ -381,7 +384,7 @@ class KonfluxOlmBundleRebaser:
         operator_framework_tags = self._get_operator_framework_tags(
             channel_name,
             package_name,
-            additional_channels=additional_channels,
+            channel_names=channel_names,
             package_default_channel=package_default_channel,
         )
 
@@ -966,32 +969,33 @@ class KonfluxOlmBundleRebaser:
         self,
         channel_name: str,
         package_name: str,
-        additional_channels: Sequence[str] | None = None,
+        channel_names: Sequence[str] | None = None,
         package_default_channel: str | None = None,
     ):
+        override_channel = channel_name
+        override_default = channel_name
         stable_channel = self._group_config.get('operator_stable_channel_name', 'stable')
-        operator_channel_stable = self._group_config.operator_channel_stable
-        additional = tuple(additional_channels or ())
 
-        if not additional:
-            # Exact historical single-channel path (ART-3107 join uses a tuple).
-            override_channel = channel_name
-            override_default = channel_name
-            if operator_channel_stable in ['default', 'extra']:
-                override_channel = ','.join((channel_name, stable_channel))
-            if operator_channel_stable == 'default':
-                override_default = stable_channel
+        # When package.yaml lists multiple channels, advertise all of them.
+        if channel_names and len(channel_names) > 1:
+            names = list(channel_names)
+            override_channel = ','.join(names)
+            if package_default_channel and str(package_default_channel) in names:
+                override_default = str(package_default_channel)
+            # see: issues.redhat.com/browse/ART-3107
+            if self._group_config.operator_channel_stable in ['default', 'extra']:
+                if stable_channel not in names:
+                    names.append(stable_channel)
+                    override_channel = ','.join(names)
+                if self._group_config.operator_channel_stable == 'default':
+                    override_default = stable_channel
         else:
-            # Multi-channel package.yaml: advertise every listed channel.
-            override_channel, override_default = format_bundle_channels_label(
-                channel_name,
-                additional,
-                package_default_channel=package_default_channel,
-                operator_channel_stable=(
-                    operator_channel_stable if operator_channel_stable in ('default', 'extra') else None
-                ),
-                stable_channel_name=stable_channel,
-            )
+            # Historical single-channel path
+            # see: issues.redhat.com/browse/ART-3107
+            if self._group_config.operator_channel_stable in ['default', 'extra']:
+                override_channel = ','.join((channel_name, stable_channel))
+            if self._group_config.operator_channel_stable == 'default':
+                override_default = stable_channel
 
         tags = {
             'operators.operatorframework.io.bundle.channel.default.v1': override_default,

@@ -382,7 +382,7 @@ class TestKonfluxOlmBundleRebaser(IsolatedAsyncioTestCase):
         tags = self.rebaser._get_operator_framework_tags(
             'stable',
             'cluster-observability-operator',
-            additional_channels=('fast',),
+            channel_names=['stable', 'fast'],
             package_default_channel='stable',
         )
         self.assertEqual(tags['operators.operatorframework.io.bundle.channels.v1'], 'stable,fast')
@@ -399,7 +399,7 @@ class TestKonfluxOlmBundleRebaser(IsolatedAsyncioTestCase):
         tags = self.rebaser._get_operator_framework_tags(
             'stable',
             'test-package',
-            additional_channels=('fast',),
+            channel_names=['stable', 'fast'],
             package_default_channel='stable',
         )
         self.assertEqual(tags['operators.operatorframework.io.bundle.channels.v1'], 'stable,fast')

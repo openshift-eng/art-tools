@@ -18,7 +18,6 @@ from koji import ClientSession
 from tenacity import retry, stop_after_attempt, wait_fixed
 
 from doozerlib import brew, util
-from doozerlib.olm.package_yaml import format_bundle_channels_label, resolve_package_channels
 from doozerlib.runtime import Runtime
 
 
@@ -236,21 +235,23 @@ class OLMBundle(object):
         exectools.cmd_assert(["git", "-C", self.bundle_clone_path, "rm", "--ignore-unmatch", "-rf", "."])
 
     def get_operator_package_yaml_info(self):
-        """Get operator package name and channel(s) from its package YAML
+        """Get operator package name and channel from its package YAML
         This info will be used to generate bundle's Dockerfile labels and metadata/annotations.yaml
-
-        ``self.channel`` remains the primary (channels[0]) name for backwards compatibility.
-        Additional peer channels from package.yaml are stored on ``self.additional_channels``.
         """
         file_path = glob.glob('{}/*package.yaml'.format(self.operator_manifests_dir))[0]
         with io.open(file_path) as f:
             package_yaml = yaml.safe_load(f)
 
-        resolved = resolve_package_channels(package_yaml)
-        self.package = resolved.package_name
-        self.channel = resolved.primary_channel
-        self.additional_channels = resolved.additional_channels
-        self.package_default_channel = resolved.default_channel
+        self.package = package_yaml['packageName']
+        self.channel = str(package_yaml['channels'][0]['name'])
+        # Preserve package.yaml order; skip duplicate names.
+        channel_names = []
+        for entry in package_yaml['channels']:
+            name = str(entry['name'])
+            if name not in channel_names:
+                channel_names.append(name)
+        self.channel_names = channel_names
+        self.package_default_channel = package_yaml.get('defaultChannel')
 
     def copy_operator_manifests_to_bundle(self):
         """Copy all manifests from the operator distgit repository over to its corresponding bundle
@@ -642,30 +643,32 @@ class OLMBundle(object):
 
     @property
     def operator_framework_tags(self):
+        override_channel = self.channel
+        override_default = self.channel
         stable_channel = self.runtime.group_config.get('operator_stable_channel_name', 'stable')
-        operator_channel_stable = self.runtime.group_config.operator_channel_stable
         # Tests / callers may set channel without going through package.yaml resolution.
-        additional = tuple(getattr(self, 'additional_channels', ()) or ())
+        channel_names = getattr(self, 'channel_names', None)
         package_default_channel = getattr(self, 'package_default_channel', None)
 
-        if not additional:
-            # Exact historical single-channel path (ART-3107 join uses a set).
-            override_channel = self.channel
-            override_default = self.channel
-            if operator_channel_stable in ['default', 'extra']:
-                override_channel = ','.join({self.channel, stable_channel})
-            if operator_channel_stable == 'default':
-                override_default = stable_channel
+        # When package.yaml lists multiple channels, advertise all of them.
+        if channel_names and len(channel_names) > 1:
+            names = list(channel_names)
+            override_channel = ','.join(names)
+            if package_default_channel and str(package_default_channel) in names:
+                override_default = str(package_default_channel)
+            # see: issues.redhat.com/browse/ART-3107
+            if self.runtime.group_config.operator_channel_stable in ['default', 'extra']:
+                if stable_channel not in names:
+                    names.append(stable_channel)
+                    override_channel = ','.join(names)
+                if self.runtime.group_config.operator_channel_stable == 'default':
+                    override_default = stable_channel
         else:
-            override_channel, override_default = format_bundle_channels_label(
-                self.channel,
-                additional,
-                package_default_channel=package_default_channel,
-                operator_channel_stable=(
-                    operator_channel_stable if operator_channel_stable in ('default', 'extra') else None
-                ),
-                stable_channel_name=stable_channel,
-            )
+            # Historical single-channel path (ART-3107 join uses a set).
+            if self.runtime.group_config.operator_channel_stable in ['default', 'extra']:
+                override_channel = ','.join({self.channel, stable_channel})
+            if self.runtime.group_config.operator_channel_stable == 'default':
+                override_default = stable_channel
 
         return {
             'operators.operatorframework.io.bundle.channel.default.v1': override_default,

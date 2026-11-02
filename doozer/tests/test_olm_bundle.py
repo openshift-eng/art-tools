@@ -127,7 +127,7 @@ class TestOLMBundle(unittest.TestCase):
         olm = self._make_olm_bundle_with_runtime(name, Model({}))
         olm.channel = 'stable'
         olm.package = 'cluster-observability-operator'
-        olm.additional_channels = ('fast',)
+        olm.channel_names = ['stable', 'fast']
         olm.package_default_channel = 'stable'
         olm.runtime.group_config = Model({})
 
