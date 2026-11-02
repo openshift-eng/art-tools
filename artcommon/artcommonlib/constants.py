@@ -79,6 +79,7 @@ REGISTRY_CI_OPENSHIFT = "registry.ci.openshift.org"
 REGISTRY_REDHAT_IO = "registry.redhat.io"
 REGISTRY_BREW = "brew.registry.redhat.io"
 KONFLUX_DEFAULT_IMAGE_REPO = "quay.io/redhat-user-workloads/ocp-art-tenant/art-images"
+KONFLUX_IMAGE_TEST_REPO = "quay.io/redhat-user-workloads/ocp-art-tenant/art-images-test"
 RHCOS_IMAGE_REPO = "quay.io/redhat-user-workloads/ocp-art-tenant/art-rhcos-images"
 KONFLUX_DEFAULT_FBC_REPO = "quay.io/redhat-user-workloads/ocp-art-tenant/art-fbc"
 

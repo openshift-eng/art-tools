@@ -4,8 +4,9 @@ import os
 import tempfile
 import unittest
 from pathlib import Path
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import ANY, AsyncMock, MagicMock, patch
 
+from artcommonlib.constants import KONFLUX_IMAGE_TEST_REPO
 from artcommonlib.variants import BuildVariant
 from pyartcd.counter_models import BuildFailCounterContext
 from pyartcd.pipelines.ocp4_konflux import KonfluxOcpPipeline
@@ -262,6 +263,98 @@ class TestDryRunSideEffects(unittest.IsolatedAsyncioTestCase):
                     self.assertEqual(pipeline.runtime.new_mail_client.call_count, notify.await_count)
                     pipeline.rebase_images.assert_awaited_once()
                     pipeline.build_images.assert_awaited_once()
+
+
+class TestMirrorTestBuildsToQuay(unittest.IsolatedAsyncioTestCase):
+    """Tests for the test-build auto-sync hook (mirror_test_builds_to_quay)."""
+
+    def make_pipeline(self, assembly='test', dry_run=False):
+        runtime = MagicMock(dry_run=dry_run)
+        with patch('pyartcd.pipelines.ocp4_konflux.util.default_release_suffix', return_value='202408190000'):
+            pipeline = KonfluxOcpPipeline(
+                runtime=runtime,
+                assembly=assembly,
+                version='4.18',
+                data_path='https://github.com/example/ocp-build-data',
+                image_build_strategy='all',
+                rpm_build_strategy='none',
+                build_priority='auto',
+            )
+        return pipeline
+
+    async def test_noop_when_not_test_assembly(self):
+        pipeline = self.make_pipeline(assembly='stream')
+        pipeline.building_images = MagicMock(return_value=True)
+        pipeline.parse_record_log = MagicMock()
+        with patch('pyartcd.pipelines.ocp4_konflux.sync_image_to_quay', new_callable=AsyncMock) as mock_sync:
+            await pipeline.mirror_test_builds_to_quay()
+        mock_sync.assert_not_awaited()
+        pipeline.parse_record_log.assert_not_called()
+
+    async def test_syncs_good_builds_and_skips_rhcos_failed_embargoed(self):
+        pipeline = self.make_pipeline(assembly='test')
+        pipeline.building_images = MagicMock(return_value=True)
+        pipeline.parse_record_log = MagicMock(
+            return_value={
+                'image_build_konflux': [
+                    {
+                        'name': 'ose-good',
+                        'status': '0',
+                        'image_pullspec': 'quay.io/x/art-images@sha256:aaa',
+                        'image_tag': 'good-tag',
+                        'nvrs': 'ose-good-4.18.0-1.p0',
+                    },
+                    {
+                        'name': 'ose-embargoed',
+                        'status': '0',
+                        'image_pullspec': 'quay.io/x/art-images@sha256:bbb',
+                        'image_tag': 'embargoed-tag',
+                        'nvrs': 'ose-embargoed-4.18.0-1.p1',
+                    },
+                    {
+                        'name': 'rhcos-node-image',
+                        'status': '0',
+                        'image_pullspec': 'quay.io/x/art-images@sha256:ccc',
+                        'image_tag': 'rhcos-tag',
+                        'nvrs': 'rhcos-node-image-4.18.0-1.p0',
+                    },
+                    {
+                        'name': 'ose-failed',
+                        'status': '1',
+                        'image_pullspec': 'quay.io/x/art-images@sha256:ddd',
+                        'image_tag': 'failed-tag',
+                        'nvrs': 'ose-failed-4.18.0-1.p0',
+                    },
+                ]
+            }
+        )
+
+        def fake_embargo(nvr):
+            return '.p1' in nvr
+
+        with (
+            patch('pyartcd.pipelines.ocp4_konflux.sync_image_to_quay', new_callable=AsyncMock) as mock_sync,
+            patch('pyartcd.pipelines.ocp4_konflux.is_nvr_embargoed', side_effect=fake_embargo),
+        ):
+            await pipeline.mirror_test_builds_to_quay()
+
+        # Only the single good, non-RHCOS, non-embargoed, successful build should sync.
+        mock_sync.assert_awaited_once_with(
+            'quay.io/x/art-images@sha256:aaa',
+            KONFLUX_IMAGE_TEST_REPO,
+            ['good-tag', 'ose-good-4.18'],
+            dry_run=False,
+            logger=ANY,
+        )
+
+    async def test_no_images_building_is_noop(self):
+        pipeline = self.make_pipeline(assembly='test')
+        pipeline.building_images = MagicMock(return_value=False)
+        pipeline.parse_record_log = MagicMock()
+        with patch('pyartcd.pipelines.ocp4_konflux.sync_image_to_quay', new_callable=AsyncMock) as mock_sync:
+            await pipeline.mirror_test_builds_to_quay()
+        mock_sync.assert_not_awaited()
+        pipeline.parse_record_log.assert_not_called()
 
 
 if __name__ == "__main__":
