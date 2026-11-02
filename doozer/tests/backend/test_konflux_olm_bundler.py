@@ -375,6 +375,36 @@ class TestKonfluxOlmBundleRebaser(IsolatedAsyncioTestCase):
         self.assertEqual(tags['operators.operatorframework.io.bundle.channel.default.v1'], 'test-channel')
         self.assertEqual(tags['operators.operatorframework.io.bundle.channels.v1'], 'test-channel')
 
+    def test_get_operator_framework_tags_multi_channel(self):
+        """Multiple package.yaml channels are advertised on the bundle labels."""
+        self.rebaser._group_config.get = lambda key, default=None: default
+        self.rebaser._group_config.operator_channel_stable = None
+        tags = self.rebaser._get_operator_framework_tags(
+            'stable',
+            'cluster-observability-operator',
+            additional_channels=('fast',),
+            package_default_channel='stable',
+        )
+        self.assertEqual(tags['operators.operatorframework.io.bundle.channels.v1'], 'stable,fast')
+        self.assertEqual(tags['operators.operatorframework.io.bundle.channel.default.v1'], 'stable')
+        self.assertEqual(
+            tags['operators.operatorframework.io.bundle.package.v1'],
+            'cluster-observability-operator',
+        )
+
+    def test_get_operator_framework_tags_multi_channel_with_art3107(self):
+        """ART-3107 must not duplicate stable when package.yaml already lists it."""
+        self.rebaser._group_config.get = lambda key, default=None: default
+        self.rebaser._group_config.operator_channel_stable = 'default'
+        tags = self.rebaser._get_operator_framework_tags(
+            'stable',
+            'test-package',
+            additional_channels=('fast',),
+            package_default_channel='stable',
+        )
+        self.assertEqual(tags['operators.operatorframework.io.bundle.channels.v1'], 'stable,fast')
+        self.assertEqual(tags['operators.operatorframework.io.bundle.channel.default.v1'], 'stable')
+
     def test_create_dockerfile(self):
         metadata = MagicMock()
         metadata.get_olm_bundle_brew_component_name.return_value = "test-component"
