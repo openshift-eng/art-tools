@@ -480,6 +480,20 @@ class TestRepoAwareImageConsistency(IsolatedAsyncioTestCase):
         issues = await self.assert_conflict()
         self.assertIn("assembly override dependencies NVR kernel-3-1", str(issues[0]))
 
+    async def test_unavailable_member_override_dependency_is_not_suppressed(self):
+        self.meta.get_assembly_rpm_package_dependencies.return_value = (
+            {"kernel": "kernel-3-1"},
+            {"kernel": "kernel-3-1"},
+        )
+        self.add_repo("packages", [self.rpm()])
+        with patch.object(
+            self.inspector, "_external_rpm_is_unavailable", wraps=self.inspector._external_rpm_is_unavailable
+        ) as unavailable:
+            issues = await self.assert_conflict()
+        self.assertIn("assembly override dependencies NVR kernel-3-1", str(issues[0]))
+        unavailable.assert_not_awaited()
+        self.loader.assert_not_awaited()
+
     async def test_available_explicit_pins_are_not_overwritten(self):
         """Available member and group pins remain mandatory, including missing dependencies."""
         self.add_repo("packages", [self.rpm(source="kernel-3-1.src.rpm")])

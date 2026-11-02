@@ -597,7 +597,7 @@ class AssemblyInspector:
                 installed_nvr = installed_build_dict['nvr']
                 if installed_nvr != desired_nvr:
                     if package_name not in group_rpm_package_names:
-                        if await self._external_rpm_is_unavailable(
+                        if package_name not in required_packages and await self._external_rpm_is_unavailable(
                             build_record_inspector, installed_build_dict, desired_nvr, package_rpm_finder
                         ):
                             image_meta.logger.info(
