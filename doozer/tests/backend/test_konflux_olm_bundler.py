@@ -1832,7 +1832,6 @@ class TestKonfluxOlmBundleBuilder(IsolatedAsyncioTestCase):
                     patch("doozerlib.backend.konflux_olm_bundler.DockerfileParser") as parser,
                     patch("doozerlib.backend.konflux_olm_bundler.aiofiles.open", return_value=bundle_file),
                     patch("doozerlib.backend.konflux_olm_bundler.get_reporter") as reporter,
-                    patch("doozerlib.backend.konflux_olm_bundler.sync_to_quay", new=AsyncMock()),
                     patch.object(self.builder, "_start_build", new=AsyncMock(return_value=(plr, "url"))),
                     patch.object(self.builder, "_update_konflux_db", new=AsyncMock()),
                     patch.object(

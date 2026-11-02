@@ -864,7 +864,7 @@ async def extract_nvrs_from_fbc(
     By default uses version-scoped rendered-catalog extraction (layered-product
     shipping). See :func:`artcommonlib.util.extract_versioned_related_images_from_fbc`.
 
-    When ``version_scoped`` is false (OCP optional / share-style), uses
+    When ``version_scoped`` is false (OCP optional operators), uses
     :func:`artcommonlib.util.extract_related_images_from_fbc` so build-suffixed
     OCP bundle names (e.g. ``*.v4.22.0-202407221``) are not required to match
     ``.v{assembly}`` exactly. ``assembly`` is ignored in that mode.

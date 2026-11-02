@@ -1303,15 +1303,15 @@ def _fbc_artifact_base_pullspec(fbc_pullspec: str) -> str:
 
 
 async def extract_related_images_from_fbc(fbc_pullspec: str, product: str) -> list[str]:
-    """Extract related image pullspecs for OCP FBC share-sync / catch-up.
+    """Extract related image pullspecs from an OCP FBC without version filtering.
 
     Prefer Konflux's ``related-images.json`` attachment (unreleased delta vs the
     production index). If that artifact is absent, fall back to relatedImages
     from *all* olm.bundle entries in the rendered catalog.
 
     This path is intentionally *not* version-scoped. OCP nightlies use
-    ``assembly=stream`` and digest-only FBC refs; share sync only needs digests
-    that may be missing from ``art-images-share`` (Telco / multi-arch).
+    ``assembly=stream`` and digest-only FBC refs; extraction includes related
+    images regardless of the bundle version.
 
     For layered-product shipping / related-image consistency checks, use
     :func:`extract_versioned_related_images_from_fbc` instead.
@@ -1492,7 +1492,7 @@ async def extract_versioned_related_images_from_fbc(
 ) -> list[str]:
     """Extract related images for layered-product shipping / validation.
 
-    Unlike :func:`extract_related_images_from_fbc` (OCP share sync), this path:
+    Unlike :func:`extract_related_images_from_fbc` (unscoped OCP extraction), this path:
 
     * Requires the Konflux ``rendered-catalog`` attachment (not the per-OCP
       ``related-images.json`` delta vs the production index)
