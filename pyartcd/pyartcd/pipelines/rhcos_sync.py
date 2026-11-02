@@ -25,6 +25,7 @@ import os
 import re
 import tempfile
 from contextlib import contextmanager
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 
@@ -38,13 +39,24 @@ from artcommonlib.registry_config import RegistryConfig
 from pyartcd import oc
 from pyartcd.cli import cli, click_coroutine, pass_runtime
 from pyartcd.pipelines.sign_rhcos_containers import SignRhcosContainersPipeline
-from pyartcd.pipelines.sync_rhcos import SyncRhcosPipeline
+from pyartcd.pipelines.sync_rhcos import SyncRhcosPipeline, get_rhcos_mirror_path
 from pyartcd.runtime import Runtime
 
 # RHCOS artifacts that are synced (from rhcoslib.groovy).
 # The allowlist is not enforced by default; all images in meta.json are synced.
 RHCOS_ALLOWLIST = ["gcp", "initramfs", "iso", "kernel", "metal", "openstack", "qemu", "vmware", "dasd"]
 ENFORCE_ALLOWLIST = False
+
+
+@dataclass(frozen=True)
+class BootImageVariant:
+    """
+    Identify a RHCOS build and the suffix for its mirror directories.
+    """
+
+    name: str
+    build_id: str
+    stream_suffix: str = ""
 
 
 def parse_release_tag(tag: str) -> Tuple[str, bool]:
@@ -308,7 +320,7 @@ class RhcosSyncPipeline:
         This drives the exact same preamble that ``run()`` uses — registry auth via
         ``RegistryConfig``, ``_parse_release_tag``, ``_resolve_version_name`` and
         ``_extract_rhcos_metadata`` — and then returns the result of
-        ``_check_needs_happening()``.
+        ``_check_needs_happening()`` for each applicable variant.
 
         It is used by the fast-channel z-stream auto-detection pipeline
         (``rhcos-sync-fast-channel``, ART-25059) to decide whether a boot-image
@@ -317,8 +329,8 @@ class RhcosSyncPipeline:
         ``RHCOS_SYNC`` Jenkins job via ``jenkins.start_rhcos_sync(..., sign_only=False)``.
 
         Returns:
-            True if a boot-image sync is needed (build id differs or not on
-            mirror, or ``force`` is set); False if the mirror is already current.
+            True if any variant needs a boot-image sync (build id differs or not
+            on mirror, or ``force`` is set); False if all variants are current.
         """
         self.logger.info("Checking RHCOS needsHappening for release tag: %s", self.release_tag)
 
@@ -329,7 +341,10 @@ class RhcosSyncPipeline:
         # then return the needsHappening result without mirroring or signing.
         with self._registry_auth():
             await self._run_preamble()
-            return await self._check_needs_happening()
+            for variant in self._get_boot_image_variants():
+                if await self._check_needs_happening(variant):
+                    return True
+            return False
 
     async def _run_preamble(self):
         """Resolve the version name and extract RHCOS metadata from the payload.
@@ -510,7 +525,7 @@ class RhcosSyncPipeline:
                             json.dump(content, f)
                         self.logger.info("Extracted additional RHCOS stream: %s -> %s", stream_name, extra_file)
 
-    async def _generate_synclist(self) -> Path:
+    async def _generate_synclist(self, variant: BootImageVariant) -> Path:
         """Generate a synclist file by fetching meta.json from the RHCOS release browser.
 
         Ported from rhcoslib.groovy rhcosSyncPrintArtifacts().
@@ -520,13 +535,14 @@ class RhcosSyncPipeline:
         Returns:
             Path to the generated synclist file.
         """
-        build_url = f"{self.RHCOS_RELEASES_BASE_URL}/{self.rhcos_stream}/builds/{self.rhcos_build}/{self.arch}"
+        rhcos_stream = compute_rhcos_stream(self.ocp_version, variant.build_id)
+        build_url = f"{self.RHCOS_RELEASES_BASE_URL}/{rhcos_stream}/builds/{variant.build_id}/{self.arch}"
         meta_url = f"{build_url}/meta.json"
 
         self.logger.info(
             "Fetching RHCOS meta.json for stream=%s, build=%s, arch=%s",
-            self.rhcos_stream,
-            self.rhcos_build,
+            rhcos_stream,
+            variant.build_id,
             self.arch,
         )
 
@@ -534,7 +550,8 @@ class RhcosSyncPipeline:
             async with session.get(meta_url) as response:
                 if response.status != 200:
                     raise RuntimeError(
-                        f"Failed to fetch RHCOS meta.json for build {self.rhcos_build}: HTTP {response.status}"
+                        f"Failed to fetch RHCOS meta.json for variant {variant.name}, "
+                        f"build {variant.build_id}: HTTP {response.status}"
                     )
                 meta = await response.json()
 
@@ -548,15 +565,19 @@ class RhcosSyncPipeline:
             if path:
                 image_urls.append(f"{build_url}/{path}")
 
-        self.logger.info("Generated synclist with %d artifacts", len(image_urls))
+        if not image_urls:
+            raise ValueError(
+                f"No boot image artifacts found for RHCOS variant {variant.name}, build {variant.build_id}"
+            )
+        self.logger.info("Generated synclist for variant %s with %d artifacts", variant.name, len(image_urls))
 
         # Write synclist to a file
-        synclist_path = Path(self.runtime.working_dir) / f"rhcos-synclist-{self.arch}.txt"
+        synclist_path = Path(self.runtime.working_dir) / f"rhcos-synclist-{self.arch}-{variant.name}.txt"
         synclist_path.write_text("\n".join(image_urls) + "\n")
 
         return synclist_path
 
-    async def _check_needs_happening(self) -> bool:
+    async def _check_needs_happening(self, variant: BootImageVariant) -> bool:
         """Check whether this RHCOS sync has already been performed.
 
         Ported from rhcoslib.groovy rhcosSyncNeedsHappening().
@@ -570,7 +591,8 @@ class RhcosSyncPipeline:
             self.logger.info("FORCE flag set, skipping needsHappening check")
             return True
 
-        mirror_url = f"https://mirror.openshift.com{self.base_dir}/{self.mirror_prefix}/{self.name}/rhcos-id.txt"
+        mirror_path = get_rhcos_mirror_path(self.mirror_prefix, self.name, variant.stream_suffix)
+        mirror_url = f"https://mirror.openshift.com{self.base_dir}/{mirror_path}/rhcos-id.txt"
         self.logger.info("Checking existing RHCOS build on mirror: %s", mirror_url)
 
         try:
@@ -584,33 +606,89 @@ class RhcosSyncPipeline:
             self.logger.warning("Failed to check mirror for existing build: %s", e)
             return True
 
-        self.logger.info("RHCOS build requested to sync: %s", self.rhcos_build)
+        self.logger.info("RHCOS build requested to sync: %s", variant.build_id)
         self.logger.info("RHCOS build on mirror: %s", existing_build)
 
-        if existing_build == self.rhcos_build:
+        if existing_build == variant.build_id:
             self.logger.info("RHCOS build is already on mirror, skipping sync")
             return False
 
         self.logger.info("Requested RHCOS build is not on mirror, sync is needed")
         return True
 
-    async def _sync_boot_images(self):
-        """Generate synclist, check if sync is needed, and run SyncRhcosPipeline.
-
-        Orchestrates the "sync" portion of the Jenkinsfile:
-          1. Generate synclist from meta.json
-          2. Check needsHappening
-          3. Call SyncRhcosPipeline.run()
+    def _get_boot_image_variants(self) -> list[BootImageVariant]:
         """
-        # Generate the synclist
-        synclist_path = await self._generate_synclist()
+        Collect distinct builds, assigning additional streams an -elNN suffix.
 
-        # Check if sync is needed
-        needs_happening = await self._check_needs_happening()
+        The primary stream keeps its existing paths. For example, an additional
+        RHEL 10 build for OCP 5.0 is published under rhcos/5.0-el10/5.0.0/.
+        """
+        variants = [BootImageVariant("primary", self.rhcos_build)]
+        seen_builds = {self.rhcos_build}
+        seen_suffixes: set[str] = set()
+        for stream_name, stream_data in self.extra_streams.items():
+            if not re.fullmatch(r"[a-zA-Z0-9][a-zA-Z0-9_.-]*", stream_name):
+                raise ValueError(f"Invalid RHCOS variant name: {stream_name!r}")
+            architectures = stream_data.get("architectures", {})
+            if self.arch not in architectures:
+                self.logger.warning(
+                    "RHCOS variant %s has no architecture %s; skipping boot images", stream_name, self.arch
+                )
+                continue
+            try:
+                build_id = architectures[self.arch]["artifacts"]["qemu"]["release"]
+            except (KeyError, TypeError) as e:
+                raise ValueError(
+                    f"Cannot extract RHCOS build ID for variant {stream_name}, architecture {self.arch}"
+                ) from e
+            if not isinstance(build_id, str) or not build_id.strip():
+                raise ValueError(f"Empty or invalid RHCOS build ID for variant {stream_name}, architecture {self.arch}")
+            if build_id in seen_builds:
+                self.logger.info("Skipping duplicate RHCOS variant %s (build %s)", stream_name, build_id)
+                continue
+            rhcos_stream = compute_rhcos_stream(self.ocp_version, build_id)
+            match = re.search(r"(?:^|-)rhel-(\d+)\.", rhcos_stream)
+            if not match:
+                raise ValueError(f"Cannot determine RHEL major version for RHCOS variant {stream_name}: {rhcos_stream}")
+            stream_suffix = f"-el{match.group(1)}"
+            if stream_suffix in seen_suffixes:
+                raise ValueError(f"Multiple distinct RHCOS builds map to mirror suffix {stream_suffix}")
+            seen_builds.add(build_id)
+            seen_suffixes.add(stream_suffix)
+            variants.append(BootImageVariant(stream_name, build_id, stream_suffix))
+        return variants
+
+    async def _sync_boot_images(self) -> None:
+        """
+        Mirror every applicable variant with independent destinations and markers.
+        """
+        for variant in self._get_boot_image_variants():
+            mirror_path = get_rhcos_mirror_path(self.mirror_prefix, self.name, variant.stream_suffix)
+            self.logger.info(
+                "Checking boot images for RHCOS variant %s: build=%s, destination=%s/%s/",
+                variant.name,
+                variant.build_id,
+                self.base_dir,
+                mirror_path,
+            )
+            try:
+                await self._sync_boot_image_variant(variant)
+            except Exception:
+                self.logger.exception(
+                    "Boot image sync failed for RHCOS variant %s (build %s)", variant.name, variant.build_id
+                )
+                raise
+
+    async def _sync_boot_image_variant(self, variant: BootImageVariant) -> None:
+        """
+        Mirror a variant when its own build marker differs from the requested build.
+        """
+        needs_happening = await self._check_needs_happening(variant)
         if not needs_happening:
-            self.logger.info("Sync is not needed (already on mirror). Skipping boot image sync.")
+            self.logger.info("RHCOS variant %s is already on mirror; skipping boot image sync", variant.name)
             return
 
+        synclist_path = await self._generate_synclist(variant)
         # Determine signing environment
         signing_env = self.signing_env
         if signing_env is None:
@@ -621,16 +699,17 @@ class RhcosSyncPipeline:
         pipeline = SyncRhcosPipeline(
             runtime=self.runtime,
             arch=self.arch,
-            build_id=self.rhcos_build,
+            build_id=variant.build_id,
             version=self.name,
             mirror_prefix=self.mirror_prefix,
             base_dir=self.base_dir,
             synclist=str(synclist_path),
             no_latest=self.no_latest,
             signing_env=signing_env,
+            stream_suffix=variant.stream_suffix,
         )
         await pipeline.run()
-        self.logger.info("Boot image sync completed")
+        self.logger.info("Boot image sync completed for RHCOS variant %s", variant.name)
 
     async def _sign_containers(self):
         """Sign RHCOS container images for all streams.
