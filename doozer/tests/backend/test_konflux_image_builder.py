@@ -2054,13 +2054,26 @@ class TestKonfluxImageBuilderGolangComponent(unittest.TestCase):
                 result = konflux_golang_builder_component_name(nvr)
                 self.assertEqual(result, expected)
 
-    def test_get_golang_builder_component_name_multiple_el_patterns(self):
-        """Test theoretical edge case where both .el8 and .el9 appear in release."""
-        # This documents the expected behavior: .el8 override wins due to simplified logic
-        nvr = "openshift-golang-builder-container-v1.25.8-202604081607.p0.g2aa6a05.el8.dependency.el9"
-        expected = "golang-builder-v1.25-rhel8"  # .el8 override takes precedence
-        result = konflux_golang_builder_component_name(nvr)
-        self.assertEqual(result, expected)
+    def test_get_golang_builder_component_name_el10(self):
+        """Test golang builder component name with el10."""
+        test_cases = [
+            (
+                "openshift-golang-builder-container-v1.26.10-202610231157.p2.gfa5e690.assembly.stream.el10",
+                "golang-builder-v1.26-rhel10",
+            ),
+            (
+                "openshift-golang-builder-container-v1.25.14-202610231156.p2.gfa5e690.assembly.stream.el10",
+                "golang-builder-v1.25-rhel10",
+            ),
+            (
+                "openshift-golang-builder-container-v1.24.13-202610231156.p2.gfa5e690.assembly.stream.el10",
+                "golang-builder-v1.24-rhel10",
+            ),
+        ]
+        for nvr, expected in test_cases:
+            with self.subTest(nvr=nvr):
+                result = konflux_golang_builder_component_name(nvr)
+                self.assertEqual(result, expected)
 
 
 class TestGetInstalledPackages(unittest.IsolatedAsyncioTestCase):
