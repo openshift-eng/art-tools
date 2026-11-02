@@ -1,6 +1,8 @@
+import asyncio
 from unittest import IsolatedAsyncioTestCase
 from unittest.mock import AsyncMock, MagicMock, patch
 
+from aiohttp import ClientConnectionError, ClientResponseError, RequestInfo
 from artcommonlib.assembly import AssemblyIssueCode, AssemblyTypes
 from artcommonlib.config.plashet import PlashetConfig
 from artcommonlib.config.repo import ContentSet, PlashetRepo
@@ -11,6 +13,8 @@ from doozerlib.build_info import BrewBuildRecordInspector, KonfluxBuildRecordIns
 from doozerlib.image import ImageMetadata
 from doozerlib.repodata import Repodata, Rpm
 from doozerlib.repos import Repo
+from multidict import CIMultiDict, CIMultiDictProxy
+from yarl import URL
 
 
 class TestAssemblyInspector(IsolatedAsyncioTestCase):
@@ -149,7 +153,7 @@ class TestRepoAwareImageConsistency(IsolatedAsyncioTestCase):
         self.loader = self.enterContext(patch("doozerlib.repos.RepodataLoader.load", new_callable=AsyncMock))
         self.loader.side_effect = lambda name, url: self.repodatas[name]
 
-    def add_repo(self, name, rpms=(), enabled=True, options=None):
+    def add_repo(self, name, rpms=(), enabled=True, options=None, optional=True):
         """Select a real repository and supply metadata without network access."""
         repo = Repo(
             name,
@@ -159,7 +163,7 @@ class TestRepoAwareImageConsistency(IsolatedAsyncioTestCase):
                     "enabled": enabled,
                     "extra_options": options or {},
                 },
-                "content_set": {"optional": True},
+                "content_set": {"optional": optional},
             },
             ["x86_64", "aarch64"],
         )
@@ -344,6 +348,62 @@ class TestRepoAwareImageConsistency(IsolatedAsyncioTestCase):
         self.loader.side_effect = RuntimeError("metadata unavailable")
         with self.assertRaisesRegex(RuntimeError, "metadata unavailable"):
             await self.issues()
+
+    def metadata_http_error(self, status):
+        """Build a real HTTP response error with usable request and status details."""
+        url = URL("https://example.invalid/repo/repodata/repomd.xml")
+        request = RequestInfo(url, "GET", CIMultiDictProxy(CIMultiDict()), url)
+        return ClientResponseError(request, (), status=status, message="metadata unavailable")
+
+    async def test_optional_repo_404_with_remaining_repos(self):
+        """An absent optional repo must not hide eligible binaries in other real repos."""
+        for available in (False, True):
+            with self.subTest(available=available):
+                missing = self.add_repo("a-missing")
+                missing.get_repodata_threadsafe = AsyncMock(side_effect=self.metadata_http_error(404))
+                self.add_repo("z-remaining", [self.rpm()] if available else [])
+                if available:
+                    await self.assert_conflict()
+                else:
+                    self.assertEqual(await self.issues(), [])
+                missing.get_repodata_threadsafe.assert_awaited_once_with("x86_64")
+                self.assertIn("z-remaining-x86_64", [call.args[0] for call in self.loader.await_args_list])
+
+    async def test_optional_repo_404_is_only_repo(self):
+        """A definitively absent sole optional repo proves the expected RPM unavailable."""
+        missing = self.add_repo("missing")
+        missing.get_repodata_threadsafe = AsyncMock(side_effect=self.metadata_http_error(404))
+        self.assertTrue(
+            await self.inspector._external_rpm_is_unavailable(self.build, self.installed, "kernel-2-1", None)
+        )
+        self.assertEqual(await self.issues(), [])
+        self.loader.assert_not_awaited()
+
+    async def test_required_repo_404_propagates(self):
+        """Required-repo 404s must propagate even when another repo has the expected RPM."""
+        self.add_repo("a-available", [self.rpm()])
+        required = self.add_repo("z-required", optional=False)
+        error = self.metadata_http_error(404)
+        required.get_repodata_threadsafe = AsyncMock(side_effect=error)
+        with self.assertRaises(ClientResponseError) as raised:
+            await self.issues()
+        self.assertIs(raised.exception, error)
+
+    async def test_optional_repo_non_404_failure_propagates(self):
+        """Only HTTP 404 can waive an optional repo; other failures remain fail-closed."""
+        self.add_repo("a-available", [self.rpm()])
+        for error in (
+            self.metadata_http_error(503),
+            asyncio.TimeoutError("metadata timeout"),
+            ClientConnectionError("metadata connection failed"),
+            ValueError("invalid metadata"),
+        ):
+            with self.subTest(error=type(error).__name__):
+                optional = self.add_repo("z-optional")
+                optional.get_repodata_threadsafe = AsyncMock(side_effect=error)
+                with self.assertRaises(type(error)) as raised:
+                    await self.issues()
+                self.assertIs(raised.exception, error)
 
     async def test_repo_metadata_cache_is_reused(self):
         """Repeated consistency checks reuse the repository's existing metadata cache."""

@@ -2,6 +2,7 @@ import asyncio
 from typing import Any, Dict, List, Optional, cast
 
 import artcommonlib.util as artutil
+from aiohttp import ClientResponseError
 from artcommonlib.arch_util import brew_arch_for_go_arch
 from artcommonlib.assembly import (
     AssemblyIssue,
@@ -431,6 +432,7 @@ class AssemblyInspector:
 
         Konflux records union binary NVRs across architectures. Check every possible
         build architecture rather than inferring where an individual binary was installed.
+        Only definitive HTTP 404s from optional repositories count as repository absence.
         """
         enabled_repos = inspector.get_image_meta().get_enabled_repos()
         if not enabled_repos:
@@ -439,13 +441,22 @@ class AssemblyInspector:
         if not binaries:
             return False
         for arch, names in binaries.items():
-            repodatas = await asyncio.gather(
-                *(
-                    self.runtime.repos[name].get_repodata_threadsafe(arch)
-                    for name in sorted(enabled_repos)
-                    if arch in self.runtime.repos[name].arches
-                )
+            repos = [
+                self.runtime.repos[name] for name in sorted(enabled_repos) if arch in self.runtime.repos[name].arches
+            ]
+            results = await asyncio.gather(
+                *(repo.get_repodata_threadsafe(arch) for repo in repos), return_exceptions=True
             )
+            repodatas = []
+            for repo, result in zip(repos, results):
+                if isinstance(result, ClientResponseError) and result.status == 404 and repo.cs_optional is True:
+                    self.runtime.logger.info(
+                        "Skipping absent optional repository %s for %s (HTTP 404)", repo.name, arch
+                    )
+                    continue
+                if isinstance(result, BaseException):
+                    raise result
+                repodatas.append(result)
             for repodata in repodatas:
                 for rpm in repodata.primary_rpms:
                     if rpm.name in names and rpm.arch in (arch, "noarch"):
