@@ -367,7 +367,8 @@ class TestRepoAwareImageConsistency(IsolatedAsyncioTestCase):
                     await self.assert_conflict()
                 else:
                     self.assertEqual(await self.issues(), [])
-                missing.get_repodata_threadsafe.assert_awaited_once_with("x86_64")
+                self.assertEqual(missing.get_repodata_threadsafe.await_count, 2 if available else 1)
+                missing.get_repodata_threadsafe.assert_awaited_with("x86_64")
                 self.assertIn("z-remaining-x86_64", [call.args[0] for call in self.loader.await_args_list])
 
     async def test_optional_repo_404_is_only_repo(self):
@@ -379,6 +380,16 @@ class TestRepoAwareImageConsistency(IsolatedAsyncioTestCase):
         )
         self.assertEqual(await self.issues(), [])
         self.loader.assert_not_awaited()
+
+    async def test_optional_repo_404_without_request_url_propagates(self):
+        repo = self.add_repo("missing")
+        for request in (None, MagicMock(url=None), MagicMock(url=object())):
+            with self.subTest(request=request):
+                error = ClientResponseError(request, (), status=404)
+                repo.get_repodata_threadsafe = AsyncMock(side_effect=error)
+                with self.assertRaises(ClientResponseError) as raised:
+                    await self.issues()
+                self.assertIs(raised.exception, error)
 
     async def test_required_repo_404_propagates(self):
         """Required-repo 404s must propagate even when another repo has the expected RPM."""
@@ -446,14 +457,38 @@ class TestRepoAwareImageConsistency(IsolatedAsyncioTestCase):
                     await self.issues()
                 self.assertIs(raised.exception, error)
 
-    async def test_explicit_pins_are_not_repo_gated_or_overwritten(self):
-        """Explicit member and group pins remain mandatory, including missing dependencies."""
+    async def test_unavailable_override_dependency_is_suppressed(self):
+        self.meta.get_assembly_rpm_package_dependencies.return_value = ({}, {"kernel": "kernel-3-1"})
+        self.add_repo("packages", [self.rpm()])
+        finder = MagicMock()
+        with patch.object(
+            self.inspector, "_external_rpm_is_unavailable", wraps=self.inspector._external_rpm_is_unavailable
+        ) as unavailable:
+            self.assertEqual(await self.inspector.check_group_image_consistency(self.build, finder), [])
+        unavailable.assert_awaited_once_with(self.build, self.installed, "kernel-3-1", finder)
+        self.meta.logger.info.assert_called_once_with(
+            "Skipping inherited override dependency conflict for %s: expected %s unavailable from enabled repos %s for image %s",
+            "kernel",
+            "kernel-3-1",
+            ["packages"],
+            "image",
+        )
+
+    async def test_available_override_dependency_is_not_suppressed(self):
+        self.meta.get_assembly_rpm_package_dependencies.return_value = ({}, {"kernel": "kernel-3-1"})
+        self.add_repo("packages", [self.rpm(source="kernel-3-1.src.rpm")])
+        issues = await self.assert_conflict()
+        self.assertIn("assembly override dependencies NVR kernel-3-1", str(issues[0]))
+
+    async def test_available_explicit_pins_are_not_overwritten(self):
+        """Available member and group pins remain mandatory, including missing dependencies."""
+        self.add_repo("packages", [self.rpm(source="kernel-3-1.src.rpm")])
         for member in ({}, {"kernel": "kernel-3-1"}):
             with self.subTest(member=member):
                 self.meta.get_assembly_rpm_package_dependencies.return_value = (member, {"kernel": "kernel-3-1"})
                 issues = await self.assert_conflict()
                 self.assertIn("kernel-3-1", str(issues[0]))
-        self.loader.assert_not_awaited()
+        self.loader.assert_awaited_once()
 
         self.build.get_all_installed_package_build_dicts.return_value = {}
         issues = await self.issues()
@@ -461,11 +496,14 @@ class TestRepoAwareImageConsistency(IsolatedAsyncioTestCase):
 
     async def test_managed_rpm_mismatch_is_not_repo_gated(self):
         """ART-managed RPM policy remains independent of external repository availability."""
+        self.meta.config.check_external_packages = []
         self.inspector.get_group_rpm_build_dicts.return_value = {
             "kernel": {"package_name": "kernel", "nvr": "kernel-3-1"}
         }
+        self.inspector._external_rpm_is_unavailable = AsyncMock(return_value=True)
         issues = await self.issues()
         self.assertEqual([issue.code for issue in issues], [AssemblyIssueCode.CONFLICTING_GROUP_RPM_INSTALLED])
+        self.inspector._external_rpm_is_unavailable.assert_not_awaited()
 
     async def test_rhcos_tag_logic_and_mandatory_checks_are_unchanged(self):
         """RHCOS keeps its tag checks, explicit pins and managed RPM policy unchanged."""

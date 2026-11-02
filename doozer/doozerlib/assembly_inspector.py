@@ -452,7 +452,13 @@ class AssemblyInspector:
             for repo, result in zip(repos, results):
                 if isinstance(result, RetryError):
                     result = result.last_attempt.exception() or result
-                if isinstance(result, ClientResponseError) and result.status == 404 and repo.cs_optional is True:
+                request_url = getattr(getattr(result, "request_info", None), "url", None)
+                if (
+                    isinstance(result, ClientResponseError)
+                    and result.status == 404
+                    and repo.cs_optional is True
+                    and (getattr(request_url, "path", None) or "").endswith("/repodata/repomd.xml")
+                ):
                     self.runtime.logger.info(
                         "Skipping absent optional repository %s for %s (HTTP 404)", repo.name, arch
                     )
@@ -591,6 +597,17 @@ class AssemblyInspector:
                 installed_nvr = installed_build_dict['nvr']
                 if installed_nvr != desired_nvr:
                     if package_name not in group_rpm_package_names:
+                        if await self._external_rpm_is_unavailable(
+                            build_record_inspector, installed_build_dict, desired_nvr, package_rpm_finder
+                        ):
+                            image_meta.logger.info(
+                                "Skipping inherited override dependency conflict for %s: expected %s unavailable from enabled repos %s for image %s",
+                                package_name,
+                                desired_nvr,
+                                sorted(image_meta.get_enabled_repos()),
+                                dgk,
+                            )
+                            continue
                         issues.append(
                             AssemblyIssue(
                                 f'Expected image to contain assembly override dependencies NVR {desired_nvr} but found {installed_nvr} installed',
