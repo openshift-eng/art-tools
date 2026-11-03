@@ -629,12 +629,17 @@ class SigstoreSignatory:
 
         log.info(f"Signing manifest {pullspec} with identities: {identities}")
 
+        # Cheap pre-check computed once per manifest: if no signature object exists at all, skip the
+        # per-identity cosign verify / KMS round-trips entirely and just sign. force_resign bypasses
+        # all checks. The check is read-only, so it still runs under dry_run.
+        check_existing = (not self.force_resign) and await self._any_signature_exists(pullspec)
+
         for identity in identities:
             for signing_key_id in self.signing_key_ids:
                 # Skip signing when our signature for this identity+key already exists.
                 # The check is read-only, so it runs in dry-run too (keeps dry-run output accurate).
-                # force_resign bypasses this to allow backfills to re-sign unconditionally.
-                if not self.force_resign and await self._signature_exists(pullspec, identity, signing_key_id):
+                # Only consult the precise per-identity verify when a signature object may exist.
+                if check_existing and await self._signature_exists(pullspec, identity, signing_key_id):
                     log.info(
                         f"Signature already present, skipping: pullspec={pullspec}, "
                         f"identity={identity}, key={signing_key_id}"
@@ -697,6 +702,79 @@ class SigstoreSignatory:
                     # we signed the image before. i do not see a plausible risk resulting.
                     self._logger.info(f"found sig file at {url}")
                     return True
+
+    async def _any_signature_exists(self, pullspec: str) -> bool:
+        """
+        Cheaply check whether ANY cosign signature OBJECT exists for a manifest, without verifying it.
+
+        cosign stores the signature for a manifest at a predictable tag derived from its digest:
+        ``<repo>:sha256-<hex>.sig``. A plain registry existence check on that tag tells us whether
+        there is anything to verify at all. This lets the common promote case (image not yet signed)
+        skip the per-identity ``cosign verify`` / KMS round-trips entirely and just sign.
+
+        This is a coarse pre-check, not a verification: a True result only means some signature
+        object is present, so the caller must still run the precise per-identity ``_signature_exists``.
+
+        The check FAILS OPEN: it returns True (so the caller falls through to the precise per-identity
+        verify, which itself fails open to signing) on anything other than a clear "the registry has
+        no such manifest" signal. It returns False ONLY on tight registry not-found signals, so a
+        wrong "no signature" (which would cause duplicate signing) is avoided.
+
+        :param pullspec: Digest-based pullspec (``<repo>@sha256:<hex>``) to check.
+        :return: True if a signature object exists OR the result is ambiguous; False only on a clear
+            registry not-found for the derived ``.sig`` tag.
+        """
+        log = self._logger
+
+        # Derive the cosign signature tag from the digest pullspec. If this is not a digest pullspec
+        # we cannot compute the .sig tag, so fall through to the precise per-identity verify.
+        if "@sha256:" not in pullspec:
+            log.debug(
+                "Cannot derive cosign .sig tag for non-digest pullspec %s; assuming signature may exist", pullspec
+            )
+            return True
+        repo, digest_hex = pullspec.split("@sha256:", 1)
+        sig_tag = f"{repo}:sha256-{digest_hex}.sig"
+
+        cmd = ["skopeo", "inspect", "--raw"]
+        # QUAY_AUTH_FILE has path-scoped auth keys that skopeo (unlike cosign) can use directly.
+        quay_auth_file = os.environ.get("QUAY_AUTH_FILE")
+        if quay_auth_file:
+            cmd.extend(["--authfile", quay_auth_file])
+        cmd.append(f"docker://{sig_tag}")
+
+        rc, stdout, stderr = await exectools.cmd_gather_async(cmd, check=False, env=self.ENV)
+        if rc == 0:
+            # The .sig object exists -> some signature is present.
+            return True
+
+        # Match ONLY tight registry "no such manifest" signals. A bare "not found" is deliberately
+        # NOT matched (so e.g. "skopeo: command not found" is treated as ambiguous, not "no signature").
+        stderr_lc = (stderr or "").lower()
+        not_found_signals = (
+            "manifest unknown",
+            "manifestunknown",
+            "name unknown",
+            "nameunknown",
+            "was deleted or has expired",
+            "http 404",
+            "status 404",
+            " 404 ",
+        )
+        if any(signal in stderr_lc for signal in not_found_signals):
+            log.debug("No cosign signature object for %s (sig tag %s not found)", pullspec, sig_tag)
+            return False
+
+        # Ambiguous (auth error, network, skopeo missing, unrecognized error): fail OPEN so the
+        # caller falls back to the precise per-identity cosign verify. Never return False here.
+        log.debug(
+            "Ambiguous signature existence check for %s (sig tag %s, rc=%s): %s; assuming signature may exist",
+            pullspec,
+            sig_tag,
+            rc,
+            exectools._redact_url_credentials(stderr),
+        )
+        return True
 
     async def _signature_exists(self, pullspec: str, identity: str, signing_key_id: str) -> bool:
         """
