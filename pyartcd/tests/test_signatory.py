@@ -1,6 +1,9 @@
 import asyncio
 import base64
 import json
+import os
+import shutil
+import tempfile
 from datetime import datetime, timedelta, timezone
 from io import BytesIO
 from unittest import IsolatedAsyncioTestCase
@@ -521,3 +524,133 @@ class TestSigstoreSignatory(IsolatedAsyncioTestCase):
         err_msg = str(result[ps])
         self.assertIn("identity=", err_msg)
         self.assertIn("key=my-key-123", err_msg)
+
+    # --- repo-aware (longest-prefix) credential selection ----------------------------------------
+
+    RELEASE_CRED = {"auth": "cmVsZWFzZS11c2VyOnJlbGVhc2UtcGFzcw=="}  # release-user:release-pass
+    ART_CRED = {"auth": "YXJ0LXVzZXI6YXJ0LXBhc3M="}  # art-user:art-pass
+
+    def _make_auth_file(self, auths: dict) -> str:
+        """Write a QUAY_AUTH_FILE-style config.json with the given auths and return its path."""
+        tmpdir = tempfile.mkdtemp(prefix="test-quay-auth-")
+        self.addCleanup(shutil.rmtree, tmpdir, ignore_errors=True)
+        path = os.path.join(tmpdir, "auth.json")
+        with open(path, "w") as f:
+            json.dump({"auths": auths}, f)
+        return path
+
+    def _read_config_auths(self, config_dir: str) -> dict:
+        with open(os.path.join(config_dir, "config.json")) as f:
+            return json.load(f)["auths"]
+
+    def test_repo_aware_selects_longest_prefix_credential(self):
+        """With multiple quay.io path-scoped robots, the hostname-only entry handed to cosign is the
+        longest-prefix match for each image's repository."""
+        auths = {
+            "quay.io/openshift-release-dev": self.RELEASE_CRED,
+            "quay.io/redhat-user-workloads/ocp-art-tenant/art-images": self.ART_CRED,
+        }
+        path = self._make_auth_file(auths)
+        with patch.dict(os.environ, {"QUAY_AUTH_FILE": path}):
+            signatory = self._create_signatory()
+            self.addCleanup(signatory.close)
+
+            # An ocp-v4.0-art-dev image under openshift-release-dev must resolve to the release cred.
+            release_ps = "quay.io/openshift-release-dev/ocp-v4.0-art-dev@sha256:" + "a" * 64
+            release_dir = signatory._docker_config_dir_for_pullspec(release_ps)
+            release_auths = self._read_config_auths(release_dir)
+            self.assertEqual(release_auths["quay.io"], self.RELEASE_CRED)
+            # Original path-scoped entries are preserved alongside the hostname-only alias.
+            self.assertEqual(release_auths["quay.io/openshift-release-dev"], self.RELEASE_CRED)
+            self.assertEqual(release_auths["quay.io/redhat-user-workloads/ocp-art-tenant/art-images"], self.ART_CRED)
+
+            # An art-images image must resolve to the art-images cred instead.
+            art_ps = "quay.io/redhat-user-workloads/ocp-art-tenant/art-images@sha256:" + "b" * 64
+            art_dir = signatory._docker_config_dir_for_pullspec(art_ps)
+            self.assertEqual(self._read_config_auths(art_dir)["quay.io"], self.ART_CRED)
+
+            # Different repos resolve to different cached config dirs.
+            self.assertNotEqual(release_dir, art_dir)
+            # Same repo reuses the cached config dir.
+            self.assertEqual(release_dir, signatory._docker_config_dir_for_pullspec(release_ps))
+
+    def test_repo_aware_resolves_tagged_pullspec(self):
+        """Repo derivation strips a trailing tag as well as a digest."""
+        auths = {
+            "quay.io/openshift-release-dev": self.RELEASE_CRED,
+            "quay.io/redhat-user-workloads/ocp-art-tenant/art-images": self.ART_CRED,
+        }
+        path = self._make_auth_file(auths)
+        with patch.dict(os.environ, {"QUAY_AUTH_FILE": path}):
+            signatory = self._create_signatory()
+            self.addCleanup(signatory.close)
+            tagged_ps = "quay.io/openshift-release-dev/ocp-release:4.16.1-x86_64"
+            auths_out = self._read_config_auths(signatory._docker_config_dir_for_pullspec(tagged_ps))
+            self.assertEqual(auths_out["quay.io"], self.RELEASE_CRED)
+
+    def test_single_entry_per_host_unchanged(self):
+        """With a single path-scoped credential per host, behavior is unchanged: the global fallback
+        config aliases the hostname to that single credential."""
+        auths = {"quay.io/openshift-release-dev": self.RELEASE_CRED}
+        path = self._make_auth_file(auths)
+        with patch.dict(os.environ, {"QUAY_AUTH_FILE": path}):
+            signatory = self._create_signatory()
+            self.addCleanup(signatory.close)
+
+            # The global/fallback config collapses the lone path-scoped key to a hostname alias.
+            global_auths = self._read_config_auths(signatory._global_docker_config_dir)
+            self.assertEqual(global_auths["quay.io"], self.RELEASE_CRED)
+
+            # Per-pullspec resolution also yields that single credential.
+            ps = "quay.io/openshift-release-dev/ocp-v4.0-art-dev@sha256:" + "c" * 64
+            resolved = self._read_config_auths(signatory._docker_config_dir_for_pullspec(ps))
+            self.assertEqual(resolved["quay.io"], self.RELEASE_CRED)
+
+    def test_no_matching_entry_falls_back_without_crash(self):
+        """A pullspec whose repo matches no stored path-scoped entry falls back to the global config
+        dir rather than crashing."""
+        auths = {"quay.io/openshift-release-dev": self.RELEASE_CRED}
+        path = self._make_auth_file(auths)
+        with patch.dict(os.environ, {"QUAY_AUTH_FILE": path}):
+            signatory = self._create_signatory()
+            self.addCleanup(signatory.close)
+            other_host_ps = "registry.redhat.io/some/other-image@sha256:" + "d" * 64
+            self.assertEqual(
+                signatory._docker_config_dir_for_pullspec(other_host_ps),
+                signatory._global_docker_config_dir,
+            )
+
+    def test_no_auth_file_returns_none(self):
+        """Without QUAY_AUTH_FILE there is no config dir to hand cosign (env stays unchanged)."""
+        with patch.dict(os.environ, {}, clear=False):
+            os.environ.pop("QUAY_AUTH_FILE", None)
+            signatory = self._create_signatory()
+            self.addCleanup(signatory.close)
+            self.assertIsNone(signatory._global_docker_config_dir)
+            self.assertIsNone(
+                signatory._docker_config_dir_for_pullspec("quay.io/openshift-release-dev/x@sha256:" + "e" * 64)
+            )
+
+    @patch("pyartcd.signatory.asyncio.sleep", new_callable=AsyncMock)
+    @patch("pyartcd.signatory.exectools.cmd_gather_async", new_callable=AsyncMock)
+    async def test_sign_manifest_passes_repo_aware_docker_config(self, mock_cmd, mock_sleep):
+        """_sign_manifest hands cosign the repo-aware DOCKER_CONFIG for the signed pullspec."""
+        auths = {
+            "quay.io/openshift-release-dev": self.RELEASE_CRED,
+            "quay.io/redhat-user-workloads/ocp-art-tenant/art-images": self.ART_CRED,
+        }
+        path = self._make_auth_file(auths)
+        mock_cmd.return_value = (0, "ok", "")
+        with patch.dict(os.environ, {"QUAY_AUTH_FILE": path}):
+            signatory = self._create_signatory(dry_run=False)
+            self.addCleanup(signatory.close)
+            art_ps = "quay.io/redhat-user-workloads/ocp-art-tenant/art-images@sha256:" + "f" * 64
+            expected_dir = signatory._docker_config_dir_for_pullspec(art_ps)
+
+            result = await signatory._sign_manifest(art_ps)
+
+            self.assertEqual(result, {})
+            self.assertTrue(mock_cmd.await_count >= 1)
+            env = mock_cmd.await_args_list[0].kwargs["env"]
+            self.assertEqual(env["DOCKER_CONFIG"], expected_dir)
+            self.assertEqual(self._read_config_auths(env["DOCKER_CONFIG"])["quay.io"], self.ART_CRED)

@@ -295,39 +295,163 @@ class SigstoreSignatory:
         self.signing_key_ids = signing_key_ids  # key ids for signing
         self.rekor_url = rekor_url  # rekor server for cosign tlog storage
         self.ENV["AWS_SHARED_CREDENTIALS_FILE"] = signing_creds  # filename for KMS credentials
-        # cosign uses go-containerregistry which does hostname-only auth lookup.
-        # QUAY_AUTH_FILE has path-scoped keys (e.g. "quay.io/openshift-release-dev")
-        # so we must add hostname-only entries (e.g. "quay.io") for cosign to find them.
+        # cosign uses go-containerregistry, which performs a HOSTNAME-ONLY credential lookup. The
+        # QUAY_AUTH_FILE however has path-scoped keys (e.g. "quay.io/openshift-release-dev" and
+        # "quay.io/redhat-user-workloads/ocp-art-tenant/art-images"), so cosign/skopeo cannot find a
+        # match unless a hostname-only entry (e.g. "quay.io") is present. Collapsing all path-scoped
+        # keys into one hostname-only entry is ambiguous when multiple credentials share a host: an
+        # arbitrary robot would be picked, which may not have access to the repo being signed.
+        #
+        # Instead, keep the full parsed mapping and build a per-pullspec DOCKER_CONFIG whose
+        # hostname-only entry is the LONGEST-PREFIX path-scoped match for that image's repository
+        # (see _docker_config_dir_for_pullspec). A hostname-collapsed global config is retained as a
+        # safe fallback that preserves the previous behavior when there is at most one path-scoped
+        # credential per host (or when no path-scoped entry matches a given pullspec).
+        self._registry_auths: Dict[str, dict] = {}  # full registry-key -> auth entry mapping
+        self._base_auth_data: Optional[dict] = None  # the full parsed auth file (top-level fields preserved)
+        self._global_docker_config_dir: Optional[str] = None  # hostname-collapsed fallback config dir
+        self._temp_docker_config_dirs: List[str] = []  # temp dirs to clean up
+        self._pullspec_config_cache: Dict[Tuple[str, str], str] = {}  # (host, chosen-key) -> config dir
         quay_auth_file = os.environ.get("QUAY_AUTH_FILE")
         if quay_auth_file:
-            docker_config_dir = tempfile.mkdtemp(prefix="cosign-docker-config-")
-            config_json_path = os.path.join(docker_config_dir, "config.json")
             try:
                 with open(quay_auth_file) as f:
                     auth_data = json.load(f)
-                auths = auth_data.get("auths", {})
-                # Add hostname-only entries for any path-scoped keys
-                hostname_auths = {}
-                for key, value in auths.items():
-                    hostname = key.split("/")[0]
-                    if hostname != key and hostname not in auths:
-                        hostname_auths[hostname] = value
-                if hostname_auths:
-                    auths.update(hostname_auths)
-                    auth_data["auths"] = auths
-                    logger.info("Added hostname-only auth entries for cosign: %s", list(hostname_auths.keys()))
-                with open(config_json_path, "w") as f:
-                    json.dump(auth_data, f)
+                self._base_auth_data = auth_data
+                self._registry_auths = dict(auth_data.get("auths", {}))
             except Exception as e:
-                logger.warning("Could not rewrite auth file for cosign, falling back to copy: %s", e)
-                shutil.copy2(quay_auth_file, config_json_path)
-            self.ENV["DOCKER_CONFIG"] = docker_config_dir
-            logger.info("Set DOCKER_CONFIG=%s for cosign (from QUAY_AUTH_FILE=%s)", docker_config_dir, quay_auth_file)
+                logger.warning("Could not parse QUAY_AUTH_FILE for repo-aware auth: %s", e)
+            # Build the hostname-collapsed fallback config and use it as the default DOCKER_CONFIG.
+            self._global_docker_config_dir = self._build_global_docker_config(quay_auth_file, logger)
+            if self._global_docker_config_dir:
+                self.ENV["DOCKER_CONFIG"] = self._global_docker_config_dir
+                logger.info(
+                    "Set fallback DOCKER_CONFIG=%s for cosign (from QUAY_AUTH_FILE=%s)",
+                    self._global_docker_config_dir,
+                    quay_auth_file,
+                )
         else:
             logger.warning("QUAY_AUTH_FILE not set; cosign may lack registry credentials")
         self.concurrency_limit = concurrency_limit  # limit on concurrent lookups or signings
         self.batch_retries = batch_retries  # number of batch-level retries for failed images
         self.batch_retry_delay = batch_retry_delay  # seconds to wait between batch retries
+
+    def _build_global_docker_config(self, quay_auth_file: str, logger) -> str:
+        """
+        Build a hostname-collapsed DOCKER_CONFIG directory used as a safe fallback.
+
+        This reproduces the previous behavior: path-scoped keys get a hostname-only alias so cosign
+        can find a credential. When multiple credentials share a host the chosen alias is arbitrary,
+        which is why repo-aware resolution (see _docker_config_dir_for_pullspec) is preferred; this
+        config is only used when a pullspec matches no path-scoped entry.
+
+        :return: path to a temp directory containing config.json (registered for cleanup)
+        """
+        docker_config_dir = tempfile.mkdtemp(prefix="cosign-docker-config-")
+        self._temp_docker_config_dirs.append(docker_config_dir)
+        config_json_path = os.path.join(docker_config_dir, "config.json")
+        try:
+            with open(quay_auth_file) as f:
+                auth_data = json.load(f)
+            auths = auth_data.get("auths", {})
+            # Add hostname-only entries for any path-scoped keys.
+            hostname_auths = {}
+            for key, value in auths.items():
+                hostname = key.split("/")[0]
+                if hostname != key and hostname not in auths:
+                    hostname_auths[hostname] = value
+            if hostname_auths:
+                auths.update(hostname_auths)
+                auth_data["auths"] = auths
+                logger.info("Added hostname-only auth entries for cosign: %s", list(hostname_auths.keys()))
+            with open(config_json_path, "w") as f:
+                json.dump(auth_data, f)
+        except Exception as e:
+            logger.warning("Could not rewrite auth file for cosign, falling back to copy: %s", e)
+            shutil.copy2(quay_auth_file, config_json_path)
+        return docker_config_dir
+
+    @staticmethod
+    def _image_repo(pullspec: str) -> str:
+        """
+        Return the repository portion of a pullspec, stripping any ``@sha256:...`` digest or
+        trailing ``:tag`` while leaving a ``registry:port`` prefix intact.
+        """
+        repo = pullspec.split("@", 1)[0]  # drop any digest
+        last_slash = repo.rfind("/")
+        last_colon = repo.rfind(":")
+        if last_colon > last_slash:  # a ":" after the last "/" is a tag, not a registry port
+            repo = repo[:last_colon]
+        return repo
+
+    def _find_longest_prefix_key(self, repo: str) -> Optional[str]:
+        """
+        Find the stored auth key that is the longest path-boundary prefix of ``repo``.
+
+        A key matches when it equals the repo or is a parent path of it (``repo == key`` or
+        ``repo.startswith(key + "/")``); this includes a bare hostname key. The longest such key
+        wins, so ``quay.io/openshift-release-dev/ocp-v4.0-art-dev`` prefers the
+        ``quay.io/openshift-release-dev`` entry over a bare ``quay.io`` entry.
+
+        :return: the matching key, or None if no stored key is a prefix of the repo
+        """
+        best: Optional[str] = None
+        for key in self._registry_auths:
+            if repo == key or repo.startswith(key + "/"):
+                if best is None or len(key) > len(best):
+                    best = key
+        return best
+
+    def _docker_config_dir_for_pullspec(self, pullspec: str) -> Optional[str]:
+        """
+        Return a DOCKER_CONFIG directory whose hostname-only credential is the longest-prefix
+        path-scoped match for ``pullspec``'s repository.
+
+        cosign/skopeo (go-containerregistry) only look up credentials by hostname, so the returned
+        config contains the original path-scoped auths PLUS a hostname-only entry for the image's
+        host set to the chosen (longest-prefix) credential. Results are cached per (host, chosen-key)
+        so repeated signings of the same repo reuse one temp directory.
+
+        Falls back to the hostname-collapsed global config dir (which may be None when QUAY_AUTH_FILE
+        is unset) when no path-scoped entry matches the repository.
+        """
+        if not self._registry_auths or self._base_auth_data is None:
+            return self._global_docker_config_dir
+        repo = self._image_repo(pullspec)
+        host = repo.split("/", 1)[0]
+        chosen_key = self._find_longest_prefix_key(repo)
+        if chosen_key is None:
+            self._logger.warning("No path-scoped credential matched repo %s; using fallback DOCKER_CONFIG", repo)
+            return self._global_docker_config_dir
+        cache_key = (host, chosen_key)
+        cached = self._pullspec_config_cache.get(cache_key)
+        if cached:
+            return cached
+        # Build a config with the full original auths plus a hostname-only alias for the chosen cred.
+        new_auths = dict(self._registry_auths)
+        new_auths[host] = self._registry_auths[chosen_key]
+        new_data = dict(self._base_auth_data)
+        new_data["auths"] = new_auths
+        config_dir = tempfile.mkdtemp(prefix="cosign-docker-config-")
+        self._temp_docker_config_dirs.append(config_dir)
+        with open(os.path.join(config_dir, "config.json"), "w") as f:
+            json.dump(new_data, f)
+        self._pullspec_config_cache[cache_key] = config_dir
+        # Log only the registry path chosen, never the credential itself.
+        self._logger.debug("Repo-aware DOCKER_CONFIG for %s: host %s -> auth key %s", repo, host, chosen_key)
+        return config_dir
+
+    def close(self) -> None:
+        """Remove any temporary DOCKER_CONFIG directories created for cosign/skopeo."""
+        while self._temp_docker_config_dirs:
+            shutil.rmtree(self._temp_docker_config_dirs.pop(), ignore_errors=True)
+        self._pullspec_config_cache = {}
+
+    def __del__(self):
+        try:
+            self.close()
+        except Exception:
+            pass
 
     @staticmethod
     def redigest_pullspec(pullspec: str, digest: str) -> str:
@@ -626,6 +750,13 @@ class SigstoreSignatory:
 
         log.info(f"Signing manifest {pullspec} with identities: {identities}")
 
+        # Hand cosign a DOCKER_CONFIG whose hostname-only credential is the longest-prefix
+        # path-scoped match for this image's repository (go-containerregistry is hostname-only).
+        env = dict(self.ENV)
+        docker_config_dir = self._docker_config_dir_for_pullspec(pullspec)
+        if docker_config_dir:
+            env["DOCKER_CONFIG"] = docker_config_dir
+
         for identity in identities:
             for signing_key_id in self.signing_key_ids:
                 cmd = [
@@ -650,7 +781,7 @@ class SigstoreSignatory:
 
                 log.debug(f"Running: {cmd}")
                 try:
-                    stdout = await self._retrying_cosign(cmd)
+                    stdout = await self._retrying_cosign(cmd, env)
                     log.debug(f"Signed {pullspec} (identity={identity}): {stdout}")
                     await asyncio.sleep(uniform(0, self.THROTTLE_DELAY))
                 except Exception as exc:
@@ -686,11 +817,13 @@ class SigstoreSignatory:
                     return True
 
     @retry(wait=wait_random_exponential(), stop=stop_after_attempt(5), reraise=True)
-    async def _retrying_cosign(self, cmd: List[str]) -> str:
+    async def _retrying_cosign(self, cmd: List[str], env: Optional[Dict[str, str]] = None) -> str:
         """Execute cosign with retry on failure."""
+        if env is None:
+            env = self.ENV
         await asyncio.sleep(uniform(0, self.THROTTLE_DELAY))
-        self._logger.debug("cosign ENV DOCKER_CONFIG=%s", self.ENV.get("DOCKER_CONFIG"))
-        rc, stdout, stderr = await exectools.cmd_gather_async(cmd, check=False, env=self.ENV)
+        self._logger.debug("cosign ENV DOCKER_CONFIG=%s", env.get("DOCKER_CONFIG"))
+        rc, stdout, stderr = await exectools.cmd_gather_async(cmd, check=False, env=env)
         if rc:
             raise RuntimeError(stderr)
         return stdout
