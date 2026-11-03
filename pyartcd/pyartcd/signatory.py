@@ -297,6 +297,12 @@ class SigstoreSignatory:
         self.rekor_url = rekor_url  # rekor server for cosign tlog storage
         # if true, re-sign even when our signature already exists (escape hatch for backfills)
         self.force_resign = force_resign
+        # Work on an INSTANCE-LOCAL copy of the class-level ENV default. __init__ mutates
+        # DOCKER_CONFIG/AWS creds and close()/__del__ delete the temp DOCKER_CONFIG dirs; if those
+        # mutations landed on the shared class dict, a later instance would inherit (and point cosign
+        # at) a DOCKER_CONFIG that an earlier instance already deleted. Copying here keeps each
+        # signatory's credential env isolated.
+        self.ENV = dict(type(self).ENV)
         self.ENV["AWS_SHARED_CREDENTIALS_FILE"] = signing_creds  # filename for KMS credentials
         # cosign uses go-containerregistry, which performs a HOSTNAME-ONLY credential lookup. The
         # QUAY_AUTH_FILE however has path-scoped keys (e.g. "quay.io/openshift-release-dev" and
@@ -331,11 +337,9 @@ class SigstoreSignatory:
             self._global_docker_config_dir = self._build_global_docker_config(quay_auth_file, logger)
             if self._global_docker_config_dir:
                 self.ENV["DOCKER_CONFIG"] = self._global_docker_config_dir
-                logger.info(
-                    "Set fallback DOCKER_CONFIG=%s for cosign (from QUAY_AUTH_FILE=%s)",
-                    self._global_docker_config_dir,
-                    quay_auth_file,
-                )
+                # Do not log the auth-file path or the DOCKER_CONFIG location (keep credentials and
+                # their on-disk paths out of the logs).
+                logger.debug("Configured fallback DOCKER_CONFIG for cosign from QUAY_AUTH_FILE")
         else:
             logger.warning("QUAY_AUTH_FILE not set; cosign may lack registry credentials")
         self.concurrency_limit = concurrency_limit  # limit on concurrent lookups or signings
@@ -369,7 +373,8 @@ class SigstoreSignatory:
             if hostname_auths:
                 auths.update(hostname_auths)
                 auth_data["auths"] = auths
-                logger.info("Added hostname-only auth entries for cosign: %s", list(hostname_auths.keys()))
+                # Log only a count at debug; never log the registry keys/credentials themselves.
+                logger.debug("Added %d hostname-only auth entries for cosign", len(hostname_auths))
             with open(config_json_path, "w") as f:
                 json.dump(auth_data, f)
         except Exception as e:
@@ -427,7 +432,7 @@ class SigstoreSignatory:
         host = repo.split("/", 1)[0]
         chosen_key = self._find_longest_prefix_key(repo)
         if chosen_key is None:
-            self._logger.warning("No path-scoped credential matched repo %s; using fallback DOCKER_CONFIG", repo)
+            self._logger.debug("No path-scoped credential matched repo %s; using fallback DOCKER_CONFIG", repo)
             return self._global_docker_config_dir
         cache_key = (host, chosen_key)
         cached = self._pullspec_config_cache.get(cache_key)
@@ -443,8 +448,9 @@ class SigstoreSignatory:
         with open(os.path.join(config_dir, "config.json"), "w") as f:
             json.dump(new_data, f)
         self._pullspec_config_cache[cache_key] = config_dir
-        # Log only the registry path chosen, never the credential itself.
-        self._logger.debug("Repo-aware DOCKER_CONFIG for %s: host %s -> auth key %s", repo, host, chosen_key)
+        # Keep this at debug and log only the image host; never log the chosen auth key/registry path
+        # or the credential itself.
+        self._logger.debug("Built repo-aware DOCKER_CONFIG for host %s", host)
         return config_dir
 
     def _env_for_pullspec(self, pullspec: str) -> Dict[str, str]:
@@ -779,7 +785,17 @@ class SigstoreSignatory:
         # Cheap pre-check computed once per manifest: if no signature object exists at all, skip the
         # per-identity cosign verify / KMS round-trips entirely and just sign. force_resign bypasses
         # all checks. The check is read-only, so it still runs under dry_run.
-        check_existing = (not self.force_resign) and await self._any_signature_exists(pullspec)
+        #
+        # COSIGN_REPOSITORY redirects where cosign stores signatures, so both the .sig existence
+        # check (derived from the image repo) and the per-image credential selection would target the
+        # wrong repo and could wrongly report "not signed" -> bypass verify -> re-sign. ART does not
+        # normally set COSIGN_REPOSITORY; rather than add full redirect support, disable the
+        # idempotency short-circuit when it is set and always sign (like force_resign). This never
+        # wrongly skips -- worst case it signs when it could have skipped, which is safe.
+        if os.environ.get("COSIGN_REPOSITORY"):
+            check_existing = False
+        else:
+            check_existing = (not self.force_resign) and await self._any_signature_exists(pullspec)
 
         for identity in identities:
             for signing_key_id in self.signing_key_ids:
@@ -787,10 +803,8 @@ class SigstoreSignatory:
                 # The check is read-only, so it runs in dry-run too (keeps dry-run output accurate).
                 # Only consult the precise per-identity verify when a signature object may exist.
                 if check_existing and await self._signature_exists(pullspec, identity, signing_key_id):
-                    log.info(
-                        f"Signature already present, skipping: pullspec={pullspec}, "
-                        f"identity={identity}, key={signing_key_id}"
-                    )
+                    # Keep this at debug and omit the KMS key id (do not log signing key material).
+                    log.debug(f"Signature already present, skipping: pullspec={pullspec}, identity={identity}")
                     continue
 
                 cmd = [
@@ -1038,7 +1052,6 @@ class SigstoreSignatory:
         if env is None:
             env = self.ENV
         await asyncio.sleep(uniform(0, self.THROTTLE_DELAY))
-        self._logger.debug("cosign ENV DOCKER_CONFIG=%s", env.get("DOCKER_CONFIG"))
         rc, stdout, stderr = await exectools.cmd_gather_async(cmd, check=False, env=env)
         if rc:
             raise RuntimeError(stderr)

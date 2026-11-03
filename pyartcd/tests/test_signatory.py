@@ -710,6 +710,29 @@ class TestSigstoreSignatory(IsolatedAsyncioTestCase):
         signatory._signature_exists.assert_not_awaited()
         self.assertEqual(mock_cmd.await_count, 2)
 
+    @patch("pyartcd.signatory.asyncio.sleep", new_callable=AsyncMock)
+    @patch("pyartcd.signatory.exectools.cmd_gather_async", new_callable=AsyncMock)
+    async def test_sign_manifest_cosign_repository_bypasses_skip_checks(self, mock_cmd, mock_sleep):
+        """When COSIGN_REPOSITORY is set, cosign stores signatures in a different repo than the image,
+        so the idempotency skip checks (which target the image repo) would be wrong. _sign_manifest
+        must NOT consult them and must proceed to sign."""
+        signatory = self._create_signatory(dry_run=False)
+        # Both checks would report "already signed"; the guard must ignore them entirely.
+        signatory._any_signature_exists = AsyncMock(return_value=True)
+        signatory._signature_exists = AsyncMock(return_value=True)
+        mock_cmd.return_value = (0, "ok", "")
+
+        pullspec = "quay.io/openshift-release-dev/ocp-release@sha256:abc123"
+        with patch.dict(os.environ, {"COSIGN_REPOSITORY": "quay.io/other/signature-mirror"}):
+            result = await signatory._sign_manifest(pullspec, canonical_tag="4.16.1-x86_64")
+
+        self.assertEqual(result, {})
+        # The skip checks are bypassed even though both would have reported "already signed".
+        signatory._any_signature_exists.assert_not_awaited()
+        signatory._signature_exists.assert_not_awaited()
+        # Both identities (digest + tag) are signed.
+        self.assertEqual(mock_cmd.await_count, 2)
+
     @patch("pyartcd.signatory.exectools.cmd_gather_async", new_callable=AsyncMock)
     async def test_any_signature_exists_true_on_success(self, mock_cmd):
         """_any_signature_exists returns True when skopeo inspect finds the .sig object (rc 0)."""
@@ -837,8 +860,10 @@ class TestSigstoreSignatory(IsolatedAsyncioTestCase):
 
     # --- repo-aware (longest-prefix) credential selection ----------------------------------------
 
-    RELEASE_CRED = {"auth": "cmVsZWFzZS11c2VyOnJlbGVhc2UtcGFzcw=="}  # release-user:release-pass
-    ART_CRED = {"auth": "YXJ0LXVzZXI6YXJ0LXBhc3M="}  # art-user:art-pass
+    # Compute the Docker "auth" values at runtime so no long base64 credential literal lives in the
+    # source (they are only throwaway test fixtures, never real credentials).
+    RELEASE_CRED = {"auth": base64.b64encode(b"release-user:release-pass").decode()}
+    ART_CRED = {"auth": base64.b64encode(b"art-user:art-pass").decode()}
 
     def _make_auth_file(self, auths: dict) -> str:
         """Write a QUAY_AUTH_FILE-style config.json with the given auths and return its path."""
@@ -966,3 +991,37 @@ class TestSigstoreSignatory(IsolatedAsyncioTestCase):
                 env = call.kwargs["env"]
                 self.assertEqual(env["DOCKER_CONFIG"], expected_dir)
                 self.assertEqual(self._read_config_auths(env["DOCKER_CONFIG"])["quay.io"], self.ART_CRED)
+
+    def test_env_is_instance_local_and_does_not_leak_docker_config(self):
+        """Each SigstoreSignatory works on its own ENV copy, so DOCKER_CONFIG/credentials set (and
+        temp dirs later deleted) on one instance cannot leak onto another instance or onto the
+        class-level ENV default. Previously ENV was a shared class dict, so a closed instance left a
+        deleted DOCKER_CONFIG that the next instance would inherit."""
+        class_env_before = dict(SigstoreSignatory.ENV)
+        auths = {"quay.io/openshift-release-dev": self.RELEASE_CRED}
+        path = self._make_auth_file(auths)
+        with patch.dict(os.environ, {"QUAY_AUTH_FILE": path}):
+            sig1 = self._create_signatory()
+            sig2 = self._create_signatory()
+
+        # Each instance has its own ENV dict (not the class dict, and not each other's).
+        self.assertIsNot(sig1.ENV, SigstoreSignatory.ENV)
+        self.assertIsNot(sig2.ENV, SigstoreSignatory.ENV)
+        self.assertIsNot(sig1.ENV, sig2.ENV)
+
+        # Each instance points DOCKER_CONFIG at its OWN temp dir.
+        self.assertIn("DOCKER_CONFIG", sig1.ENV)
+        self.assertIn("DOCKER_CONFIG", sig2.ENV)
+        self.assertNotEqual(sig1.ENV["DOCKER_CONFIG"], sig2.ENV["DOCKER_CONFIG"])
+
+        # The class-level default was NOT mutated: no DOCKER_CONFIG or AWS creds leaked onto it.
+        self.assertEqual(SigstoreSignatory.ENV, class_env_before)
+
+        # Closing sig1 removes ITS docker config dir but must not disturb sig2's env or temp dir.
+        sig1_dir = sig1.ENV["DOCKER_CONFIG"]
+        sig2_dir = sig2.ENV["DOCKER_CONFIG"]
+        sig1.close()
+        self.assertFalse(os.path.exists(sig1_dir))
+        self.assertEqual(sig2.ENV["DOCKER_CONFIG"], sig2_dir)
+        self.assertTrue(os.path.exists(sig2_dir))
+        sig2.close()
