@@ -1107,7 +1107,12 @@ class KonfluxOcpPipeline:
                 logger=LOGGER,
             )
 
-        await asyncio.gather(*[sync_build(build) for build in builds_to_mirror])
+        # Wait for all eligible syncs even if one fails, then surface the first failure so
+        # run_safe records it (a single bad sync should not skip the remaining builds).
+        results = await asyncio.gather(*[sync_build(build) for build in builds_to_mirror], return_exceptions=True)
+        for result in results:
+            if isinstance(result, BaseException):
+                raise result
 
     async def run(self):
         # Unset XDG_RUNTIME_DIR to ensure we don't use default auth.json

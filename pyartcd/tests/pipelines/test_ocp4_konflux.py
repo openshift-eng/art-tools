@@ -347,6 +347,53 @@ class TestMirrorTestBuildsToQuay(unittest.IsolatedAsyncioTestCase):
             logger=ANY,
         )
 
+    async def test_one_sync_failure_still_attempts_others_and_raises(self):
+        pipeline = self.make_pipeline(assembly='test')
+        pipeline.building_images = MagicMock(return_value=True)
+        pipeline.parse_record_log = MagicMock(
+            return_value={
+                'image_build_konflux': [
+                    {
+                        'name': 'ose-one',
+                        'status': '0',
+                        'image_pullspec': 'quay.io/x/art-images@sha256:aaa',
+                        'image_tag': 'one-tag',
+                        'nvrs': 'ose-one-4.18.0-1.p0',
+                    },
+                    {
+                        'name': 'ose-two',
+                        'status': '0',
+                        'image_pullspec': 'quay.io/x/art-images@sha256:bbb',
+                        'image_tag': 'two-tag',
+                        'nvrs': 'ose-two-4.18.0-1.p0',
+                    },
+                ]
+            }
+        )
+
+        async def fake_sync(image_pullspec, *args, **kwargs):
+            if image_pullspec == 'quay.io/x/art-images@sha256:aaa':
+                raise RuntimeError('mirror failed')
+
+        with (
+            patch(
+                'pyartcd.pipelines.ocp4_konflux.sync_image_to_quay',
+                new_callable=AsyncMock,
+                side_effect=fake_sync,
+            ) as mock_sync,
+            patch('pyartcd.pipelines.ocp4_konflux.is_nvr_embargoed', return_value=False),
+        ):
+            with self.assertRaises(RuntimeError):
+                await pipeline.mirror_test_builds_to_quay()
+
+        # Both eligible builds were attempted even though the first one failed.
+        self.assertEqual(mock_sync.await_count, 2)
+        synced_pullspecs = {call.args[0] for call in mock_sync.await_args_list}
+        self.assertEqual(
+            synced_pullspecs,
+            {'quay.io/x/art-images@sha256:aaa', 'quay.io/x/art-images@sha256:bbb'},
+        )
+
     async def test_no_images_building_is_noop(self):
         pipeline = self.make_pipeline(assembly='test')
         pipeline.building_images = MagicMock(return_value=False)
