@@ -1,4 +1,4 @@
-from unittest import TestCase
+from unittest import IsolatedAsyncioTestCase, TestCase
 from unittest.mock import MagicMock, patch
 
 from doozerlib.cli.release_gen_assembly_targeted import AssemblyParams, GenAssemblyTargetedCli, KernelInfo
@@ -241,7 +241,7 @@ class TestFindDtkBuildBrew(TestCase):
         cli.kernel_info = [_make_kernel_info()]
         cli._find_dtk_build_brew()
 
-        self.assertEqual(cli.dtk_nvr, "driver-toolkit-container-v4.17.0-202401150000.el9")
+        self.assertEqual(cli.dtk_nvrs["driver-toolkit"], "driver-toolkit-container-v4.17.0-202401150000.el9")
 
     @patch("doozerlib.cli.release_gen_assembly_targeted.koji.ClientSession")
     def test_dtk_not_found(self, mock_koji_cls):
@@ -269,7 +269,7 @@ class TestFindDtkBuildBrew(TestCase):
 class TestBuildAssemblyDefinition(TestCase):
     def test_assembly_definition_structure(self):
         """
-        Assembly definition has correct structure with basis, issues, kernel/DTK pins, and RHCOS.
+        Assembly definition has correct structure with basis, issues, kernel dependencies and DTK pins, and RHCOS.
         """
         cli = _make_cli()
         cli.kernel_info = [_make_kernel_info()]
@@ -281,7 +281,7 @@ class TestBuildAssemblyDefinition(TestCase):
                 },
             },
         }
-        cli.dtk_nvr = "driver-toolkit-container-v4.17.0-202401150000.el9"
+        cli.dtk_nvrs = {"driver-toolkit": "driver-toolkit-container-v4.17.0-202401150000.el9"}
 
         result = cli._build_assembly_definition()
 
@@ -295,20 +295,21 @@ class TestBuildAssemblyDefinition(TestCase):
         self.assertTrue(assembly["issues"]["targeted_fixes_only"])
         self.assertEqual(assembly["issues"]["include"], [{"id": "OCPBUGS-12345"}])
 
-        kernel_pin = assembly["members"]["rpms"][0]
-        self.assertEqual(kernel_pin["distgit_key"], "kernel")
-        self.assertEqual(kernel_pin["metadata"]["is"]["el9"], "kernel-5.14.0-284.28.1.el9_2")
-        self.assertIn("CVE-2025-1234", kernel_pin["why"])
+        self.assertEqual(assembly["members"]["rpms"], [])
+        kernel_dependency = assembly["group"]["dependencies"]["rpms!"][0]
+        self.assertEqual(kernel_dependency["el9"], "kernel-5.14.0-284.28.1.el9_2")
+        self.assertEqual(kernel_dependency["non_gc_tag"], "hotfix")
+        self.assertIn("CVE-2025-1234", kernel_dependency["why"])
 
         dtk_pin = assembly["members"]["images"][0]
         self.assertEqual(dtk_pin["distgit_key"], "driver-toolkit")
-        self.assertEqual(dtk_pin["metadata"]["is"]["nvr"], cli.dtk_nvr)
+        self.assertEqual(dtk_pin["metadata"]["is"]["nvr"], cli.dtk_nvrs["driver-toolkit"])
 
         self.assertIn("machine-os-content", assembly["rhcos"])
 
-    def test_multiple_kernel_targets_merged(self):
+    def test_multiple_kernel_targets_are_dependencies(self):
         """
-        Multiple kernel NVRs for different RHEL targets merged into single pin entry.
+        Multiple kernel NVRs remain external dependencies for their RHEL targets.
         """
         cli = _make_cli(
             kernel_nvrs=("kernel-5.14.0-284.28.1.el8_6", "kernel-5.14.0-284.28.1.el9_2"),
@@ -324,15 +325,19 @@ class TestBuildAssemblyDefinition(TestCase):
             ),
             _make_kernel_info(nvr="kernel-5.14.0-284.28.1.el9_2", el_ver=9),
         ]
-        cli.dtk_nvr = "dtk-nvr"
+        cli.dtk_nvrs = {"driver-toolkit": "dtk-nvr"}
 
         result = cli._build_assembly_definition()
         assembly = result["releases"]["4.17.5"]["assembly"]
-        kernel_pin = assembly["members"]["rpms"][0]
-
-        self.assertEqual(kernel_pin["metadata"]["is"]["el8"], "kernel-5.14.0-284.28.1.el8_6")
-        self.assertEqual(kernel_pin["metadata"]["is"]["el9"], "kernel-5.14.0-284.28.1.el9_2")
-        self.assertIn("CVE-2025-1234", kernel_pin["why"])
+        self.assertEqual(assembly["members"]["rpms"], [])
+        dependencies = assembly["group"]["dependencies"]["rpms!"]
+        self.assertEqual(
+            dependencies,
+            [
+                {"el8": "kernel-5.14.0-284.28.1.el8_6", "why": "CVE fix for CVE-2025-1234", "non_gc_tag": "hotfix"},
+                {"el9": "kernel-5.14.0-284.28.1.el9_2", "why": "CVE fix for CVE-2025-1234", "non_gc_tag": "hotfix"},
+            ],
+        )
         self.assertEqual(len(assembly["issues"]["include"]), 2)
 
     def test_candidate_assembly_type_for_rc(self):
@@ -371,7 +376,7 @@ class TestBuildAssemblyDefinition(TestCase):
             ),
         )
         cli.kernel_info = [_make_kernel_info()]
-        cli.dtk_nvr = "dtk-nvr"
+        cli.dtk_nvrs = {"driver-toolkit": "dtk-nvr"}
 
         result = cli._build_assembly_definition()
         images = result["releases"]["4.17.5"]["assembly"]["members"]["images"]
@@ -384,7 +389,7 @@ class TestBuildAssemblyDefinition(TestCase):
 
     def test_image_only_assembly(self):
         """
-        Assembly with only image NVRs (no kernel) has no rpms or RHCOS pins.
+        Assembly with only image NVRs has empty RPM and RHCOS pins.
         """
         cli = _make_cli(
             kernel_nvrs=(),
@@ -395,7 +400,7 @@ class TestBuildAssemblyDefinition(TestCase):
         result = cli._build_assembly_definition()
         assembly = result["releases"]["4.17.5"]["assembly"]
 
-        self.assertNotIn("rpms", assembly["members"])
+        self.assertEqual(assembly["members"]["rpms"], [])
         self.assertNotIn("dependencies", assembly["group"])
         self.assertEqual(len(assembly["members"]["images"]), 1)
         self.assertEqual(assembly["members"]["images"][0]["distgit_key"], "ose-installer")
@@ -414,3 +419,75 @@ class TestBuildAssemblyDefinition(TestCase):
         assembly = result["releases"]["4.17.5"]["assembly"]
 
         self.assertEqual(assembly["group"]["release_date"], "2026-Jun-15")
+
+
+class TestFindDtkBuildKonflux(IsolatedAsyncioTestCase):
+    async def _run_lookup(self, missing_name: str | None = None) -> GenAssemblyTargetedCli:
+        """
+        Run DTK selection with RHEL 9 and RHEL 10 image metadata.
+        """
+        cli = _make_cli()
+        cli.kernel_info = [
+            _make_kernel_info(),
+            _make_kernel_info(
+                nvr="kernel-6.12.0-211.73.1.el10_2",
+                el_ver=10,
+                kernel_core_nvr="kernel-core-6.12.0-211.73.1.el10_2",
+                kernel_devel_nvr="kernel-devel-6.12.0-211.73.1.el10_2",
+            ),
+        ]
+        targets = {"driver-toolkit": 9, "driver-toolkit-rhel10": 10}
+        metas = []
+        for name, target in targets.items():
+            meta = MagicMock(distgit_key=name, is_payload=True)
+            meta.determine_rhel_targets.return_value = [target]
+            metas.append(meta)
+        cli.runtime.image_metas.return_value = metas
+
+        async def search_builds(**kwargs):
+            """
+            Return a build only when the query uses the correct kernel for its image.
+            """
+            name = kwargs["where"]["name"]
+            expected_kernel = next(ki for ki in cli.kernel_info if ki.el_ver == targets[name])
+            self.assertEqual(kwargs["array_contains"], {"installed_rpms": expected_kernel.kernel_devel_nvr})
+            if name != missing_name:
+                yield MagicMock(nvr=f"{name}-container-v5.0.0-test.el{targets[name]}")
+
+        with patch("artcommonlib.konflux.konflux_db.KonfluxDb") as mock_db:
+            mock_db.return_value.search_builds_by_fields.side_effect = search_builds
+            await cli._find_dtk_build_konflux()
+        return cli
+
+    async def test_pins_both_dtk_targets(self):
+        """
+        Both DTKs get pins matching their RHEL kernels.
+        """
+        cli = await self._run_lookup()
+        assembly = cli._build_assembly_definition()["releases"]["4.17.5"]["assembly"]
+        pins = {pin["distgit_key"]: pin["metadata"]["is"]["nvr"] for pin in assembly["members"]["images"]}
+        self.assertEqual(
+            pins,
+            {
+                "driver-toolkit": "driver-toolkit-container-v5.0.0-test.el9",
+                "driver-toolkit-rhel10": "driver-toolkit-rhel10-container-v5.0.0-test.el10",
+            },
+        )
+
+    async def test_missing_rhel10_build_fails(self):
+        """
+        Finding RHEL 9 DTK does not hide a missing RHEL 10 DTK build.
+        """
+        with self.assertRaisesRegex(RuntimeError, "No driver-toolkit-rhel10 build found"):
+            await self._run_lookup(missing_name="driver-toolkit-rhel10")
+
+    async def test_missing_dtk_configuration_fails(self):
+        """
+        A requested kernel must have a configured DTK image.
+        """
+        cli = _make_cli()
+        cli.kernel_info = [_make_kernel_info()]
+        cli.runtime.image_metas.return_value = []
+        with patch("artcommonlib.konflux.konflux_db.KonfluxDb"):
+            with self.assertRaisesRegex(RuntimeError, "No driver-toolkit image configured"):
+                await cli._find_dtk_build_konflux()
