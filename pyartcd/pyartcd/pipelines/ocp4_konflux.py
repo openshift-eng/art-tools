@@ -1097,12 +1097,14 @@ class KonfluxOcpPipeline:
                 LOGGER.info(f"Not syncing {image_pullspec} because it is in an embargoed release")
                 return
 
+            # Only apply the build-specific image_tag (plus the sha256-<digest> GC tag that
+            # sync_to_quay adds internally). No floating "<name>-<X.Y>" tag: it would be
+            # overwritten by any later build of the same component in this pull-for-testing repo.
             image_tag = build["image_tag"]
-            latest_tag = f'{build["name"]}-{self.version}'
             await sync_image_to_quay(
                 image_pullspec,
                 KONFLUX_IMAGE_TEST_REPO,
-                [image_tag, latest_tag],
+                [image_tag],
                 dry_run=self.runtime.dry_run,
                 logger=LOGGER,
             )

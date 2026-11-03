@@ -338,11 +338,12 @@ class TestMirrorTestBuildsToQuay(unittest.IsolatedAsyncioTestCase):
         ):
             await pipeline.mirror_test_builds_to_quay()
 
-        # Only the single good, non-RHCOS, non-embargoed, successful build should sync.
+        # Only the single good, non-RHCOS, non-embargoed, successful build should sync, and only
+        # the build-specific image_tag is applied (no floating "<name>-<X.Y>" tag).
         mock_sync.assert_awaited_once_with(
             'quay.io/x/art-images@sha256:aaa',
             KONFLUX_IMAGE_TEST_REPO,
-            ['good-tag', 'ose-good-4.18'],
+            ['good-tag'],
             dry_run=False,
             logger=ANY,
         )

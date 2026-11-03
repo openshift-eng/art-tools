@@ -156,7 +156,7 @@ class TestSyncNvrToQuayPipeline(unittest.IsolatedAsyncioTestCase):
         mock_sync.assert_awaited_once_with(
             record.image_pullspec,
             KONFLUX_IMAGE_TEST_REPO,
-            ["foo-tag", "ose-foo-4.18"],
+            ["foo-tag"],
         )
 
     @mock.patch("pyartcd.pipelines.sync_nvr_to_quay.sync_to_quay", new_callable=mock.AsyncMock)
@@ -186,10 +186,12 @@ class TestSyncNvrToQuayPipeline(unittest.IsolatedAsyncioTestCase):
         pipeline = SyncNvrToQuayPipeline(runtime, nvrs=["ose-foo-4.18.0-1"])
         await pipeline.run()
 
+        # No image_tag and no floating tag -> only the internal sha256 GC tag remains,
+        # so sync_to_quay is called with an empty additional-tags list.
         mock_sync.assert_awaited_once_with(
             record.image_pullspec,
             KONFLUX_IMAGE_TEST_REPO,
-            ["ose-foo-4.18"],
+            [],
         )
 
     @mock.patch("pyartcd.pipelines.sync_nvr_to_quay.sync_to_quay", new_callable=mock.AsyncMock)
@@ -248,7 +250,7 @@ class TestSyncNvrToQuayPipeline(unittest.IsolatedAsyncioTestCase):
         mock_sync.assert_awaited_once_with(
             record.image_pullspec,
             KONFLUX_IMAGE_TEST_REPO,
-            ["foo-tag", "ose-foo-4.18"],
+            ["foo-tag"],
         )
 
     @mock.patch("pyartcd.pipelines.sync_nvr_to_quay.sync_to_quay", new_callable=mock.AsyncMock)

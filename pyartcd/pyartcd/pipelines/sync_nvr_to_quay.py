@@ -193,10 +193,11 @@ class SyncNvrToQuayPipeline:
         if not record.image_pullspec:
             raise ValueError(f"record {record.record_id} for {nvr} has no image_pullspec; cannot sync")
 
-        # X.Y version derived from the record version (e.g. "4.18.0" -> "4.18").
-        major_minor = ".".join((record.version or "").split(".")[:2])
-        # Human-friendly tags mirroring the old mirror_images pattern.
-        tags = [record.image_tag, f"{record.name}-{major_minor}"]
+        # Only apply the build-specific image_tag (empty/omitted when the record has none).
+        # sync_to_quay additionally adds the sha256-<digest> GC tag internally. We deliberately
+        # do NOT apply a floating "<name>-<X.Y>" tag: it would be overwritten by any later build
+        # of the same component, which is misleading in a pull-for-testing repo.
+        tags = [record.image_tag]
 
         await sync_image_to_quay(
             record.image_pullspec,
