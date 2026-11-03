@@ -120,3 +120,17 @@ class TestOLMBundle(unittest.TestCase):
         tags = olm.operator_framework_tags
         self.assertEqual(tags['operators.operatorframework.io.bundle.channel.default.v1'], 'test-channel')
         self.assertNotIn(custom_stable, tags['operators.operatorframework.io.bundle.channels.v1'])
+
+    def test_operator_framework_tags_multi_channel(self):
+        """Multiple package.yaml channels are advertised on Brew bundle labels."""
+        name = 'foo-operator'
+        olm = self._make_olm_bundle_with_runtime(name, Model({}))
+        olm.channel = 'stable'
+        olm.package = 'cluster-observability-operator'
+        olm.channel_names = ['stable', 'fast']
+        olm.package_default_channel = 'stable'
+        olm.runtime.group_config = Model({})
+
+        tags = olm.operator_framework_tags
+        self.assertEqual(tags['operators.operatorframework.io.bundle.channels.v1'], 'stable,fast')
+        self.assertEqual(tags['operators.operatorframework.io.bundle.channel.default.v1'], 'stable')

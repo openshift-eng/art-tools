@@ -243,6 +243,13 @@ class KonfluxOlmBundleRebaser:
         channel = package_yaml['channels'][0]
         channel_name = str(channel['name'])
         csv_name = str(channel['currentCSV'])
+        # Preserve package.yaml order; skip duplicate names.
+        channel_names = []
+        for entry in package_yaml['channels']:
+            name = str(entry['name'])
+            if name not in channel_names:
+                channel_names.append(name)
+        package_default_channel = package_yaml.get('defaultChannel')
 
         # Read image references from the operator's image-references file.
         # Different operators place the file in different directories, so
@@ -374,7 +381,12 @@ class KonfluxOlmBundleRebaser:
             logger.warning(f"Found operands: {all_found_operands}")
 
         # Generate bundle's operator-framework tags
-        operator_framework_tags = self._get_operator_framework_tags(channel_name, package_name)
+        operator_framework_tags = self._get_operator_framework_tags(
+            channel_name,
+            package_name,
+            channel_names=channel_names,
+            package_default_channel=package_default_channel,
+        )
 
         # Generate bundle's annotations.yaml
         bundle_metadata_dir = bundle_dir / "metadata"
@@ -953,15 +965,38 @@ class KonfluxOlmBundleRebaser:
             labels['com.redhat.prerelease'] = 'true'
         return labels
 
-    def _get_operator_framework_tags(self, channel_name: str, package_name: str):
+    def _get_operator_framework_tags(
+        self,
+        channel_name: str,
+        package_name: str,
+        channel_names: Sequence[str] | None = None,
+        package_default_channel: str | None = None,
+    ):
         override_channel = channel_name
         override_default = channel_name
         stable_channel = self._group_config.get('operator_stable_channel_name', 'stable')
-        # see: issues.redhat.com/browse/ART-3107
-        if self._group_config.operator_channel_stable in ['default', 'extra']:
-            override_channel = ','.join((channel_name, stable_channel))
-        if self._group_config.operator_channel_stable == 'default':
-            override_default = stable_channel
+
+        # When package.yaml lists multiple channels, advertise all of them.
+        if channel_names and len(channel_names) > 1:
+            names = list(channel_names)
+            override_channel = ','.join(names)
+            if package_default_channel and str(package_default_channel) in names:
+                override_default = str(package_default_channel)
+            # see: issues.redhat.com/browse/ART-3107
+            if self._group_config.operator_channel_stable in ['default', 'extra']:
+                if stable_channel not in names:
+                    names.append(stable_channel)
+                    override_channel = ','.join(names)
+                if self._group_config.operator_channel_stable == 'default':
+                    override_default = stable_channel
+        else:
+            # Historical single-channel path
+            # see: issues.redhat.com/browse/ART-3107
+            if self._group_config.operator_channel_stable in ['default', 'extra']:
+                override_channel = ','.join((channel_name, stable_channel))
+            if self._group_config.operator_channel_stable == 'default':
+                override_default = stable_channel
+
         tags = {
             'operators.operatorframework.io.bundle.channel.default.v1': override_default,
             'operators.operatorframework.io.bundle.channels.v1': override_channel,
