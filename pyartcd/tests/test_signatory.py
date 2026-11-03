@@ -562,20 +562,26 @@ class TestSigstoreSignatory(IsolatedAsyncioTestCase):
         self.assertEqual(cmd[cmd.index("--key") + 1], "awskms:///test-key-id")
         self.assertIn("--output", cmd)
         self.assertEqual(cmd[-1], pullspec)
-        # No rekor_url configured -> ignore tlog, mirroring sign-time --tlog-upload=false
+        # The existence check always ignores the tlog and never uses --rekor-url.
         self.assertIn("--insecure-ignore-tlog=true", cmd)
+        self.assertFalse(any(arg.startswith("--rekor-url") for arg in cmd))
 
     @patch("pyartcd.signatory.exectools.cmd_gather_async", new_callable=AsyncMock)
-    async def test_signature_exists_appends_rekor_url(self, mock_cmd):
-        """_signature_exists uses --rekor-url when rekor_url is configured (mirrors sign-time flags)"""
+    async def test_signature_exists_always_ignores_tlog(self, mock_cmd):
+        """_signature_exists ignores the tlog and never passes --rekor-url, even when rekor_url is set.
+
+        This is only an idempotency existence check, so it needs the key-signature over the
+        identity, not tlog-inclusion proof; verifying against the internal Rekor can fail because
+        its public key may not be in the TUF root cosign consults.
+        """
         signatory = self._create_signatory(rekor_url="https://rekor.example.com")
         mock_cmd.return_value = (0, json.dumps([]), "")
 
         await signatory._signature_exists("quay.io/x@sha256:a", "quay.io/x:tag", "test-key-id")
 
         cmd = mock_cmd.await_args.args[0]
-        self.assertIn("--rekor-url=https://rekor.example.com", cmd)
-        self.assertNotIn("--insecure-ignore-tlog=true", cmd)
+        self.assertIn("--insecure-ignore-tlog=true", cmd)
+        self.assertFalse(any(arg.startswith("--rekor-url") for arg in cmd))
 
     @patch("pyartcd.signatory.exectools.cmd_gather_async", new_callable=AsyncMock)
     async def test_signature_exists_false_when_identity_does_not_match(self, mock_cmd):

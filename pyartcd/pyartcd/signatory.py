@@ -982,11 +982,14 @@ class SigstoreSignatory:
             "json",
         ]
 
-        # Mirror the sign-time tlog flags so verification matches how we signed.
-        if self.rekor_url:
-            cmd.append(f"--rekor-url={self.rekor_url}")
-        else:
-            cmd.append("--insecure-ignore-tlog=true")
+        # Always ignore the transparency log for this existence check, even when a rekor_url is
+        # configured for signing. This is only an idempotency check -- we want to know whether a
+        # signature by our key over this identity already exists, not to prove tlog inclusion.
+        # cosign verify against our internal Rekor fails here with "rekor log public key not found"
+        # because that key may not be verifiable via the TUF root cosign consults, which would make
+        # the check fail open and re-sign every time. Signing itself still records to the tlog
+        # (see _sign_manifest); only this verify ignores it.
+        cmd.append("--insecure-ignore-tlog=true")
 
         cmd.append(pullspec)
 
