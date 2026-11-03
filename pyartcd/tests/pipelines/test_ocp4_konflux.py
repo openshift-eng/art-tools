@@ -264,5 +264,121 @@ class TestDryRunSideEffects(unittest.IsolatedAsyncioTestCase):
                     pipeline.build_images.assert_awaited_once()
 
 
+ACTIVE_GOLANG_VERSIONS = {
+    '4.19': {'1.23', '1.24'},
+    '4.20': {'1.24', '1.25'},
+    '4.21': {'1.24', '1.25'},
+    '4.22': {'1.25', '1.26'},
+    '4.23': {'1.26'},
+    '5.0': {'1.26'},
+}
+
+
+class TestSweepGolangBugs(unittest.IsolatedAsyncioTestCase):
+    def make_pipeline(self, version='4.22', assembly='stream', dry_run=False):
+        runtime = MagicMock(dry_run=dry_run, doozer_working='/tmp/doozer-working')
+        pipeline = KonfluxOcpPipeline(
+            runtime=runtime,
+            assembly=assembly,
+            version=version,
+            data_path='https://github.com/openshift-eng/ocp-build-data',
+            image_build_strategy='all',
+            rpm_build_strategy='none',
+            build_priority='auto',
+        )
+        pipeline._registry_auth_file = '/tmp/registry-auth.json'
+        pipeline.slack_client = MagicMock()
+        pipeline.slack_client.say = AsyncMock()
+        return pipeline
+
+    async def sweep(self, pipeline, active=ACTIVE_GOLANG_VERSIONS, side_effect=None):
+        discovery = (
+            MagicMock(return_value=active) if not isinstance(active, Exception) else MagicMock(side_effect=active)
+        )
+        with (
+            patch('pyartcd.pipelines.ocp4_konflux.get_active_ocp_golang_major_minors', discovery),
+            patch('pyartcd.pipelines.ocp4_konflux.exectools.cmd_assert_async', new_callable=AsyncMock) as cmd,
+        ):
+            cmd.side_effect = side_effect
+            await pipeline.sweep_golang_bugs()
+        groups = [call.args[0][3] for call in cmd.await_args_list]
+        return cmd, groups
+
+    async def test_two_golangs_sweep_every_version_sharing_either(self):
+        pipeline = self.make_pipeline(version='4.22')
+        cmd, groups = await self.sweep(pipeline)
+        self.assertEqual(
+            groups,
+            [
+                '--group=openshift-4.20',
+                '--group=openshift-4.21',
+                '--group=openshift-4.22',
+                '--group=openshift-4.23',
+                '--group=openshift-5.0',
+            ],
+        )
+        self.assertEqual(
+            cmd.await_args_list[0].args[0],
+            [
+                'elliott',
+                '--assembly',
+                'stream',
+                '--group=openshift-4.20',
+                '--registry-config=/tmp/registry-auth.json',
+                'find-bugs:golang',
+                '--analyze',
+                '--update-tracker',
+            ],
+        )
+        pipeline.slack_client.say.assert_not_awaited()
+
+    async def test_non_stream_assembly_is_skipped(self):
+        pipeline = self.make_pipeline(assembly='test')
+        cmd, _ = await self.sweep(pipeline)
+        cmd.assert_not_awaited()
+
+    async def test_discovery_failure_sweeps_own_version_only(self):
+        pipeline = self.make_pipeline(version='4.22')
+        _, groups = await self.sweep(pipeline, active=RuntimeError('GitHub API down'))
+        self.assertEqual(groups, ['--group=openshift-4.22'])
+
+    async def test_version_without_go_vars_sweeps_own_version_only(self):
+        pipeline = self.make_pipeline(version='4.18')
+        _, groups = await self.sweep(pipeline)
+        self.assertEqual(groups, ['--group=openshift-4.18'])
+
+    async def test_sibling_failures_do_not_stop_the_sweep_and_are_only_logged(self):
+        pipeline = self.make_pipeline(version='4.23')
+        with patch.object(pipeline.runtime, 'logger') as mock_logger:
+            cmd, groups = await self.sweep(
+                pipeline, side_effect=[ChildProcessError('boom'), None, ChildProcessError('boom')]
+            )
+            mock_logger.warning.assert_any_call('Golang bug sweep failed for sibling OCP version(s): %s', '4.22, 5.0')
+        self.assertEqual(groups, ['--group=openshift-4.22', '--group=openshift-4.23', '--group=openshift-5.0'])
+        pipeline.slack_client.bind_channel.assert_not_called()
+        pipeline.slack_client.say.assert_not_awaited()
+
+    async def test_own_version_failure_sends_slack_even_when_siblings_succeed(self):
+        pipeline = self.make_pipeline(version='4.23')
+        cmd, groups = await self.sweep(pipeline, side_effect=[None, ChildProcessError('boom'), None])
+        self.assertEqual(groups, ['--group=openshift-4.22', '--group=openshift-4.23', '--group=openshift-5.0'])
+        pipeline.slack_client.bind_channel.assert_called_once_with('openshift-4.23')
+        pipeline.slack_client.say.assert_awaited_once_with('Golang bug sweep failed for 4.23. Please investigate')
+
+    async def test_slack_failure_does_not_raise(self):
+        pipeline = self.make_pipeline(version='5.0')
+        pipeline.slack_client.say.side_effect = RuntimeError('slack down')
+        await self.sweep(pipeline, side_effect=ChildProcessError('boom'))
+        pipeline.slack_client.say.assert_awaited_once()
+
+    async def test_dry_run_passes_flag_and_skips_slack(self):
+        pipeline = self.make_pipeline(version='5.0', dry_run=True)
+        cmd, _ = await self.sweep(pipeline, side_effect=ChildProcessError('boom'))
+        self.assertEqual(cmd.await_count, 3)
+        for call in cmd.await_args_list:
+            self.assertEqual(call.args[0][-1], '--dry-run')
+        pipeline.slack_client.say.assert_not_awaited()
+
+
 if __name__ == "__main__":
     unittest.main()

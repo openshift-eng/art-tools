@@ -58,7 +58,7 @@ def go_version_from_floating_tag(nvr_like: str, ignore_rhel: bool) -> str:
     return f"{major_minor}.el{rhel_version}"
 
 
-def go_version_from_floating_tag_exact(image_pullspec: str) -> str:
+def go_version_from_floating_tag_exact(image_pullspec: str, registry_config: str | None = None) -> str:
     """Resolve a floating-tag pullspec to the exact golang package NVR.
 
     Calls ``oc image info`` to read the OCI labels from the resolved image.
@@ -70,7 +70,7 @@ def go_version_from_floating_tag_exact(image_pullspec: str) -> str:
     for older images that do not carry the ``io.openshift.build.golang-nvr`` label.
     """
     _LOGGER.info(f"Resolving floating tag via oc image info: {image_pullspec}")
-    image_data = oc_image_info_for_arch(image_pullspec)
+    image_data = oc_image_info_for_arch(image_pullspec, registry_config=registry_config)
     # Use `or {}` so that an explicit null Labels value is treated as empty.
     labels = image_data.get('config', {}).get('config', {}).get('Labels') or {}
 
@@ -83,7 +83,9 @@ def go_version_from_floating_tag_exact(image_pullspec: str) -> str:
     # Fallback for older images without the label: reuse extract_nvr_from_pullspec
     # to read the builder image NVR from standard OCI labels, then query the DB.
     try:
-        component, version, release = asyncio.run(extract_nvr_from_pullspec(image_pullspec))
+        component, version, release = asyncio.run(
+            extract_nvr_from_pullspec(image_pullspec, registry_config=registry_config)
+        )
     except IOError as e:
         raise ValueError(str(e)) from e
     _LOGGER.info(f"Resolved floating tag to builder NVR: {component}-{version}-{release}")
@@ -183,7 +185,7 @@ def golang_report_for_version(runtime, ocp_version: str, ignore_rhel: bool = Fal
             # Exact mode: resolve to actual image via oc image info to obtain the real golang package NVR.
             _LOGGER.info(f"Stream {stream_name} uses a floating tag; extracting version from tag")
             if exact:
-                version = go_version_from_floating_tag_exact(image_nvr_like)
+                version = go_version_from_floating_tag_exact(image_nvr_like, registry_config=runtime.registry_config)
             else:
                 version = go_version_from_floating_tag(nvr, ignore_rhel)
         elif exact:
