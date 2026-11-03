@@ -53,6 +53,7 @@ from doozerlib.cli import click_coroutine, pass_runtime
 from doozerlib.cli.release_gen_assembly import releases_gen_assembly
 from doozerlib.rhcos import RHCOSBuildFinder
 from doozerlib.runtime import Runtime
+from doozerlib.targeted_rpms import find_rhcos_rpm_pins
 from doozerlib.util import infer_assembly_type
 
 logger = logging.getLogger(__name__)
@@ -214,6 +215,7 @@ class GenAssemblyTargetedCli:
         self.kernel_info: list[KernelInfo] = []
         self.rhcos_config: dict = {}
         self.dtk_nvrs: dict[str, str] = {}
+        self.rpm_pins: list[dict] = []
         self.upgrades: str = ""
 
         self._ocp_major: int = 0
@@ -233,6 +235,7 @@ class GenAssemblyTargetedCli:
             self._validate_and_parse_kernel_nvrs()
             await self._find_rhcos_build()
             await self._find_dtk_build()
+            self.rpm_pins = find_rhcos_rpm_pins(self.runtime, self.rhcos_config, self.params.basis_assembly)
         await self._compute_upgrades()
         return self._build_assembly_definition()
 
@@ -674,7 +677,7 @@ class GenAssemblyTargetedCli:
             issues_config["targeted_fixes_only"] = True
             issues_config["include"] = [{"id": bug_id} for bug_id in self.params.bug_ids]
 
-        members = {"rpms": []}
+        members = {"rpms": self.rpm_pins}
         if image_pins:
             members["images"] = image_pins
 

@@ -1,5 +1,5 @@
 from unittest import IsolatedAsyncioTestCase, TestCase
-from unittest.mock import MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 from artcommonlib.assembly import assembly_group_config
 from artcommonlib.model import Model
@@ -551,3 +551,42 @@ class TestFindDtkBuildKonflux(IsolatedAsyncioTestCase):
         """
         cli = await self._run_lookup(dtk_targets={})
         self.assertEqual(cli.dtk_nvrs, {})
+
+
+class TestTargetedRpmPinIntegration(IsolatedAsyncioTestCase):
+    @patch("doozerlib.cli.release_gen_assembly_targeted.find_rhcos_rpm_pins")
+    async def test_selected_rhcos_rpm_overrides_are_emitted(self, find_pins):
+        """
+        Wire detected CRI-O source builds into member pins while preserving kernel dependencies.
+        """
+        cli = _make_cli()
+        cli.kernel_info = [_make_kernel_info()]
+        cli.rhcos_config = {"rhel-coreos": {"images": {"x86_64": "repo/image@sha256:new"}}}
+        cli.dtk_nvrs = {"driver-toolkit": "driver-toolkit-container-v4.17.0-test.el9"}
+        cli._validate_and_parse_kernel_nvrs = MagicMock()
+        cli._find_rhcos_build = AsyncMock()
+        cli._find_dtk_build = AsyncMock()
+        cli._compute_upgrades = AsyncMock()
+        find_pins.return_value = [
+            {
+                "distgit_key": "cri-o",
+                "why": "Match RHCOS",
+                "metadata": {"is": {"el9": "cri-o-5.0.0-202610292257.p2.g9186725.assembly.stream.el9"}},
+            }
+        ]
+        result = await cli.run()
+        assembly = result["releases"]["4.17.5"]["assembly"]
+        self.assertEqual(assembly["members"]["rpms"], find_pins.return_value)
+        self.assertEqual(assembly["group"]["dependencies"]["rpms"][0]["el9"], cli.kernel_info[0].nvr)
+        find_pins.assert_called_once_with(cli.runtime, cli.rhcos_config, "4.17.4")
+
+    @patch("doozerlib.cli.release_gen_assembly_targeted.find_rhcos_rpm_pins")
+    async def test_image_only_assembly_skips_rhcos_rpm_detection(self, find_pins):
+        """
+        An image-only pin does not select RHCOS and must not trigger RPM inventory lookups.
+        """
+        cli = _make_cli(kernel_nvrs=(), image_nvrs=("ose-installer-container-v4.17.0-test.el9",))
+        cli._compute_upgrades = AsyncMock()
+        assembly = (await cli.run())["releases"]["4.17.5"]["assembly"]
+        self.assertEqual(assembly["members"]["rpms"], [])
+        find_pins.assert_not_called()
