@@ -38,8 +38,11 @@ ALLOWED_TARGET_REPOS = frozenset(
 # cannot reach the query layer. The NVR pattern is permissive enough for real NVRs
 # (e.g. "rhcos-node-image-nvidia-container-v5.0.0-202610261547.p2.gb4b1579.assembly.stream.el10")
 # while still rejecting whitespace and shell/SQL metacharacters.
-NVR_PATTERN = re.compile(r"^[A-Za-z0-9._+~-]{1,256}$")
-RECORD_ID_PATTERN = re.compile(r"^[A-Za-z0-9-]{1,64}$")
+# NOTE: the patterns are intentionally un-anchored and matched with re.fullmatch (not re.match
+# with '$'), because in Python '$' also matches just before a trailing newline, so e.g. "abc\n"
+# would otherwise sneak through. re.fullmatch requires the ENTIRE input to match.
+NVR_PATTERN = re.compile(r"[A-Za-z0-9._+~-]{1,256}")
+RECORD_ID_PATTERN = re.compile(r"[A-Za-z0-9-]{1,64}")
 
 
 async def sync_image_to_quay(
@@ -105,13 +108,13 @@ class SyncNvrToQuayPipeline:
 
         # Allow-list each NVR's format before it can reach the DB query layer.
         for nvr in self.nvrs:
-            if not NVR_PATTERN.match(nvr):
+            if not NVR_PATTERN.fullmatch(nvr):
                 raise ValueError(
                     f"Invalid NVR {nvr!r}: must match {NVR_PATTERN.pattern} (letters, digits, '.', '-', '_', '+', '~')."
                 )
 
         # Allow-list the record_id's format before it can reach the DB query layer.
-        if self.record_id and not RECORD_ID_PATTERN.match(self.record_id):
+        if self.record_id and not RECORD_ID_PATTERN.fullmatch(self.record_id):
             raise ValueError(
                 f"Invalid record_id {self.record_id!r}: must match {RECORD_ID_PATTERN.pattern} "
                 "(letters, digits, and '-')."

@@ -125,6 +125,18 @@ class TestSyncNvrToQuayPipelineValidation(unittest.IsolatedAsyncioTestCase):
         pipeline = SyncNvrToQuayPipeline(runtime, nvrs=["ose-foo-4.18.0-1"], record_id=record_id)
         assert pipeline.record_id == record_id
 
+    def test_nvr_with_trailing_newline_rejected(self):
+        """A value of valid chars plus a trailing newline must be rejected (re.fullmatch, not $)."""
+        runtime = _make_runtime()
+        with pytest.raises(ValueError, match="Invalid NVR"):
+            SyncNvrToQuayPipeline(runtime, nvrs=["valid-nvr\n"])
+
+    def test_record_id_with_trailing_newline_rejected(self):
+        """A record_id of valid chars plus a trailing newline must be rejected."""
+        runtime = _make_runtime()
+        with pytest.raises(ValueError, match="Invalid record_id"):
+            SyncNvrToQuayPipeline(runtime, nvrs=["ose-foo-4.18.0-1"], record_id="0123abcd\n")
+
 
 class TestSyncNvrToQuayPipeline(unittest.IsolatedAsyncioTestCase):
     @mock.patch("pyartcd.pipelines.sync_nvr_to_quay.sync_to_quay", new_callable=mock.AsyncMock)
