@@ -543,11 +543,6 @@ class KonfluxRebaser:
             self._logger.debug("Could not read pullspec %s: %s", pullspec, exc)
             return False, str(exc)
 
-    async def _registry_pullspec_exists(self, pullspec: str) -> bool:
-        """Return True if the registry reports the image readable (manifest present). Used for lazy DB lookups."""
-        exists, _ = await self._registry_pullspec_status(pullspec)
-        return exists
-
     @start_as_current_span_async(TRACER, "rebase.resolve_member_parent")
     async def _resolve_member_parent(self, member: str, original_parent: str):
         """Resolve the parent image for the given image metadata."""
