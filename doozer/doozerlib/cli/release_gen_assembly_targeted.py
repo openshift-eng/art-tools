@@ -32,6 +32,7 @@ import click
 import koji
 import requests
 import semver
+from artcommonlib.assembly import assembly_group_config
 from artcommonlib.constants import BREW_HUB
 from artcommonlib.exectools import cmd_assert
 from artcommonlib.model import Missing
@@ -610,6 +611,28 @@ class GenAssemblyTargetedCli:
             self.upgrades = ",".join(sorted(all_sources, key=functools.cmp_to_key(semver.compare)))
             self.logger.info("Computed %d upgrade sources", len(all_sources))
 
+    def _kernel_dependencies(self, why: str) -> dict[str, list[dict]]:
+        """
+        Replace an existing RPM dependency list, or introduce it without a merge operator.
+        Preserve dependencies other than the requested kernel targets.
+        """
+        basis_group = assembly_group_config(
+            self.runtime.get_releases_config(), self.params.basis_assembly, self.runtime.group_config
+        )
+        has_rpms = "rpms" in basis_group.dependencies
+        dependencies = []
+        target_keys = {f"el{ki.el_ver}" for ki in self.kernel_info}
+        for entry in basis_group.dependencies.rpms or []:
+            preserved = {
+                key: value
+                for key, value in entry.primitive().items()
+                if key not in target_keys or parse_nvr(value)["name"] != "kernel"
+            }
+            if any(key.startswith("el") for key in preserved):
+                dependencies.append(preserved)
+        dependencies.extend({f"el{ki.el_ver}": ki.nvr, "why": why, "non_gc_tag": "hotfix"} for ki in self.kernel_info)
+        return {"rpms!" if has_rpms else "rpms": dependencies}
+
     def _build_assembly_definition(self) -> dict:
         """
         Construct the assembly YAML definition.
@@ -641,9 +664,7 @@ class GenAssemblyTargetedCli:
         }
 
         if self.kernel_info:
-            group_config["dependencies"] = {
-                "rpms!": [{f"el{ki.el_ver}": ki.nvr, "why": why, "non_gc_tag": "hotfix"} for ki in self.kernel_info]
-            }
+            group_config["dependencies"] = self._kernel_dependencies(why)
 
         issues_config = {}
         if self.params.bug_ids:

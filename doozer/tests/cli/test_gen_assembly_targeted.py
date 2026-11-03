@@ -1,7 +1,10 @@
 from unittest import IsolatedAsyncioTestCase, TestCase
 from unittest.mock import MagicMock, patch
 
+from artcommonlib.assembly import assembly_group_config
+from artcommonlib.model import Model
 from doozerlib.cli.release_gen_assembly_targeted import AssemblyParams, GenAssemblyTargetedCli, KernelInfo
+from doozerlib.image import ImageMetadata
 from pydantic import ValidationError
 
 
@@ -12,6 +15,8 @@ def _make_runtime():
     runtime.group_config.vars.MINOR = 17
     runtime.group_config.arches = ["x86_64", "aarch64"]
     runtime.group_config.rhcos.get.return_value = False
+    runtime.group_config.primitive.return_value = {}
+    runtime.get_releases_config.return_value = Model({"releases": {"4.17.4": {"assembly": {}}}})
     return runtime
 
 
@@ -339,6 +344,51 @@ class TestBuildAssemblyDefinition(TestCase):
             ],
         )
         self.assertEqual(len(assembly["issues"]["include"]), 2)
+
+    def test_generated_kernel_dependencies_resolve_for_consumers(self):
+        """
+        Select the operator using resolved basis dependencies, including inherited lists.
+        Preserve unrelated dependencies while replacing an old kernel pin.
+        """
+        for parent_group in (
+            {},
+            {"dependencies": {"rpms": []}},
+            {
+                "dependencies": {
+                    "rpms": [
+                        {"el9": "kernel-5.14.0-284.27.1.el9_2", "el10": "kernel-6.12.0-1.el10_2"},
+                        {"el9": "cri-tools-1.32.0-1.el9"},
+                    ]
+                }
+            },
+        ):
+            with self.subTest(parent_group=parent_group):
+                cli = _make_cli()
+                cli.kernel_info = [_make_kernel_info()]
+                parents = {
+                    "releases": {
+                        "4.17.4": {"assembly": {"basis": {"assembly": "4.17.3"}}},
+                        "4.17.3": {"assembly": {"group": parent_group}},
+                    }
+                }
+                cli.runtime.get_releases_config.return_value = Model(parents)
+                generated = cli._build_assembly_definition()
+                raw_deps = generated["releases"]["4.17.5"]["assembly"]["group"]["dependencies"]
+                self.assertIn("rpms!" if parent_group else "rpms", raw_deps)
+                generated["releases"].update(parents["releases"])
+                resolved = assembly_group_config(Model(generated), "4.17.5", Model({}))
+                self.assertIn("rpms", resolved.dependencies)
+                self.assertNotIn("rpms!", resolved.dependencies)
+                image = MagicMock()
+                image.runtime.get_group_config.return_value = resolved
+                image.config = Model({})
+                _, overrides = ImageMetadata.get_assembly_rpm_package_dependencies(image, 9)
+                self.assertEqual(overrides["kernel"], cli.kernel_info[0].nvr)
+                if parent_group.get("dependencies", {}).get("rpms"):
+                    self.assertEqual(overrides["cri-tools"], "cri-tools-1.32.0-1.el9")
+                    _, el10_overrides = ImageMetadata.get_assembly_rpm_package_dependencies(image, 10)
+                    self.assertEqual(el10_overrides["kernel"], "kernel-6.12.0-1.el10_2")
+                    self.assertNotIn("kernel-5.14.0-284.27.1.el9_2", str(resolved.dependencies))
 
     def test_candidate_assembly_type_for_rc(self):
         """
