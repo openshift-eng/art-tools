@@ -159,6 +159,52 @@ class TestSyncNvrToQuayPipeline(unittest.IsolatedAsyncioTestCase):
             ["foo-tag"],
         )
 
+    @mock.patch("pyartcd.pipelines.sync_nvr_to_quay.jenkins.update_description")
+    @mock.patch("pyartcd.pipelines.sync_nvr_to_quay.jenkins.init_jenkins")
+    @mock.patch("pyartcd.pipelines.sync_nvr_to_quay.sync_to_quay", new_callable=mock.AsyncMock)
+    @mock.patch("pyartcd.pipelines.sync_nvr_to_quay.is_nvr_embargoed", return_value=False)
+    @mock.patch("pyartcd.pipelines.sync_nvr_to_quay.KonfluxDb")
+    async def test_updates_build_description_on_success(
+        self, mock_db_cls, mock_embargo, mock_sync, mock_init, mock_update
+    ):
+        runtime = _make_runtime(dry_run=False)
+        record = _make_record(
+            name="ose-foo",
+            image_tag="foo-tag",
+            image_pullspec="quay.io/redhat-user-workloads/ocp-art-tenant/art-images@sha256:deadbeef",
+        )
+        _db_with_results(mock_db_cls, [record])
+
+        pipeline = SyncNvrToQuayPipeline(runtime, nvrs=["ose-foo-4.18.0-1"])
+        await pipeline.run()
+
+        mock_init.assert_called_once()
+        mock_update.assert_called_once()
+        description = mock_update.call_args.args[0]
+        # The description lists the created destination pullspecs, grouped by NVR.
+        assert "ose-foo-4.18.0-1" in description
+        assert f"{KONFLUX_IMAGE_TEST_REPO}@sha256:deadbeef" in description
+        assert f"{KONFLUX_IMAGE_TEST_REPO}:sha256-deadbeef" in description
+        assert f"{KONFLUX_IMAGE_TEST_REPO}:foo-tag" in description
+
+    @mock.patch("pyartcd.pipelines.sync_nvr_to_quay.jenkins.update_description")
+    @mock.patch("pyartcd.pipelines.sync_nvr_to_quay.jenkins.init_jenkins")
+    @mock.patch("pyartcd.pipelines.sync_nvr_to_quay.sync_to_quay", new_callable=mock.AsyncMock)
+    @mock.patch("pyartcd.pipelines.sync_nvr_to_quay.is_nvr_embargoed", return_value=False)
+    @mock.patch("pyartcd.pipelines.sync_nvr_to_quay.KonfluxDb")
+    async def test_dry_run_does_not_update_description(
+        self, mock_db_cls, mock_embargo, mock_sync, mock_init, mock_update
+    ):
+        runtime = _make_runtime(dry_run=True)
+        record = _make_record(name="ose-foo", image_tag="foo-tag")
+        _db_with_results(mock_db_cls, [record])
+
+        pipeline = SyncNvrToQuayPipeline(runtime, nvrs=["ose-foo-4.18.0-1"])
+        await pipeline.run()
+
+        mock_update.assert_not_called()
+        mock_init.assert_not_called()
+
     @mock.patch("pyartcd.pipelines.sync_nvr_to_quay.sync_to_quay", new_callable=mock.AsyncMock)
     @mock.patch("pyartcd.pipelines.sync_nvr_to_quay.is_nvr_embargoed", return_value=False)
     @mock.patch("pyartcd.pipelines.sync_nvr_to_quay.KonfluxDb")

@@ -20,6 +20,7 @@ from artcommonlib.konflux.konflux_db import KonfluxDb
 from artcommonlib.registry_config import RegistryConfig
 from artcommonlib.util import sync_to_quay
 
+from pyartcd import jenkins
 from pyartcd.cli import cli, click_coroutine, pass_runtime
 from pyartcd.runtime import Runtime
 
@@ -93,6 +94,8 @@ class SyncNvrToQuayPipeline:
         self.target_repo = target_repo
         self.allow_failed = allow_failed
         self.record_id = record_id
+        # Maps each synced NVR -> list of destination pullspecs created on the target repo.
+        self.created_pullspecs: dict = {}
 
         self._validate_parameters()
 
@@ -206,6 +209,15 @@ class SyncNvrToQuayPipeline:
             dry_run=self.runtime.dry_run,
             logger=self._logger,
         )
+
+        # Record the destination pullspecs that sync_to_quay creates (mirrors its behavior):
+        # the digest ref, the sha256- GC tag, and the build-specific image_tag when present.
+        shasum = record.image_pullspec.split("@sha256:")[1]
+        dest_pullspecs = [f"{self.target_repo}@sha256:{shasum}", f"{self.target_repo}:sha256-{shasum}"]
+        if record.image_tag:
+            dest_pullspecs.append(f"{self.target_repo}:{record.image_tag}")
+        self.created_pullspecs[nvr] = dest_pullspecs
+
         self._logger.info("Done syncing %s", nvr)
 
     async def run(self) -> None:
@@ -228,31 +240,62 @@ class SyncNvrToQuayPipeline:
             # do not attempt to build a merged registry config.
             for nvr in self.nvrs:
                 await self._sync_nvr(db, nvr)
-            self._logger.info("sync-nvr-to-quay completed")
+        else:
+            # Merge the default konflux creds with the RHCOS creds (when available) so the mirror
+            # can read an RHCOS source as well as a konflux source, and write to art-images-test.
+            rhcos_quay_auth_file = os.environ.get("RHCOS_QUAY_AUTH_FILE")
+            source_files = [quay_auth_file]
+            registries = [KONFLUX_DEFAULT_IMAGE_REPO, KONFLUX_IMAGE_TEST_REPO]
+            if rhcos_quay_auth_file and os.path.exists(rhcos_quay_auth_file):
+                source_files.append(rhcos_quay_auth_file)
+                registries.append(RHCOS_IMAGE_REPO)
+
+            with RegistryConfig(source_files=source_files, registries=registries) as merged_auth_file:
+                previous_auth_file = os.environ.get("QUAY_AUTH_FILE")
+                os.environ["QUAY_AUTH_FILE"] = merged_auth_file
+                try:
+                    for nvr in self.nvrs:
+                        await self._sync_nvr(db, nvr)
+                finally:
+                    if previous_auth_file is None:
+                        os.environ.pop("QUAY_AUTH_FILE", None)
+                    else:
+                        os.environ["QUAY_AUTH_FILE"] = previous_auth_file
+
+        self._report_created_pullspecs()
+        self._logger.info("sync-nvr-to-quay completed")
+
+    def _report_created_pullspecs(self) -> None:
+        """Log the created destination pullspecs and, on a real run, record them in the
+        Jenkins build description. Grouped by NVR. A description-update failure is logged
+        but never fails the job; in dry-run the description is not updated."""
+        if not self.created_pullspecs:
             return
 
-        # Merge the default konflux creds with the RHCOS creds (when available) so the mirror
-        # can read an RHCOS source as well as a konflux source, and write to art-images-test.
-        rhcos_quay_auth_file = os.environ.get("RHCOS_QUAY_AUTH_FILE")
-        source_files = [quay_auth_file]
-        registries = [KONFLUX_DEFAULT_IMAGE_REPO, KONFLUX_IMAGE_TEST_REPO]
-        if rhcos_quay_auth_file and os.path.exists(rhcos_quay_auth_file):
-            source_files.append(rhcos_quay_auth_file)
-            registries.append(RHCOS_IMAGE_REPO)
+        # Plain-text summary (grouped by NVR) for the logs.
+        text_lines = []
+        for nvr, pullspecs in self.created_pullspecs.items():
+            text_lines.append(f"{nvr}:")
+            text_lines.extend(f"  {pullspec}" for pullspec in pullspecs)
+        self._logger.info("sync-nvr-to-quay created destination pullspecs:\n%s", "\n".join(text_lines))
 
-        with RegistryConfig(source_files=source_files, registries=registries) as merged_auth_file:
-            previous_auth_file = os.environ.get("QUAY_AUTH_FILE")
-            os.environ["QUAY_AUTH_FILE"] = merged_auth_file
-            try:
-                for nvr in self.nvrs:
-                    await self._sync_nvr(db, nvr)
-            finally:
-                if previous_auth_file is None:
-                    os.environ.pop("QUAY_AUTH_FILE", None)
-                else:
-                    os.environ["QUAY_AUTH_FILE"] = previous_auth_file
+        if self.runtime.dry_run:
+            self._logger.info("[DRY RUN] Not updating Jenkins build description")
+            return
 
-        self._logger.info("sync-nvr-to-quay completed")
+        # Jenkins descriptions render HTML, so separate lines with <br>.
+        html_lines = ["sync-nvr-to-quay created destination pullspecs:"]
+        for nvr, pullspecs in self.created_pullspecs.items():
+            html_lines.append(f"<b>{nvr}</b>:")
+            html_lines.extend(pullspecs)
+        description = "<br>".join(html_lines) + "<br>"
+
+        try:
+            jenkins.init_jenkins()
+            jenkins.update_description(description, append=True)
+        except Exception as err:
+            # A failure to annotate the build must not fail an otherwise-successful sync.
+            self._logger.warning("Failed to update Jenkins build description: %s", err)
 
 
 @cli.command(
