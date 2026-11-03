@@ -1279,6 +1279,13 @@ class KonfluxFbcRebaser:
             # (e.g. ACM). These graphs are deliberately managed — preserve them
             # as-is and do NOT migrate skips onto the new head entry.
             has_replaces_graph = any(e.get('replaces') for e in channel['entries'])
+            # Detect skips-only channels (e.g. kueue) before skip migration mutates entries.
+            # LP invents/rebuilds replaces unless the channel is already skips-only.
+            disable_channel_skips = bool(getattr(group_config.vars, "FBC_DISABLE_CHANNEL_SKIPS", False))
+            has_skips_graph = any(e.get('skips') for e in channel['entries'])
+            use_replaces = (not self.group.startswith("openshift-")) and (
+                has_replaces_graph or disable_channel_skips or not has_skips_graph
+            )
 
             if has_replaces_graph:
                 logger.info("Channel has replaces-based update graph; preserving existing entries")
@@ -1353,15 +1360,17 @@ class KonfluxFbcRebaser:
                     logger.info("Sorting channel entries by version order")
                     channel['entries'].sort(key=lambda e: self._extract_version_from_bundle_name(e['name']))
 
-                    # Rebuild replaces chain for non-OpenShift groups (operators using replaces)
-                    if not self.group.startswith('openshift-'):
+                    # Rebuild replaces chain for LP channels that use replaces
+                    # (skip for skips-only channels like kueue)
+                    if use_replaces:
                         logger.info("Rebuilding replaces chain after version sorting")
                         self._rebuild_replaces_chain(channel['entries'])
                 else:
                     # For an operator bundle that uses replaces -- such as OADP
-                    # Calculate replaces based on current head before appending
+                    # Calculate replaces based on current head before appending.
+                    # Skips-only LP channels (e.g. kueue) leave replaces unset.
                     replaces = None
-                    if not self.group.startswith('openshift-'):
+                    if use_replaces:
                         # Find the current head - the entry not superseded
                         # (not replaced or skipped) by any other entry
                         all_entries = list(channel['entries'])
@@ -1386,7 +1395,6 @@ class KonfluxFbcRebaser:
             if olm_skip_range:
                 entry["skipRange"] = olm_skip_range
             if skips:
-                disable_channel_skips = bool(getattr(group_config.vars, "FBC_DISABLE_CHANNEL_SKIPS", False))
                 if self.group.startswith("openshift-") or not disable_channel_skips:
                     entry["skips"] = sorted(skips)
 
