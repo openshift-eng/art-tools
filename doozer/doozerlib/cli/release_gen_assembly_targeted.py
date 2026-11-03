@@ -218,6 +218,7 @@ class GenAssemblyTargetedCli:
         self.rhcos_config: dict = {}
         self.dtk_nvrs: dict[str, str] = {}
         self.rpm_pins: list[dict] = []
+        self.discovered_bug_ids: list[str] = []
         self.upgrades: str = ""
 
         self._ocp_major: int = 0
@@ -242,6 +243,10 @@ class GenAssemblyTargetedCli:
             )
             self.rpm_pins = find_rhcos_rpm_pins(
                 self.runtime, self.rhcos_config, self.params.basis_assembly, review=review
+            )
+            self.discovered_bug_ids = review.discover_rhcos_issues()
+            self.logger.info(
+                "Automatically discovered RHCOS issue additions: %s", ", ".join(self.discovered_bug_ids) or "none"
             )
             review.write(Path(self.runtime.working_dir))
             self.logger.info(
@@ -684,9 +689,10 @@ class GenAssemblyTargetedCli:
             group_config["dependencies"] = self._kernel_dependencies(why)
 
         issues_config = {}
-        if self.params.bug_ids:
+        bug_ids = list(dict.fromkeys([*self.params.bug_ids, *self.discovered_bug_ids]))
+        if bug_ids:
             issues_config["targeted_fixes_only"] = True
-            issues_config["include"] = [{"id": bug_id} for bug_id in self.params.bug_ids]
+            issues_config["include"] = [{"id": bug_id} for bug_id in bug_ids]
 
         members = {"rpms": self.rpm_pins}
         if image_pins:

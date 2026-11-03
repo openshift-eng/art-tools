@@ -576,9 +576,11 @@ class TestTargetedRpmPinIntegration(IsolatedAsyncioTestCase):
                 "metadata": {"is": {"el9": "cri-o-5.0.0-202610292257.p2.g9186725.assembly.stream.el9"}},
             }
         ]
+        review_cls.return_value.discover_rhcos_issues.return_value = ["OCPBUGS-128369", "OCPBUGS-12345"]
         result = await cli.run()
         assembly = result["releases"]["4.17.5"]["assembly"]
         self.assertEqual(assembly["members"]["rpms"], find_pins.return_value)
+        self.assertEqual(assembly["issues"]["include"], [{"id": "OCPBUGS-12345"}, {"id": "OCPBUGS-128369"}])
         self.assertEqual(assembly["group"]["dependencies"]["rpms"][0]["el9"], cli.kernel_info[0].nvr)
         find_pins.assert_called_once_with(cli.runtime, cli.rhcos_config, "4.17.4", review=review_cls.return_value)
         review_cls.return_value.write.assert_called_once()

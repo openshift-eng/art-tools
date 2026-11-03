@@ -56,7 +56,7 @@ def _source_builds(
 
 
 def _managed_builds(
-    runtime: Runtime, config: dict, metas: dict[str, Any], label: str
+    runtime: Runtime, config: dict, metas: dict[str, Any], label: str, review: TargetedRpmEvidence | None = None
 ) -> tuple[dict[tuple[str, int], str], dict[int, str]]:
     """
     Collect one installed source build per ART component and RHEL target across images.
@@ -75,9 +75,10 @@ def _managed_builds(
             if not images:
                 raise ValueError(f"No explicit RHCOS image pins for {label}/{arch}; cannot compare ART RPMs")
             inspector = RHCOSBuildInspector(runtime, images, arch, registry_config=runtime.registry_config)
-            for build in _source_builds(
-                inspector.get_os_metadata_rpm_list(), session, build_cache, set(metas), runtime.logger
-            ):
+            entries = inspector.get_os_metadata_rpm_list()
+            if review is not None:
+                review.add_inventory(arch, entries)
+            for build in _source_builds(entries, session, build_cache, set(metas), runtime.logger):
                 package_name = build.get("package_name") or build["name"]
                 nvr = build["nvr"]
                 if package_name == "kernel":
@@ -127,7 +128,7 @@ def find_rhcos_rpm_pins(
         return []
     basis_config = assembly_rhcos_config(runtime.get_releases_config(), basis_assembly).primitive()
     before, basis_kernels = _managed_builds(runtime, basis_config, metas, basis_assembly)
-    selected, selected_kernels = _managed_builds(runtime, rhcos_config, metas, "selected")
+    selected, selected_kernels = _managed_builds(runtime, rhcos_config, metas, "selected", review=review)
     if review is not None:
         for el_ver, nvr in sorted(selected_kernels.items()):
             if basis_kernels.get(el_ver) != nvr:
@@ -147,8 +148,7 @@ def find_rhcos_rpm_pins(
         pin["metadata"]["is"][f"el{el_ver}"] = nvr
         if review is not None:
             package = parse_nvr(nvr)["name"]
-            reason = review.record(package, el_ver, before.get((distgit_key, el_ver)), nvr)
-            pin["why"] += "\n" + reason
+            review.record(package, el_ver, before.get((distgit_key, el_ver)), nvr)
         runtime.logger.info(
             "Pinning ART RPM %s/el%s to %s (basis RHCOS: %s)",
             distgit_key,

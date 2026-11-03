@@ -155,8 +155,8 @@ class TestRhcosRpmPins(TestCase):
             "cri-o-5.0.0-202610221550.p2.g4f5848d.assembly.stream.el9",
             "cri-o-5.0.0-202610292257.p2.g9186725.assembly.stream.el9",
         )
-        self.assertIn("OCPBUGS-135021", pins[0]["why"])
-        self.assertIn("CVE-2026-2000", pins[0]["why"])
+        self.assertEqual(pins[0]["why"], "Match ART-managed RPM builds installed in the selected RHCOS images")
+        self.assertEqual(review.add_inventory.call_count, 2)
         self.assertEqual(len(pins), 1)
 
     def test_unchanged_art_build_needs_no_override(self):

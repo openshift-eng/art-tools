@@ -1,9 +1,9 @@
 """
 Explain targeted RPM pins and discover additional kernel CVE claim candidates.
 
-Reports distinguish the release's triggering issues from references newly mentioned
-in each RPM's changelog. Discovery is read-only and never claims a CVE fixed or
-adds a Jira issue to the assembly automatically.
+Reports distinguish changelog deltas from verified fixes present in selected RHCOS.
+Verified RHCOS trackers with matching installed RPM evidence can be included in
+the assembly; discovery never changes Jira.
 """
 
 import json
@@ -14,6 +14,8 @@ from typing import Any
 from artcommonlib.assembly import assembly_issues_config
 from artcommonlib.jira_config import get_jira_browse_url
 from elliottlib.bzutil import JIRABugTracker, is_rhcos_pscomponent
+
+from doozerlib.targeted_rhcos_issues import requirements_installed, verified_rpm_requirements
 
 
 class TargetedRpmEvidence:
@@ -30,10 +32,97 @@ class TargetedRpmEvidence:
         self._jira_error: str | None = None
         self.records: list[dict] = []
         self.warnings: list[str] = []
+        self.rhcos_matches: list[dict] = []
+        self._inventories: dict[str, list[list]] = {}
         basis_issues = assembly_issues_config(runtime.get_releases_config(), basis)
         self._included = set(bug_ids)
         self._basis_included = {str(item.id) for item in basis_issues.include or []}
         self._excluded = {str(item.id) for item in basis_issues.exclude or []}
+
+    def add_inventory(self, arch: str, entries: list[list]) -> None:
+        """
+        Retain selected binary RPM inventories, including epochs and external RHEL RPMs.
+        """
+        self._inventories[arch] = entries
+
+    def _get_tracker(self) -> Any:
+        """
+        Require Jira access and valid target releases before any discovery query.
+        """
+        if self._jira_error:
+            raise ValueError(self._jira_error)
+        if self._tracker is None:
+            tracker = JIRABugTracker(JIRABugTracker.get_config(self._runtime))
+            releases = tracker.target_release()
+            if not releases:
+                raise ValueError("No Jira target releases configured")
+            available = tracker._get_available_target_versions()
+            if available and set(releases) - set(available):
+                raise ValueError("Configured Jira target releases are unavailable")
+            self._tracker = tracker
+        return self._tracker
+
+    def discover_rhcos_issues(self) -> list[str]:
+        """
+        Discover unclaimed Verified RHCOS CVEs supported by selected installed RPMs.
+
+        A fix appearing in the basis changelog is not proof that its Jira tracker
+        was claimed. Include eligible trackers even when the RPM did not change.
+        """
+        try:
+            if not self._inventories:
+                raise ValueError("No selected RHCOS RPM inventories available")
+            tracker = self._get_tracker()
+            bugs = tracker.cve_tracker_search(status=["Verified"], search_filter=None)
+            for bug in sorted(bugs, key=lambda item: item.id):
+                component = bug.whiteboard_component or ""
+                if not bug.cve_id or not is_rhcos_pscomponent(component):
+                    continue
+                if str(bug.status).strip().upper() != "VERIFIED":
+                    continue
+                if bug.id in self._included | self._basis_included | self._excluded:
+                    continue
+                match = re.fullmatch(r"openshift/ose-rhel-coreos-(\d+)", component)
+                el_versions = (
+                    {int(match.group(1))}
+                    if match
+                    else {
+                        int(value)
+                        for entries in self._inventories.values()
+                        for entry in entries
+                        for value in re.findall(r"\.el(\d+)(?:_|\b)", entry[3])
+                    }
+                )
+                try:
+                    requirements = verified_rpm_requirements(tracker._client.comments(bug.id), bug.cve_id)
+                except Exception as exc:
+                    warning = f"RHCOS CVE discovery incomplete for {bug.id}: {exc}"
+                    self.warnings.append(warning)
+                    self._runtime.logger.warning(warning)
+                    requirements = []
+                installed = any(requirements_installed(requirements, self._inventories, el) for el in el_versions)
+                self.rhcos_matches.append(
+                    {
+                        "id": bug.id,
+                        "cve": bug.cve_id,
+                        "status": bug.status,
+                        "url": get_jira_browse_url(bug.id),
+                        "disposition": "automatic_addition" if installed else "needs_review",
+                        "reason": (
+                            "Selected RPMs satisfy the passing Jira verification requirements"
+                            if installed
+                            else "Required RPMs are absent or too old in selected RHCOS"
+                            if requirements
+                            else "No supported passing RPM verification found"
+                        ),
+                        "required_rpms": requirements,
+                    }
+                )
+        except Exception as exc:
+            warning = f"RHCOS CVE discovery incomplete: {exc}"
+            self.warnings.append(warning)
+            self._runtime.logger.warning(warning)
+        return sorted({item["id"] for item in self.rhcos_matches if item["disposition"] == "automatic_addition"})
 
     def _changelog(self, nvr: str) -> list[str]:
         """
@@ -56,14 +145,7 @@ class TargetedRpmEvidence:
         if self._jira_error:
             raise ValueError(self._jira_error)
         try:
-            if self._tracker is None:
-                self._tracker = JIRABugTracker(JIRABugTracker.get_config(self._runtime))
-                releases = self._tracker.target_release()
-                if not releases:
-                    raise ValueError("No Jira target releases configured")
-                available = self._tracker._get_available_target_versions()
-                if available and set(releases) - set(available):
-                    raise ValueError("Configured Jira target releases are unavailable")
+            self._get_tracker()
             clauses = [f'key = "{key}"' for key in sorted(bugs)]
             clauses += [f'summary ~ "{cve}"' for cve in sorted(cves)]
             matches = {}
@@ -167,6 +249,8 @@ class TargetedRpmEvidence:
             "trigger_ocpbugs": list(self._bugs),
             "trigger_cves": list(self._cves),
             "records": self.records,
+            "rhcos_matches": self.rhcos_matches,
+            "selected_rhcos_rpms": self._inventories,
             "warnings": self.warnings,
             "complete": not self.warnings,
         }
@@ -176,10 +260,21 @@ class TargetedRpmEvidence:
             "",
             "Trigger: " + (", ".join((*self._bugs, *self._cves)) or "No issue IDs supplied"),
             "",
-            "New changelog references and Jira matches are candidates for review, not automatic fixed-CVE claims.",
+            "Changelog matches are review candidates. Automatic additions require a Verified release-scoped",
+            "RHCOS tracker and passing verification whose required RPMs match the selected installed versions.",
             "",
         ]
         proposals = set()
+        lines += ["## Verified RHCOS CVE discovery", ""]
+        lines += [
+            f"- [{item['id']}]({item['url']}): {item['cve']} — {item['disposition']}. {item['reason']}."
+            for item in self.rhcos_matches
+        ]
+        lines += [f"- Incomplete evidence: {warning}" for warning in self.warnings] + [""]
+        additions = {item["id"] for item in self.rhcos_matches if item["disposition"] == "automatic_addition"}
+        lines += ["Automatically included after comparing verified required RPMs with selected RHCOS:", ""]
+        lines += [f"- {key}" for key in sorted(additions)] or ["None."]
+        lines += [""]
         for row in self.records:
             lines += [
                 f"## {row['package']} / {row['el_target']}",
@@ -193,7 +288,7 @@ class TargetedRpmEvidence:
             ]
             for match in row["jira_matches"]:
                 lines.append(f"- [{match['id']}]({match['url']}): {match['status']} — {match['disposition']}")
-                if match["disposition"] == "proposed_addition":
+                if match["disposition"] == "proposed_addition" and match["id"] not in additions:
                     proposals.add(match["id"])
             lines += [f"- Incomplete evidence: {warning}" for warning in row["warnings"]] + [""]
         lines += [
