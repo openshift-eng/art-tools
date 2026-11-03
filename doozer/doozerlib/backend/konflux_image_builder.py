@@ -1287,24 +1287,28 @@ class KonfluxImageBuilder:
             'released_pullspec': released_pullspec,
         }
 
+        # results:
+        # - name: IMAGE_URL
+        #   value: quay.io/openshift-release-dev/ocp-v4.0-art-dev-test:ose-network-metrics-daemon-rhel9-v4.18.0-20241001.151532
+        # - name: IMAGE_DIGEST
+        #   value: sha256:49d65afba393950a93517f09385e1b441d1735e0071678edf6fc0fc1fe501807
+        #
+        # Read the image results once. They are present for successful builds, but can also be
+        # present for some non-SUCCESS outcomes (e.g. an image that was built and pushed but then
+        # failed ITS/conforma verification -> its_error). Recording the pullspec in that case lets
+        # the image still be referenced; genuine build errors have no results and leave it empty.
+        results = pipelinerun_dict.get('status', {}).get('results', [])
+        image_url = next((r['value'] for r in results if r['name'] == 'IMAGE_URL'), None)
+        image_digest = next((r['value'] for r in results if r['name'] == 'IMAGE_DIGEST'), None)
+
         if outcome is KonfluxBuildOutcome.SUCCESS:
-            # results:
-            # - name: IMAGE_URL
-            #   value: quay.io/openshift-release-dev/ocp-v4.0-art-dev-test:ose-network-metrics-daemon-rhel9-v4.18.0-20241001.151532
-            # - name: IMAGE_DIGEST
-            #   value: sha256:49d65afba393950a93517f09385e1b441d1735e0071678edf6fc0fc1fe501807
-
-            results = pipelinerun_dict.get('status', {}).get('results', [])
-            image_pullspec = next((r['value'] for r in results if r['name'] == 'IMAGE_URL'), None)
-            image_digest = next((r['value'] for r in results if r['name'] == 'IMAGE_DIGEST'), None)
-
-            if not (image_pullspec and image_digest):
+            if not (image_url and image_digest):
                 raise ValueError(
                     f"[{metadata.distgit_key}] Could not find expected results in konflux "
                     f"pipelinerun {pipelinerun_name}"
                 )
 
-            definitive_image_pullspec = f"{image_pullspec.split(':')[0]}@{image_digest}"
+            definitive_image_pullspec = f"{image_url.split(':')[0]}@{image_digest}"
 
             # Skip RPM extraction for images that don't use RPMs (e.g. FROM scratch builds).
             # no_shell implies no /bin/sh and no RPMs installed in the image.
@@ -1320,7 +1324,7 @@ class KonfluxImageBuilder:
                 package_nvrs: set = set()
                 source_rpms: set = set()
             else:
-                # use image_digest here to be precise, image_pullspec can collide in case of golang-builder images
+                # use image_digest here to be precise, image_url can collide in case of golang-builder images
                 package_nvrs, source_rpms = await self.get_installed_packages(
                     definitive_image_pullspec, building_arches, self._config.registry_auth_file
                 )
@@ -1333,7 +1337,17 @@ class KonfluxImageBuilder:
                     'image_pullspec': definitive_image_pullspec,
                     'installed_packages': sorted(source_rpms),
                     'installed_rpms': sorted(package_nvrs),
-                    'image_tag': image_pullspec.split(':')[-1],
+                    'image_tag': image_url.split(':')[-1],
+                }
+            )
+        elif image_url and image_digest:
+            # Non-SUCCESS outcome, but the image was built and pushed (e.g. its_error).
+            # Record the pullspec/tag so the image can still be referenced, but do NOT perform
+            # installed-RPM/package extraction (this is not a releasable build).
+            build_record_params.update(
+                {
+                    'image_pullspec': f"{image_url.split(':')[0]}@{image_digest}",
+                    'image_tag': image_url.split(':')[-1],
                 }
             )
         status = pipelinerun_dict.get('status', {})
