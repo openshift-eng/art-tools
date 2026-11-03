@@ -471,6 +471,26 @@ class TestScanForMissingBundlesFbcs(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(pipeline.ocp_target_versions, ['4.19'])
 
     @patch('pyartcd.pipelines.layered_products_scan_konflux.load_group_config', new_callable=AsyncMock)
+    async def test_auto_version_from_group_name(self, mock_load_group_config):
+        mock_load_group_config.return_value = {'version': 'auto', 'OCP_TARGET_VERSIONS': ['4.22']}
+        for group in ('acm-5.1', 'mce-5.1'):
+            with self.subTest(group=group):
+                pipeline = self._make_pipeline(group=group)
+
+                await pipeline.load_ocp_target_versions()
+
+                self.assertEqual(pipeline.version, '5.1.0')
+                self.assertEqual(pipeline.ocp_target_versions, ['4.22'])
+
+    @patch('pyartcd.pipelines.layered_products_scan_konflux.load_group_config', new_callable=AsyncMock)
+    async def test_auto_version_without_group_version_raises(self, mock_load_group_config):
+        mock_load_group_config.return_value = {'version': 'auto'}
+        pipeline = self._make_pipeline(group='acm-invalid')
+
+        with self.assertRaisesRegex(ValueError, "Cannot resolve version 'auto'.*MAJOR.MINOR"):
+            await pipeline.load_ocp_target_versions()
+
+    @patch('pyartcd.pipelines.layered_products_scan_konflux.load_group_config', new_callable=AsyncMock)
     async def test_version_fallback_to_group_name(self, mock_load_group_config):
         """When group.yml omits version, keep MAJOR.MINOR derived from the group name."""
         mock_load_group_config.return_value = {'OCP_TARGET_VERSIONS': ['4.14']}

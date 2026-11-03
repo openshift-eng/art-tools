@@ -31,7 +31,7 @@ from artcommonlib.release_util import (
 from artcommonlib.release_util import (
     isolate_el_version_in_release as _artcommon_isolate_el_version_in_release,
 )
-from artcommonlib.util import merge_objects, new_roundtrip_yaml_handler, split_git_url
+from artcommonlib.util import merge_objects, new_roundtrip_yaml_handler, product_version_from_group_name, split_git_url
 from doozerlib import util as doozerutil
 from doozerlib.constants import ART_BUILD_HISTORY_URL
 from errata_tool import ErrataConnector
@@ -92,6 +92,18 @@ def is_greenwave_all_pass_on_advisory(advisory_id: int) -> bool:
         logger.warning(f"Some greenwave tests on {advisory_id} failed with {result}")
         return False
     return True
+
+
+def resolve_build_version(group: str, version: str) -> str:
+    """Resolve ``auto`` to the group's MAJOR.MINOR.0; preserve explicit versions."""
+    if version != 'auto':
+        return version
+
+    group_version = product_version_from_group_name(group)
+    if group_version is None:
+        raise ValueError(f"Cannot resolve version 'auto' for group {group}: expected a group ending in MAJOR.MINOR")
+    major, minor = group_version
+    return f'{major}.{minor}.0'
 
 
 async def load_group_config(

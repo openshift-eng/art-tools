@@ -31,6 +31,7 @@ from pyartcd.util import (
     increment_fail_counter,
     load_group_config,
     reset_fail_counter,
+    resolve_build_version,
     update_build_fail_counters,
     update_rebase_fail_counters,
 )
@@ -207,7 +208,9 @@ class BuildLayeredProductsPipeline:
                     self.version = '.'.join(str(part) for part in group_version)
             if not self.version:
                 raise ValueError(f"No version found in group config for {self.group}")
-            self._logger.info(f"Using version {self.version} from group configuration or name")
+
+        self.version = resolve_build_version(self.group, self.version)
+        self._logger.info(f"Using build version {self.version}")
 
         # Extract product from group config
         product = group_config.get('product') or 'ocp'
@@ -503,7 +506,7 @@ class BuildLayeredProductsPipeline:
     "--version",
     metavar='NAME',
     required=False,
-    help="Layered product version (if not provided, will be read from group config)",
+    help="Layered product version (defaults to group config); 'auto' derives MAJOR.MINOR.0 from the group name",
 )
 @click.option(
     "--assembly",
