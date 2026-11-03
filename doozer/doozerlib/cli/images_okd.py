@@ -207,7 +207,6 @@ async def images_okd_rebase(
     """
 
     runtime.variant = BuildVariant.OKD  # Set variant so get_group_config() merges okd config
-    runtime.network_mode_override = 'open'  # OKD builds must be done in open mode.
 
     await OkdRebaseCli(
         runtime=runtime,
