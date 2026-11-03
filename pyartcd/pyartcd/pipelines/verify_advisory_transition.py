@@ -12,6 +12,7 @@ from pyartcd.cli import cli, click_coroutine, pass_runtime
 from pyartcd.runtime import Runtime
 
 LOGGER = logging.getLogger(__name__)
+STAGE_RELEASE_SUCCESS_LABEL = "stage-release-success"
 VERIFY_RELEASE_SUCCESS_LABEL = "verify-release-success"
 ADVISORY_TRANSITION_SUCCESS_LABEL = "advisory-transition-success"
 ADVISORY_TRANSITION_FAIL_LABEL = "advisory-transition-fail"
@@ -60,6 +61,9 @@ class VerifyAdvisoryTransitionPipeline:
         labels = set(mr.labels or [])
         if ADVISORY_TRANSITION_SUCCESS_LABEL in labels:
             LOGGER.info("Advisories already processed for %s, skipping", self.assembly)
+            return
+        if STAGE_RELEASE_SUCCESS_LABEL not in labels:
+            LOGGER.info("Waiting for %s before moving advisories for %s", STAGE_RELEASE_SUCCESS_LABEL, self.assembly)
             return
         if VERIFY_RELEASE_SUCCESS_LABEL not in labels:
             raise ValueError(f"Shipment MR must have {VERIFY_RELEASE_SUCCESS_LABEL}: {mr_url}")
@@ -110,8 +114,9 @@ class VerifyAdvisoryTransitionPipeline:
 async def verify_advisory_transition_cli(runtime: Runtime, version: str, assembly: str):
     """Verify metadata URLs, move QE advisories (excluding MicroShift), and label the MR.
 
-    Requires verify-release-success on the shipment MR. Only QE advisories are
-    transitioned. Elliott manages both outcome labels, verifies final states and adds advisory-transition-success
+    Requires stage-release-success and verify-release-success on the shipment MR.
+    Missing stage success leaves the release pending without marking a failure.
+    Only QE advisories are transitioned. Elliott manages both outcome labels, verifies final states and adds advisory-transition-success
     only after all active advisories have progressed past QE. No open-MR
     requirement applies. Failed attempts add advisory-transition-fail, including
     metadata and advisory errors. The scanner skips both outcome labels; retry

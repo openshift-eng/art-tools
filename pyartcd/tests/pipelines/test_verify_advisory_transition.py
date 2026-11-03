@@ -23,7 +23,7 @@ class TestVerifyAdvisoryTransition(unittest.IsolatedAsyncioTestCase):
         self.load_config.return_value = self.config
         self.gitlab = self.enterContext(patch(f"{MODULE}.GitLabClient.from_url")).return_value
         self.mr = self.gitlab.get_mr_from_url.return_value
-        self.mr.labels = ["verify-release-success", "unrelated"]
+        self.mr.labels = ["stage-release-success", "verify-release-success", "unrelated"]
         self.command = self.enterContext(patch(f"{MODULE}.exectools.cmd_assert_async", new_callable=AsyncMock))
         self.update = self.gitlab.add_mr_labels
         self.inspect = self.enterContext(patch(f"{MODULE}.exectools.cmd_gather_async", new_callable=AsyncMock))
@@ -112,11 +112,43 @@ class TestVerifyAdvisoryTransition(unittest.IsolatedAsyncioTestCase):
         self.update.assert_not_called()
 
     async def test_unverified_release_is_rejected(self):
-        self.mr.labels = []
+        self.mr.labels = ["stage-release-success"]
         with self.assertRaisesRegex(ValueError, "verify-release-success"):
             await self.pipeline.run()
         self.assertEqual(self.command.await_count, 1)
         self.assert_failure_marked()
+
+    async def test_missing_stage_success_waits_without_commands_or_failure_labels(self):
+        for labels in (
+            ["verify-release-success"],
+            ["verify-release-success", "stage-release-skipped"],
+            ["verify-release-success", "stage-release-fail"],
+            ["verify-release-success", "advisory-transition-fail"],
+            [],
+            None,
+        ):
+            for dry_run in (False, True):
+                with self.subTest(labels=labels, dry_run=dry_run):
+                    self.mr.labels = labels
+                    self.runtime.dry_run = dry_run
+                    with self.assertLogs(MODULE, level="INFO") as logs:
+                        await self.pipeline.run()
+                    self.assertIn("Waiting for stage-release-success", "\n".join(logs.output))
+                    self.command.assert_not_called()
+                    self.inspect.assert_not_called()
+                    self.update.assert_not_called()
+                    self.assertFalse(self.pipeline.working_dir.exists())
+
+    async def test_release_can_be_retried_after_stage_succeeds(self):
+        self.mr.labels = ["verify-release-success"]
+        await self.pipeline.run()
+        self.command.assert_not_called()
+        self.inspect.assert_not_called()
+        self.mr.labels.append("stage-release-success")
+        await self.pipeline.run()
+        self.assertEqual(self.command.await_count, 4)
+        self.assertEqual(self.command.call_args_list[0].args[0][-1], "verify-metadata-url")
+        self.assertEqual(self.command.call_args.args[0][-2:], ["verify-advisory-status", "--mark"])
 
     async def test_missing_shipment_is_rejected(self):
         self.config.pop("shipment")

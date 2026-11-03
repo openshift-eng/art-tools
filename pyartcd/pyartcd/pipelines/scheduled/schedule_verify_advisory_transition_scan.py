@@ -9,6 +9,7 @@ from pyartcd.cli import cli, click_coroutine, pass_runtime
 from pyartcd.pipelines.verify_advisory_transition import (
     ADVISORY_TRANSITION_FAIL_LABEL,
     ADVISORY_TRANSITION_SUCCESS_LABEL,
+    STAGE_RELEASE_SUCCESS_LABEL,
     VERIFY_RELEASE_SUCCESS_LABEL,
 )
 from pyartcd.runtime import Runtime
@@ -22,15 +23,16 @@ async def scan_and_trigger(runtime: Runtime):
     project_path = SHIPMENT_DATA_URL_TEMPLATE.split(REDHAT_GITLAB_URL + "/")[1]
     # GitLabClient lists every page. MRs may already be closed or merged.
     merge_requests = gitlab_client.list_merge_requests(
-        project_path, state="all", labels=[VERIFY_RELEASE_SUCCESS_LABEL], per_page=100
+        project_path, state="all", labels=[STAGE_RELEASE_SUCCESS_LABEL, VERIFY_RELEASE_SUCCESS_LABEL], per_page=100
     )
     releases = set()
     for mr in merge_requests:
         labels = set(mr.labels or [])
-        if VERIFY_RELEASE_SUCCESS_LABEL not in labels or labels & {
-            ADVISORY_TRANSITION_SUCCESS_LABEL,
-            ADVISORY_TRANSITION_FAIL_LABEL,
-        }:
+        if (
+            STAGE_RELEASE_SUCCESS_LABEL not in labels
+            or VERIFY_RELEASE_SUCCESS_LABEL not in labels
+            or labels & {ADVISORY_TRANSITION_SUCCESS_LABEL, ADVISORY_TRANSITION_FAIL_LABEL}
+        ):
             continue
         match = RELEASE_NAME_PATTERN.search(mr.title)
         if not match:
@@ -60,7 +62,9 @@ async def scan_and_trigger(runtime: Runtime):
 @pass_runtime
 @click_coroutine
 async def schedule_verify_advisory_transition_scan(runtime: Runtime):
-    """Scan verified shipment MRs without advisory-transition-success or advisory-transition-fail.
+    """Scan staged and verified MRs without advisory-transition-success or advisory-transition-fail.
+
+    Requires both stage-release-success and verify-release-success.
 
     Failed attempts require a manual retry or removal of the fail label. The per-release
     Jenkins job locks each release and rechecks labels before doing work.
