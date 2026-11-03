@@ -694,6 +694,7 @@ class TestKonfluxFbcRebaser(unittest.IsolatedAsyncioTestCase):
         result_catalog_blobs = list(yaml.load_all(result_catalog_file))
         result_catalog_blobs = self.rebaser._catagorize_catalog_blobs(result_catalog_blobs)
         self.assertEqual(result_catalog_blobs.keys(), {"test-package"})
+        # Skips-only LP channel: accumulate skips onto new head, do NOT invent replaces
         self.assertEqual(
             result_catalog_blobs["test-package"]["olm.channel"]["test-channel"]["entries"],
             [
@@ -702,7 +703,6 @@ class TestKonfluxFbcRebaser(unittest.IsolatedAsyncioTestCase):
                 {"name": "test-bundle-name.1.1.0", "skipRange": ">=4.8.0 <4.17.0"},
                 {
                     "name": "test-bundle-name.1.2.3",
-                    "replaces": "test-bundle-name.1.0.0",
                     "skipRange": ">=4.8.0 <4.17.0",
                     "skips": [
                         "test-bundle-name.0.0.9",
@@ -2649,7 +2649,317 @@ class TestKonfluxFbcRebaser(unittest.IsolatedAsyncioTestCase):
                     f"Entry {entry['name']} should not retain skips after migration",
                 )
 
-        self.assertIn("replaces", new_entry)
+        # Skips-only channel: do not invent a bogus replaces edge
+        self.assertNotIn("replaces", new_entry)
+
+    @patch("doozerlib.opm.generate_dockerfile")
+    @patch("pathlib.Path.unlink")
+    @patch("doozerlib.backend.konflux_fbc.KonfluxFbcRebaser._load_csv_from_bundle")
+    @patch("doozerlib.backend.konflux_fbc.KonfluxFbcRebaser._get_referenced_images")
+    @patch("doozerlib.backend.konflux_fbc.DockerfileParser")
+    @patch("pathlib.Path.mkdir")
+    @patch("pathlib.Path.is_file", return_value=True)
+    @patch("pathlib.Path.open")
+    @patch("doozerlib.backend.konflux_fbc.KonfluxFbcRebaser._fetch_olm_bundle_image_info", new_callable=AsyncMock)
+    @patch("doozerlib.backend.konflux_fbc.KonfluxFbcRebaser._fetch_olm_bundle_blob", new_callable=AsyncMock)
+    async def test_rebase_dir_lp_skips_only_no_replaces(
+        self,
+        mock_fetch_olm_bundle_blob,
+        mock_fetch_olm_bundle_image_info,
+        mock_open,
+        mock_is_file,
+        mock_mkdir,
+        MockDockerfileParser,
+        mock_get_referenced_images,
+        mock_load_csv_from_bundle: AsyncMock,
+        mock_path_unlink: Mock,
+        mock_generate_dockerfile: AsyncMock,
+    ):
+        """Kueue-like skips-only LP channel: new head gets accumulated skips, no invented replaces."""
+        rebaser = KonfluxFbcRebaser(
+            base_dir=self.base_dir,
+            group="kueue-1.4",
+            assembly=self.assembly,
+            version="1.4.4",
+            release="1",
+            commit_message="test",
+            push=False,
+            fbc_repo="https://example.com/fbc.git",
+            upcycle=False,
+        )
+
+        metadata = MagicMock(spec=ImageMetadata)
+        metadata.distgit_key = "kueue-operator"
+        metadata.runtime = MagicMock()
+        metadata.runtime.group_config = MagicMock()
+        metadata.runtime.group_config.vars = MagicMock()
+        metadata.runtime.group_config.vars.MAJOR = "1"
+        metadata.runtime.group_config.vars.MINOR = "4"
+        metadata.runtime.group_config.vars.FBC_DISABLE_CHANNEL_SKIPS = False
+        metadata.runtime.konflux_db = MagicMock()
+        metadata.config = MagicMock()
+        metadata.config.delivery = MagicMock()
+        metadata.config.delivery.delivery_repo_names = ["kueue-repo"]
+        metadata.get_olm_bundle_delivery_repo_name.return_value = "kueue-repo"
+
+        build_repo = MagicMock()
+        build_repo.local_dir = self.base_dir
+        bundle_build = MagicMock(
+            spec=KonfluxBundleBuildRecord,
+            nvr="kueue-operator-bundle-1.4.4-1",
+            operator_nvr="kueue-operator-1.4.4-1",
+            operand_nvrs=[],
+            image_pullspec="example.com/kueue-bundle@sha256:abc",
+            image_tag="abc123",
+            source_repo="https://example.com/kueue-operator.git",
+            commitish="abc123def",
+        )
+        logger = MagicMock()
+
+        mock_fetch_olm_bundle_image_info.return_value = {
+            "config": {
+                "config": {
+                    "Labels": {
+                        "name": "kueue-operator",
+                        "operators.operatorframework.io.bundle.channels.v1": "stable-v1.4",
+                        "operators.operatorframework.io.bundle.channel.default.v1": "stable-v1.4",
+                        "operators.operatorframework.io.bundle.package.v1": "kueue-operator",
+                        "operators.operatorframework.io.bundle.manifests.v1": "manifests/",
+                    },
+                },
+            },
+        }
+
+        mock_fetch_olm_bundle_blob.return_value = (
+            "kueue-operator.v1.4.4",
+            "kueue-operator",
+            {
+                "schema": "olm.bundle",
+                "name": "kueue-operator.v1.4.4",
+                "package": "kueue-operator",
+                "properties": [],
+                "relatedImages": [{"name": "", "image": "example.com/kueue-bundle@sha256:abc"}],
+            },
+        )
+
+        org_catalog_blobs = [
+            {"schema": "olm.package", "name": "kueue-operator", "defaultChannel": "stable-v1.4"},
+            {
+                "schema": "olm.channel",
+                "name": "stable-v1.4",
+                "package": "kueue-operator",
+                "entries": [
+                    {"name": "kueue-operator.v1.4.0"},
+                    {"name": "kueue-operator.v1.4.1"},
+                    {"name": "kueue-operator.v1.4.2"},
+                    {
+                        "name": "kueue-operator.v1.4.3",
+                        "skips": [
+                            "kueue-operator.v1.4.0",
+                            "kueue-operator.v1.4.1",
+                            "kueue-operator.v1.4.2",
+                        ],
+                    },
+                ],
+            },
+            {
+                "schema": "olm.bundle",
+                "name": "kueue-operator.v1.4.3",
+                "package": "kueue-operator",
+                "properties": [],
+                "relatedImages": [],
+            },
+        ]
+
+        org_catalog_file = StringIO()
+        yaml.dump_all(org_catalog_blobs, org_catalog_file)
+        org_catalog_file.seek(0)
+        result_catalog_file = StringIO()
+        images_mirror_set_file = StringIO()
+        mock_open.return_value.__enter__.side_effect = [org_catalog_file, result_catalog_file, images_mirror_set_file]
+
+        mock_get_referenced_images.return_value = []
+        mock_load_csv_from_bundle.return_value = {
+            "metadata": {
+                "name": "kueue-operator",
+                "annotations": {},
+            },
+            "spec": {"icon": []},
+        }
+
+        mock_dfp = MockDockerfileParser.return_value
+        mock_dfp.envs = {}
+        mock_dfp.labels = {}
+
+        mock_generate_dockerfile.return_value = None
+
+        await rebaser._rebase_dir(metadata, build_repo, bundle_build, "1.4.4", "1", logger)
+
+        result_catalog_file.seek(0)
+        result_catalog_blobs = list(yaml.load_all(result_catalog_file))
+        result_catalog_blobs = rebaser._catagorize_catalog_blobs(result_catalog_blobs)
+
+        entries = result_catalog_blobs["kueue-operator"]["olm.channel"]["stable-v1.4"]["entries"]
+        new_entry = next(e for e in entries if e["name"] == "kueue-operator.v1.4.4")
+
+        self.assertEqual(
+            sorted(new_entry["skips"]),
+            sorted(
+                [
+                    "kueue-operator.v1.4.0",
+                    "kueue-operator.v1.4.1",
+                    "kueue-operator.v1.4.2",
+                    "kueue-operator.v1.4.3",
+                ]
+            ),
+        )
+        self.assertNotIn("replaces", new_entry)
+        for entry in entries:
+            if entry["name"] != "kueue-operator.v1.4.4":
+                self.assertNotIn("skips", entry)
+
+    @patch("doozerlib.opm.generate_dockerfile")
+    @patch("pathlib.Path.unlink")
+    @patch("doozerlib.backend.konflux_fbc.KonfluxFbcRebaser._load_csv_from_bundle")
+    @patch("doozerlib.backend.konflux_fbc.KonfluxFbcRebaser._get_referenced_images")
+    @patch("doozerlib.backend.konflux_fbc.DockerfileParser")
+    @patch("pathlib.Path.mkdir")
+    @patch("pathlib.Path.is_file", return_value=True)
+    @patch("pathlib.Path.open")
+    @patch("doozerlib.backend.konflux_fbc.KonfluxFbcRebaser._fetch_olm_bundle_image_info", new_callable=AsyncMock)
+    @patch("doozerlib.backend.konflux_fbc.KonfluxFbcRebaser._fetch_olm_bundle_blob", new_callable=AsyncMock)
+    async def test_rebase_dir_lp_cold_start_invents_replaces(
+        self,
+        mock_fetch_olm_bundle_blob,
+        mock_fetch_olm_bundle_image_info,
+        mock_open,
+        mock_is_file,
+        mock_mkdir,
+        MockDockerfileParser,
+        mock_get_referenced_images,
+        mock_load_csv_from_bundle: AsyncMock,
+        mock_path_unlink: Mock,
+        mock_generate_dockerfile: AsyncMock,
+    ):
+        """LP cold-start (single entry, no skips, no FBC_DISABLE) still invents replaces (BC)."""
+        rebaser = KonfluxFbcRebaser(
+            base_dir=self.base_dir,
+            group="oadp-1.5",
+            assembly=self.assembly,
+            version="1.5.1",
+            release="1",
+            commit_message="test",
+            push=False,
+            fbc_repo="https://example.com/fbc.git",
+            upcycle=False,
+        )
+
+        metadata = MagicMock(spec=ImageMetadata)
+        metadata.distgit_key = "oadp-operator"
+        metadata.runtime = MagicMock()
+        metadata.runtime.group_config = MagicMock()
+        metadata.runtime.group_config.vars = MagicMock()
+        metadata.runtime.group_config.vars.MAJOR = "1"
+        metadata.runtime.group_config.vars.MINOR = "5"
+        metadata.runtime.group_config.vars.FBC_DISABLE_CHANNEL_SKIPS = False
+        metadata.runtime.konflux_db = MagicMock()
+        metadata.config = MagicMock()
+        metadata.config.delivery = MagicMock()
+        metadata.config.delivery.delivery_repo_names = ["oadp-repo"]
+        metadata.get_olm_bundle_delivery_repo_name.return_value = "oadp-repo"
+
+        build_repo = MagicMock()
+        build_repo.local_dir = self.base_dir
+        bundle_build = MagicMock(
+            spec=KonfluxBundleBuildRecord,
+            nvr="oadp-operator-bundle-1.5.1-1",
+            operator_nvr="oadp-operator-1.5.1-1",
+            operand_nvrs=[],
+            image_pullspec="example.com/oadp-bundle@sha256:abc",
+            image_tag="abc123",
+            source_repo="https://example.com/oadp-operator.git",
+            commitish="abc123def",
+        )
+        logger = MagicMock()
+
+        mock_fetch_olm_bundle_image_info.return_value = {
+            "config": {
+                "config": {
+                    "Labels": {
+                        "name": "oadp-operator",
+                        "operators.operatorframework.io.bundle.channels.v1": "stable-1.5",
+                        "operators.operatorframework.io.bundle.channel.default.v1": "stable-1.5",
+                        "operators.operatorframework.io.bundle.package.v1": "redhat-oadp-operator",
+                        "operators.operatorframework.io.bundle.manifests.v1": "manifests/",
+                    },
+                },
+            },
+        }
+
+        mock_fetch_olm_bundle_blob.return_value = (
+            "oadp-operator.v1.5.1",
+            "redhat-oadp-operator",
+            {
+                "schema": "olm.bundle",
+                "name": "oadp-operator.v1.5.1",
+                "package": "redhat-oadp-operator",
+                "properties": [],
+                "relatedImages": [{"name": "", "image": "example.com/oadp-bundle@sha256:abc"}],
+            },
+        )
+
+        org_catalog_blobs = [
+            {"schema": "olm.package", "name": "redhat-oadp-operator", "defaultChannel": "stable-1.5"},
+            {
+                "schema": "olm.channel",
+                "name": "stable-1.5",
+                "package": "redhat-oadp-operator",
+                "entries": [
+                    {"name": "oadp-operator.v1.5.0", "skipRange": ">=1.4.0 <1.5.0"},
+                ],
+            },
+            {
+                "schema": "olm.bundle",
+                "name": "oadp-operator.v1.5.0",
+                "package": "redhat-oadp-operator",
+                "properties": [],
+                "relatedImages": [],
+            },
+        ]
+
+        org_catalog_file = StringIO()
+        yaml.dump_all(org_catalog_blobs, org_catalog_file)
+        org_catalog_file.seek(0)
+        result_catalog_file = StringIO()
+        images_mirror_set_file = StringIO()
+        mock_open.return_value.__enter__.side_effect = [org_catalog_file, result_catalog_file, images_mirror_set_file]
+
+        mock_get_referenced_images.return_value = []
+        mock_load_csv_from_bundle.return_value = {
+            "metadata": {
+                "name": "oadp-operator",
+                "annotations": {"olm.skipRange": ">=1.4.0 <1.5.1"},
+            },
+            "spec": {"icon": []},
+        }
+
+        mock_dfp = MockDockerfileParser.return_value
+        mock_dfp.envs = {}
+        mock_dfp.labels = {}
+
+        mock_generate_dockerfile.return_value = None
+
+        await rebaser._rebase_dir(metadata, build_repo, bundle_build, "1.5.1", "1", logger)
+
+        result_catalog_file.seek(0)
+        result_catalog_blobs = list(yaml.load_all(result_catalog_file))
+        result_catalog_blobs = rebaser._catagorize_catalog_blobs(result_catalog_blobs)
+
+        entries = result_catalog_blobs["redhat-oadp-operator"]["olm.channel"]["stable-1.5"]["entries"]
+        new_entry = next(e for e in entries if e["name"] == "oadp-operator.v1.5.1")
+
+        self.assertEqual(new_entry["replaces"], "oadp-operator.v1.5.0")
+        self.assertEqual(new_entry["skips"], ["oadp-operator.v1.5.0"])
 
 
 class TestFetchCsvFromGit(unittest.IsolatedAsyncioTestCase):
