@@ -575,9 +575,12 @@ class GenAssemblyTargetedCli:
                         f"DTK may need rebuilding with the target kernel headers."
                     )
 
-        missing_targets = kernels_by_el.keys() - matched_targets
-        if missing_targets:
-            raise RuntimeError(f"No driver-toolkit image configured for RHEL targets {sorted(missing_targets)}")
+        rhcos_only_targets = kernels_by_el.keys() - matched_targets
+        if rhcos_only_targets:
+            self.logger.info(
+                "No payload driver-toolkit image configured for RHEL targets %s; retaining kernel pins without DTK overrides",
+                sorted(rhcos_only_targets),
+            )
 
     async def _compute_upgrades(self) -> None:
         """

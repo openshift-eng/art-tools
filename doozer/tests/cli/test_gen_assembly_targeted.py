@@ -301,7 +301,7 @@ class TestBuildAssemblyDefinition(TestCase):
         self.assertEqual(assembly["issues"]["include"], [{"id": "OCPBUGS-12345"}])
 
         self.assertEqual(assembly["members"]["rpms"], [])
-        kernel_dependency = assembly["group"]["dependencies"]["rpms!"][0]
+        kernel_dependency = assembly["group"]["dependencies"]["rpms"][0]
         self.assertEqual(kernel_dependency["el9"], "kernel-5.14.0-284.28.1.el9_2")
         self.assertEqual(kernel_dependency["non_gc_tag"], "hotfix")
         self.assertIn("CVE-2025-1234", kernel_dependency["why"])
@@ -335,7 +335,7 @@ class TestBuildAssemblyDefinition(TestCase):
         result = cli._build_assembly_definition()
         assembly = result["releases"]["4.17.5"]["assembly"]
         self.assertEqual(assembly["members"]["rpms"], [])
-        dependencies = assembly["group"]["dependencies"]["rpms!"]
+        dependencies = assembly["group"]["dependencies"]["rpms"]
         self.assertEqual(
             dependencies,
             [
@@ -472,7 +472,9 @@ class TestBuildAssemblyDefinition(TestCase):
 
 
 class TestFindDtkBuildKonflux(IsolatedAsyncioTestCase):
-    async def _run_lookup(self, missing_name: str | None = None) -> GenAssemblyTargetedCli:
+    async def _run_lookup(
+        self, missing_name: str | None = None, dtk_targets: dict[str, int] | None = None
+    ) -> GenAssemblyTargetedCli:
         """
         Run DTK selection with RHEL 9 and RHEL 10 image metadata.
         """
@@ -486,7 +488,7 @@ class TestFindDtkBuildKonflux(IsolatedAsyncioTestCase):
                 kernel_devel_nvr="kernel-devel-6.12.0-211.73.1.el10_2",
             ),
         ]
-        targets = {"driver-toolkit": 9, "driver-toolkit-rhel10": 10}
+        targets = dtk_targets if dtk_targets is not None else {"driver-toolkit": 9, "driver-toolkit-rhel10": 10}
         metas = []
         for name, target in targets.items():
             meta = MagicMock(distgit_key=name, is_payload=True)
@@ -531,13 +533,21 @@ class TestFindDtkBuildKonflux(IsolatedAsyncioTestCase):
         with self.assertRaisesRegex(RuntimeError, "No driver-toolkit-rhel10 build found"):
             await self._run_lookup(missing_name="driver-toolkit-rhel10")
 
-    async def test_missing_dtk_configuration_fails(self):
+    async def test_rhel10_rhcos_without_rhel10_dtk(self):
         """
-        A requested kernel must have a configured DTK image.
+        OCP 4.22 pins both RHCOS kernels while only its configured RHEL 9 DTK is required.
         """
-        cli = _make_cli()
-        cli.kernel_info = [_make_kernel_info()]
-        cli.runtime.image_metas.return_value = []
-        with patch("artcommonlib.konflux.konflux_db.KonfluxDb"):
-            with self.assertRaisesRegex(RuntimeError, "No driver-toolkit image configured"):
-                await cli._find_dtk_build_konflux()
+        cli = await self._run_lookup(dtk_targets={"driver-toolkit": 9})
+        assembly = cli._build_assembly_definition()["releases"]["4.17.5"]["assembly"]
+        self.assertEqual(cli.dtk_nvrs, {"driver-toolkit": "driver-toolkit-container-v5.0.0-test.el9"})
+        self.assertEqual([pin["distgit_key"] for pin in assembly["members"]["images"]], ["driver-toolkit"])
+        dependencies = assembly["group"]["dependencies"]["rpms"]
+        self.assertEqual(dependencies[0]["el9"], cli.kernel_info[0].nvr)
+        self.assertEqual(dependencies[1]["el10"], cli.kernel_info[1].nvr)
+
+    async def test_rhcos_only_targets_need_no_dtk(self):
+        """
+        Kernels with no configured payload DTK do not require a DTK build.
+        """
+        cli = await self._run_lookup(dtk_targets={})
+        self.assertEqual(cli.dtk_nvrs, {})
