@@ -14,14 +14,48 @@ def _make_runtime(dry_run=False):
     return runtime
 
 
-def _make_record(name="ose-foo", version="4.18.0", image_tag="foo-tag", embargoed=False):
+def _make_record(
+    name="ose-foo",
+    version="4.18.0",
+    image_tag="foo-tag",
+    embargoed=False,
+    record_id="rec-1",
+    outcome="success",
+    image_pullspec="quay.io/redhat-user-workloads/ocp-art-tenant/art-images@sha256:deadbeef",
+    start_time="2026-01-01T00:00:00+00:00",
+):
     record = mock.MagicMock()
     record.name = name
     record.version = version
     record.image_tag = image_tag
-    record.image_pullspec = "quay.io/redhat-user-workloads/ocp-art-tenant/art-images@sha256:deadbeef"
+    record.image_pullspec = image_pullspec
     record.embargoed = embargoed
+    record.record_id = record_id
+    record.outcome = outcome
+    record.start_time = start_time
     return record
+
+
+def _aiter(items):
+    """Return a fresh async iterator over items (mimics search_builds_by_fields)."""
+
+    async def _gen():
+        for item in items:
+            yield item
+
+    return _gen()
+
+
+def _db_with_results(mock_db_cls, *result_batches):
+    """Wire the mocked KonfluxDb so each search_builds_by_fields call yields the next batch.
+
+    Also records the ``where`` kwargs of each call on the returned MagicMock.
+    """
+    db = mock_db_cls.return_value
+    batches = iter(result_batches)
+    search = mock.MagicMock(side_effect=lambda **kwargs: _aiter(next(batches)))
+    db.search_builds_by_fields = search
+    return db, search
 
 
 class TestSyncImageToQuayHelper(unittest.IsolatedAsyncioTestCase):
@@ -36,7 +70,7 @@ class TestSyncImageToQuayHelper(unittest.IsolatedAsyncioTestCase):
         mock_sync.assert_awaited_once_with("pullspec", KONFLUX_IMAGE_TEST_REPO, ["b"])
 
 
-class TestSyncNvrToQuayPipeline(unittest.IsolatedAsyncioTestCase):
+class TestSyncNvrToQuayPipelineValidation(unittest.IsolatedAsyncioTestCase):
     def test_allowlist_rejects_unapproved_repo(self):
         runtime = _make_runtime()
         with pytest.raises(ValueError, match="not allowed"):
@@ -51,21 +85,34 @@ class TestSyncNvrToQuayPipeline(unittest.IsolatedAsyncioTestCase):
         runtime = _make_runtime()
         pipeline = SyncNvrToQuayPipeline(runtime, nvrs=["ose-foo-4.18.0-1"])
         assert pipeline.target_repo == KONFLUX_IMAGE_TEST_REPO
+        assert pipeline.allow_failed is False
+        assert pipeline.record_id == ""
 
+    def test_record_id_with_multiple_nvrs_rejected(self):
+        runtime = _make_runtime()
+        with pytest.raises(ValueError, match="only meaningful for a single NVR"):
+            SyncNvrToQuayPipeline(
+                runtime,
+                nvrs=["ose-foo-4.18.0-1", "ose-bar-4.18.0-1"],
+                record_id="rec-1",
+            )
+
+
+class TestSyncNvrToQuayPipeline(unittest.IsolatedAsyncioTestCase):
     @mock.patch("pyartcd.pipelines.sync_nvr_to_quay.sync_to_quay", new_callable=mock.AsyncMock)
     @mock.patch("pyartcd.pipelines.sync_nvr_to_quay.is_nvr_embargoed", return_value=False)
     @mock.patch("pyartcd.pipelines.sync_nvr_to_quay.KonfluxDb")
     async def test_happy_path_sync(self, mock_db_cls, mock_embargo, mock_sync):
         runtime = _make_runtime(dry_run=False)
         record = _make_record(name="ose-foo", version="4.18.0", image_tag="foo-tag")
-        db = mock_db_cls.return_value
-        db.get_build_record_by_nvr = mock.AsyncMock(return_value=record)
+        db, search = _db_with_results(mock_db_cls, [record])
 
         pipeline = SyncNvrToQuayPipeline(runtime, nvrs=["ose-foo-4.18.0-1"])
         await pipeline.run()
 
         db.bind.assert_called_once()
-        db.get_build_record_by_nvr.assert_awaited_once_with("ose-foo-4.18.0-1")
+        # allow_failed=False => outcome filter is success-only
+        assert search.call_args.kwargs["where"] == {"nvr": "ose-foo-4.18.0-1", "outcome": "success"}
         mock_sync.assert_awaited_once_with(
             record.image_pullspec,
             KONFLUX_IMAGE_TEST_REPO,
@@ -75,11 +122,26 @@ class TestSyncNvrToQuayPipeline(unittest.IsolatedAsyncioTestCase):
     @mock.patch("pyartcd.pipelines.sync_nvr_to_quay.sync_to_quay", new_callable=mock.AsyncMock)
     @mock.patch("pyartcd.pipelines.sync_nvr_to_quay.is_nvr_embargoed", return_value=False)
     @mock.patch("pyartcd.pipelines.sync_nvr_to_quay.KonfluxDb")
+    async def test_allow_failed_omits_outcome_filter(self, mock_db_cls, mock_embargo, mock_sync):
+        runtime = _make_runtime(dry_run=False)
+        record = _make_record(outcome="its_error")
+        db, search = _db_with_results(mock_db_cls, [record])
+
+        pipeline = SyncNvrToQuayPipeline(runtime, nvrs=["ose-foo-4.18.0-1"], allow_failed=True)
+        await pipeline.run()
+
+        # allow_failed=True => no outcome key, so default terminal set applies
+        assert "outcome" not in search.call_args.kwargs["where"]
+        assert search.call_args.kwargs["where"] == {"nvr": "ose-foo-4.18.0-1"}
+        mock_sync.assert_awaited_once()
+
+    @mock.patch("pyartcd.pipelines.sync_nvr_to_quay.sync_to_quay", new_callable=mock.AsyncMock)
+    @mock.patch("pyartcd.pipelines.sync_nvr_to_quay.is_nvr_embargoed", return_value=False)
+    @mock.patch("pyartcd.pipelines.sync_nvr_to_quay.KonfluxDb")
     async def test_empty_image_tag_omitted(self, mock_db_cls, mock_embargo, mock_sync):
         runtime = _make_runtime(dry_run=False)
         record = _make_record(name="ose-foo", version="4.18.0", image_tag="")
-        db = mock_db_cls.return_value
-        db.get_build_record_by_nvr = mock.AsyncMock(return_value=record)
+        _db_with_results(mock_db_cls, [record])
 
         pipeline = SyncNvrToQuayPipeline(runtime, nvrs=["ose-foo-4.18.0-1"])
         await pipeline.run()
@@ -91,15 +153,84 @@ class TestSyncNvrToQuayPipeline(unittest.IsolatedAsyncioTestCase):
         )
 
     @mock.patch("pyartcd.pipelines.sync_nvr_to_quay.sync_to_quay", new_callable=mock.AsyncMock)
+    @mock.patch("pyartcd.pipelines.sync_nvr_to_quay.is_nvr_embargoed", return_value=False)
+    @mock.patch("pyartcd.pipelines.sync_nvr_to_quay.KonfluxDb")
+    async def test_no_record_found_raises(self, mock_db_cls, mock_embargo, mock_sync):
+        runtime = _make_runtime(dry_run=False)
+        _db_with_results(mock_db_cls, [])
+
+        pipeline = SyncNvrToQuayPipeline(runtime, nvrs=["ose-foo-4.18.0-1"])
+        with pytest.raises(ValueError, match="No build record found"):
+            await pipeline.run()
+        mock_sync.assert_not_awaited()
+
+    @mock.patch("pyartcd.pipelines.sync_nvr_to_quay.sync_to_quay", new_callable=mock.AsyncMock)
+    @mock.patch("pyartcd.pipelines.sync_nvr_to_quay.is_nvr_embargoed", return_value=False)
+    @mock.patch("pyartcd.pipelines.sync_nvr_to_quay.KonfluxDb")
+    async def test_no_record_found_suggests_allow_failed(self, mock_db_cls, mock_embargo, mock_sync):
+        runtime = _make_runtime(dry_run=False)
+        _db_with_results(mock_db_cls, [])
+
+        pipeline = SyncNvrToQuayPipeline(runtime, nvrs=["ose-foo-4.18.0-1"], allow_failed=False)
+        with pytest.raises(ValueError, match="--allow-failed"):
+            await pipeline.run()
+
+    @mock.patch("pyartcd.pipelines.sync_nvr_to_quay.sync_to_quay", new_callable=mock.AsyncMock)
+    @mock.patch("pyartcd.pipelines.sync_nvr_to_quay.is_nvr_embargoed", return_value=False)
+    @mock.patch("pyartcd.pipelines.sync_nvr_to_quay.KonfluxDb")
+    async def test_multiple_records_without_record_id_raises(self, mock_db_cls, mock_embargo, mock_sync):
+        runtime = _make_runtime(dry_run=False)
+        rec_a = _make_record(record_id="rec-a", outcome="success")
+        rec_b = _make_record(record_id="rec-b", outcome="its_error")
+        _db_with_results(mock_db_cls, [rec_a, rec_b])
+
+        pipeline = SyncNvrToQuayPipeline(runtime, nvrs=["ose-foo-4.18.0-1"], allow_failed=True)
+        with pytest.raises(ValueError) as exc_info:
+            await pipeline.run()
+        msg = str(exc_info.value)
+        assert "Multiple build records found" in msg
+        assert "rec-a" in msg and "rec-b" in msg
+        assert "--record-id" in msg
+        mock_sync.assert_not_awaited()
+
+    @mock.patch("pyartcd.pipelines.sync_nvr_to_quay.sync_to_quay", new_callable=mock.AsyncMock)
+    @mock.patch("pyartcd.pipelines.sync_nvr_to_quay.is_nvr_embargoed", return_value=False)
+    @mock.patch("pyartcd.pipelines.sync_nvr_to_quay.KonfluxDb")
+    async def test_record_id_disambiguation(self, mock_db_cls, mock_embargo, mock_sync):
+        runtime = _make_runtime(dry_run=False)
+        record = _make_record(record_id="rec-b", outcome="its_error", image_tag="foo-tag", name="ose-foo")
+        db, search = _db_with_results(mock_db_cls, [record])
+
+        pipeline = SyncNvrToQuayPipeline(runtime, nvrs=["ose-foo-4.18.0-1"], allow_failed=True, record_id="rec-b")
+        await pipeline.run()
+
+        assert search.call_args.kwargs["where"] == {"nvr": "ose-foo-4.18.0-1", "record_id": "rec-b"}
+        mock_sync.assert_awaited_once_with(
+            record.image_pullspec,
+            KONFLUX_IMAGE_TEST_REPO,
+            ["foo-tag", "ose-foo-4.18"],
+        )
+
+    @mock.patch("pyartcd.pipelines.sync_nvr_to_quay.sync_to_quay", new_callable=mock.AsyncMock)
+    @mock.patch("pyartcd.pipelines.sync_nvr_to_quay.is_nvr_embargoed", return_value=False)
+    @mock.patch("pyartcd.pipelines.sync_nvr_to_quay.KonfluxDb")
+    async def test_record_id_not_found_raises(self, mock_db_cls, mock_embargo, mock_sync):
+        runtime = _make_runtime(dry_run=False)
+        _db_with_results(mock_db_cls, [])
+
+        pipeline = SyncNvrToQuayPipeline(runtime, nvrs=["ose-foo-4.18.0-1"], record_id="rec-x")
+        with pytest.raises(ValueError, match="record_id"):
+            await pipeline.run()
+
+    @mock.patch("pyartcd.pipelines.sync_nvr_to_quay.sync_to_quay", new_callable=mock.AsyncMock)
     @mock.patch("pyartcd.pipelines.sync_nvr_to_quay.is_nvr_embargoed", return_value=True)
     @mock.patch("pyartcd.pipelines.sync_nvr_to_quay.KonfluxDb")
-    async def test_embargoed_nvr_skipped(self, mock_db_cls, mock_embargo, mock_sync):
+    async def test_embargoed_nvr_skipped_even_when_failed(self, mock_db_cls, mock_embargo, mock_sync):
         runtime = _make_runtime(dry_run=False)
-        record = _make_record(embargoed=False)
-        db = mock_db_cls.return_value
-        db.get_build_record_by_nvr = mock.AsyncMock(return_value=record)
+        record = _make_record(embargoed=False, outcome="its_error")
+        _db_with_results(mock_db_cls, [record])
 
-        pipeline = SyncNvrToQuayPipeline(runtime, nvrs=["ose-foo-4.18.0-1.p3"])
+        pipeline = SyncNvrToQuayPipeline(runtime, nvrs=["ose-foo-4.18.0-1.p3"], allow_failed=True)
         await pipeline.run()
 
         mock_sync.assert_not_awaited()
@@ -110,12 +241,24 @@ class TestSyncNvrToQuayPipeline(unittest.IsolatedAsyncioTestCase):
     async def test_record_embargoed_flag_skipped(self, mock_db_cls, mock_embargo, mock_sync):
         runtime = _make_runtime(dry_run=False)
         record = _make_record(embargoed=True)
-        db = mock_db_cls.return_value
-        db.get_build_record_by_nvr = mock.AsyncMock(return_value=record)
+        _db_with_results(mock_db_cls, [record])
 
         pipeline = SyncNvrToQuayPipeline(runtime, nvrs=["ose-foo-4.18.0-1"])
         await pipeline.run()
 
+        mock_sync.assert_not_awaited()
+
+    @mock.patch("pyartcd.pipelines.sync_nvr_to_quay.sync_to_quay", new_callable=mock.AsyncMock)
+    @mock.patch("pyartcd.pipelines.sync_nvr_to_quay.is_nvr_embargoed", return_value=False)
+    @mock.patch("pyartcd.pipelines.sync_nvr_to_quay.KonfluxDb")
+    async def test_no_pullspec_guard_raises(self, mock_db_cls, mock_embargo, mock_sync):
+        runtime = _make_runtime(dry_run=False)
+        record = _make_record(outcome="build_error", image_pullspec="", record_id="rec-np")
+        _db_with_results(mock_db_cls, [record])
+
+        pipeline = SyncNvrToQuayPipeline(runtime, nvrs=["ose-foo-4.18.0-1"], allow_failed=True)
+        with pytest.raises(ValueError, match="has no image_pullspec"):
+            await pipeline.run()
         mock_sync.assert_not_awaited()
 
     @mock.patch("pyartcd.pipelines.sync_nvr_to_quay.sync_to_quay", new_callable=mock.AsyncMock)
@@ -124,13 +267,11 @@ class TestSyncNvrToQuayPipeline(unittest.IsolatedAsyncioTestCase):
     async def test_dry_run_does_not_sync(self, mock_db_cls, mock_embargo, mock_sync):
         runtime = _make_runtime(dry_run=True)
         record = _make_record()
-        db = mock_db_cls.return_value
-        db.get_build_record_by_nvr = mock.AsyncMock(return_value=record)
+        _db_with_results(mock_db_cls, [record])
 
         pipeline = SyncNvrToQuayPipeline(runtime, nvrs=["ose-foo-4.18.0-1"])
         await pipeline.run()
 
-        db.get_build_record_by_nvr.assert_awaited_once()
         mock_sync.assert_not_awaited()
 
     @mock.patch("pyartcd.pipelines.sync_nvr_to_quay.sync_to_quay", new_callable=mock.AsyncMock)
@@ -138,12 +279,10 @@ class TestSyncNvrToQuayPipeline(unittest.IsolatedAsyncioTestCase):
     @mock.patch("pyartcd.pipelines.sync_nvr_to_quay.KonfluxDb")
     async def test_multiple_nvrs_synced(self, mock_db_cls, mock_embargo, mock_sync):
         runtime = _make_runtime(dry_run=False)
-        db = mock_db_cls.return_value
-        db.get_build_record_by_nvr = mock.AsyncMock(
-            side_effect=[
-                _make_record(name="ose-foo", image_tag="foo-tag"),
-                _make_record(name="ose-bar", image_tag="bar-tag"),
-            ]
+        _db_with_results(
+            mock_db_cls,
+            [_make_record(name="ose-foo", image_tag="foo-tag")],
+            [_make_record(name="ose-bar", image_tag="bar-tag")],
         )
 
         pipeline = SyncNvrToQuayPipeline(runtime, nvrs=["ose-foo-4.18.0-1", "ose-bar-4.18.0-1"])

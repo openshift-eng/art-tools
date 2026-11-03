@@ -13,7 +13,7 @@ import logging
 import click
 from artcommonlib.build_visibility import is_nvr_embargoed
 from artcommonlib.constants import KONFLUX_IMAGE_TEST_REPO
-from artcommonlib.konflux.konflux_build_record import KonfluxBuildRecord
+from artcommonlib.konflux.konflux_build_record import KonfluxBuildOutcome, KonfluxBuildRecord
 from artcommonlib.konflux.konflux_db import KonfluxDb
 from artcommonlib.util import sync_to_quay
 
@@ -62,11 +62,15 @@ class SyncNvrToQuayPipeline:
         runtime: Runtime,
         nvrs: list,
         target_repo: str = KONFLUX_IMAGE_TEST_REPO,
+        allow_failed: bool = False,
+        record_id: str = "",
     ) -> None:
         self.runtime = runtime
         self._logger = runtime.logger
         self.nvrs = nvrs
         self.target_repo = target_repo
+        self.allow_failed = allow_failed
+        self.record_id = record_id
 
         self._validate_parameters()
 
@@ -80,15 +84,78 @@ class SyncNvrToQuayPipeline:
                 f"Target repo {self.target_repo!r} is not allowed. Allowed repos: {sorted(ALLOWED_TARGET_REPOS)}"
             )
 
+        # --record-id disambiguates a single NVR; it is meaningless for several NVRs at once.
+        if self.record_id and len(self.nvrs) > 1:
+            raise ValueError(
+                "--record-id is only meaningful for a single NVR; "
+                f"got {len(self.nvrs)} NVRs. Re-run with one NVR at a time when using --record-id."
+            )
+
+    async def _resolve_record(self, db: KonfluxDb, nvr: str) -> KonfluxBuildRecord:
+        """
+        List matching build records for an NVR and select exactly one.
+
+        When allow_failed is False, only outcome='success' records are eligible.
+        When allow_failed is True, the search default (terminal success + failure
+        outcomes, including its_error) applies. record_id disambiguates when more
+        than one record exists for the NVR.
+        """
+        where = {"nvr": nvr}
+        if self.record_id:
+            where["record_id"] = self.record_id
+        if not self.allow_failed:
+            where["outcome"] = str(KonfluxBuildOutcome.SUCCESS)
+
+        records = [record async for record in db.search_builds_by_fields(where=where)]
+
+        if self.record_id:
+            if not records:
+                raise ValueError(
+                    f"No build record found for NVR {nvr!r} with record_id {self.record_id!r} "
+                    f"(allow_failed={self.allow_failed})."
+                )
+            if len(records) > 1:
+                raise ValueError(
+                    f"Multiple build records matched NVR {nvr!r} with record_id {self.record_id!r}; "
+                    "record_id should uniquely identify a record. Please verify the record_id."
+                )
+            return records[0]
+
+        if not records:
+            hint = ""
+            if not self.allow_failed:
+                hint = (
+                    " If the build failed ITS/conforma, re-run with --allow-failed to include terminal failed builds."
+                )
+            raise ValueError(f"No build record found for NVR {nvr!r} (allow_failed={self.allow_failed}).{hint}")
+
+        if len(records) > 1:
+            candidates = "\n".join(
+                f"  - record_id={record.record_id} outcome={record.outcome} "
+                f"start_time={record.start_time} image_pullspec={record.image_pullspec}"
+                for record in records
+            )
+            raise ValueError(
+                f"Multiple build records found for NVR {nvr!r}:\n{candidates}\n"
+                "Re-run with --record-id (RECORD_ID in Jenkins) set to the desired record. "
+                "Refusing to pick one automatically."
+            )
+
+        return records[0]
+
     async def _sync_nvr(self, db: KonfluxDb, nvr: str) -> None:
         """Resolve a single NVR's build record, apply the embargo gate, and sync."""
         self._logger.info("Processing NVR %s", nvr)
-        record: KonfluxBuildRecord = await db.get_build_record_by_nvr(nvr)
+        record = await self._resolve_record(db, nvr)
 
-        # EMBARGO GATE: embargoed builds must NEVER be synced to this repo.
+        # EMBARGO GATE: embargoed builds must NEVER be synced to this repo, regardless of allow_failed.
         if is_nvr_embargoed(nvr) or getattr(record, "embargoed", False):
             self._logger.warning("Skipping %s: NVR is embargoed and must not be synced", nvr)
             return
+
+        # SAFETY GUARD: a failed build (e.g. build_error) may have no image to mirror.
+        if not record.image_pullspec:
+            raise ValueError(f"record {record.record_id} for {nvr} has no image_pullspec; cannot sync")
 
         # X.Y version derived from the record version (e.g. "4.18.0" -> "4.18").
         major_minor = ".".join((record.version or "").split(".")[:2])
@@ -133,10 +200,28 @@ class SyncNvrToQuayPipeline:
     show_default=True,
     help="Target quay repo to sync into. Must be on the server-side allowlist.",
 )
+@click.option(
+    "--allow-failed",
+    is_flag=True,
+    default=False,
+    help="Also consider terminal failed builds (e.g. its_error) in addition to successful ones. "
+    "Embargoed builds are still never synced.",
+)
+@click.option(
+    "--record-id",
+    default="",
+    help="Konflux build record_id, used to disambiguate when multiple records exist for one NVR.",
+)
 @pass_runtime
 @click_coroutine
-async def sync_nvr_to_quay_cli(runtime: Runtime, nvr: str, target_repo: str):
+async def sync_nvr_to_quay_cli(runtime: Runtime, nvr: str, target_repo: str, allow_failed: bool, record_id: str):
     """CLI entrypoint for the sync-nvr-to-quay pipeline."""
     nvrs = [n.strip() for n in nvr.split(",") if n.strip()]
-    pipeline = SyncNvrToQuayPipeline(runtime, nvrs=nvrs, target_repo=target_repo)
+    pipeline = SyncNvrToQuayPipeline(
+        runtime,
+        nvrs=nvrs,
+        target_repo=target_repo,
+        allow_failed=allow_failed,
+        record_id=record_id,
+    )
     await pipeline.run()
