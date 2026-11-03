@@ -13,6 +13,7 @@ from collections import Counter
 from dataclasses import dataclass
 from io import StringIO
 from pathlib import Path
+from time import monotonic
 from typing import Dict, Sequence
 from urllib.parse import urlparse
 
@@ -32,8 +33,7 @@ YAML = new_roundtrip_yaml_handler()
 _TIMESTAMP_RE = re.compile(r"(\d{14})$")
 _PROD_RELEASE_LABEL_PREFIX = "prod-release"
 _STAGE_RELEASE_SUCCESS_LABEL = "stage-release-success"
-_MR_CREATION_ATTEMPTS = 3
-_MR_CREATION_RETRY_DELAY_SECONDS = 5
+_MR_CREATION_RETRY_DELAYS_SECONDS = (5, 10, 20, 30, 30, 30)
 
 
 class ShipmentMRValidationError(ValueError):
@@ -111,7 +111,8 @@ async def create_shipment_mr_with_retry(source_project, attributes: dict, logger
 
     GitLab can briefly return ``source_branch: does not exist`` immediately
     after accepting a new branch push. Retry only that known transient error;
-    all other MR creation failures remain immediate and unchanged.
+    all other MR creation failures remain immediate and unchanged. Allow seven
+    attempts with 125 seconds of total backoff, reusing the pushed branch.
 
     Args:
         source_project: Python-gitlab project that owns the source branch.
@@ -126,7 +127,9 @@ async def create_shipment_mr_with_retry(source_project, attributes: dict, logger
             source branch remains unavailable after all attempts.
     """
     source_branch = attributes.get('source_branch', '<unknown>')
-    for attempt in range(1, _MR_CREATION_ATTEMPTS + 1):
+    attempts = len(_MR_CREATION_RETRY_DELAYS_SECONDS) + 1
+    started_at = monotonic()
+    for attempt in range(1, attempts + 1):
         try:
             return source_project.mergerequests.create(attributes)
         except GitlabCreateError as exc:
@@ -135,15 +138,30 @@ async def create_shipment_mr_with_retry(source_project, attributes: dict, logger
             missing_source_branch = exc.response_code == 400 and any(
                 'does not exist' in str(error).lower() for error in source_errors
             )
-            if not missing_source_branch or attempt == _MR_CREATION_ATTEMPTS:
+            if not missing_source_branch:
                 raise
+            elapsed = monotonic() - started_at
+            if attempt == attempts:
+                logger.error(
+                    "GitLab still cannot find branch %s in project %s after %d MR creation attempts (%.1fs elapsed)",
+                    source_branch,
+                    source_project.path_with_namespace,
+                    attempts,
+                    elapsed,
+                )
+                raise
+            delay = _MR_CREATION_RETRY_DELAYS_SECONDS[attempt - 1]
             logger.warning(
-                "GitLab has not recognized newly pushed branch %s yet; retrying MR creation (%d/%d)",
+                "GitLab cannot find newly pushed branch %s in project %s (%.1fs elapsed); "
+                "retrying MR creation in %ds (%d/%d)",
                 source_branch,
+                source_project.path_with_namespace,
+                elapsed,
+                delay,
                 attempt + 1,
-                _MR_CREATION_ATTEMPTS,
+                attempts,
             )
-            await asyncio.sleep(_MR_CREATION_RETRY_DELAY_SECONDS)
+            await asyncio.sleep(delay)
 
     raise AssertionError("Unreachable")
 

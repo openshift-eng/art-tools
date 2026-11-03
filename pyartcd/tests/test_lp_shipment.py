@@ -1,8 +1,9 @@
 import asyncio
+import logging
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from types import SimpleNamespace
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, call, patch
 
 import pytest
 from artcommonlib.util import new_roundtrip_yaml_handler
@@ -158,10 +159,57 @@ def test_create_shipment_mr_retries_transient_missing_branch(mock_sleep):
 
 
 @patch("pyartcd.lp_shipment.asyncio.sleep", new_callable=AsyncMock)
-def test_create_shipment_mr_does_not_retry_other_errors(mock_sleep):
+@pytest.mark.parametrize("missing_branch_attempts", [0, 6])
+def test_create_shipment_mr_succeeds_within_retry_window(mock_sleep, missing_branch_attempts):
+    """Handle immediate success and branch visibility delayed beyond the old retry window."""
+    source_project = MagicMock()
+    expected_mr = MagicMock()
+    source_project.mergerequests.create.side_effect = [
+        GitlabCreateError({'source_branch': ['does not exist']}, 400, None) for _ in range(missing_branch_attempts)
+    ] + [expected_mr]
+    attributes = {'source_branch': 'prepare-shipment-test'}
+
+    result = asyncio.run(create_shipment_mr_with_retry(source_project, attributes, MagicMock()))
+
+    assert result is expected_mr
+    assert source_project.mergerequests.create.call_args_list == [call(attributes)] * (missing_branch_attempts + 1)
+    expected_delays = [5, 10, 20, 30, 30, 30] if missing_branch_attempts else []
+    assert mock_sleep.await_args_list == [call(delay) for delay in expected_delays]
+
+
+@patch("pyartcd.lp_shipment.monotonic", side_effect=[0, 0, 5, 15, 35, 65, 95, 125])
+@patch("pyartcd.lp_shipment.asyncio.sleep", new_callable=AsyncMock)
+def test_create_shipment_mr_stops_after_retry_window(mock_sleep, mock_monotonic, caplog):
+    """Preserve the GitLab error and log branch context when retries are exhausted."""
+    source_project = MagicMock(path_with_namespace='group/project')
+    error = GitlabCreateError({'source_branch': ['does not exist']}, 400, None)
+    source_project.mergerequests.create.side_effect = error
+    attributes = {'source_branch': 'prepare-shipment-test'}
+
+    with pytest.raises(GitlabCreateError) as exc_info:
+        asyncio.run(create_shipment_mr_with_retry(source_project, attributes, logging.getLogger(__name__)))
+
+    assert exc_info.value is error
+    assert source_project.mergerequests.create.call_args_list == [call(attributes)] * 7
+    assert mock_sleep.await_args_list == [call(delay) for delay in [5, 10, 20, 30, 30, 30]]
+    assert 'branch prepare-shipment-test in project group/project' in caplog.text
+    assert 'after 7 MR creation attempts (125.0s elapsed)' in caplog.text
+
+
+@patch("pyartcd.lp_shipment.asyncio.sleep", new_callable=AsyncMock)
+@pytest.mark.parametrize(
+    "error_message, response_code",
+    [
+        ({'title': ['is invalid']}, 400),
+        ({'source_branch': ['is protected']}, 400),
+        ({'source_branch': ['does not exist']}, 403),
+        ('Internal Server Error', 500),
+    ],
+)
+def test_create_shipment_mr_does_not_retry_other_errors(mock_sleep, error_message, response_code):
     """Keep unrelated GitLab MR creation failures immediate."""
     source_project = MagicMock()
-    source_project.mergerequests.create.side_effect = GitlabCreateError({'title': ['is invalid']}, 400, None)
+    source_project.mergerequests.create.side_effect = GitlabCreateError(error_message, response_code, None)
 
     with pytest.raises(GitlabCreateError):
         asyncio.run(
