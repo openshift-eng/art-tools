@@ -7,6 +7,7 @@ from typing import Optional
 
 logger = logging.getLogger(__name__)
 
+ART_PIPELINES_UI_URL = "https://art-pipelines-ui-art-pipelines-ui.apps.artc2023.pc3z.p1.openshiftapps.com"
 ARTC2023_CONSOLE_URL = "https://console-openshift-console.apps.artc2023.pc3z.p1.openshiftapps.com"
 
 
@@ -40,7 +41,7 @@ def _get_console_url() -> str:
 
 def _build_console_pipelinerun_url(pipelinerun_name: str, namespace: Optional[str] = None) -> str:
     ns = namespace or _get_namespace()
-    return f"{_get_console_url()}/k8s/ns/{ns}/tekton.dev~v1~PipelineRun/{pipelinerun_name}"
+    return f"{ART_PIPELINES_UI_URL}/#/run/{ns}/{pipelinerun_name}?tab=logs"
 
 
 def _get_propagatable_params() -> dict:
@@ -103,7 +104,7 @@ def start_pipeline_run(
 
     When running inside a Tekton PipelineRun, the child PipelineRun is
     labelled with the parent pipeline/pipelinerun name and annotated with
-    a console URL back to the parent for build-chain traceability.
+    an ART Pipelines UI URL back to the parent for build-chain traceability.
 
     Recovery jobs can supply an explicit ``parent_run`` and ``rebuilt_from``
     ART attempt. Set ``use_current_parent=False`` to keep the recovery scan
