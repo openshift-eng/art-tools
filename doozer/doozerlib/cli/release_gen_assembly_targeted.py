@@ -212,7 +212,7 @@ class GenAssemblyTargetedCli:
 
         self.kernel_info: list[KernelInfo] = []
         self.rhcos_config: dict = {}
-        self.dtk_nvr: str = ""
+        self.dtk_nvrs: dict[str, str] = {}
         self.upgrades: str = ""
 
         self._ocp_major: int = 0
@@ -446,7 +446,7 @@ class GenAssemblyTargetedCli:
     async def _find_dtk_build(self) -> None:
         """
         Find a driver-toolkit build containing kernel-devel matching the target kernel.
-        Sets self.dtk_nvr.
+        Sets self.dtk_nvrs.
         """
         if self.runtime.build_system == "brew":
             self._find_dtk_build_brew()
@@ -456,7 +456,7 @@ class GenAssemblyTargetedCli:
     def _find_dtk_build_brew(self) -> None:
         """
         For Brew: find driver-toolkit-container build in candidate tag
-        that contains kernel-devel with matching version-release. Sets self.dtk_nvr.
+        that contains kernel-devel with matching version-release. Sets self.dtk_nvrs.
         """
         target_devel_nvrs = {ki.kernel_devel_nvr for ki in self.kernel_info}
         koji_session = koji.ClientSession(BREW_HUB)
@@ -479,7 +479,7 @@ class GenAssemblyTargetedCli:
             for build in tagged_builds:
                 if self._dtk_build_has_kernel_devel(koji_session, build, target_devel_nvrs):
                     self.logger.info("Found matching DTK build: %s", build["nvr"])
-                    self.dtk_nvr = build["nvr"]
+                    self.dtk_nvrs["driver-toolkit"] = build["nvr"]
                     return
 
             try:
@@ -497,7 +497,7 @@ class GenAssemblyTargetedCli:
                     continue
                 if self._dtk_build_has_kernel_devel(koji_session, build, target_devel_nvrs):
                     self.logger.info("Found matching DTK build: %s", build["nvr"])
-                    self.dtk_nvr = build["nvr"]
+                    self.dtk_nvrs["driver-toolkit"] = build["nvr"]
                     return
 
         raise RuntimeError(
@@ -536,7 +536,7 @@ class GenAssemblyTargetedCli:
     async def _find_dtk_build_konflux(self) -> None:
         """
         For Konflux: query KonfluxDB for driver-toolkit builds
-        containing the target kernel-devel RPM. Sets self.dtk_nvr.
+        containing the target kernel-devel RPM. Sets self.dtk_nvrs.
         """
         from artcommonlib.konflux.konflux_build_record import KonfluxBuildOutcome, KonfluxBuildRecord
         from artcommonlib.konflux.konflux_db import KonfluxDb
@@ -545,28 +545,38 @@ class GenAssemblyTargetedCli:
         konflux_db.bind(KonfluxBuildRecord)
 
         group = f"openshift-{self._ocp_major}.{self._ocp_minor}"
-        for ki in self.kernel_info:
-            self.logger.info("Searching Konflux DB for DTK with %s", ki.kernel_devel_nvr)
+        kernels_by_el = {ki.el_ver: ki for ki in self.kernel_info}
+        matched_targets: set[int] = set()
+        for meta in self.runtime.image_metas():
+            if not meta.distgit_key.startswith("driver-toolkit") or not meta.is_payload:
+                continue
+            for el_ver in meta.determine_rhel_targets():
+                ki = kernels_by_el.get(el_ver)
+                if ki is None:
+                    continue
+                self.logger.info("Searching Konflux DB for %s with %s", meta.distgit_key, ki.kernel_devel_nvr)
+                async for record in konflux_db.search_builds_by_fields(
+                    where={
+                        "name": meta.distgit_key,
+                        "group": group,
+                        "outcome": str(KonfluxBuildOutcome.SUCCESS),
+                    },
+                    array_contains={"installed_rpms": ki.kernel_devel_nvr},
+                    limit=1,
+                ):
+                    self.logger.info("Found matching DTK build in Konflux: %s", record.nvr)
+                    self.dtk_nvrs[meta.distgit_key] = record.nvr
+                    matched_targets.add(el_ver)
+                    break
+                else:
+                    raise RuntimeError(
+                        f"No {meta.distgit_key} build found in Konflux DB containing {ki.kernel_devel_nvr}. "
+                        f"DTK may need rebuilding with the target kernel headers."
+                    )
 
-            async for record in konflux_db.search_builds_by_fields(
-                where={
-                    "name": "driver-toolkit",
-                    "group": group,
-                    "outcome": str(KonfluxBuildOutcome.SUCCESS),
-                },
-                array_contains={"installed_rpms": ki.kernel_devel_nvr},
-                limit=1,
-            ):
-                self.logger.info("Found matching DTK build in Konflux: %s", record.nvr)
-                self.dtk_nvr = record.nvr
-                return
-
-        target_devel_nvrs = {ki.kernel_devel_nvr for ki in self.kernel_info}
-        raise RuntimeError(
-            f"No driver-toolkit build found in Konflux DB containing {target_devel_nvrs}. "
-            f"DTK may need rebuilding with the target kernel headers. "
-            f"Trigger a DTK build and retry."
-        )
+        missing_targets = kernels_by_el.keys() - matched_targets
+        if missing_targets:
+            raise RuntimeError(f"No driver-toolkit image configured for RHEL targets {sorted(missing_targets)}")
 
     async def _compute_upgrades(self) -> None:
         """
@@ -611,13 +621,11 @@ class GenAssemblyTargetedCli:
 
         why = f"CVE fix for {', '.join(self.params.cve_ids)}" if self.params.cve_ids else "Targeted pin"
 
-        rpm_pins = []
         image_pins = []
 
         if self.kernel_info:
-            kernel_is = {f"el{ki.el_ver}": ki.nvr for ki in self.kernel_info}
-            rpm_pins.append({"distgit_key": "kernel", "why": why, "metadata": {"is": kernel_is}})
-            image_pins.append({"distgit_key": "driver-toolkit", "why": why, "metadata": {"is": {"nvr": self.dtk_nvr}}})
+            for distgit_key, nvr in self.dtk_nvrs.items():
+                image_pins.append({"distgit_key": distgit_key, "why": why, "metadata": {"is": {"nvr": nvr}}})
 
         for nvr in self.params.image_nvrs:
             parsed = parse_nvr(nvr)
@@ -642,9 +650,7 @@ class GenAssemblyTargetedCli:
             issues_config["targeted_fixes_only"] = True
             issues_config["include"] = [{"id": bug_id} for bug_id in self.params.bug_ids]
 
-        members = {}
-        if rpm_pins:
-            members["rpms"] = rpm_pins
+        members = {"rpms": []}
         if image_pins:
             members["images"] = image_pins
 
