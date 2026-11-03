@@ -97,6 +97,33 @@ class TestSyncNvrToQuayPipelineValidation(unittest.IsolatedAsyncioTestCase):
                 record_id="rec-1",
             )
 
+    def test_realistic_nvr_passes_validation(self):
+        runtime = _make_runtime()
+        nvr = "rhcos-node-image-nvidia-container-v5.0.0-202610261547.p2.gb4b1579.assembly.stream.el10"
+        pipeline = SyncNvrToQuayPipeline(runtime, nvrs=[nvr])
+        assert pipeline.nvrs == [nvr]
+
+    def test_nvr_with_illegal_space_rejected(self):
+        runtime = _make_runtime()
+        with pytest.raises(ValueError, match="Invalid NVR"):
+            SyncNvrToQuayPipeline(runtime, nvrs=["ose-foo-4.18.0-1 extra"])
+
+    def test_nvr_with_illegal_semicolon_rejected(self):
+        runtime = _make_runtime()
+        with pytest.raises(ValueError, match="Invalid NVR"):
+            SyncNvrToQuayPipeline(runtime, nvrs=["ose-foo-4.18.0-1;rm -rf"])
+
+    def test_invalid_record_id_rejected(self):
+        runtime = _make_runtime()
+        with pytest.raises(ValueError, match="Invalid record_id"):
+            SyncNvrToQuayPipeline(runtime, nvrs=["ose-foo-4.18.0-1"], record_id="abc/def")
+
+    def test_uuid_record_id_passes_validation(self):
+        runtime = _make_runtime()
+        record_id = "123e4567-e89b-12d3-a456-426614174000"
+        pipeline = SyncNvrToQuayPipeline(runtime, nvrs=["ose-foo-4.18.0-1"], record_id=record_id)
+        assert pipeline.record_id == record_id
+
 
 class TestSyncNvrToQuayPipeline(unittest.IsolatedAsyncioTestCase):
     @mock.patch("pyartcd.pipelines.sync_nvr_to_quay.sync_to_quay", new_callable=mock.AsyncMock)

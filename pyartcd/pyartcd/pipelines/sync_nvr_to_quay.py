@@ -9,6 +9,7 @@ Embargoed NVRs are NEVER synced to the target repo.
 """
 
 import logging
+import re
 
 import click
 from artcommonlib.build_visibility import is_nvr_embargoed
@@ -30,6 +31,13 @@ ALLOWED_TARGET_REPOS = frozenset(
         KONFLUX_IMAGE_TEST_REPO,
     }
 )
+
+# Input allow-list patterns, validated before any DB query so untrusted operator input
+# cannot reach the query layer. The NVR pattern is permissive enough for real NVRs
+# (e.g. "rhcos-node-image-nvidia-container-v5.0.0-202610261547.p2.gb4b1579.assembly.stream.el10")
+# while still rejecting whitespace and shell/SQL metacharacters.
+NVR_PATTERN = re.compile(r"^[A-Za-z0-9._+~-]{1,256}$")
+RECORD_ID_PATTERN = re.compile(r"^[A-Za-z0-9-]{1,64}$")
 
 
 async def sync_image_to_quay(
@@ -65,6 +73,15 @@ class SyncNvrToQuayPipeline:
         allow_failed: bool = False,
         record_id: str = "",
     ) -> None:
+        """Initialize the pipeline and validate its parameters.
+
+        :param runtime: PyARTCD runtime instance.
+        :param nvrs: List of one or more NVRs to sync.
+        :param target_repo: Target quay repo; must be on the server-side allowlist.
+        :param allow_failed: Also consider terminal failed builds (e.g. its_error).
+        :param record_id: Konflux build record_id to disambiguate multiple records for one NVR.
+        :raises ValueError: If any parameter fails validation.
+        """
         self.runtime = runtime
         self._logger = runtime.logger
         self.nvrs = nvrs
@@ -75,13 +92,27 @@ class SyncNvrToQuayPipeline:
         self._validate_parameters()
 
     def _validate_parameters(self) -> None:
-        """Validate the NVR list and enforce the target-repo allowlist."""
+        """Validate inputs (allowlist + format) before any DB query is issued."""
         if not self.nvrs:
             raise ValueError("At least one NVR is required")
 
         if self.target_repo not in ALLOWED_TARGET_REPOS:
             raise ValueError(
                 f"Target repo {self.target_repo!r} is not allowed. Allowed repos: {sorted(ALLOWED_TARGET_REPOS)}"
+            )
+
+        # Allow-list each NVR's format before it can reach the DB query layer.
+        for nvr in self.nvrs:
+            if not NVR_PATTERN.match(nvr):
+                raise ValueError(
+                    f"Invalid NVR {nvr!r}: must match {NVR_PATTERN.pattern} (letters, digits, '.', '-', '_', '+', '~')."
+                )
+
+        # Allow-list the record_id's format before it can reach the DB query layer.
+        if self.record_id and not RECORD_ID_PATTERN.match(self.record_id):
+            raise ValueError(
+                f"Invalid record_id {self.record_id!r}: must match {RECORD_ID_PATTERN.pattern} "
+                "(letters, digits, and '-')."
             )
 
         # --record-id disambiguates a single NVR; it is meaningless for several NVRs at once.
@@ -172,6 +203,7 @@ class SyncNvrToQuayPipeline:
         self._logger.info("Done syncing %s", nvr)
 
     async def run(self) -> None:
+        """Bind the Konflux DB and sync each configured NVR in turn."""
         self._logger.info("Starting sync-nvr-to-quay for %s NVR(s) -> %s", len(self.nvrs), self.target_repo)
 
         db = KonfluxDb()
