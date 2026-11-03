@@ -200,6 +200,23 @@ class GenAssemblyTargetedPipeline:
             raise ChildProcessError(f"doozer command failed (rc={rc}): {out}")
         return yaml.load(out)
 
+    def _rpm_review_body(self) -> str:
+        """
+        Include RPM pin reasons and proposed kernel claims from archived doozer logs.
+        """
+        review_dir = self._working_dir / "doozer-working"
+        review_file = review_dir / "targeted-rpm-review.log"
+        if not review_file.is_file():
+            return ""
+        body = "\n\n" + review_file.read_text()
+        build_url = jenkins.get_build_url()
+        if build_url:
+            artifact = "artifact/" + str(
+                (review_dir / "targeted-rpm-evidence.log").relative_to(self._working_dir.parent)
+            )
+            body += f"\n[Full RPM and kernel issue evidence]({build_url.rstrip('/')}/{artifact})\n"
+        return body
+
     async def _create_or_update_pull_request(self, assembly_definition: dict):
         """
         Create or update pull request for ocp-build-data using shared PR logic.
@@ -214,6 +231,7 @@ class GenAssemblyTargetedPipeline:
             f"Basis assembly: {self.basis_assembly}\n"
             f"Bugs: {', '.join(self.bug_ids)}\n"
             f"Created by job run {jenkins.get_build_url()}"
+            f"{self._rpm_review_body()}"
         )
 
         return await create_or_update_assembly_pr(

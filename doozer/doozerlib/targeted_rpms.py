@@ -14,6 +14,7 @@ from artcommonlib.rpm_utils import parse_nvr
 
 from doozerlib.rhcos import RHCOSBuildInspector
 from doozerlib.runtime import Runtime
+from doozerlib.targeted_rpm_evidence import TargetedRpmEvidence
 
 
 def _source_builds(
@@ -54,12 +55,15 @@ def _source_builds(
     return [build_cache[build_id] for build_id in sorted(build_ids)]
 
 
-def _managed_builds(runtime: Runtime, config: dict, metas: dict[str, Any], label: str) -> dict[tuple[str, int], str]:
+def _managed_builds(
+    runtime: Runtime, config: dict, metas: dict[str, Any], label: str
+) -> tuple[dict[tuple[str, int], str], dict[int, str]]:
     """
     Collect one installed source build per ART component and RHEL target across images.
     """
     installed: dict[tuple[str, int], str] = {}
     provenance: dict[tuple[str, int], str] = {}
+    kernels: dict[int, str] = {}
     build_cache: dict[int, dict] = {}
     with runtime.pooled_koji_client_session() as session:
         for arch in runtime.group_config.arches:
@@ -75,10 +79,19 @@ def _managed_builds(runtime: Runtime, config: dict, metas: dict[str, Any], label
                 inspector.get_os_metadata_rpm_list(), session, build_cache, set(metas), runtime.logger
             ):
                 package_name = build.get("package_name") or build["name"]
+                nvr = build["nvr"]
+                if package_name == "kernel":
+                    kernel_el = isolate_el_version_in_release(parse_nvr(nvr)["release"])
+                    if not kernel_el:
+                        raise ValueError(f"Unable to determine RHEL target for {nvr}")
+                    if kernel_el in kernels and kernels[kernel_el] != nvr:
+                        raise ValueError(
+                            f"Conflicting kernel source builds in {label} RHCOS for el{kernel_el}: {kernels[kernel_el]} and {nvr}"
+                        )
+                    kernels[kernel_el] = nvr
                 meta = metas.get(package_name)
                 if meta is None:
                     continue
-                nvr = build["nvr"]
                 if build.get("state") != koji.BUILD_STATES["COMPLETE"]:
                     raise ValueError(f"Installed ART source build {nvr} is not complete in Brew")
                 el_ver = isolate_el_version_in_release(parse_nvr(nvr)["release"])
@@ -93,10 +106,12 @@ def _managed_builds(runtime: Runtime, config: dict, metas: dict[str, Any], label
                     )
                 installed[key] = nvr
                 provenance[key] = arch
-    return installed
+    return installed, kernels
 
 
-def find_rhcos_rpm_pins(runtime: Runtime, rhcos_config: dict, basis_assembly: str) -> list[dict]:
+def find_rhcos_rpm_pins(
+    runtime: Runtime, rhcos_config: dict, basis_assembly: str, review: TargetedRpmEvidence | None = None
+) -> list[dict]:
     """
     Propose member overrides for changed ART source builds installed in selected RHCOS.
 
@@ -108,11 +123,15 @@ def find_rhcos_rpm_pins(runtime: Runtime, rhcos_config: dict, basis_assembly: st
         if meta.rpm_name in metas:
             raise ValueError(f"Multiple ART RPM definitions for source package {meta.rpm_name}")
         metas[meta.rpm_name] = meta
-    if not metas:
+    if not metas and review is None:
         return []
     basis_config = assembly_rhcos_config(runtime.get_releases_config(), basis_assembly).primitive()
-    before = _managed_builds(runtime, basis_config, metas, basis_assembly)
-    selected = _managed_builds(runtime, rhcos_config, metas, "selected")
+    before, basis_kernels = _managed_builds(runtime, basis_config, metas, basis_assembly)
+    selected, selected_kernels = _managed_builds(runtime, rhcos_config, metas, "selected")
+    if review is not None:
+        for el_ver, nvr in sorted(selected_kernels.items()):
+            if basis_kernels.get(el_ver) != nvr:
+                review.record("kernel", el_ver, basis_kernels.get(el_ver), nvr)
     pins: dict[str, dict] = {}
     for (distgit_key, el_ver), nvr in sorted(selected.items()):
         if before.get((distgit_key, el_ver)) == nvr:
@@ -126,6 +145,10 @@ def find_rhcos_rpm_pins(runtime: Runtime, rhcos_config: dict, basis_assembly: st
             },
         )
         pin["metadata"]["is"][f"el{el_ver}"] = nvr
+        if review is not None:
+            package = parse_nvr(nvr)["name"]
+            reason = review.record(package, el_ver, before.get((distgit_key, el_ver)), nvr)
+            pin["why"] += "\n" + reason
         runtime.logger.info(
             "Pinning ART RPM %s/el%s to %s (basis RHCOS: %s)",
             distgit_key,

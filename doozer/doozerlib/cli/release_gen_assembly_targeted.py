@@ -27,6 +27,7 @@ import logging
 import os
 import sys
 import tempfile
+from pathlib import Path
 
 import click
 import koji
@@ -53,6 +54,7 @@ from doozerlib.cli import click_coroutine, pass_runtime
 from doozerlib.cli.release_gen_assembly import releases_gen_assembly
 from doozerlib.rhcos import RHCOSBuildFinder
 from doozerlib.runtime import Runtime
+from doozerlib.targeted_rpm_evidence import TargetedRpmEvidence
 from doozerlib.targeted_rpms import find_rhcos_rpm_pins
 from doozerlib.util import infer_assembly_type
 
@@ -235,7 +237,16 @@ class GenAssemblyTargetedCli:
             self._validate_and_parse_kernel_nvrs()
             await self._find_rhcos_build()
             await self._find_dtk_build()
-            self.rpm_pins = find_rhcos_rpm_pins(self.runtime, self.rhcos_config, self.params.basis_assembly)
+            review = TargetedRpmEvidence(
+                self.runtime, self.params.basis_assembly, self.params.bug_ids, self.params.cve_ids
+            )
+            self.rpm_pins = find_rhcos_rpm_pins(
+                self.runtime, self.rhcos_config, self.params.basis_assembly, review=review
+            )
+            review.write(Path(self.runtime.working_dir))
+            self.logger.info(
+                "RPM pin reasons and kernel CVE claim candidates: %s/targeted-rpm-review.log", self.runtime.working_dir
+            )
         await self._compute_upgrades()
         return self._build_assembly_definition()
 

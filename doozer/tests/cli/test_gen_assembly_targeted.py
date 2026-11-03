@@ -554,12 +554,14 @@ class TestFindDtkBuildKonflux(IsolatedAsyncioTestCase):
 
 
 class TestTargetedRpmPinIntegration(IsolatedAsyncioTestCase):
+    @patch("doozerlib.cli.release_gen_assembly_targeted.TargetedRpmEvidence")
     @patch("doozerlib.cli.release_gen_assembly_targeted.find_rhcos_rpm_pins")
-    async def test_selected_rhcos_rpm_overrides_are_emitted(self, find_pins):
+    async def test_selected_rhcos_rpm_overrides_are_emitted(self, find_pins, review_cls):
         """
         Wire detected CRI-O source builds into member pins while preserving kernel dependencies.
         """
         cli = _make_cli()
+        cli.runtime.working_dir = "/tmp/targeted-rpm-test"
         cli.kernel_info = [_make_kernel_info()]
         cli.rhcos_config = {"rhel-coreos": {"images": {"x86_64": "repo/image@sha256:new"}}}
         cli.dtk_nvrs = {"driver-toolkit": "driver-toolkit-container-v4.17.0-test.el9"}
@@ -578,7 +580,8 @@ class TestTargetedRpmPinIntegration(IsolatedAsyncioTestCase):
         assembly = result["releases"]["4.17.5"]["assembly"]
         self.assertEqual(assembly["members"]["rpms"], find_pins.return_value)
         self.assertEqual(assembly["group"]["dependencies"]["rpms"][0]["el9"], cli.kernel_info[0].nvr)
-        find_pins.assert_called_once_with(cli.runtime, cli.rhcos_config, "4.17.4")
+        find_pins.assert_called_once_with(cli.runtime, cli.rhcos_config, "4.17.4", review=review_cls.return_value)
+        review_cls.return_value.write.assert_called_once()
 
     @patch("doozerlib.cli.release_gen_assembly_targeted.find_rhcos_rpm_pins")
     async def test_image_only_assembly_skips_rhcos_rpm_detection(self, find_pins):

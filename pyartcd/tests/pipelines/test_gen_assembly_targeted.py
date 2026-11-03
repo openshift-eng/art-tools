@@ -1,5 +1,6 @@
 import os
 from pathlib import Path
+from tempfile import TemporaryDirectory
 from unittest import IsolatedAsyncioTestCase
 from unittest.mock import ANY, AsyncMock, MagicMock, patch
 
@@ -154,3 +155,23 @@ class TestRunPipeline(IsolatedAsyncioTestCase):
 
         slack_client = runtime.new_slack_client.return_value
         self.assertTrue(any("Error" in str(call) for call in slack_client.say.call_args_list))
+
+
+class TestRpmReviewBody(IsolatedAsyncioTestCase):
+    @patch("pyartcd.pipelines.gen_assembly_targeted.jenkins.get_build_url", return_value="https://jenkins/job/1/")
+    @patch("pyartcd.pipelines.gen_assembly_targeted.create_or_update_assembly_pr", new_callable=AsyncMock)
+    async def test_pin_reasons_and_claim_proposals_are_visible_in_pr(self, create_pr, build_url):
+        """
+        Include the archived issue review and evidence link in the generated assembly PR.
+        """
+        with TemporaryDirectory() as directory:
+            runtime = _make_runtime()
+            runtime.working_dir = Path(directory) / "artcd_working"
+            review_dir = runtime.working_dir / "doozer-working"
+            review_dir.mkdir(parents=True)
+            (review_dir / "targeted-rpm-review.log").write_text("Kernel claim proposal: OCPBUGS-200 / CVE-2026-2000")
+            pipeline = _make_pipeline(runtime=runtime)
+            await pipeline._create_or_update_pull_request({"releases": {}})
+            body = create_pr.call_args.kwargs["body"]
+            self.assertIn("OCPBUGS-200 / CVE-2026-2000", body)
+            self.assertIn("https://jenkins/job/1/artifact/artcd_working/doozer-working/targeted-rpm-evidence.log", body)

@@ -137,6 +137,28 @@ class TestRhcosRpmPins(TestCase):
         self.assertEqual(pins[0]["distgit_key"], "cri-o-distgit")
         self.assertEqual(pins[0]["metadata"]["is"], {"el9": "cri-o-5.0.0-202610292257.p2.g9186725.assembly.stream.el9"})
 
+    def test_review_receives_both_kernel_changes_and_art_pin_changes(self):
+        """
+        Inspect external kernel source builds for claims as well as ART RPM changes.
+        """
+        for arch in self.runtime.group_config.arches:
+            self.inventories[("before", arch)] += self._entries("kernel", "1.el9_8", 100, arch)
+            self.inventories[("after", arch)] += self._entries("kernel", "2.el9_8", 200, arch)
+        review = MagicMock()
+        review.record.return_value = "Triggered by OCPBUGS-135021; new references: CVE-2026-2000"
+        with patch("doozerlib.targeted_rpms.RHCOSBuildInspector", side_effect=self._inspect):
+            pins = find_rhcos_rpm_pins(self.runtime, self.after, "5.0.0", review=review)
+        review.record.assert_any_call("kernel", 9, "kernel-5.0.0-1.el9_8", "kernel-5.0.0-2.el9_8")
+        review.record.assert_any_call(
+            "cri-o",
+            9,
+            "cri-o-5.0.0-202610221550.p2.g4f5848d.assembly.stream.el9",
+            "cri-o-5.0.0-202610292257.p2.g9186725.assembly.stream.el9",
+        )
+        self.assertIn("OCPBUGS-135021", pins[0]["why"])
+        self.assertIn("CVE-2026-2000", pins[0]["why"])
+        self.assertEqual(len(pins), 1)
+
     def test_unchanged_art_build_needs_no_override(self):
         """
         Preserve inherited pins when the installed source build did not change.
