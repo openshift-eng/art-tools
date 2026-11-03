@@ -769,6 +769,11 @@ class TestBuildLayeredProductsPipeline(IsolatedAsyncioTestCase):
             ('openshift-4.22', None, {'version': '4.22.1'}, 'ocp', '4.22.1'),
             ('openshift-4.22', '4.22.2', {'version': '4.22.1'}, 'ocp', '4.22.2'),
             ('oadp-1.4', None, {'product': 'oadp', 'version': '1.4.9'}, 'oadp', '1.4.9'),
+            ('acm-5.1', None, {'version': 'auto'}, 'ocp', '5.1.0'),
+            ('mce-5.1', None, {'version': 'auto'}, 'ocp', '5.1.0'),
+            ('openshift-4.22', None, {'version': 'auto'}, 'ocp', '4.22.0'),
+            ('acm-5.1', '5.1.2', {'version': 'auto'}, 'ocp', '5.1.2'),
+            ('acm-5.1', 'auto', {'version': '5.1.2'}, 'ocp', '5.1.0'),
         ]
         for group, version, config, expected_product, expected_version in cases:
             with self.subTest(group=group, version=version, config=config):
@@ -784,6 +789,31 @@ class TestBuildLayeredProductsPipeline(IsolatedAsyncioTestCase):
                 self.assertEqual(self.pipeline.version, expected_version)
                 mock_build.assert_awaited_once_with(expected_product, KONFLUX_DEFAULT_IMAGE_REPO)
                 mock_trigger.assert_called_once()
+
+    async def test_run_auto_version_keeps_zero_patch_for_z_stream_assembly(self):
+        self.pipeline.group = 'mce-5.1'
+        self.pipeline.version = None
+        self.pipeline.assembly = '5.1.7'
+        with (
+            patch('pyartcd.pipelines.build_layered_products.load_group_config', return_value={'version': 'auto'}),
+            patch.object(self.pipeline, '_rebase_and_build', new_callable=AsyncMock),
+            patch.object(self.pipeline, 'trigger_bundle_build'),
+        ):
+            await self.pipeline.run()
+
+        self.assertEqual(self.pipeline.version, '5.1.0')
+
+    async def test_run_rejects_auto_version_without_group_version(self):
+        self.pipeline.group = 'acm-invalid'
+        self.pipeline.version = None
+        with (
+            patch('pyartcd.pipelines.build_layered_products.load_group_config', return_value={'version': 'auto'}),
+            patch.object(self.pipeline, '_rebase_and_build', new_callable=AsyncMock) as mock_build,
+            self.assertRaisesRegex(ValueError, "Cannot resolve version 'auto'.*MAJOR.MINOR"),
+        ):
+            await self.pipeline.run()
+
+        mock_build.assert_not_awaited()
 
     async def test_run_rejects_missing_version_for_layered_product_or_invalid_openshift_group(self):
         for group in ('oadp-1.4', 'openshift-invalid'):

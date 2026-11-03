@@ -23,7 +23,7 @@ from pyartcd.locks import Lock
 from pyartcd.lp_recovery import RecoveryPlanner
 from pyartcd.runtime import Runtime
 from pyartcd.stage_registry import check_bundle_in_stage_registry, resolve_stage_release_plan
-from pyartcd.util import load_group_config
+from pyartcd.util import load_group_config, resolve_build_version
 
 
 class LayeredProductsScanPipeline:
@@ -347,7 +347,8 @@ class LayeredProductsScanPipeline:
         Prefer ``version`` from group config (same source BLP uses) so rescheduled
         FBC builds get the full semver (e.g. kueue ``1.4.4``) rather than the
         group-name MAJOR.MINOR padded to ``.0``. Also loads ``OCP_TARGET_VERSIONS``
-        for multi-version FBC builds.
+        for multi-version FBC builds. ``version: auto`` derives MAJOR.MINOR.0 from
+        the group name.
         """
 
         try:
@@ -360,7 +361,7 @@ class LayeredProductsScanPipeline:
 
             cfg_version = group_config.get('version')
             if cfg_version:
-                self.version = str(cfg_version)
+                self.version = resolve_build_version(self.group, str(cfg_version))
                 self.logger.info('Using version %s from group config', self.version)
             elif self.version:
                 self.logger.info('No version in group config; keeping %s from group name', self.version)
