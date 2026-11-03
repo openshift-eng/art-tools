@@ -1284,9 +1284,7 @@ class KonfluxFbcRebaser:
             disable_channel_skips = bool(getattr(group_config.vars, "FBC_DISABLE_CHANNEL_SKIPS", False))
             has_skips_graph = any(e.get('skips') for e in channel['entries'])
             use_replaces = (not self.group.startswith("openshift-")) and (
-                has_replaces_graph
-                or disable_channel_skips
-                or not has_skips_graph
+                has_replaces_graph or disable_channel_skips or not has_skips_graph
             )
 
             if has_replaces_graph:
