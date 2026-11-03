@@ -290,7 +290,28 @@ class RhcosSyncPipeline:
         with RegistryConfig(kubeconfig=kubeconfig, source_files=source_files, registries=registries) as auth_file:
             self._registry_auth_file = auth_file
             self.logger.info("Registry auth file: %s", auth_file)
-            yield auth_file
+
+            # Export the resolved/curated auth file as QUAY_AUTH_FILE for the
+            # duration of this context, restoring the prior value on exit. This
+            # mirrors the pattern in ocp4_konflux.py. Without this, the raw
+            # multi-robot Jenkins QUAY_AUTH_FILE stays in the environment, and
+            # SigstoreSignatory/cosign — which does a hostname-only auth lookup
+            # (go-containerregistry) — collapses all quay.io/* path-scoped
+            # entries into a single "quay.io" key that may land on a konflux
+            # art-* robot with no access to ocp-v4.0-art-dev, causing cosign
+            # sign to fail UNAUTHORIZED. Pointing QUAY_AUTH_FILE at the resolved
+            # file (which contains only quay.io/openshift-release-dev and
+            # registry.ci.openshift.org) ensures the hostname-only lookup
+            # resolves quay.io to the correct openshift-release-dev push robot.
+            _prev_quay_auth = os.environ.get("QUAY_AUTH_FILE")
+            os.environ["QUAY_AUTH_FILE"] = auth_file
+            try:
+                yield auth_file
+            finally:
+                if _prev_quay_auth is not None:
+                    os.environ["QUAY_AUTH_FILE"] = _prev_quay_auth
+                else:
+                    os.environ.pop("QUAY_AUTH_FILE", None)
 
     async def run(self):
         """Execute the full RHCOS sync pipeline."""
