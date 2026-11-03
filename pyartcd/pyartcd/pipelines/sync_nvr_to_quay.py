@@ -9,13 +9,15 @@ Embargoed NVRs are NEVER synced to the target repo.
 """
 
 import logging
+import os
 import re
 
 import click
 from artcommonlib.build_visibility import is_nvr_embargoed
-from artcommonlib.constants import KONFLUX_IMAGE_TEST_REPO
+from artcommonlib.constants import KONFLUX_DEFAULT_IMAGE_REPO, KONFLUX_IMAGE_TEST_REPO, RHCOS_IMAGE_REPO
 from artcommonlib.konflux.konflux_build_record import KonfluxBuildOutcome, KonfluxBuildRecord
 from artcommonlib.konflux.konflux_db import KonfluxDb
+from artcommonlib.registry_config import RegistryConfig
 from artcommonlib.util import sync_to_quay
 
 from pyartcd.cli import cli, click_coroutine, pass_runtime
@@ -203,14 +205,48 @@ class SyncNvrToQuayPipeline:
         self._logger.info("Done syncing %s", nvr)
 
     async def run(self) -> None:
-        """Bind the Konflux DB and sync each configured NVR in turn."""
+        """Bind the Konflux DB and sync each configured NVR in turn.
+
+        The source image may live in the RHCOS repo (art-rhcos-images), which uses a
+        separate quay credential (RHCOS_QUAY_AUTH_FILE) than the default konflux creds
+        (QUAY_AUTH_FILE). sync_to_quay runs ``oc image mirror --registry-config=$QUAY_AUTH_FILE``,
+        so we build a merged auth file that covers both the source (RHCOS or konflux) and
+        the destination (art-images-test), and point QUAY_AUTH_FILE at it for the sync calls.
+        """
         self._logger.info("Starting sync-nvr-to-quay for %s NVR(s) -> %s", len(self.nvrs), self.target_repo)
 
         db = KonfluxDb()
         db.bind(KonfluxBuildRecord)
 
-        for nvr in self.nvrs:
-            await self._sync_nvr(db, nvr)
+        quay_auth_file = os.environ.get("QUAY_AUTH_FILE")
+        if not quay_auth_file:
+            # No auth file configured (e.g. a local/dev invocation); keep legacy behavior and
+            # do not attempt to build a merged registry config.
+            for nvr in self.nvrs:
+                await self._sync_nvr(db, nvr)
+            self._logger.info("sync-nvr-to-quay completed")
+            return
+
+        # Merge the default konflux creds with the RHCOS creds (when available) so the mirror
+        # can read an RHCOS source as well as a konflux source, and write to art-images-test.
+        rhcos_quay_auth_file = os.environ.get("RHCOS_QUAY_AUTH_FILE")
+        source_files = [quay_auth_file]
+        registries = [KONFLUX_DEFAULT_IMAGE_REPO, KONFLUX_IMAGE_TEST_REPO]
+        if rhcos_quay_auth_file and os.path.exists(rhcos_quay_auth_file):
+            source_files.append(rhcos_quay_auth_file)
+            registries.append(RHCOS_IMAGE_REPO)
+
+        with RegistryConfig(source_files=source_files, registries=registries) as merged_auth_file:
+            previous_auth_file = os.environ.get("QUAY_AUTH_FILE")
+            os.environ["QUAY_AUTH_FILE"] = merged_auth_file
+            try:
+                for nvr in self.nvrs:
+                    await self._sync_nvr(db, nvr)
+            finally:
+                if previous_auth_file is None:
+                    os.environ.pop("QUAY_AUTH_FILE", None)
+                else:
+                    os.environ["QUAY_AUTH_FILE"] = previous_auth_file
 
         self._logger.info("sync-nvr-to-quay completed")
 

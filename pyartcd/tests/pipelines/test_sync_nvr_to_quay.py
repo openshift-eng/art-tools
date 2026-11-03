@@ -1,8 +1,9 @@
+import os
 import unittest
 from unittest import mock
 
 import pytest
-from artcommonlib.constants import KONFLUX_IMAGE_TEST_REPO
+from artcommonlib.constants import KONFLUX_DEFAULT_IMAGE_REPO, KONFLUX_IMAGE_TEST_REPO, RHCOS_IMAGE_REPO
 from pyartcd.pipelines.sync_nvr_to_quay import SyncNvrToQuayPipeline, sync_image_to_quay
 from pyartcd.runtime import Runtime
 
@@ -316,3 +317,90 @@ class TestSyncNvrToQuayPipeline(unittest.IsolatedAsyncioTestCase):
         await pipeline.run()
 
         assert mock_sync.await_count == 2
+
+
+class TestSyncNvrToQuayMergedAuth(unittest.IsolatedAsyncioTestCase):
+    """Tests for the merged registry-auth handling in run()."""
+
+    def _patch_registry_config(self, mock_rc_cls, merged_path="/merged/auth.json"):
+        """Wire the mocked RegistryConfig context manager to yield merged_path."""
+        ctx = mock_rc_cls.return_value
+        ctx.__enter__ = mock.MagicMock(return_value=merged_path)
+        ctx.__exit__ = mock.MagicMock(return_value=False)
+        return ctx
+
+    @mock.patch("pyartcd.pipelines.sync_nvr_to_quay.os.path.exists", return_value=True)
+    @mock.patch("pyartcd.pipelines.sync_nvr_to_quay.RegistryConfig")
+    @mock.patch("pyartcd.pipelines.sync_nvr_to_quay.sync_to_quay", new_callable=mock.AsyncMock)
+    @mock.patch("pyartcd.pipelines.sync_nvr_to_quay.is_nvr_embargoed", return_value=False)
+    @mock.patch("pyartcd.pipelines.sync_nvr_to_quay.KonfluxDb")
+    async def test_rhcos_auth_merges_both_source_files_and_repos(
+        self, mock_db_cls, mock_embargo, mock_sync, mock_rc_cls, mock_exists
+    ):
+        self._patch_registry_config(mock_rc_cls)
+        runtime = _make_runtime(dry_run=False)
+        _db_with_results(mock_db_cls, [_make_record(name="ose-foo", image_tag="foo-tag")])
+
+        captured = {}
+
+        async def _capture(*args, **kwargs):
+            captured["quay_auth_file"] = os.environ.get("QUAY_AUTH_FILE")
+
+        mock_sync.side_effect = _capture
+
+        env = {"QUAY_AUTH_FILE": "/default/auth.json", "RHCOS_QUAY_AUTH_FILE": "/rhcos/auth.json"}
+        with mock.patch.dict(os.environ, env, clear=False):
+            pipeline = SyncNvrToQuayPipeline(runtime, nvrs=["ose-foo-4.18.0-1"])
+            await pipeline.run()
+            # QUAY_AUTH_FILE restored to the original default after run()
+            assert os.environ.get("QUAY_AUTH_FILE") == "/default/auth.json"
+
+        # Both source files passed; registries include RHCOS repo.
+        kwargs = mock_rc_cls.call_args.kwargs
+        assert kwargs["source_files"] == ["/default/auth.json", "/rhcos/auth.json"]
+        assert kwargs["registries"] == [KONFLUX_DEFAULT_IMAGE_REPO, KONFLUX_IMAGE_TEST_REPO, RHCOS_IMAGE_REPO]
+        # During the sync, QUAY_AUTH_FILE pointed at the merged file.
+        assert captured["quay_auth_file"] == "/merged/auth.json"
+
+    @mock.patch("pyartcd.pipelines.sync_nvr_to_quay.os.path.exists", return_value=True)
+    @mock.patch("pyartcd.pipelines.sync_nvr_to_quay.RegistryConfig")
+    @mock.patch("pyartcd.pipelines.sync_nvr_to_quay.sync_to_quay", new_callable=mock.AsyncMock)
+    @mock.patch("pyartcd.pipelines.sync_nvr_to_quay.is_nvr_embargoed", return_value=False)
+    @mock.patch("pyartcd.pipelines.sync_nvr_to_quay.KonfluxDb")
+    async def test_without_rhcos_auth_uses_only_default_source(
+        self, mock_db_cls, mock_embargo, mock_sync, mock_rc_cls, mock_exists
+    ):
+        self._patch_registry_config(mock_rc_cls)
+        runtime = _make_runtime(dry_run=False)
+        _db_with_results(mock_db_cls, [_make_record(name="ose-foo", image_tag="foo-tag")])
+
+        # Ensure RHCOS_QUAY_AUTH_FILE is absent for this run.
+        env = {"QUAY_AUTH_FILE": "/default/auth.json"}
+        with mock.patch.dict(os.environ, env, clear=False):
+            os.environ.pop("RHCOS_QUAY_AUTH_FILE", None)
+            pipeline = SyncNvrToQuayPipeline(runtime, nvrs=["ose-foo-4.18.0-1"])
+            await pipeline.run()
+
+        kwargs = mock_rc_cls.call_args.kwargs
+        assert kwargs["source_files"] == ["/default/auth.json"]
+        assert kwargs["registries"] == [KONFLUX_DEFAULT_IMAGE_REPO, KONFLUX_IMAGE_TEST_REPO]
+        assert RHCOS_IMAGE_REPO not in kwargs["registries"]
+        mock_sync.assert_awaited_once()
+
+    @mock.patch("pyartcd.pipelines.sync_nvr_to_quay.RegistryConfig")
+    @mock.patch("pyartcd.pipelines.sync_nvr_to_quay.sync_to_quay", new_callable=mock.AsyncMock)
+    @mock.patch("pyartcd.pipelines.sync_nvr_to_quay.is_nvr_embargoed", return_value=False)
+    @mock.patch("pyartcd.pipelines.sync_nvr_to_quay.KonfluxDb")
+    async def test_no_quay_auth_file_skips_merge(self, mock_db_cls, mock_embargo, mock_sync, mock_rc_cls):
+        runtime = _make_runtime(dry_run=False)
+        _db_with_results(mock_db_cls, [_make_record(name="ose-foo", image_tag="foo-tag")])
+
+        with mock.patch.dict(os.environ, {}, clear=False):
+            os.environ.pop("QUAY_AUTH_FILE", None)
+            os.environ.pop("RHCOS_QUAY_AUTH_FILE", None)
+            pipeline = SyncNvrToQuayPipeline(runtime, nvrs=["ose-foo-4.18.0-1"])
+            await pipeline.run()
+
+        # Without QUAY_AUTH_FILE, no merged config is built, but the sync still runs.
+        mock_rc_cls.assert_not_called()
+        mock_sync.assert_awaited_once()
