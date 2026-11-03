@@ -743,7 +743,21 @@ class SigstoreSignatory:
             cmd.extend(["--authfile", quay_auth_file])
         cmd.append(f"docker://{sig_tag}")
 
-        rc, stdout, stderr = await exectools.cmd_gather_async(cmd, check=False, env=self.ENV)
+        try:
+            rc, stdout, stderr = await exectools.cmd_gather_async(cmd, check=False, env=self.ENV)
+        except Exception as exc:
+            # cmd_gather_async launches the subprocess before its own try block, so a missing or
+            # unlaunchable skopeo (FileNotFoundError/PermissionError/OSError) raises here instead of
+            # returning a non-zero rc. Fail OPEN: fall back to the precise per-identity cosign verify
+            # (which itself fails open to signing) rather than let the exception abort the batch.
+            # Do not catch BaseException so asyncio.CancelledError still propagates.
+            log.debug(
+                "Could not launch signature existence check for %s (sig tag %s): %s; assuming signature may exist",
+                pullspec,
+                sig_tag,
+                exc,
+            )
+            return True
         if rc == 0:
             # The .sig object exists -> some signature is present.
             return True
@@ -811,7 +825,18 @@ class SigstoreSignatory:
 
         cmd.append(pullspec)
 
-        rc, stdout, stderr = await exectools.cmd_gather_async(cmd, check=False, env=self.ENV)
+        try:
+            rc, stdout, stderr = await exectools.cmd_gather_async(cmd, check=False, env=self.ENV)
+        except Exception as exc:
+            # cmd_gather_async launches the subprocess before its own try block, so a missing or
+            # unlaunchable cosign (FileNotFoundError/PermissionError/OSError) raises here instead of
+            # returning a non-zero rc. Fail OPEN: treat as not signed so the caller re-signs rather
+            # than let the exception abort the batch. Do not catch BaseException so
+            # asyncio.CancelledError still propagates.
+            log.warning(
+                f"Could not launch cosign verify for {pullspec} (identity={identity}): {exc}; treating as not signed"
+            )
+            return False
         if rc != 0:
             # Not signed by us (or not verifiable) -> treat as not signed, re-sign.
             # Redact any URL credentials from stderr before logging (mirrors cmd_gather_async's

@@ -797,3 +797,38 @@ class TestSigstoreSignatory(IsolatedAsyncioTestCase):
         self.assertEqual(mock_cmd.await_count, 2)
         for call in mock_cmd.await_args_list:
             self.assertEqual(call.args[0][:2], ["cosign", "sign"])
+
+    @patch("pyartcd.signatory.exectools.cmd_gather_async", new_callable=AsyncMock)
+    async def test_signature_exists_false_on_unexpected_json_shapes(self, mock_cmd):
+        """_signature_exists fails OPEN (returns False, no raise) on valid JSON with unexpected shapes.
+
+        cosign may exit 0 yet emit something other than a list of well-formed payload dicts. Each of
+        these must be treated as 'signature not found' so the caller re-signs rather than raising.
+        """
+        signatory = self._create_signatory()
+
+        for stdout in ("null", "{}", "[null]", '["x"]', '[{"critical": null}]', '[{"critical": {"identity": null}}]'):
+            with self.subTest(stdout=stdout):
+                mock_cmd.return_value = (0, stdout, "")
+                result = await signatory._signature_exists("quay.io/x@sha256:a", "quay.io/x:tag", "test-key-id")
+                self.assertFalse(result)
+
+    @patch("pyartcd.signatory.exectools.cmd_gather_async", new_callable=AsyncMock)
+    async def test_signature_exists_false_when_cosign_cannot_launch(self, mock_cmd):
+        """_signature_exists fails OPEN (returns False, no raise) when cosign cannot be launched."""
+        signatory = self._create_signatory()
+        mock_cmd.side_effect = FileNotFoundError("cosign")
+
+        result = await signatory._signature_exists("quay.io/x@sha256:a", "quay.io/x:tag", "test-key-id")
+
+        self.assertFalse(result)
+
+    @patch("pyartcd.signatory.exectools.cmd_gather_async", new_callable=AsyncMock)
+    async def test_any_signature_exists_true_when_skopeo_cannot_launch(self, mock_cmd):
+        """_any_signature_exists fails OPEN (returns True, no raise) when skopeo cannot be launched."""
+        signatory = self._create_signatory()
+        mock_cmd.side_effect = FileNotFoundError("skopeo")
+
+        result = await signatory._any_signature_exists("quay.io/x/y@sha256:abc123")
+
+        self.assertTrue(result)
