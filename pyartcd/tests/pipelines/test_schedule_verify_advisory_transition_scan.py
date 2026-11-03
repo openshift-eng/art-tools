@@ -11,7 +11,9 @@ def make_mr(title="Shipment for 4.22.9", labels=None, state="opened", iid=42):
         iid=iid,
         title=title,
         state=state,
-        labels=["stage-release-success", "verify-release-success"] if labels is None else labels,
+        labels=["stage-release-success", "prod-release-success", "verify-release-success"]
+        if labels is None
+        else labels,
     )
 
 
@@ -32,7 +34,7 @@ class TestScheduleVerifyAdvisoryTransitionScan(unittest.IsolatedAsyncioTestCase)
         self.gitlab.list_merge_requests.assert_called_once_with(
             "hybrid-platforms/art/ocp-shipment-data",
             state="all",
-            labels=["stage-release-success", "verify-release-success"],
+            labels=["stage-release-success", "prod-release-success", "verify-release-success"],
             per_page=100,
         )
         self.assertEqual(
@@ -52,21 +54,40 @@ class TestScheduleVerifyAdvisoryTransitionScan(unittest.IsolatedAsyncioTestCase)
 
     async def test_skips_completed_failed_unverified_and_non_ocp_releases(self):
         self.gitlab.list_merge_requests.return_value = [
-            make_mr(labels=["stage-release-success", "verify-release-success", "advisory-transition-success"]),
-            make_mr(labels=["stage-release-success", "verify-release-success", "advisory-transition-fail"]),
+            make_mr(
+                labels=[
+                    "stage-release-success",
+                    "prod-release-success",
+                    "verify-release-success",
+                    "advisory-transition-success",
+                ]
+            ),
+            make_mr(
+                labels=[
+                    "stage-release-success",
+                    "prod-release-success",
+                    "verify-release-success",
+                    "advisory-transition-fail",
+                ]
+            ),
             make_mr(labels=[]),
             make_mr("Shipment for logging 6.5.2"),
         ]
         await scan_and_trigger(self.runtime)
         self.trigger.assert_not_called()
 
-    async def test_requires_both_stage_and_verification_success(self):
+    async def test_requires_stage_prod_and_verification_success(self):
         for labels in (
             [],
             ["stage-release-success"],
+            ["prod-release-success"],
             ["verify-release-success"],
+            ["stage-release-success", "prod-release-success"],
+            ["stage-release-success", "verify-release-success"],
+            ["prod-release-success", "verify-release-success"],
             ["verify-release-success", "stage-release-skipped"],
             ["verify-release-success", "stage-release-fail"],
+            ["stage-release-success", "verify-release-success", "prod-release-fail"],
         ):
             with self.subTest(labels=labels):
                 self.gitlab.list_merge_requests.return_value = [make_mr(labels=labels)]
@@ -74,11 +95,20 @@ class TestScheduleVerifyAdvisoryTransitionScan(unittest.IsolatedAsyncioTestCase)
                 self.trigger.assert_not_called()
 
     async def test_release_becomes_eligible_after_stage_succeeds(self):
-        mr = make_mr(labels=["verify-release-success"])
+        mr = make_mr(labels=["prod-release-success", "verify-release-success"])
         self.gitlab.list_merge_requests.return_value = [mr]
         await scan_and_trigger(self.runtime)
         self.trigger.assert_not_called()
         mr.labels.append("stage-release-success")
+        await scan_and_trigger(self.runtime)
+        self.trigger.assert_called_once_with(version="4.22", assembly="4.22.9", block_until_building=False)
+
+    async def test_release_becomes_eligible_after_prod_succeeds(self):
+        mr = make_mr(labels=["stage-release-success", "verify-release-success"])
+        self.gitlab.list_merge_requests.return_value = [mr]
+        await scan_and_trigger(self.runtime)
+        self.trigger.assert_not_called()
+        mr.labels.append("prod-release-success")
         await scan_and_trigger(self.runtime)
         self.trigger.assert_called_once_with(version="4.22", assembly="4.22.9", block_until_building=False)
 
