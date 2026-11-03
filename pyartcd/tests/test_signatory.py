@@ -328,6 +328,7 @@ class TestSigstoreSignatory(IsolatedAsyncioTestCase):
     async def test_sign_manifest_with_canonical_tag(self):
         """Test signing a manifest with canonical tag signs with both digest and tag identities"""
         signatory = self._create_signatory()
+        signatory._signature_exists = AsyncMock(return_value=False)
 
         pullspec = "quay.io/openshift-release-dev/ocp-release@sha256:abc123"
         canonical_tag = "4.16.1-x86_64"
@@ -341,6 +342,7 @@ class TestSigstoreSignatory(IsolatedAsyncioTestCase):
     async def test_sign_manifest_without_canonical_tag(self):
         """Test signing a manifest without canonical tag signs with digest identity only"""
         signatory = self._create_signatory()
+        signatory._signature_exists = AsyncMock(return_value=False)
 
         pullspec = "quay.io/openshift-release-dev/ocp-v4.0-art-dev@sha256:abc123"
         result = await signatory._sign_manifest(pullspec)
@@ -363,6 +365,7 @@ class TestSigstoreSignatory(IsolatedAsyncioTestCase):
             with self.subTest(rekor_url=rekor_url):
                 mock_cmd.reset_mock()
                 signatory = self._create_signatory(dry_run=False, rekor_url=rekor_url)
+                signatory._signature_exists = AsyncMock(return_value=False)
 
                 result = await signatory._sign_manifest(pullspec, canonical_tag)
 
@@ -390,6 +393,7 @@ class TestSigstoreSignatory(IsolatedAsyncioTestCase):
         from pyartcd.signatory import ReleaseImageInfo
 
         signatory = self._create_signatory()
+        signatory._signature_exists = AsyncMock(return_value=False)
 
         # Simulate a manifest list where multiple arch manifests are discovered
         release_info = ReleaseImageInfo(
@@ -411,6 +415,7 @@ class TestSigstoreSignatory(IsolatedAsyncioTestCase):
     async def test_sign_component_images(self):
         """Test signing component images signs with digest identity only"""
         signatory = self._create_signatory()
+        signatory._signature_exists = AsyncMock(return_value=False)
 
         component_images = [
             "quay.io/openshift-release-dev/ocp-v4.0-art-dev@sha256:comp1",
@@ -431,6 +436,7 @@ class TestSigstoreSignatory(IsolatedAsyncioTestCase):
         from pyartcd.signatory import ReleaseImageInfo
 
         signatory = self._create_signatory(dry_run=False, batch_retries=2, batch_retry_delay=0)
+        signatory._signature_exists = AsyncMock(return_value=False)
 
         ps_ok = "quay.io/ocp-release@sha256:aaa"
         ps_fail = "quay.io/ocp-release@sha256:bbb"
@@ -521,3 +527,164 @@ class TestSigstoreSignatory(IsolatedAsyncioTestCase):
         err_msg = str(result[ps])
         self.assertIn("identity=", err_msg)
         self.assertIn("key=my-key-123", err_msg)
+
+    @patch("pyartcd.signatory.exectools.cmd_gather_async", new_callable=AsyncMock)
+    async def test_signature_exists_true_when_identity_matches(self, mock_cmd):
+        """_signature_exists returns True when verify succeeds and a payload matches the identity"""
+        signatory = self._create_signatory()
+
+        pullspec = "quay.io/openshift-release-dev/ocp-release@sha256:abc123"
+        identity = "quay.io/openshift-release-dev/ocp-release:4.16.1-x86_64"
+        payloads = [
+            {"critical": {"identity": {"docker-reference": "quay.io/other:tag"}}},
+            {"critical": {"identity": {"docker-reference": identity}}},
+        ]
+        mock_cmd.return_value = (0, json.dumps(payloads), "")
+
+        result = await signatory._signature_exists(pullspec, identity, "test-key-id")
+
+        self.assertTrue(result)
+        cmd = mock_cmd.await_args.args[0]
+        self.assertEqual(cmd[:2], ["cosign", "verify"])
+        self.assertEqual(cmd[cmd.index("--key") + 1], "awskms:///test-key-id")
+        self.assertIn("--output", cmd)
+        self.assertEqual(cmd[-1], pullspec)
+        # No rekor_url configured -> ignore tlog, mirroring sign-time --tlog-upload=false
+        self.assertIn("--insecure-ignore-tlog=true", cmd)
+
+    @patch("pyartcd.signatory.exectools.cmd_gather_async", new_callable=AsyncMock)
+    async def test_signature_exists_appends_rekor_url(self, mock_cmd):
+        """_signature_exists uses --rekor-url when rekor_url is configured (mirrors sign-time flags)"""
+        signatory = self._create_signatory(rekor_url="https://rekor.example.com")
+        mock_cmd.return_value = (0, json.dumps([]), "")
+
+        await signatory._signature_exists("quay.io/x@sha256:a", "quay.io/x:tag", "test-key-id")
+
+        cmd = mock_cmd.await_args.args[0]
+        self.assertIn("--rekor-url=https://rekor.example.com", cmd)
+        self.assertNotIn("--insecure-ignore-tlog=true", cmd)
+
+    @patch("pyartcd.signatory.exectools.cmd_gather_async", new_callable=AsyncMock)
+    async def test_signature_exists_false_when_identity_does_not_match(self, mock_cmd):
+        """_signature_exists returns False when no payload matches the requested identity"""
+        signatory = self._create_signatory()
+
+        payloads = [{"critical": {"identity": {"docker-reference": "quay.io/other:tag"}}}]
+        mock_cmd.return_value = (0, json.dumps(payloads), "")
+
+        result = await signatory._signature_exists(
+            "quay.io/openshift-release-dev/ocp-release@sha256:abc123",
+            "quay.io/openshift-release-dev/ocp-release:4.16.1-x86_64",
+            "test-key-id",
+        )
+
+        self.assertFalse(result)
+
+    @patch("pyartcd.signatory.exectools.cmd_gather_async", new_callable=AsyncMock)
+    async def test_signature_exists_false_when_verify_fails(self, mock_cmd):
+        """_signature_exists returns False (fail open) when cosign verify exits non-zero"""
+        signatory = self._create_signatory()
+
+        mock_cmd.return_value = (1, "", "no matching signatures")
+
+        result = await signatory._signature_exists("quay.io/x@sha256:a", "quay.io/x:tag", "test-key-id")
+
+        self.assertFalse(result)
+
+    @patch("pyartcd.signatory.exectools.cmd_gather_async", new_callable=AsyncMock)
+    async def test_signature_exists_false_on_unparseable_json(self, mock_cmd):
+        """_signature_exists returns False (does not raise) when verify output is not valid JSON"""
+        signatory = self._create_signatory()
+
+        mock_cmd.return_value = (0, "not json at all", "")
+
+        result = await signatory._signature_exists("quay.io/x@sha256:a", "quay.io/x:tag", "test-key-id")
+
+        self.assertFalse(result)
+
+    @patch("pyartcd.signatory.asyncio.sleep", new_callable=AsyncMock)
+    @patch("pyartcd.signatory.exectools.cmd_gather_async", new_callable=AsyncMock)
+    async def test_sign_manifest_skips_when_signature_exists(self, mock_cmd, mock_sleep):
+        """_sign_manifest skips the cosign sign call when our signature already exists"""
+        signatory = self._create_signatory(dry_run=False)
+        signatory._signature_exists = AsyncMock(return_value=True)
+        mock_cmd.return_value = (0, "ok", "")
+
+        pullspec = "quay.io/openshift-release-dev/ocp-release@sha256:abc123"
+        result = await signatory._sign_manifest(pullspec, canonical_tag="4.16.1-x86_64")
+
+        self.assertEqual(result, {})
+        # Both identities already signed -> no sign commands issued
+        self.assertEqual(mock_cmd.await_count, 0)
+        self.assertEqual(signatory._signature_exists.await_count, 2)
+
+    @patch("pyartcd.signatory.asyncio.sleep", new_callable=AsyncMock)
+    @patch("pyartcd.signatory.exectools.cmd_gather_async", new_callable=AsyncMock)
+    async def test_sign_manifest_signs_when_signature_absent(self, mock_cmd, mock_sleep):
+        """_sign_manifest signs when our signature does not yet exist"""
+        signatory = self._create_signatory(dry_run=False)
+        signatory._signature_exists = AsyncMock(return_value=False)
+        mock_cmd.return_value = (0, "ok", "")
+
+        pullspec = "quay.io/openshift-release-dev/ocp-release@sha256:abc123"
+        result = await signatory._sign_manifest(pullspec, canonical_tag="4.16.1-x86_64")
+
+        self.assertEqual(result, {})
+        # Two identities (digest + tag), one key each -> two sign commands
+        self.assertEqual(mock_cmd.await_count, 2)
+        for call in mock_cmd.await_args_list:
+            self.assertEqual(call.args[0][:2], ["cosign", "sign"])
+
+    @patch("pyartcd.signatory.asyncio.sleep", new_callable=AsyncMock)
+    @patch("pyartcd.signatory.exectools.cmd_gather_async", new_callable=AsyncMock)
+    async def test_sign_manifest_signs_only_missing_identity(self, mock_cmd, mock_sleep):
+        """
+        Per-identity skipping contract: when the digest identity is already signed but the tag
+        identity is not, both identities are checked and ONLY the missing tag identity gets a
+        `cosign sign` command. This is the RHCOS/kubevirt case (ART-23308) that motivated the
+        per-identity check -- the tag identity must still be signed even though the digest is done.
+        """
+        signatory = self._create_signatory(dry_run=False)
+        pullspec = "quay.io/openshift-release-dev/ocp-release@sha256:abc123"
+        digest_identity = pullspec
+        tag_identity = "quay.io/openshift-release-dev/ocp-release:4.16.1-x86_64"
+
+        # Key the existence check by identity: digest is signed, tag is not.
+        signed_by_identity = {digest_identity: True, tag_identity: False}
+
+        async def fake_exists(ps, identity, key_id):
+            return signed_by_identity[identity]
+
+        signatory._signature_exists = AsyncMock(side_effect=fake_exists)
+        mock_cmd.return_value = (0, "ok", "")
+
+        result = await signatory._sign_manifest(pullspec, canonical_tag="4.16.1-x86_64")
+
+        self.assertEqual(result, {})
+        # Both identities were evaluated independently.
+        self.assertEqual(signatory._signature_exists.await_count, 2)
+        checked_identities = {call.args[1] for call in signatory._signature_exists.await_args_list}
+        self.assertEqual(checked_identities, {digest_identity, tag_identity})
+
+        # Exactly one sign command, and it is for the missing tag identity only.
+        self.assertEqual(mock_cmd.await_count, 1)
+        sign_cmd = mock_cmd.await_args_list[0].args[0]
+        self.assertEqual(sign_cmd[:2], ["cosign", "sign"])
+        self.assertIn(f"--sign-container-identity={tag_identity}", sign_cmd)
+        self.assertNotIn(f"--sign-container-identity={digest_identity}", sign_cmd)
+
+    @patch("pyartcd.signatory.asyncio.sleep", new_callable=AsyncMock)
+    @patch("pyartcd.signatory.exectools.cmd_gather_async", new_callable=AsyncMock)
+    async def test_sign_manifest_force_resign_bypasses_existence_check(self, mock_cmd, mock_sleep):
+        """force_resign=True signs unconditionally and never consults _signature_exists"""
+        signatory = self._create_signatory(dry_run=False, force_resign=True)
+        signatory._signature_exists = AsyncMock(return_value=True)
+        mock_cmd.return_value = (0, "ok", "")
+
+        pullspec = "quay.io/openshift-release-dev/ocp-release@sha256:abc123"
+        result = await signatory._sign_manifest(pullspec, canonical_tag="4.16.1-x86_64")
+
+        self.assertEqual(result, {})
+        # Existence check is bypassed entirely, and both identities are signed
+        signatory._signature_exists.assert_not_awaited()
+        self.assertEqual(mock_cmd.await_count, 2)

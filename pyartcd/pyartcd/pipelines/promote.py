@@ -1190,6 +1190,8 @@ class PromotePipeline:
             signing_key_ids=os.environ.get("KMS_KEY_ID", "dummy-key").strip().split(','),
             rekor_url=os.environ.get("REKOR_URL", ""),
             concurrency_limit=CONCURRENCY_LIMIT,
+            # force_resign defaults to False, so promote-time signing is idempotent:
+            # manifests that already carry our signature are skipped, not re-signed.
         )
 
         # --- Phase 1: Discover release images and their manifests ---

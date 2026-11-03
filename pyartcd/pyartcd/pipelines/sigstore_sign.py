@@ -61,6 +61,8 @@ class SigstorePipeline:
             signing_key_ids=os.environ.get("KMS_KEY_ID", "dummy-key").strip().split(','),
             rekor_url=os.environ.get("REKOR_URL", ""),
             concurrency_limit=CONCURRENCY_LIMIT,
+            # force_resign defaults to False, so signing is idempotent: manifests that already
+            # carry our signature are skipped rather than re-signed.
         )
 
     def check_environment_variables(self):

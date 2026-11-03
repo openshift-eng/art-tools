@@ -289,11 +289,14 @@ class SigstoreSignatory:
         concurrency_limit: int,
         batch_retries: int = 3,
         batch_retry_delay: float = 30.0,
+        force_resign: bool = False,
     ) -> None:
         self._logger = logger
         self.dry_run = dry_run  # if true, run discovery but do not sign anything
         self.signing_key_ids = signing_key_ids  # key ids for signing
         self.rekor_url = rekor_url  # rekor server for cosign tlog storage
+        # if true, re-sign even when our signature already exists (escape hatch for backfills)
+        self.force_resign = force_resign
         self.ENV["AWS_SHARED_CREDENTIALS_FILE"] = signing_creds  # filename for KMS credentials
         # cosign uses go-containerregistry which does hostname-only auth lookup.
         # QUAY_AUTH_FILE has path-scoped keys (e.g. "quay.io/openshift-release-dev")
@@ -628,6 +631,16 @@ class SigstoreSignatory:
 
         for identity in identities:
             for signing_key_id in self.signing_key_ids:
+                # Skip signing when our signature for this identity+key already exists.
+                # The check is read-only, so it runs in dry-run too (keeps dry-run output accurate).
+                # force_resign bypasses this to allow backfills to re-sign unconditionally.
+                if not self.force_resign and await self._signature_exists(pullspec, identity, signing_key_id):
+                    log.info(
+                        f"Signature already present, skipping: pullspec={pullspec}, "
+                        f"identity={identity}, key={signing_key_id}"
+                    )
+                    continue
+
                 cmd = [
                     "cosign",
                     "sign",
@@ -684,6 +697,82 @@ class SigstoreSignatory:
                     # we signed the image before. i do not see a plausible risk resulting.
                     self._logger.info(f"found sig file at {url}")
                     return True
+
+    async def _signature_exists(self, pullspec: str, identity: str, signing_key_id: str) -> bool:
+        """
+        Check whether OUR cosign signature for a specific identity already exists on a manifest.
+
+        This verifies against the given signing key and matches the exact docker-reference
+        identity, so a manifest whose digest identity is signed but whose tag identity is not
+        (or vice-versa) is still reported as missing the signature for the identity in question.
+
+        The check FAILS OPEN: any verify failure, non-zero exit, or JSON parse error returns
+        False so that the caller proceeds to sign (we never silently skip signing on error).
+
+        :param pullspec: Digest-based pullspec to verify
+        :param identity: The docker-reference identity the signature must match
+        :param signing_key_id: AWS KMS key id the signature must be verifiable against
+        :return: True only if a signature for this exact identity exists and verifies
+        """
+        log = self._logger
+
+        cmd = [
+            "cosign",
+            "verify",
+            "--key",
+            f"awskms:///{signing_key_id}",
+            "--output",
+            "json",
+        ]
+
+        # Mirror the sign-time tlog flags so verification matches how we signed.
+        if self.rekor_url:
+            cmd.append(f"--rekor-url={self.rekor_url}")
+        else:
+            cmd.append("--insecure-ignore-tlog=true")
+
+        cmd.append(pullspec)
+
+        rc, stdout, stderr = await exectools.cmd_gather_async(cmd, check=False, env=self.ENV)
+        if rc != 0:
+            # Not signed by us (or not verifiable) -> treat as not signed, re-sign.
+            # Redact any URL credentials from stderr before logging (mirrors cmd_gather_async's
+            # own diagnostics) so cosign errors can't leak secrets into the logs.
+            log.debug(
+                f"cosign verify returned rc={rc} for {pullspec} (identity={identity}): "
+                f"{exectools._redact_url_credentials(stderr)}"
+            )
+            return False
+
+        try:
+            payloads = json.loads(stdout)
+        except json.JSONDecodeError as exc:
+            # Fail OPEN: if we can't parse the output, re-sign rather than silently skip.
+            log.warning(f"Could not parse cosign verify output for {pullspec} (identity={identity}): {exc}")
+            return False
+
+        # Fail OPEN on unexpected JSON shapes: cosign may exit 0 yet emit something other than a
+        # list of payload dicts (e.g. `null`, or a list with null/non-dict elements). Treat any
+        # such shape as "signature not found" so the caller re-signs rather than raising.
+        if not isinstance(payloads, list):
+            log.warning(
+                f"Unexpected cosign verify output (not a list) for {pullspec} (identity={identity}); "
+                "treating as not signed"
+            )
+            return False
+
+        for payload in payloads:
+            if not isinstance(payload, dict):
+                continue
+            critical = payload.get("critical")
+            if not isinstance(critical, dict):
+                continue
+            identity_obj = critical.get("identity")
+            if not isinstance(identity_obj, dict):
+                continue
+            if identity_obj.get("docker-reference") == identity:
+                return True
+        return False
 
     @retry(wait=wait_random_exponential(), stop=stop_after_attempt(5), reraise=True)
     async def _retrying_cosign(self, cmd: List[str]) -> str:
