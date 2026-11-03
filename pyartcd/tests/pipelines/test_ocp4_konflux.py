@@ -264,5 +264,5 @@ class TestDryRunSideEffects(unittest.IsolatedAsyncioTestCase):
                     pipeline.build_images.assert_awaited_once()
 
 
-if __name__ == "__main__":
+if __name__ == '__main__':
     unittest.main()
