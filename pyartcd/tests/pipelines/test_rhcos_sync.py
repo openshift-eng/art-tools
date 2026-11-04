@@ -185,9 +185,10 @@ class TestRhcosSyncVariants(IsolatedAsyncioTestCase):
         self.assertEqual(session.get.call_count, 2)
 
     async def test_fast_channel_check_includes_additional_variant_without_publishing(self):
+        # Fast-channel queries the "latest" markers, not per-version paths.
         base = "https://mirror.openshift.com/pub/openshift-v4/x86_64/dependencies/rhcos"
-        primary_marker = f"{base}/5.0/5.0.0/rhcos-id.txt"
-        el10_marker = f"{base}/5.0-el10/5.0.0/rhcos-id.txt"
+        primary_marker = f"{base}/5.0/latest/rhcos-id.txt"
+        el10_marker = f"{base}/5.0-el10/latest/rhcos-id.txt"
         for existing, expected in (
             ({primary_marker: "9.8.20261026-0"}, True),
             ({primary_marker: "9.8.20261026-0", el10_marker: "10.2.20261026-0"}, False),
@@ -203,9 +204,35 @@ class TestRhcosSyncVariants(IsolatedAsyncioTestCase):
                 ):
                     self.assertEqual(await self.pipeline.check_needs_happening(), expected)
                 session = http.__aenter__.return_value
-                self.assertEqual([call.args[0] for call in session.get.call_args_list], [primary_marker, el10_marker])
+                queried = [call.args[0] for call in session.get.call_args_list]
+                self.assertEqual(queried, [primary_marker, el10_marker])
+                self.assertTrue(all(url.endswith("/latest/rhcos-id.txt") for url in queried))
                 sync.assert_not_awaited()
                 sign.assert_not_awaited()
+
+    async def test_check_needs_happening_default_uses_per_version_path(self):
+        # No mirror_version → lookup uses self.name (the per-version dir).
+        base = "https://mirror.openshift.com/pub/openshift-v4/x86_64/dependencies/rhcos"
+        variant = self.pipeline._get_boot_image_variants()[0]
+        per_version_marker = f"{base}/5.0/5.0.0/rhcos-id.txt"
+        http = self._mock_http({per_version_marker: "9.8.20261026-0"})
+        with patch("pyartcd.pipelines.rhcos_sync.aiohttp.ClientSession", return_value=http):
+            self.assertFalse(await self.pipeline._check_needs_happening(variant))
+        session = http.__aenter__.return_value
+        self.assertEqual([call.args[0] for call in session.get.call_args_list], [per_version_marker])
+
+    async def test_check_needs_happening_mirror_version_latest_uses_latest_path(self):
+        # mirror_version="latest" → lookup targets the latest marker, not self.name.
+        base = "https://mirror.openshift.com/pub/openshift-v4/x86_64/dependencies/rhcos"
+        variant = self.pipeline._get_boot_image_variants()[0]
+        latest_marker = f"{base}/5.0/latest/rhcos-id.txt"
+        http = self._mock_http({latest_marker: "9.8.20261026-0"})
+        with patch("pyartcd.pipelines.rhcos_sync.aiohttp.ClientSession", return_value=http):
+            self.assertFalse(await self.pipeline._check_needs_happening(variant, mirror_version="latest"))
+        session = http.__aenter__.return_value
+        queried = [call.args[0] for call in session.get.call_args_list]
+        self.assertEqual(queried, [latest_marker])
+        self.assertTrue(queried[0].endswith("/latest/rhcos-id.txt"))
 
     async def test_pre_release_marker_matches_suffixed_upload_path(self):
         self.pipeline.name = "5.0.0-rc.8"

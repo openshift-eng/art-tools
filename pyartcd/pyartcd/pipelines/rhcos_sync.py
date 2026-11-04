@@ -342,7 +342,8 @@ class RhcosSyncPipeline:
         with self._registry_auth():
             await self._run_preamble()
             for variant in self._get_boot_image_variants():
-                if await self._check_needs_happening(variant):
+                # Fast-channel has no per-version dir, so compare against the "latest" marker.
+                if await self._check_needs_happening(variant, mirror_version="latest"):
                     return True
             return False
 
@@ -577,12 +578,18 @@ class RhcosSyncPipeline:
 
         return synclist_path
 
-    async def _check_needs_happening(self, variant: BootImageVariant) -> bool:
+    async def _check_needs_happening(self, variant: BootImageVariant, mirror_version: Optional[str] = None) -> bool:
         """Check whether this RHCOS sync has already been performed.
 
         Ported from rhcoslib.groovy rhcosSyncNeedsHappening().
         Fetches rhcos-id.txt from mirror.openshift.com and compares
         the build ID. Returns False (skip) if they match.
+
+        Args:
+            variant: The boot-image variant to check.
+            mirror_version: Version segment of the mirror lookup path; defaults to
+                ``self.name``. Fast-channel passes ``"latest"`` to check the
+                per-y-stream latest marker instead of a per-version dir.
 
         Returns:
             True if sync should proceed, False if already done.
@@ -591,7 +598,7 @@ class RhcosSyncPipeline:
             self.logger.info("FORCE flag set, skipping needsHappening check")
             return True
 
-        mirror_path = get_rhcos_mirror_path(self.mirror_prefix, self.name, variant.stream_suffix)
+        mirror_path = get_rhcos_mirror_path(self.mirror_prefix, mirror_version or self.name, variant.stream_suffix)
         mirror_url = f"https://mirror.openshift.com{self.base_dir}/{mirror_path}/rhcos-id.txt"
         self.logger.info("Checking existing RHCOS build on mirror: %s", mirror_url)
 
