@@ -1,4 +1,5 @@
 import asyncio
+import os
 import unittest
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -23,6 +24,8 @@ from pyartcd.pipelines.release_from_fbc import (
     _is_test_shipment_mr,
     _normalize_release_date,
 )
+
+from pyartcd import constants
 
 
 def _make_snapshot(app="oadp-1-4"):
@@ -292,7 +295,12 @@ class TestReleaseFromFbcPipeline(unittest.TestCase):
         load_config.return_value = {'product': 'quay', 'version': 'auto'}
         pipeline = self._make_pipeline(group='quay-3.18', assembly='3.18.3')
         pipeline.product = asyncio.run(pipeline._load_product_from_group_config())
-        load_config.assert_awaited_once_with(group='quay-3.18', assembly='3.18.3')
+        load_config.assert_awaited_once_with(
+            group='quay-3.18',
+            assembly='3.18.3',
+            doozer_data_path=os.getenv('DOOZER_DATA_PATH', constants.OCP_BUILD_DATA_URL),
+            doozer_data_gitref=os.getenv('DOOZER_DATA_GITREF') or '',
+        )
         snapshot = _make_snapshot(app='quay-3-18')
         for kind in ('image', 'extras'):
             for release_notes in (None, ReleaseNotes(type='RHSA')):
@@ -313,6 +321,31 @@ class TestReleaseFromFbcPipeline(unittest.TestCase):
                         )
                         if release_notes is None:
                             self.assertNotIn('releaseNotes', release.data)
+
+    @patch('pyartcd.pipelines.release_from_fbc.load_group_config', new_callable=AsyncMock)
+    def test_version_policy_uses_selected_build_data_source(self, load_config):
+        """Tag generation reads the same build-data overrides as FBC refresh."""
+        for overrides, expected_path, expected_ref in (
+            ({}, constants.OCP_BUILD_DATA_URL, ''),
+            (
+                {'DOOZER_DATA_PATH': '/tmp/custom-build-data', 'DOOZER_DATA_GITREF': 'custom-policy'},
+                '/tmp/custom-build-data',
+                'custom-policy',
+            ),
+            ({'DOOZER_DATA_GITREF': 'custom-policy'}, constants.OCP_BUILD_DATA_URL, 'custom-policy'),
+        ):
+            with self.subTest(overrides=overrides), patch.dict(os.environ, overrides, clear=True):
+                load_config.reset_mock()
+                load_config.return_value = {'product': 'quay', 'version': 'auto'}
+                pipeline = self._make_pipeline(group='quay-3.18', assembly='3.18.3')
+                pipeline.product = asyncio.run(pipeline._load_product_from_group_config())
+                load_config.assert_awaited_once_with(
+                    group='quay-3.18',
+                    assembly='3.18.3',
+                    doozer_data_path=expected_path,
+                    doozer_data_gitref=expected_ref,
+                )
+                self.assertIsNotNone(pipeline.create_shipment_config('image', _make_snapshot()).shipment.data.mapping)
 
     @patch('pyartcd.pipelines.release_from_fbc.load_group_config', new_callable=AsyncMock)
     def test_explicit_or_missing_build_version_does_not_generate_tags(self, load_config):

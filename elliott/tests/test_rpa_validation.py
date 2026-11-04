@@ -105,8 +105,24 @@ class TestRPAValidation(IsolatedAsyncioTestCase):
                         with self.assertRaisesRegex(ValueError, f'{env} RPA.*labels.version.*assembly-based'):
                             await self.validate()
 
+    async def test_assembly_tags_reject_shipment_image_version_templates(self):
+        """Shipment defaults must not mix assembly and image-version tags, even with clean RPAs."""
+        for tags in (
+            ['v{{ assembly }}', 'v{{ labels.version }}'],
+            ['v{{assembly}}-{{labels.version}}'],
+        ):
+            with self.subTest(tags=tags):
+                self.shipment.data.mapping = Mapping.model_validate({'defaults': {'tags': tags}})
+                with self.assertRaisesRegex(ValueError, r'shipment\.data\.mapping\.defaults\.tags') as error:
+                    await self.validate()
+                self.assertIn('indicated shipment or RPA mapping', str(error.exception))
+
     async def test_image_version_tags_remain_allowed_without_assembly_tag_templates(self):
-        for mapping in (None, Mapping.model_validate({'defaults': {'tags': ['custom-tag']}})):
+        for mapping in (
+            None,
+            Mapping.model_validate({'defaults': {'tags': ['custom-tag']}}),
+            Mapping.model_validate({'defaults': {'tags': ['v{{ labels.version }}']}}),
+        ):
             with self.subTest(mapping=mapping):
                 self.shipment.data.mapping = mapping
                 self.resources[('ReleasePlanAdmission', 'unusual-prod-admission', 'managed-prod')]['spec']['data'][

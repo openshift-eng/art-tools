@@ -512,7 +512,12 @@ class ReleaseFromFbcPipeline:
 
     async def _load_product_from_group_config(self) -> str:
         """Load the product and version policy from the effective assembly group config."""
-        group_config = await load_group_config(group=self.group, assembly=self.assembly)
+        group_config = await load_group_config(
+            group=self.group,
+            assembly=self.assembly,
+            doozer_data_path=os.getenv('DOOZER_DATA_PATH', constants.OCP_BUILD_DATA_URL),
+            doozer_data_gitref=os.getenv('DOOZER_DATA_GITREF') or '',
+        )
         self._auto_version = group_config.get('version') == 'auto'
         if group_config.get('product'):
             return group_config['product']

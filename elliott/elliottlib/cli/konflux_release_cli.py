@@ -85,11 +85,14 @@ def _validate_assembly_tag_mapping(shipment: Shipment, mapping: dict, rpa_descri
         return
 
     snapshot_names = {component.name for component in shipment.snapshot.spec.components}
-    tag_sources = [('mapping.defaults', mapping.get('defaults') or {})]
+    tag_sources = [
+        ('shipment.data.mapping.defaults', {'tags': shipment.data.mapping.defaults.tags}),
+        ('RPA.mapping.defaults', mapping.get('defaults') or {}),
+    ]
     for component in mapping.get('components', []):
         if component.get('name') not in snapshot_names:
             continue
-        component_path = f"mapping.components[{component['name']}]"
+        component_path = f"RPA.mapping.components[{component['name']}]"
         tag_sources.append((component_path, component))
         for index, repository in enumerate(component.get('repositories', [])):
             tag_sources.append((f'{component_path}.repositories[{index}]', repository))
@@ -102,9 +105,9 @@ def _validate_assembly_tag_mapping(shipment: Shipment, mapping: dict, rpa_descri
     ]
     if conflicts:
         raise ValueError(
-            f"{rpa_description} defines labels.version tags that conflict with assembly-based shipment tags "
+            f"Release tags for {rpa_description} contain labels.version tags that conflict with assembly-based shipment tags "
             f"for assembly {shipment.metadata.assembly}: {'; '.join(conflicts)}. "
-            "Remove the labels.version tag templates from this RPA before releasing; "
+            "Remove the labels.version tag templates from the indicated shipment or RPA mapping before releasing; "
             "Konflux combines RPA and shipment tags."
         )
 
