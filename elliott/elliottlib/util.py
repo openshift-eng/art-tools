@@ -856,6 +856,7 @@ async def extract_nvrs_from_fbc(
     version_scoped: bool = True,
     *,
     ignore_patch_version: bool = False,
+    bundle_version: Optional[str] = None,
 ) -> list[str]:
     """
     Extract NVRs from FBC image using ORAS workflow.
@@ -880,13 +881,19 @@ async def extract_nvrs_from_fbc(
             When false, use the unscoped OCP extractor.
         ignore_patch_version: Select the FBC's recorded bundle on the assembly's
             major/minor release train. Only used when version_scoped is true.
+        bundle_version: Actual selected source bundle version, which takes
+            precedence over the destination assembly and FBC tag versions.
     """
     logger = get_logger(__name__)
     logger.info(f"Extracting NVRs from FBC image: {fbc_pullspec}")
 
     if version_scoped:
         related_images = await extract_versioned_related_images_from_fbc(
-            fbc_pullspec, product, assembly=assembly, ignore_patch_version=ignore_patch_version
+            fbc_pullspec,
+            product,
+            assembly=assembly,
+            ignore_patch_version=ignore_patch_version,
+            bundle_version=bundle_version,
         )
     else:
         related_images = await extract_related_images_from_fbc(fbc_pullspec, product)
