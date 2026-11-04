@@ -17,7 +17,7 @@ jobs:
         run: dnf install -y --nobest git clang gcc krb5-devel make glibc openssl3-libs
 
       - name: Set up Python 3.11
-        uses: actions/setup-python@v6
+        uses: actions/setup-python@v7
         with:
           python-version: ${{env.PYTHON_VERSION}}
 
