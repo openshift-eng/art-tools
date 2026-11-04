@@ -1,5 +1,6 @@
 import json
 import logging
+import re
 from dataclasses import dataclass
 from typing import Optional
 from urllib.parse import urlsplit
@@ -13,7 +14,7 @@ from elliottlib.verify_common import VerifyResultBase, handle_verify_result, ver
 
 LOGGER = logging.getLogger(__name__)
 
-RELEASE_STREAM_API = "https://amd64.ocp.releases.ci.openshift.org/api/v1/releasestream"
+PAYLOAD_TEMPLATE = "quay.io/openshift-release-dev/ocp-release:{assembly}-x86_64"
 
 
 @dataclass
@@ -55,35 +56,6 @@ class VerifyMetadataUrlResult(VerifyResultBase):
         return "\n".join(lines)
 
 
-def _release_stream_name(release: str) -> str:
-    major = release.split(".")[0]
-    parts = release.split("-", 1)
-    if len(parts) > 1 and parts[1].startswith("ec."):
-        return f"{major}-dev-preview"
-    return f"{major}-stable"
-
-
-async def get_release_pullspec(release: str) -> str:
-    stream = _release_stream_name(release)
-    url = f"{RELEASE_STREAM_API}/{stream}/latest?prefix={release}"
-    LOGGER.info("Fetching pullspec from %s", url)
-    session = aiohttp.ClientSession()
-    try:
-        resp = await session.get(url, timeout=aiohttp.ClientTimeout(total=30))
-        try:
-            if not resp.ok:
-                raise RuntimeError(f"Release stream API returned {resp.status} for {url}")
-            data = await resp.json()
-            pullspec = data.get("pullSpec")
-            if not pullspec:
-                raise RuntimeError(f"No pullSpec in release stream response for {release}")
-            return pullspec
-        finally:
-            resp.release()
-    finally:
-        await session.close()
-
-
 async def extract_metadata_url(pullspec: str) -> str:
     cmd = ["oc", "adm", "release", "info", pullspec, "-o", "json"]
     rc, stdout, stderr = await exectools.cmd_gather_async(cmd, check=False)
@@ -123,7 +95,7 @@ async def check_url_accessible(url: str) -> bool:
         resp = await session.get(url, timeout=aiohttp.ClientTimeout(total=30), allow_redirects=False)
         try:
             LOGGER.info("HTTP %s for metadata URL", resp.status)
-            return resp.ok
+            return resp.status == 200
         finally:
             resp.release()
     finally:
@@ -131,9 +103,8 @@ async def check_url_accessible(url: str) -> bool:
 
 
 async def verify_metadata_url(release: str) -> VerifyMetadataUrlResult:
-    result = VerifyMetadataUrlResult(release=release)
+    result = VerifyMetadataUrlResult(release=release, pullspec=PAYLOAD_TEMPLATE.format(assembly=release))
     try:
-        result.pullspec = await get_release_pullspec(release)
         LOGGER.info("Release %s pullspec: %s", release, result.pullspec)
 
         result.metadata_url = await extract_metadata_url(result.pullspec)
@@ -153,19 +124,21 @@ async def verify_metadata_url(release: str) -> VerifyMetadataUrlResult:
 async def verify_metadata_url_cli(runtime, output):
     """Check that the release payload metadata URL is accessible.
 
-    Fetches the release pullspec from the release stream API,
-    extracts the metadata URL via 'oc adm release info', and verifies
+    Uses the exact release payload tag, extracts the metadata URL via 'oc adm release info', and verifies
     it returns HTTP 200. The metadata URL points to the customer-facing
     errata page on access.redhat.com.
 
-    Requires --group and --assembly global options. Uses the assembly name
-    as the release version prefix for the release stream API query.
+    Requires --assembly with a production release version in X.Y.Z format.
+    RC and EC releases are not supported.
 
     Example:
         elliott --group openshift-4.18 --assembly 4.18.50 verify-metadata-url
     """
-    runtime.initialize()
     release = runtime.assembly
+    if not release or not re.fullmatch(r"[0-9]+\.[0-9]+\.[0-9]+", release):
+        raise click.BadParameter(
+            "Specify a release version in X.Y.Z format, for example 4.18.50.", param_hint="--assembly"
+        )
 
     LOGGER.info("Verifying metadata URL for release %s", release)
     result = await verify_metadata_url(release=release)
