@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from datetime import datetime, timezone
 from typing import List, Literal, Optional, Self
 
@@ -97,10 +98,40 @@ class ReleaseNotes(StrictBaseModel):
         return field
 
 
+class MappingDefaults(StrictBaseModel):
+    """Additional image tags supplied by a shipment to the Konflux release mapping."""
+
+    tags: List[str] = Field(min_length=1)
+
+    def resolve_tags(self, assembly: str) -> List[str]:
+        """Resolve ART's assembly placeholder while preserving Konflux tag variables."""
+        resolved_tags = []
+        for tag in self.tags:
+            if re.search(r'\{\{\s*assembly\s*\}\}', tag):
+                if assembly == 'stream':
+                    raise ValueError('Assembly-based release tags require a named assembly, not stream')
+                if not re.fullmatch(r'[a-zA-Z0-9_][a-zA-Z0-9_.-]*', assembly):
+                    raise ValueError(f'Invalid assembly for release tags: {assembly!r}')
+            resolved = re.sub(r'\{\{\s*assembly\s*\}\}', lambda _: assembly, tag)
+            # Konflux validates the expanded values of its own variables at release time.
+            literal_tag = re.sub(r'\{\{\s*[a-zA-Z0-9_.-]+\s*\}\}', 'x', resolved)
+            if not re.fullmatch(r'[a-zA-Z0-9_][a-zA-Z0-9_.-]{0,127}', literal_tag):
+                raise ValueError(f'Invalid release tag after assembly substitution: {resolved!r}')
+            resolved_tags.append(resolved)
+        return resolved_tags
+
+
+class Mapping(StrictBaseModel):
+    """Shipment-controlled tags; destination repositories remain configured in the RPA."""
+
+    defaults: MappingDefaults
+
+
 class Data(StrictBaseModel):
     """Represents spec.data field when constructing a Konflux release"""
 
     releaseNotes: ReleaseNotes
+    mapping: Optional[Mapping] = None
 
 
 class EnvAdvisory(StrictBaseModel):
@@ -170,6 +201,12 @@ class Shipment(StrictBaseModel):
         # Only require releaseNotes for OpenShift products (groups starting with 'openshift-')
         if not self.metadata.fbc and not release_notes_present and self.metadata.group.startswith('openshift-'):
             raise ValueError('A regular shipment is expected to have data.releaseNotes defined')
+        return self
+
+    @model_validator(mode='after')
+    def validate_release_tags(self) -> Self:
+        if self.data and self.data.mapping:
+            self.data.mapping.defaults.resolve_tags(self.metadata.assembly)
         return self
 
     @model_validator(mode='after')

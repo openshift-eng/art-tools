@@ -16,6 +16,7 @@ tedious and error prone.
       * [Authenticating](#authenticating)
    * [Tests](#tests)
    * [Usage](#usage)
+      * [Shipment release tags](#shipment-release-tags)
       * [`get` - Viewing an Advisory](#advisoryget---viewing-an-advisory)
       * [`create` - Create a New Advisory](#advisorycreate---create-a-new-advisory)
       * [`change-state` - Change the State of an Advisory](#advisorychange-state---change-the-state-of-an-advisory)
@@ -371,6 +372,47 @@ filter:
     operator: "notequals"
     value: "Documentation"
 ~~~~
+
+# Shipment release tags
+
+Image/advisory shipments can opt into additional release tags under
+`shipment.data.mapping.defaults.tags`:
+
+```yaml
+shipment:
+  metadata:
+    # Other required metadata fields omitted.
+    assembly: "3.18.3"
+  data:
+    releaseNotes:
+      type: RHBA
+    mapping:
+      defaults:
+        tags:
+          - "v{{ assembly }}"
+          - "v{{ assembly }}-{{ release_timestamp }}"
+```
+
+Elliott replaces `{{ assembly }}` with `shipment.metadata.assembly` when creating
+the Konflux Release. Konflux expands its own variables, such as
+`{{ release_timestamp }}`, `{{ incrementer }}`, and `{{ labels.version }}`, during
+release. This example publishes `v3.18.3` and `v3.18.3-<release_timestamp>` in both
+stage and production, even if the selected image's version label is `3.18.0`.
+Image labels and digests are unchanged.
+
+Konflux combines and deduplicates these tags with tags defined in the ReleasePlan
+and ReleasePlanAdmission (RPA). Shipment tags cannot remove or replace RPA tags.
+Destination repositories remain configured in the RPA. See Konflux's
+[Release data support](https://konflux-ci.dev/docs/releasing/create-release/) and
+[data merging implementation](https://github.com/konflux-ci/release-service-utils/blob/main/src/tasks/managed/collect_data/collect_data.py).
+
+The mapping is optional: shipments without it retain their existing behavior.
+Assembly-based tags require a named assembly; `stream` is rejected. Tags must
+follow container tag syntax (letters, digits, underscores, periods, and hyphens,
+with no leading period or hyphen, and a maximum of 128 characters). Elliott
+validates the literal portions after assembly substitution; Konflux validates
+its variables' expanded values at release time. FBC shipments retain their
+existing release path and do not support this mapping.
 
 # Tests
 

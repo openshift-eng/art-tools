@@ -184,6 +184,59 @@ class TestCreateReleaseCli(IsolatedAsyncioTestCase):
         self.konflux_client.verify_connection = MagicMock(return_value=True)
         self.konflux_client.resource_url = MagicMock()
 
+    @patch("doozerlib.backend.konflux_client.KonfluxClient.from_kubeconfig")
+    async def test_assembly_tags_in_stage_and_prod_release_manifests(self, mock_konflux_client_init):
+        mock_konflux_client_init.return_value = self.konflux_client
+        self.runtime.product = 'quay'
+        self.runtime.group = 'quay-3.18'
+        self.runtime.assembly = '3.18.3'
+        shipment = Shipment.model_validate(
+            {
+                'metadata': {
+                    'product': 'quay',
+                    'application': 'quay-3-18',
+                    'group': 'quay-3.18',
+                    'assembly': '3.18.3',
+                },
+                'environments': {
+                    'stage': {'releasePlan': 'quay-stage'},
+                    'prod': {'releasePlan': 'quay-prod'},
+                },
+                'data': {
+                    'releaseNotes': {'type': 'RHBA', 'live_id': 123456},
+                    'mapping': {'defaults': {'tags': ['v{{ assembly }}', 'v{{assembly}}-{{ release_timestamp }}']}},
+                },
+            }
+        )
+        original_data = shipment.data.model_dump()
+
+        for env in ('stage', 'prod'):
+            with self.subTest(env=env):
+                cli = CreateReleaseCli(
+                    runtime=self.runtime,
+                    config_path=self.config_path,
+                    release_env=env,
+                    konflux_config=self.konflux_config,
+                    image_repo_pull_secret=self.image_repo_pull_secret,
+                    dry_run=True,
+                    kind='image',
+                )
+                config = cli.get_release_config(shipment, env, 'test-release', 'test-snapshot')
+                release = await cli.new_release(config)
+                self.assertEqual(release['spec']['releasePlan'], f'quay-{env}')
+                self.assertEqual(
+                    release['spec']['data']['mapping']['defaults']['tags'],
+                    ['v3.18.3', 'v3.18.3-{{ release_timestamp }}'],
+                )
+                self.assertEqual(release['metadata']['annotations']['art.redhat.com/assembly'], '3.18.3')
+                if env == 'prod':
+                    self.assertEqual(release['spec']['data']['releaseNotes']['live_id'], 123456)
+                else:
+                    self.assertNotIn('live_id', release['spec']['data']['releaseNotes'])
+
+        self.assertEqual(shipment.data.model_dump(), original_data)
+        self.konflux_client._create.assert_not_awaited()
+
     @patch("elliottlib.cli.konflux_release_cli.get_utc_now_formatted_str", return_value="20260805200004")
     @patch("doozerlib.backend.konflux_client.KonfluxClient.from_kubeconfig")
     def test_object_name_is_normalized_and_preserves_timestamp(self, mock_konflux_client_init, _mock_timestamp):
