@@ -182,9 +182,10 @@ def compute_rhcos_stream(ocp_version: str, rhcos_build: str) -> str:
     For OCP 4.19+ / 5.x+, the build ID format is ``9.6.20250121-0`` and
     the stream is ``rhel-{major}.{minor}`` (e.g. ``rhel-9.6``).
 
-    For OCP ≤ 4.18, the build ID format is ``418.94.202410090804-0`` and
-    the stream is ``{ocpVersion}-{rhelMajor}.{rhelMinor}``
-    (e.g. ``4.18-9.4``).
+    For legacy OCP ≤ 4.18, the build ID format is ``418.94.202410090804-0``.
+    RHEL 9-based streams (4.13–4.18) use ``{ocpVersion}-{rhelMajor}.{rhelMinor}``
+    (e.g. ``4.18-9.4``); the RHEL 8-based stream (4.12) uses the bare OCP version
+    (e.g. ``4.12``).
 
     Args:
         ocp_version: OCP major.minor string (e.g. "4.19").
@@ -206,6 +207,11 @@ def compute_rhcos_stream(ocp_version: str, rhcos_build: str) -> str:
         # Legacy format: 418.94.202410090804-0 → 4.18-9.4
         rhel_major = parts[1][0]
         rhel_minor = parts[1][1:]
+        if rhel_major == "8":
+            # RHEL 8 legacy (4.12) publishes under the bare OCP version, not the
+            # suffixed form; verified against the live release browser
+            # (streams/4.12/ → 200, streams/4.12-8.6/ → 403).
+            return ocp_version
         return f"{ocp_version}-{rhel_major}.{rhel_minor}"
 
 

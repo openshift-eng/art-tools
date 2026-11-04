@@ -8,11 +8,11 @@ import json
 import tempfile
 from contextlib import nullcontext
 from pathlib import Path
-from unittest import IsolatedAsyncioTestCase
+from unittest import IsolatedAsyncioTestCase, TestCase
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import yaml
-from pyartcd.pipelines.rhcos_sync import RhcosSyncPipeline
+from pyartcd.pipelines.rhcos_sync import RhcosSyncPipeline, compute_rhcos_stream
 from pyartcd.pipelines.sync_rhcos import SyncRhcosPipeline
 
 
@@ -319,3 +319,19 @@ class TestRhcosSyncVariants(IsolatedAsyncioTestCase):
         with patch("pyartcd.pipelines.rhcos_sync.aiohttp.ClientSession", return_value=http):
             with self.assertRaisesRegex(ValueError, "No boot image artifacts found for RHCOS variant rhel-10"):
                 await self.pipeline._generate_synclist(variant)
+
+
+class TestComputeRhcosStream(TestCase):
+    """Coverage for the RHCOS release-browser stream identifier computation."""
+
+    def test_rhel8_legacy_uses_bare_ocp_version(self):
+        # RHEL 8 legacy (4.12) resolves to the bare OCP version.
+        self.assertEqual(compute_rhcos_stream("4.12", "412.86.202402272018-0"), "4.12")
+
+    def test_rhel9_legacy_uses_suffixed_stream(self):
+        # RHEL 9 legacy (4.13) keeps the suffixed stream.
+        self.assertEqual(compute_rhcos_stream("4.13", "413.92.202402131523-0"), "4.13-9.2")
+
+    def test_new_format_uses_rhel_prefix(self):
+        self.assertEqual(compute_rhcos_stream("4.19", "9.6.20250121-0"), "rhel-9.6")
+        self.assertEqual(compute_rhcos_stream("5.0", "9.8.20261026-0"), "rhel-9.8")
