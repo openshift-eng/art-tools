@@ -106,6 +106,7 @@ class KonfluxImageBuilderConfig:
     integration_test_scenarios: tuple[str, ...] = ()
     integration_test_snapshot_annotations: Dict[str, str] = field(default_factory=dict)
     skip_custom_its: bool = False
+    build_args: Dict[str, str] = field(default_factory=dict)
 
 
 class KonfluxImageBuilder:
@@ -935,6 +936,10 @@ class KonfluxImageBuilder:
         build_args = None
         if raw_ba:
             build_args = [str(arg.primitive()) if hasattr(arg, 'primitive') else str(arg) for arg in raw_ba]
+        if self._config.build_args:
+            merged_args = {arg.split('=', 1)[0]: arg for arg in (build_args or [])}
+            merged_args.update({key: f'{key}={value}' for key, value in self._config.build_args.items()})
+            build_args = list(merged_args.values())
 
         raw_secret = _get_konflux_config(metadata, "additional_secret")
         additional_secret = str(raw_secret) if raw_secret else None

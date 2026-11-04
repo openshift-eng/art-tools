@@ -3,6 +3,7 @@ import unittest
 from types import SimpleNamespace
 from unittest import mock
 
+import click
 from artcommonlib.conforma import resolve_stage_policy
 from artcommonlib.konflux.konflux_build_record import (
     KonfluxBuildOutcome,
@@ -273,6 +274,39 @@ class TestKonfluxBundleCli(unittest.IsolatedAsyncioTestCase):
 
 
 class TestKonfluxBuildSelection(unittest.TestCase):
+    def test_build_argument_overrides_accept_equals_and_last_value_wins(self):
+        cli = KonfluxBuildCli(
+            mock.Mock(),
+            None,
+            None,
+            'test',
+            'test',
+            None,
+            False,
+            True,
+            None,
+            'auto',
+            build_args=('RELEASE_VALUE=old', ' RELEASE_VALUE =new=value', 'EMPTY='),
+        )
+        self.assertEqual(cli.build_args, {'RELEASE_VALUE': 'new=value', 'EMPTY': ''})
+
+    def test_malformed_build_argument_is_rejected(self):
+        for arg in ('NO_EQUALS', '=value', ' =value'):
+            with self.subTest(arg=arg), self.assertRaises(click.BadParameter):
+                KonfluxBuildCli(
+                    mock.Mock(),
+                    None,
+                    None,
+                    'test',
+                    'test',
+                    None,
+                    False,
+                    True,
+                    None,
+                    'auto',
+                    build_args=(arg,),
+                )
+
     def test_okd_excludes_dependents_added_during_metadata_expansion(self):
         runtime = mock.Mock(spec=Runtime)
         runtime.variant = BuildVariant.OKD
