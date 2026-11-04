@@ -546,14 +546,34 @@ class RhcosSyncPipeline:
             self.arch,
         )
 
-        async with aiohttp.ClientSession() as session:
-            async with session.get(meta_url) as response:
-                if response.status != 200:
-                    raise RuntimeError(
-                        f"Failed to fetch RHCOS meta.json for variant {variant.name}, "
-                        f"build {variant.build_id}: HTTP {response.status}"
-                    )
-                meta = await response.json()
+        try:
+            async with aiohttp.ClientSession() as session:
+                async with session.get(meta_url) as response:
+                    if response.status != 200:
+                        self.logger.error(
+                            "Failed to fetch RHCOS meta.json for variant %s, build %s from %s: HTTP %d",
+                            variant.name,
+                            variant.build_id,
+                            meta_url,
+                            response.status,
+                        )
+                        raise RuntimeError(
+                            f"Failed to fetch RHCOS meta.json for variant {variant.name}, "
+                            f"build {variant.build_id} from {meta_url}: HTTP {response.status}"
+                        )
+                    meta = await response.json()
+        except aiohttp.ClientError as e:
+            self.logger.error(
+                "Failed to fetch RHCOS meta.json for variant %s, build %s from %s: %s",
+                variant.name,
+                variant.build_id,
+                meta_url,
+                e,
+            )
+            raise RuntimeError(
+                f"Failed to fetch RHCOS meta.json for variant {variant.name}, "
+                f"build {variant.build_id} from {meta_url}: {e}"
+            ) from e
 
         # Extract image URLs from meta.json
         image_urls: List[str] = []
