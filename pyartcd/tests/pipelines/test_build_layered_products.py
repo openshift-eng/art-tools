@@ -529,11 +529,18 @@ class TestBuildLayeredProductsPipeline(IsolatedAsyncioTestCase):
             data_path='https://github.com/openshift-eng/ocp-build-data',
             skip_bundle_build=True,
             skip_rebase=True,
+            payload='quay.io/openshift-release-dev/ocp-release:4.20.1-x86_64',
         )
 
-        with patch(
-            "pyartcd.pipelines.build_layered_products.get_build_variant_for_product",
-            return_value=BuildVariant.OCP,
+        with (
+            patch(
+                "pyartcd.pipelines.build_layered_products.get_build_variant_for_product",
+                return_value=BuildVariant.OCP,
+            ),
+            patch(
+                'pyartcd.pipelines.build_layered_products.oc.get_release_image_info',
+                return_value={'metadata': {'version': '4.20.1'}},
+            ),
         ):
             await pipeline.run()
 

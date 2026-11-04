@@ -320,6 +320,7 @@ class KonfluxBuildCli:
         effective_time: str = "now",
         skip_custom_its: bool = False,
         skip_tasks: tuple[str, ...] = (),
+        build_args: tuple[str, ...] = (),
     ):
         self.runtime = runtime
         self.konflux_kubeconfig = konflux_kubeconfig
@@ -329,6 +330,12 @@ class KonfluxBuildCli:
         self.registry_auth_file = registry_auth_file
         self.skip_checks = skip_checks
         self.skip_tasks = skip_tasks
+        self.build_args = {}
+        for arg in build_args:
+            key, separator, value = arg.partition('=')
+            if not separator or not key.strip():
+                raise click.BadParameter('Expected KEY=VALUE', param_hint='--build-arg')
+            self.build_args[key] = value
         self.dry_run = dry_run
         self.plr_template = plr_template
         self.build_priority = build_priority
@@ -423,6 +430,7 @@ class KonfluxBuildCli:
             integration_test_scenarios=tuple(dict.fromkeys(integration_test_scenarios)),
             integration_test_snapshot_annotations=dict(integration_test_snapshot_annotations),
             skip_custom_its=self.skip_custom_its,
+            build_args=self.build_args,
         )
         builder = KonfluxImageBuilder(config=config, record_logger=runtime.record_logger)
         await builder.validate_custom_integration_test_scenarios()
@@ -665,6 +673,13 @@ class KonfluxBuildCli:
     help='The namespace to use for Konflux cluster connections.',
 )
 @click.option('--image-repo', default=constants.KONFLUX_DEFAULT_IMAGE_REPO, help='Push images to the specified repo.')
+@click.option(
+    '--build-arg',
+    'build_args',
+    multiple=True,
+    metavar='KEY=VALUE',
+    help='Override a Docker build argument. Repeatable; takes precedence over image and group configuration.',
+)
 @click.option('--skip-checks', default=False, is_flag=True, help='Skip all post build checks')
 @click.option(
     '--skip-task',
@@ -726,6 +741,7 @@ async def images_konflux_build(
     skip_ec_verify: bool,
     effective_time: str,
     skip_custom_its: bool,
+    build_args: tuple[str, ...],
 ):
     if network_mode:
         runtime.network_mode_override = network_mode
@@ -745,6 +761,7 @@ async def images_konflux_build(
         skip_ec_verify=skip_ec_verify,
         effective_time=effective_time,
         skip_custom_its=skip_custom_its,
+        build_args=build_args,
     )
     await cli.run()
 

@@ -1954,9 +1954,9 @@ class TestStartBuildEnablePackageRegistryProxy(unittest.IsolatedAsyncioTestCase)
 
         return metadata
 
-    async def _run_start_build(self, enable_package_registry_proxy=None):
+    async def _run_start_build(self, enable_package_registry_proxy=None, metadata=None):
         """Helper to call _start_build with metadata configured for enable_package_registry_proxy."""
-        metadata = self._metadata(enable_package_registry_proxy=enable_package_registry_proxy)
+        metadata = metadata or self._metadata(enable_package_registry_proxy=enable_package_registry_proxy)
 
         build_repo = MagicMock()
         build_repo.commit_hash = "abc123"
@@ -1994,6 +1994,44 @@ class TestStartBuildEnablePackageRegistryProxy(unittest.IsolatedAsyncioTestCase)
         """Test that enable_package_registry_proxy is None when not set in config."""
         build_params = await self._run_start_build(enable_package_registry_proxy=None)
         self.assertIsNone(build_params.enable_package_registry_proxy)
+
+    async def test_build_argument_overrides_merge_with_effective_config(self):
+        from artcommonlib.model import Model
+
+        for image_args in (None, ['RELEASE_VALUE=image-payload', 'ARCH=ppc64le', 'KEEP=a=b', 'FROM_ENV']):
+            with self.subTest(image_args=image_args):
+                self.mock_konflux_client.start_pipeline_run_for_image_build.reset_mock()
+                metadata = self._metadata()
+                metadata.runtime.group_config = Model(
+                    {
+                        'konflux': {
+                            'build_args': [
+                                'RELEASE_VALUE=group-payload',
+                                'ARCH=x86_64',
+                            ]
+                        }
+                    }
+                )
+                metadata.config = Model({'konflux': {} if image_args is None else {'build_args': image_args}})
+                self.builder._config.build_args = {'RELEASE_VALUE': 'runtime-payload', 'PATCH_VERSION': '19'}
+                params = await self._run_start_build(metadata=metadata)
+                values = dict(arg.partition('=')[::2] for arg in params.build_args)
+                self.assertEqual(values['RELEASE_VALUE'], 'runtime-payload')
+                self.assertEqual(values['PATCH_VERSION'], '19')
+                self.assertEqual(values['ARCH'], 'x86_64' if image_args is None else 'ppc64le')
+                self.assertEqual(sum(arg.startswith('RELEASE_VALUE=') for arg in params.build_args), 1)
+                if image_args is not None:
+                    self.assertEqual(values['KEEP'], 'a=b')
+                    self.assertIn('FROM_ENV', params.build_args)
+
+    async def test_no_build_argument_overrides_preserves_config(self):
+        from artcommonlib.model import Model
+
+        metadata = self._metadata()
+        args = ['ARCH=x86_64', 'RELEASE_VALUE=config-payload']
+        metadata.runtime.group_config = Model({'konflux': {'build_args': args}})
+        params = await self._run_start_build(metadata=metadata)
+        self.assertEqual(params.build_args, args)
 
 
 class TestNormalizeVersion(unittest.TestCase):
