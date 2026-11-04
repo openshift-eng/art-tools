@@ -126,6 +126,11 @@ class TestReleaseFromFbcPipeline(unittest.TestCase):
                 self.assertEqual(pipeline._fbc_operator_by_pullspec, {pipeline.fbc_pullspecs[0]: 'operator'})
                 self.assertEqual(pipeline._fbc_related_nvrs_by_pullspec, {pipeline.fbc_pullspecs[0]: result})
 
+    @patch.dict(
+        os.environ,
+        {'DOOZER_DATA_PATH': 'https://github.com/test/custom-build-data', 'DOOZER_DATA_GITREF': 'custom-policy'},
+        clear=True,
+    )
     @patch("pyartcd.pipelines.release_from_fbc.build_fbc_catalogs", new_callable=AsyncMock)
     @patch.object(ReleaseFromFbcPipeline, "_load_component_doozer_keys", new_callable=AsyncMock)
     def test_refresh_fbc_pullspecs_uses_exact_operator_nvrs(self, mock_component_keys, mock_build_fbc_catalogs):
@@ -161,6 +166,8 @@ class TestReleaseFromFbcPipeline(unittest.TestCase):
             ],
         )
         kwargs = mock_build_fbc_catalogs.await_args.kwargs
+        self.assertEqual(kwargs['data_path'], 'https://github.com/test/custom-build-data')
+        self.assertEqual(kwargs['data_gitref'], 'custom-policy')
         self.assertEqual(kwargs["assembly"], "1.4.5")
         self.assertEqual(kwargs["operator_nvrs_by_target"], {"4.19": [operator_nvr], "4.20": [operator_nvr]})
         self.assertTrue(kwargs["force"])
@@ -328,11 +335,23 @@ class TestReleaseFromFbcPipeline(unittest.TestCase):
         for overrides, expected_path, expected_ref in (
             ({}, constants.OCP_BUILD_DATA_URL, ''),
             (
-                {'DOOZER_DATA_PATH': '/tmp/custom-build-data', 'DOOZER_DATA_GITREF': 'custom-policy'},
-                '/tmp/custom-build-data',
+                {
+                    'DOOZER_DATA_PATH': 'https://github.com/test/custom-build-data',
+                    'DOOZER_DATA_GITREF': 'custom-policy',
+                },
+                'https://github.com/test/custom-build-data',
                 'custom-policy',
             ),
             ({'DOOZER_DATA_GITREF': 'custom-policy'}, constants.OCP_BUILD_DATA_URL, 'custom-policy'),
+            ({'DOOZER_DATA_PATH': '/tmp/custom-build-data'}, '/tmp/custom-build-data', ''),
+            (
+                {
+                    'DOOZER_DATA_PATH': 'git@github.com:test/custom-build-data.git',
+                    'DOOZER_DATA_GITREF': 'custom-policy',
+                },
+                'git@github.com:test/custom-build-data.git',
+                'custom-policy',
+            ),
         ):
             with self.subTest(overrides=overrides), patch.dict(os.environ, overrides, clear=True):
                 load_config.reset_mock()
@@ -346,6 +365,31 @@ class TestReleaseFromFbcPipeline(unittest.TestCase):
                     doozer_data_gitref=expected_ref,
                 )
                 self.assertIsNotNone(pipeline.create_shipment_config('image', _make_snapshot()).shipment.data.mapping)
+
+    @patch('pyartcd.pipelines.release_from_fbc.load_group_config', new_callable=AsyncMock)
+    @patch('pyartcd.pipelines.release_from_fbc.build_fbc_catalogs', new_callable=AsyncMock)
+    @patch.object(ReleaseFromFbcPipeline, '_load_component_doozer_keys', new_callable=AsyncMock)
+    def test_local_build_data_with_ref_rejected_before_loading_or_refreshing(self, component_keys, build, load_config):
+        """Do not silently read a different local revision or change the user's checkout."""
+        for data_path in ('/tmp/custom-build-data', '../ocp-build-data', 'file:///tmp/custom-build-data'):
+            with (
+                self.subTest(data_path=data_path),
+                patch.dict(
+                    os.environ, {'DOOZER_DATA_PATH': data_path, 'DOOZER_DATA_GITREF': 'custom-policy'}, clear=True
+                ),
+            ):
+                pipeline = self._make_pipeline()
+                with self.assertRaisesRegex(
+                    ValueError, 'DOOZER_DATA_GITREF cannot be used with a local DOOZER_DATA_PATH'
+                ):
+                    asyncio.run(pipeline._load_product_from_group_config())
+                with self.assertRaisesRegex(
+                    ValueError, 'DOOZER_DATA_GITREF cannot be used with a local DOOZER_DATA_PATH'
+                ):
+                    asyncio.run(pipeline._refresh_fbc_pullspecs([]))
+        load_config.assert_not_awaited()
+        component_keys.assert_not_awaited()
+        build.assert_not_awaited()
 
     @patch('pyartcd.pipelines.release_from_fbc.load_group_config', new_callable=AsyncMock)
     def test_explicit_or_missing_build_version_does_not_generate_tags(self, load_config):

@@ -510,13 +510,29 @@ class ReleaseFromFbcPipeline:
         )
         await self.shipment_data_repo.fetch_switch_branch("main")
 
+    @staticmethod
+    def _build_data_source() -> tuple[str, str]:
+        """Reject local checkout/ref pairs that Doozer would silently read at the wrong revision."""
+        data_path = os.getenv('DOOZER_DATA_PATH', constants.OCP_BUILD_DATA_URL)
+        data_gitref = os.getenv('DOOZER_DATA_GITREF') or ''
+        data_url = urlparse(data_path)
+        is_local = data_url.scheme == 'file' or (not data_url.scheme and ':' not in data_url.path)
+        if is_local and data_gitref:
+            raise ValueError(
+                'DOOZER_DATA_GITREF cannot be used with a local DOOZER_DATA_PATH: '
+                'Doozer reads the working tree without checking out the requested ref. '
+                'Check out the desired revision yourself and unset DOOZER_DATA_GITREF, or use a remote Git URL.'
+            )
+        return data_path, data_gitref
+
     async def _load_product_from_group_config(self) -> str:
         """Load the product and version policy from the effective assembly group config."""
+        data_path, data_gitref = self._build_data_source()
         group_config = await load_group_config(
             group=self.group,
             assembly=self.assembly,
-            doozer_data_path=os.getenv('DOOZER_DATA_PATH', constants.OCP_BUILD_DATA_URL),
-            doozer_data_gitref=os.getenv('DOOZER_DATA_GITREF') or '',
+            doozer_data_path=data_path,
+            doozer_data_gitref=data_gitref,
         )
         self._auto_version = group_config.get('version') == 'auto'
         if group_config.get('product'):
@@ -1296,11 +1312,13 @@ class ReleaseFromFbcPipeline:
                 ordered by their source operator identities.
 
         Raises:
+            ValueError: If a local build-data path is combined with an explicit ref.
             RuntimeError: If an FBC cannot be mapped unambiguously to one
                 operator NVR and target version, or if two source FBCs resolve
                 to the same operator NVR and target, or if refreshed catalogs
                 cannot be associated one-to-one with their sources.
         """
+        data_path, data_gitref = self._build_data_source()
         component_keys = await self._load_component_doozer_keys()
         operator_nvrs_by_target: dict[str, list[str]] = {}
         source_fbcs_by_target: dict[str, list[tuple[str, str]]] = {}
@@ -1347,8 +1365,8 @@ class ReleaseFromFbcPipeline:
             version=self.assembly,
             product=self.product,
             operator_nvrs_by_target=operator_nvrs_by_target,
-            data_path=os.getenv("DOOZER_DATA_PATH", constants.OCP_BUILD_DATA_URL),
-            data_gitref=os.getenv("DOOZER_DATA_GITREF") or None,
+            data_path=data_path,
+            data_gitref=data_gitref or None,
             force=True,
             reset_to_prod=True,
         )

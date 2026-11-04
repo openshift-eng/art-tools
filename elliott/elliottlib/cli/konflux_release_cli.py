@@ -77,7 +77,9 @@ async def _render_fbc_packages(
     return component_packages
 
 
-def _validate_assembly_tag_mapping(shipment: Shipment, mapping: dict, rpa_description: str) -> None:
+def _validate_assembly_tag_mapping(
+    shipment: Shipment, rpa_mapping: dict, release_plan_mapping: dict, rpa_description: str
+) -> None:
     """Reject effective image-version tags when a shipment publishes assembly-based tags."""
     if not shipment.data or not shipment.data.mapping:
         return
@@ -87,15 +89,16 @@ def _validate_assembly_tag_mapping(shipment: Shipment, mapping: dict, rpa_descri
     snapshot_names = {component.name for component in shipment.snapshot.spec.components}
     tag_sources = [
         ('shipment.data.mapping.defaults', {'tags': shipment.data.mapping.defaults.tags}),
-        ('RPA.mapping.defaults', mapping.get('defaults') or {}),
     ]
-    for component in mapping.get('components', []):
-        if component.get('name') not in snapshot_names:
-            continue
-        component_path = f"RPA.mapping.components[{component['name']}]"
-        tag_sources.append((component_path, component))
-        for index, repository in enumerate(component.get('repositories', [])):
-            tag_sources.append((f'{component_path}.repositories[{index}]', repository))
+    for source, mapping in (('ReleasePlan', release_plan_mapping), ('RPA', rpa_mapping)):
+        tag_sources.append((f'{source}.mapping.defaults', mapping.get('defaults') or {}))
+        for component in mapping.get('components', []):
+            if component.get('name') not in snapshot_names:
+                continue
+            component_path = f"{source}.mapping.components[{component['name']}]"
+            tag_sources.append((component_path, component))
+            for index, repository in enumerate(component.get('repositories', [])):
+                tag_sources.append((f'{component_path}.repositories[{index}]', repository))
 
     conflicts = [
         f'{path}.tags: {tag!r}'
@@ -107,8 +110,8 @@ def _validate_assembly_tag_mapping(shipment: Shipment, mapping: dict, rpa_descri
         raise ValueError(
             f"Release tags for {rpa_description} contain labels.version tags that conflict with assembly-based shipment tags "
             f"for assembly {shipment.metadata.assembly}: {'; '.join(conflicts)}. "
-            "Remove the labels.version tag templates from the indicated shipment or RPA mapping before releasing; "
-            "Konflux combines RPA and shipment tags."
+            "Remove the labels.version tag templates from the indicated shipment, ReleasePlan, or RPA mapping "
+            "before releasing; Konflux combines tags from all three sources."
         )
 
 
@@ -226,7 +229,12 @@ async def validate_snapshot_against_rpa(
                 f"The following {kind} shipment components are not listed in {check_env} RPA {target}/{rpa_name} "
                 f"and would be silently filtered out during release: {sorted(missing)}"
             )
-        _validate_assembly_tag_mapping(shipment, mapping, f'{check_env} RPA {target}/{rpa_name}')
+        _validate_assembly_tag_mapping(
+            shipment,
+            mapping,
+            (rp.get('spec', {}).get('data') or {}).get('mapping') or {},
+            f'{check_env} RPA {target}/{rpa_name}',
+        )
         LOGGER.info(
             "All %d snapshot components of %s shipment validated against RPA %s/%s",
             len(snapshot_names),

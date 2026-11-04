@@ -417,10 +417,11 @@ mapping automatically.
 
 When a shipment uses `{{ assembly }}`, release validation rejects tag templates
 that also use `{{ labels.version }}`. Validation checks shipment defaults and
-both stage and production RPAs, including mapping defaults and tags on the
-shipment's mapped components and repositories. Remove those image-version
-templates from the indicated shipment or RPA mapping before using assembly-based
-shipment tags; otherwise Konflux would publish both versions.
+both stage and production ReleasePlans and RPAs, including mapping defaults and
+tags on the shipment's mapped components and repositories. Remove those
+image-version templates from the indicated shipment, ReleasePlan, or RPA mapping
+before using assembly-based shipment tags; otherwise Konflux would publish both
+versions.
 
 Assembly-based tags require a named assembly; `stream` is rejected. Tags must
 follow container tag syntax (letters, digits, underscores, periods, and hyphens,

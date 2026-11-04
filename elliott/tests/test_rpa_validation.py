@@ -115,7 +115,38 @@ class TestRPAValidation(IsolatedAsyncioTestCase):
                 self.shipment.data.mapping = Mapping.model_validate({'defaults': {'tags': tags}})
                 with self.assertRaisesRegex(ValueError, r'shipment\.data\.mapping\.defaults\.tags') as error:
                     await self.validate()
-                self.assertIn('indicated shipment or RPA mapping', str(error.exception))
+                self.assertIn('indicated shipment, ReleasePlan, or RPA mapping', str(error.exception))
+
+    async def test_assembly_tags_reject_release_plan_image_version_templates(self):
+        """ReleasePlan tags participate in the same union as shipment and RPA tags."""
+        self.shipment.data.mapping = Mapping.model_validate({'defaults': {'tags': ['v{{ assembly }}']}})
+        original_resources = deepcopy(self.resources)
+        for env in ('stage', 'prod'):
+            for scope in ('defaults', 'component', 'repository'):
+                with self.subTest(env=env, scope=scope):
+                    self.resources = deepcopy(original_resources)
+                    mapping = {'components': [{'name': 'test-component'}]}
+                    self.resources[(KIND_RELEASE_PLAN, f'custom-{env}-plan', None)]['spec']['data'] = {
+                        'mapping': mapping
+                    }
+                    tag = 'v{{labels.version}}'
+                    if scope == 'defaults':
+                        mapping['defaults'] = {'tags': [tag]}
+                    elif scope == 'component':
+                        mapping['components'][0]['tags'] = [tag]
+                    else:
+                        mapping['components'][0]['repositories'] = [{'url': 'registry.example.com/test', 'tags': [tag]}]
+                    with self.assertRaisesRegex(ValueError, f'{env} RPA.*ReleasePlan.mapping'):
+                        await self.validate()
+
+    async def test_assembly_tags_allow_empty_release_plan_data(self):
+        """Optional ReleasePlan data or mapping may be absent or null."""
+        self.shipment.data.mapping = Mapping.model_validate({'defaults': {'tags': ['v{{ assembly }}']}})
+        for data in (None, {'mapping': None}, {}):
+            with self.subTest(data=data):
+                for env in ('stage', 'prod'):
+                    self.resources[(KIND_RELEASE_PLAN, f'custom-{env}-plan', None)]['spec']['data'] = data
+                await self.validate()
 
     async def test_image_version_tags_remain_allowed_without_assembly_tag_templates(self):
         for mapping in (
@@ -128,6 +159,9 @@ class TestRPAValidation(IsolatedAsyncioTestCase):
                 self.resources[('ReleasePlanAdmission', 'unusual-prod-admission', 'managed-prod')]['spec']['data'][
                     'mapping'
                 ]['defaults'] = {'tags': ['v{{ labels.version }}']}
+                self.resources[(KIND_RELEASE_PLAN, 'custom-prod-plan', None)]['spec']['data'] = {
+                    'mapping': {'defaults': {'tags': ['v{{ labels.version }}']}}
+                }
                 await self.validate()
 
     async def test_assembly_tags_allow_other_image_labels_and_ignore_unshipped_components(self):
@@ -145,9 +179,9 @@ class TestRPAValidation(IsolatedAsyncioTestCase):
         self.shipment.metadata.group = 'quay-3.18'
         self.shipment.metadata.assembly = '3.18.3'
         self.shipment.data.mapping = Mapping.model_validate({'defaults': {'tags': ['v{{ assembly }}']}})
-        self.resources[('ReleasePlanAdmission', 'unusual-prod-admission', 'managed-prod')]['spec']['data']['mapping'][
-            'defaults'
-        ] = {'tags': ['v{{ labels.version }}']}
+        self.resources[(KIND_RELEASE_PLAN, 'custom-prod-plan', None)]['spec']['data'] = {
+            'mapping': {'defaults': {'tags': ['v{{ labels.version }}']}}
+        }
         original_get = self.client._get.side_effect
 
         async def get(version, kind, name, namespace=None):

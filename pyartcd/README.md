@@ -21,9 +21,16 @@ applies to extras shipments from `release-from-fbc`. Elliott resolves
 the shipment assembly when constructing stage and production Releases, and
 Konflux expands the release timestamp. These tags are combined with RPA tags,
 so a `3.18.3` assembly can publish `v3.18.3` even when the image version is
-`3.18.0`. RPA validation rejects `{{ labels.version }}` tags in either environment
-when the shipment uses assembly-based tags, preventing both versions from being
-published. Groups with explicit versions retain their existing behavior.
+`3.18.0`. Release validation rejects `{{ labels.version }}` tags in shipment
+defaults and either environment's ReleasePlan or RPA when the shipment uses
+assembly-based tags, preventing both versions from being published. Groups with
+explicit versions retain their existing behavior.
 Non-OpenShift shipments can carry tags without release notes. FBC
 shipments retain their catalog release path. See the
 [shipment tag configuration](../elliott/README.md#shipment-release-tags).
+
+`release-from-fbc` uses `DOOZER_DATA_PATH` and `DOOZER_DATA_GITREF` consistently
+for version policy and FBC refresh. A local path combined with an explicit ref
+is rejected because Doozer reads local working-tree contents without checking
+out that ref. For a local checkout, select the revision yourself and unset
+`DOOZER_DATA_GITREF`; alternatively, use a remote Git URL with the requested ref.
