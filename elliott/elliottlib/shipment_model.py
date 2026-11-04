@@ -130,7 +130,7 @@ class Mapping(StrictBaseModel):
 class Data(StrictBaseModel):
     """Represents spec.data field when constructing a Konflux release"""
 
-    releaseNotes: ReleaseNotes
+    releaseNotes: Optional[ReleaseNotes] = None
     mapping: Optional[Mapping] = None
 
 
@@ -206,6 +206,8 @@ class Shipment(StrictBaseModel):
     @model_validator(mode='after')
     def validate_release_tags(self) -> Self:
         if self.data and self.data.mapping:
+            if self.metadata.fbc:
+                raise ValueError('FBC shipment is not expected to have data.mapping defined')
             self.data.mapping.defaults.resolve_tags(self.metadata.assembly)
         return self
 

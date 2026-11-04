@@ -158,6 +158,26 @@ class TestShipmentModel(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, 'Extra inputs are not permitted'):
             Shipment(**shipment_data)
 
+    def test_mapping_only_shipment_without_release_notes(self):
+        shipment_data = self._create_base_shipment_data()
+        shipment_data['data'] = {'mapping': {'defaults': {'tags': ['v{{ assembly }}']}}}
+        shipment = Shipment(**shipment_data)
+        self.assertIsNone(shipment.data.releaseNotes)
+        self.assertNotIn('releaseNotes', shipment.model_dump(exclude_none=True)['data'])
+
+    def test_openshift_mapping_does_not_replace_required_release_notes(self):
+        shipment_data = self._create_base_shipment_data()
+        shipment_data['metadata']['group'] = 'openshift-4.18'
+        shipment_data['data'] = {'mapping': {'defaults': {'tags': ['v{{ assembly }}']}}}
+        with self.assertRaisesRegex(ValueError, 'A regular shipment is expected to have data.releaseNotes defined'):
+            Shipment(**shipment_data)
+
+    def test_fbc_shipment_rejects_tag_mapping(self):
+        shipment_data = self._create_base_shipment_data(fbc=True)
+        shipment_data['data'] = {'mapping': {'defaults': {'tags': ['v{{ assembly }}']}}}
+        with self.assertRaisesRegex(ValueError, 'FBC shipment is not expected to have data.mapping defined'):
+            Shipment(**shipment_data)
+
     def test_assembly_tags_are_validated_when_loading_shipment(self):
         for assembly in ('stream', '', '3.18.3+metadata', 'bad/assembly', '{{ labels.version }}'):
             with self.subTest(assembly=assembly):

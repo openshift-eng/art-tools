@@ -1,4 +1,5 @@
 import os
+import re
 import sys
 from dataclasses import dataclass
 from time import perf_counter
@@ -74,6 +75,38 @@ async def _render_fbc_packages(
             LOGGER.info("Rendered FBC component %s in %.2f seconds", component.name, perf_counter() - start)
         component_packages.append((component.name, pullspec, packages_by_image[pullspec]))
     return component_packages
+
+
+def _validate_assembly_tag_mapping(shipment: Shipment, mapping: dict, rpa_description: str) -> None:
+    """Reject effective image-version tags when a shipment publishes assembly-based tags."""
+    if not shipment.data or not shipment.data.mapping:
+        return
+    if not any(re.search(r'\{\{\s*assembly\s*\}\}', tag) for tag in shipment.data.mapping.defaults.tags):
+        return
+
+    snapshot_names = {component.name for component in shipment.snapshot.spec.components}
+    tag_sources = [('mapping.defaults', mapping.get('defaults') or {})]
+    for component in mapping.get('components', []):
+        if component.get('name') not in snapshot_names:
+            continue
+        component_path = f"mapping.components[{component['name']}]"
+        tag_sources.append((component_path, component))
+        for index, repository in enumerate(component.get('repositories', [])):
+            tag_sources.append((f'{component_path}.repositories[{index}]', repository))
+
+    conflicts = [
+        f'{path}.tags: {tag!r}'
+        for path, source in tag_sources
+        for tag in source.get('tags', [])
+        if re.search(r'\{\{\s*labels\.version\s*\}\}', tag)
+    ]
+    if conflicts:
+        raise ValueError(
+            f"{rpa_description} defines labels.version tags that conflict with assembly-based shipment tags "
+            f"for assembly {shipment.metadata.assembly}: {'; '.join(conflicts)}. "
+            "Remove the labels.version tag templates from this RPA before releasing; "
+            "Konflux combines RPA and shipment tags."
+        )
 
 
 async def validate_snapshot_against_rpa(
@@ -179,7 +212,8 @@ async def validate_snapshot_against_rpa(
             LOGGER.info("All FBC packages validated against %s RPA %s/%s", check_env, target, rpa_name)
             continue
 
-        components = rpa.get("spec", {}).get("data", {}).get("mapping", {}).get("components", [])
+        mapping = rpa.get("spec", {}).get("data", {}).get("mapping", {})
+        components = mapping.get("components", [])
         allowed_names = {comp["name"] for comp in components if isinstance(comp, dict) and "name" in comp}
         if not allowed_names:
             raise ValueError(f"RPA {target}/{rpa_name} has no components defined")
@@ -189,6 +223,7 @@ async def validate_snapshot_against_rpa(
                 f"The following {kind} shipment components are not listed in {check_env} RPA {target}/{rpa_name} "
                 f"and would be silently filtered out during release: {sorted(missing)}"
             )
+        _validate_assembly_tag_mapping(shipment, mapping, f'{check_env} RPA {target}/{rpa_name}')
         LOGGER.info(
             "All %d snapshot components of %s shipment validated against RPA %s/%s",
             len(snapshot_names),
@@ -420,7 +455,7 @@ class CreateReleaseCli:
             # We only reserve live_id for prod release, therefore releaseNotes.live_id is only meant for prod
             # For stage release, we want konflux to automatically assign a live_id to the release
             if env != "prod":
-                rc.data['releaseNotes'].pop('live_id', None)
+                rc.data.get('releaseNotes', {}).pop('live_id', None)
             if shipment.data.mapping:
                 rc.data['mapping']['defaults']['tags'] = shipment.data.mapping.defaults.resolve_tags(
                     shipment.metadata.assembly

@@ -1,5 +1,5 @@
 {
-  "$comment": "Schema generated on 2026-11-04 16:23 UTC from elliottlib.shipment_model",
+  "$comment": "Schema generated on 2026-11-04 16:32 UTC from elliottlib.shipment_model",
   "$defs": {
     "ComponentSource": {
       "additionalProperties": false,
@@ -39,7 +39,15 @@
       "description": "Represents spec.data field when constructing a Konflux release",
       "properties": {
         "releaseNotes": {
-          "$ref": "#/$defs/ReleaseNotes"
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ReleaseNotes"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
         },
         "mapping": {
           "anyOf": [
@@ -53,9 +61,6 @@
           "default": null
         }
       },
-      "required": [
-        "releaseNotes"
-      ],
       "title": "Data",
       "type": "object"
     },

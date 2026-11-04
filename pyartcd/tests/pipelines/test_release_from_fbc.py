@@ -3,12 +3,14 @@ import unittest
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import click
+from elliottlib.cli.konflux_release_cli import CreateReleaseCli
 from elliottlib.shipment_model import (
     ComponentSource,
     GitSource,
     Issue,
     Issues,
     ReleaseNotes,
+    ShipmentConfig,
     Snapshot,
     SnapshotComponent,
     SnapshotSpec,
@@ -277,7 +279,7 @@ class TestReleaseFromFbcPipeline(unittest.TestCase):
         self.assertEqual(config.shipment.data.releaseNotes.type, "RHBA")
 
     def test_create_shipment_config_image_without_release_notes(self):
-        """create_shipment_config should produce no data for non-OpenShift image without release_notes."""
+        """Non-auto groups do not add image shipment tags or release notes."""
         pipeline = self._make_pipeline()
         snapshot = _make_snapshot()
 
@@ -285,9 +287,57 @@ class TestReleaseFromFbcPipeline(unittest.TestCase):
 
         self.assertIsNone(config.shipment.data)
 
+    @patch('pyartcd.pipelines.release_from_fbc.load_group_config', new_callable=AsyncMock)
+    def test_generated_image_and_extras_tags_reach_stage_and_prod_release_data(self, load_config):
+        load_config.return_value = {'product': 'quay', 'version': 'auto'}
+        pipeline = self._make_pipeline(group='quay-3.18', assembly='3.18.3')
+        pipeline.product = asyncio.run(pipeline._load_product_from_group_config())
+        load_config.assert_awaited_once_with(group='quay-3.18', assembly='3.18.3')
+        snapshot = _make_snapshot(app='quay-3-18')
+        for kind in ('image', 'extras'):
+            for release_notes in (None, ReleaseNotes(type='RHSA')):
+                with self.subTest(kind=kind, release_notes=release_notes):
+                    config = pipeline.create_shipment_config(kind, snapshot, release_notes)
+                    dumped = config.model_dump(exclude_unset=True, exclude_none=True)
+                    self.assertEqual(
+                        dumped['shipment']['data']['mapping']['defaults']['tags'],
+                        ['v{{ assembly }}', 'v{{ assembly }}-{{ release_timestamp }}'],
+                    )
+                    shipment = ShipmentConfig.model_validate(dumped).shipment
+                    self.assertEqual(shipment.data.releaseNotes, release_notes)
+                    for env in ('stage', 'prod'):
+                        release = CreateReleaseCli.get_release_config(shipment, env, 'release', 'snapshot')
+                        self.assertEqual(
+                            release.data['mapping']['defaults']['tags'],
+                            ['v3.18.3', 'v3.18.3-{{ release_timestamp }}'],
+                        )
+                        if release_notes is None:
+                            self.assertNotIn('releaseNotes', release.data)
+
+    @patch('pyartcd.pipelines.release_from_fbc.load_group_config', new_callable=AsyncMock)
+    def test_explicit_or_missing_build_version_does_not_generate_tags(self, load_config):
+        pipeline = self._make_pipeline(group='quay-3.18', assembly='3.18.3')
+        snapshot = _make_snapshot(app='quay-3-18')
+        for version in ('3.18.3', None):
+            for kind in ('image', 'extras'):
+                with self.subTest(version=version, kind=kind):
+                    load_config.return_value = {'product': 'quay', 'version': version}
+                    pipeline.product = asyncio.run(pipeline._load_product_from_group_config())
+                    self.assertIsNone(pipeline.create_shipment_config(kind, snapshot).shipment.data)
+                    config = pipeline.create_shipment_config(kind, snapshot, ReleaseNotes(type='RHBA'))
+                    self.assertIsNone(config.shipment.data.mapping)
+
+    @patch('pyartcd.pipelines.release_from_fbc.load_group_config', new_callable=AsyncMock)
+    def test_group_config_read_failure_stops_tag_policy_resolution(self, load_config):
+        pipeline = self._make_pipeline()
+        load_config.side_effect = RuntimeError('Cannot read group config')
+        with self.assertRaisesRegex(RuntimeError, 'Cannot read group config'):
+            asyncio.run(pipeline._load_product_from_group_config())
+
     def test_create_shipment_config_fbc_ignores_release_notes(self):
         """FBC shipments should never have data.releaseNotes, even if release_notes is provided."""
         pipeline = self._make_pipeline()
+        pipeline._auto_version = True
         snapshot = _make_snapshot()
 
         release_notes = ReleaseNotes(type="RHSA")
@@ -2312,7 +2362,7 @@ class TestOcpOptionalMode(unittest.TestCase):
         self.assertIn("extras", config.shipment.data.releaseNotes.synopsis)
 
     def test_create_shipment_config_extras_no_notes_for_non_openshift(self):
-        """extras kind for non-openshift group should have no data when no release notes provided."""
+        """Non-auto groups do not add extras shipment tags or release notes."""
         pipeline = self._make_pipeline(ocp_optional=True, group="oadp-1.4", assembly="1.4.5")
         pipeline.product = "oadp"
         snapshot = _make_snapshot(app="oadp-1-4")

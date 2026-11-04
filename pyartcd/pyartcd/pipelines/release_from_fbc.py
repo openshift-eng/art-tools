@@ -26,6 +26,8 @@ from elliottlib.cli.konflux_release_cli import validate_snapshot_against_rpa
 from elliottlib.shipment_model import (
     Data,
     Environments,
+    Mapping,
+    MappingDefaults,
     Metadata,
     ReleaseNotes,
     Shipment,
@@ -66,6 +68,7 @@ from pyartcd.lp_shipment import (
     verify_shipment_mr_url,
 )
 from pyartcd.runtime import Runtime
+from pyartcd.util import load_group_config
 
 yaml = new_roundtrip_yaml_handler()
 
@@ -195,6 +198,7 @@ class ReleaseFromFbcPipeline:
 
         # Product configuration - initialized to None, will be loaded from group config in run()
         self.product = None
+        self._auto_version = False
 
         # FBC operator doozer keys - populated during validate_fbc_related_images()
         self._fbc_operator_keys: list[str] = []
@@ -507,28 +511,11 @@ class ReleaseFromFbcPipeline:
         await self.shipment_data_repo.fetch_switch_branch("main")
 
     async def _load_product_from_group_config(self) -> str:
-        """
-        Load the product field from group configuration using doozer command.
-        Falls back to extracting from group name if not found.
-        """
-        try:
-            # Use doozer command to read group config product field
-            doozer_cmd = ['doozer', f'--group={self.group}', 'config:read-group', 'product']
-
-            _, product_output, _ = await exectools.cmd_gather_async(doozer_cmd)
-            # Doozer may print its first-run notice before the scalar value.
-            output_lines = [line.strip() for line in (product_output or "").splitlines() if line.strip()]
-            product = output_lines[-1] if output_lines else ""
-
-            if product and product != 'None' and product != 'null':
-                self.logger.info(f"Loaded product from group config: {product}")
-                return product
-            else:
-                self.logger.debug("No product field found in group config, falling back to group name extraction")
-
-        except Exception as e:
-            self.logger.warning(f"Failed to load product from group config: {e}")
-
+        """Load the product and version policy from the effective assembly group config."""
+        group_config = await load_group_config(group=self.group, assembly=self.assembly)
+        self._auto_version = group_config.get('version') == 'auto'
+        if group_config.get('product'):
+            return group_config['product']
         # Fallback: extract product from group name (e.g., "oadp-1.3" -> "oadp")
         product = self.group.split('-')[0]
         # Special case: openshift groups do not define product in group config,
@@ -960,17 +947,26 @@ class ReleaseFromFbcPipeline:
         # - For openshift-* groups, ALL non-FBC shipments (image, extras)
         #   require data.releaseNotes per shipment model validation.
         # - For non-openshift groups, release notes are included only if provided.
-        data = None
         if kind != 'fbc' and release_notes:
             self.logger.info("Using provided release notes (type=%s) for %s shipment", release_notes.type, kind)
-            data = Data(releaseNotes=release_notes)
         elif kind != 'fbc' and self.group.startswith('openshift-'):
             self.logger.info(
                 f"Group '{self.group}' starts with 'openshift-' - generating minimal release notes "
                 f"for {kind} shipment to satisfy shipment validation requirements."
             )
-            rn = ReleaseNotes(type='RHBA', synopsis=f'FBC-derived {kind} shipment for {self.product} {self.assembly}')
-            data = Data(releaseNotes=rn)
+            release_notes = ReleaseNotes(
+                type='RHBA', synopsis=f'FBC-derived {kind} shipment for {self.product} {self.assembly}'
+            )
+
+        data = None
+        if kind != 'fbc':
+            mapping = None
+            if self._auto_version:
+                mapping = Mapping(
+                    defaults=MappingDefaults(tags=['v{{ assembly }}', 'v{{ assembly }}-{{ release_timestamp }}'])
+                )
+            if release_notes or mapping:
+                data = Data(releaseNotes=release_notes, mapping=mapping)
 
         # Create shipment
         shipment = Shipment(metadata=metadata, environments=environments, snapshot=snapshot, data=data)

@@ -407,6 +407,20 @@ Destination repositories remain configured in the RPA. See Konflux's
 [data merging implementation](https://github.com/konflux-ci/release-service-utils/blob/main/src/tasks/managed/collect_data/collect_data.py).
 
 The mapping is optional: shipments without it retain their existing behavior.
+`prepare-release-lp` and `release-from-fbc` automatically include the two assembly
+tag templates shown above in generated image/advisory shipments only when the
+effective group configuration has `version: auto`. This includes
+`release-from-fbc` extras shipments. Groups with explicit versions retain their
+existing tags. Non-OpenShift shipments can carry these tags without release
+notes. `prepare-release-konflux` and `elliott shipment init` do not populate this
+mapping automatically.
+
+When a shipment uses `{{ assembly }}`, RPA validation rejects tag templates that
+also use `{{ labels.version }}`. Validation checks both stage and production,
+including mapping defaults and tags on the shipment's mapped components and
+repositories. Remove those image-version templates from the RPAs before using
+assembly-based shipment tags; otherwise Konflux would publish both versions.
+
 Assembly-based tags require a named assembly; `stream` is rejected. Tags must
 follow container tag syntax (letters, digits, underscores, periods, and hyphens,
 with no leading period or hyphen, and a maximum of 128 characters). Elliott
