@@ -1233,5 +1233,204 @@ class TestRegistryConfigKubeconfig(unittest.TestCase):
         self.assertIsNotNone(config)
 
 
+# ---------------------------------------------------------------------------
+# RegistryConfig — collapse_to_host (opt-in hostname-only aliases)
+# ---------------------------------------------------------------------------
+
+
+class TestRegistryConfigCollapseToHost(unittest.TestCase):
+    def test_default_does_not_collapse(self):
+        """Without collapse_to_host, no bare-hostname alias is emitted (unchanged behavior)."""
+        auth_path = _write_auth_file(
+            {
+                "quay.io/openshift-release-dev": {"auth": _b64("u", "p")},
+            }
+        )
+        try:
+            with RegistryConfig(
+                source_files=[auth_path],
+                registries=["quay.io/openshift-release-dev"],
+            ) as auth_file:
+                data = _read_auth_file(auth_file)
+                self.assertIn("quay.io/openshift-release-dev", data["auths"])
+                self.assertNotIn("quay.io", data["auths"])
+                self.assertEqual(len(data["auths"]), 1)
+        finally:
+            os.unlink(auth_path)
+
+    def test_collapse_adds_hostname_alias(self):
+        """collapse_to_host adds a bare-hostname key aliased to the path-scoped credential."""
+        auth_path = _write_auth_file(
+            {
+                "quay.io/openshift-release-dev": {"auth": _b64("u", "p")},
+            }
+        )
+        try:
+            with RegistryConfig(
+                source_files=[auth_path],
+                registries=["quay.io/openshift-release-dev"],
+                collapse_to_host=True,
+            ) as auth_file:
+                data = _read_auth_file(auth_file)
+                # Both the original path-scoped key and the hostname alias are present.
+                self.assertIn("quay.io/openshift-release-dev", data["auths"])
+                self.assertIn("quay.io", data["auths"])
+                self.assertEqual(
+                    data["auths"]["quay.io"],
+                    data["auths"]["quay.io/openshift-release-dev"],
+                )
+        finally:
+            os.unlink(auth_path)
+
+    def test_collapse_first_requested_wins_for_shared_host(self):
+        """When several resolved registries share a host, the FIRST requested one supplies the alias."""
+        auth_path = _write_auth_file(
+            {
+                "quay.io/openshift-release-dev": {"auth": _b64("release", "pw")},
+                "quay.io/redhat-user-workloads/art": {"auth": _b64("art", "pw")},
+            }
+        )
+        try:
+            with RegistryConfig(
+                source_files=[auth_path],
+                registries=[
+                    "quay.io/redhat-user-workloads/art",
+                    "quay.io/openshift-release-dev",
+                ],
+                collapse_to_host=True,
+            ) as auth_file:
+                data = _read_auth_file(auth_file)
+                self.assertEqual(
+                    base64.b64decode(data["auths"]["quay.io"]["auth"]).decode(),
+                    "art:pw",
+                )
+        finally:
+            os.unlink(auth_path)
+
+    def test_collapse_preserves_explicit_bare_host_entry(self):
+        """A resolved bare-hostname entry is never overwritten by a path-scoped alias."""
+        auth_path = _write_auth_file(
+            {
+                "quay.io": {"auth": _b64("bare", "pw")},
+                "quay.io/openshift-release-dev": {"auth": _b64("release", "pw")},
+            }
+        )
+        try:
+            with RegistryConfig(
+                source_files=[auth_path],
+                registries=[
+                    "quay.io/openshift-release-dev",
+                    "quay.io",
+                ],
+                collapse_to_host=True,
+            ) as auth_file:
+                data = _read_auth_file(auth_file)
+                # The explicitly resolved bare-hostname credential wins, not the path-scoped alias.
+                self.assertEqual(
+                    base64.b64decode(data["auths"]["quay.io"]["auth"]).decode(),
+                    "bare:pw",
+                )
+        finally:
+            os.unlink(auth_path)
+
+    def test_collapse_with_credentials_only(self):
+        """collapse_to_host also aliases path-scoped explicit credentials."""
+        with RegistryConfig(
+            credentials=[RegistryCredential("quay.io/qci", "user", "pass")],
+            collapse_to_host=True,
+        ) as auth_file:
+            data = _read_auth_file(auth_file)
+            self.assertIn("quay.io/qci", data["auths"])
+            self.assertIn("quay.io", data["auths"])
+            self.assertEqual(data["auths"]["quay.io"], data["auths"]["quay.io/qci"])
+
+
+# ---------------------------------------------------------------------------
+# RegistryConfig — output_dir (DOCKER_CONFIG directory mode)
+# ---------------------------------------------------------------------------
+
+
+class TestRegistryConfigOutputDir(unittest.TestCase):
+    def test_default_returns_file_path(self):
+        """Without output_dir, __enter__ returns a config.json FILE path (unchanged behavior)."""
+        with RegistryConfig(
+            credentials=[RegistryCredential("quay.io", "u", "p")],
+        ) as returned:
+            self.assertTrue(os.path.isfile(returned))
+            self.assertFalse(os.path.isdir(returned))
+
+    def test_output_dir_returns_directory_with_config_json(self):
+        """With output_dir, __enter__ returns a DIRECTORY containing config.json."""
+        with RegistryConfig(
+            credentials=[RegistryCredential("quay.io", "u", "p")],
+            output_dir=True,
+        ) as returned:
+            self.assertTrue(os.path.isdir(returned))
+            config_path = os.path.join(returned, "config.json")
+            self.assertTrue(os.path.isfile(config_path))
+            data = _read_auth_file(config_path)
+            self.assertIn("quay.io", data["auths"])
+
+    def test_output_dir_config_json_permissions_restrictive(self):
+        """The config.json written in dir mode has restrictive (0600) permissions."""
+        with RegistryConfig(
+            credentials=[RegistryCredential("quay.io", "u", "p")],
+            output_dir=True,
+        ) as returned:
+            mode = os.stat(os.path.join(returned, "config.json")).st_mode
+            self.assertEqual(mode & stat.S_IRWXG, 0)
+            self.assertEqual(mode & stat.S_IRWXO, 0)
+
+    def test_output_dir_cleaned_up_after_exit(self):
+        """The temp directory (and its config.json) is removed on context exit."""
+        dir_holder = []
+        with RegistryConfig(
+            credentials=[RegistryCredential("quay.io", "u", "p")],
+            output_dir=True,
+        ) as returned:
+            dir_holder.append(returned)
+            self.assertTrue(os.path.isdir(returned))
+        self.assertFalse(os.path.exists(dir_holder[0]))
+
+    def test_output_dir_cleaned_up_after_exception(self):
+        """The temp directory is removed even if an exception occurs inside the context."""
+        dir_seen = None
+        try:
+            with RegistryConfig(
+                credentials=[RegistryCredential("quay.io", "u", "p")],
+                output_dir=True,
+            ) as returned:
+                dir_seen = returned
+                raise RuntimeError("boom")
+        except RuntimeError:
+            pass
+        self.assertIsNotNone(dir_seen)
+        self.assertFalse(os.path.exists(dir_seen))
+
+    def test_output_dir_combined_with_collapse(self):
+        """output_dir + collapse_to_host: directory config.json carries the hostname alias."""
+        auth_path = _write_auth_file(
+            {
+                "quay.io/openshift-release-dev": {"auth": _b64("u", "p")},
+            }
+        )
+        try:
+            with RegistryConfig(
+                source_files=[auth_path],
+                registries=["quay.io/openshift-release-dev"],
+                collapse_to_host=True,
+                output_dir=True,
+            ) as returned:
+                self.assertTrue(os.path.isdir(returned))
+                data = _read_auth_file(os.path.join(returned, "config.json"))
+                self.assertIn("quay.io", data["auths"])
+                self.assertEqual(
+                    data["auths"]["quay.io"],
+                    data["auths"]["quay.io/openshift-release-dev"],
+                )
+        finally:
+            os.unlink(auth_path)
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -5,8 +5,6 @@ import itertools
 import json
 import logging
 import os
-import shutil
-import tempfile
 import uuid
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
@@ -16,6 +14,7 @@ from typing import BinaryIO, Dict, Iterable, List, Optional, Set, Tuple, cast
 import aiofiles
 import aiohttp
 from artcommonlib import exectools
+from artcommonlib.registry_config import RegistryConfig
 from artcommonlib.util import run_limited_unordered
 from cryptography import x509
 from cryptography.x509.oid import NameOID
@@ -319,22 +318,35 @@ class SigstoreSignatory:
         # (see _docker_config_dir_for_pullspec). A hostname-collapsed global config is retained as a
         # safe fallback that preserves the previous behavior when there is at most one path-scoped
         # credential per host (or when no path-scoped entry matches a given pullspec).
+        #
+        # The per-pullspec and fallback configs are built with the shared RegistryConfig helper
+        # (collapse_to_host=True to add the hostname-only alias cosign needs, output_dir=True to
+        # materialize a DOCKER_CONFIG directory). The RegistryConfig instances are retained and
+        # closed in close()/__del__ so their temp directories are removed.
         self._registry_auths: Dict[str, dict] = {}  # full registry-key -> auth entry mapping
-        self._base_auth_data: Optional[dict] = None  # the full parsed auth file (top-level fields preserved)
+        self._quay_auth_file: Optional[str] = None  # path to the source QUAY_AUTH_FILE
         self._global_docker_config_dir: Optional[str] = None  # hostname-collapsed fallback config dir
-        self._temp_docker_config_dirs: List[str] = []  # temp dirs to clean up
+        self._registry_configs: List[RegistryConfig] = []  # open RegistryConfig contexts to clean up
         self._pullspec_config_cache: Dict[Tuple[str, str], str] = {}  # (host, chosen-key) -> config dir
         quay_auth_file = os.environ.get("QUAY_AUTH_FILE")
         if quay_auth_file:
+            self._quay_auth_file = quay_auth_file
             try:
                 with open(quay_auth_file) as f:
                     auth_data = json.load(f)
-                self._base_auth_data = auth_data
                 self._registry_auths = dict(auth_data.get("auths", {}))
             except Exception as e:
                 logger.warning("Could not parse QUAY_AUTH_FILE for repo-aware auth: %s", e)
             # Build the hostname-collapsed fallback config and use it as the default DOCKER_CONFIG.
-            self._global_docker_config_dir = self._build_global_docker_config(quay_auth_file, logger)
+            # It requests every parsed registry key that has a usable auth value and lets
+            # RegistryConfig add the hostname-only aliases. When multiple credentials share a host
+            # the collapsed alias is the first such key (arbitrary), which is why repo-aware
+            # resolution (see _docker_config_dir_for_pullspec) is preferred; this fallback is only
+            # used when a pullspec matches no path-scoped entry.
+            fallback_registries = [
+                key for key, value in self._registry_auths.items() if isinstance(value, dict) and value.get("auth")
+            ]
+            self._global_docker_config_dir = self._new_registry_config_dir(fallback_registries)
             if self._global_docker_config_dir:
                 self.ENV["DOCKER_CONFIG"] = self._global_docker_config_dir
                 # Do not log the auth-file path or the DOCKER_CONFIG location (keep credentials and
@@ -346,41 +358,34 @@ class SigstoreSignatory:
         self.batch_retries = batch_retries  # number of batch-level retries for failed images
         self.batch_retry_delay = batch_retry_delay  # seconds to wait between batch retries
 
-    def _build_global_docker_config(self, quay_auth_file: str, logger) -> str:
+    def _new_registry_config_dir(self, registries: List[str]) -> Optional[str]:
         """
-        Build a hostname-collapsed DOCKER_CONFIG directory used as a safe fallback.
+        Build a DOCKER_CONFIG directory for ``registries`` with the shared RegistryConfig helper,
+        collapsing path-scoped keys to a hostname-only alias (cosign/go-containerregistry performs a
+        hostname-only lookup) and materializing a config.json inside a temp directory.
 
-        This reproduces the previous behavior: path-scoped keys get a hostname-only alias so cosign
-        can find a credential. When multiple credentials share a host the chosen alias is arbitrary,
-        which is why repo-aware resolution (see _docker_config_dir_for_pullspec) is preferred; this
-        config is only used when a pullspec matches no path-scoped entry.
+        The RegistryConfig context is entered and retained so its temp dir survives for the lifetime
+        of this signatory; close()/__del__ exit it to remove the dir. Fails OPEN: on any error
+        (unparseable auth, missing credential, launch failure) returns None so the caller falls back
+        to the global config / unchanged env rather than aborting.
 
-        :return: path to a temp directory containing config.json (registered for cleanup)
+        :return: path to the temp DOCKER_CONFIG directory, or None on failure / no credentials.
         """
-        docker_config_dir = tempfile.mkdtemp(prefix="cosign-docker-config-")
-        self._temp_docker_config_dirs.append(docker_config_dir)
-        config_json_path = os.path.join(docker_config_dir, "config.json")
+        if not registries:
+            return None
         try:
-            with open(quay_auth_file) as f:
-                auth_data = json.load(f)
-            auths = auth_data.get("auths", {})
-            # Add hostname-only entries for any path-scoped keys.
-            hostname_auths = {}
-            for key, value in auths.items():
-                hostname = key.split("/")[0]
-                if hostname != key and hostname not in auths:
-                    hostname_auths[hostname] = value
-            if hostname_auths:
-                auths.update(hostname_auths)
-                auth_data["auths"] = auths
-                # Log only a count at debug; never log the registry keys/credentials themselves.
-                logger.debug("Added %d hostname-only auth entries for cosign", len(hostname_auths))
-            with open(config_json_path, "w") as f:
-                json.dump(auth_data, f)
+            registry_config = RegistryConfig(
+                source_files=[self._quay_auth_file],
+                registries=registries,
+                collapse_to_host=True,
+                output_dir=True,
+            )
+            config_dir = registry_config.__enter__()
         except Exception as e:
-            logger.warning("Could not rewrite auth file for cosign, falling back to copy: %s", e)
-            shutil.copy2(quay_auth_file, config_json_path)
-        return docker_config_dir
+            self._logger.warning("Could not build DOCKER_CONFIG via RegistryConfig: %s", e)
+            return None
+        self._registry_configs.append(registry_config)
+        return config_dir
 
     @staticmethod
     def _image_repo(pullspec: str) -> str:
@@ -425,8 +430,12 @@ class SigstoreSignatory:
 
         Falls back to the hostname-collapsed global config dir (which may be None when QUAY_AUTH_FILE
         is unset) when no path-scoped entry matches the repository.
+
+        The config is built with the shared RegistryConfig helper: only the chosen key is requested,
+        and collapse_to_host adds the hostname-only alias cosign needs, so the hostname entry is
+        unambiguously the longest-prefix credential for this repository.
         """
-        if not self._registry_auths or self._base_auth_data is None:
+        if not self._registry_auths or not self._quay_auth_file:
             return self._global_docker_config_dir
         repo = self._image_repo(pullspec)
         host = repo.split("/", 1)[0]
@@ -438,15 +447,12 @@ class SigstoreSignatory:
         cached = self._pullspec_config_cache.get(cache_key)
         if cached:
             return cached
-        # Build a config with the full original auths plus a hostname-only alias for the chosen cred.
-        new_auths = dict(self._registry_auths)
-        new_auths[host] = self._registry_auths[chosen_key]
-        new_data = dict(self._base_auth_data)
-        new_data["auths"] = new_auths
-        config_dir = tempfile.mkdtemp(prefix="cosign-docker-config-")
-        self._temp_docker_config_dirs.append(config_dir)
-        with open(os.path.join(config_dir, "config.json"), "w") as f:
-            json.dump(new_data, f)
+        # Request only the chosen key; RegistryConfig's collapse_to_host adds the hostname-only alias
+        # (quay.io -> chosen credential) that cosign/go-containerregistry looks up.
+        config_dir = self._new_registry_config_dir([chosen_key])
+        if config_dir is None:
+            # Fall back to the global config rather than aborting (fail open).
+            return self._global_docker_config_dir
         self._pullspec_config_cache[cache_key] = config_dir
         # Keep this at debug and log only the image host; never log the chosen auth key/registry path
         # or the credential itself.
@@ -470,10 +476,18 @@ class SigstoreSignatory:
         return env
 
     def close(self) -> None:
-        """Remove any temporary DOCKER_CONFIG directories created for cosign/skopeo."""
-        while self._temp_docker_config_dirs:
-            shutil.rmtree(self._temp_docker_config_dirs.pop(), ignore_errors=True)
+        """Remove any temporary DOCKER_CONFIG directories created for cosign/skopeo.
+
+        Exits every retained RegistryConfig context, which removes the temp directory it created.
+        """
+        while self._registry_configs:
+            registry_config = self._registry_configs.pop()
+            try:
+                registry_config.__exit__(None, None, None)
+            except Exception:
+                pass
         self._pullspec_config_cache = {}
+        self._global_docker_config_dir = None
 
     def __del__(self):
         try:

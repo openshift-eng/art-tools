@@ -901,14 +901,19 @@ class TestSigstoreSignatory(IsolatedAsyncioTestCase):
             release_dir = signatory._docker_config_dir_for_pullspec(release_ps)
             release_auths = self._read_config_auths(release_dir)
             self.assertEqual(release_auths["quay.io"], self.RELEASE_CRED)
-            # Original path-scoped entries are preserved alongside the hostname-only alias.
+            # The chosen path-scoped key is preserved alongside its hostname-only alias, and the
+            # UNRELATED robot's credential is NOT present in this repo's config (cosign resolves by
+            # hostname, so only the longest-prefix credential for this repo is handed over).
             self.assertEqual(release_auths["quay.io/openshift-release-dev"], self.RELEASE_CRED)
-            self.assertEqual(release_auths["quay.io/redhat-user-workloads/ocp-art-tenant/art-images"], self.ART_CRED)
+            self.assertNotIn("quay.io/redhat-user-workloads/ocp-art-tenant/art-images", release_auths)
 
             # An art-images image must resolve to the art-images cred instead.
             art_ps = "quay.io/redhat-user-workloads/ocp-art-tenant/art-images@sha256:" + "b" * 64
             art_dir = signatory._docker_config_dir_for_pullspec(art_ps)
-            self.assertEqual(self._read_config_auths(art_dir)["quay.io"], self.ART_CRED)
+            art_auths = self._read_config_auths(art_dir)
+            self.assertEqual(art_auths["quay.io"], self.ART_CRED)
+            self.assertEqual(art_auths["quay.io/redhat-user-workloads/ocp-art-tenant/art-images"], self.ART_CRED)
+            self.assertNotIn("quay.io/openshift-release-dev", art_auths)
 
             # Different repos resolve to different cached config dirs.
             self.assertNotEqual(release_dir, art_dir)
