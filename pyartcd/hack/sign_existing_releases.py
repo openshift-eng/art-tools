@@ -132,6 +132,7 @@ async def main_async(
     dry_run: bool,
     concurrency: int,
     sign_digest: bool = False,
+    force: bool = False,
 ) -> int:
     """
     Main async entry point for signing release images.
@@ -140,6 +141,7 @@ async def main_async(
     :param dry_run: If True, don't actually sign anything
     :param concurrency: Maximum concurrent operations
     :param sign_digest: If True, also sign with digest identity (default: False, tag only)
+    :param force: If True, re-sign even when our signature already exists (for backfills)
     :return: Exit code (0 for success, 1 for errors)
     """
     # Validate environment
@@ -163,6 +165,7 @@ async def main_async(
         signing_key_ids=kms_key_id.split(",") if kms_key_id else ["dummy-key"],
         rekor_url=rekor_url,
         concurrency_limit=concurrency,
+        force_resign=force,
     )
 
     tag_only = not sign_digest
@@ -226,12 +229,19 @@ async def main_async(
     default=False,
     help="Also sign with digest identity (default: tag-only for retroactive signing)",
 )
+@click.option(
+    "--force/--no-force",
+    "force",
+    default=False,
+    help="Re-sign even when our signature already exists (use for backfills)",
+)
 @click.argument("pullspecs", nargs=-1)
 def main(
     dry_run: bool,
     input_file: Optional[str],
     concurrency: int,
     sign_digest: bool,
+    force: bool,
     pullspecs: tuple,
 ):
     """
@@ -276,7 +286,7 @@ def main(
         sys.exit(1)
 
     # Run async main
-    exit_code = asyncio.run(main_async(all_pullspecs, dry_run, concurrency, sign_digest))
+    exit_code = asyncio.run(main_async(all_pullspecs, dry_run, concurrency, sign_digest, force))
     sys.exit(exit_code)
 
 
