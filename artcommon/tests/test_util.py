@@ -1874,6 +1874,15 @@ class TestResolveKonfluxFbcStageReleasePlan(unittest.TestCase):
             ("openshift-opentelemetry-operator", 0, 158): "rhosdt-advisory-stage-auto-0-158",
             ("zero-trust-workload-identity-manager", 1, 0): "zt-advisory-stage-auto-1-0",
             ("zero-trust-workload-identity-manager", 1, 1): "zt-advisory-stage-auto-1-1",
+            ("oadp", 1, 3): "oadp-advisory-stage-auto-1-3",
+            ("oadp", 1, 4): "oadp-advisory-stage-auto-1-4",
+            ("oadp", 1, 5): "oadp-advisory-stage-auto-1-5",
+            ("oadp", 1, 6): "oadp-advisory-stage-auto-1-6",
+            ("mta", 8, 0): "mta-advisory-stage-auto-8-0",
+            ("mta", 8, 1): "mta-advisory-stage-auto-8-1",
+            ("mta", 8, 2): "mta-advisory-stage-auto-8-2",
+            ("mta", 8, 3): "mta-advisory-stage-auto-8-3",
+            ("rhmtc", 1, 8): "mtc-advisory-stage-auto-1-8",
         }
 
         for (product, major, minor), expected_plan in expected_plans.items():
