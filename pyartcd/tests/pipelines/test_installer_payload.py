@@ -131,6 +131,30 @@ class TestInstallerPayload(IsolatedAsyncioTestCase):
             await pipeline._rebase('art-agent-installer-iso', BuildVariant.AGENT_INSTALLER)
         self.assertNotIn('--build-arg', command.call_args.args[0])
 
+    async def test_explicit_build_version_must_also_match_payload_minor(self):
+        for version in ('4.23.0', '4.22.0', 'auto'):
+            with self.subTest(version=version):
+                pipeline = self.pipeline('quay.io/example/release:4.22.21')
+                pipeline.version = version
+                with (
+                    patch(
+                        'pyartcd.pipelines.build_layered_products.load_group_config',
+                        return_value={'product': 'openshift_agent_installer', 'version': '4.22'},
+                    ),
+                    patch(
+                        'pyartcd.pipelines.build_layered_products.oc.get_release_image_info',
+                        return_value={'metadata': {'version': '4.22.21'}},
+                    ),
+                    patch.object(pipeline, '_rebase_and_build', new_callable=AsyncMock) as build,
+                ):
+                    if version == '4.23.0':
+                        with self.assertRaisesRegex(ValueError, 'does not match installer build version'):
+                            await pipeline.run()
+                        build.assert_not_awaited()
+                    else:
+                        await pipeline.run()
+                        build.assert_awaited_once()
+
 
 class TestInstallerPayloadCli(TestCase):
     def test_product_matrix_through_artcd_and_doozer_option_parsing(self):

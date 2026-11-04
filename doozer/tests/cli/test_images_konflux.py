@@ -250,7 +250,7 @@ class TestKonfluxBuildSelection(unittest.TestCase):
             True,
             None,
             'auto',
-            build_args=('RELEASE_VALUE=old', 'RELEASE_VALUE=new=value', 'EMPTY='),
+            build_args=('RELEASE_VALUE=old', ' RELEASE_VALUE =new=value', 'EMPTY='),
         )
         self.assertEqual(cli.build_args, {'RELEASE_VALUE': 'new=value', 'EMPTY': ''})
 

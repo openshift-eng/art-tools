@@ -333,7 +333,8 @@ class KonfluxBuildCli:
         self.build_args = {}
         for arg in build_args:
             key, separator, value = arg.partition('=')
-            if not separator or not key.strip():
+            key = key.strip()
+            if not separator or not key:
                 raise click.BadParameter('Expected KEY=VALUE', param_hint='--build-arg')
             self.build_args[key] = value
         self.dry_run = dry_run

@@ -207,7 +207,6 @@ class BuildLayeredProductsPipeline:
         if product == 'openshift_agent_installer':
             if not self.payload:
                 raise click.UsageError('--payload is required for product openshift_agent_installer')
-            await self._configure_installer_payload(group_config)
         elif self.payload is not None:
             raise click.UsageError('--payload is only supported for product openshift_agent_installer')
 
@@ -223,8 +222,9 @@ class BuildLayeredProductsPipeline:
 
         self.version = resolve_build_version(self.group, self.version)
         self._logger.info(f"Using build version {self.version}")
+        if product == 'openshift_agent_installer':
+            await self._configure_installer_payload(group_config)
 
-        # Extract product from group config
         image_repo = group_config.get('konflux', {}).get('image_repo') or KONFLUX_DEFAULT_IMAGE_REPO
         await self._rebase_and_build(product, image_repo)
         self.trigger_bundle_build()
@@ -245,14 +245,15 @@ class BuildLayeredProductsPipeline:
         )
         payload_version = VersionInfo.parse(info['metadata']['version'])
         major_minor = f'{payload_version.major}.{payload_version.minor}'
-        group_version = resolve_build_version(self.group, str(group_config['version']))
-        if group_version.count('.') == 1:
-            group_version += '.0'
-        group_version = VersionInfo.parse(group_version)
-        if (payload_version.major, payload_version.minor) != (group_version.major, group_version.minor):
-            raise ValueError(
-                f'Payload version {payload_version} does not match installer group version {group_version}'
-            )
+        for source, version in (('group', group_config['version']), ('build', self.version)):
+            version = resolve_build_version(self.group, str(version))
+            if version.count('.') == 1:
+                version += '.0'
+            version = VersionInfo.parse(version)
+            if (payload_version.major, payload_version.minor) != (version.major, version.minor):
+                raise ValueError(
+                    f'Payload version {payload_version} does not match installer {source} version {version}'
+                )
         self._build_args = {
             'RELEASE_FLAG': '--release-image-url',
             'RELEASE_VALUE': self.payload,
