@@ -1,7 +1,7 @@
 """Shared utilities for verify-* elliott subcommands.
 
 Provides:
-- get_assembly_advisory_ids(): unified advisory ID lookup from assembly config
+- get_ocp_release_advisory_ids(): unified advisory ID lookup from assembly config
 - get_assembly_shipment_url(): shipment MR URL lookup from assembly config
 - VerifyResultBase: abstract base for verify result dataclasses
 - render_verify_result(): generic JSON/text rendering
@@ -18,20 +18,22 @@ import click
 from artcommonlib.assembly import assembly_config_struct
 
 
-def get_assembly_advisory_ids(
+def get_ocp_release_advisory_ids(
     runtime,
     include_types: tuple[str, ...] | None = None,
-    exclude_types: tuple[str, ...] = (),
+    exclude_types: tuple[str, ...] = ("microshift",),
 ) -> dict[str, int]:
-    """Get advisory IDs from assembly config, filtered by impetus type.
+    """Get OCP release advisory IDs from assembly config, excluding MicroShift by default.
 
     Reads the assembly's group config from releases.yml and returns
-    advisory IDs filtered by impetus type.
+    advisory IDs filtered by impetus type. MicroShift is excluded by default
+    because its advisory is managed separately from the OCP release flow.
 
     Args:
         runtime: Elliott runtime (must be initialized).
         include_types: If set, only include these impetus types.
-        exclude_types: Impetus types to skip.
+        exclude_types: Impetus types to skip (defaults to MicroShift). Pass an
+            explicit tuple to override the default.
 
     Returns:
         dict mapping impetus name to advisory ID.
