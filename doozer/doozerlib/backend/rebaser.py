@@ -528,15 +528,20 @@ class KonfluxRebaser:
         private_fix = any(private_fix for _, private_fix in mapped_images)
         return downstream_parents, private_fix
 
-    async def _registry_pullspec_exists(self, pullspec: str) -> bool:
-        """Return True if the registry reports the image readable (manifest present). Used for lazy DB lookups."""
+    async def _registry_pullspec_status(self, pullspec: str) -> tuple[bool, str]:
+        """Probe the registry for a pullspec.
+
+        Returns (True, "") when the registry reports the image readable (manifest present);
+        otherwise (False, <error detail>) where the detail is the string form of the raised
+        exception. Used for lazy DB lookups.
+        """
         registry_config = getattr(self._runtime, "registry_config", None)
         try:
             await oc_image_info_for_arch_async(pullspec, registry_config=registry_config)
-            return True
+            return True, ""
         except Exception as exc:
             self._logger.debug("Could not read pullspec %s: %s", pullspec, exc)
-            return False
+            return False, str(exc)
 
     @start_as_current_span_async(TRACER, "rebase.resolve_member_parent")
     async def _resolve_member_parent(self, member: str, original_parent: str):
@@ -585,9 +590,21 @@ class KonfluxRebaser:
                         build.nvr,
                     )
                     rh_pullspec = util.rh_art_images_base_pullspec(build.nvr)
-                    if await self._registry_pullspec_exists(rh_pullspec):
+                    exists, detail = await self._registry_pullspec_status(rh_pullspec)
+                    if exists:
                         return rh_pullspec, build.embargoed
-                    raise IOError(f"Late-resolved parent {member}: art-images-base tag unreachable at {rh_pullspec}")
+                    reason = detail.lower()
+                    if any(key in reason for key in ("manifest unknown", "not found", "was not found", "unauthorized")):
+                        raise IOError(
+                            f"Late-resolved parent {member}: {rh_pullspec} could not be resolved from "
+                            f"art-images-base ({detail}). This most likely means build {build.nvr}'s base-image "
+                            f"release has not completed, so the image was not published -- check the Konflux "
+                            f"Release / ReleasePlanAdmission mapping. A missing manifest on an otherwise-published "
+                            f"tag, or an authentication problem, can also surface this way."
+                        )
+                    raise IOError(
+                        f"Late-resolved parent {member}: could not read {rh_pullspec} from art-images-base: {detail}"
+                    )
                 return build.image_pullspec, build.embargoed
 
             return original_parent, False
