@@ -98,7 +98,7 @@ class VerifyReleasePipeline:
         self.working_dir = self.runtime.working_dir / "verify_release"
         self.working_dir.mkdir(parents=True, exist_ok=True)
 
-        self._elliott_env: dict[str, str] = {}
+        self._elliott_env: dict[str, str] = os.environ.copy()
         self._registry_auth_file: str | None = None
 
     @property
@@ -115,6 +115,18 @@ class VerifyReleasePipeline:
         return command
 
     async def run(self) -> VerifyReleaseResult:
+        try:
+            return await self._run()
+        except Exception:
+            # Record early/setup errors too, without masking the original error.
+            if "shipment-label" not in self.skip_steps and not self.runtime.dry_run:
+                try:
+                    await self._mark_release_outcome(passed=False)
+                except Exception:
+                    LOGGER.exception("Unable to mark failed release verification for %s", self.assembly)
+            raise
+
+    async def _run(self) -> VerifyReleaseResult:
         # Unset XDG_RUNTIME_DIR to ensure we don't use default auth.json
         # All registry auth must come from explicit Jenkins credentials or oc login to temp files
         if 'XDG_RUNTIME_DIR' in os.environ:
@@ -159,9 +171,14 @@ class VerifyReleasePipeline:
                     message = "skipped by user"
                     click.echo("[verify-release: shipment-label] SKIP (skipped by user)", err=True)
                     result.steps.append(StepResult("shipment-label", StepStatus.SKIP, message))
-                elif result.passed:
-                    label_result = await self._mark_release_verified()
+                else:
+                    checks_passed = result.passed
+                    label_result = await self._mark_release_outcome(passed=checks_passed)
                     result.steps.append(label_result)
+                    if checks_passed and label_result.status == StepStatus.FAIL:
+                        failure_label = await self._mark_release_outcome(passed=False)
+                        failure_label.name = "shipment-failure-label"
+                        result.steps.append(failure_label)
                 return result
             finally:
                 # RegistryConfig removes the merged file after this block.
@@ -169,8 +186,8 @@ class VerifyReleasePipeline:
                 self._elliott_env = elliott_env
                 self._registry_auth_file = original_registry_auth_file
 
-    async def _mark_release_verified(self) -> StepResult:
-        cmd = self._elliott_base + ["verify-release", "--mark"]
+    async def _mark_release_outcome(self, *, passed: bool) -> StepResult:
+        cmd = self._elliott_base + ["verify-release", "--mark" if passed else "--mark-failed"]
         if self.runtime.dry_run:
             cmd.append("--dry-run")
         return await self._run_elliott_cmd("shipment-label", cmd)
@@ -315,7 +332,7 @@ class VerifyReleasePipeline:
             "shipment-label",
         ]
     ),
-    help="Steps to skip.",
+    help="Steps to skip. Skipping shipment-label suppresses both success and failure labels.",
 )
 @click.option(
     "-o",

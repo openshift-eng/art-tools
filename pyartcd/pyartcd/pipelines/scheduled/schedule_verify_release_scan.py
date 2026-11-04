@@ -15,6 +15,7 @@ LOGGER = logging.getLogger(__name__)
 STAGE_RELEASE_SUCCESS_LABEL = "stage-release-success"
 STAGE_TESTING_SUCCESS_LABEL = "stage-testing-success"
 VERIFY_RELEASE_SUCCESS_LABEL = "verify-release-success"
+VERIFY_RELEASE_FAIL_LABEL = "verify-release-fail"
 RELEASE_NAME_PATTERN = re.compile(r"Shipment for (\d+)\.(\d+)\.(\d+)(?:-([a-zA-Z0-9.]+))?")
 
 
@@ -31,8 +32,9 @@ async def scan_and_trigger(runtime: Runtime):
 
     for mr in merge_requests:
         labels = set(mr.labels or [])
-        if VERIFY_RELEASE_SUCCESS_LABEL in labels:
-            LOGGER.info("MR !%s (%s) — verify-release already passed, skipping", mr.iid, mr.title)
+        outcomes = labels & {VERIFY_RELEASE_SUCCESS_LABEL, VERIFY_RELEASE_FAIL_LABEL}
+        if outcomes:
+            LOGGER.info("MR !%s (%s) — has %s, skipping", mr.iid, mr.title, sorted(outcomes))
             continue
 
         if STAGE_TESTING_SUCCESS_LABEL not in labels:
@@ -68,7 +70,8 @@ async def schedule_verify_release_scan(runtime: Runtime):
 
     Only MRs with stage-release-success and stage-testing-success are eligible.
     Successful verify-release builds add ``verify-release-success`` to the MR.
-    Failed builds remain eligible for a later scan.
+    Failed attempts add verify-release-fail. Both outcome labels stop automatic
+    scheduling. Retry manually or remove fail to re-enroll the MR.
 
     Requires GITLAB_TOKEN to be set in the environment.
 
