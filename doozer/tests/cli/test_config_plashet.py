@@ -1,10 +1,23 @@
+import os
+import tempfile
 import unittest
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
+import click
+import yaml
 from artcommonlib.rpm_utils import parse_nvr
-from doozerlib.cli.config_plashet import are_signed, compare_nvr_openshift_aware
+from doozerlib.cli.config_plashet import (
+    are_signed,
+    compare_nvr_openshift_aware,
+    is_dest_within_base,
+    merge_filtered_into_existing,
+    read_existing_plashet_nvres,
+    required_included_packages,
+    validate_package_filter_scope,
+)
+from doozerlib.exceptions import DoozerFatalError
 
 
 class TestCompareNvrOpenshiftAware(unittest.TestCase):
@@ -571,6 +584,210 @@ class TestAreSigned(unittest.TestCase):
 
         self.assertTrue(result["ok-pkg-1.0-1.el9"])
         self.assertFalse(result["missing-1.0-1.el9"])
+
+
+class TestReadExistingPlashetNvres(unittest.TestCase):
+    """Test cases for the --package-filter merge helper read_existing_plashet_nvres()."""
+
+    def _write_plashet_yml(self, dest_dir, packages):
+        with open(Path(dest_dir, 'plashet.yml'), mode='w', encoding='utf-8') as f:
+            yaml.dump({'assemble': {'packages': packages}}, f)
+
+    def test_returns_empty_when_no_existing_plashet(self):
+        """The pure reader returns an empty set when no plashet.yml exists at dest_dir.
+
+        Note: the merge *caller* (merge_filtered_into_existing) fails closed on a missing baseline rather
+        than treating this as a scoped-only build -- see TestMergeFilteredIntoExisting.
+        """
+        with tempfile.TemporaryDirectory() as dest_dir:
+            config = SimpleNamespace(dest_dir=dest_dir)
+            result = read_existing_plashet_nvres(config, exclude_packages={'kata-containers'})
+            self.assertEqual(result, set())
+
+    def test_preserves_non_filtered_packages_and_drops_filtered(self):
+        """Packages NOT in the filter are preserved; filtered packages (being rebuilt) are dropped."""
+        with tempfile.TemporaryDirectory() as dest_dir:
+            self._write_plashet_yml(
+                dest_dir,
+                [
+                    {'package_name': 'kata-containers', 'nvr': 'kata-containers-3.2.0-1.rhaos4.17.el9', 'epoch': None},
+                    {'package_name': 'cri-o', 'nvr': 'cri-o-1.30.0-5.rhaos4.17.el9', 'epoch': None},
+                    {'package_name': 'openshift', 'nvr': 'openshift-4.17.0-1.el9', 'epoch': '2'},
+                ],
+            )
+            config = SimpleNamespace(dest_dir=dest_dir)
+            result = read_existing_plashet_nvres(config, exclude_packages={'kata-containers'})
+            # kata-containers is dropped (it's the filtered package being rebuilt); the rest are preserved.
+            # The epoch is reconstructed into the n-v-r:E form produced by to_nvre.
+            self.assertEqual(
+                result,
+                {'cri-o-1.30.0-5.rhaos4.17.el9', 'openshift-4.17.0-1.el9:2'},
+            )
+
+    def test_empty_packages_list(self):
+        """An existing plashet.yml with no packages yields an empty set."""
+        with tempfile.TemporaryDirectory() as dest_dir:
+            self._write_plashet_yml(dest_dir, [])
+            config = SimpleNamespace(dest_dir=dest_dir)
+            result = read_existing_plashet_nvres(config, exclude_packages={'kata-containers'})
+            self.assertEqual(result, set())
+
+
+class TestMergeFilteredIntoExisting(unittest.TestCase):
+    """Test cases for the fail-closed --package-filter merge helper merge_filtered_into_existing()."""
+
+    def setUp(self):
+        # The module-level logger is None until setup_logging() runs; inject a mock for unit tests.
+        import doozerlib.cli.config_plashet as _mod
+
+        self._orig_logger = _mod.logger
+        _mod.logger = MagicMock()
+
+    def tearDown(self):
+        import doozerlib.cli.config_plashet as _mod
+
+        _mod.logger = self._orig_logger
+
+    def _write_plashet_yml(self, dest_dir, packages):
+        with open(Path(dest_dir, 'plashet.yml'), mode='w', encoding='utf-8') as f:
+            yaml.dump({'assemble': {'packages': packages}}, f)
+
+    def test_fails_closed_when_no_baseline(self):
+        """With no plashet.yml baseline present, the merge FAILS (raises) instead of a scoped-only build.
+
+        This replaces the previous scoped-only fallback behavior.
+        """
+        with tempfile.TemporaryDirectory() as dest_dir:
+            config = SimpleNamespace(dest_dir=dest_dir, package_filter=('kata-containers',))
+            with self.assertRaises(DoozerFatalError):
+                merge_filtered_into_existing(config, {'kata-containers-3.2.0-2.rhaos4.17.el9'})
+
+    def test_merge_with_seeded_plashet_yml(self):
+        """With a seeded baseline plashet.yml, filtered NVREs are merged with the preserved packages."""
+        with tempfile.TemporaryDirectory() as dest_dir:
+            self._write_plashet_yml(
+                dest_dir,
+                [
+                    # Old kata-containers in the baseline -> dropped and replaced by the freshly-built one.
+                    {'package_name': 'kata-containers', 'nvr': 'kata-containers-3.2.0-1.rhaos4.17.el9', 'epoch': None},
+                    {'package_name': 'cri-o', 'nvr': 'cri-o-1.30.0-5.rhaos4.17.el9', 'epoch': None},
+                    {'package_name': 'openshift', 'nvr': 'openshift-4.17.0-1.el9', 'epoch': '2'},
+                ],
+            )
+            config = SimpleNamespace(dest_dir=dest_dir, package_filter=('kata-containers',))
+            merged = merge_filtered_into_existing(config, {'kata-containers-3.2.0-2.rhaos4.17.el9'})
+            self.assertEqual(
+                merged,
+                {
+                    'kata-containers-3.2.0-2.rhaos4.17.el9',  # newly built filtered package
+                    'cri-o-1.30.0-5.rhaos4.17.el9',  # preserved
+                    'openshift-4.17.0-1.el9:2',  # preserved
+                },
+            )
+
+    def test_fails_closed_when_filtered_baseline_pkg_has_no_replacement(self):
+        """A filtered package present in the baseline but with no freshly-computed NVRE raises (not dropped)."""
+        with tempfile.TemporaryDirectory() as dest_dir:
+            self._write_plashet_yml(
+                dest_dir,
+                [
+                    {'package_name': 'kata-containers', 'nvr': 'kata-containers-3.2.0-1.rhaos4.17.el9', 'epoch': None},
+                    {'package_name': 'cri-o', 'nvr': 'cri-o-1.30.0-5.rhaos4.17.el9', 'epoch': None},
+                ],
+            )
+            config = SimpleNamespace(dest_dir=dest_dir, package_filter=('kata-containers',))
+            # No eligible kata-containers build computed this run -> must raise, not silently drop it.
+            with self.assertRaises(DoozerFatalError):
+                merge_filtered_into_existing(config, set())
+
+    def test_merge_allows_new_filtered_pkg_not_in_baseline(self):
+        """Filtering a package that is not yet in the baseline is allowed (it is simply added)."""
+        with tempfile.TemporaryDirectory() as dest_dir:
+            self._write_plashet_yml(
+                dest_dir,
+                [{'package_name': 'cri-o', 'nvr': 'cri-o-1.30.0-5.rhaos4.17.el9', 'epoch': None}],
+            )
+            config = SimpleNamespace(dest_dir=dest_dir, package_filter=('newpkg',))
+            merged = merge_filtered_into_existing(config, {'newpkg-1.0-1.el9'})
+            self.assertEqual(merged, {'newpkg-1.0-1.el9', 'cri-o-1.30.0-5.rhaos4.17.el9'})
+
+    def test_merge_preserves_duplicate_baseline_entries(self):
+        """Multiple NVREs for the same unfiltered package (e.g. --include-previous) are all preserved."""
+        with tempfile.TemporaryDirectory() as dest_dir:
+            self._write_plashet_yml(
+                dest_dir,
+                [
+                    {'package_name': 'kata-containers', 'nvr': 'kata-containers-3.2.0-1.rhaos4.17.el9', 'epoch': None},
+                    # cri-o appears twice: the latest build and a previous build kept via --include-previous.
+                    {'package_name': 'cri-o', 'nvr': 'cri-o-1.30.0-5.rhaos4.17.el9', 'epoch': None},
+                    {'package_name': 'cri-o', 'nvr': 'cri-o-1.30.0-4.rhaos4.17.el9', 'epoch': None},
+                ],
+            )
+            config = SimpleNamespace(dest_dir=dest_dir, package_filter=('kata-containers',))
+            merged = merge_filtered_into_existing(config, {'kata-containers-3.2.0-2.rhaos4.17.el9'})
+            self.assertEqual(
+                merged,
+                {
+                    'kata-containers-3.2.0-2.rhaos4.17.el9',
+                    'cri-o-1.30.0-5.rhaos4.17.el9',  # both cri-o builds preserved, not collapsed
+                    'cri-o-1.30.0-4.rhaos4.17.el9',
+                },
+            )
+
+
+class TestRequiredIncludedPackages(unittest.TestCase):
+    """Test cases for the filter-aware include-package completeness helper required_included_packages()."""
+
+    def test_full_run_requires_all_included(self):
+        """Without a package filter, every included package is required."""
+        config = SimpleNamespace(include_package=('golang', 'goversioninfo'), package_filter=())
+        self.assertEqual(required_included_packages(config), ('golang', 'goversioninfo'))
+
+    def test_filtered_run_requires_only_intersection(self):
+        """With a package filter, only included packages that are also in the filter are required."""
+        config = SimpleNamespace(include_package=('golang', 'goversioninfo'), package_filter=('golang',))
+        self.assertEqual(required_included_packages(config), ('golang',))
+
+    def test_no_included_packages(self):
+        """No include-package means nothing is required."""
+        config = SimpleNamespace(include_package=(), package_filter=('golang',))
+        self.assertEqual(required_included_packages(config), ())
+
+
+class TestValidatePackageFilterScope(unittest.TestCase):
+    """Test cases for restricting --package-filter to the from-tags subcommand."""
+
+    def test_rejects_filter_for_non_from_tags(self):
+        for subcommand in ('for-assembly', 'from-images', None):
+            with self.subTest(subcommand=subcommand):
+                with self.assertRaises(click.UsageError):
+                    validate_package_filter_scope(('kata-containers',), subcommand)
+
+    def test_allows_filter_for_from_tags(self):
+        # Should not raise.
+        validate_package_filter_scope(('kata-containers',), 'from-tags')
+
+    def test_allows_empty_filter_for_any_subcommand(self):
+        # Empty filter is always fine regardless of subcommand.
+        validate_package_filter_scope((), 'for-assembly')
+        validate_package_filter_scope((), 'from-images')
+
+
+class TestIsDestWithinBase(unittest.TestCase):
+    """Test cases for the --name escape guard is_dest_within_base()."""
+
+    def test_name_inside_base_is_allowed(self):
+        with tempfile.TemporaryDirectory() as base:
+            self.assertTrue(is_dest_within_base(base, os.path.join(base, 'ok-name')))
+
+    def test_relative_escape_is_rejected(self):
+        with tempfile.TemporaryDirectory() as base:
+            self.assertFalse(is_dest_within_base(base, os.path.join(base, '..', 'evil')))
+
+    def test_absolute_name_escape_is_rejected(self):
+        with tempfile.TemporaryDirectory() as base:
+            # os.path.join(base, '/etc/passwd') == '/etc/passwd' (absolute wins) -> outside base.
+            self.assertFalse(is_dest_within_base(base, os.path.join(base, '/etc/passwd')))
 
 
 if __name__ == '__main__':

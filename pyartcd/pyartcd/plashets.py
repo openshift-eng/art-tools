@@ -207,6 +207,26 @@ def convert_plashet_config_to_new_style(plashet_config: dict) -> list[Repo]:
     return repos
 
 
+def require_published_baseline_symlink(plashet_config, repo_name: str) -> None:
+    """
+    Fail-closed guard for --package-filter runs: a published baseline symlink is required to merge into.
+
+    The seeding step downloads the baseline's plashet.yml from the published ``latest`` symlink. If the plashet
+    config does not publish a symlink (``create_symlinks`` is false or ``symlink_name`` is empty), there is no
+    stable baseline to merge into, so reject the filtered build instead of seeding a non-existent symlink.
+
+    :param plashet_config: the PlashetConfig for this run.
+    :param repo_name: the repo name, for a clearer error message.
+    :raises ValueError: when the config does not publish a baseline symlink.
+    """
+    if not plashet_config.create_symlinks or not plashet_config.symlink_name:
+        raise ValueError(
+            f"--package-filter requires a published baseline symlink to merge into, but plashet config for repo "
+            f"'{repo_name}' does not publish one (create_symlinks={plashet_config.create_symlinks}, "
+            f"symlink_name={plashet_config.symlink_name!r}). Refusing the filtered build."
+        )
+
+
 async def build_plashets(
     group: str,
     release: str,
@@ -218,6 +238,7 @@ async def build_plashets(
     copy_links: bool = False,
     dry_run: bool = False,
     version: str | None = None,
+    package_filter: Sequence[str] = (),
 ) -> dict:
     """
     Unless no RPMs have changed, create multiple yum repos (one for each arch) of RPMs
@@ -234,6 +255,8 @@ async def build_plashets(
     :param data_gitref: Doozer data path git [branch / tag / sha] to use
     :param dry_run: do not actually run the command, just log it
     :param copy_links: transform symlink into referent file/dir
+    :param package_filter: (optional) run-level override. When set, the plashet run is scoped to just these
+        package names and MERGED into the existing plashet instead of a full regeneration. Empty = full run.
 
     Returns a list describing the plashets that have been built. The dict will look like this:
     {
@@ -366,6 +389,18 @@ async def build_plashets(
         plashet_name_template = string.Template(plashet_config.plashet_dir)
         plashet_name = plashet_name_template.substitute(**variables)
 
+        # Package-filter mode merges into the current published plashet, so point the seeding step at the
+        # remote "latest" baseline for this slug. The baseline's plashet.yml is downloaded locally before the
+        # doozer run (see build_plashet_from_tags / seed_plashet_baseline).
+        seed_latest_from = None
+        if package_filter:
+            # The merge seeds from the published baseline symlink. If this config does not publish one, there
+            # is no stable baseline to merge into -- fail closed rather than seeding a non-existent "latest".
+            require_published_baseline_symlink(plashet_config, repo.name)
+            remote_base_dir = Path(constants.PLASHET_REMOTE_BASE_DIR, base_dir_name)
+            seed_host = PLASHET_REMOTES[0]['host']
+            seed_latest_from = f"{seed_host}:{remote_base_dir}/{plashet_config.symlink_name}"
+
         local_path = await build_plashet_from_tags(
             group_param=group_param,
             assembly=assembly,
@@ -380,6 +415,8 @@ async def build_plashets(
             include_previous_packages=config.include_previous_packages,
             include_packages=config.include_packages,
             exclude_packages=config.exclude_packages,
+            package_filter=package_filter,
+            seed_latest_from=seed_latest_from,
             repo_subdir=plashet_config.repo_subdir if plashet_config.create_repo_subdirs else None,
             data_path=data_path,
             dry_run=dry_run,
@@ -428,6 +465,8 @@ async def build_plashet_from_tags(
     include_previous_packages: Optional[Sequence[str]] = None,
     include_packages: Optional[Sequence[str]] = None,
     exclude_packages: Optional[Sequence[str]] = None,
+    package_filter: Optional[Sequence[str]] = None,
+    seed_latest_from: Optional[str] = None,
     repo_subdir: str | None = 'os',
     poll_for: int = 0,
     data_path: str = constants.OCP_BUILD_DATA_URL,
@@ -437,11 +476,25 @@ async def build_plashet_from_tags(
 ):
     """
     Builds Plashet repo with "from-tags"
+
+    :param seed_latest_from: (package-filter only) rsync spec (``host:/path/to/latest``) of the current
+        published plashet baseline. When set together with ``package_filter``, the baseline's plashet.yml is
+        downloaded into the new local plashet dir BEFORE doozer runs so the doozer --package-filter merge can
+        preserve the unfiltered packages. doozer fails closed if this baseline is missing.
     """
 
     repo_path = Path(base_dir, name)
-    if repo_path.exists():
+    # In package-filter mode we MERGE into the existing plashet, so we must NOT wipe it. Without a filter we
+    # keep the original behavior of starting from a clean directory for a full regeneration.
+    if repo_path.exists() and not package_filter:
         shutil.rmtree(repo_path)
+
+    # Package-filter mode: seed the destination with the current "latest" plashet baseline (its plashet.yml,
+    # which is all the doozer merge needs: symlinks and repodata are rebuilt from brewroot) BEFORE invoking
+    # doozer. This is what lets doozer's fail-closed --package-filter merge find a baseline to merge into.
+    if package_filter and seed_latest_from:
+        await seed_plashet_baseline(seed_latest_from, repo_path, dry_run=dry_run)
+
     cmd = [
         "doozer",
         f'--data-path={data_path}',
@@ -477,6 +530,8 @@ async def build_plashet_from_tags(
         cmd.extend(["--include-package", pkg])
     for pkg in exclude_packages or []:
         cmd.extend(["--exclude-package", pkg])
+    for pkg in package_filter or []:
+        cmd.extend(["--package-filter", pkg])
     from_tags_args = ["from-tags"]
     if signing_advisory and str(signing_advisory) != '0':
         from_tags_args.extend(
@@ -504,12 +559,44 @@ async def build_plashet_from_tags(
         cmd.extend(["--poll-for", str(poll_for)])
 
     if dry_run:
-        repo_path.mkdir(parents=True)
+        repo_path.mkdir(parents=True, exist_ok=True)
         logger.warning("[Dry run] Would have run %s", cmd)
     else:
         logger.info("Executing %s", cmd)
         await exectools.cmd_assert_async(cmd, env=os.environ.copy())
     return os.path.abspath(Path(base_dir, name))
+
+
+async def seed_plashet_baseline(seed_latest_from: str, dest_dir: os.PathLike, dry_run: bool = False):
+    """
+    Download the current "latest" plashet baseline manifest (plashet.yml) from ocp-artifacts into ``dest_dir``
+    so a subsequent doozer --package-filter run has an existing baseline to MERGE its filtered packages into.
+
+    Only plashet.yml is fetched: it is the sole input the doozer merge needs (it rebuilds the per-arch symlinks
+    and repodata from brewroot for the combined NVRE set). If ``latest`` does not exist on the remote (e.g. a
+    brand-new slug that has never been built), the rsync fails and the error propagates -- doozer would then also
+    fail closed. Honors ``dry_run``.
+
+    :param seed_latest_from: rsync source of the latest baseline dir, e.g. ``ocp-artifacts:/mnt/.../latest``.
+    :param dest_dir: local plashet dir to seed (the doozer destination).
+    :param dry_run: when True, only log the command that would run.
+    """
+    dest_dir = Path(dest_dir)
+    cmd = [
+        "rsync",
+        "-avz",
+        "--copy-links",
+        "--",
+        f"{seed_latest_from.rstrip('/')}/plashet.yml",
+        f"{dest_dir}/plashet.yml",
+    ]
+    if dry_run:
+        # Do not log the remote host/path (redacted); log a generic message only.
+        logger.warning("[DRY RUN] Would have seeded the current 'latest' plashet baseline (plashet.yml)")
+        return
+    dest_dir.mkdir(parents=True, exist_ok=True)
+    logger.info("Seeding the current 'latest' plashet baseline (plashet.yml) for package-filter merge")
+    await exectools.cmd_assert_async(cmd, env=os.environ.copy())
 
 
 def create_latest_symlink(base_dir: os.PathLike, plashet_name: str, symlink_name: str = "latest"):

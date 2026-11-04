@@ -2,6 +2,7 @@ import itertools
 import logging
 import os
 import re
+import shutil
 import ssl
 import sys
 import time
@@ -258,6 +259,17 @@ def _assemble_repo(config: SimpleNamespace, nvres: List[str], koji_api: koji.Cli
             dest_arch_path += '/' + config.repo_subdir.strip('/')  # strip / from start and end
         links_dir = os.path.join(dest_arch_path, 'Packages')
         rpm_list_path = os.path.join(dest_arch_path, 'rpm_list')
+
+        if getattr(config, 'package_filter', None):
+            # Package-filter merge mode: the arch repo may already exist. Rebuild it cleanly from the combined
+            # (preserved + filtered) NVRE set so the symlink/createrepo path below is reused unchanged and does
+            # not collide with pre-existing symlinks. For a normal full run the destination never pre-exists,
+            # so this is a no-op and behavior is unchanged.
+            if os.path.isdir(links_dir):
+                shutil.rmtree(links_dir)
+            if os.path.exists(rpm_list_path):
+                os.remove(rpm_list_path)
+
         mkdirs(links_dir)
 
         # Each arch will have its own yum repo & thus needs its own rpm_list
@@ -389,6 +401,178 @@ def assemble_repo(config, nvres, event_info=None, extra_data: Dict = None):
                 'extra': extra_data or {},
             }
             yaml.dump(plashet_info, y, default_flow_style=False)
+
+
+def plashet_baseline_path(config: SimpleNamespace) -> str:
+    """Return the path to the existing plashet baseline manifest (plashet.yml) at ``config.dest_dir``."""
+    return os.path.join(config.dest_dir, 'plashet.yml')
+
+
+def read_existing_plashet_packages(config: SimpleNamespace) -> List[Tuple[str, str]]:
+    """
+    Read the plashet.yml baseline at ``config.dest_dir`` and return ``(package_name, nvre)`` for EVERY package
+    entry recorded in it.
+
+    A list (not a dict) is returned on purpose: a single package name can legitimately appear more than once
+    in a plashet (e.g. a previous build added by ``--include-previous`` / ``--include-previous-for``), and a
+    dict would collapse those duplicates and silently drop the extra NVREs during a filtered merge.
+
+    The NVRE is reconstructed in the same ``n-v-r:E`` form produced by ``to_nvre`` so downstream
+    ``parse_nvr``/``strip_epoch`` handling is identical for baseline and freshly-computed NVREs.
+
+    :param config: cli config (uses ``config.dest_dir``).
+    :return: a list of ``(package_name, nvre)`` tuples. Empty if no plashet.yml is present.
+    """
+    plashet_yml_path = plashet_baseline_path(config)
+    if not os.path.isfile(plashet_yml_path):
+        return []
+
+    with open(plashet_yml_path, encoding='utf-8') as f:
+        existing = yaml.safe_load(f) or {}
+
+    packages = (existing.get('assemble') or {}).get('packages') or []
+    result: List[Tuple[str, str]] = []
+    for pkg in packages:
+        package_name = pkg.get('package_name')
+        nvre = pkg.get('nvr')
+        if not package_name or not nvre:
+            continue
+        epoch = pkg.get('epoch')
+        if epoch not in (None, '', 'None'):
+            nvre = f'{nvre}:{epoch}'
+        result.append((package_name, nvre))
+
+    return result
+
+
+def read_existing_plashet_nvres(config: SimpleNamespace, exclude_packages: set) -> set:
+    """
+    Reads the plashet.yml of an already-assembled plashet at ``config.dest_dir`` and returns the set of
+    NVREs for every package whose name is NOT in ``exclude_packages``.
+
+    This supports --package-filter "merge into existing" behavior: the packages being (re)built are passed
+    in ``exclude_packages`` so that their *old* NVREs are dropped and replaced by the freshly-computed ones,
+    while every other package already present in the plashet is preserved verbatim.
+
+    :param config: cli config (uses ``config.dest_dir``).
+    :param exclude_packages: set of package names to NOT preserve (i.e. the filtered packages being rebuilt).
+    :return: a set of NVRE strings to merge back in. Empty if no existing plashet.yml is present.
+    """
+    return {
+        nvre for package_name, nvre in read_existing_plashet_packages(config) if package_name not in exclude_packages
+    }
+
+
+def merge_filtered_into_existing(config: SimpleNamespace, new_nvres: set) -> set:
+    """
+    Compute the final NVRE set for a --package-filter run by MERGING the freshly-computed filtered NVREs
+    (``new_nvres``) into the existing plashet baseline at ``config.dest_dir``.
+
+    This is fail-closed in two ways:
+
+    * If no existing plashet baseline (plashet.yml) is present at the destination, a ``DoozerFatalError`` is
+      raised rather than silently producing a scoped-only plashet (which would be missing every unfiltered
+      package and, if published over the real ``latest``, would corrupt the repo). Callers (pyartcd) are
+      responsible for SEEDING the destination with the current ``latest`` baseline before invoking doozer.
+    * If a filtered package exists in the baseline but no eligible replacement NVRE was computed for it this
+      run, a ``DoozerFatalError`` is raised rather than silently dropping that package from the plashet.
+
+    :param config: cli config (uses ``config.dest_dir`` and ``config.package_filter``).
+    :param new_nvres: the filtered NVREs computed during this run.
+    :return: ``new_nvres`` unioned with the preserved (non-filtered) NVREs recovered from the baseline.
+    :raises DoozerFatalError: when no plashet.yml baseline exists, or a filtered baseline package has no
+        replacement in ``new_nvres``.
+    """
+    baseline_path = plashet_baseline_path(config)
+    if not os.path.isfile(baseline_path):
+        raise DoozerFatalError(
+            f'--package-filter requires an existing plashet baseline to merge into, but no plashet.yml was '
+            f'found at {config.dest_dir}. The destination must be seeded with the current "latest" plashet '
+            f'before a package-filter merge run (failing closed to avoid publishing a plashet that is missing '
+            f'its unfiltered packages).'
+        )
+
+    filter_set = set(config.package_filter)
+    baseline_packages = read_existing_plashet_packages(config)
+    # Preserve EVERY unfiltered baseline entry, including multiple NVREs for the same package name (e.g.
+    # previous builds added by --include-previous).
+    preserved_nvres = {nvre for name, nvre in baseline_packages if name not in filter_set}
+    baseline_names = {name for name, _ in baseline_packages}
+
+    # Fail-closed on missing replacement: every filtered package that is present in the baseline must have a
+    # freshly-computed NVRE this run. Otherwise merging would silently drop it from the plashet.
+    new_package_names = {parse_nvr(nvre)["name"] for nvre in new_nvres}
+    missing_replacements = sorted(
+        name for name in baseline_names if name in filter_set and name not in new_package_names
+    )
+    if missing_replacements:
+        raise DoozerFatalError(
+            f'--package-filter run found no eligible build for baseline package(s) {missing_replacements}; '
+            f'refusing to drop them from the plashet (failing closed). Investigate why no build was selected '
+            f'(e.g. released-version/embargo/signing guardrails) before re-running.'
+        )
+
+    merged = set(new_nvres) | preserved_nvres
+    logger.info(
+        'Package-filter merge: preserving %d package(s) from existing plashet baseline and '
+        'adding/updating %d filtered package(s)',
+        len(preserved_nvres),
+        len(new_nvres),
+    )
+    return merged
+
+
+def required_included_packages(config: SimpleNamespace) -> tuple:
+    """
+    Return the ``--include-package`` names that must be found during this run.
+
+    For a normal run this is simply every ``--include-package`` value. During a ``--package-filter`` run the
+    included packages that are NOT in the filter are intentionally skipped, so only the included packages that
+    are also in the filter are required to be found (otherwise the completeness check would spuriously fail,
+    e.g. filtering ``golang`` in a repo whose include_packages is ``[golang, goversioninfo]``).
+
+    :param config: cli config (uses ``config.include_package`` and ``config.package_filter``).
+    :return: a tuple of package names that must be present in the computed desired set.
+    """
+    if config.package_filter:
+        return tuple(pkg for pkg in config.include_package if pkg in config.package_filter)
+    return tuple(config.include_package)
+
+
+def validate_package_filter_scope(package_filter, invoked_subcommand: Optional[str]) -> None:
+    """
+    Reject ``--package-filter`` for any subcommand other than ``from-tags``.
+
+    The merge-into-existing semantics (and the relaxed "destination may already exist" guard) are only
+    implemented and only make sense for ``from-tags``; using the flag with ``for-assembly`` / ``from-images``
+    would silently ignore it, so fail loudly instead.
+
+    :param package_filter: the (possibly empty) tuple/list of filtered package names.
+    :param invoked_subcommand: the click-resolved subcommand name about to run.
+    :raises click.UsageError: when ``package_filter`` is set for a non ``from-tags`` subcommand.
+    """
+    if package_filter and invoked_subcommand != 'from-tags':
+        raise click.UsageError("--package-filter is only supported by the 'from-tags' subcommand")
+
+
+def is_dest_within_base(base_dir_path: str, dest_dir: str) -> bool:
+    """
+    Return whether ``dest_dir`` resolves to a location inside ``base_dir_path``.
+
+    This guards against a ``--name`` that escapes ``--base-dir`` (e.g. ``../other`` or an absolute path),
+    which would otherwise let a package-filter cleanup touch files outside the intended base directory.
+
+    :param base_dir_path: the (absolute) base directory.
+    :param dest_dir: the candidate destination directory (``base_dir_path`` joined with ``--name``).
+    :return: True if ``dest_dir`` is ``base_dir_path`` or a path beneath it, else False.
+    """
+    real_base = os.path.realpath(base_dir_path)
+    real_dest = os.path.realpath(dest_dir)
+    try:
+        return os.path.commonpath([real_base, real_dest]) == real_base
+    except ValueError:
+        # Raised when the paths cannot be compared (e.g. different drives); treat as outside.
+        return False
 
 
 def get_brewroot_base_path(config: SimpleNamespace, nvre: str) -> Path | None:
@@ -659,6 +843,16 @@ def setup_logging(dest_dir: str):
 @click.option(
     '-i', '--include-package', metavar='NAME', multiple=True, default=[], help='Only include specified packages'
 )
+@click.option(
+    '--package-filter',
+    metavar='NAME',
+    multiple=True,
+    default=[],
+    help='Scope the run to these package names and MERGE them into an existing plashet (when one already exists at '
+    'the destination) instead of a full regeneration. All existing guardrails (released-version, embargo, signing, '
+    'per-arch availability) still apply to the filtered packages. Empty (default) disables the filter and performs '
+    'a normal full run.',
+)
 def config_plashet(ctx, base_dir, brew_root, name, signing_key_id, **kwargs):
     """
     Creates a directory containing one or more arch specific yum repositories by using local
@@ -693,6 +887,11 @@ def config_plashet(ctx, base_dir, brew_root, name, signing_key_id, **kwargs):
         from-advisories --advisory-id 54701
     """
 
+    # --package-filter (merge-into-existing) is only supported by the from-tags subcommand. Reject it early
+    # for any other subcommand rather than silently ignoring it.
+    package_filter = kwargs.get('package_filter') or ()
+    validate_package_filter_scope(package_filter, ctx.invoked_subcommand)
+
     brew_root_path = os.path.abspath(brew_root)
     if not os.path.isdir(brew_root_path):
         print(f'{brew_root_path} does not exist; unable to start')
@@ -706,7 +905,16 @@ def config_plashet(ctx, base_dir, brew_root, name, signing_key_id, **kwargs):
 
     dest_dir = os.path.join(base_dir_path, name)
 
-    if os.path.exists(dest_dir):
+    # Reject a --name that resolves outside --base-dir (e.g. '../other' or an absolute path) before any
+    # filtered cleanup touches the filesystem.
+    if not is_dest_within_base(base_dir_path, dest_dir):
+        print(f'--name {name!r} resolves outside --base-dir {base_dir_path}; refusing to continue')
+        exit(1)
+
+    # When --package-filter is supplied the run is allowed to MERGE into an existing plashet at dest_dir
+    # (see from_tags / _assemble_repo). Without a filter the destination must be unique, preserving the
+    # original full-regeneration behavior byte-for-byte.
+    if os.path.exists(dest_dir) and not package_filter:
         print('Destination {} already exists; name must be unique'.format(dest_dir))
         exit(1)
 
@@ -962,6 +1170,14 @@ def from_tags(
                 logger.info(f'Skipping tagged but not command line included package: {nvre}')
                 continue
 
+            if config.package_filter and package_name not in config.package_filter:
+                # Package-filter mode scopes the run to a specific set of packages. Packages outside the
+                # filter are skipped here; they are merged back in from the existing plashet later (see the
+                # merge step at the end of from_tags). This guard sits alongside include/exclude-package and
+                # BEFORE the released-version check so every remaining guardrail still runs for filtered packages.
+                logger.info(f'Skipping tagged but not in command line package filter: {nvre}')
+                continue
+
             if is_embargoed(nvre):
                 # An embargoed build has not been shipped.
                 actual_embargoed_nvres.append(nvre)  # Record that at the time of build, this was considered embargoed
@@ -1052,9 +1268,12 @@ def from_tags(
                     historical_nvres.add(history_nvre)
                     nvr_product_version[strip_epoch(history_nvre)] = product_version
 
-    if config.include_package and len(config.include_package) != len(desired_nvres):
+    # During a --package-filter run only the included packages that are also in the filter are expected to be
+    # found (the rest are intentionally filtered out); for a normal run this is every included package.
+    expected_included = required_included_packages(config)
+    if expected_included and len(expected_included) != len(desired_nvres):
         raise IOError(
-            f'Did not find all command line included packages {config.include_package}; only found {desired_nvres}'
+            f'Did not find all command line included packages {expected_included}; only found {desired_nvres}'
         )
 
     # Did any of the arches require signed content?
@@ -1130,6 +1349,18 @@ def from_tags(
     all_nvres = set()
     all_nvres.update(desired_nvres)
     all_nvres.update(historical_nvres)
+
+    if config.package_filter:
+        # Package-filter mode: MERGE the freshly-computed filtered NVREs into the EXISTING plashet baseline
+        # rather than rebuilding from scratch. We recover the NVREs of every package NOT in the filter from the
+        # existing plashet.yml and add them to the set handed to assemble_repo. _assemble_repo then rebuilds
+        # repodata from the combined rpm_list via the existing createrepo path, so: packages outside the
+        # filter are preserved, filtered packages are added/updated, and all guardrails above already ran for
+        # the filtered packages. This is fail-closed: if no baseline plashet.yml is present at the destination
+        # (the caller is responsible for seeding it with the current "latest"), merge_filtered_into_existing
+        # raises rather than publishing a scoped-only plashet missing its unfiltered packages.
+        all_nvres = merge_filtered_into_existing(config, all_nvres)
+
     assemble_repo(config, all_nvres, event_info, extra_data=extra_data)
 
 

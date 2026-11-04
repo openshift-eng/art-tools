@@ -1,4 +1,5 @@
 import json
+import re
 import traceback
 
 import click
@@ -32,6 +33,7 @@ class BuildPlashetsPipeline:
         data_gitref='',
         copy_links=False,
         version=None,
+        package_filter=None,
     ):
         self.runtime = runtime
         self.group = group
@@ -42,6 +44,7 @@ class BuildPlashetsPipeline:
         self.data_gitref = data_gitref
         self.copy_links = copy_links
         self.version = version
+        self.package_filter = package_filter or []
 
         self.slack_client = runtime.new_slack_client()
 
@@ -87,6 +90,7 @@ class BuildPlashetsPipeline:
                 copy_links=self.copy_links,
                 dry_run=self.runtime.dry_run,
                 version=self.version,
+                package_filter=self.package_filter,
             )
             self.runtime.logger.info('Built plashets: %s', json.dumps(plashets_built, indent=4))
 
@@ -167,6 +171,13 @@ class BuildPlashetsPipeline:
     default='',
     help='OCP version for resolving MAJOR/MINOR vars in golang groups (e.g. 4.18). Required for golang groups, ignored for other groups.',
 )
+@click.option(
+    '--package-filter',
+    required=False,
+    default='',
+    help='(Optional) Comma/space-separated list of package names to scope the plashet run to. When set, the run is '
+    'merged into the existing plashet instead of a full regeneration. Empty = full regen.',
+)
 @pass_runtime
 @click_coroutine
 async def build_plashets_cli(
@@ -179,6 +190,7 @@ async def build_plashets_cli(
     data_gitref: str,
     copy_links: bool,
     version: str,
+    package_filter: str,
 ):
     # Auto-generate release timestamp if not provided
     if not release:
@@ -199,6 +211,9 @@ async def build_plashets_cli(
             "Version is only used for golang groups."
         )
 
+    # Parse the comma/space-separated package filter into a list of package names.
+    package_filter = [pkg for pkg in re.split(r'[,\s]+', package_filter.strip()) if pkg] if package_filter else []
+
     pipeline = BuildPlashetsPipeline(
         runtime=runtime,
         group=group,
@@ -209,6 +224,7 @@ async def build_plashets_cli(
         data_gitref=data_gitref,
         copy_links=copy_links,
         version=version or None,
+        package_filter=package_filter,
     )
 
     lock = Lock.PLASHET
