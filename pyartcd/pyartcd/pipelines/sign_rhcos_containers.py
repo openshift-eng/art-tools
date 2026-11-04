@@ -45,7 +45,6 @@ class SignRhcosContainersPipeline:
         self.rhcos_file = Path(rhcos_file)
         self.arch = arch
         self.signing_env = signing_env or "stage"
-        # Allow forcing re-signing via the --force option or the FORCE_RESIGN env var.
         self.force_resign = force_resign or os.environ.get("FORCE_RESIGN", "").lower() in ("1", "true", "yes")
         self.logger = self.runtime.logger
 

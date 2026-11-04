@@ -142,22 +142,18 @@ class RegistryConfig:
     explicit credential takes precedence.  When a registry appears in
     multiple source files, the first file wins.
 
-    Two opt-in, backward-compatible behaviors are available for tools (such as
-    cosign / go-containerregistry) that look up credentials by hostname only:
+    Two opt-in behaviors support tools (cosign / go-containerregistry) that look
+    up credentials by hostname only:
 
-    * ``collapse_to_host=True`` additionally emits a bare-hostname ("collapsed")
-      key for every resolved path-scoped registry, so a hostname-only lookup can
-      find a credential. The FIRST resolved registry for a given host supplies
-      that host's alias; an explicitly resolved bare-hostname entry is always
-      preserved and never overwritten.
-    * ``output_dir=True`` materializes a DOCKER_CONFIG *directory* (a temp dir
-      containing ``config.json``) instead of a bare file, so the path can be
-      handed to tools via ``DOCKER_CONFIG=<dir>``. ``__enter__`` then returns the
-      directory path.
+    * ``collapse_to_host=True`` adds a bare-hostname alias key for each resolved
+      path-scoped registry (first resolved registry per host wins; an explicit
+      bare-hostname entry is never overwritten).
+    * ``output_dir=True`` writes ``config.json`` into a temp directory so the path
+      can be handed over via ``DOCKER_CONFIG=<dir>``; ``__enter__`` then returns
+      the directory.
 
-    Both default to ``False``; with the defaults the class behaves exactly as
-    before (``__enter__`` returns the path to a single ``config.json`` file and
-    no hostname aliases are added).
+    Both default to ``False`` (``__enter__`` returns the ``config.json`` file path
+    and no aliases are added).
 
     Arg(s):
         kubeconfig (str | None): Path to a kubeconfig file. When provided,
@@ -354,11 +350,8 @@ class RegistryConfig:
                 cred.registry,
             )
 
-        # Step 3 (opt-in): add bare-hostname alias keys so hostname-only credential
-        # lookups (e.g. go-containerregistry used by cosign) can find a credential.
-        # The FIRST resolved registry for each host supplies the alias; an existing
-        # bare-hostname entry (whether resolved directly or added earlier) is never
-        # overwritten.
+        # Add bare-hostname alias keys so hostname-only lookups (cosign/go-containerregistry)
+        # find a credential. First registry per host wins; an existing host entry is kept.
         if self._collapse_to_host:
             for registry, entry in list(merged.items()):
                 host = registry.split("/", 1)[0]
@@ -440,11 +433,8 @@ class RegistryConfig:
 
     def _write_temp_file(self) -> None:
         """
-        Write merged credentials to a temporary location.
-
-        By default a single ``config.json`` file is created with restrictive
-        permissions (0600). When ``output_dir=True`` the ``config.json`` is written
-        inside a freshly created temp directory (DOCKER_CONFIG layout) instead.
+        Write merged credentials (0600) to a temp ``config.json``, or, when
+        ``output_dir=True``, to ``config.json`` inside a fresh temp directory.
         """
         merged_config = {"auths": self._merged_auths}
 

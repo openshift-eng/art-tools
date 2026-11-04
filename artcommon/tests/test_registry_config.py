@@ -1272,7 +1272,6 @@ class TestRegistryConfigCollapseToHost(unittest.TestCase):
                 collapse_to_host=True,
             ) as auth_file:
                 data = _read_auth_file(auth_file)
-                # Both the original path-scoped key and the hostname alias are present.
                 self.assertIn("quay.io/openshift-release-dev", data["auths"])
                 self.assertIn("quay.io", data["auths"])
                 self.assertEqual(
@@ -1325,7 +1324,7 @@ class TestRegistryConfigCollapseToHost(unittest.TestCase):
                 collapse_to_host=True,
             ) as auth_file:
                 data = _read_auth_file(auth_file)
-                # The explicitly resolved bare-hostname credential wins, not the path-scoped alias.
+                # The explicitly resolved bare-hostname credential wins over the path-scoped alias.
                 self.assertEqual(
                     base64.b64decode(data["auths"]["quay.io"]["auth"]).decode(),
                     "bare:pw",

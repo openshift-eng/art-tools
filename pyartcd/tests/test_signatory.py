@@ -568,12 +568,7 @@ class TestSigstoreSignatory(IsolatedAsyncioTestCase):
 
     @patch("pyartcd.signatory.exectools.cmd_gather_async", new_callable=AsyncMock)
     async def test_signature_exists_always_ignores_tlog(self, mock_cmd):
-        """_signature_exists ignores the tlog and never passes --rekor-url, even when rekor_url is set.
-
-        This is only an idempotency existence check, so it needs the key-signature over the
-        identity, not tlog-inclusion proof; verifying against the internal Rekor can fail because
-        its public key may not be in the TUF root cosign consults.
-        """
+        """_signature_exists ignores the tlog and never passes --rekor-url, even when rekor_url is set."""
         signatory = self._create_signatory(rekor_url="https://rekor.example.com")
         mock_cmd.return_value = (0, json.dumps([]), "")
 
@@ -626,7 +621,6 @@ class TestSigstoreSignatory(IsolatedAsyncioTestCase):
     async def test_sign_manifest_skips_when_signature_exists(self, mock_cmd, mock_sleep):
         """_sign_manifest skips the cosign sign call when our signature already exists"""
         signatory = self._create_signatory(dry_run=False)
-        # A signature object exists, so the precise per-identity verify path is exercised.
         signatory._any_signature_exists = AsyncMock(return_value=True)
         signatory._signature_exists = AsyncMock(return_value=True)
         mock_cmd.return_value = (0, "ok", "")
@@ -635,7 +629,6 @@ class TestSigstoreSignatory(IsolatedAsyncioTestCase):
         result = await signatory._sign_manifest(pullspec, canonical_tag="4.16.1-x86_64")
 
         self.assertEqual(result, {})
-        # Both identities already signed -> no sign commands issued
         self.assertEqual(mock_cmd.await_count, 0)
         self.assertEqual(signatory._signature_exists.await_count, 2)
 
@@ -644,7 +637,6 @@ class TestSigstoreSignatory(IsolatedAsyncioTestCase):
     async def test_sign_manifest_signs_when_signature_absent(self, mock_cmd, mock_sleep):
         """_sign_manifest signs when our signature does not yet exist"""
         signatory = self._create_signatory(dry_run=False)
-        # A signature object exists, so the precise per-identity verify path is exercised.
         signatory._any_signature_exists = AsyncMock(return_value=True)
         signatory._signature_exists = AsyncMock(return_value=False)
         mock_cmd.return_value = (0, "ok", "")
@@ -653,7 +645,6 @@ class TestSigstoreSignatory(IsolatedAsyncioTestCase):
         result = await signatory._sign_manifest(pullspec, canonical_tag="4.16.1-x86_64")
 
         self.assertEqual(result, {})
-        # Two identities (digest + tag), one key each -> two sign commands
         self.assertEqual(mock_cmd.await_count, 2)
         for call in mock_cmd.await_args_list:
             self.assertEqual(call.args[0][:2], ["cosign", "sign"])
@@ -661,24 +652,18 @@ class TestSigstoreSignatory(IsolatedAsyncioTestCase):
     @patch("pyartcd.signatory.asyncio.sleep", new_callable=AsyncMock)
     @patch("pyartcd.signatory.exectools.cmd_gather_async", new_callable=AsyncMock)
     async def test_sign_manifest_signs_only_missing_identity(self, mock_cmd, mock_sleep):
-        """
-        Per-identity skipping contract: when the digest identity is already signed but the tag
-        identity is not, both identities are checked and ONLY the missing tag identity gets a
-        `cosign sign` command. This is the RHCOS/kubevirt case (ART-23308) that motivated the
-        per-identity check -- the tag identity must still be signed even though the digest is done.
-        """
+        """Only the unsigned identity is signed when its sibling identity is already signed (ART-23308)."""
         signatory = self._create_signatory(dry_run=False)
         pullspec = "quay.io/openshift-release-dev/ocp-release@sha256:abc123"
         digest_identity = pullspec
         tag_identity = "quay.io/openshift-release-dev/ocp-release:4.16.1-x86_64"
 
-        # Key the existence check by identity: digest is signed, tag is not.
+        # digest is signed, tag is not.
         signed_by_identity = {digest_identity: True, tag_identity: False}
 
         async def fake_exists(ps, identity, key_id):
             return signed_by_identity[identity]
 
-        # A signature object exists, so the precise per-identity verify path is exercised.
         signatory._any_signature_exists = AsyncMock(return_value=True)
         signatory._signature_exists = AsyncMock(side_effect=fake_exists)
         mock_cmd.return_value = (0, "ok", "")
@@ -686,12 +671,10 @@ class TestSigstoreSignatory(IsolatedAsyncioTestCase):
         result = await signatory._sign_manifest(pullspec, canonical_tag="4.16.1-x86_64")
 
         self.assertEqual(result, {})
-        # Both identities were evaluated independently.
         self.assertEqual(signatory._signature_exists.await_count, 2)
         checked_identities = {call.args[1] for call in signatory._signature_exists.await_args_list}
         self.assertEqual(checked_identities, {digest_identity, tag_identity})
 
-        # Exactly one sign command, and it is for the missing tag identity only.
         self.assertEqual(mock_cmd.await_count, 1)
         sign_cmd = mock_cmd.await_args_list[0].args[0]
         self.assertEqual(sign_cmd[:2], ["cosign", "sign"])
@@ -711,7 +694,6 @@ class TestSigstoreSignatory(IsolatedAsyncioTestCase):
         result = await signatory._sign_manifest(pullspec, canonical_tag="4.16.1-x86_64")
 
         self.assertEqual(result, {})
-        # Both existence checks are bypassed entirely, and both identities are signed
         signatory._any_signature_exists.assert_not_awaited()
         signatory._signature_exists.assert_not_awaited()
         self.assertEqual(mock_cmd.await_count, 2)
@@ -719,11 +701,8 @@ class TestSigstoreSignatory(IsolatedAsyncioTestCase):
     @patch("pyartcd.signatory.asyncio.sleep", new_callable=AsyncMock)
     @patch("pyartcd.signatory.exectools.cmd_gather_async", new_callable=AsyncMock)
     async def test_sign_manifest_cosign_repository_bypasses_skip_checks(self, mock_cmd, mock_sleep):
-        """When COSIGN_REPOSITORY is set, cosign stores signatures in a different repo than the image,
-        so the idempotency skip checks (which target the image repo) would be wrong. _sign_manifest
-        must NOT consult them and must proceed to sign."""
+        """COSIGN_REPOSITORY redirects signature storage, so the skip checks are bypassed and we sign."""
         signatory = self._create_signatory(dry_run=False)
-        # Both checks would report "already signed"; the guard must ignore them entirely.
         signatory._any_signature_exists = AsyncMock(return_value=True)
         signatory._signature_exists = AsyncMock(return_value=True)
         mock_cmd.return_value = (0, "ok", "")
@@ -733,10 +712,8 @@ class TestSigstoreSignatory(IsolatedAsyncioTestCase):
             result = await signatory._sign_manifest(pullspec, canonical_tag="4.16.1-x86_64")
 
         self.assertEqual(result, {})
-        # The skip checks are bypassed even though both would have reported "already signed".
         signatory._any_signature_exists.assert_not_awaited()
         signatory._signature_exists.assert_not_awaited()
-        # Both identities (digest + tag) are signed.
         self.assertEqual(mock_cmd.await_count, 2)
 
     @patch("pyartcd.signatory.exectools.cmd_gather_async", new_callable=AsyncMock)
@@ -752,10 +729,8 @@ class TestSigstoreSignatory(IsolatedAsyncioTestCase):
         self.assertTrue(result)
         cmd = mock_cmd.await_args.args[0]
         self.assertEqual(cmd[:3], ["skopeo", "inspect", "--raw"])
-        # QUAY_AUTH_FILE is passed through as --authfile (skopeo understands path-scoped keys).
         self.assertIn("--authfile", cmd)
         self.assertEqual(cmd[cmd.index("--authfile") + 1], "/path/to/auth.json")
-        # The derived cosign signature tag is <repo>:sha256-<hex>.sig.
         self.assertEqual(cmd[-1], "docker://quay.io/openshift-release-dev/ocp-release:sha256-abc123.sig")
 
     @patch("pyartcd.signatory.exectools.cmd_gather_async", new_callable=AsyncMock)
@@ -780,18 +755,13 @@ class TestSigstoreSignatory(IsolatedAsyncioTestCase):
 
     @patch("pyartcd.signatory.exectools.cmd_gather_async", new_callable=AsyncMock)
     async def test_any_signature_exists_true_on_ambiguous_error(self, mock_cmd):
-        """_any_signature_exists fails OPEN (returns True) on an auth/other error.
-
-        A bare 'not found' (e.g. 'skopeo: command not found') is NOT a registry not-found
-        signal, so it is treated as ambiguous rather than 'no signature'.
-        """
+        """_any_signature_exists fails OPEN (returns True) on an auth/other error or a bare 'not found'."""
         signatory = self._create_signatory()
         mock_cmd.return_value = (1, "", "unauthorized: authentication required")
 
         result = await signatory._any_signature_exists("quay.io/x/y@sha256:abc123")
         self.assertTrue(result)
 
-        # A bare "not found" must not be mistaken for a registry not-found signal.
         mock_cmd.return_value = (127, "", "bash: skopeo: command not found")
         result = await signatory._any_signature_exists("quay.io/x/y@sha256:abc123")
         self.assertTrue(result)
@@ -804,7 +774,6 @@ class TestSigstoreSignatory(IsolatedAsyncioTestCase):
             result = await signatory._any_signature_exists("quay.io/x/y:4.16.1-x86_64")
 
         self.assertTrue(result)
-        # No registry call is made when we cannot derive the signature tag.
         mock_cmd.assert_not_awaited()
 
     @patch("pyartcd.signatory.asyncio.sleep", new_callable=AsyncMock)
@@ -812,7 +781,6 @@ class TestSigstoreSignatory(IsolatedAsyncioTestCase):
     async def test_sign_manifest_skips_verify_when_no_sig_object(self, mock_cmd, mock_sleep):
         """When no signature object exists, _signature_exists is never called and all identities sign."""
         signatory = self._create_signatory(dry_run=False)
-        # No signature object at all -> skip the per-identity verify entirely.
         signatory._any_signature_exists = AsyncMock(return_value=False)
         signatory._signature_exists = AsyncMock(return_value=True)
         mock_cmd.return_value = (0, "ok", "")
@@ -821,21 +789,15 @@ class TestSigstoreSignatory(IsolatedAsyncioTestCase):
         result = await signatory._sign_manifest(pullspec, canonical_tag="4.16.1-x86_64")
 
         self.assertEqual(result, {})
-        # The pre-check short-circuits the per-identity verify: zero cosign verify calls.
         self.assertEqual(signatory._any_signature_exists.await_count, 1)
         self.assertEqual(signatory._signature_exists.await_count, 0)
-        # Both identities (digest + tag), one key each -> two cosign sign commands.
         self.assertEqual(mock_cmd.await_count, 2)
         for call in mock_cmd.await_args_list:
             self.assertEqual(call.args[0][:2], ["cosign", "sign"])
 
     @patch("pyartcd.signatory.exectools.cmd_gather_async", new_callable=AsyncMock)
     async def test_signature_exists_false_on_unexpected_json_shapes(self, mock_cmd):
-        """_signature_exists fails OPEN (returns False, no raise) on valid JSON with unexpected shapes.
-
-        cosign may exit 0 yet emit something other than a list of well-formed payload dicts. Each of
-        these must be treated as 'signature not found' so the caller re-signs rather than raising.
-        """
+        """_signature_exists fails OPEN (returns False, no raise) on valid JSON with unexpected shapes."""
         signatory = self._create_signatory()
 
         for stdout in ("null", "{}", "[null]", '["x"]', '[{"critical": null}]', '[{"critical": {"identity": null}}]'):
@@ -866,8 +828,7 @@ class TestSigstoreSignatory(IsolatedAsyncioTestCase):
 
     # --- repo-aware (longest-prefix) credential selection ----------------------------------------
 
-    # Compute the Docker "auth" values at runtime so no long base64 credential literal lives in the
-    # source (they are only throwaway test fixtures, never real credentials).
+    # Computed at runtime so no credential literal lives in source (throwaway fixtures only).
     RELEASE_CRED = {"auth": base64.b64encode(b"release-user:release-pass").decode()}
     ART_CRED = {"auth": base64.b64encode(b"art-user:art-pass").decode()}
 
@@ -901,9 +862,7 @@ class TestSigstoreSignatory(IsolatedAsyncioTestCase):
             release_dir = signatory._docker_config_dir_for_pullspec(release_ps)
             release_auths = self._read_config_auths(release_dir)
             self.assertEqual(release_auths["quay.io"], self.RELEASE_CRED)
-            # The chosen path-scoped key is preserved alongside its hostname-only alias, and the
-            # UNRELATED robot's credential is NOT present in this repo's config (cosign resolves by
-            # hostname, so only the longest-prefix credential for this repo is handed over).
+            # The chosen key is preserved; the unrelated robot's credential is absent from this config.
             self.assertEqual(release_auths["quay.io/openshift-release-dev"], self.RELEASE_CRED)
             self.assertNotIn("quay.io/redhat-user-workloads/ocp-art-tenant/art-images", release_auths)
 
@@ -1004,10 +963,8 @@ class TestSigstoreSignatory(IsolatedAsyncioTestCase):
                 self.assertEqual(self._read_config_auths(env["DOCKER_CONFIG"])["quay.io"], self.ART_CRED)
 
     def test_env_is_instance_local_and_does_not_leak_docker_config(self):
-        """Each SigstoreSignatory works on its own ENV copy, so DOCKER_CONFIG/credentials set (and
-        temp dirs later deleted) on one instance cannot leak onto another instance or onto the
-        class-level ENV default. Previously ENV was a shared class dict, so a closed instance left a
-        deleted DOCKER_CONFIG that the next instance would inherit."""
+        """Each SigstoreSignatory uses its own ENV copy, so DOCKER_CONFIG and its temp dir cannot leak
+        onto another instance or onto the class-level ENV default."""
         class_env_before = dict(SigstoreSignatory.ENV)
         auths = {"quay.io/openshift-release-dev": self.RELEASE_CRED}
         path = self._make_auth_file(auths)
