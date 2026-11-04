@@ -39,7 +39,7 @@ def validate(file, schema_only, images_dir):
         return
 
     if support.get_artifact_type(file) == 'releases':
-        err = releases.validate(parsed)
+        err = releases.validate(parsed, group_config=support.load_group_config_for(file))
         if err:
             msg = "releases.yml validation failed\nReturned error: {}".format(err)
             support.fail_validation(msg, parsed)
