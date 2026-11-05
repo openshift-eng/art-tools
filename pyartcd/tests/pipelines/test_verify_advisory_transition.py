@@ -75,30 +75,26 @@ class TestVerifyAdvisoryTransition(unittest.IsolatedAsyncioTestCase):
         self.inspect.assert_awaited_once()
         self.update.assert_not_called()
 
-    async def test_metadata_uses_prepared_quay_auth_and_removes_temp_file(self):
-        auth_paths = []
+    async def test_metadata_forwards_quay_auth_file_without_rewriting_credentials(self):
+        namespace = "quay.io/openshift-release-dev"
+        for auths in (
+            {namespace: {"auth": "test-namespace-auth"}},
+            {"quay.io": {"auth": "test-host-auth"}},
+            {namespace: {"auth": "test-namespace-auth"}, "quay.io": {"auth": "test-host-auth"}},
+        ):
+            with self.subTest(registries=list(auths)):
+                original_auth = json.dumps({"auths": auths})
+                self.quay_auth_file.write_text(original_auth)
+                self.command.reset_mock()
 
-        async def run_command(cmd):
-            if cmd[-1] != "verify-metadata-url":
-                return
-            auth_path = Path(next(arg.split("=", 1)[1] for arg in cmd if arg.startswith("--registry-config=")))
-            auth_paths.append(auth_path)
-            self.assertNotEqual(auth_path, self.quay_auth_file)
-            self.assertEqual(
-                json.loads(auth_path.read_text()),
-                {
-                    "auths": {
-                        "quay.io/openshift-release-dev": {"auth": "test-namespace-auth"},
-                    }
-                },
-            )
+                await self.pipeline.run()
 
-        self.command.side_effect = run_command
-        await self.pipeline.run()
-
-        self.assertEqual(len(auth_paths), 1)
-        self.assertFalse(auth_paths[0].exists())
-        self.assertTrue(self.quay_auth_file.exists())
+                metadata_cmd = self.command.call_args_list[0].args[0]
+                self.assertEqual(
+                    metadata_cmd,
+                    self.pipeline._elliott_base + [f"--registry-config={self.quay_auth_file}", "verify-metadata-url"],
+                )
+                self.assertEqual(self.quay_auth_file.read_text(), original_auth)
 
     async def test_missing_quay_credentials_marks_failure_without_transitioning(self):
         with patch.dict("os.environ", {"QUAY_AUTH_FILE": ""}):
