@@ -121,11 +121,18 @@ Production snapshots can have an empty provenance `inputs` list and empty
 builds record no selected source bundle NVRs. Product, target, execution group,
 NVR, and Dockerfile/provenance consistency checks still apply.
 
-Continue supplying `--fbc-build` inputs so ARTCD can infer and validate the source
-group and obtain its product configuration. Use inputs from the same execution
-group as the committed branch. The committed branch determines catalog content;
-the supplied images are not re-rendered in this mode. The existing product/target
-lock, architecture lookup, build retries and result recording still apply.
+With `--fbc-branch`, `--fbc-build` inputs can be omitted. ARTCD reads
+`execution_group`, `product`, and `ocp_target_version` from that branch's committed
+`unified-provenance.json`, validates them, and loads the execution group's existing
+build configuration. No source-build database lookup is needed. Missing or
+inconsistent provenance fails before a build starts.
+
+When build inputs are supplied, ARTCD continues inferring the group from their
+records; use inputs from the same execution group as the committed branch.
+`--skip-rebase` without a custom branch still requires build inputs. The committed
+branch determines catalog content; supplied images are not re-rendered in this
+mode. The existing product/target lock, architecture lookup, build retries and
+result recording still apply.
 Combining `--skip-rebase` with `--dry-run` checks the branch and metadata without
 starting Konflux builds or writing database records.
 

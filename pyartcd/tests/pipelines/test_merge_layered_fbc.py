@@ -77,6 +77,84 @@ class TestMergeLayeredFbcPipeline(unittest.IsolatedAsyncioTestCase):
         self.assertIn('--skip-rebase', cmd)
         self.assertEqual(cmd[cmd.index('--fbc-branch') + 1], branch)
 
+    def test_cli_accepts_branch_without_build_inputs(self):
+        with cli.commands['lp-unified-fbc'].make_context(
+            'lp-unified-fbc', ['--ocp-target-version=5.0', '--fbc-branch=codex/production']
+        ) as context:
+            self.assertEqual(context.params['fbc_builds'], ())
+
+    async def test_branch_only_resolves_configuration_without_build_database(self):
+        provenance = {'execution_group': 'quay-3.16', 'product': 'quay', 'ocp_target_version': '5.0'}
+
+        async def run_locked(**kwargs):
+            self.assertEqual(kwargs['lock_name'], 'lock:fbc-merge:quay:ocp-5.0')
+            return await kwargs['coro']
+
+        for dry_run, repository in ((True, None), (False, 'git@github.com:example/custom-fbc.git')):
+            with self.subTest(dry_run=dry_run, repository=repository):
+                self.runtime.dry_run = dry_run
+                pipeline = MergeLayeredFbcPipeline(
+                    runtime=self.runtime, ocp_target_version='5.0', fbc_branch='codex/production', fbc_repo=repository
+                )
+                repo = Mock()
+                repo.get_contents.return_value.decoded_content = json.dumps(provenance).encode()
+                with (
+                    patch('pyartcd.pipelines.merge_layered_fbc.get_github_client_for_org') as client,
+                    patch('pyartcd.pipelines.merge_layered_fbc.KonfluxDb') as db,
+                    patch(
+                        'pyartcd.pipelines.merge_layered_fbc.load_group_config',
+                        new=AsyncMock(return_value={'product': 'quay', 'OCP_TARGET_VERSIONS': ['5.0']}),
+                    ) as config,
+                    patch(
+                        'pyartcd.pipelines.merge_layered_fbc.locks.run_with_lock',
+                        new=AsyncMock(side_effect=run_locked),
+                    ) as lock,
+                    patch('pyartcd.pipelines.merge_layered_fbc.exectools.cmd_assert_async', new=AsyncMock()) as command,
+                ):
+                    client.return_value.get_repo.return_value = repo
+                    await pipeline.run()
+                db.assert_not_called()
+                client.assert_called_once_with('example' if repository else 'openshift-priv')
+                client.return_value.get_repo.assert_called_once_with(
+                    'example/custom-fbc' if repository else 'openshift-priv/art-fbc'
+                )
+                repo.get_contents.assert_called_once_with('unified-provenance.json', ref='codex/production')
+                config.assert_awaited_once_with('quay-3.16', 'stream', None, pipeline.data_path)
+                self.assertEqual(lock.await_count, 0 if dry_run else 1)
+                cmd = command.await_args.args[0]
+                self.assertIn('--group=quay-3.16', cmd)
+                self.assertIn('--skip-rebase', cmd)
+                self.assertNotIn('--fbc-build', cmd)
+
+    async def test_branch_only_rejects_invalid_provenance_before_build(self):
+        valid = {'execution_group': 'quay-3.16', 'product': 'quay', 'ocp_target_version': '5.0'}
+        for change, error in (
+            ({'execution_group': None}, 'execution_group'),
+            ({'execution_group': '--invalid group'}, 'execution_group'),
+            ({'ocp_target_version': '4.22'}, 'does not match OCP'),
+            ({'product': 'logging'}, 'expected product quay'),
+            ({'product': None}, 'layered-product identity'),
+        ):
+            with self.subTest(change=change):
+                pipeline = MergeLayeredFbcPipeline(
+                    runtime=self.runtime, ocp_target_version='5.0', fbc_branch='codex/production', product='quay'
+                )
+                with (
+                    patch('pyartcd.pipelines.merge_layered_fbc.get_github_client_for_org') as client,
+                    patch.object(pipeline, '_build', new=AsyncMock()) as build,
+                ):
+                    client.return_value.get_repo.return_value.get_contents.return_value.decoded_content = json.dumps(
+                        valid | change
+                    ).encode()
+                    with self.assertRaisesRegex(ValueError, error):
+                        await pipeline.run()
+                build.assert_not_awaited()
+
+    async def test_empty_builds_without_custom_branch_are_rejected(self):
+        pipeline = MergeLayeredFbcPipeline(runtime=self.runtime, ocp_target_version='5.0', skip_rebase=True)
+        with self.assertRaisesRegex(ValueError, 'unless --fbc-branch is set'):
+            await pipeline.run()
+
     async def test_lock_uses_product_and_target(self):
         async def run_locked(**kwargs):
             self.assertEqual(kwargs['lock_name'], 'lock:fbc-merge:quay:ocp-5.0')

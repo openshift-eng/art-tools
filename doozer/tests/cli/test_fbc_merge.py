@@ -2,6 +2,7 @@ import inspect
 import unittest
 from unittest.mock import AsyncMock, Mock, patch
 
+import click
 from doozerlib.cli.fbc_merge import fbc_merge_layered
 from doozerlib.runtime import Runtime
 
@@ -35,3 +36,26 @@ class TestFbcMergeLayeredCli(unittest.IsolatedAsyncioTestCase):
                 else:
                     merger.prepare.assert_awaited_once_with(options['builds'])
                 merger.merge.assert_awaited_once_with(options['image_repo'], skip_rebase=skip_rebase or bool(branch))
+
+    async def test_empty_build_inputs_require_custom_branch(self):
+        runtime = Mock(spec=Runtime, product='quay', group='quay-3.16', upcycle=False)
+        for branch in (None, 'codex/production'):
+            with self.subTest(branch=branch):
+                args = ['--major-minor=4.22']
+                if branch:
+                    args.append('--fbc-branch=' + branch)
+                with fbc_merge_layered.make_context('beta:fbc:merge-layered', args) as context:
+                    options = context.params
+                merger = Mock(prepare=AsyncMock(), merge=AsyncMock(return_value={'dry_run': True}))
+                with (
+                    patch('doozerlib.cli.fbc_merge.LayeredFbcMerger', return_value=merger),
+                    patch('doozerlib.cli.fbc_merge.resolve_konflux_kubeconfig_by_product', return_value=None),
+                    patch('doozerlib.cli.fbc_merge.click.echo'),
+                ):
+                    if branch:
+                        await inspect.unwrap(fbc_merge_layered.callback)(runtime, **options)
+                        merger.prepare.assert_not_awaited()
+                        merger.merge.assert_awaited_once_with(options['image_repo'], skip_rebase=True)
+                    else:
+                        with self.assertRaisesRegex(click.ClickException, 'unless --fbc-branch is set'):
+                            await inspect.unwrap(fbc_merge_layered.callback)(runtime, **options)
