@@ -2,6 +2,7 @@
 
 import json
 import logging
+import os
 
 import click
 from artcommonlib import exectools
@@ -73,7 +74,10 @@ class VerifyAdvisoryTransitionPipeline:
         self.working_dir.mkdir(parents=True, exist_ok=True)
         elliott_base = self._elliott_base
         # Metadata accessibility belongs to this flow, not verify-release.
-        await exectools.cmd_assert_async(elliott_base + ["verify-metadata-url"])
+        quay_auth_file = os.getenv("QUAY_AUTH_FILE")
+        if not quay_auth_file:
+            raise ValueError("QUAY_AUTH_FILE environment variable is required but not set.")
+        await exectools.cmd_assert_async(elliott_base + [f"--registry-config={quay_auth_file}", "verify-metadata-url"])
         # Elliott owns assembly selection (including MicroShift exclusion) and
         # reads the actual states. A failed check is expected while advisories
         # are still in QE; API/configuration errors must never look like QE.

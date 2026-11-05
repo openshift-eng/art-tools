@@ -13,6 +13,18 @@ MR_URL = "https://gitlab.cee.redhat.com/hybrid-platforms/art/ocp-shipment-data/-
 class TestVerifyAdvisoryTransition(unittest.IsolatedAsyncioTestCase):
     def setUp(self):
         self.temp_dir = self.enterContext(tempfile.TemporaryDirectory())
+        self.quay_auth_file = Path(self.temp_dir) / "quay-auth.json"
+        self.quay_auth_file.write_text(
+            json.dumps(
+                {
+                    "auths": {
+                        "quay.io/openshift-release-dev": {"auth": "test-namespace-auth"},
+                        "quay.io": {"auth": "test-unrelated-auth"},
+                    }
+                }
+            )
+        )
+        self.enterContext(patch.dict("os.environ", {"QUAY_AUTH_FILE": str(self.quay_auth_file)}))
         self.runtime = MagicMock(dry_run=False, working_dir=Path(self.temp_dir))
         self.pipeline = VerifyAdvisoryTransitionPipeline(self.runtime, "4.22", "4.22.9")
         self.config = {
@@ -62,6 +74,36 @@ class TestVerifyAdvisoryTransition(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(commands[-1][-2:], ["verify-advisory-status", "--mark"])
         self.inspect.assert_awaited_once()
         self.update.assert_not_called()
+
+    async def test_metadata_forwards_quay_auth_file_without_rewriting_credentials(self):
+        namespace = "quay.io/openshift-release-dev"
+        for auths in (
+            {namespace: {"auth": "test-namespace-auth"}},
+            {"quay.io": {"auth": "test-host-auth"}},
+            {namespace: {"auth": "test-namespace-auth"}, "quay.io": {"auth": "test-host-auth"}},
+        ):
+            with self.subTest(registries=list(auths)):
+                original_auth = json.dumps({"auths": auths})
+                self.quay_auth_file.write_text(original_auth)
+                self.command.reset_mock()
+
+                await self.pipeline.run()
+
+                metadata_cmd = self.command.call_args_list[0].args[0]
+                self.assertEqual(
+                    metadata_cmd,
+                    self.pipeline._elliott_base + [f"--registry-config={self.quay_auth_file}", "verify-metadata-url"],
+                )
+                self.assertEqual(self.quay_auth_file.read_text(), original_auth)
+
+    async def test_missing_quay_credentials_marks_failure_without_transitioning(self):
+        with patch.dict("os.environ", {"QUAY_AUTH_FILE": ""}):
+            with self.assertRaisesRegex(ValueError, "QUAY_AUTH_FILE"):
+                await self.pipeline.run()
+
+        self.assertEqual(self.command.await_count, 1)
+        self.assert_failure_marked()
+        self.inspect.assert_not_called()
 
     async def test_closed_and_merged_mrs_are_supported(self):
         for state in ("closed", "merged"):
