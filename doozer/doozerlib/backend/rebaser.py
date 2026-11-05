@@ -124,7 +124,14 @@ class KonfluxRebaser:
         self.konflux_db = self._runtime.konflux_db
         if self.konflux_db:
             self.konflux_db.bind(KonfluxBuildRecord)
-        self.derived_group = runtime.derived_group
+        # Derive the group from the rebaser's own variant (not runtime.variant): the generic
+        # beta:images:konflux:rebase path builds the rebaser with the default variant=OCP and can
+        # --push, so keying this off runtime.variant could push OCP content to an okd-derived branch.
+        if self.variant is BuildVariant.OKD:
+            major, minor = runtime.get_major_minor_fields()
+            self.derived_group = f'okd-{major}.{minor}'
+        else:
+            self.derived_group = runtime.group
 
     @staticmethod
     def construct_dest_branch(group: str, assembly_name: Optional[str], distgit_key: str) -> str:
