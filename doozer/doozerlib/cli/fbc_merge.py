@@ -19,8 +19,7 @@ from doozerlib.runtime import Runtime
     '--fbc-build',
     'builds',
     multiple=True,
-    required=True,
-    help='Source FBC NVR or pullspec. Repeat for each operator and source version; all must match the OCP target.',
+    help='Source FBC NVR or pullspec. Repeat for each source version; optional when --fbc-branch is set.',
 )
 @click.option('--major-minor', required=True, help='Target OCP MAJOR.MINOR version, e.g. 4.20 or 5.0.')
 @click.option('--fbc-repo', default=constants.ART_FBC_GIT_REPO, show_default=True)
@@ -60,6 +59,8 @@ async def fbc_merge_layered(
     dry_run: bool,
     output_file: str | None,
 ):
+    if not builds and not fbc_branch:
+        raise click.ClickException('At least one FBC build is required unless --fbc-branch is set')
     runtime.initialize(build_system='konflux', config_only=True)
     if runtime.product == 'ocp' or runtime.group.startswith('openshift-'):
         raise click.ClickException('Use beta:fbc:merge for OpenShift FBCs')

@@ -6,9 +6,10 @@ from pathlib import Path
 
 import click
 from artcommonlib import exectools
+from artcommonlib.github_auth import get_github_client_for_org
 from artcommonlib.konflux.konflux_build_record import KonfluxBuildOutcome, KonfluxFbcBuildRecord
 from artcommonlib.konflux.konflux_db import KonfluxDb
-from artcommonlib.util import extract_ocp_version_from_fbc_nvr, oc_image_info_for_arch_async
+from artcommonlib.util import extract_ocp_version_from_fbc_nvr, oc_image_info_for_arch_async, split_git_url
 
 from pyartcd import constants, locks
 from pyartcd.cli import cli, click_coroutine, pass_runtime
@@ -22,7 +23,7 @@ class MergeLayeredFbcPipeline:
         self,
         runtime: Runtime,
         ocp_target_version: str,
-        fbc_builds: tuple[str, ...],
+        fbc_builds: tuple[str, ...] = (),
         product: str | None = None,
         data_path: str = constants.OCP_BUILD_DATA_URL,
         fbc_repo: str | None = None,
@@ -56,6 +57,8 @@ class MergeLayeredFbcPipeline:
         self.skip_tasks = skip_tasks
 
     async def _resolve_groups(self) -> list[str]:
+        if not self.builds:
+            return await self._resolve_branch_group()
         db = KonfluxDb()
         db.bind(KonfluxFbcBuildRecord)
         groups = set()
@@ -77,9 +80,37 @@ class MergeLayeredFbcPipeline:
             groups.add(record.group)
         return sorted(groups)
 
+    async def _resolve_branch_group(self) -> list[str]:
+        repository = self.options['--fbc-repo'] or 'https://github.com/openshift-priv/art-fbc.git'
+
+        def read_provenance():
+            host, owner, name = split_git_url(repository)
+            if host != 'github.com':
+                raise ValueError(f'Unsupported FBC source repository {repository}')
+            repo = get_github_client_for_org(owner).get_repo(f'{owner}/{name}')
+            return json.loads(
+                repo.get_contents('unified-provenance.json', ref=self.options['--fbc-branch']).decoded_content
+            )
+
+        provenance = await exectools.to_thread(read_provenance)
+        if not isinstance(provenance, dict):
+            raise ValueError('FBC branch provenance must be a JSON object')
+        group = provenance.get('execution_group')
+        if not isinstance(group, str) or not re.fullmatch(r'[\w.-]+', group):
+            raise ValueError('FBC branch provenance has no valid execution_group')
+        if provenance.get('ocp_target_version') != self.target:
+            raise ValueError(f'FBC branch provenance does not match OCP {self.target}')
+        product = provenance.get('product')
+        if not isinstance(product, str) or not product or product == 'ocp':
+            raise ValueError('FBC branch provenance has no layered-product identity')
+        if self.product and product != self.product:
+            raise ValueError(f'FBC branch belongs to {product}, expected product {self.product}')
+        self.product = product
+        return [group]
+
     async def run(self) -> dict:
-        if not self.builds:
-            raise ValueError('At least one FBC build is required')
+        if not self.builds and not self.options['--fbc-branch']:
+            raise ValueError('At least one FBC build is required unless --fbc-branch is set')
         if not re.fullmatch(r'\d+\.\d+', self.target):
             raise ValueError('OCP target must have MAJOR.MINOR format')
         groups = await self._resolve_groups()
@@ -144,8 +175,7 @@ class MergeLayeredFbcPipeline:
     '--fbc-build',
     'fbc_builds',
     multiple=True,
-    required=True,
-    help='FBC NVR or pullspec; repeat for each operator and source version, all matching the OCP target.',
+    help='FBC NVR or pullspec; repeat for each source version. Optional when --fbc-branch is set.',
 )
 @click.option('--product', help='Require all source builds to belong to this product.')
 @click.option('--data-path', default=constants.OCP_BUILD_DATA_URL)
