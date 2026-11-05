@@ -1642,6 +1642,18 @@
           "$ref": "#/properties/konflux/properties/its"
         },
         "its-": {},
+        "post_build": {
+          "description": "Name of an ART post-build callback to run for this image; the callback must pass before ITS, release, and a successful build record",
+          "type": "string",
+          "minLength": 1
+        },
+        "post_build!": {
+          "$ref": "#/properties/konflux/properties/post_build"
+        },
+        "post_build?": {
+          "$ref": "#/properties/konflux/properties/post_build"
+        },
+        "post_build-": {},
         "skip_validate_slsa": {
           "description": "Skip SLSA attestation and source image signature validation after a successful Konflux build",
           "type": "boolean"

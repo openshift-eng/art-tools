@@ -16,6 +16,7 @@ class TestKonfluxBuildOutcome(TestCase):
         for outcome, value in (
             (KonfluxBuildOutcome.BUILD_ERROR, 'build_error'),
             (KonfluxBuildOutcome.ITS_ERROR, 'its_error'),
+            (KonfluxBuildOutcome.POST_BUILD_ERROR, 'post_build_error'),
             (KonfluxBuildOutcome.RELEASE_ERROR, 'release_error'),
         ):
             build = KonfluxBuildRecord(outcome=outcome)
@@ -30,6 +31,7 @@ class TestKonfluxBuildOutcome(TestCase):
             KonfluxBuildOutcome.FAILURE,
             KonfluxBuildOutcome.BUILD_ERROR,
             KonfluxBuildOutcome.ITS_ERROR,
+            KonfluxBuildOutcome.POST_BUILD_ERROR,
             KonfluxBuildOutcome.RELEASE_ERROR,
             KonfluxBuildOutcome.TIMEOUT,
             KonfluxBuildOutcome.CANCELLED,
@@ -46,6 +48,7 @@ class TestKonfluxBuildOutcome(TestCase):
         self.assertIn('failure', values)
         self.assertIn('build_error', values)
         self.assertIn('its_error', values)
+        self.assertIn('post_build_error', values)
         self.assertIn('release_error', values)
         self.assertNotIn('pending', values)
 

@@ -43,6 +43,7 @@ from doozerlib.backend.konflux_client import (
 from doozerlib.backend.konflux_fbc import get_referenced_images
 from doozerlib.backend.konflux_image_builder import KonfluxImageBuilder, KonfluxImageBuilderConfig
 from doozerlib.backend.konflux_olm_bundler import KonfluxOlmBundleBuilder, KonfluxOlmBundleRebaser
+from doozerlib.backend.konflux_post_build import build_post_build_callbacks
 from doozerlib.backend.rebaser import KonfluxRebaser
 from doozerlib.cli import (
     cli,
@@ -319,6 +320,7 @@ class KonfluxBuildCli:
         skip_ec_verify: bool = False,
         effective_time: str = "now",
         skip_custom_its: bool = False,
+        skip_post_build: bool = False,
         skip_tasks: tuple[str, ...] = (),
         build_args: tuple[str, ...] = (),
     ):
@@ -343,6 +345,7 @@ class KonfluxBuildCli:
         self.skip_ec_verify = skip_ec_verify
         self.effective_time = effective_time
         self.skip_custom_its = skip_custom_its
+        self.skip_post_build = skip_post_build
 
         validate_build_priority(self.build_priority)
 
@@ -356,6 +359,10 @@ class KonfluxBuildCli:
         runtime.konflux_db.bind(KonfluxBuildRecord)
         assert runtime.source_resolver is not None, "source_resolver is not initialized. Doozer bug?"
         metas = _filter_okd_excluded_metas(runtime, runtime.ordered_image_metas())
+
+        post_build_callbacks = build_post_build_callbacks(
+            metas=metas, runtime=runtime, skip=self.skip_post_build or self.dry_run
+        )
 
         # Update span name to include metas count
         span = trace.get_current_span()
@@ -432,6 +439,7 @@ class KonfluxBuildCli:
             integration_test_snapshot_annotations=dict(integration_test_snapshot_annotations),
             skip_custom_its=self.skip_custom_its,
             build_args=self.build_args,
+            post_build_callbacks=post_build_callbacks,
         )
         builder = KonfluxImageBuilder(config=config, record_logger=runtime.record_logger)
         await builder.validate_custom_integration_test_scenarios()
@@ -725,6 +733,7 @@ class KonfluxBuildCli:
     is_flag=True,
     help='Skip custom IntegrationTestScenarios configured in group.yml.',
 )
+@click.option('--skip-post-build', is_flag=True, help='Skip configured Konflux post-build callbacks.')
 @pass_runtime
 @click_coroutine
 async def images_konflux_build(
@@ -743,6 +752,7 @@ async def images_konflux_build(
     effective_time: str,
     skip_custom_its: bool,
     build_args: tuple[str, ...],
+    skip_post_build: bool,
 ):
     if network_mode:
         runtime.network_mode_override = network_mode
@@ -763,6 +773,7 @@ async def images_konflux_build(
         effective_time=effective_time,
         skip_custom_its=skip_custom_its,
         build_args=build_args,
+        skip_post_build=skip_post_build,
     )
     await cli.run()
 
