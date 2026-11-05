@@ -3,7 +3,7 @@ import re
 import unittest
 from pathlib import Path
 
-from elliottlib.shipment_model import Shipment, ShipmentConfig
+from elliottlib.shipment_model import MappingDefaults, Shipment, ShipmentConfig
 
 
 class TestShipmentModel(unittest.TestCase):
@@ -135,6 +135,92 @@ class TestShipmentModel(unittest.TestCase):
         self.assertFalse(shipment.metadata.docs_approval_required)
         roundtripped = Shipment.model_validate(shipment.model_dump())
         self.assertFalse(roundtripped.metadata.docs_approval_required)
+
+    def test_release_tag_mapping_roundtrips_without_resolving_templates(self):
+        shipment_data = self._create_base_shipment_data()
+        shipment_data.update(self._create_release_notes_data())
+        shipment_data['metadata']['assembly'] = '3.18.3'
+        tags = ['v{{ assembly }}', 'v{{assembly}}-{{ release_timestamp }}']
+        shipment_data['data']['mapping'] = {'defaults': {'tags': tags}}
+
+        shipment = Shipment(**shipment_data)
+        dumped = shipment.model_dump(exclude_none=True)
+        self.assertEqual(dumped['data']['mapping'], {'defaults': {'tags': tags}})
+        self.assertEqual(Shipment.model_validate(dumped).data.mapping.defaults.tags, tags)
+
+    def test_release_tag_mapping_rejects_repository_configuration(self):
+        shipment_data = self._create_base_shipment_data()
+        shipment_data.update(self._create_release_notes_data())
+        shipment_data['data']['mapping'] = {
+            'defaults': {'tags': ['latest']},
+            'components': [{'name': 'test', 'repositories': [{'url': 'example.com/test'}]}],
+        }
+        with self.assertRaisesRegex(ValueError, 'Extra inputs are not permitted'):
+            Shipment(**shipment_data)
+
+    def test_mapping_only_shipment_without_release_notes(self):
+        shipment_data = self._create_base_shipment_data()
+        shipment_data['data'] = {'mapping': {'defaults': {'tags': ['v{{ assembly }}']}}}
+        shipment = Shipment(**shipment_data)
+        self.assertIsNone(shipment.data.releaseNotes)
+        self.assertNotIn('releaseNotes', shipment.model_dump(exclude_none=True)['data'])
+
+    def test_openshift_mapping_does_not_replace_required_release_notes(self):
+        shipment_data = self._create_base_shipment_data()
+        shipment_data['metadata']['group'] = 'openshift-4.18'
+        shipment_data['data'] = {'mapping': {'defaults': {'tags': ['v{{ assembly }}']}}}
+        with self.assertRaisesRegex(ValueError, 'A regular shipment is expected to have data.releaseNotes defined'):
+            Shipment(**shipment_data)
+
+    def test_fbc_shipment_rejects_tag_mapping(self):
+        shipment_data = self._create_base_shipment_data(fbc=True)
+        shipment_data['data'] = {'mapping': {'defaults': {'tags': ['v{{ assembly }}']}}}
+        with self.assertRaisesRegex(ValueError, 'FBC shipment is not expected to have data.mapping defined'):
+            Shipment(**shipment_data)
+
+    def test_assembly_tags_are_validated_when_loading_shipment(self):
+        for assembly in ('stream', '', '3.18.3+metadata', 'bad/assembly', '{{ labels.version }}'):
+            with self.subTest(assembly=assembly):
+                shipment_data = self._create_base_shipment_data()
+                shipment_data.update(self._create_release_notes_data())
+                shipment_data['metadata']['assembly'] = assembly
+                shipment_data['data']['mapping'] = {'defaults': {'tags': ['v{{ assembly }}']}}
+                with self.assertRaises(ValueError):
+                    Shipment(**shipment_data)
+
+    def test_release_tags_resolve_only_assembly(self):
+        tags = [
+            'v{{ assembly }}',
+            'v{{assembly}}-{{ release_timestamp }}',
+            'v{{ assembly }}-{{ incrementer }}',
+            '{{ labels.version }}-{{ labels.release }}',
+            '{{ digest_sha }}',
+        ]
+        mapping = MappingDefaults(tags=tags)
+        self.assertEqual(
+            mapping.resolve_tags('3.18.3-rc.1'),
+            [
+                'v3.18.3-rc.1',
+                'v3.18.3-rc.1-{{ release_timestamp }}',
+                'v3.18.3-rc.1-{{ incrementer }}',
+                '{{ labels.version }}-{{ labels.release }}',
+                '{{ digest_sha }}',
+            ],
+        )
+        self.assertEqual(mapping.tags, tags)
+
+    def test_release_tags_reject_invalid_tag_syntax(self):
+        for tag in ('', '.invalid', '-invalid', 'bad/tag', 'bad tag', 'v{{ assembly }', 'x' * 129):
+            with self.subTest(tag=tag):
+                with self.assertRaisesRegex(ValueError, 'Invalid release tag'):
+                    MappingDefaults(tags=[tag]).resolve_tags('3.18.3')
+
+    def test_release_tags_reject_empty_tag_list(self):
+        with self.assertRaises(ValueError):
+            MappingDefaults(tags=[])
+
+    def test_static_release_tags_do_not_require_named_assembly(self):
+        self.assertEqual(MappingDefaults(tags=['latest']).resolve_tags('stream'), ['latest'])
 
     def test_regular_shipment_validation_unhappy_path(self):
         """Test that regular OpenShift shipment without data.releaseNotes fails validation"""

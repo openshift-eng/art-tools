@@ -1,5 +1,5 @@
 {
-  "$comment": "Schema generated on 2026-11-02 11:08 UTC from elliottlib.shipment_model",
+  "$comment": "Schema generated on 2026-11-04 16:32 UTC from elliottlib.shipment_model",
   "$defs": {
     "ComponentSource": {
       "additionalProperties": false,
@@ -39,12 +39,28 @@
       "description": "Represents spec.data field when constructing a Konflux release",
       "properties": {
         "releaseNotes": {
-          "$ref": "#/$defs/ReleaseNotes"
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ReleaseNotes"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "mapping": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Mapping"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
         }
       },
-      "required": [
-        "releaseNotes"
-      ],
       "title": "Data",
       "type": "object"
     },
@@ -179,6 +195,39 @@
         }
       },
       "title": "Issues",
+      "type": "object"
+    },
+    "Mapping": {
+      "additionalProperties": false,
+      "description": "Shipment-controlled tags; destination repositories remain configured in the RPA.",
+      "properties": {
+        "defaults": {
+          "$ref": "#/$defs/MappingDefaults"
+        }
+      },
+      "required": [
+        "defaults"
+      ],
+      "title": "Mapping",
+      "type": "object"
+    },
+    "MappingDefaults": {
+      "additionalProperties": false,
+      "description": "Additional image tags supplied by a shipment to the Konflux release mapping.",
+      "properties": {
+        "tags": {
+          "items": {
+            "type": "string"
+          },
+          "minItems": 1,
+          "title": "Tags",
+          "type": "array"
+        }
+      },
+      "required": [
+        "tags"
+      ],
+      "title": "MappingDefaults",
       "type": "object"
     },
     "Metadata": {

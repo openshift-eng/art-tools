@@ -3,7 +3,8 @@ import json
 import unittest
 from unittest.mock import AsyncMock, MagicMock, PropertyMock, patch
 
-from elliottlib.shipment_model import Snapshot, SnapshotSpec
+from elliottlib.cli.konflux_release_cli import CreateReleaseCli
+from elliottlib.shipment_model import ReleaseNotes, ShipmentConfig, Snapshot, SnapshotSpec
 from pyartcd.fbc_build import FbcBuildResult
 from pyartcd.lp_shipment import ShipmentMRActiveStageError
 from pyartcd.pipelines.prepare_release_lp import PrepareReleaseLPPipeline
@@ -41,6 +42,62 @@ class TestPrepareReleaseLPPipeline(unittest.TestCase):
         mock_resolve.assert_called_once_with(pipeline.shipment_data_repo, "acm-2-17")
         self.assertEqual(config.shipment.environments.stage.releasePlan, "acm-stage")
         self.assertEqual(config.shipment.environments.prod.releasePlan, "acm-prod")
+
+    @patch('pyartcd.pipelines.prepare_release_lp.load_group_config', new_callable=AsyncMock)
+    def test_image_shipment_generates_assembly_tags_with_or_without_release_notes(self, load_config):
+        load_config.return_value = {'product': 'quay', 'version': 'auto'}
+        pipeline = self._make_pipeline(group='quay-3.18', assembly='3.18.3')
+        pipeline.product = asyncio.run(pipeline._load_product_from_group_config())
+        load_config.assert_awaited_once_with(
+            group='quay-3.18', assembly='3.18.3', doozer_data_path=pipeline.build_data_repo_url
+        )
+        snapshot = Snapshot(spec=SnapshotSpec(application='quay-3-18', components=[]), nvrs=[])
+        for release_notes in (None, ReleaseNotes(type='RHSA')):
+            with self.subTest(release_notes=release_notes):
+                config = pipeline._create_shipment_config('image', snapshot, release_notes)
+                dumped = config.model_dump(exclude_unset=True, exclude_none=True)
+                self.assertEqual(
+                    dumped['shipment']['data']['mapping']['defaults']['tags'],
+                    ['v{{ assembly }}', 'v{{ assembly }}-{{ release_timestamp }}'],
+                )
+                shipment = ShipmentConfig.model_validate(dumped).shipment
+                self.assertEqual(shipment.data.releaseNotes, release_notes)
+                for env in ('stage', 'prod'):
+                    release = CreateReleaseCli.get_release_config(shipment, env, 'release', 'snapshot')
+                    self.assertEqual(
+                        release.data['mapping']['defaults']['tags'],
+                        ['v3.18.3', 'v3.18.3-{{ release_timestamp }}'],
+                    )
+                    if release_notes is None:
+                        self.assertNotIn('releaseNotes', release.data)
+
+    @patch('pyartcd.pipelines.prepare_release_lp.load_group_config', new_callable=AsyncMock)
+    def test_explicit_or_missing_build_version_does_not_generate_tags(self, load_config):
+        pipeline = self._make_pipeline(group='quay-3.18', assembly='3.18.3')
+        snapshot = Snapshot(spec=SnapshotSpec(application='quay-3-18', components=[]), nvrs=[])
+        for version in ('3.18.3', None):
+            with self.subTest(version=version):
+                load_config.return_value = {'product': 'quay', 'version': version}
+                pipeline.product = asyncio.run(pipeline._load_product_from_group_config())
+                self.assertIsNone(pipeline._create_shipment_config('image', snapshot).shipment.data)
+                config = pipeline._create_shipment_config('image', snapshot, ReleaseNotes(type='RHBA'))
+                self.assertIsNone(config.shipment.data.mapping)
+
+    @patch('pyartcd.pipelines.prepare_release_lp.load_group_config', new_callable=AsyncMock)
+    def test_group_config_read_failure_stops_tag_policy_resolution(self, load_config):
+        pipeline = self._make_pipeline()
+        load_config.side_effect = RuntimeError('Cannot read group config')
+        with self.assertRaisesRegex(RuntimeError, 'Cannot read group config'):
+            asyncio.run(pipeline._load_product_from_group_config())
+
+    def test_fbc_shipment_does_not_generate_assembly_tags(self):
+        pipeline = self._make_pipeline()
+        pipeline.product = 'rhacm2'
+        pipeline._auto_version = True
+        snapshot = Snapshot(spec=SnapshotSpec(application='fbc-acm-2-17', components=[]), nvrs=[])
+        config = pipeline._create_shipment_config('fbc', snapshot, ReleaseNotes(type='RHBA'))
+        self.assertTrue(config.shipment.metadata.fbc)
+        self.assertNotIn('data', config.model_dump(exclude_none=True)['shipment'])
 
     @patch("pyartcd.pipelines.prepare_release_lp.get_advisory_boilerplate")
     @patch.object(PrepareReleaseLPPipeline, "get_file_from_branch")
