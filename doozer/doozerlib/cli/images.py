@@ -1226,6 +1226,7 @@ def images_print(runtime, short, show_non_release, only_for_payload, show_base, 
     {image_name} - The container registry image name (e.g. openshift3/ose-ansible)
     {image_name_short} - The container image name without the registry (e.g. ose-ansible)
     {component} - The component identified in the Dockerfile
+    {olm_bundle_component} - The OLM bundle component, or empty for non-operators
     {image} - The image name according to distgit Dockerfile (image_name / image_name_short are faster)
     {version} - The version of the latest brew build
     {release} - The release of the latest brew build
@@ -1318,6 +1319,9 @@ def images_print(runtime, short, show_non_release, only_for_payload, show_base, 
         s = s.replace("{image_name}", image.image_name)
         s = s.replace("{image_name_short}", image.image_name_short)
         s = s.replace("{component}", image.get_component_name())
+        if '{olm_bundle_component}' in s:
+            bundle_component = image.get_olm_bundle_brew_component_name() if image.is_olm_operator else ''
+            s = s.replace('{olm_bundle_component}', bundle_component)
 
         source_url = image.config.content.source.git.url
         s = s.replace("{upstream}", source_url or 'None')

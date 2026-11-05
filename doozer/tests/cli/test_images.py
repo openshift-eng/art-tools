@@ -9,7 +9,7 @@ from artcommonlib.variants import BuildVariant
 from click.testing import CliRunner
 from doozerlib import Runtime
 from doozerlib.backend.base_image_handler import BaseImageReleaseResult
-from doozerlib.cli.images import images_show_ancestors, release_to_base_repo
+from doozerlib.cli.images import images_print, images_show_ancestors, release_to_base_repo
 from doozerlib.exceptions import DoozerFatalError
 from doozerlib.image import ImageMetadata
 
@@ -34,6 +34,48 @@ class TestImagesCli(unittest.TestCase):
     def tearDown(self):
         for p in self.patchers:
             p.stop()
+
+    def test_print_olm_bundle_components(self):
+        runtime = MagicMock(spec=Runtime)
+        runtime.variant = BuildVariant.OCP
+        runtime.load_disabled = True
+        images = []
+        for name, operator, override in [
+            ('operator', True, None),
+            ('custom', True, 'custom-bundle-container'),
+            ('operand', False, None),
+        ]:
+            image = MagicMock()
+            image.name = name
+            image.distgit_key = name
+            image.namespace = 'containers'
+            image.image_name = f'test/{name}'
+            image.image_name_short = name
+            image.base_only = False
+            image.enabled = True
+            image.is_olm_operator = operator
+            image.config = Model({'distgit': {'bundle_component': override}})
+            image.get_component_name.return_value = f'{name}-container'
+            image.get_olm_bundle_brew_component_name.side_effect = lambda image=image: (
+                ImageMetadata.get_olm_bundle_brew_component_name(image)
+            )
+            images.append(image)
+        runtime.image_metas.return_value = images
+
+        result = self.runner.invoke(
+            images_print,
+            ['--short', '--show-non-release', '{component}: {name}: {olm_bundle_component}'],
+            obj=runtime,
+        )
+
+        self.assertEqual(result.exit_code, 0, result.output)
+        self.assertEqual(
+            result.output,
+            'operator-container: operator: operator-metadata-container\n'
+            'custom-container: custom: custom-bundle-container\n'
+            'operand-container: operand: \n',
+        )
+        images[-1].get_olm_bundle_brew_component_name.assert_not_called()
 
     def test_show_ancestors(self):
         runtime = Mock(spec=Runtime)

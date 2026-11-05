@@ -129,6 +129,7 @@ class TestLPPreparationRPAValidation(IsolatedAsyncioTestCase):
                 pipeline.extract_fbc_nvr = MagicMock(return_value=fbc_nvr)
                 pipeline._load_ignore_patch_version_from_group_config = AsyncMock(return_value=False)
                 pipeline.validate_fbc_related_images = AsyncMock(return_value=[])
+                pipeline._load_component_doozer_keys = AsyncMock(return_value={})
                 pipeline.categorize_nvrs = MagicMock(return_value={"image": [], "fbc": [fbc_nvr], "external": []})
         return pipeline, publish, write
 

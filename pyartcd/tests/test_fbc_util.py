@@ -215,6 +215,37 @@ class TestFinalFbcOperands(unittest.IsolatedAsyncioTestCase):
 class TestValidateFbcRelatedImages(unittest.TestCase):
     @patch('pyartcd.fbc_util.extract_nvrs_from_fbc', new_callable=AsyncMock)
     @patch('pyartcd.fbc_util.extract_fbc_labels', new_callable=AsyncMock)
+    def test_membership_filters_same_version_ocp_images_and_checks_different_version_product_images(
+        self, mock_labels, mock_extract
+    ):
+        mock_labels.return_value = {'doozer_key': 'backplane-operator'}
+        pullspecs = ['quay.io/fbc:5.0', 'quay.io/fbc:4.22']
+        operand = 'mce-backplane-operator-container-4.9.0-1'
+        external = 'ose-cluster-api-container-v5.0.0-1'
+        mock_extract.side_effect = [[operand, external], [operand]]
+        result = asyncio.run(
+            validate_fbc_related_images(
+                pullspecs,
+                'multicluster-engine',
+                assembly='5.0.0',
+                image_components={'mce-backplane-operator-container'},
+            )
+        )
+        self.assertEqual(result, sorted([operand, external]))
+
+        mock_extract.side_effect = [[operand], ['mce-backplane-operator-container-4.9.0-2']]
+        with self.assertRaisesRegex(RuntimeError, 'mismatched related images'):
+            asyncio.run(
+                validate_fbc_related_images(
+                    pullspecs,
+                    'multicluster-engine',
+                    assembly='5.0.0',
+                    image_components={'mce-backplane-operator-container'},
+                )
+            )
+
+    @patch('pyartcd.fbc_util.extract_nvrs_from_fbc', new_callable=AsyncMock)
+    @patch('pyartcd.fbc_util.extract_fbc_labels', new_callable=AsyncMock)
     def test_external_differences_preserve_union_and_provenance(self, mock_labels, mock_extract):
         """Reproduce the external-only Quay mismatches from Jenkins build #6."""
         pullspecs = [f"quay.io/test/fbc:{i}" for i in range(5)]
