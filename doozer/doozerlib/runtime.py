@@ -1444,6 +1444,20 @@ class Runtime(GroupRuntime):
         minor = int(self.group_config.vars['MINOR'])
         return major, minor
 
+    @property
+    def derived_group(self) -> str:
+        """
+        The group name under which build records are stored for this variant.
+
+        OKD builds are recorded under ``okd-{major}.{minor}`` rather than the OCP
+        ``openshift-{major}.{minor}`` group, so Konflux build lookups must use this
+        derived name for the OKD variant. For OCP this is simply ``self.group``.
+        """
+        if self.variant is BuildVariant.OKD:
+            major, minor = self.get_major_minor_fields()
+            return f'okd-{major}.{minor}'
+        return self.group
+
     def resolve_metadata(self):
         """
         The group control data can be on a local filesystem, in a git

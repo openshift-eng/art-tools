@@ -124,11 +124,7 @@ class KonfluxRebaser:
         self.konflux_db = self._runtime.konflux_db
         if self.konflux_db:
             self.konflux_db.bind(KonfluxBuildRecord)
-        if self.variant is BuildVariant.OKD:
-            major, minor = runtime.get_major_minor_fields()
-            self.derived_group = f'okd-{major}.{minor}'
-        else:
-            self.derived_group = runtime.group
+        self.derived_group = runtime.derived_group
 
     @staticmethod
     def construct_dest_branch(group: str, assembly_name: Optional[str], distgit_key: str) -> str:

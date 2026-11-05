@@ -1264,7 +1264,7 @@ class ImageMetadata(Metadata):
 
         try:
             base_search_params = {
-                'group': self.runtime.group,
+                'group': self.runtime.derived_group,
                 'engine': self.runtime.build_system,
                 'name': self.distgit_key,
                 'assembly': self.runtime.assembly,

@@ -16,6 +16,7 @@ from doozerlib import build_info, image
 from doozerlib.image import ImageMetadata, extract_golang_version_from_pullspec
 from doozerlib.repodata import Repodata, Rpm
 from doozerlib.repos import Repos
+from doozerlib.runtime import Runtime
 from flexmock import flexmock
 
 TEST_YAML = """---
@@ -1605,6 +1606,36 @@ class TestImageMetadataAsyncMethods(IsolatedAsyncioTestCase):
         self.assertEqual(metadata.runtime.konflux_db.get_latest_build.await_count, 1)
         called = metadata.runtime.konflux_db.get_latest_build.await_args.kwargs
         self.assertEqual(called['outcome'], KonfluxBuildOutcome.SUCCESS)
+
+    async def test_fetch_rpms_from_build_uses_derived_group(self):
+        """OKD build records live under okd-<major>.<minor>, so fetch_rpms_from_build must query
+        get_latest_build with the derived group for OKD, and the plain group for OCP."""
+        for variant, expected_group in (
+            (BuildVariant.OKD, 'okd-5.1'),
+            (BuildVariant.OCP, 'openshift-5.1'),
+        ):
+            with self.subTest(variant=variant):
+                metadata = self._create_image_metadata('openshift/test-derived-group')
+                metadata.installed_rpms = None
+                rt = metadata.runtime
+                rt.group = 'openshift-5.1'
+                rt.variant = variant
+                rt.get_major_minor_fields.return_value = (5, 1)
+                # Compute the value via the real Runtime.derived_group property, exactly as code reads it.
+                rt.derived_group = Runtime.derived_group.fget(rt)
+
+                mock_build = MagicMock()
+                mock_build.installed_rpms = ['pkg1']
+                rt.konflux_db.get_latest_build = AsyncMock(return_value=mock_build)
+
+                with patch.object(metadata, 'get_parent_members', return_value={}):
+                    await metadata.fetch_rpms_from_build()
+
+                self.assertEqual(rt.konflux_db.get_latest_build.await_count, 1)
+                called = rt.konflux_db.get_latest_build.await_args.kwargs
+                self.assertEqual(called['group'], expected_group)
+                # installed_rpms must still be fetched as today (no column behavior change).
+                self.assertNotIn('exclude_large_columns', called)
 
     def _setup_mock_config(self, metadata, lockfile_rpms=None):
         """Helper to setup mock config with lockfile RPMs."""
