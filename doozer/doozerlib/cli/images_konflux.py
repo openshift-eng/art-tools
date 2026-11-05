@@ -104,7 +104,6 @@ class KonfluxRebaseCli:
         image_repo: str,
         message: str,
         push: bool,
-        lockfile_seed_nvrs: Optional[List[str]] = None,
         extra_labels: Optional[dict[str, str]] = None,
     ):
         self.runtime = runtime
@@ -120,7 +119,6 @@ class KonfluxRebaseCli:
         self.push = push
         self.extra_labels = extra_labels or {}
         self.upcycle = runtime.upcycle
-        self.lockfile_seed_nvrs = lockfile_seed_nvrs
 
     @start_as_current_span_async(TRACER, "beta:images:konflux:rebase")
     async def run(self):
@@ -142,7 +140,6 @@ class KonfluxRebaseCli:
             upcycle=self.upcycle,
             force_private_bit=self.embargoed,
             image_repo=self.image_repo,
-            lockfile_seed_nvrs=self.lockfile_seed_nvrs,
             extra_labels=self.extra_labels,
         )
 
@@ -237,15 +234,6 @@ class KonfluxRebaseCli:
     help='Override network mode for Konflux builds. Takes precedence over image and group config settings.',
 )
 @click.option(
-    '--lockfile-seed-nvrs',
-    default=None,
-    metavar='NVRS',
-    help='NVRs of builds whose installed RPMs should seed lockfile generation. '
-    'The distgit key is resolved internally from the build DB. '
-    'Format: NVR[,NVR,...]. '
-    'Example: ironic-container-v4.22.0-assembly.test',
-)
-@click.option(
     '--extra-label',
     multiple=True,
     metavar='KEY=VALUE',
@@ -264,7 +252,6 @@ async def images_konflux_rebase(
     repo_type: str,
     image_repo: str,
     network_mode: Optional[str],
-    lockfile_seed_nvrs: Optional[str],
     extra_label: tuple,
     message: str,
     push: bool,
@@ -274,10 +261,6 @@ async def images_konflux_rebase(
     """
     if network_mode:
         runtime.network_mode_override = network_mode
-
-    parsed_seed_nvrs = None
-    if lockfile_seed_nvrs:
-        parsed_seed_nvrs = [nvr.strip() for nvr in lockfile_seed_nvrs.split(',') if nvr.strip()]
 
     # Parse extra labels from KEY=VALUE format
     extra_labels = {}
@@ -297,7 +280,6 @@ async def images_konflux_rebase(
         image_repo=image_repo,
         message=message,
         push=push,
-        lockfile_seed_nvrs=parsed_seed_nvrs,
         extra_labels=extra_labels,
     )
     await cli.run()
