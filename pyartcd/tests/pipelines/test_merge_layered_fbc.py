@@ -62,6 +62,21 @@ class TestMergeLayeredFbcPipeline(unittest.IsolatedAsyncioTestCase):
             await self.pipeline._build()
         self.assertIn('--skip-rebase', command.await_args.args[0])
 
+    async def test_custom_branch_automatically_skips_rebase(self):
+        branch = 'codex/art-quay-fbc-unified-prod-4-22'
+        pipeline = MergeLayeredFbcPipeline(
+            runtime=self.runtime,
+            ocp_target_version='5.0',
+            fbc_builds=self.pipeline.builds,
+            fbc_branch=branch,
+        )
+        pipeline.group = self.pipeline.group
+        with patch('pyartcd.pipelines.merge_layered_fbc.exectools.cmd_assert_async', new=AsyncMock()) as command:
+            await pipeline._build()
+        cmd = command.await_args.args[0]
+        self.assertIn('--skip-rebase', cmd)
+        self.assertEqual(cmd[cmd.index('--fbc-branch') + 1], branch)
+
     async def test_lock_uses_product_and_target(self):
         async def run_locked(**kwargs):
             self.assertEqual(kwargs['lock_name'], 'lock:fbc-merge:quay:ocp-5.0')

@@ -101,6 +101,12 @@ branch, for example `art-quay-fbc-unified-4-21` for Quay targeting OCP 4.21.
 This supports rebuilding after manual catalog fixes committed to that branch.
 Without the flag, sources are regenerated as before.
 
+Pass `--fbc-branch=codex/art-quay-fbc-unified-prod-4-22` to select a custom
+existing branch in `--fbc-repo`. This automatically implies `--skip-rebase` in
+both ARTCD and Doozer. Omitting it preserves the standard branch name. A custom
+branch is never created or rebased: it must already exist remotely, and the
+freshly fetched commit is used for the build and recorded in provenance URLs.
+
 The flag skips input catalog rendering, production baseline merging, source
 generation, commits and pushes. It uses a fresh checkout and builds that exact
 commit, preserving the Dockerfile, catalogs, mirror sets and provenance. The NVR,
@@ -108,6 +114,12 @@ release and source bundle NVRs come from the committed Dockerfile and provenance
 rebuilding reuses the existing NVR and image tag. The branch must already contain
 consistent unified FBC metadata for the requested product, target and execution
 group. Missing branches and mismatched metadata fail before a build starts.
+
+Production snapshots can have an empty provenance `inputs` list and empty
+`__doozer_bundle_nvrs` when `source_type` is `production-index-only` or
+`production-index-with-manual-fixes` and `production_index` is recorded. Such
+builds record no selected source bundle NVRs. Product, target, execution group,
+NVR, and Dockerfile/provenance consistency checks still apply.
 
 Continue supplying `--fbc-build` inputs so ARTCD can infer and validate the source
 group and obtain its product configuration. Use inputs from the same execution

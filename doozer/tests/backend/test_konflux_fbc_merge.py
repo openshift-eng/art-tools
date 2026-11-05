@@ -356,6 +356,72 @@ class TestLayeredFbcMerger(unittest.IsolatedAsyncioTestCase):
         repo.commit.assert_not_awaited()
         repo.push.assert_not_awaited()
 
+    async def test_custom_branch_implies_skip_rebase_without_modifying_sources(self):
+        repo = self._existing_source()
+        self.merger.fbc_branch = 'codex/art-quay-fbc-unified-prod-4-22'
+        before = {path: path.read_bytes() for path in repo.local_dir.rglob('*') if path.is_file()}
+        with (
+            patch('doozerlib.backend.konflux_fbc_merge.BuildRepo', return_value=repo) as build_repo,
+            patch.object(self.merger, 'run', new_callable=AsyncMock) as rebase,
+        ):
+            await self.merger.merge('quay.io/test/fbc')
+        self.assertEqual(build_repo.call_args.kwargs['branch'], self.merger.fbc_branch)
+        repo.ensure_source.assert_awaited_once_with(upcycle=True, strict=True)
+        rebase.assert_not_awaited()
+        repo.commit.assert_not_awaited()
+        repo.push.assert_not_awaited()
+        self.assertEqual(before, {path: path.read_bytes() for path in before})
+
+    async def test_production_snapshot_accepts_empty_selected_bundle_metadata(self):
+        repo = self._existing_source()
+        self.merger.fbc_branch = 'codex/production-snapshot'
+        DockerfileParser(str(repo.local_dir / 'catalog.Dockerfile')).envs['__doozer_bundle_nvrs'] = ''
+        path = repo.local_dir / 'unified-provenance.json'
+        provenance = json.loads(path.read_text())
+        provenance['inputs'] = []
+        provenance['production_index'] = 'registry.redhat.io/redhat/redhat-operator-index@sha256:' + 'a' * 64
+        for source_type in ('production-index-only', 'production-index-with-manual-fixes'):
+            with self.subTest(source_type=source_type):
+                provenance['source_type'] = source_type
+                path.write_text(json.dumps(provenance))
+                with patch('doozerlib.backend.konflux_fbc_merge.BuildRepo', return_value=repo):
+                    result = await self.merger.merge('quay.io/test/fbc')
+                self.assertEqual(self.merger._get_bundle_nvrs(), [])
+                self.assertEqual(result['provenance'], provenance)
+
+    async def test_custom_branch_submission_uses_fetched_commit(self):
+        self.merger.fbc_branch = 'codex/production-snapshot'
+        self.merger._set_product_identity()
+        client = self.merger._konflux_client
+        client.ensure_application = AsyncMock()
+        client.get_component = AsyncMock(return_value=None)
+        client.ensure_component = AsyncMock()
+        client.start_pipeline_run_for_image_build = AsyncMock()
+        repo = SimpleNamespace(
+            https_url='https://github.com/openshift-priv/art-fbc',
+            commit_hash='a' * 40,
+            branch=self.merger.fbc_branch,
+        )
+        await self.merger._start_build(repo, f'quay.io/test/fbc:{self.merger.nvr}')
+        submitted = client.start_pipeline_run_for_image_build.await_args.kwargs
+        self.assertEqual(submitted['target_branch'], self.merger.fbc_branch)
+        self.assertEqual(submitted['commit_sha'], repo.commit_hash)
+        self.assertEqual(client.ensure_component.await_args.kwargs['revision'], self.merger.fbc_branch)
+
+    async def test_empty_bundle_metadata_requires_production_snapshot_provenance(self):
+        repo = self._existing_source()
+        path = repo.local_dir / 'unified-provenance.json'
+        provenance = json.loads(path.read_text())
+        provenance['inputs'] = []
+        DockerfileParser(str(repo.local_dir / 'catalog.Dockerfile')).envs['__doozer_bundle_nvrs'] = ''
+        for source_type in (None, 'production-index-only'):
+            with self.subTest(source_type=source_type):
+                provenance['source_type'] = source_type
+                path.write_text(json.dumps(provenance))
+                with patch('doozerlib.backend.konflux_fbc_merge.BuildRepo', return_value=repo):
+                    with self.assertRaisesRegex(ValueError, 'inconsistent source bundle metadata'):
+                        await self.merger.merge('quay.io/test/fbc', skip_rebase=True)
+
     async def test_skip_rebase_requires_existing_branch(self):
         repo = self._existing_source()
         repo.ensure_source.side_effect = ChildProcessError('remote branch not found')

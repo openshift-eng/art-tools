@@ -12,22 +12,26 @@ class TestFbcMergeLayeredCli(unittest.IsolatedAsyncioTestCase):
         runtime.product = 'quay'
         runtime.group = 'quay-3.18'
         runtime.upcycle = False
-        for skip_rebase in (False, True):
-            with self.subTest(skip_rebase=skip_rebase):
+        for skip_rebase, branch in ((False, None), (True, None), (False, 'codex/prod-4-22'), (True, 'codex/prod-4-22')):
+            with self.subTest(skip_rebase=skip_rebase, branch=branch):
                 args = ['--fbc-build=quay-operator-fbc-3.18.1-1.ocp4.20', '--major-minor=4.20']
                 if skip_rebase:
                     args.append('--skip-rebase')
+                if branch:
+                    args.append('--fbc-branch=' + branch)
                 with fbc_merge_layered.make_context('beta:fbc:merge-layered', args) as context:
                     options = context.params
                 merger = Mock(prepare=AsyncMock(), merge=AsyncMock(return_value={'dry_run': False}))
                 with (
-                    patch('doozerlib.cli.fbc_merge.LayeredFbcMerger', return_value=merger),
+                    patch('doozerlib.cli.fbc_merge.LayeredFbcMerger', return_value=merger) as factory,
                     patch('doozerlib.cli.fbc_merge.resolve_konflux_kubeconfig_by_product', return_value=None),
                     patch('doozerlib.cli.fbc_merge.click.echo'),
                 ):
                     await inspect.unwrap(fbc_merge_layered.callback)(runtime, **options)
-                if skip_rebase:
+                factory.assert_called_once()
+                self.assertEqual(factory.call_args.kwargs['fbc_branch'], branch)
+                if skip_rebase or branch:
                     merger.prepare.assert_not_awaited()
                 else:
                     merger.prepare.assert_awaited_once_with(options['builds'])
-                merger.merge.assert_awaited_once_with(options['image_repo'], skip_rebase=skip_rebase)
+                merger.merge.assert_awaited_once_with(options['image_repo'], skip_rebase=skip_rebase or bool(branch))

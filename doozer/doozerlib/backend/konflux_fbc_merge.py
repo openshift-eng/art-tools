@@ -134,11 +134,14 @@ def merge_layered_catalogs(baseline: list[dict], inputs: list[LayeredFbcInput]) 
 class LayeredFbcMerger(KonfluxFbcFragmentMerger):
     """Reuse the FBC image builder with channel-aware content and release metadata."""
 
-    def __init__(self, *, runtime, target_version: str, registry_auth: str | None, **kwargs):
+    def __init__(
+        self, *, runtime, target_version: str, registry_auth: str | None, fbc_branch: str | None = None, **kwargs
+    ):
         if not re.fullmatch(r'\d+\.\d+', target_version):
             raise ValueError('OCP target must have MAJOR.MINOR format')
         self.runtime = runtime
         self.target_version = target_version
+        self.fbc_branch = fbc_branch
         self.product = runtime.product
         self.identity = None
         self.name = None
@@ -182,7 +185,7 @@ class LayeredFbcMerger(KonfluxFbcFragmentMerger):
         self.identity = f'{self.name}-{self.target_version}'.replace('.', '-').replace('_', '-')
         self.nvr = f'{self.name}-{self.version}-{self.release}'
         self.working_dir = Path(self.runtime.working_dir) / 'konflux-fbc-sources' / self.identity
-        self.fbc_git_branch = f'art-{self.identity}'
+        self.fbc_git_branch = self.fbc_branch or f'art-{self.identity}'
 
     async def _pin_image(self, pullspec: str) -> str:
         info = await util.oc_image_info_for_arch_async(pullspec, registry_config=self.registry_auth)
@@ -364,8 +367,15 @@ class LayeredFbcMerger(KonfluxFbcFragmentMerger):
             raise ValueError(f'{self.fbc_git_branch} has inconsistent unified FBC NVR metadata')
         self.inputs = []
         self.provenance = provenance
-        if not provenance.get('inputs') or self._get_bundle_nvrs() != sorted(
-            dfp.envs.get('__doozer_bundle_nvrs', '').split(',')
+        production_snapshot = provenance.get('source_type') in (
+            'production-index-only',
+            'production-index-with-manual-fixes',
+        ) and provenance.get('production_index')
+        if (
+            not isinstance(provenance.get('inputs'), list)
+            or (not provenance['inputs'] and not production_snapshot)
+            or self._get_bundle_nvrs()
+            != sorted(nvr for nvr in dfp.envs.get('__doozer_bundle_nvrs', '').split(',') if nvr)
         ):
             raise ValueError(f'{self.fbc_git_branch} has inconsistent source bundle metadata')
         self.release = release
@@ -490,7 +500,7 @@ class LayeredFbcMerger(KonfluxFbcFragmentMerger):
                 self._logger.exception('Failed to clean up unified FBC git-auth secret')
 
     async def merge(self, image_repo: str, skip_rebase: bool = False) -> dict:
-        if skip_rebase:
+        if skip_rebase or self.fbc_branch:
             await self._prepare_existing_source()
             plr_info = await self._build(self.build_source, f'{image_repo}:{self.nvr}', None)
         else:
