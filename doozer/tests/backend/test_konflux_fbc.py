@@ -3651,7 +3651,7 @@ class TestKonfluxFbcBuilder(unittest.IsolatedAsyncioTestCase):
                 fetch_tags=False,
                 skip_checks=False,
                 skip_fips_check=False,
-                build_priority='2',
+                build_priority='1',
             ),
         )
         self.assertEqual(result, (pplr, "https://example.com/pipelinerun/test-pipeline-run-name"))
@@ -3709,7 +3709,7 @@ class TestKonfluxFbcBuilder(unittest.IsolatedAsyncioTestCase):
                 hermetic=True,
                 fetch_tags=False,
                 dockerfile='catalog.Dockerfile',
-                build_priority='2',
+                build_priority='1',
             ),
         )
         self.assertEqual(result, (pplr, "https://example.com/pipelinerun/test-pipeline-run-name"))
@@ -4047,7 +4047,7 @@ class TestKonfluxFbcBuilder(unittest.IsolatedAsyncioTestCase):
                 hermetic=True,
                 fetch_tags=False,
                 dockerfile='catalog.Dockerfile',
-                build_priority='2',
+                build_priority='1',
             ),
         )
         self.assertEqual(result, (pplr, "https://example.com/pipelinerun/test-pipeline-run-name"))
@@ -4102,7 +4102,7 @@ class TestKonfluxFbcBuilder(unittest.IsolatedAsyncioTestCase):
                 hermetic=True,
                 fetch_tags=False,
                 dockerfile='catalog.Dockerfile',
-                build_priority='2',
+                build_priority='1',
             ),
         )
         self.assertEqual(result, (pplr, "https://example.com/pipelinerun/test-pipeline-run-name"))
