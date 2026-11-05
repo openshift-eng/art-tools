@@ -1091,6 +1091,49 @@ class TestCategorizeNvrs(unittest.TestCase):
             self.assertIn(option, command)
 
     @patch('pyartcd.pipelines.release_from_fbc.exectools.cmd_gather_async')
+    def test_load_components_uses_effective_build_data_and_assembly(self, mock_cmd):
+        cases = [
+            ({}, constants.OCP_BUILD_DATA_URL, 'oadp-1.5'),
+            (
+                {
+                    'DOOZER_DATA_PATH': 'https://github.com/test/custom-build-data',
+                    'DOOZER_DATA_GITREF': 'pinned-revision',
+                },
+                'https://github.com/test/custom-build-data',
+                'oadp-1.5@pinned-revision',
+            ),
+            ({'DOOZER_DATA_PATH': '/tmp/custom-build-data'}, '/tmp/custom-build-data', 'oadp-1.5'),
+        ]
+        for env, data_path, group in cases:
+            with self.subTest(env=env), patch.dict(os.environ, env, clear=True):
+                pipeline = self._make_pipeline()
+                mock_cmd.reset_mock()
+                mock_cmd.return_value = (0, 'oadp-operator-container: oadp-operator: \n', '')
+
+                asyncio.run(pipeline._load_component_doozer_keys())
+
+                mock_cmd.assert_awaited_once()
+                command = mock_cmd.await_args.args[0]
+                self.assertIn(f'--data-path={data_path}', command)
+                self.assertIn(f'--group={group}', command)
+                self.assertIn('--assembly=1.5.3', command)
+
+    @patch.dict(
+        os.environ,
+        {'DOOZER_DATA_PATH': '/tmp/custom-build-data', 'DOOZER_DATA_GITREF': 'pinned-revision'},
+        clear=True,
+    )
+    @patch('pyartcd.pipelines.release_from_fbc.exectools.cmd_gather_async')
+    def test_load_components_rejects_local_build_data_with_gitref(self, mock_cmd):
+        pipeline = self._make_pipeline()
+
+        with self.assertRaisesRegex(ValueError, 'DOOZER_DATA_GITREF cannot be used with a local DOOZER_DATA_PATH'):
+            asyncio.run(pipeline._load_component_doozer_keys())
+
+        mock_cmd.assert_not_awaited()
+        self.assertIsNone(pipeline._component_doozer_keys)
+
+    @patch('pyartcd.pipelines.release_from_fbc.exectools.cmd_gather_async')
     @patch('pyartcd.pipelines.release_from_fbc._validate_fbc_related_images', new_callable=AsyncMock)
     def test_mce_run_uses_cached_membership_before_creating_snapshot(self, mock_validate, mock_cmd):
         pipeline = self._make_pipeline()

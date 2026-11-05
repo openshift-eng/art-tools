@@ -1280,9 +1280,13 @@ class ReleaseFromFbcPipeline:
         """
         if self._component_doozer_keys is not None:
             return self._component_doozer_keys
+        data_path, data_gitref = self._build_data_source()
+        group = f'{self.group}@{data_gitref}' if data_gitref else self.group
         cmd = [
             'doozer',
-            f'--group={self.group}',
+            f'--data-path={data_path}',
+            f'--group={group}',
+            f'--assembly={self.assembly}',
             f'--working-dir={self.doozer_working_dir}',
             '--load-disabled',
             '--load-wip',
