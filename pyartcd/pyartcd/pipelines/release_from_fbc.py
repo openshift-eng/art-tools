@@ -22,9 +22,12 @@ from artcommonlib.github_auth import build_git_auth_env, get_github_client_for_o
 from artcommonlib.gitlab import GitLabClient
 from artcommonlib.rpm_utils import parse_nvr
 from artcommonlib.util import new_roundtrip_yaml_handler
+from elliottlib.cli.konflux_release_cli import validate_snapshot_against_rpa
 from elliottlib.shipment_model import (
     Data,
     Environments,
+    Mapping,
+    MappingDefaults,
     Metadata,
     ReleaseNotes,
     Shipment,
@@ -43,7 +46,6 @@ from pyartcd.fbc_build import build_fbc_catalogs
 from pyartcd.fbc_util import extract_fbc_labels as _extract_fbc_labels
 from pyartcd.fbc_util import (
     extract_ocp_version_from_nvr,
-    is_nvr_from_assembly,
     validate_layered_product_fbc_nvrs,
     validate_layered_product_group_assembly,
 )
@@ -65,6 +67,7 @@ from pyartcd.lp_shipment import (
     verify_shipment_mr_url,
 )
 from pyartcd.runtime import Runtime
+from pyartcd.util import load_group_config
 
 yaml = new_roundtrip_yaml_handler()
 
@@ -177,6 +180,8 @@ class ReleaseFromFbcPipeline:
         self.dry_run = self.runtime.dry_run
         self.ocp_optional = ocp_optional
         self._ignore_patch_version = False
+        self._component_doozer_keys: Optional[dict[str, str]] = None
+        self._group_components: Optional[set[str]] = None
         self.excluded_components = set(exclude_nvr_components) if exclude_nvr_components else set()
 
         # Setup working directories
@@ -194,6 +199,7 @@ class ReleaseFromFbcPipeline:
 
         # Product configuration - initialized to None, will be loaded from group config in run()
         self.product = None
+        self._auto_version = False
 
         # FBC operator doozer keys - populated during validate_fbc_related_images()
         self._fbc_operator_keys: list[str] = []
@@ -505,29 +511,33 @@ class ReleaseFromFbcPipeline:
         )
         await self.shipment_data_repo.fetch_switch_branch("main")
 
+    @staticmethod
+    def _build_data_source() -> tuple[str, str]:
+        """Reject local checkout/ref pairs that Doozer would silently read at the wrong revision."""
+        data_path = os.getenv('DOOZER_DATA_PATH', constants.OCP_BUILD_DATA_URL)
+        data_gitref = os.getenv('DOOZER_DATA_GITREF') or ''
+        data_url = urlparse(data_path)
+        is_local = data_url.scheme == 'file' or (not data_url.scheme and ':' not in data_url.path)
+        if is_local and data_gitref:
+            raise ValueError(
+                'DOOZER_DATA_GITREF cannot be used with a local DOOZER_DATA_PATH: '
+                'Doozer reads the working tree without checking out the requested ref. '
+                'Check out the desired revision yourself and unset DOOZER_DATA_GITREF, or use a remote Git URL.'
+            )
+        return data_path, data_gitref
+
     async def _load_product_from_group_config(self) -> str:
-        """
-        Load the product field from group configuration using doozer command.
-        Falls back to extracting from group name if not found.
-        """
-        try:
-            # Use doozer command to read group config product field
-            doozer_cmd = ['doozer', f'--group={self.group}', 'config:read-group', 'product']
-
-            _, product_output, _ = await exectools.cmd_gather_async(doozer_cmd)
-            # Doozer may print its first-run notice before the scalar value.
-            output_lines = [line.strip() for line in (product_output or "").splitlines() if line.strip()]
-            product = output_lines[-1] if output_lines else ""
-
-            if product and product != 'None' and product != 'null':
-                self.logger.info(f"Loaded product from group config: {product}")
-                return product
-            else:
-                self.logger.debug("No product field found in group config, falling back to group name extraction")
-
-        except Exception as e:
-            self.logger.warning(f"Failed to load product from group config: {e}")
-
+        """Load the product and version policy from the effective assembly group config."""
+        data_path, data_gitref = self._build_data_source()
+        group_config = await load_group_config(
+            group=self.group,
+            assembly=self.assembly,
+            doozer_data_path=data_path,
+            doozer_data_gitref=data_gitref,
+        )
+        self._auto_version = group_config.get('version') == 'auto'
+        if group_config.get('product'):
+            return group_config['product']
         # Fallback: extract product from group name (e.g., "oadp-1.3" -> "oadp")
         product = self.group.split('-')[0]
         # Special case: openshift groups do not define product in group config,
@@ -771,24 +781,16 @@ class ReleaseFromFbcPipeline:
             return None
 
     def is_nvr_from_current_group(self, nvr: str) -> bool:
-        """
-        Determine if an NVR belongs to the current group based on version matching.
-
-        This filters out external dependencies like kube-rbac-proxy from openshift-4.x
-        when processing logging-6.x FBCs.
-
-        Example:
-            Assembly "6.3.3" matches NVR version "6.3.3-202602032201..." -> True
-            Assembly "6.3.3" does NOT match NVR version "v4.20.0-202512150315..." -> False
-            Assembly "6.3" does NOT match NVR version "6.30.0-..." -> False (prevents false positives)
-        """
-        return is_nvr_from_assembly(nvr, self.assembly)
+        """Check whether the NVR's component is configured in the group branch."""
+        if self._group_components is None:
+            raise RuntimeError(f"Component mappings have not been loaded for group '{self.group}'")
+        return parse_nvr(nvr)['name'] in self._group_components
 
     def categorize_nvrs(self, nvrs: List[str]) -> Dict[str, List[str]]:
         """
         Categorize NVRs into build kinds.
 
-        In default mode: image / fbc / external (based on group version matching).
+        In default mode: image / fbc / external (based on group component membership).
         In OCP optional mode (--ocp-optional): extras / fbc / external.
         All non-FBC images (including bundles) go into extras by default;
         only explicitly listed --exclude-nvr-components are filtered out.
@@ -959,17 +961,26 @@ class ReleaseFromFbcPipeline:
         # - For openshift-* groups, ALL non-FBC shipments (image, extras)
         #   require data.releaseNotes per shipment model validation.
         # - For non-openshift groups, release notes are included only if provided.
-        data = None
         if kind != 'fbc' and release_notes:
             self.logger.info("Using provided release notes (type=%s) for %s shipment", release_notes.type, kind)
-            data = Data(releaseNotes=release_notes)
         elif kind != 'fbc' and self.group.startswith('openshift-'):
             self.logger.info(
                 f"Group '{self.group}' starts with 'openshift-' - generating minimal release notes "
                 f"for {kind} shipment to satisfy shipment validation requirements."
             )
-            rn = ReleaseNotes(type='RHBA', synopsis=f'FBC-derived {kind} shipment for {self.product} {self.assembly}')
-            data = Data(releaseNotes=rn)
+            release_notes = ReleaseNotes(
+                type='RHBA', synopsis=f'FBC-derived {kind} shipment for {self.product} {self.assembly}'
+            )
+
+        data = None
+        if kind != 'fbc':
+            mapping = None
+            if self._auto_version:
+                mapping = Mapping(
+                    defaults=MappingDefaults(tags=['v{{ assembly }}', 'v{{ assembly }}-{{ release_timestamp }}'])
+                )
+            if release_notes or mapping:
+                data = Data(releaseNotes=release_notes, mapping=mapping)
 
         # Create shipment
         shipment = Shipment(metadata=metadata, environments=environments, snapshot=snapshot, data=data)
@@ -1238,6 +1249,8 @@ class ReleaseFromFbcPipeline:
         # OCP optional bundles often use build-suffixed names (*.v4.y.z-<timestamp>)
         # that do not endswith(.v{assembly}); keep the unscoped extractor there.
         version_scoped = not self.ocp_optional
+        if version_scoped:
+            await self._load_component_doozer_keys()
         result = await _validate_fbc_related_images(
             fbc_pullspecs,
             self.product,
@@ -1247,6 +1260,7 @@ class ReleaseFromFbcPipeline:
             assembly=self.assembly if version_scoped else None,
             version_scoped=version_scoped,
             ignore_patch_version=self._ignore_patch_version if version_scoped else False,
+            image_components=self._group_components if version_scoped else None,
         )
         self._fbc_operator_keys = sorted(operator_groups.keys())
         self._fbc_operator_by_pullspec = operator_by_fbc
@@ -1254,32 +1268,54 @@ class ReleaseFromFbcPipeline:
         return result
 
     async def _load_component_doozer_keys(self) -> dict[str, str]:
-        """Load the authoritative component-to-Doozer-key mapping.
+        """Load and cache group image and generated OLM bundle components.
 
         Returns:
-            A mapping from Konflux component names to Doozer image keys.
+            A mapping from image component names to Doozer image keys.
+            Generated bundle components are retained separately for membership
+            checks so FBC refresh still resolves only operator image NVRs.
 
         Raises:
             RuntimeError: If Doozer does not return any component mappings.
         """
+        if self._component_doozer_keys is not None:
+            return self._component_doozer_keys
+        data_path, data_gitref = self._build_data_source()
+        group = f'{self.group}@{data_gitref}' if data_gitref else self.group
         cmd = [
             'doozer',
-            f'--group={self.group}',
+            f'--data-path={data_path}',
+            f'--group={group}',
+            f'--assembly={self.assembly}',
             f'--working-dir={self.doozer_working_dir}',
             '--load-disabled',
+            '--load-wip',
             'images:print',
             '--show-non-release',
+            '--show-base',
             '--short',
-            '{component}: {name}',
+            '{component}: {name}: {olm_bundle_component}',
         ]
-        _, output, _ = await exectools.cmd_gather_async(cmd)
+        rc, output, stderr = await exectools.cmd_gather_async(cmd)
+        if rc:
+            raise RuntimeError(f"Failed to load component mappings for group '{self.group}': {stderr}")
         mappings = {}
-        for line in output.strip().splitlines():
-            parts = line.split(': ', 1)
-            if len(parts) == 2:
-                mappings[parts[0].strip()] = parts[1].strip()
+        components = set()
+        for line in output.splitlines():
+            if not line.strip():
+                continue
+            parts = [part.strip() for part in line.split(': ', 2)]
+            if len(parts) != 3 or not parts[0] or not parts[1]:
+                raise RuntimeError(f"Invalid component mapping for group '{self.group}': {line!r}")
+            component, key, bundle_component = parts
+            mappings[component] = key
+            components.add(component)
+            if bundle_component:
+                components.add(bundle_component)
         if not mappings:
             raise RuntimeError(f"Doozer returned no component mappings for group '{self.group}'")
+        self._component_doozer_keys = mappings
+        self._group_components = components
         return mappings
 
     async def _refresh_fbc_pullspecs(self, source_fbc_nvrs: List[str]) -> List[str]:
@@ -1294,11 +1330,13 @@ class ReleaseFromFbcPipeline:
                 ordered by their source operator identities.
 
         Raises:
+            ValueError: If a local build-data path is combined with an explicit ref.
             RuntimeError: If an FBC cannot be mapped unambiguously to one
                 operator NVR and target version, or if two source FBCs resolve
                 to the same operator NVR and target, or if refreshed catalogs
                 cannot be associated one-to-one with their sources.
         """
+        data_path, data_gitref = self._build_data_source()
         component_keys = await self._load_component_doozer_keys()
         operator_nvrs_by_target: dict[str, list[str]] = {}
         source_fbcs_by_target: dict[str, list[tuple[str, str]]] = {}
@@ -1345,8 +1383,8 @@ class ReleaseFromFbcPipeline:
             version=self.assembly,
             product=self.product,
             operator_nvrs_by_target=operator_nvrs_by_target,
-            data_path=os.getenv("DOOZER_DATA_PATH", constants.OCP_BUILD_DATA_URL),
-            data_gitref=os.getenv("DOOZER_DATA_GITREF") or None,
+            data_path=data_path,
+            data_gitref=data_gitref or None,
             force=True,
             reset_to_prod=True,
         )
@@ -1552,6 +1590,8 @@ class ReleaseFromFbcPipeline:
             empty_categorized = {"extras": [], "fbc": [], "external": []}
         else:
             empty_categorized = {"image": [], "fbc": [], "external": []}
+        if not self.ocp_optional and all_nvrs:
+            await self._load_component_doozer_keys()
         categorized_nvrs = self.categorize_nvrs(all_nvrs) if all_nvrs else empty_categorized
 
         # The key for the primary non-FBC image shipment depends on mode
@@ -1649,6 +1689,11 @@ class ReleaseFromFbcPipeline:
 
         # Create MR if requested
         if self.create_mr and shipments_by_kind:
+            for config in shipments_by_kind.values():
+                shipment = config.shipment
+                kind = "fbc" if shipment.metadata.fbc else image_key
+                await validate_snapshot_against_rpa(shipment, "prod", kind)
+
             if self.ocp_optional:
                 try:
                     mr_url = await self.create_shipment_mr(shipments_by_kind, env="prod")

@@ -168,6 +168,33 @@ class TestCompareNvrOpenshiftAware(unittest.TestCase):
                 result = compare_nvr_openshift_aware(obj1, obj2)
                 self.assertEqual(result, expected, f"Failed: {description}")
 
+    def test_equivalent_numeric_epochs(self):
+        for epoch1, epoch2 in [("", "0:"), ("01:", "1:")]:
+            obj1 = parse_nvr(f"{epoch1}package-1.0-1.rhaos4.21.el9")
+            obj2 = parse_nvr(f"{epoch2}package-1.0-1.rhaos4.21.el9")
+            with self.subTest(epoch1=epoch1, epoch2=epoch2):
+                self.assertEqual(compare_nvr_openshift_aware(obj1, obj2), 0)
+            with self.subTest(epoch1=epoch2, epoch2=epoch1):
+                self.assertEqual(compare_nvr_openshift_aware(obj2, obj1), 0)
+
+    def test_equivalent_epochs_preserve_version_and_release_ordering(self):
+        test_cases = [
+            ("2.0-1.rhaos4.20.el9", "1.0-2.rhaos4.21.el9", None, 1),
+            ("1.0-2.el9", "1.0-1.el9", None, 1),
+            ("1.0-2.rhaos4.21.el9", "1.0-1.rhaos4.21.el9", (4, 21), 1),
+            ("1.0-1.rhaos4.21.el9", "1.0-2.rhaos4.20.el9", None, 1),
+            ("1.0-1.rhaos4.21.el9", "1.0-2.rhaos4.20.el9", (4, 20), -1),
+            ("1.0-1.rhaos4.21.el9", "1.0-2.rhaos4.20.el9", (4, 22), -1),
+        ]
+        for epoch1, epoch2 in [("", "0:"), ("01:", "1:")]:
+            for version_release1, version_release2, target, expected in test_cases:
+                obj1 = parse_nvr(f"{epoch1}package-{version_release1}")
+                obj2 = parse_nvr(f"{epoch2}package-{version_release2}")
+                with self.subTest(obj1=obj1, obj2=obj2, target=target):
+                    self.assertEqual(compare_nvr_openshift_aware(obj1, obj2, target), expected)
+                with self.subTest(obj1=obj2, obj2=obj1, target=target):
+                    self.assertEqual(compare_nvr_openshift_aware(obj2, obj1, target), -expected)
+
     def test_different_versions(self):
         """Test comparison with different package versions."""
         test_cases = [

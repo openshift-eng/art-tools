@@ -72,6 +72,7 @@ from elliottlib.cli.tag_builds_cli import tag_builds_cli
 # cli commands
 from elliottlib.cli.tarball_sources_cli import tarball_sources_cli
 from elliottlib.cli.validate_rhsa import validate_rhsa_cli
+from elliottlib.cli.verify_advisory_status_cli import verify_advisory_status_cli
 from elliottlib.cli.verify_attached_bugs_cli import verify_attached_bugs_cli
 from elliottlib.cli.verify_attached_operators_cli import verify_attached_operators_cli
 from elliottlib.cli.verify_cdn_push_cli import verify_cdn_push_cli
@@ -337,6 +338,7 @@ cli.add_command(shipment_cli)
 cli.add_command(watch_release_cli)
 cli.add_command(find_bugs_second_fix_cli)
 cli.add_command(process_release_from_fbc_bugs_cli)
+cli.add_command(verify_advisory_status_cli)
 cli.add_command(verify_cdn_push_cli)
 cli.add_command(verify_csv_versions_cli)
 cli.add_command(verify_cve_trackers_cli)

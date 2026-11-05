@@ -7,12 +7,13 @@ override, without bypassing other prerequisites or explicit skips.
 import asyncio
 from pathlib import Path
 from unittest import IsolatedAsyncioTestCase
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import ANY, AsyncMock, MagicMock, create_autospec, patch
 
+from artcommonlib.conforma import resolve_stage_policy
 from artcommonlib.konflux.konflux_build_record import KonfluxBuildOutcome
 from artcommonlib.model import Model
+from artcommonlib.pipeline_report import ComponentReport
 from artcommonlib.variants import BuildVariant
-from doozerlib import constants
 from doozerlib.backend.konflux_client import CustomIntegrationTestResult, ECVerificationResult
 from doozerlib.backend.konflux_image_builder import (
     KonfluxImageBuilder,
@@ -30,8 +31,7 @@ def _make_config(**overrides) -> KonfluxImageBuilderConfig:
         dry_run=True,
         build_priority="5",
         skip_ec_verify=False,
-        ec_policy_configuration=constants.KONFLUX_DEFAULT_EC_POLICY_CONFIGURATION,
-        prega_ec_policy_configuration=constants.KONFLUX_PREGA_EC_POLICY_CONFIGURATION,
+        ec_policy_configuration=resolve_stage_policy("ocp"),
     )
     defaults.update(overrides)
     return KonfluxImageBuilderConfig(**defaults)
@@ -106,6 +106,42 @@ def _ec_exception_result():
 @patch("doozerlib.backend.konflux_client.KonfluxClient.from_kubeconfig")
 class TestEcVerificationGating(IsolatedAsyncioTestCase):
     """Test that EC verification is only triggered under the correct conditions."""
+
+    async def test_declares_only_enabled_checks_before_building(self, mock_kc_init):
+        for for_release, its_enabled, skip_ec, skip_custom, expected in (
+            (True, None, False, False, ['conforma', 'custom']),
+            (True, None, True, False, ['custom']),
+            (True, None, False, True, ['conforma']),
+            (True, None, True, True, []),
+            (False, None, False, False, []),
+            (False, True, False, False, ['conforma', 'custom']),
+            (True, False, False, False, []),
+        ):
+            with self.subTest(
+                for_release=for_release, its_enabled=its_enabled, skip_ec=skip_ec, skip_custom=skip_custom
+            ):
+                handle = create_autospec(ComponentReport, instance=True)
+                reporter = MagicMock()
+                reporter.component.return_value = handle
+                config = _make_config(
+                    skip_ec_verify=skip_ec,
+                    skip_custom_its=skip_custom,
+                    integration_test_scenarios=('qe',),
+                )
+                metadata = _make_metadata(for_release=for_release)
+                if its_enabled is not None:
+                    metadata.config = Model({'konflux': {'its': {'enabled': its_enabled}}})
+                with patch('doozerlib.backend.konflux_image_builder.get_reporter', return_value=reporter):
+                    await self._run_build_and_get_ec_calls(
+                        config,
+                        metadata,
+                        mock_kc_init,
+                        blocking_custom_its=['qe'],
+                    )
+                checks = handle.configure_checks.await_args.args[0]
+                self.assertEqual([check['kind'] for check in checks], expected)
+                self.assertTrue(all(check['blocking'] for check in checks))
+                handle.finish_checks.assert_awaited()
 
     async def _run_build_and_get_ec_calls(
         self,
@@ -237,7 +273,6 @@ class TestEcVerificationGating(IsolatedAsyncioTestCase):
             with self.subTest(policy=policy, scenarios=scenarios, variant=variant, phase=phase):
                 config = _make_config(
                     ec_policy_configuration=policy,
-                    prega_ec_policy_configuration=policy,
                     integration_test_scenarios=scenarios,
                 )
                 metadata = _make_metadata(for_release=False, variant=variant)
@@ -255,8 +290,7 @@ class TestEcVerificationGating(IsolatedAsyncioTestCase):
         for phase, expected_policy in (("release", "release-policy"), ("pre-release", "prega-policy")):
             with self.subTest(phase=phase):
                 config = _make_config(
-                    ec_policy_configuration="release-policy",
-                    prega_ec_policy_configuration="prega-policy",
+                    ec_policy_configuration=expected_policy,
                     effective_time="2026-04-10T00:00:00Z",
                 )
                 metadata = _make_metadata(for_release=False)
@@ -380,9 +414,7 @@ class TestEcVerificationGating(IsolatedAsyncioTestCase):
 
     async def test_ec_skipped_when_no_policy_configured(self, mock_kc_init):
         """EC verification should be skipped when no EC policy is configured for the product."""
-        config = _make_config(
-            group_name="logging-6.2", ec_policy_configuration=None, prega_ec_policy_configuration=None
-        )
+        config = _make_config(group_name="logging-6.2", ec_policy_configuration=None)
         metadata = _make_metadata(for_release=True)
 
         verify_ec = await self._run_build_and_get_ec_calls(config, metadata, mock_kc_init)
@@ -397,7 +429,7 @@ class TestEcVerificationGating(IsolatedAsyncioTestCase):
         verify_ec.assert_not_called()
 
     async def test_ec_skipped_when_prega_policy_is_not_configured(self, mock_kc_init):
-        config = _make_config(prega_ec_policy_configuration=None)
+        config = _make_config(ec_policy_configuration=None)
         metadata = _make_metadata(for_release=True)
         metadata.runtime.group_config.software_lifecycle.phase = "pre-release"
 
@@ -408,7 +440,6 @@ class TestEcVerificationGating(IsolatedAsyncioTestCase):
     async def test_custom_its_runs_independently_of_ec(self, mock_kc_init):
         config = _make_config(
             ec_policy_configuration=None,
-            prega_ec_policy_configuration=None,
             integration_test_scenarios=("qe-test",),
             integration_test_snapshot_annotations={"pac.test.appstudio.openshift.io/branch": "release-4.18"},
         )
@@ -425,6 +456,7 @@ class TestEcVerificationGating(IsolatedAsyncioTestCase):
             commit_sha="deadbeef",
             blocking_scenario_names=set(),
             snapshot_annotations={"pac.test.appstudio.openshift.io/branch": "release-4.18"},
+            on_check_update=ANY,
             namespace="ocp-art-tenant",
         )
 
@@ -461,7 +493,6 @@ class TestEcVerificationGating(IsolatedAsyncioTestCase):
         config = _make_config(
             dry_run=False,
             ec_policy_configuration=None,
-            prega_ec_policy_configuration=None,
             integration_test_scenarios=("qe-test",),
         )
         metadata = _make_metadata(for_release=True)
@@ -486,7 +517,6 @@ class TestEcVerificationGating(IsolatedAsyncioTestCase):
         config = _make_config(
             dry_run=False,
             ec_policy_configuration=None,
-            prega_ec_policy_configuration=None,
             integration_test_scenarios=("qe-test",),
         )
         metadata = _make_metadata(for_release=True)
@@ -512,7 +542,6 @@ class TestEcVerificationGating(IsolatedAsyncioTestCase):
         config = _make_config(
             dry_run=False,
             ec_policy_configuration=None,
-            prega_ec_policy_configuration=None,
             integration_test_scenarios=("qe-test",),
         )
         metadata = _make_metadata(for_release=True)
@@ -639,25 +668,24 @@ class TestEcVerificationGating(IsolatedAsyncioTestCase):
         verify_ec = await self._run_build_and_get_ec_calls(config, metadata, mock_kc_init)
         verify_ec.assert_called_once()
         call_kwargs = verify_ec.call_args
-        self.assertEqual(call_kwargs.kwargs["ec_policy"], constants.KONFLUX_DEFAULT_EC_POLICY_CONFIGURATION)
+        self.assertEqual(call_kwargs.kwargs["ec_policy"], "rhtap-releng-tenant/registry-ocp-art-stage")
 
     async def test_ec_uses_prega_policy_for_pre_release_phase(self, mock_kc_init):
         """Pre-release lifecycle phase uses the prega policy from config."""
-        config = _make_config(group_name="openshift-4.18")
+        config = _make_config(ec_policy_configuration=resolve_stage_policy("ocp", lifecycle_phase="pre-release"))
         metadata = _make_metadata(for_release=True)
         metadata.runtime.group_config.software_lifecycle.phase = "pre-release"
 
         verify_ec = await self._run_build_and_get_ec_calls(config, metadata, mock_kc_init)
         verify_ec.assert_called_once()
         call_kwargs = verify_ec.call_args
-        self.assertEqual(call_kwargs.kwargs["ec_policy"], constants.KONFLUX_PREGA_EC_POLICY_CONFIGURATION)
+        self.assertEqual(call_kwargs.kwargs["ec_policy"], "rhtap-releng-tenant/registry-ocp-art-ec-stage")
 
     async def test_ec_uses_test_policy_from_config(self, mock_kc_init):
         """Test assembly builds use the test-specific EC policy passed via config."""
         config = _make_config(
             group_name="openshift-4.18",
-            ec_policy_configuration=constants.KONFLUX_TEST_EC_POLICY_CONFIGURATION,
-            prega_ec_policy_configuration=constants.KONFLUX_TEST_PREGA_EC_POLICY_CONFIGURATION,
+            ec_policy_configuration=resolve_stage_policy("ocp", assembly="test"),
         )
         metadata = _make_metadata(for_release=True)
         metadata.runtime.group_config.software_lifecycle.phase = "release"
@@ -665,14 +693,13 @@ class TestEcVerificationGating(IsolatedAsyncioTestCase):
         verify_ec = await self._run_build_and_get_ec_calls(config, metadata, mock_kc_init)
         verify_ec.assert_called_once()
         call_kwargs = verify_ec.call_args
-        self.assertEqual(call_kwargs.kwargs["ec_policy"], constants.KONFLUX_TEST_EC_POLICY_CONFIGURATION)
+        self.assertEqual(call_kwargs.kwargs["ec_policy"], "ocp-art-tenant/conforma-build-stage-test")
 
     async def test_ec_uses_test_prega_policy_for_pre_release(self, mock_kc_init):
         """Test assembly builds with pre-release lifecycle use the test prega policy from config."""
         config = _make_config(
             group_name="openshift-4.18",
-            ec_policy_configuration=constants.KONFLUX_TEST_EC_POLICY_CONFIGURATION,
-            prega_ec_policy_configuration=constants.KONFLUX_TEST_PREGA_EC_POLICY_CONFIGURATION,
+            ec_policy_configuration=resolve_stage_policy("ocp", assembly="test", lifecycle_phase="pre-release"),
         )
         metadata = _make_metadata(for_release=True)
         metadata.runtime.group_config.software_lifecycle.phase = "pre-release"
@@ -680,4 +707,4 @@ class TestEcVerificationGating(IsolatedAsyncioTestCase):
         verify_ec = await self._run_build_and_get_ec_calls(config, metadata, mock_kc_init)
         verify_ec.assert_called_once()
         call_kwargs = verify_ec.call_args
-        self.assertEqual(call_kwargs.kwargs["ec_policy"], constants.KONFLUX_TEST_PREGA_EC_POLICY_CONFIGURATION)
+        self.assertEqual(call_kwargs.kwargs["ec_policy"], "ocp-art-tenant/conforma-build-ec-stage-test")

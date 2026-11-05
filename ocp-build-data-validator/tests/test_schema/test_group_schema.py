@@ -149,6 +149,22 @@ class TestGroupSchema(unittest.TestCase):
         }
         self.assertIn("'yes' is not of type 'boolean'", group_schema.validate("group.yml", invalid_data))
 
+    def test_validate_with_valid_use_source_fallback_branch_values(self):
+        for value in ("yes", "always", "never"):
+            with self.subTest(value=value):
+                valid_data = {
+                    "use_source_fallback_branch": value,
+                }
+                self.assertEqual("", group_schema.validate("group.yml", valid_data))
+
+    def test_validate_with_invalid_use_source_fallback_branch_value(self):
+        invalid_data = {
+            "use_source_fallback_branch": "sometimes",
+        }
+        error = group_schema.validate("group.yml", invalid_data)
+        self.assertIsNotNone(error)
+        self.assertIn("'sometimes' is not one of", error)
+
     def test_validate_with_valid_el_target(self):
         valid_data = {
             "el_target": 9,

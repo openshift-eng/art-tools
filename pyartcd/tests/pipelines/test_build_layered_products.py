@@ -387,6 +387,54 @@ class TestBuildLayeredProductsPipeline(IsolatedAsyncioTestCase):
         self.assertEqual(call_count, 2)
         self.pipeline._logger.info.assert_any_call('Successfully built oadp-velero-restic-restore-helper')
 
+    async def test_partial_rebase_warning_preserves_builds_and_bundle_trigger(self):
+        for strategy in (BuildStrategy.ONLY, BuildStrategy.ALL):
+            with self.subTest(strategy=strategy):
+                self.pipeline.image_build_strategy = strategy
+                self.pipeline.image_list = 'healthy,failed,child' if strategy == BuildStrategy.ONLY else ''
+                with (
+                    patch(
+                        'pyartcd.pipelines.build_layered_products.load_group_config', return_value={'product': 'oadp'}
+                    ),
+                    patch('pyartcd.pipelines.build_layered_products.tekton.is_tekton_context', return_value=True),
+                    patch('pyartcd.pipelines.build_layered_products.tekton.annotate_current_pipelinerun') as annotate,
+                    patch.object(self.pipeline, '_rebase', new=AsyncMock(return_value=['failed', 'child'])),
+                    patch.object(self.pipeline, '_build', new=AsyncMock()) as build,
+                    patch.object(self.pipeline, 'update_build_fail_counters', new=AsyncMock()),
+                    patch.object(self.pipeline, '_update_build_description'),
+                    patch.object(self.pipeline, 'trigger_bundle_build') as trigger,
+                ):
+                    await self.pipeline.run()
+
+                build.assert_awaited_once_with(
+                    strategy,
+                    'healthy' if strategy == BuildStrategy.ONLY else None,
+                    ['failed', 'child'],
+                    'oadp',
+                    KONFLUX_DEFAULT_IMAGE_REPO,
+                    BuildVariant.OADP,
+                )
+                annotate.assert_called_once_with(
+                    {'art.openshift.io/rebase-warning': 'Images excluded after rebase failure: failed, child'}
+                )
+                trigger.assert_called_once()
+
+    async def test_rebase_warning_not_published_for_success_dry_run_or_jenkins(self):
+        for excluded, dry_run, use_tekton in (([], False, True), (['failed'], True, True), (['failed'], False, False)):
+            with self.subTest(excluded=excluded, dry_run=dry_run, use_tekton=use_tekton):
+                self.pipeline.image_list = 'healthy,failed'
+                self.runtime.dry_run = dry_run
+                with (
+                    patch('pyartcd.pipelines.build_layered_products.tekton.is_tekton_context', return_value=use_tekton),
+                    patch('pyartcd.pipelines.build_layered_products.tekton.annotate_current_pipelinerun') as annotate,
+                    patch.object(self.pipeline, '_rebase', new=AsyncMock(return_value=excluded)),
+                    patch.object(self.pipeline, '_build', new=AsyncMock()),
+                    patch.object(self.pipeline, 'update_build_fail_counters', new=AsyncMock()),
+                    patch.object(self.pipeline, '_update_build_description'),
+                ):
+                    await self.pipeline._rebase_and_build('oadp', KONFLUX_DEFAULT_IMAGE_REPO)
+                annotate.assert_not_called()
+
     async def test_skip_rebase_passes_full_list_to_build(self):
         """When skip_rebase is set, the full image list goes directly to build."""
         self.pipeline.skip_rebase = True
@@ -481,11 +529,18 @@ class TestBuildLayeredProductsPipeline(IsolatedAsyncioTestCase):
             data_path='https://github.com/openshift-eng/ocp-build-data',
             skip_bundle_build=True,
             skip_rebase=True,
+            payload='quay.io/openshift-release-dev/ocp-release:4.20.1-x86_64',
         )
 
-        with patch(
-            "pyartcd.pipelines.build_layered_products.get_build_variant_for_product",
-            return_value=BuildVariant.OCP,
+        with (
+            patch(
+                "pyartcd.pipelines.build_layered_products.get_build_variant_for_product",
+                return_value=BuildVariant.OCP,
+            ),
+            patch(
+                'pyartcd.pipelines.build_layered_products.oc.get_release_image_info',
+                return_value={'metadata': {'version': '4.20.1'}},
+            ),
         ):
             await pipeline.run()
 
@@ -721,6 +776,11 @@ class TestBuildLayeredProductsPipeline(IsolatedAsyncioTestCase):
             ('openshift-4.22', None, {'version': '4.22.1'}, 'ocp', '4.22.1'),
             ('openshift-4.22', '4.22.2', {'version': '4.22.1'}, 'ocp', '4.22.2'),
             ('oadp-1.4', None, {'product': 'oadp', 'version': '1.4.9'}, 'oadp', '1.4.9'),
+            ('acm-5.1', None, {'version': 'auto'}, 'ocp', '5.1.0'),
+            ('mce-5.1', None, {'version': 'auto'}, 'ocp', '5.1.0'),
+            ('openshift-4.22', None, {'version': 'auto'}, 'ocp', '4.22.0'),
+            ('acm-5.1', '5.1.2', {'version': 'auto'}, 'ocp', '5.1.2'),
+            ('acm-5.1', 'auto', {'version': '5.1.2'}, 'ocp', '5.1.0'),
         ]
         for group, version, config, expected_product, expected_version in cases:
             with self.subTest(group=group, version=version, config=config):
@@ -736,6 +796,31 @@ class TestBuildLayeredProductsPipeline(IsolatedAsyncioTestCase):
                 self.assertEqual(self.pipeline.version, expected_version)
                 mock_build.assert_awaited_once_with(expected_product, KONFLUX_DEFAULT_IMAGE_REPO)
                 mock_trigger.assert_called_once()
+
+    async def test_run_auto_version_keeps_zero_patch_for_z_stream_assembly(self):
+        self.pipeline.group = 'mce-5.1'
+        self.pipeline.version = None
+        self.pipeline.assembly = '5.1.7'
+        with (
+            patch('pyartcd.pipelines.build_layered_products.load_group_config', return_value={'version': 'auto'}),
+            patch.object(self.pipeline, '_rebase_and_build', new_callable=AsyncMock),
+            patch.object(self.pipeline, 'trigger_bundle_build'),
+        ):
+            await self.pipeline.run()
+
+        self.assertEqual(self.pipeline.version, '5.1.0')
+
+    async def test_run_rejects_auto_version_without_group_version(self):
+        self.pipeline.group = 'acm-invalid'
+        self.pipeline.version = None
+        with (
+            patch('pyartcd.pipelines.build_layered_products.load_group_config', return_value={'version': 'auto'}),
+            patch.object(self.pipeline, '_rebase_and_build', new_callable=AsyncMock) as mock_build,
+            self.assertRaisesRegex(ValueError, "Cannot resolve version 'auto'.*MAJOR.MINOR"),
+        ):
+            await self.pipeline.run()
+
+        mock_build.assert_not_awaited()
 
     async def test_run_rejects_missing_version_for_layered_product_or_invalid_openshift_group(self):
         for group in ('oadp-1.4', 'openshift-invalid'):

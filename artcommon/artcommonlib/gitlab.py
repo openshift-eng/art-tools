@@ -110,6 +110,24 @@ class GitLabClient:
         project = self._client.projects.get(project_path)
         return project.mergerequests.get(mr_iid)
 
+    def add_mr_labels(self, mr_url: str, labels: list[str], *, remove_labels: list[str] | None = None):
+        """Add labels and optionally remove others in one atomic update.
+
+        Preserve unrelated labels on MRs in any state.
+
+        Return the updated MR data, or None during a dry run. API errors are
+        propagated so each caller can report a failed marking step.
+        """
+        if self.dry_run:
+            logger.info("[DRY-RUN] Would add labels %s and remove labels %s", labels, remove_labels)
+            return None
+        project_path, mr_iid = self._parse_mr_url(mr_url)
+        project = self.get_project(project_path)
+        updates = {"add_labels": ",".join(labels)}
+        if remove_labels:
+            updates["remove_labels"] = ",".join(remove_labels)
+        return project.mergerequests.update(int(mr_iid), **updates)
+
     def add_mr_comment(self, mr_url: str, body: str):
         """Add a comment to a GitLab merge request.
 

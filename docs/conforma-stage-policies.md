@@ -1,0 +1,44 @@
+# Conforma stage-policy resolution
+
+`artcommonlib.conforma.resolve_stage_policy` selects the policy from
+`ProductConfig.conforma_stage_policies` for image ITS, OCP bundle ITS, scheduled
+verification and ad-hoc `build-conforma-verify`. Policy selection does not decide
+whether verification is eligible or enabled.
+
+Scheduled and ad-hoc verification honor a non-empty configured group `product`,
+including catalog aliases, even for `openshift-*` groups. Only those groups fall
+back to `ocp` when product is missing, `None` or empty; other groups require a
+supported configured product. Ad-hoc default selection loads and caches the group
+configuration for all artifact types, including FBCs. A usable explicit policy
+override avoids that read. Product selection does not change group-based namespace
+or kubeconfig routing.
+
+- OCP images and bundles use `rhtap-releng-tenant/registry-ocp-art-stage`, or
+  `rhtap-releng-tenant/registry-ocp-art-ec-stage` when `software_lifecycle.phase`
+  is `pre-release`. Assembly type, including preview, does not determine preGA.
+  Missing or unknown lifecycle phases retain the scheduler's normal-policy fallback.
+- OCP `test` assemblies retain `ocp-art-tenant/conforma-build-stage-test` and
+  `ocp-art-tenant/conforma-build-ec-stage-test`. These are transitional exceptions:
+  test base images are not released, and the art-images base registry rule is
+  excluded. Normal stage policies are unchanged.
+- OCP FBC verification uses `rhtap-releng-tenant/fbc-ocp-art-stage`, including
+  pre-release and test assemblies. Layered products use their catalog image/FBC
+  policies; a missing FBC policy does not fall back to an image policy.
+- FBC-specific explicit overrides precede generic explicit overrides, which
+  precede defaults. Unknown products have no default policy. Image ITS keeps
+  its no-policy guard; verification pipelines reject missing policies clearly.
+
+Stage-policy consumers use the shared resolver directly, without compatibility
+constants or policy maps. Quay uses its existing stage policy for test assemblies too,
+so otherwise-eligible Quay test image builds receive verification rather than
+being skipped due to a missing map entry. No eligibility gates change.
+
+The catalog's `mirror_gui` image policy now matches its pre-existing ITS mapping,
+`rhtap-releng-tenant/registry-art-oc-mirror-mirror-gui-stage`, rather than the
+generic `registry-standard`. Scheduled and ad-hoc verification therefore preserve
+that product-specific ITS policy. `oc-mirror` keeps `registry-standard`, and
+neither product acquires an FBC policy. Catalog aliases resolve consistently.
+
+Skip flags, OKD handling, `for_release`, `konflux.its.enabled`, successful-build
+requirements and the OCP-only bundle ITS guard remain unchanged. This does not
+enable layered-product bundle ITS or add a direct FBC build-time EC call.

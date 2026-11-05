@@ -363,6 +363,20 @@ def check_rhcos_payload_shas(
     )
 
 
+def load_shipment_config(runtime: Runtime, config_path: str) -> ShipmentConfig:
+    """
+    Load and validate a shipment config from a local file path.
+
+    Arg(s):
+        runtime (Runtime): the elliott Runtime, already initialized with shipment data access.
+        config_path (str): path to the shipment yaml file.
+    Return Value(s):
+        ShipmentConfig: the parsed and validated shipment config.
+    """
+    config_raw = runtime.shipment_gitdata.load_yaml_file(config_path)
+    return ShipmentConfig.model_validate(config_raw)
+
+
 def load_release_notes(runtime: Runtime, config_path: str) -> ReleaseNotes | None:
     """
     Load a shipment config's releaseNotes from a local file path.
@@ -373,8 +387,7 @@ def load_release_notes(runtime: Runtime, config_path: str) -> ReleaseNotes | Non
     Return Value(s):
         ReleaseNotes | None: the parsed release notes, or None if this shipment has none (e.g. FBC).
     """
-    config_raw = runtime.shipment_gitdata.load_yaml_file(config_path)
-    config = ShipmentConfig.model_validate(config_raw)
+    config = load_shipment_config(runtime, config_path)
     if config.shipment.data is None:
         return None
     return config.shipment.data.releaseNotes
@@ -569,12 +582,20 @@ async def verify_docs_approval(runtime, image_config_path, extras_config_path):
       5. rhcos advisory references rpm advisory
       6. rhcos advisory payload SHAs match image shipment SHAs
 
+    If a provided shipment config sets `metadata.docs_approval_required: false`,
+    all checks are skipped and the command reports success, allowing a release
+    to ship when a docs-approval check cannot be satisfied.
+
     \b
         $ elliott -g openshift-4.20 --assembly=4.20.32 --shipment-path=. \\
             verify-docs-approval --image-config=shipment/.../4.20.32.image.yaml \\
             --extras-config=shipment/.../4.20.32.extras.yaml
     """
     runtime.initialize(build_system="konflux", with_shipment=True)
+    for label, config_path in (("image", image_config_path), ("extras", extras_config_path)):
+        if config_path and load_shipment_config(runtime, config_path).shipment.metadata.docs_approval_required is False:
+            click.echo(f"Skipping docs-approval checks: {label} shipment metadata sets docs_approval_required=false")
+            return
     results = await run_checks(runtime, image_config_path, extras_config_path)
     click.echo(format_report(results))
     if any(r.status == "fail" for r in results):

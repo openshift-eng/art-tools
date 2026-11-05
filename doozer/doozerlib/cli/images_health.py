@@ -92,12 +92,6 @@ class ImagesHealthPipeline:
                     self.logger.info('Skipping OKD disabled image: %s', image_meta.distgit_key)
                     continue
 
-                for_payload = image_meta.config.for_payload
-                if for_payload is Missing:
-                    for_payload = False
-                if not for_payload:
-                    self.logger.info('Skipping OKD non-payload image: %s', image_meta.distgit_key)
-                    continue
             elif image_meta.config.konflux.mode == 'disabled' or image_meta.mode == 'disabled':
                 self.logger.info('Skipping disabled image: %s', image_meta.distgit_key)
                 continue

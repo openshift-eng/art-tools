@@ -227,7 +227,7 @@ class TestCredentialManagement:
 
             assert call_kwargs['source_files'] == [str(quay_auth)]
             assert call_kwargs['kubeconfig'] == str(kubeconfig)
-            assert len(call_kwargs['registries']) == 6
+            assert len(call_kwargs['registries']) == 5
             # Verify uses constants, not hardcoded strings
             from artcommonlib.constants import REGISTRY_CI_OPENSHIFT
 

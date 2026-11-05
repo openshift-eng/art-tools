@@ -103,7 +103,10 @@ class TestProductCatalog(unittest.TestCase):
         """Represent a product with no Conforma FBC policy explicitly."""
         config = get_product_config("mirror_gui")
 
-        self.assertEqual(config.conforma_stage_policies.image_policy, "rhtap-releng-tenant/registry-standard")
+        self.assertEqual(
+            config.conforma_stage_policies.image_policy,
+            "rhtap-releng-tenant/registry-art-oc-mirror-mirror-gui-stage",
+        )
         self.assertIsNone(config.conforma_stage_policies.fbc_policy)
 
     def test_ocp_base_image_targets_are_preserved(self):

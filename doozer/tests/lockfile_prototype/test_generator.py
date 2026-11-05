@@ -2046,197 +2046,6 @@ class TestExtractInstallPackages(unittest.TestCase):
         self.assertEqual(result, {"git", "vim", "curl"})
 
 
-class TestHasNoRpmdb(unittest.IsolatedAsyncioTestCase):
-    """
-    Tests for _has_no_rpmdb — probe whether a base image has an RPM
-    database, used to skip RPM resolution for FROM-scratch stages.
-    """
-
-    def _make_generator(self) -> RpmLockfilePrototypeGenerator:
-        gen = RpmLockfilePrototypeGenerator.__new__(RpmLockfilePrototypeGenerator)
-        gen.logger = MagicMock()
-        gen._container = MagicMock(spec=ContainerImageHelper)
-        gen._rpmdb_package_cache = {}
-        return gen
-
-    async def test_scratch_image_returns_true(self):
-        """An image with no RPMDB (e.g. FROM scratch) returns True."""
-        gen = self._make_generator()
-        gen._get_base_image_rpmdb_packages = AsyncMock(return_value=None)
-
-        result = await gen._has_no_rpmdb(
-            "quay.io/test/scratch-image@sha256:abc123", "operator-index", ["x86_64", "aarch64"]
-        )
-        self.assertTrue(result)
-        # Only the first arch should be probed
-        gen._get_base_image_rpmdb_packages.assert_awaited_once_with(
-            "quay.io/test/scratch-image@sha256:abc123", "x86_64"
-        )
-
-    async def test_image_with_packages_returns_false(self):
-        """An image with RPMDB packages returns False."""
-        gen = self._make_generator()
-        gen._get_base_image_rpmdb_packages = AsyncMock(return_value={"glibc", "openssl", "rpm"})
-
-        result = await gen._has_no_rpmdb("quay.io/test/base@sha256:def456", "csi-driver-nfs", ["x86_64", "ppc64le"])
-        self.assertFalse(result)
-
-    async def test_probe_failure_returns_false(self):
-        """On exception, fail-open: return False so resolution proceeds."""
-        gen = self._make_generator()
-        gen._get_base_image_rpmdb_packages = AsyncMock(side_effect=RuntimeError("network timeout"))
-
-        result = await gen._has_no_rpmdb("quay.io/test/flaky@sha256:ghi789", "test-image", ["x86_64"])
-        self.assertFalse(result)
-        gen.logger.warning.assert_called()
-
-    async def test_result_cached_across_calls(self):
-        """Second call for the same pullspec+arch uses _rpmdb_package_cache."""
-        gen = self._make_generator()
-        gen._container.get_installed_packages_from_rpmdb = AsyncMock(return_value=None)
-
-        pullspec = "quay.io/test/scratch@sha256:cached"
-        await gen._has_no_rpmdb(pullspec, "img-a", ["x86_64"])
-        await gen._has_no_rpmdb(pullspec, "img-b", ["x86_64"])
-
-        # Container method called only once — second call hits _rpmdb_package_cache
-        gen._container.get_installed_packages_from_rpmdb.assert_awaited_once()
-
-    async def test_resolve_all_stages_skips_scratch_stage(self):
-        """
-        Integration: a non-final stage whose base image has no RPMDB
-        should be skipped entirely in _resolve_all_stages.
-        """
-        container = MagicMock(spec=ContainerImageHelper)
-        container.resolve_to_digest = AsyncMock(
-            side_effect=lambda p: p.split(":")[0] + "@sha256:abc123" if ":" in p and "/" in p else p
-        )
-        container.get_installed_packages = AsyncMock(return_value=[])
-        container.get_installed_packages_from_rpmdb = AsyncMock(return_value=None)
-        container.read_file_from_image = AsyncMock(return_value="")
-
-        resolver = MagicMock(spec=RpmResolver)
-        resolver.resolve = AsyncMock(return_value=FAKE_LOCKFILE_DATA.model_copy(deep=True))
-
-        repos = MagicMock()
-        baseos = MagicMock()
-        baseos.name = "rhel-9-baseos-rpms"
-        baseos.baseurl.return_value = "https://example.com/baseos/x86_64/os/"
-        baseos.content_set.return_value = "rhel-9-for-x86_64-baseos-rpms"
-        baseos.cs_optional = False
-        baseos._data.conf.get.return_value = {}
-        repo_map = {"rhel-9-baseos-rpms": baseos}
-        repos.__getitem__ = lambda self_repos, key: repo_map[key]
-
-        meta = MagicMock()
-        meta.distgit_key = "operator-index"
-        meta.get_arches.return_value = ["x86_64"]
-        meta.get_enabled_repos.return_value = {"rhel-9-baseos-rpms"}
-        meta.is_lockfile_generation_enabled.return_value = True
-        meta.is_cross_arch_enabled.return_value = False
-
-        generator = RpmLockfilePrototypeGenerator(
-            repos=repos,
-            working_dir=Path(tempfile.mkdtemp()),
-            container_helper=container,
-            resolver=resolver,
-        )
-        # Stage 0: scratch-based (no RPMDB), stage 1: real base (final)
-        generator.downstream_parents = [
-            "quay.io/test/scratch-base:latest",
-            "quay.io/test/real-base:latest",
-        ]
-
-        with TemporaryDirectory() as tmpdir:
-            dest_dir = Path(tmpdir)
-            (dest_dir / "Dockerfile").write_text(
-                "FROM scratch-base AS builder\n"
-                "RUN dnf install -y gcc\n"
-                "\n"
-                "FROM real-base\n"
-                "COPY --from=builder /app /app\n"
-            )
-            await generator.generate_lockfile(meta, dest_dir)
-
-        # Stage 0 should be skipped (no RPMDB), stage 1 (final)
-        # should be resolved — only 1 call total
-        self.assertEqual(resolver.resolve.call_count, 1)
-        # Verify the single resolve call was for stage 1 (the final stage)
-        # by checking the image_pullspec kwarg matches the real base
-        resolve_call = resolver.resolve.call_args
-        self.assertIn("quay.io/test/real-base", resolve_call.kwargs.get("image_pullspec", ""))
-
-    async def test_scratch_stage_with_extra_packages_not_skipped(self):
-        """
-        A non-final stage whose base image has no RPMDB but HAS extra
-        install packages (via $(cat ...)) should NOT be skipped — the
-        guard prevents the RPMDB check when packages are present.
-        """
-        container = MagicMock(spec=ContainerImageHelper)
-        container.resolve_to_digest = AsyncMock(
-            side_effect=lambda p: p.split(":")[0] + "@sha256:abc123" if ":" in p and "/" in p else p
-        )
-        container.get_installed_packages = AsyncMock(return_value=[])
-        # Base image has no RPMDB (scratch-like)
-        container.get_installed_packages_from_rpmdb = AsyncMock(return_value=None)
-
-        def _read_file_side_effect(pullspec, filepath):
-            if filepath == "/packages.txt":
-                return "extra-pkg"
-            return ""
-
-        container.read_file_from_image = AsyncMock(side_effect=_read_file_side_effect)
-
-        resolver = MagicMock(spec=RpmResolver)
-        resolver.resolve = AsyncMock(return_value=FAKE_LOCKFILE_DATA.model_copy(deep=True))
-
-        repos = MagicMock()
-        baseos = MagicMock()
-        baseos.name = "rhel-9-baseos-rpms"
-        baseos.baseurl.return_value = "https://example.com/baseos/x86_64/os/"
-        baseos.content_set.return_value = "rhel-9-for-x86_64-baseos-rpms"
-        baseos.cs_optional = False
-        baseos._data.conf.get.return_value = {}
-        repo_map = {"rhel-9-baseos-rpms": baseos}
-        repos.__getitem__ = lambda self_repos, key: repo_map[key]
-
-        meta = MagicMock()
-        meta.distgit_key = "operator-index"
-        meta.get_arches.return_value = ["x86_64"]
-        meta.get_enabled_repos.return_value = {"rhel-9-baseos-rpms"}
-        meta.is_lockfile_generation_enabled.return_value = True
-        meta.is_cross_arch_enabled.return_value = False
-
-        generator = RpmLockfilePrototypeGenerator(
-            repos=repos,
-            working_dir=Path(tempfile.mkdtemp()),
-            container_helper=container,
-            resolver=resolver,
-        )
-        # Stage 0: scratch-based (no RPMDB) but WITH extra packages
-        # Stage 1: real base (final)
-        generator.downstream_parents = [
-            "quay.io/test/scratch-base:latest",
-            "quay.io/test/real-base:latest",
-        ]
-
-        with TemporaryDirectory() as tmpdir:
-            dest_dir = Path(tmpdir)
-            (dest_dir / "Dockerfile").write_text(
-                "FROM scratch-base AS builder\n"
-                "RUN dnf install -y $(cat /packages.txt)\n"
-                "\n"
-                "FROM real-base\n"
-                "COPY --from=builder /app /app\n"
-            )
-            await generator.generate_lockfile(meta, dest_dir)
-
-        # Stage 0 has extra packages from $(cat /packages.txt), so it
-        # should NOT be skipped despite having no RPMDB — both stages
-        # should be resolved
-        self.assertGreaterEqual(resolver.resolve.call_count, 2)
-
-
 class TestNoRpmsConfig(unittest.IsolatedAsyncioTestCase):
     """
     Tests for no_rpms config flag support in generate_lockfile /
@@ -2315,6 +2124,85 @@ class TestNoRpmsConfig(unittest.IsolatedAsyncioTestCase):
         # Stage 0 (no_rpms=true) should be skipped — only stage 1 (final) resolved
         self.assertEqual(gen._resolver.resolve.call_count, 1)
         gen.logger.info.assert_any_call("mirror-gui: stage 0: no_rpms=true in config, skipping RPM resolution")
+
+    async def test_non_final_stage_resolved_regardless_of_rpmdb_probe(self):
+        for rpmdb_result in (None, set(), {"glibc", "rpm"}, RuntimeError("RPMDB query failed")):
+            with self.subTest(rpmdb_result=rpmdb_result):
+                gen = self._make_generator()
+                if isinstance(rpmdb_result, Exception):
+                    gen._container.get_installed_packages_from_rpmdb.side_effect = rpmdb_result
+                else:
+                    gen._container.get_installed_packages_from_rpmdb.return_value = rpmdb_result
+                gen.downstream_parents = ["quay.io/test/base:latest", "build", "build"]
+                meta = self._make_meta([])
+
+                with TemporaryDirectory() as tmpdir:
+                    dest_dir = Path(tmpdir)
+                    (dest_dir / "Dockerfile").write_text(
+                        "FROM base AS build\n"
+                        "COPY install.sh /tmp/install.sh\n"
+                        "RUN bash /tmp/install.sh\n"
+                        "FROM build AS metadata\n"
+                        "RUN generate-metadata\n"
+                        "FROM build\n"
+                        "COPY --from=metadata /metadata /metadata\n"
+                    )
+                    (dest_dir / "install.sh").write_text("dnf install -y test-package\n")
+                    await gen.generate_lockfile(meta, dest_dir)
+                    lockfile = yaml.safe_load((dest_dir / "rpms.lock.yaml").read_text())
+
+                resolved_stages = [call.kwargs["stage_num"] for call in gen._resolver.resolve.call_args_list]
+                self.assertEqual(resolved_stages, [1, 2, 3])
+                self.assertIn(
+                    "quay.io/test/base@sha256:", gen._resolver.resolve.call_args_list[0].kwargs["image_pullspec"]
+                )
+                self.assertTrue(lockfile["arches"])
+                gen._container.get_installed_packages_from_rpmdb.assert_not_awaited()
+
+    async def test_literal_scratch_stage_without_runs_not_resolved(self):
+        gen = self._make_generator()
+        gen.downstream_parents = ["scratch", "quay.io/test/base:latest"]
+        meta = self._make_meta([])
+
+        with TemporaryDirectory() as tmpdir:
+            dest_dir = Path(tmpdir)
+            (dest_dir / "Dockerfile").write_text(
+                "FROM scratch AS empty\nCOPY artifact /artifact\nFROM base\nCOPY --from=empty /artifact /artifact\n"
+            )
+            await gen.generate_lockfile(meta, dest_dir)
+
+        self.assertEqual(gen._resolver.resolve.await_count, 1)
+        self.assertEqual(gen._resolver.resolve.call_args.kwargs["stage_num"], 2)
+        gen._container.get_installed_packages_from_rpmdb.assert_not_awaited()
+
+    async def test_non_final_stage_with_extra_packages_resolved(self):
+        gen = self._make_generator()
+        gen.downstream_parents = ["quay.io/test/base:latest", "build"]
+        gen._container.read_file_from_image.return_value = "extra-pkg"
+        meta = self._make_meta([])
+
+        with TemporaryDirectory() as tmpdir:
+            dest_dir = Path(tmpdir)
+            (dest_dir / "Dockerfile").write_text(
+                "FROM base AS build\n"
+                "RUN dnf install -y $(cat /packages.txt)\n"
+                "FROM build\n"
+                "COPY --from=build /artifact /artifact\n"
+            )
+            await gen.generate_lockfile(meta, dest_dir)
+
+        self.assertEqual([call.kwargs["stage_num"] for call in gen._resolver.resolve.call_args_list], [1, 2])
+        self.assertIn("extra-pkg", gen._resolver.resolve.call_args_list[0].args[0].packages)
+        gen._container.get_installed_packages_from_rpmdb.assert_not_awaited()
+
+    async def test_rpmdb_package_lookup_caches_inconclusive_result(self):
+        gen = self._make_generator()
+        pullspec = "quay.io/test/base@sha256:cached"
+
+        self.assertIsNone(await gen._get_base_image_rpmdb_packages(pullspec, "x86_64"))
+        self.assertIsNone(await gen._get_base_image_rpmdb_packages(pullspec, "x86_64"))
+
+        gen._container.get_installed_packages_from_rpmdb.assert_awaited_once_with(pullspec, "x86_64")
 
     async def test_no_rpms_false_not_skipped(self):
         """Stage with no_rpms=false in builder config proceeds normally."""

@@ -234,7 +234,7 @@ class BaseImageHandler:
         nvr = snapshot_input.nvr
 
         if snapshot_input.is_golang_builder:
-            comp_name = doozer_util.konflux_golang_builder_component_name(nvr)
+            comp_name = doozer_util.konflux_golang_builder_component_name(nvr, distgit_key=snapshot_input.distgit_key)
         else:
             comp_name = doozer_util.konflux_image_component_name(app_name, snapshot_input.distgit_key)
 

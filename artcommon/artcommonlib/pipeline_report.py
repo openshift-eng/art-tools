@@ -14,7 +14,7 @@ import time
 import weakref
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
-from functools import wraps
+from functools import partial, wraps
 
 LOGGER = logging.getLogger(__name__)
 COMPONENT_PREFIX = 'art.openshift.io/component-build-'
@@ -247,6 +247,53 @@ class ComponentReport:
         self.display_name = display_name
         self.dry_run = dry_run
         self._previous_runs = None
+        self._check_definitions = []
+        self._current_run = None
+
+    @best_effort
+    async def configure_checks(self, checks):
+        """Declare enabled checks before building; keep results with their build attempt."""
+        self._check_definitions = [
+            {**check, 'status': 'DryRun' if self.dry_run else 'Pending', 'reason': '', 'url': ''} for check in checks
+        ]
+        await self.reporter.update(self, lambda entry: entry.update(checks=copy.deepcopy(self._check_definitions)))
+
+    def check_callback(self, kind):
+        """Bind updates to this attempt, including while a later retry is running."""
+        return partial(self._update_check, self._current_run, kind)
+
+    @best_effort
+    async def _update_check(self, identity, kind, name, status, *, url='', reason=''):
+        if self.dry_run:
+            return
+
+        def mutate(entry):
+            run = next((run for run in entry['pipelineRuns'] if (run['namespace'], run['name']) == identity), None)
+            if run is None:
+                raise ValueError('Check result has no recorded build attempt')
+            check = next(check for check in run['checks'] if check['kind'] == kind and check['name'] == name)
+            check.update(status=status, url=str(url or ''), reason=str(reason or '')[:500])
+            if run is max(entry['pipelineRuns'], key=lambda run: run['attempt']):
+                entry['checks'] = copy.deepcopy(run['checks'])
+
+        await self.reporter.update(self, mutate)
+
+    @best_effort
+    async def finish_checks(self):
+        """Mark checks that could not start after an earlier failure as not run."""
+
+        def mutate(entry):
+            for check in entry.get('checks', []):
+                if check['status'] == 'Pending':
+                    check.update(status='Skipped', reason='Not run because an earlier step failed')
+            if self._current_run:
+                for run in entry['pipelineRuns']:
+                    if (run['namespace'], run['name']) == self._current_run:
+                        for check in run.get('checks', []):
+                            if check['status'] == 'Pending':
+                                check.update(status='Skipped', reason='Not run because an earlier step failed')
+
+        await self.reporter.update(self, mutate)
 
     async def set_status(self, status, *, reason=''):
         """Set an operation result, capturing earlier runs when starting work."""
@@ -295,6 +342,7 @@ class ComponentReport:
         metadata = data.get('metadata') or {}
         if not metadata.get('name'):
             return
+        self._current_run = (metadata.get('namespace', ''), metadata['name'])
         status = data.get('status') or {}
         condition = next((c for c in status.get('conditions', []) if c.get('type') == 'Succeeded'), {})
         item = {
@@ -319,10 +367,19 @@ class ComponentReport:
                     break
             else:
                 item['attempt'] = max(attempt, max((run['attempt'] for run in runs), default=0) + 1)
+                item['checks'] = copy.deepcopy(self._check_definitions)
                 runs.append(item)
+            if item['status'] in ('Failed', 'Cancelled'):
+                for run in runs:
+                    if (run['namespace'], run['name']) == identity:
+                        for check in run.get('checks', []):
+                            if check['status'] == 'Pending':
+                                check.update(status='Skipped', reason='Not run because the build failed')
             latest = max(runs, key=lambda run: run['attempt'])
             entry['status'] = latest['status']
             entry['reason'] = latest['reason']
+            if 'checks' in latest:
+                entry['checks'] = copy.deepcopy(latest['checks'])
 
         await self.reporter.update(self, mutate)
 

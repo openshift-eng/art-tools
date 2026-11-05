@@ -3,6 +3,8 @@ import unittest
 from types import SimpleNamespace
 from unittest import mock
 
+import click
+from artcommonlib.conforma import resolve_stage_policy
 from artcommonlib.konflux.konflux_build_record import (
     KonfluxBuildOutcome,
     KonfluxBuildRecord,
@@ -10,7 +12,6 @@ from artcommonlib.konflux.konflux_build_record import (
 )
 from artcommonlib.model import Model
 from artcommonlib.variants import BuildVariant
-from doozerlib import constants
 from doozerlib.cli.images_konflux import (
     BundleStageReleaseRelatedImagesCli,
     KonfluxBuildCli,
@@ -25,11 +26,65 @@ from doozerlib.source_resolver import SourceResolver
 
 class TestKueueProductPolicies(unittest.TestCase):
     def test_canonical_product_selects_existing_policies(self):
-        """Select existing Kueue policies by canonical name without legacy policy-map keys."""
-        for policies in (constants.PRODUCT_EC_POLICY_MAP, constants.PRODUCT_TEST_EC_POLICY_MAP):
-            with self.subTest(policies=policies):
-                self.assertEqual(policies.get("kueue"), "rhtap-releng-tenant/registry-art-kueue-stage")
-                self.assertNotIn("kueue-operator", policies)
+        """Resolve canonical and legacy Kueue names through the shared catalog."""
+        for assembly in ("stream", "test"):
+            for product in ("kueue", "kueue-operator"):
+                with self.subTest(assembly=assembly, product=product):
+                    self.assertEqual(
+                        resolve_stage_policy(product, assembly=assembly), "rhtap-releng-tenant/registry-art-kueue-stage"
+                    )
+
+    def test_quay_test_mapping_is_no_longer_missing(self):
+        self.assertEqual(resolve_stage_policy("quay", assembly="test"), "rhtap-releng-tenant/registry-art-quay-stage")
+
+
+class TestKonfluxBuildStagePolicies(unittest.IsolatedAsyncioTestCase):
+    async def test_cli_passes_one_resolved_policy_to_builder(self):
+        for product, assembly, phase in (
+            ("ocp", "stream", "release"),
+            ("ocp", "stream", "pre-release"),
+            ("ocp", "test", "release"),
+            ("ocp", "test", "pre-release"),
+            ("quay", "test", "release"),
+            ("mirror_gui", "stream", "release"),
+            ("unknown", "stream", "release"),
+            ("ocp", "stream", None),
+            ("ocp", "test", None),
+            ("logging", "stream", None),
+        ):
+            with self.subTest(product=product, assembly=assembly, phase=phase):
+                runtime = mock.MagicMock(spec=Runtime)
+                runtime.working_dir = "/tmp"
+                runtime.group = "openshift-4.23"
+                runtime.assembly = assembly
+                runtime.product = product
+                runtime.variant = BuildVariant.OCP
+                runtime.group_config = Model({"software_lifecycle": None if phase is None else {"phase": phase}})
+                runtime.ordered_image_metas.return_value = []
+                runtime.source_resolver = mock.Mock()
+                runtime.konflux_db = mock.Mock()
+                runtime.record_logger = mock.Mock()
+                runtime.logger = mock.Mock()
+                builder = mock.MagicMock()
+                builder.validate_custom_integration_test_scenarios = mock.AsyncMock()
+                builder._konflux_client = mock.AsyncMock()
+                with mock.patch("doozerlib.cli.images_konflux.KonfluxImageBuilder", return_value=builder) as factory:
+                    cli = KonfluxBuildCli(runtime, None, None, "test", "test", None, False, True, None, "auto")
+                    await cli.run()
+                self.assertEqual(
+                    factory.call_args.kwargs["config"].ec_policy_configuration,
+                    (
+                        "rhtap-releng-tenant/registry-art-logging-stage"
+                        if product == "logging"
+                        else (
+                            "ocp-art-tenant/conforma-build-stage-test"
+                            if assembly == "test"
+                            else "rhtap-releng-tenant/registry-ocp-art-stage"
+                        )
+                    )
+                    if phase is None
+                    else resolve_stage_policy(product, assembly=assembly, lifecycle_phase=phase),
+                )
 
 
 class TestKonfluxBundleCli(unittest.IsolatedAsyncioTestCase):
@@ -73,6 +128,41 @@ class TestKonfluxBundleCli(unittest.IsolatedAsyncioTestCase):
         build.nvr = nvr
         return build
 
+    async def test_forced_rebuild_allocates_after_releases_from_other_assemblies(self):
+        operator = self._create_operator_build("operator", "operator-container-1-1.p2")
+        image_meta = mock.Mock()
+        image_meta.get_olm_bundle_short_name.return_value = "operator-bundle"
+
+        async def search(**kwargs):
+            self.assertNotIn("assembly", kwargs["where"])
+            for release in ("3", "11", "2"):
+                yield mock.Mock(release=release)
+
+        self.mock_bundle_db.search_builds_by_fields = mock.Mock(side_effect=search)
+        self.bundle_cli.force = True
+        self.bundle_cli._get_bundle_build_for = mock.AsyncMock(return_value=mock.Mock(release="2"))
+        self.bundle_cli._get_bundle_build_by_nvr = mock.AsyncMock(return_value=None)
+        rebaser = mock.AsyncMock()
+        rebaser.rebase.return_value = "operator-bundle-1-12"
+        builder = mock.AsyncMock()
+        result = await self.bundle_cli._rebase_and_build(rebaser, builder, image_meta, operator)
+        self.assertEqual(result, "operator-bundle-1-12")
+        rebaser.rebase.assert_awaited_once_with(image_meta, operator, "12")
+        builder.build.assert_awaited_once()
+
+    async def test_explicit_forced_release_retains_collision_check(self):
+        self.bundle_cli.force = True
+        self.bundle_cli.release = "7"
+        self.bundle_cli._next_bundle_release = mock.AsyncMock()
+        self.bundle_cli._get_bundle_build_by_nvr = mock.AsyncMock(return_value=None)
+        operator = self._create_operator_build("operator", "operator-container-1-1.p2")
+        image_meta = mock.Mock()
+        rebaser = mock.AsyncMock()
+        await self.bundle_cli._rebase_and_build(rebaser, mock.AsyncMock(), image_meta, operator)
+        rebaser.rebase.assert_awaited_once_with(image_meta, operator, "7")
+        self.bundle_cli._next_bundle_release.assert_not_awaited()
+        self.bundle_cli._get_bundle_build_by_nvr.assert_awaited_once()
+
     async def test_get_bundle_build_by_nvr_searches_without_assembly_filter(self):
         existing_build = mock.Mock(spec=KonfluxBundleBuildRecord)
 
@@ -105,6 +195,7 @@ class TestKonfluxBundleCli(unittest.IsolatedAsyncioTestCase):
 
         self.bundle_cli._get_bundle_build_for = mock.AsyncMock(return_value=None)
         self.bundle_cli._get_bundle_build_by_nvr = mock.AsyncMock(return_value=existing_build)
+        self.bundle_cli._next_bundle_release = mock.AsyncMock(return_value="1")
 
         with self.assertRaisesRegex(
             ValueError,
@@ -183,6 +274,39 @@ class TestKonfluxBundleCli(unittest.IsolatedAsyncioTestCase):
 
 
 class TestKonfluxBuildSelection(unittest.TestCase):
+    def test_build_argument_overrides_accept_equals_and_last_value_wins(self):
+        cli = KonfluxBuildCli(
+            mock.Mock(),
+            None,
+            None,
+            'test',
+            'test',
+            None,
+            False,
+            True,
+            None,
+            'auto',
+            build_args=('RELEASE_VALUE=old', ' RELEASE_VALUE =new=value', 'EMPTY='),
+        )
+        self.assertEqual(cli.build_args, {'RELEASE_VALUE': 'new=value', 'EMPTY': ''})
+
+    def test_malformed_build_argument_is_rejected(self):
+        for arg in ('NO_EQUALS', '=value', ' =value'):
+            with self.subTest(arg=arg), self.assertRaises(click.BadParameter):
+                KonfluxBuildCli(
+                    mock.Mock(),
+                    None,
+                    None,
+                    'test',
+                    'test',
+                    None,
+                    False,
+                    True,
+                    None,
+                    'auto',
+                    build_args=(arg,),
+                )
+
     def test_okd_excludes_dependents_added_during_metadata_expansion(self):
         runtime = mock.Mock(spec=Runtime)
         runtime.variant = BuildVariant.OKD

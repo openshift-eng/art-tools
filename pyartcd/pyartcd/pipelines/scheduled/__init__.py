@@ -10,8 +10,8 @@ from . import (
     schedule_okd_scan,
     schedule_open_reconciliation_prs,
     schedule_scan_plashet_rpms,
-    schedule_stage_testing_scan,
     schedule_verify_release_scan,
+    schedule_verify_stage_testing_scan,
 )
 
 __all__ = [
@@ -22,6 +22,6 @@ __all__ = [
     'schedule_okd_scan',
     'schedule_open_reconciliation_prs',
     'schedule_scan_plashet_rpms',
-    'schedule_stage_testing_scan',
+    'schedule_verify_stage_testing_scan',
     'schedule_verify_release_scan',
 ]

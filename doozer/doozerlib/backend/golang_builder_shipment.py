@@ -21,11 +21,12 @@ import gitlab as python_gitlab
 from artcommonlib import exectools
 from artcommonlib.constants import REDHAT_GITLAB_URL, SHIPMENT_DATA_URL_TEMPLATE
 from artcommonlib.github_auth import build_git_auth_env
+from artcommonlib.konflux.konflux_build_record import Engine, KonfluxBuildOutcome, KonfluxBuildRecord
 from artcommonlib.release_util import isolate_el_version_in_release
 from artcommonlib.rpm_utils import parse_nvr
 from artcommonlib.util import new_roundtrip_yaml_handler
 from doozerlib.constants import ART_IMAGES_BASE_APPLICATION
-from doozerlib.util import konflux_golang_builder_component_name
+from doozerlib.util import GolangBuilderComponentNameError, konflux_golang_builder_component_name
 from elliottlib.shipment_model import (
     ComponentSource,
     Data,
@@ -110,8 +111,23 @@ class GolangBuilderShipmentHandler:
         rebase_repo_url: str,
         rebase_commitish: str,
         env: Optional[str] = None,
+        distgit_key: Optional[str] = None,
     ) -> Optional[str]:
-        """Create shipment MR for one golang builder build (non-fatal inline path)."""
+        """
+        Create shipment MR for one golang builder build (inline path).
+
+        Failures while creating the MR are logged and return ``None``. A build that cannot be
+        mapped to its floating-tag component raises, so it never ships under a wrong tag.
+
+        :param nvr: Golang builder image NVR
+        :param container_image: Digest pullspec of the built image
+        :param rebase_repo_url: Rebase git URL for the snapshot source
+        :param rebase_commitish: Rebase commit for the snapshot source
+        :param env: Shipment environment key in GOLANG_BUILDER_SHIPMENT_RELEASE_PLAN_MAP (default prod)
+        :param distgit_key: Image config key that produced the build, checked against the floating tag
+        :raises GolangBuilderComponentNameError: when the build cannot be mapped to its floating-tag component
+        """
+        konflux_golang_builder_component_name(nvr, distgit_key=distgit_key)
         try:
             golang_group = derive_golang_group([nvr])
             env = env or _DEFAULT_ENV
@@ -156,8 +172,20 @@ class GolangBuilderShipmentHandler:
         nvrs: List[str],
         env: Optional[str] = None,
     ) -> Optional[str]:
-        """Create shipment MR from NVR list (CLI path; may use elliott for snapshot)."""
+        """
+        Create shipment MR from NVR list (CLI path; may use elliott for snapshot).
+
+        Every NVR is checked against the image config recorded in the Konflux DB before any repo is touched,
+        so variant configs (e.g. ``.rhel9-6``) cannot publish the shared floating tag.
+
+        :param nvrs: Golang builder image NVRs
+        :param env: Shipment environment key in GOLANG_BUILDER_SHIPMENT_RELEASE_PLAN_MAP (default prod)
+        :raises GolangBuilderComponentNameError: when an NVR cannot be verified or mapped to its floating-tag component
+        """
         nvrs = sorted(nvrs)
+        distgit_keys = await self._lookup_distgit_keys(nvrs)
+        for nvr in nvrs:
+            konflux_golang_builder_component_name(nvr, distgit_key=distgit_keys[nvr])
         golang_group = derive_golang_group(nvrs)
         env = env or _DEFAULT_ENV
         release_plan = GOLANG_BUILDER_SHIPMENT_RELEASE_PLAN_MAP[env]
@@ -187,6 +215,39 @@ class GolangBuilderShipmentHandler:
         )
         self.logger.info("Shipment MR created: %s", mr_url)
         return mr_url
+
+    async def _lookup_distgit_keys(self, nvrs: List[str]) -> dict:
+        """
+        Image config key (Konflux build record ``name``) that produced each NVR.
+
+        :param nvrs: Golang builder image NVRs
+        :return: Mapping of NVR to image config key
+        :raises GolangBuilderComponentNameError: when the Konflux DB is unavailable or an NVR has no SUCCESS record
+        :raises IOError: when the Konflux DB query itself fails
+        """
+        if getattr(self.runtime, "konflux_db", None) is None:
+            self.runtime.initialize_konflux_db()
+        konflux_db = getattr(self.runtime, "konflux_db", None)
+        if konflux_db is None:
+            raise GolangBuilderComponentNameError(
+                f"Refusing to ship golang builder NVR(s) {', '.join(nvrs)}: the Konflux DB is unavailable, "
+                f"so the image config that built them cannot be verified"
+            )
+        konflux_db.bind(KonfluxBuildRecord)
+        records = await konflux_db.get_build_records_by_nvrs(
+            nvrs,
+            outcome=KonfluxBuildOutcome.SUCCESS,
+            where={"group": _ELLIOTT_GOLANG_GROUP, "engine": Engine.KONFLUX.value},
+            strict=False,
+            exclude_large_columns=True,
+        )
+        missing = [nvr for nvr, record in zip(nvrs, records) if record is None]
+        if missing:
+            raise GolangBuilderComponentNameError(
+                f"Refusing to ship golang builder NVR(s) {', '.join(missing)}: no SUCCESS Konflux build record "
+                f"in group {_ELLIOTT_GOLANG_GROUP}, so the image config that built them cannot be verified"
+            )
+        return {nvr: record.name for nvr, record in zip(nvrs, records)}
 
     async def _setup_repos(self) -> None:
         self._gitlab_token = os.getenv("GITLAB_TOKEN")

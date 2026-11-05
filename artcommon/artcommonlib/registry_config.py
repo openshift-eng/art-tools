@@ -56,6 +56,7 @@ import base64
 import json
 import logging
 import os
+import shutil
 import tempfile
 from dataclasses import dataclass
 from pathlib import Path
@@ -141,6 +142,19 @@ class RegistryConfig:
     explicit credential takes precedence.  When a registry appears in
     multiple source files, the first file wins.
 
+    Two opt-in behaviors support tools (cosign / go-containerregistry) that look
+    up credentials by hostname only:
+
+    * ``collapse_to_host=True`` adds a bare-hostname alias key for each resolved
+      path-scoped registry (first resolved registry per host wins; an explicit
+      bare-hostname entry is never overwritten).
+    * ``output_dir=True`` writes ``config.json`` into a temp directory so the path
+      can be handed over via ``DOCKER_CONFIG=<dir>``; ``__enter__`` then returns
+      the directory.
+
+    Both default to ``False`` (``__enter__`` returns the ``config.json`` file path
+    and no aliases are added).
+
     Arg(s):
         kubeconfig (str | None): Path to a kubeconfig file. When provided,
             ``oc --kubeconfig=<path> registry login`` is run during ``__enter__``
@@ -149,6 +163,9 @@ class RegistryConfig:
         source_files (list[str] | None): Paths to existing auth.json files to extract from.
         registries (list[str] | None): Registry paths to cherry-pick from source_files / kubeconfig.
         credentials (list[RegistryCredential] | None): Explicit username/password credentials.
+        collapse_to_host (bool): When True, add bare-hostname alias keys (see above).
+        output_dir (bool): When True, write ``config.json`` into a temp directory and
+            return that directory from ``__enter__`` instead of the file path.
     """
 
     def __init__(
@@ -157,6 +174,8 @@ class RegistryConfig:
         registries: Optional[list[str]] = None,
         credentials: Optional[list[RegistryCredential]] = None,
         kubeconfig: Optional[str] = None,
+        collapse_to_host: bool = False,
+        output_dir: bool = False,
     ) -> None:
         """
         Initialize the RegistryConfig context manager.
@@ -166,6 +185,11 @@ class RegistryConfig:
             registries (list[str] | None): Registry paths to extract from source_files / kubeconfig.
             credentials (list[RegistryCredential] | None): Explicit credentials.
             kubeconfig (str | None): Path to a kubeconfig file for ``oc registry login``.
+            collapse_to_host (bool): Emit bare-hostname alias keys in addition to the
+                requested keys (opt-in; default False preserves prior behavior).
+            output_dir (bool): Materialize a DOCKER_CONFIG directory and return it from
+                ``__enter__`` instead of the config.json file path (opt-in; default False
+                preserves the prior file-path return).
 
         Raises:
             ValueError: If no registries or credentials are provided, or if
@@ -175,7 +199,10 @@ class RegistryConfig:
         self._registries = [_normalize_registry_path(r) for r in registries] if registries else []
         self._credentials = list(credentials) if credentials else []
         self._kubeconfig = kubeconfig
+        self._collapse_to_host = collapse_to_host
+        self._output_dir = output_dir
         self._temp_auth_file: Optional[Path] = None
+        self._temp_dir: Optional[Path] = None
         self._merged_auths: dict[str, dict[str, str]] = {}
 
         # Must have at least one registry or credential
@@ -191,7 +218,9 @@ class RegistryConfig:
         Enter the context: resolve credentials and write a temporary auth file.
 
         Return Value(s):
-            str: Path to the temporary auth file containing merged credentials.
+            str: Path to the temporary auth file containing merged credentials, or,
+                when ``output_dir=True``, the path to the temporary directory that
+                contains ``config.json``.
 
         Raises:
             ValueError: If a requested registry is not found in any source file.
@@ -199,6 +228,8 @@ class RegistryConfig:
             RuntimeError: If ``oc registry login`` fails.
         """
         self._resolve_and_write()
+        if self._output_dir:
+            return str(self._temp_dir)
         return str(self._temp_auth_file)
 
     def _run_oc_registry_login(self) -> dict[str, dict]:
@@ -319,6 +350,17 @@ class RegistryConfig:
                 cred.registry,
             )
 
+        # Add bare-hostname alias keys so hostname-only lookups (cosign/go-containerregistry)
+        # find a credential. First registry per host wins; an existing host entry is kept.
+        if self._collapse_to_host:
+            for registry, entry in list(merged.items()):
+                host = registry.split("/", 1)[0]
+                if host == registry:
+                    continue  # already a bare-hostname entry
+                if host not in merged:
+                    merged[host] = entry
+                    logger.debug("Added bare-hostname alias '%s' for '%s'", host, registry)
+
         self._merged_auths = merged
         self._write_temp_file()
 
@@ -391,15 +433,37 @@ class RegistryConfig:
 
     def _write_temp_file(self) -> None:
         """
-        Write merged credentials to a temporary file.
-
-        The file is created with restrictive permissions (0600) via mkstemp.
+        Write merged credentials (0600) to a temp ``config.json``, or, when
+        ``output_dir=True``, to ``config.json`` inside a fresh temp directory.
         """
+        merged_config = {"auths": self._merged_auths}
+
+        if self._output_dir:
+            self._temp_dir = Path(tempfile.mkdtemp(prefix="registry_config_"))
+            config_path = self._temp_dir / "config.json"
+            try:
+                with open(config_path, "w", encoding="utf-8") as f:
+                    json.dump(merged_config, f, indent=2)
+                    f.flush()
+                    os.fsync(f.fileno())
+                os.chmod(config_path, 0o600)
+                self._temp_auth_file = config_path
+                logger.info(
+                    "Wrote %d credentials to %s",
+                    len(self._merged_auths),
+                    config_path,
+                )
+            except Exception:
+                shutil.rmtree(self._temp_dir, ignore_errors=True)
+                self._temp_dir = None
+                self._temp_auth_file = None
+                raise
+            return
+
         try:
             fd, temp_path = tempfile.mkstemp(prefix="registry_config_", suffix=".json", text=True)
             self._temp_auth_file = Path(temp_path)
 
-            merged_config = {"auths": self._merged_auths}
             with os.fdopen(fd, "w", encoding="utf-8") as f:
                 json.dump(merged_config, f, indent=2)
                 f.flush()
@@ -420,9 +484,17 @@ class RegistryConfig:
 
     def __exit__(self, exc_type, exc_val, exc_tb) -> bool:
         """
-        Clean up the merged auth temp file.
+        Clean up the merged auth temp file (or temp directory in output_dir mode).
         """
         self._merged_auths = {}
+        temp_dir = self._temp_dir
+        self._temp_dir = None
+        if temp_dir is not None:
+            self._temp_auth_file = None
+            shutil.rmtree(temp_dir, ignore_errors=True)
+            logger.debug("Removed temp dir %s", temp_dir)
+            return False
+
         path = self._temp_auth_file
         self._temp_auth_file = None
         if path and path.exists():

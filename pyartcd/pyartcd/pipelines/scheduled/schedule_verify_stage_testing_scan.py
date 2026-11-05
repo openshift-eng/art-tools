@@ -1,4 +1,5 @@
 import logging
+import os
 import re
 
 from artcommonlib.constants import REDHAT_GITLAB_URL, SHIPMENT_DATA_URL_TEMPLATE
@@ -48,7 +49,8 @@ async def scan_and_trigger(runtime: Runtime):
         release_name = f"{major}.{minor}.{patch}-{suffix}" if suffix else assembly
         pullspec = f"{RELEASE_IMAGE_REPO}:{release_name}-x86_64"
         try:
-            info = await get_image_info(pullspec)
+            registry_config = os.getenv("QUAY_AUTH_FILE")
+            info = await get_image_info(pullspec, registry_config=registry_config)
         except Exception:
             LOGGER.exception("MR !%s — failed to check image availability for %s", mr.iid, pullspec)
             continue
@@ -68,10 +70,10 @@ async def scan_and_trigger(runtime: Runtime):
             LOGGER.exception("MR !%s — failed to trigger verify-stage-testing for %s", mr.iid, assembly)
 
 
-@cli.command("schedule-stage-testing-scan", short_help="Scan shipment MRs and trigger stage testing")
+@cli.command("schedule-verify-stage-testing-scan", short_help="Scan shipment MRs and trigger stage testing")
 @pass_runtime
 @click_coroutine
-async def schedule_stage_testing_scan(runtime: Runtime):
+async def schedule_verify_stage_testing_scan(runtime: Runtime):
     """Scan GitLab shipment MRs for assemblies needing stage testing.
 
     Lists open MRs with 'stage-release-success' label that have no
@@ -82,7 +84,7 @@ async def schedule_stage_testing_scan(runtime: Runtime):
 
     \b
     Example:
-        artcd schedule-stage-testing-scan
+        artcd schedule-verify-stage-testing-scan
     """
     jenkins.init_jenkins()
     await scan_and_trigger(runtime)

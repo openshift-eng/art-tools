@@ -24,6 +24,7 @@ from elliottlib.cli.verify_docs_approval import (
     extract_advisory_name,
     extract_payload_shas,
     format_report,
+    load_shipment_config,
     run_checks,
 )
 from elliottlib.shipment_model import ReleaseNotes
@@ -481,6 +482,50 @@ class TestRunChecks(unittest.IsolatedAsyncioTestCase):
 
         assert len(results) == 6
         assert all(r.status == "pass" for r in results), results
+
+
+class TestLoadShipmentConfig(unittest.TestCase):
+    """
+    Verify load_shipment_config parses a shipment config and exposes
+    metadata.docs_approval_required (the field driving the opt-out path).
+    """
+
+    @staticmethod
+    def _config_raw(docs_approval_required=None):
+        metadata = {"product": "ocp", "application": "app", "group": "openshift-4.20", "assembly": "4.20.32"}
+        if docs_approval_required is not None:
+            metadata["docs_approval_required"] = docs_approval_required
+        return {
+            "shipment": {
+                "metadata": metadata,
+                "environments": {"stage": {"releasePlan": "p"}, "prod": {"releasePlan": "p"}},
+                "data": {
+                    "releaseNotes": {
+                        "type": "RHSA",
+                        "live_id": 48676,
+                        "description": "desc",
+                        "solution": "n/a",
+                    }
+                },
+            }
+        }
+
+    def test_docs_approval_required_defaults_true(self):
+        runtime = MagicMock()
+        runtime.shipment_gitdata.load_yaml_file.return_value = self._config_raw()
+
+        config = load_shipment_config(runtime, "image.yaml")
+
+        runtime.shipment_gitdata.load_yaml_file.assert_called_once_with("image.yaml")
+        self.assertTrue(config.shipment.metadata.docs_approval_required)
+
+    def test_docs_approval_required_false_when_set(self):
+        runtime = MagicMock()
+        runtime.shipment_gitdata.load_yaml_file.return_value = self._config_raw(docs_approval_required=False)
+
+        config = load_shipment_config(runtime, "image.yaml")
+
+        self.assertFalse(config.shipment.metadata.docs_approval_required)
 
 
 if __name__ == "__main__":

@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import Dict, List, Optional, Sequence, Tuple
 
 import click
+from artcommonlib.conforma import resolve_stage_policy
 from artcommonlib.constants import KONFLUX_DEFAULT_NAMESPACE
 from artcommonlib.konflux.konflux_build_record import (
     KonfluxBuildOutcome,
@@ -103,7 +104,6 @@ class KonfluxRebaseCli:
         image_repo: str,
         message: str,
         push: bool,
-        lockfile_seed_nvrs: Optional[List[str]] = None,
         extra_labels: Optional[dict[str, str]] = None,
     ):
         self.runtime = runtime
@@ -119,7 +119,6 @@ class KonfluxRebaseCli:
         self.push = push
         self.extra_labels = extra_labels or {}
         self.upcycle = runtime.upcycle
-        self.lockfile_seed_nvrs = lockfile_seed_nvrs
 
     @start_as_current_span_async(TRACER, "beta:images:konflux:rebase")
     async def run(self):
@@ -141,7 +140,6 @@ class KonfluxRebaseCli:
             upcycle=self.upcycle,
             force_private_bit=self.embargoed,
             image_repo=self.image_repo,
-            lockfile_seed_nvrs=self.lockfile_seed_nvrs,
             extra_labels=self.extra_labels,
         )
 
@@ -236,15 +234,6 @@ class KonfluxRebaseCli:
     help='Override network mode for Konflux builds. Takes precedence over image and group config settings.',
 )
 @click.option(
-    '--lockfile-seed-nvrs',
-    default=None,
-    metavar='NVRS',
-    help='NVRs of builds whose installed RPMs should seed lockfile generation. '
-    'The distgit key is resolved internally from the build DB. '
-    'Format: NVR[,NVR,...]. '
-    'Example: ironic-container-v4.22.0-assembly.test',
-)
-@click.option(
     '--extra-label',
     multiple=True,
     metavar='KEY=VALUE',
@@ -263,7 +252,6 @@ async def images_konflux_rebase(
     repo_type: str,
     image_repo: str,
     network_mode: Optional[str],
-    lockfile_seed_nvrs: Optional[str],
     extra_label: tuple,
     message: str,
     push: bool,
@@ -273,10 +261,6 @@ async def images_konflux_rebase(
     """
     if network_mode:
         runtime.network_mode_override = network_mode
-
-    parsed_seed_nvrs = None
-    if lockfile_seed_nvrs:
-        parsed_seed_nvrs = [nvr.strip() for nvr in lockfile_seed_nvrs.split(',') if nvr.strip()]
 
     # Parse extra labels from KEY=VALUE format
     extra_labels = {}
@@ -296,7 +280,6 @@ async def images_konflux_rebase(
         image_repo=image_repo,
         message=message,
         push=push,
-        lockfile_seed_nvrs=parsed_seed_nvrs,
         extra_labels=extra_labels,
     )
     await cli.run()
@@ -319,6 +302,7 @@ class KonfluxBuildCli:
         effective_time: str = "now",
         skip_custom_its: bool = False,
         skip_tasks: tuple[str, ...] = (),
+        build_args: tuple[str, ...] = (),
     ):
         self.runtime = runtime
         self.konflux_kubeconfig = konflux_kubeconfig
@@ -328,6 +312,13 @@ class KonfluxBuildCli:
         self.registry_auth_file = registry_auth_file
         self.skip_checks = skip_checks
         self.skip_tasks = skip_tasks
+        self.build_args = {}
+        for arg in build_args:
+            key, separator, value = arg.partition('=')
+            key = key.strip()
+            if not separator or not key:
+                raise click.BadParameter('Expected KEY=VALUE', param_hint='--build-arg')
+            self.build_args[key] = value
         self.dry_run = dry_run
         self.plr_template = plr_template
         self.build_priority = build_priority
@@ -359,13 +350,12 @@ class KonfluxBuildCli:
         else:
             group = runtime.group
 
-        product = runtime.product
-        if runtime.assembly == "test":
-            ec_policy = constants.PRODUCT_TEST_EC_POLICY_MAP.get(product)
-            prega_ec_policy = constants.PRODUCT_TEST_PREGA_EC_POLICY_MAP.get(product, ec_policy)
-        else:
-            ec_policy = constants.PRODUCT_EC_POLICY_MAP.get(product)
-            prega_ec_policy = constants.PRODUCT_PREGA_EC_POLICY_MAP.get(product, ec_policy)
+        lifecycle = runtime.group_config.get("software_lifecycle")
+        ec_policy = resolve_stage_policy(
+            runtime.product,
+            lifecycle_phase=lifecycle.get("phase") if lifecycle is not None else None,
+            assembly=runtime.assembly,
+        )
 
         integration_test_scenarios = runtime.group_config.get("konflux", {}).get("integration_test_scenarios", [])
         if integration_test_scenarios is Missing or integration_test_scenarios is None:
@@ -418,12 +408,12 @@ class KonfluxBuildCli:
             plr_template=self.plr_template,
             build_priority=self.build_priority,
             ec_policy_configuration=ec_policy,
-            prega_ec_policy_configuration=prega_ec_policy,
             skip_ec_verify=self.skip_ec_verify,
             effective_time=self.effective_time,
             integration_test_scenarios=tuple(dict.fromkeys(integration_test_scenarios)),
             integration_test_snapshot_annotations=dict(integration_test_snapshot_annotations),
             skip_custom_its=self.skip_custom_its,
+            build_args=self.build_args,
         )
         builder = KonfluxImageBuilder(config=config, record_logger=runtime.record_logger)
         await builder.validate_custom_integration_test_scenarios()
@@ -666,6 +656,13 @@ class KonfluxBuildCli:
     help='The namespace to use for Konflux cluster connections.',
 )
 @click.option('--image-repo', default=constants.KONFLUX_DEFAULT_IMAGE_REPO, help='Push images to the specified repo.')
+@click.option(
+    '--build-arg',
+    'build_args',
+    multiple=True,
+    metavar='KEY=VALUE',
+    help='Override a Docker build argument. Repeatable; takes precedence over image and group configuration.',
+)
 @click.option('--skip-checks', default=False, is_flag=True, help='Skip all post build checks')
 @click.option(
     '--skip-task',
@@ -727,6 +724,7 @@ async def images_konflux_build(
     skip_ec_verify: bool,
     effective_time: str,
     skip_custom_its: bool,
+    build_args: tuple[str, ...],
 ):
     if network_mode:
         runtime.network_mode_override = network_mode
@@ -746,6 +744,7 @@ async def images_konflux_build(
         skip_ec_verify=skip_ec_verify,
         effective_time=effective_time,
         skip_custom_its=skip_custom_its,
+        build_args=build_args,
     )
     await cli.run()
 
@@ -883,16 +882,7 @@ class KonfluxBundleCli:
                         logger.info("Skipping because --force is not set")
                         await report.set_status('Reused', reason='Existing successful bundle reused')
                         return bundle_build.nvr
-                    input_release = str(int(bundle_build.release) + 1)
-                    logger.info(
-                        "Force rebuild requested because --force is set; release string will be %s", input_release
-                    )
-                else:
-                    input_release = "1"
-                    logger.info(
-                        "No previous bundle build found; a new bundle build will be created with release string %s",
-                        input_release,
-                    )
+                input_release = await self._next_bundle_release(image_meta, operator_build)
 
             logger.info("Rebasing OLM bundle...")
             nvr = await rebaser.rebase(image_meta, operator_build, input_release)
@@ -915,6 +905,17 @@ class KonfluxBundleCli:
             await builder.build(image_meta, git_auth_secret=git_auth_secret)
             logger.info("Bundle build complete")
             return nvr
+
+    async def _next_bundle_release(self, image_meta: ImageMetadata, operator_build: KonfluxBuildRecord) -> str:
+        """Allocate after all successful releases of this operator, across assemblies."""
+        where = {
+            "name": image_meta.get_olm_bundle_short_name(),
+            "group": self.runtime.group,
+            "operator_nvr": operator_build.nvr,
+            "outcome": str(KonfluxBuildOutcome.SUCCESS),
+        }
+        releases = [int(build.release) async for build in self._db_for_bundles.search_builds_by_fields(where=where)]
+        return str(max(releases, default=0) + 1)
 
     @start_as_current_span_async(TRACER, "images:konflux:bundle")
     async def run(self):

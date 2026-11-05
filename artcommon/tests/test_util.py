@@ -1616,12 +1616,139 @@ class TestExtractVersionedRelatedImagesFromFBC(unittest.TestCase):
     @patch('builtins.open', new_callable=MagicMock)
     @patch('os.path.exists')
     @patch('os.listdir')
+    def test_explicit_source_bundle_version(self, mock_listdir, mock_exists, mock_open, mock_cmd):
+        digest_only = "quay.io/test/art-fbc@sha256:abc123"
+        for assembly in ("1.0.1", "stream", None):
+            with self.subTest(assembly=assembly):
+                self._mock_catalog_extraction(mock_listdir, mock_exists, mock_open, mock_cmd, self.catalog_multi_bundle)
+                result = asyncio.run(
+                    extract_versioned_related_images_from_fbc(
+                        digest_only,
+                        self.product,
+                        assembly=assembly,
+                        bundle_version="1.0.0",
+                    )
+                )
+                self.assertEqual(len(result), 1)
+                self.assertIn('sha256:old111', result[0])
+                self.assertNotIn('sha256:new222', str(result))
+
+    @patch('artcommonlib.util.cmd_gather_async', new_callable=AsyncMock)
+    @patch('builtins.open', new_callable=MagicMock)
+    @patch('os.path.exists')
+    @patch('os.listdir')
+    def test_source_bundle_version_precedes_destination(self, mock_listdir, mock_exists, mock_open, mock_cmd):
+        self._mock_catalog_extraction(mock_listdir, mock_exists, mock_open, mock_cmd, self.catalog_multi_bundle)
+        result = asyncio.run(
+            extract_versioned_related_images_from_fbc(
+                "quay.io/test/art-fbc@sha256:abc123",
+                self.product,
+                assembly="1.1.0",
+                bundle_version="1.0.0",
+            )
+        )
+        self.assertEqual(len(result), 1)
+        self.assertIn('sha256:old111', str(result))
+
+    @patch('artcommonlib.util.cmd_gather_async', new_callable=AsyncMock)
+    @patch('builtins.open', new_callable=MagicMock)
+    @patch('os.path.exists')
+    @patch('os.listdir')
+    def test_missing_source_bundle_fails_closed(self, mock_listdir, mock_exists, mock_open, mock_cmd):
+        self._mock_catalog_extraction(mock_listdir, mock_exists, mock_open, mock_cmd, self.catalog_multi_bundle)
+        with self.assertRaisesRegex(RuntimeError, "No olm.bundle named.*1.0.2"):
+            asyncio.run(
+                extract_versioned_related_images_from_fbc(
+                    "quay.io/test/art-fbc@sha256:abc123",
+                    self.product,
+                    assembly="1.0.3",
+                    bundle_version="1.0.2",
+                )
+            )
+
+    @patch('artcommonlib.util.cmd_gather_async', new_callable=AsyncMock)
+    @patch('builtins.open', new_callable=MagicMock)
+    @patch('os.path.exists')
+    @patch('os.listdir')
     def test_catalog_json_pretty_printed_multiline(self, mock_listdir, mock_exists, mock_open, mock_cmd):
         self._mock_catalog_extraction(mock_listdir, mock_exists, mock_open, mock_cmd, self.catalog_json_content_pretty)
         result = asyncio.run(
             extract_versioned_related_images_from_fbc(self.fbc_pullspec, self.product, assembly="1.0.0")
         )
         self.assertEqual(len(result), 2)
+
+
+class TestGetAssemblyReleaseDate(unittest.TestCase):
+    def _get_date(self, tasks, asynchronous, release_name='4.18.1'):
+        if asynchronous:
+            with patch('artcommonlib.util.aiohttp.ClientSession') as mock_session:
+                session = mock_session.return_value.__aenter__.return_value
+                session.post = AsyncMock()
+                session.get = MagicMock()
+                response = session.get.return_value.__aenter__.return_value
+                response.raise_for_status = MagicMock()
+                response.json = AsyncMock(return_value={'all_ga_tasks': tasks})
+                return asyncio.run(util.get_assembly_release_date_async(release_name))
+        with patch('artcommonlib.util.requests.Session') as mock_session:
+            mock_session.return_value.get.return_value.json.return_value = {'all_ga_tasks': tasks}
+            return util.get_assembly_release_date(release_name, 'openshift-4.18')
+
+    def test_does_not_confuse_patch_version_prefixes(self):
+        tasks = [
+            {'name': '4.18.10 in Fast Channel', 'date_start': '2026-10-20'},
+            {'name': '4.18.1 in Fast Channel', 'date_start': '2026-09-01'},
+        ]
+        for asynchronous in (False, True):
+            with self.subTest(asynchronous=asynchronous):
+                self.assertEqual(self._get_date(tasks, asynchronous), '2026-Sep-01')
+
+    def test_near_versions_do_not_satisfy_missing_release(self):
+        for title in (
+            '4.18.10 in Fast Channel',
+            '14.18.1 in Fast Channel',
+            '4.18.11 in Fast Channel',
+            '4x18x1 in Fast Channel',
+            '4.18.1.1 in Fast Channel',
+            '4.18.1-rc.1 in Fast Channel',
+            '4.18.1+build.1 in Fast Channel',
+            'prefix4.18.1 in Fast Channel',
+            '4.18.1suffix in Fast Channel',
+        ):
+            for asynchronous in (False, True):
+                with self.subTest(title=title, asynchronous=asynchronous):
+                    tasks = [{'name': title, 'date_start': '2026-10-20'}]
+                    with self.assertRaisesRegex(ValueError, 'Assembly release date not found for 4.18.1'):
+                        self._get_date(tasks, asynchronous)
+
+    def test_matches_exact_and_decorated_titles(self):
+        for title in ('4.18.1', '4.18.1 in Fast Channel', 'OpenShift (4.18.1): GA', '[4.18.1], release'):
+            for asynchronous in (False, True):
+                with self.subTest(title=title, asynchronous=asynchronous):
+                    tasks = [{'name': title, 'date_start': '2026-09-01'}]
+                    self.assertEqual(self._get_date(tasks, asynchronous), '2026-Sep-01')
+
+    def test_matches_complete_prerelease_and_build_names(self):
+        for release_name in ('4.18.1-rc.1', '4.18.1+build.1'):
+            for asynchronous in (False, True):
+                with self.subTest(release_name=release_name, asynchronous=asynchronous):
+                    tasks = [
+                        {'name': f'{release_name}0 in Fast Channel', 'date_start': '2026-10-20'},
+                        {'name': f'{release_name} in Fast Channel', 'date_start': '2026-09-01'},
+                    ]
+                    self.assertEqual(self._get_date(tasks, asynchronous, release_name), '2026-Sep-01')
+
+    def test_empty_schedule_raises(self):
+        for asynchronous in (False, True):
+            with self.subTest(asynchronous=asynchronous):
+                with self.assertRaisesRegex(ValueError, 'Assembly release date not found for 4.18.1'):
+                    self._get_date([], asynchronous)
+
+    @patch('artcommonlib.util.requests.Session')
+    def test_explicit_date_does_not_query_schedule(self, mock_session):
+        for date in ('2026-09-01', '2026-Sep-01'):
+            with self.subTest(date=date):
+                self.assertEqual(util.get_assembly_release_date('4.18.1', 'openshift-4.18', date), '2026-Sep-01')
+        mock_session.assert_not_called()
 
 
 class TestGetInflight(unittest.TestCase):
@@ -1779,6 +1906,7 @@ class TestResolveKonfluxFbcStageReleasePlan(unittest.TestCase):
             ("multicluster-engine", 2, 11): "mce-advisory-stage-auto-2-11",
             ("multicluster-engine", 2, 17): "mce-advisory-stage-auto-2-17",
             ("multicluster-engine", 5, 0): "mce-advisory-stage-auto-5-0",
+            ("multicluster-engine", 5, 1): "mce-advisory-stage-auto-5-1",
             ("ocp", 4, 12): "ocp-art-advisory-stage-auto-4-12",
             ("ocp", 4, 13): "ocp-art-advisory-stage-auto-4-13",
             ("ocp", 4, 14): "ocp-art-advisory-stage-auto-4-14",
@@ -1800,6 +1928,15 @@ class TestResolveKonfluxFbcStageReleasePlan(unittest.TestCase):
             ("openshift-opentelemetry-operator", 0, 158): "rhosdt-advisory-stage-auto-0-158",
             ("zero-trust-workload-identity-manager", 1, 0): "zt-advisory-stage-auto-1-0",
             ("zero-trust-workload-identity-manager", 1, 1): "zt-advisory-stage-auto-1-1",
+            ("oadp", 1, 3): "oadp-advisory-stage-auto-1-3",
+            ("oadp", 1, 4): "oadp-advisory-stage-auto-1-4",
+            ("oadp", 1, 5): "oadp-advisory-stage-auto-1-5",
+            ("oadp", 1, 6): "oadp-advisory-stage-auto-1-6",
+            ("mta", 8, 0): "mta-advisory-stage-auto-8-0",
+            ("mta", 8, 1): "mta-advisory-stage-auto-8-1",
+            ("mta", 8, 2): "mta-advisory-stage-auto-8-2",
+            ("mta", 8, 3): "mta-advisory-stage-auto-8-3",
+            ("rhmtc", 1, 8): "mtc-advisory-stage-auto-1-8",
         }
 
         for (product, major, minor), expected_plan in expected_plans.items():

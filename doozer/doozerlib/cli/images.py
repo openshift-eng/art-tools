@@ -21,7 +21,7 @@ from artcommonlib.format_util import color_print, green_print, yellow_print
 from artcommonlib.konflux.konflux_build_record import KonfluxBuildOutcome, KonfluxBuildRecord
 from artcommonlib.model import Missing, Model
 from artcommonlib.pushd import Dir
-from artcommonlib.variants import get_build_variant_for_product
+from artcommonlib.variants import BuildVariant, get_build_variant_for_product
 from dockerfile_parse import DockerfileParser
 
 from doozerlib import Runtime, coverity, state
@@ -1226,6 +1226,7 @@ def images_print(runtime, short, show_non_release, only_for_payload, show_base, 
     {image_name} - The container registry image name (e.g. openshift3/ose-ansible)
     {image_name_short} - The container image name without the registry (e.g. ose-ansible)
     {component} - The component identified in the Dockerfile
+    {olm_bundle_component} - The OLM bundle component, or empty for non-operators
     {image} - The image name according to distgit Dockerfile (image_name / image_name_short are faster)
     {version} - The version of the latest brew build
     {release} - The release of the latest brew build
@@ -1242,6 +1243,9 @@ def images_print(runtime, short, show_non_release, only_for_payload, show_base, 
 
     If pattern contains no braces, it will be wrapped with them automatically. For example:
     "build" will be treated as "{build}"
+
+    Enabled selection honors okd.mode for OKD, falling back to top-level mode.
+    Explicit disabled loading includes images regardless of that effective mode.
     """
 
     runtime.initialize(clone_distgits=False, prevent_cloning=True)
@@ -1280,7 +1284,12 @@ def images_print(runtime, short, show_non_release, only_for_payload, show_base, 
         if image.base_only and not show_base:
             continue
         # skip disabled images unless requested
-        if not (image.enabled or runtime.load_disabled):
+        enabled = image.enabled
+        if runtime.variant == BuildVariant.OKD:
+            okd_mode = image.config.get('okd', {}).get('mode')
+            if okd_mode is not None:
+                enabled = okd_mode == 'enabled'
+        if not (enabled or runtime.load_disabled):
             continue
 
         if only_for_payload and image.config.for_payload is not True:
@@ -1310,6 +1319,9 @@ def images_print(runtime, short, show_non_release, only_for_payload, show_base, 
         s = s.replace("{image_name}", image.image_name)
         s = s.replace("{image_name_short}", image.image_name_short)
         s = s.replace("{component}", image.get_component_name())
+        if '{olm_bundle_component}' in s:
+            bundle_component = image.get_olm_bundle_brew_component_name() if image.is_olm_operator else ''
+            s = s.replace('{olm_bundle_component}', bundle_component)
 
         source_url = image.config.content.source.git.url
         s = s.replace("{upstream}", source_url or 'None')

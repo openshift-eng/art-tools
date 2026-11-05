@@ -291,6 +291,11 @@ def is_future_release_date(date_str):
     raise ValueError(f"Unable to parse date string '{date_str}' with any of the supported formats: {formats}")
 
 
+def _release_name_matches_task(release_name: str, task_name: str) -> bool:
+    """Match a literal release token, excluding version, prerelease and build continuations."""
+    return re.search(rf'(?<![\w.+-]){re.escape(release_name)}(?![\w.+-])', task_name) is not None
+
+
 def get_assembly_release_date(assembly, group, date=None):
     """
     Get assembly release release date from release schedule API.
@@ -324,7 +329,7 @@ def get_assembly_release_date(assembly, group, date=None):
     try:
         data = response.json()
         for release in data['all_ga_tasks']:
-            if assembly in release['name']:
+            if _release_name_matches_task(assembly, release['name']):
                 # convert date format for advisory usage, 2024-02-13 -> 2024-Feb-13
                 return datetime.strptime(release['date_start'], "%Y-%m-%d").strftime("%Y-%b-%d")
     except KeyError:
@@ -349,7 +354,7 @@ async def get_assembly_release_date_async(release_name: str):
             response.raise_for_status()
             data = await response.json()
             for release in data['all_ga_tasks']:
-                if release_name in release['name']:
+                if _release_name_matches_task(release_name, release['name']):
                     # convert date format for advisory usage, 2024-02-13 -> 2024-Feb-13
                     return datetime.strptime(release['date_start'], "%Y-%m-%d").strftime("%Y-%b-%d")
     raise ValueError(f'Assembly release date not found for {release_name}')
@@ -1052,7 +1057,7 @@ def parse_version_from_fbc_pullspec(fbc_pullspec: str) -> Optional[str]:
     """
     tag = fbc_pullspec
     if '@' in tag:
-        # Digest-only refs have no version in the pullspec; callers should pass assembly.
+        # Digest-only refs have no version; callers need an explicit bundle version or assembly.
         return None
     if ':' in tag:
         tag = tag.rsplit(':', 1)[-1]
@@ -1298,15 +1303,15 @@ def _fbc_artifact_base_pullspec(fbc_pullspec: str) -> str:
 
 
 async def extract_related_images_from_fbc(fbc_pullspec: str, product: str) -> list[str]:
-    """Extract related image pullspecs for OCP FBC share-sync / catch-up.
+    """Extract related image pullspecs from an OCP FBC without version filtering.
 
     Prefer Konflux's ``related-images.json`` attachment (unreleased delta vs the
     production index). If that artifact is absent, fall back to relatedImages
     from *all* olm.bundle entries in the rendered catalog.
 
     This path is intentionally *not* version-scoped. OCP nightlies use
-    ``assembly=stream`` and digest-only FBC refs; share sync only needs digests
-    that may be missing from ``art-images-share`` (Telco / multi-arch).
+    ``assembly=stream`` and digest-only FBC refs; extraction includes related
+    images regardless of the bundle version.
 
     For layered-product shipping / related-image consistency checks, use
     :func:`extract_versioned_related_images_from_fbc` instead.
@@ -1484,10 +1489,11 @@ async def extract_versioned_related_images_from_fbc(
     assembly: Optional[str] = None,
     *,
     ignore_patch_version: bool = False,
+    bundle_version: Optional[str] = None,
 ) -> list[str]:
     """Extract related images for layered-product shipping / validation.
 
-    Unlike :func:`extract_related_images_from_fbc` (OCP share sync), this path:
+    Unlike :func:`extract_related_images_from_fbc` (unscoped OCP extraction), this path:
 
     * Requires the Konflux ``rendered-catalog`` attachment (not the per-OCP
       ``related-images.json`` delta vs the production index)
@@ -1499,18 +1505,21 @@ async def extract_versioned_related_images_from_fbc(
       and select it by digest, validating the assembly's major/minor train.
       Otherwise use the existing assembly/tag selection below:
 
-      1. Prefer caller-provided ``assembly`` when it is a real release version
+      1. Use an explicit ``bundle_version`` from selected bundle provenance when
+         provided. It must exist in the catalog; no fallback is allowed.
+      2. Prefer caller-provided ``assembly`` when it is a real release version
          (e.g. ``3.18.2``). ``assembly='stream'`` is *not* treated as a version —
          nightlies use stream, so we fall through to the FBC tag/NVR instead.
-      2. Fall back to the version encoded in the FBC pullspec/NVR tag
+      3. Fall back to the version encoded in the FBC pullspec/NVR tag
          (``…-fbc-{version}-{timestamp}…``).
-      3. If a non-stream assembly misses the catalog, also fall back to (2).
+      4. If a non-stream assembly misses the catalog, also fall back to (3).
 
     :param fbc_pullspec: FBC image pullspec
     :param product: Product name for URL transformation (e.g., 'openshift', 'oadp')
     :param assembly: Optional assembly/release version used to select the olm.bundle
     :param ignore_patch_version: Select the FBC's recorded bundle by digest instead of
         assembly version; require the same major/minor release train. Missing provenance fails.
+    :param bundle_version: Actual selected source bundle version, independent of NVR versions
     :return: List of image pullspecs (product images rewritten to art-images)
     """
     ATTACHED_ARTIFACT_TYPE = 'application/vnd.konflux-ci.attached-artifact'
@@ -1610,6 +1619,10 @@ async def extract_versioned_related_images_from_fbc(
                     f"Cannot select bundle for FBC {fbc_pullspec}, assembly {assembly!r}: {exc}"
                 ) from exc
 
+        elif bundle_version:
+            raw_images = _extract_versioned_images_from_catalog_json(catalog_json_path, bundle_version)
+            selected_version = bundle_version.lstrip('v')
+            LOGGER.info("Selected relatedImages using source bundle version '%s'", selected_version)
         elif assembly_for_match:
             try:
                 raw_images = _extract_versioned_images_from_catalog_json(catalog_json_path, assembly_for_match)

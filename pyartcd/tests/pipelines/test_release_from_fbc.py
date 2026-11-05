@@ -1,14 +1,17 @@
 import asyncio
+import os
 import unittest
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import click
+from elliottlib.cli.konflux_release_cli import CreateReleaseCli
 from elliottlib.shipment_model import (
     ComponentSource,
     GitSource,
     Issue,
     Issues,
     ReleaseNotes,
+    ShipmentConfig,
     Snapshot,
     SnapshotComponent,
     SnapshotSpec,
@@ -21,6 +24,8 @@ from pyartcd.pipelines.release_from_fbc import (
     _is_test_shipment_mr,
     _normalize_release_date,
 )
+
+from pyartcd import constants
 
 
 def _make_snapshot(app="oadp-1-4"):
@@ -99,10 +104,12 @@ class TestReleaseFromFbcPipeline(unittest.TestCase):
         self.assertEqual(config.shipment.environments.prod.releasePlan, "n/a")
 
     @patch('pyartcd.pipelines.release_from_fbc._validate_fbc_related_images', new_callable=AsyncMock)
-    def test_related_image_validation_passes_assembly_only_for_layered_products(self, mock_validate):
+    @patch.object(ReleaseFromFbcPipeline, '_load_component_doozer_keys', new_callable=AsyncMock)
+    def test_related_image_validation_passes_assembly_only_for_layered_products(self, mock_load, mock_validate):
         for ocp_optional in [False, True]:
             with self.subTest(ocp_optional=ocp_optional):
                 pipeline = self._make_pipeline(ocp_optional=ocp_optional)
+                pipeline._group_components = {'image'}
                 pipeline._ignore_patch_version = True
 
                 def validate(fbcs, product, **kwargs):
@@ -116,11 +123,20 @@ class TestReleaseFromFbcPipeline(unittest.TestCase):
 
                 self.assertEqual(mock_validate.call_args.kwargs['assembly'], None if ocp_optional else '1.4.5')
                 self.assertEqual(mock_validate.call_args.kwargs['ignore_patch_version'], not ocp_optional)
+                self.assertEqual(
+                    mock_validate.call_args.kwargs['image_components'], None if ocp_optional else {'image'}
+                )
                 self.assertEqual(result, ['image-1.4.5-1'])
                 self.assertEqual(pipeline._fbc_operator_keys, ['operator'])
                 self.assertEqual(pipeline._fbc_operator_by_pullspec, {pipeline.fbc_pullspecs[0]: 'operator'})
                 self.assertEqual(pipeline._fbc_related_nvrs_by_pullspec, {pipeline.fbc_pullspecs[0]: result})
+        mock_load.assert_awaited_once()
 
+    @patch.dict(
+        os.environ,
+        {'DOOZER_DATA_PATH': 'https://github.com/test/custom-build-data', 'DOOZER_DATA_GITREF': 'custom-policy'},
+        clear=True,
+    )
     @patch("pyartcd.pipelines.release_from_fbc.build_fbc_catalogs", new_callable=AsyncMock)
     @patch.object(ReleaseFromFbcPipeline, "_load_component_doozer_keys", new_callable=AsyncMock)
     def test_refresh_fbc_pullspecs_uses_exact_operator_nvrs(self, mock_component_keys, mock_build_fbc_catalogs):
@@ -156,6 +172,8 @@ class TestReleaseFromFbcPipeline(unittest.TestCase):
             ],
         )
         kwargs = mock_build_fbc_catalogs.await_args.kwargs
+        self.assertEqual(kwargs['data_path'], 'https://github.com/test/custom-build-data')
+        self.assertEqual(kwargs['data_gitref'], 'custom-policy')
         self.assertEqual(kwargs["assembly"], "1.4.5")
         self.assertEqual(kwargs["operator_nvrs_by_target"], {"4.19": [operator_nvr], "4.20": [operator_nvr]})
         self.assertTrue(kwargs["force"])
@@ -277,7 +295,7 @@ class TestReleaseFromFbcPipeline(unittest.TestCase):
         self.assertEqual(config.shipment.data.releaseNotes.type, "RHBA")
 
     def test_create_shipment_config_image_without_release_notes(self):
-        """create_shipment_config should produce no data for non-OpenShift image without release_notes."""
+        """Non-auto groups do not add image shipment tags or release notes."""
         pipeline = self._make_pipeline()
         snapshot = _make_snapshot()
 
@@ -285,9 +303,124 @@ class TestReleaseFromFbcPipeline(unittest.TestCase):
 
         self.assertIsNone(config.shipment.data)
 
+    @patch('pyartcd.pipelines.release_from_fbc.load_group_config', new_callable=AsyncMock)
+    def test_generated_image_and_extras_tags_reach_stage_and_prod_release_data(self, load_config):
+        load_config.return_value = {'product': 'quay', 'version': 'auto'}
+        pipeline = self._make_pipeline(group='quay-3.18', assembly='3.18.3')
+        pipeline.product = asyncio.run(pipeline._load_product_from_group_config())
+        load_config.assert_awaited_once_with(
+            group='quay-3.18',
+            assembly='3.18.3',
+            doozer_data_path=os.getenv('DOOZER_DATA_PATH', constants.OCP_BUILD_DATA_URL),
+            doozer_data_gitref=os.getenv('DOOZER_DATA_GITREF') or '',
+        )
+        snapshot = _make_snapshot(app='quay-3-18')
+        for kind in ('image', 'extras'):
+            for release_notes in (None, ReleaseNotes(type='RHSA')):
+                with self.subTest(kind=kind, release_notes=release_notes):
+                    config = pipeline.create_shipment_config(kind, snapshot, release_notes)
+                    dumped = config.model_dump(exclude_unset=True, exclude_none=True)
+                    self.assertEqual(
+                        dumped['shipment']['data']['mapping']['defaults']['tags'],
+                        ['v{{ assembly }}', 'v{{ assembly }}-{{ release_timestamp }}'],
+                    )
+                    shipment = ShipmentConfig.model_validate(dumped).shipment
+                    self.assertEqual(shipment.data.releaseNotes, release_notes)
+                    for env in ('stage', 'prod'):
+                        release = CreateReleaseCli.get_release_config(shipment, env, 'release', 'snapshot')
+                        self.assertEqual(
+                            release.data['mapping']['defaults']['tags'],
+                            ['v3.18.3', 'v3.18.3-{{ release_timestamp }}'],
+                        )
+                        if release_notes is None:
+                            self.assertNotIn('releaseNotes', release.data)
+
+    @patch('pyartcd.pipelines.release_from_fbc.load_group_config', new_callable=AsyncMock)
+    def test_version_policy_uses_selected_build_data_source(self, load_config):
+        """Tag generation reads the same build-data overrides as FBC refresh."""
+        for overrides, expected_path, expected_ref in (
+            ({}, constants.OCP_BUILD_DATA_URL, ''),
+            (
+                {
+                    'DOOZER_DATA_PATH': 'https://github.com/test/custom-build-data',
+                    'DOOZER_DATA_GITREF': 'custom-policy',
+                },
+                'https://github.com/test/custom-build-data',
+                'custom-policy',
+            ),
+            ({'DOOZER_DATA_GITREF': 'custom-policy'}, constants.OCP_BUILD_DATA_URL, 'custom-policy'),
+            ({'DOOZER_DATA_PATH': '/tmp/custom-build-data'}, '/tmp/custom-build-data', ''),
+            (
+                {
+                    'DOOZER_DATA_PATH': 'git@github.com:test/custom-build-data.git',
+                    'DOOZER_DATA_GITREF': 'custom-policy',
+                },
+                'git@github.com:test/custom-build-data.git',
+                'custom-policy',
+            ),
+        ):
+            with self.subTest(overrides=overrides), patch.dict(os.environ, overrides, clear=True):
+                load_config.reset_mock()
+                load_config.return_value = {'product': 'quay', 'version': 'auto'}
+                pipeline = self._make_pipeline(group='quay-3.18', assembly='3.18.3')
+                pipeline.product = asyncio.run(pipeline._load_product_from_group_config())
+                load_config.assert_awaited_once_with(
+                    group='quay-3.18',
+                    assembly='3.18.3',
+                    doozer_data_path=expected_path,
+                    doozer_data_gitref=expected_ref,
+                )
+                self.assertIsNotNone(pipeline.create_shipment_config('image', _make_snapshot()).shipment.data.mapping)
+
+    @patch('pyartcd.pipelines.release_from_fbc.load_group_config', new_callable=AsyncMock)
+    @patch('pyartcd.pipelines.release_from_fbc.build_fbc_catalogs', new_callable=AsyncMock)
+    @patch.object(ReleaseFromFbcPipeline, '_load_component_doozer_keys', new_callable=AsyncMock)
+    def test_local_build_data_with_ref_rejected_before_loading_or_refreshing(self, component_keys, build, load_config):
+        """Do not silently read a different local revision or change the user's checkout."""
+        for data_path in ('/tmp/custom-build-data', '../ocp-build-data', 'file:///tmp/custom-build-data'):
+            with (
+                self.subTest(data_path=data_path),
+                patch.dict(
+                    os.environ, {'DOOZER_DATA_PATH': data_path, 'DOOZER_DATA_GITREF': 'custom-policy'}, clear=True
+                ),
+            ):
+                pipeline = self._make_pipeline()
+                with self.assertRaisesRegex(
+                    ValueError, 'DOOZER_DATA_GITREF cannot be used with a local DOOZER_DATA_PATH'
+                ):
+                    asyncio.run(pipeline._load_product_from_group_config())
+                with self.assertRaisesRegex(
+                    ValueError, 'DOOZER_DATA_GITREF cannot be used with a local DOOZER_DATA_PATH'
+                ):
+                    asyncio.run(pipeline._refresh_fbc_pullspecs([]))
+        load_config.assert_not_awaited()
+        component_keys.assert_not_awaited()
+        build.assert_not_awaited()
+
+    @patch('pyartcd.pipelines.release_from_fbc.load_group_config', new_callable=AsyncMock)
+    def test_explicit_or_missing_build_version_does_not_generate_tags(self, load_config):
+        pipeline = self._make_pipeline(group='quay-3.18', assembly='3.18.3')
+        snapshot = _make_snapshot(app='quay-3-18')
+        for version in ('3.18.3', None):
+            for kind in ('image', 'extras'):
+                with self.subTest(version=version, kind=kind):
+                    load_config.return_value = {'product': 'quay', 'version': version}
+                    pipeline.product = asyncio.run(pipeline._load_product_from_group_config())
+                    self.assertIsNone(pipeline.create_shipment_config(kind, snapshot).shipment.data)
+                    config = pipeline.create_shipment_config(kind, snapshot, ReleaseNotes(type='RHBA'))
+                    self.assertIsNone(config.shipment.data.mapping)
+
+    @patch('pyartcd.pipelines.release_from_fbc.load_group_config', new_callable=AsyncMock)
+    def test_group_config_read_failure_stops_tag_policy_resolution(self, load_config):
+        pipeline = self._make_pipeline()
+        load_config.side_effect = RuntimeError('Cannot read group config')
+        with self.assertRaisesRegex(RuntimeError, 'Cannot read group config'):
+            asyncio.run(pipeline._load_product_from_group_config())
+
     def test_create_shipment_config_fbc_ignores_release_notes(self):
         """FBC shipments should never have data.releaseNotes, even if release_notes is provided."""
         pipeline = self._make_pipeline()
+        pipeline._auto_version = True
         snapshot = _make_snapshot()
 
         release_notes = ReleaseNotes(type="RHSA")
@@ -886,12 +1019,14 @@ class TestCategorizeNvrs(unittest.TestCase):
         runtime.dry_run = False
         runtime.working_dir = MagicMock()
         runtime.working_dir.absolute.return_value = MagicMock()
-        return ReleaseFromFbcPipeline(
+        pipeline = ReleaseFromFbcPipeline(
             runtime=runtime,
             group="oadp-1.5",
             assembly="1.5.3",
             fbc_pullspecs=["quay.io/example/fbc:v1"],
         )
+        pipeline._group_components = {'oadp-operator-container', 'oadp-operator-metadata-container'}
+        return pipeline
 
     def test_categorize_image_and_fbc(self):
         pipeline = self._make_pipeline()
@@ -899,6 +1034,152 @@ class TestCategorizeNvrs(unittest.TestCase):
         result = pipeline.categorize_nvrs(nvrs)
         self.assertIn("oadp-operator-container-1.5.3-1.el9", result["image"])
         self.assertIn("oadp-operator-fbc-1.5.3-1.el9", result["fbc"])
+
+    def test_membership_includes_images_with_different_versions_and_bundles(self):
+        pipeline = self._make_pipeline()
+        nvrs = ['oadp-operator-container-2.0.0-1', 'oadp-operator-metadata-container-2.0.0-1']
+        self.assertEqual(pipeline.categorize_nvrs(nvrs)['image'], nvrs)
+
+    def test_mce_does_not_include_external_ocp_images_with_the_same_version(self):
+        pipeline = self._make_pipeline()
+        pipeline.group = 'mce-5.0'
+        pipeline.assembly = '5.0.0'
+        pipeline._group_components = {'mce-backplane-operator-container', 'mce-backplane-operator-metadata-container'}
+        external = [
+            'ose-baremetal-cluster-api-controllers-container-v5.0.0-202610271435.p2.g75697ae.assembly.stream.el9',
+            'ose-cluster-api-container-v5.0.0-202610271435.p2.g6f2e5dc.assembly.stream.el9',
+            'postgresql-15-container-1-1793253459',
+        ]
+        internal = [
+            'mce-backplane-operator-container-5.0.0-1',
+            'mce-backplane-operator-metadata-container-5.0.0.202611040018-1',
+        ]
+        result = pipeline.categorize_nvrs(internal + external)
+        self.assertEqual(result['image'], internal)
+        self.assertEqual(result['external'], external)
+
+    def test_missing_component_mapping_does_not_silently_exclude_images(self):
+        pipeline = self._make_pipeline()
+        pipeline._group_components = None
+        with self.assertRaisesRegex(RuntimeError, 'Component mappings have not been loaded'):
+            pipeline.categorize_nvrs(['oadp-operator-container-1.5.3-1'])
+
+    @patch('pyartcd.pipelines.release_from_fbc.exectools.cmd_gather_async')
+    def test_load_components_includes_generated_bundles_and_caches_mapping(self, mock_cmd):
+        pipeline = self._make_pipeline()
+        mock_cmd.return_value = (
+            0,
+            'oadp-operator-container: oadp-operator: oadp-operator-metadata-container\n'
+            'custom-operator: custom-image: custom-bundle-container\n'
+            'velero-container: velero: \n',
+            '',
+        )
+        expected = {
+            'oadp-operator-container': 'oadp-operator',
+            'custom-operator': 'custom-image',
+            'velero-container': 'velero',
+        }
+        self.assertEqual(asyncio.run(pipeline._load_component_doozer_keys()), expected)
+        self.assertEqual(asyncio.run(pipeline._load_component_doozer_keys()), expected)
+        self.assertEqual(
+            pipeline._group_components,
+            {*expected, 'oadp-operator-metadata-container', 'custom-bundle-container'},
+        )
+        mock_cmd.assert_awaited_once()
+        command = mock_cmd.await_args.args[0]
+        for option in ['--load-disabled', '--load-wip', '--show-non-release', '--show-base']:
+            self.assertIn(option, command)
+
+    @patch('pyartcd.pipelines.release_from_fbc.exectools.cmd_gather_async')
+    def test_load_components_uses_effective_build_data_and_assembly(self, mock_cmd):
+        cases = [
+            ({}, constants.OCP_BUILD_DATA_URL, 'oadp-1.5'),
+            (
+                {
+                    'DOOZER_DATA_PATH': 'https://github.com/test/custom-build-data',
+                    'DOOZER_DATA_GITREF': 'pinned-revision',
+                },
+                'https://github.com/test/custom-build-data',
+                'oadp-1.5@pinned-revision',
+            ),
+            ({'DOOZER_DATA_PATH': '/tmp/custom-build-data'}, '/tmp/custom-build-data', 'oadp-1.5'),
+        ]
+        for env, data_path, group in cases:
+            with self.subTest(env=env), patch.dict(os.environ, env, clear=True):
+                pipeline = self._make_pipeline()
+                mock_cmd.reset_mock()
+                mock_cmd.return_value = (0, 'oadp-operator-container: oadp-operator: \n', '')
+
+                asyncio.run(pipeline._load_component_doozer_keys())
+
+                mock_cmd.assert_awaited_once()
+                command = mock_cmd.await_args.args[0]
+                self.assertIn(f'--data-path={data_path}', command)
+                self.assertIn(f'--group={group}', command)
+                self.assertIn('--assembly=1.5.3', command)
+
+    @patch.dict(
+        os.environ,
+        {'DOOZER_DATA_PATH': '/tmp/custom-build-data', 'DOOZER_DATA_GITREF': 'pinned-revision'},
+        clear=True,
+    )
+    @patch('pyartcd.pipelines.release_from_fbc.exectools.cmd_gather_async')
+    def test_load_components_rejects_local_build_data_with_gitref(self, mock_cmd):
+        pipeline = self._make_pipeline()
+
+        with self.assertRaisesRegex(ValueError, 'DOOZER_DATA_GITREF cannot be used with a local DOOZER_DATA_PATH'):
+            asyncio.run(pipeline._load_component_doozer_keys())
+
+        mock_cmd.assert_not_awaited()
+        self.assertIsNone(pipeline._component_doozer_keys)
+
+    @patch('pyartcd.pipelines.release_from_fbc.exectools.cmd_gather_async')
+    @patch('pyartcd.pipelines.release_from_fbc._validate_fbc_related_images', new_callable=AsyncMock)
+    def test_mce_run_uses_cached_membership_before_creating_snapshot(self, mock_validate, mock_cmd):
+        pipeline = self._make_pipeline()
+        pipeline.group = 'mce-5.0'
+        pipeline.assembly = '5.0.0'
+        pipeline.check_env_vars = MagicMock()
+        pipeline.setup_working_dir = MagicMock()
+        pipeline._load_product_from_group_config = AsyncMock(return_value='multicluster-engine')
+        pipeline._load_ignore_patch_version_from_group_config = AsyncMock(return_value=False)
+        pipeline.extract_fbc_nvr = MagicMock(return_value='backplane-operator-fbc-5.0.0-1.ocp5.0')
+        pipeline.create_snapshot = AsyncMock(side_effect=RuntimeError('reached snapshot creation'))
+        internal = [
+            'mce-backplane-operator-container-5.0.0-202611040018.p2.g113ec7d.assembly.stream.el9',
+            'mce-backplane-operator-metadata-container-5.0.0.202611040018.p2.g113ec7d.assembly.stream.el9-1',
+        ]
+        mock_validate.return_value = internal + [
+            'ose-cluster-api-container-v5.0.0-202610271435.p2.g6f2e5dc.assembly.stream.el9',
+            'ose-baremetal-cluster-api-controllers-container-v5.0.0-202610271435.p2.g75697ae.assembly.stream.el9',
+            'postgresql-15-container-1-1793253459',
+        ]
+        mock_cmd.return_value = (
+            0,
+            'mce-backplane-operator-container: backplane-operator: mce-backplane-operator-metadata-container\n',
+            '',
+        )
+
+        with self.assertRaisesRegex(RuntimeError, 'reached snapshot creation'):
+            asyncio.run(pipeline.run())
+
+        pipeline.create_snapshot.assert_awaited_once_with(internal)
+        mock_cmd.assert_awaited_once()
+        self.assertEqual(
+            mock_validate.await_args.kwargs['image_components'],
+            {'mce-backplane-operator-container', 'mce-backplane-operator-metadata-container'},
+        )
+
+    @patch('pyartcd.pipelines.release_from_fbc.exectools.cmd_gather_async')
+    def test_load_components_rejects_failed_empty_or_malformed_output(self, mock_cmd):
+        for result in [(1, '', 'Doozer failed'), (0, '', ''), (0, 'invalid output\n', '')]:
+            with self.subTest(result=result):
+                pipeline = self._make_pipeline()
+                pipeline._group_components = None
+                mock_cmd.return_value = result
+                with self.assertRaises(RuntimeError):
+                    asyncio.run(pipeline._load_component_doozer_keys())
+                self.assertIsNone(pipeline._group_components)
 
 
 class TestExtraImageNvrsValidation(unittest.TestCase):
@@ -1815,6 +2096,12 @@ class TestRunWithTemplate(unittest.TestCase):
 class TestOcpOptionalMode(unittest.TestCase):
     """Tests for OCP optional-operator mode (--ocp-optional)."""
 
+    def setUp(self):
+        # These tests isolate MR/build orchestration; validator integration is covered separately.
+        self.enterContext(
+            patch("pyartcd.pipelines.release_from_fbc.validate_snapshot_against_rpa", new_callable=AsyncMock)
+        )
+
     def _make_pipeline(
         self, ocp_optional=False, exclude_nvr_components=None, group="openshift-4.22", assembly="4.22.0"
     ):
@@ -1860,7 +2147,8 @@ class TestOcpOptionalMode(unittest.TestCase):
         self.assertIsNone(kwargs.get('assembly'))
 
     @patch('pyartcd.pipelines.release_from_fbc._validate_fbc_related_images', new_callable=AsyncMock)
-    def test_lp_mode_uses_version_scoped_related_image_extraction(self, mock_validate):
+    @patch.object(ReleaseFromFbcPipeline, '_load_component_doozer_keys', new_callable=AsyncMock)
+    def test_lp_mode_uses_version_scoped_related_image_extraction(self, mock_load, mock_validate):
         mock_validate.return_value = ["op-container-6.4.1-1"]
         pipeline = self._make_pipeline(ocp_optional=False, group="logging-6.4", assembly="6.4.1")
         pipeline.product = "logging"
@@ -1953,6 +2241,7 @@ class TestOcpOptionalMode(unittest.TestCase):
     def test_categorize_default_mode_unchanged(self):
         """Default (non-OCP-optional) mode still uses image/fbc/external."""
         pipeline = self._make_pipeline(ocp_optional=False)
+        pipeline._group_components = {'ose-metallb-operator-container'}
         nvrs = [
             "ose-metallb-operator-container-v4.22.0-202605281227.el9",
             "ose-metallb-operator-fbc-4.22.0-20260528170921",
@@ -2306,7 +2595,7 @@ class TestOcpOptionalMode(unittest.TestCase):
         self.assertIn("extras", config.shipment.data.releaseNotes.synopsis)
 
     def test_create_shipment_config_extras_no_notes_for_non_openshift(self):
-        """extras kind for non-openshift group should have no data when no release notes provided."""
+        """Non-auto groups do not add extras shipment tags or release notes."""
         pipeline = self._make_pipeline(ocp_optional=True, group="oadp-1.4", assembly="1.4.5")
         pipeline.product = "oadp"
         snapshot = _make_snapshot(app="oadp-1-4")
@@ -2486,7 +2775,7 @@ class TestResolveSingleImageKey(unittest.TestCase):
     @patch("pyartcd.pipelines.release_from_fbc.exectools.cmd_gather_async")
     def test_single_extra_nvr_resolves_via_doozer(self, mock_cmd):
         """Single extra NVR resolves component to doozer key via images:print."""
-        mock_cmd.return_value = (0, "oadp-velero-container: oadp-velero\n", "")
+        mock_cmd.return_value = (0, "oadp-velero-container: oadp-velero: \n", "")
         pipeline = self._make_pipeline(extra_image_nvrs=["oadp-velero-container-1.4.5-1.el9"])
         result = asyncio.run(pipeline._resolve_single_image_key())
         self.assertEqual(result, "oadp-velero")
@@ -2494,7 +2783,7 @@ class TestResolveSingleImageKey(unittest.TestCase):
     @patch("pyartcd.pipelines.release_from_fbc.exectools.cmd_gather_async")
     def test_single_extra_nvr_no_container_suffix(self, mock_cmd):
         """Extra NVR without -container suffix is resolved via doozer lookup."""
-        mock_cmd.return_value = (0, "my-custom-build: my-custom-image\n", "")
+        mock_cmd.return_value = (0, "my-custom-build: my-custom-image: \n", "")
         pipeline = self._make_pipeline(extra_image_nvrs=["my-custom-build-1.0.0-1.el9"])
         result = asyncio.run(pipeline._resolve_single_image_key())
         self.assertEqual(result, "my-custom-image")
@@ -2502,7 +2791,7 @@ class TestResolveSingleImageKey(unittest.TestCase):
     @patch("pyartcd.pipelines.release_from_fbc.exectools.cmd_gather_async")
     def test_single_extra_nvr_unresolvable_returns_none(self, mock_cmd):
         """When doozer cannot resolve the component, returns None for group fallback."""
-        mock_cmd.return_value = (0, "other-component: other-image\n", "")
+        mock_cmd.return_value = (0, "other-component: other-image: \n", "")
         pipeline = self._make_pipeline(extra_image_nvrs=["unknown-component-1.0.0-1.el9"])
         result = asyncio.run(pipeline._resolve_single_image_key())
         self.assertIsNone(result)
@@ -2744,7 +3033,7 @@ class TestCreateShipmentMrImageConfigApprovers(unittest.TestCase):
 
         async def mock_gather(cmd):
             if "images:print" in cmd:
-                return (0, "oadp-velero-container: oadp-velero\n", "")
+                return (0, "oadp-velero-container: oadp-velero: \n", "")
             elif "config:print" in cmd:
                 return (0, "images:\n  oadp-velero:\n    QE:\n    - image_user\nrpms: {}\n", "")
             elif "config:read-group" in cmd:

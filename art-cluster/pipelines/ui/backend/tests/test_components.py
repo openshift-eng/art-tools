@@ -26,6 +26,116 @@ def run_with(status='Succeeded', *, terminal=False, builds=None, marker=None, **
 
 
 class ComponentTests(unittest.TestCase):
+    def test_conforma_failure_preserves_native_success(self):
+        checks = [
+            {
+                'kind': 'conforma',
+                'name': 'Conforma',
+                'blocking': True,
+                'status': 'Failed',
+                'url': 'https://konflux.example/ec',
+                'reason': 'Policy failed',
+            }
+        ]
+        result = component_details(run_with(checks=checks, terminal=True))
+        component = result['components'][0]
+        self.assertEqual(component['status'], 'Succeeded')
+        self.assertEqual(component['resultStatus'], 'Failed')
+        self.assertEqual(component['checks'][0]['url'], 'https://konflux.example/ec')
+        self.assertTrue(component['checksRecorded'])
+        self.assertFalse(result['componentReporting']['partial'])
+
+    def test_optional_failure_does_not_fail_component(self):
+        for blocking, expected in ((True, 'Failed'), (False, 'Succeeded')):
+            checks = [{'kind': 'custom', 'name': 'qe', 'blocking': blocking, 'status': 'Failed'}]
+            component = component_details(run_with(checks=checks))['components'][0]
+            self.assertEqual(component['resultStatus'], expected)
+
+    def test_incomplete_optional_check_preserves_success(self):
+        for terminal in (False, True):
+            for status in ('Pending', 'Running', 'Unknown', 'invalid'):
+                with self.subTest(terminal=terminal, status=status):
+                    checks = [
+                        {'kind': 'conforma', 'name': 'Conforma', 'blocking': True, 'status': 'Succeeded'},
+                        {'kind': 'custom', 'name': 'optional-qe', 'blocking': False, 'status': status},
+                    ]
+                    result = component_details(run_with(checks=checks, terminal=terminal))
+                    component = result['components'][0]
+                    expected_status = 'Unknown' if terminal or status not in ('Pending', 'Running') else status
+                    self.assertEqual(component['status'], 'Succeeded')
+                    self.assertEqual(component['resultStatus'], 'Succeeded')
+                    self.assertEqual(component['checks'][1]['status'], expected_status)
+                    self.assertEqual(result['componentReporting']['partial'], expected_status == 'Unknown')
+
+    def test_malformed_check_only_blocks_if_it_might_be_blocking(self):
+        for check, expected in (
+            ({'blocking': False}, 'Succeeded'),
+            ({'blocking': True}, 'Unknown'),
+            ({'blocking': 'false'}, 'Unknown'),
+            ({}, 'Unknown'),
+        ):
+            with self.subTest(check=check):
+                checks = [
+                    {'kind': 'conforma', 'name': 'Conforma', 'blocking': True, 'status': 'Succeeded'},
+                    check,
+                ]
+                result = component_details(run_with(checks=checks, terminal=True))
+                self.assertEqual(result['components'][0]['resultStatus'], expected)
+                self.assertTrue(result['componentReporting']['partial'])
+
+    def test_unfinished_blocking_check_prevents_success(self):
+        for terminal, expected in ((False, 'Running'), (True, 'Unknown')):
+            result = component_details(
+                run_with(
+                    terminal=terminal,
+                    checks=[{'kind': 'conforma', 'name': 'Conforma', 'blocking': True, 'status': 'Running'}],
+                )
+            )
+            self.assertEqual(result['components'][0]['resultStatus'], expected)
+            self.assertEqual(result['componentReporting']['partial'], terminal)
+
+    def test_retry_keeps_old_checks_without_failing_recovered_component(self):
+        checks = [{'kind': 'conforma', 'name': 'Conforma', 'blocking': True, 'status': 'Succeeded'}]
+        failed = [{**checks[0], 'status': 'Failed'}]
+        component = component_details(
+            run_with(
+                checks=checks,
+                builds=[
+                    {'name': 'first', 'status': 'Succeeded', 'attempt': 1, 'checks': failed},
+                    {'name': 'retry', 'status': 'Succeeded', 'attempt': 2, 'checks': checks},
+                ],
+            )
+        )['components'][0]
+        self.assertEqual(component['resultStatus'], 'Succeeded')
+        self.assertEqual(component['pipelineRuns'][0]['checks'][0]['status'], 'Failed')
+
+    def test_legacy_and_disabled_checks_remain_distinct(self):
+        self.assertFalse(component_details(run_with())['components'][0]['checksRecorded'])
+        self.assertTrue(component_details(run_with(checks=[]))['components'][0]['checksRecorded'])
+
+    def test_malformed_checks_do_not_break_build_results(self):
+        for checks in (None, {}, ['bad'], [{'kind': [], 'name': 'bad'}]):
+            result = component_details(run_with(checks=checks))
+            self.assertEqual(result['components'][0]['status'], 'Succeeded')
+            self.assertEqual(result['components'][0]['resultStatus'], 'Unknown')
+            self.assertTrue(result['componentReporting']['partial'])
+
+    def test_invalid_check_links_are_removed(self):
+        component = component_details(
+            run_with(
+                checks=[
+                    {
+                        'kind': 'custom',
+                        'name': 'qe',
+                        'blocking': False,
+                        'status': 'Failed',
+                        'url': 'javascript:alert(1)',
+                    }
+                ]
+            )
+        )['components'][0]
+        self.assertIsNone(component['checks'][0]['url'])
+
     def test_old_runs_have_no_report(self):
         result = component_details({})
         self.assertEqual(result['components'], [])

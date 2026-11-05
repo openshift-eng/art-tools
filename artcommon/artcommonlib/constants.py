@@ -79,7 +79,7 @@ REGISTRY_CI_OPENSHIFT = "registry.ci.openshift.org"
 REGISTRY_REDHAT_IO = "registry.redhat.io"
 REGISTRY_BREW = "brew.registry.redhat.io"
 KONFLUX_DEFAULT_IMAGE_REPO = "quay.io/redhat-user-workloads/ocp-art-tenant/art-images"
-KONFLUX_DEFAULT_IMAGE_SHARE_REPO = "quay.io/redhat-user-workloads/ocp-art-tenant/art-images-share"
+KONFLUX_IMAGE_TEST_REPO = "quay.io/redhat-user-workloads/ocp-art-tenant/art-images-test"
 RHCOS_IMAGE_REPO = "quay.io/redhat-user-workloads/ocp-art-tenant/art-rhcos-images"
 KONFLUX_DEFAULT_FBC_REPO = "quay.io/redhat-user-workloads/ocp-art-tenant/art-fbc"
 
@@ -104,13 +104,6 @@ OCP_RPA_BASE_URL = (
     "https://gitlab.cee.redhat.com/releng/konflux-release-data/-/raw/main/"
     "config/kflux-ocp-p01.7ayg.p1/product/ReleasePlanAdmission/ocp-art"
 )
-OCP_RPA_KINDS = {
-    "image": "ocp-art-advisory",
-    "metadata": "ocp-art-advisory",
-    "extras": "ocp-art-advisory",
-    "microshift-bootc": "ocp-art-advisory",
-}
-OCP_RPA_ENVS = ["stage", "prod"]
 
 COREOS_RHEL10_STREAMS = [
     "rhel-coreos-10",

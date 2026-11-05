@@ -44,7 +44,7 @@ function statusColor(status) {
   if (status === 'Succeeded') return 'green';
   if (status === 'Running') return 'blue';
   if (status === 'Failed' || status?.includes('Timeout')) return 'red';
-  if (status === 'Cancelled') return 'orange';
+  if (status === 'Cancelled' || status === 'Warning') return 'orange';
   return 'grey';
 }
 
@@ -312,7 +312,7 @@ function Runs({ namespace, pipeline = '', embedded = false, filterNamespace = na
     {embedded ? <div className="embedded-runs-heading"><h2>PipelineRuns</h2><span className="count">{total} runs</span></div> : <div className="page-heading"><div><div className="eyebrow">EXECUTION HISTORY</div><Title headingLevel="h1" size="2xl">PipelineRuns</Title><p>Find runs, inspect logs, or rebuild with new values.</p></div><span className="count">{total} runs</span></div>}
     <form className="toolbar run-filters" onSubmit={searchRuns}>
       <input className="search-input" placeholder={pipeline ? 'Search run names' : 'Pipeline or run name'} value={search} onChange={(event) => setSearch(event.target.value)} aria-label="Search runs" />
-      <select value={status} onChange={(event) => setStatus(event.target.value)} aria-label="Status"><option value="">All statuses</option>{['Succeeded', 'Failed', 'Running', 'Cancelled', 'PipelineRunTimeout'].map((item) => <option key={item}>{item}</option>)}</select>
+      <select value={status} onChange={(event) => setStatus(event.target.value)} aria-label="Status"><option value="">All statuses</option>{['Succeeded', 'Warning', 'Failed', 'Running', 'Cancelled', 'PipelineRunTimeout'].map((item) => <option key={item}>{item}</option>)}</select>
       <input type="date" value={since} onChange={(event) => setSince(event.target.value)} aria-label="From date" />
       <input type="date" value={until} onChange={(event) => setUntil(event.target.value)} aria-label="To date" />
       <Button type="submit" variant="primary">Search</Button>

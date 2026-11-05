@@ -8,6 +8,7 @@ from typing import Optional
 import click
 import requests
 import yaml
+from artcommonlib.gitlab import GitLabClient
 from artcommonlib.util import get_release_name
 from requests.adapters import HTTPAdapter
 from urllib3.util import Retry
@@ -210,20 +211,8 @@ def _get_mr_labels(mr_url: str) -> list[str]:
 
 def _set_mr_label(mr_url: str, label: str) -> None:
     """Set a stage-testing label on the MR, removing any other stage-testing labels."""
-    base_url, project_path, mr_iid = _parse_gitlab_mr_url(mr_url)
-    encoded_project = requests.utils.quote(project_path, safe="")
-    api_url = f"{base_url}/api/v4/projects/{encoded_project}/merge_requests/{mr_iid}"
-
-    remove = ",".join(STAGE_TESTING_LABELS - {label})
-    response = _get_session().put(
-        url=api_url,
-        headers=_get_gitlab_headers(),
-        json={"add_labels": label, "remove_labels": remove},
-        timeout=REQUEST_TIMEOUT,
-        verify=ssl.get_default_verify_paths().openssl_cafile,
-    )
-    if response.status_code != 200:
-        raise click.ClickException(f"Failed to update labels on MR: HTTP {response.status_code} {response.reason}")
+    client = GitLabClient.from_url(mr_url)
+    client.add_mr_labels(mr_url, [label], remove_labels=sorted(STAGE_TESTING_LABELS - {label}))
     LOGGER.info("Set label '%s' on MR %s", label, mr_url)
 
 

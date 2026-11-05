@@ -19,6 +19,7 @@ from pydantic import AnyHttpUrl, BaseModel, Field, ValidationError, field_valida
 from .cluster import Gateway, UpstreamError
 from .components import component_details
 from .health import build_health, health_run
+from .messages import lp_rebase_warning, status_message
 from .rebuild import (
     REBUILT_FROM_ANNOTATION,
     REBUILT_FROM_NAME_ANNOTATION,
@@ -187,13 +188,14 @@ def run_summary(run: dict, source: str) -> dict:
     reason = condition.get("reason") or "Unknown"
     if condition.get("status") == "Unknown":
         reason = "Running"
+    warning = lp_rebase_warning(run)
     return {
         "namespace": metadata.get("namespace"),
         "name": metadata.get("name"),
         "uid": metadata.get("uid"),
         "pipeline": pipeline_name(run),
-        "status": reason,
-        "message": condition.get("message", ""),
+        "status": "Warning" if warning else reason,
+        "message": warning or status_message(condition.get("message")),
         "created": metadata.get("creationTimestamp"),
         "started": status.get("startTime"),
         "completed": status.get("completionTime"),
@@ -225,7 +227,7 @@ def event_summary(event: dict) -> dict:
         "object": involved.get("name"),
         "type": event.get("type", "Normal"),
         "reason": event.get("reason", ""),
-        "message": event.get("message", ""),
+        "message": status_message(event.get("message")),
         "count": event.get("count", 1),
         "firstSeen": event.get("firstTimestamp") or event.get("eventTime"),
         "lastSeen": event.get("lastTimestamp") or event.get("eventTime") or metadata.get("creationTimestamp"),

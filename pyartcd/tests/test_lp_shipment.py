@@ -1,8 +1,10 @@
 import asyncio
+import logging
+from copy import deepcopy
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from types import SimpleNamespace
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, call, patch
 
 import pytest
 from artcommonlib.util import new_roundtrip_yaml_handler
@@ -158,10 +160,57 @@ def test_create_shipment_mr_retries_transient_missing_branch(mock_sleep):
 
 
 @patch("pyartcd.lp_shipment.asyncio.sleep", new_callable=AsyncMock)
-def test_create_shipment_mr_does_not_retry_other_errors(mock_sleep):
+@pytest.mark.parametrize("missing_branch_attempts", [0, 6])
+def test_create_shipment_mr_succeeds_within_retry_window(mock_sleep, missing_branch_attempts):
+    """Handle immediate success and branch visibility delayed beyond the old retry window."""
+    source_project = MagicMock()
+    expected_mr = MagicMock()
+    source_project.mergerequests.create.side_effect = [
+        GitlabCreateError({'source_branch': ['does not exist']}, 400, None) for _ in range(missing_branch_attempts)
+    ] + [expected_mr]
+    attributes = {'source_branch': 'prepare-shipment-test'}
+
+    result = asyncio.run(create_shipment_mr_with_retry(source_project, attributes, MagicMock()))
+
+    assert result is expected_mr
+    assert source_project.mergerequests.create.call_args_list == [call(attributes)] * (missing_branch_attempts + 1)
+    expected_delays = [5, 10, 20, 30, 30, 30] if missing_branch_attempts else []
+    assert mock_sleep.await_args_list == [call(delay) for delay in expected_delays]
+
+
+@patch("pyartcd.lp_shipment.monotonic", side_effect=[0, 0, 5, 15, 35, 65, 95, 125])
+@patch("pyartcd.lp_shipment.asyncio.sleep", new_callable=AsyncMock)
+def test_create_shipment_mr_stops_after_retry_window(mock_sleep, mock_monotonic, caplog):
+    """Preserve the GitLab error and log branch context when retries are exhausted."""
+    source_project = MagicMock(path_with_namespace='group/project')
+    error = GitlabCreateError({'source_branch': ['does not exist']}, 400, None)
+    source_project.mergerequests.create.side_effect = error
+    attributes = {'source_branch': 'prepare-shipment-test'}
+
+    with pytest.raises(GitlabCreateError) as exc_info:
+        asyncio.run(create_shipment_mr_with_retry(source_project, attributes, logging.getLogger(__name__)))
+
+    assert exc_info.value is error
+    assert source_project.mergerequests.create.call_args_list == [call(attributes)] * 7
+    assert mock_sleep.await_args_list == [call(delay) for delay in [5, 10, 20, 30, 30, 30]]
+    assert 'branch prepare-shipment-test in project group/project' in caplog.text
+    assert 'after 7 MR creation attempts (125.0s elapsed)' in caplog.text
+
+
+@patch("pyartcd.lp_shipment.asyncio.sleep", new_callable=AsyncMock)
+@pytest.mark.parametrize(
+    "error_message, response_code",
+    [
+        ({'title': ['is invalid']}, 400),
+        ({'source_branch': ['is protected']}, 400),
+        ({'source_branch': ['does not exist']}, 403),
+        ('Internal Server Error', 500),
+    ],
+)
+def test_create_shipment_mr_does_not_retry_other_errors(mock_sleep, error_message, response_code):
     """Keep unrelated GitLab MR creation failures immediate."""
     source_project = MagicMock()
-    source_project.mergerequests.create.side_effect = GitlabCreateError({'title': ['is invalid']}, 400, None)
+    source_project.mergerequests.create.side_effect = GitlabCreateError(error_message, response_code, None)
 
     with pytest.raises(GitlabCreateError):
         asyncio.run(
@@ -952,3 +1001,213 @@ def test_reconcile_creates_new_shipment_directory_inside_repository(monkeypatch)
         assert expected.is_file()
         assert not Path(working_directory, 'shipment').exists()
         repo.commit_push.assert_awaited_once()
+
+
+@pytest.fixture
+def reconciliation_repo(tmp_path):
+    """Provide shipment files and a repository that records writes and pushes."""
+    repo = GitRepository(tmp_path)
+    repo.fetch_switch_branch = AsyncMock()
+    repo.log_diff = AsyncMock()
+    repo.commit_push = AsyncMock(return_value=True)
+    changes = []
+    mr = MagicMock(
+        source_branch='prepare-shipment-6.5.2-20260817161645',
+        labels=['stage-release-success', 'reviewed'],
+    )
+    mr.changes.return_value = {'changes': changes}
+
+    async def write_file(relative_path, content):
+        destination = tmp_path / relative_path
+        destination.write_text(content)
+        return destination
+
+    repo.write_file = AsyncMock(side_effect=write_file)
+
+    def add_file(config, filename, *, new_file=True):
+        metadata = config['shipment']['metadata']
+        path = (
+            tmp_path
+            / 'shipment'
+            / metadata['product']
+            / metadata['group']
+            / metadata['application']
+            / 'prod'
+            / filename
+        )
+        path.parent.mkdir(parents=True, exist_ok=True)
+        YAML.dump(config, path)
+        path.write_text('# Preserve formatting and comments on unchanged shipments.\n' + path.read_text())
+        changes.append({'new_path': str(path.relative_to(tmp_path)), 'new_file': new_file})
+        return path
+
+    return repo, mr, add_file
+
+
+@pytest.mark.parametrize('fbc', [False, True])
+@pytest.mark.parametrize('dry_run', [False, True])
+def test_reconcile_preserves_unchanged_stage_outputs(reconciliation_repo, fbc, dry_run):
+    """An unchanged shipment keeps its exact file, outputs, and successful MR status."""
+    repo, mr, add_file = reconciliation_repo
+    desired = _shipment(
+        fbc=fbc,
+        nvr='cluster-logging-operator-fbc-6.5.2-1.ocp4.19' if fbc else None,
+        release_notes=not fbc,
+    )
+    existing = deepcopy(desired)
+    stage = existing['shipment']['environments']['stage']
+    if fbc:
+        stage['result'] = {'pipeline': 'stage-ci'}
+    else:
+        stage['advisory'] = {'url': 'stage-advisory', 'internal_url': 'internal-stage-advisory'}
+    kind = 'fbc' if fbc else 'image'
+    path = add_file(existing, f'6.5.2.{kind}.2026081716164507.yaml')
+    original = path.read_bytes()
+
+    changed = asyncio.run(
+        reconcile_shipment_mr(
+            repo, mr, {kind: ShipmentConfig(**desired)}, include_fbc_ocp_version=True, dry_run=dry_run
+        )
+    )
+
+    assert not changed
+    assert path.read_bytes() == original
+    assert mr.labels == ['stage-release-success', 'reviewed']
+    mr.save.assert_not_called()
+    repo.write_file.assert_not_awaited()
+    repo.commit_push.assert_not_awaited()
+
+
+@pytest.mark.parametrize('dry_run', [False, True])
+@pytest.mark.parametrize(
+    'change', ['fbc-build', 'fbc-plan', 'image-build', 'image-notes', 'image-plan', 'manual-field', 'invalid-stage']
+)
+def test_reconcile_invalidates_only_changed_shipment(reconciliation_repo, change, dry_run):
+    """Any changed input invalidates stage outputs while retaining the matching filename."""
+    repo, mr, add_file = reconciliation_repo
+    fbc = change.startswith('fbc') or change == 'manual-field'
+    existing = _shipment(
+        fbc=fbc,
+        nvr='cluster-logging-operator-fbc-6.5.2-1.ocp4.19' if fbc else None,
+        release_notes=not fbc,
+    )
+    desired = deepcopy(existing)
+    existing['shipment']['environments']['stage']['result'] = {'pipeline': 'stage-ci'}
+    if not fbc:
+        existing['shipment']['environments']['stage']['advisory'] = {'url': 'stage-advisory'}
+    if change.endswith('build'):
+        if fbc:
+            desired['shipment']['snapshot']['nvrs'] = ['cluster-logging-operator-fbc-6.5.2-2.ocp4.19']
+        else:
+            desired['shipment']['snapshot']['nvrs'].append('logging-bundle-container-6.5.2-1.el9')
+    elif change.endswith('plan'):
+        desired['shipment']['environments']['stage']['releasePlan'] = 'updated-stage-plan'
+    elif change == 'image-notes':
+        desired['shipment']['data']['releaseNotes']['description'] = 'Updated release notes'
+    elif change == 'invalid-stage':
+        existing['shipment']['environments']['stage'] = None
+    else:
+        existing['shipment']['manual'] = {'field': 'discarded'}
+    kind = 'fbc' if fbc else 'image'
+    path = add_file(existing, f'6.5.2.{kind}.2026081716164507.yaml')
+
+    async def commit_push(*_args, **_kwargs):
+        assert mr.labels == ['reviewed']
+        mr.save.assert_called_once_with()
+        return True
+
+    repo.commit_push.side_effect = commit_push
+
+    changed = asyncio.run(
+        reconcile_shipment_mr(
+            repo, mr, {kind: ShipmentConfig(**desired)}, include_fbc_ocp_version=False, dry_run=dry_run
+        )
+    )
+
+    assert changed
+    assert YAML.load(path) == desired
+    repo.write_file.assert_awaited_once()
+    if dry_run:
+        assert mr.labels == ['stage-release-success', 'reviewed']
+        mr.save.assert_not_called()
+        repo.commit_push.assert_not_awaited()
+    else:
+        repo.commit_push.assert_awaited_once()
+
+
+def test_reconcile_image_change_preserves_nine_unchanged_fbcs(reconciliation_repo):
+    """Adding an image bundle must not clear existing results from unchanged FBCs."""
+    repo, mr, add_file = reconciliation_repo
+    desired_image = _shipment()
+    existing_image = deepcopy(desired_image)
+    existing_image['shipment']['environments']['stage']['advisory'] = {'url': 'stage-advisory'}
+    image_path = add_file(existing_image, '6.5.2.image.20260817161645.yaml')
+    desired_image['shipment']['snapshot']['nvrs'].append('logging-bundle-container-6.5.2-1.el9')
+    desired_image['shipment']['data']['releaseNotes']['description'] = 'Updated release notes'
+    shipments = {'image': ShipmentConfig(**desired_image)}
+    originals = {}
+    for i, minor in enumerate((12, 14, 15, 16, 17, 18, 19, 20, 21), start=1):
+        desired = _shipment(fbc=True, nvr=f'cluster-logging-operator-fbc-6.5.2-1.ocp4.{minor}', release_notes=False)
+        existing = deepcopy(desired)
+        existing['shipment']['environments']['stage']['result'] = {'pipeline': f'stage-ci-{minor}'}
+        path = add_file(existing, f'6.5.2.fbc.20260817161645{i:02d}.yaml')
+        originals[path] = path.read_bytes()
+        shipments[f'fbc{i:02d}'] = ShipmentConfig(**desired)
+
+    changed = asyncio.run(reconcile_shipment_mr(repo, mr, shipments, include_fbc_ocp_version=False, dry_run=False))
+
+    assert changed
+    assert YAML.load(image_path) == desired_image
+    for path, content in originals.items():
+        assert path.read_bytes() == content
+    repo.write_file.assert_awaited_once()
+    assert mr.labels == ['reviewed']
+    mr.save.assert_called_once_with()
+    repo.commit_push.assert_awaited_once()
+
+
+@pytest.mark.parametrize('new_file', [False, True])
+def test_reconcile_adds_and_removes_shipments_without_renaming_retained_files(reconciliation_repo, new_file):
+    """New FBC filenames avoid retained paths even when their identity sorts first."""
+    repo, mr, add_file = reconciliation_repo
+    retained = _shipment(fbc=True, nvr='cluster-logging-operator-fbc-6.5.2-1.ocp4.20', release_notes=False)
+    existing = deepcopy(retained)
+    existing['shipment']['environments']['stage']['result'] = {'pipeline': 'stage-ci'}
+    path = add_file(existing, '6.5.2.fbc.2026081716164501.yaml')
+    original = path.read_bytes()
+    obsolete = _shipment(fbc=True, nvr='cluster-logging-operator-fbc-6.5.2-1.ocp4.21', release_notes=False)
+    obsolete_path = add_file(obsolete, '6.5.2.fbc.2026081716164503.yaml', new_file=new_file)
+    added = _shipment(fbc=True, nvr='cluster-logging-operator-fbc-6.5.2-1.ocp4.19', release_notes=False)
+    unrelated = _shipment(fbc=True, nvr='cluster-logging-operator-fbc-6.5.2-1.ocp4.22', release_notes=False)
+    unrelated['shipment']['metadata']['product'] = 'another-product'
+    unrelated_path = add_file(unrelated, '6.5.2.fbc.2026081716164501.yaml')
+    unrelated_original = unrelated_path.read_bytes()
+
+    async def restore(_repo, relative_path):
+        assert _repo is repo
+        assert relative_path == str(obsolete_path.relative_to(repo._directory))
+        obsolete_path.write_text('restored from main\n')
+
+    with patch('pyartcd.lp_shipment._restore_from_main', new_callable=AsyncMock, side_effect=restore) as restore_main:
+        changed = asyncio.run(
+            reconcile_shipment_mr(
+                repo,
+                mr,
+                {'fbc01': ShipmentConfig(**added), 'fbc02': ShipmentConfig(**retained)},
+                include_fbc_ocp_version=False,
+                dry_run=False,
+            )
+        )
+
+    assert changed
+    assert path.read_bytes() == original
+    assert unrelated_path.read_bytes() == unrelated_original
+    assert YAML.load(path.with_name('6.5.2.fbc.2026081716164502.yaml')) == added
+    if new_file:
+        assert not obsolete_path.exists()
+        restore_main.assert_not_awaited()
+    else:
+        assert obsolete_path.read_text() == 'restored from main\n'
+        restore_main.assert_awaited_once()
+    repo.write_file.assert_awaited_once()
+    repo.commit_push.assert_awaited_once()

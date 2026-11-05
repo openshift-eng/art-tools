@@ -28,6 +28,7 @@ class SignRhcosContainersPipeline:
         rhcos_file: str,
         arch: str,
         signing_env: str | None = None,
+        force_resign: bool = False,
     ):
         """
         Initialize the pipeline.
@@ -37,11 +38,14 @@ class SignRhcosContainersPipeline:
             rhcos_file (str): Path to the rhcos json file
             arch (str): Architecture (e.g., x86_64, aarch64)
             signing_env (str | None): Signing environment (stage or prod)
+            force_resign (bool): Re-sign even when our signature already exists (for backfills).
+                Can also be enabled via the FORCE_RESIGN environment variable.
         """
         self.runtime = runtime
         self.rhcos_file = Path(rhcos_file)
         self.arch = arch
         self.signing_env = signing_env or "stage"
+        self.force_resign = force_resign or os.environ.get("FORCE_RESIGN", "").lower() in ("1", "true", "yes")
         self.logger = self.runtime.logger
 
         if not self.rhcos_file.exists():
@@ -113,6 +117,7 @@ class SignRhcosContainersPipeline:
             signing_key_ids=kms_key_ids,
             rekor_url=rekor_url,
             concurrency_limit=10,
+            force_resign=self.force_resign,
         )
 
         digest_list = list(container_images.values())
@@ -173,12 +178,20 @@ class SignRhcosContainersPipeline:
     default="stage",
     help="Signing environment (determines which KMS key to use)",
 )
+@click.option(
+    "--force/--no-force",
+    "force",
+    default=False,
+    help="Re-sign even when our signature already exists (use for backfills). "
+    "Can also be enabled via the FORCE_RESIGN environment variable.",
+)
 @pass_runtime
 def sign_rhcos_containers(
     runtime: Runtime,
     rhcos_file: str,
     arch: str,
     signing_env: str,
+    force: bool,
 ):
     """
     Sign RHCOS container images for a release.
@@ -211,5 +224,6 @@ def sign_rhcos_containers(
         rhcos_file=rhcos_file,
         arch=arch,
         signing_env=signing_env,
+        force_resign=force,
     )
     pipeline.run()
