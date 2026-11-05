@@ -46,7 +46,6 @@ from pyartcd.fbc_build import build_fbc_catalogs
 from pyartcd.fbc_util import extract_fbc_labels as _extract_fbc_labels
 from pyartcd.fbc_util import (
     extract_ocp_version_from_nvr,
-    is_nvr_from_assembly,
     validate_layered_product_fbc_nvrs,
     validate_layered_product_group_assembly,
 )
@@ -181,6 +180,8 @@ class ReleaseFromFbcPipeline:
         self.dry_run = self.runtime.dry_run
         self.ocp_optional = ocp_optional
         self._ignore_patch_version = False
+        self._component_doozer_keys: Optional[dict[str, str]] = None
+        self._group_components: Optional[set[str]] = None
         self.excluded_components = set(exclude_nvr_components) if exclude_nvr_components else set()
 
         # Setup working directories
@@ -780,24 +781,16 @@ class ReleaseFromFbcPipeline:
             return None
 
     def is_nvr_from_current_group(self, nvr: str) -> bool:
-        """
-        Determine if an NVR belongs to the current group based on version matching.
-
-        This filters out external dependencies like kube-rbac-proxy from openshift-4.x
-        when processing logging-6.x FBCs.
-
-        Example:
-            Assembly "6.3.3" matches NVR version "6.3.3-202602032201..." -> True
-            Assembly "6.3.3" does NOT match NVR version "v4.20.0-202512150315..." -> False
-            Assembly "6.3" does NOT match NVR version "6.30.0-..." -> False (prevents false positives)
-        """
-        return is_nvr_from_assembly(nvr, self.assembly)
+        """Check whether the NVR's component is configured in the group branch."""
+        if self._group_components is None:
+            raise RuntimeError(f"Component mappings have not been loaded for group '{self.group}'")
+        return parse_nvr(nvr)['name'] in self._group_components
 
     def categorize_nvrs(self, nvrs: List[str]) -> Dict[str, List[str]]:
         """
         Categorize NVRs into build kinds.
 
-        In default mode: image / fbc / external (based on group version matching).
+        In default mode: image / fbc / external (based on group component membership).
         In OCP optional mode (--ocp-optional): extras / fbc / external.
         All non-FBC images (including bundles) go into extras by default;
         only explicitly listed --exclude-nvr-components are filtered out.
@@ -1256,6 +1249,8 @@ class ReleaseFromFbcPipeline:
         # OCP optional bundles often use build-suffixed names (*.v4.y.z-<timestamp>)
         # that do not endswith(.v{assembly}); keep the unscoped extractor there.
         version_scoped = not self.ocp_optional
+        if version_scoped:
+            await self._load_component_doozer_keys()
         result = await _validate_fbc_related_images(
             fbc_pullspecs,
             self.product,
@@ -1265,6 +1260,7 @@ class ReleaseFromFbcPipeline:
             assembly=self.assembly if version_scoped else None,
             version_scoped=version_scoped,
             ignore_patch_version=self._ignore_patch_version if version_scoped else False,
+            image_components=self._group_components if version_scoped else None,
         )
         self._fbc_operator_keys = sorted(operator_groups.keys())
         self._fbc_operator_by_pullspec = operator_by_fbc
@@ -1272,32 +1268,50 @@ class ReleaseFromFbcPipeline:
         return result
 
     async def _load_component_doozer_keys(self) -> dict[str, str]:
-        """Load the authoritative component-to-Doozer-key mapping.
+        """Load and cache group image and generated OLM bundle components.
 
         Returns:
-            A mapping from Konflux component names to Doozer image keys.
+            A mapping from image component names to Doozer image keys.
+            Generated bundle components are retained separately for membership
+            checks so FBC refresh still resolves only operator image NVRs.
 
         Raises:
             RuntimeError: If Doozer does not return any component mappings.
         """
+        if self._component_doozer_keys is not None:
+            return self._component_doozer_keys
         cmd = [
             'doozer',
             f'--group={self.group}',
             f'--working-dir={self.doozer_working_dir}',
             '--load-disabled',
+            '--load-wip',
             'images:print',
             '--show-non-release',
+            '--show-base',
             '--short',
-            '{component}: {name}',
+            '{component}: {name}: {olm_bundle_component}',
         ]
-        _, output, _ = await exectools.cmd_gather_async(cmd)
+        rc, output, stderr = await exectools.cmd_gather_async(cmd)
+        if rc:
+            raise RuntimeError(f"Failed to load component mappings for group '{self.group}': {stderr}")
         mappings = {}
-        for line in output.strip().splitlines():
-            parts = line.split(': ', 1)
-            if len(parts) == 2:
-                mappings[parts[0].strip()] = parts[1].strip()
+        components = set()
+        for line in output.splitlines():
+            if not line.strip():
+                continue
+            parts = [part.strip() for part in line.split(': ', 2)]
+            if len(parts) != 3 or not parts[0] or not parts[1]:
+                raise RuntimeError(f"Invalid component mapping for group '{self.group}': {line!r}")
+            component, key, bundle_component = parts
+            mappings[component] = key
+            components.add(component)
+            if bundle_component:
+                components.add(bundle_component)
         if not mappings:
             raise RuntimeError(f"Doozer returned no component mappings for group '{self.group}'")
+        self._component_doozer_keys = mappings
+        self._group_components = components
         return mappings
 
     async def _refresh_fbc_pullspecs(self, source_fbc_nvrs: List[str]) -> List[str]:
@@ -1572,6 +1586,8 @@ class ReleaseFromFbcPipeline:
             empty_categorized = {"extras": [], "fbc": [], "external": []}
         else:
             empty_categorized = {"image": [], "fbc": [], "external": []}
+        if not self.ocp_optional and all_nvrs:
+            await self._load_component_doozer_keys()
         categorized_nvrs = self.categorize_nvrs(all_nvrs) if all_nvrs else empty_categorized
 
         # The key for the primary non-FBC image shipment depends on mode
