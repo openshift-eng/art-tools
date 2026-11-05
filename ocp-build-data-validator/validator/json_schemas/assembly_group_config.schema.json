@@ -780,7 +780,11 @@
             },
             "cachi2!": {"$ref": "#/properties/okd/properties/konflux/properties/cachi2"},
             "cachi2?": {"$ref": "#/properties/okd/properties/konflux/properties/cachi2"},
-            "cachi2-": {}
+            "cachi2-": {},
+            "network_mode": {"type": "string", "enum": ["hermetic", "internal-only", "open"]},
+            "network_mode!": {"$ref": "#/properties/okd/properties/konflux/properties/network_mode"},
+            "network_mode?": {"$ref": "#/properties/okd/properties/konflux/properties/network_mode"},
+            "network_mode-": {}
           },
           "additionalProperties": false
         },
