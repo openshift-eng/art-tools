@@ -1,5 +1,7 @@
 import re
+import tempfile
 import unittest
+from pathlib import Path
 from unittest import mock
 
 from artcommonlib.konflux.konflux_build_record import (
@@ -8,6 +10,7 @@ from artcommonlib.konflux.konflux_build_record import (
     KonfluxFbcBuildRecord,
 )
 from artcommonlib.model import Model
+from doozerlib import constants
 from doozerlib.cli.fbc import FbcImportCli, FbcRebaseAndBuildCli
 from doozerlib.exceptions import DoozerFatalError
 from doozerlib.runtime import Runtime
@@ -516,3 +519,54 @@ class TestFbcRebaseAndBuildCli(unittest.IsolatedAsyncioTestCase):
                 self.assertEqual(query["where"]["assembly"], self.runtime.assembly)
                 self.assertEqual(query["array_contains"], {"bundle_nvrs": bundle_build.nvr})
                 self.assertEqual(query["limit"], 1)
+
+    async def test_skip_rebase_builds_existing_source_and_reports_its_nvr(self):
+        self.fbc_cli.skip_rebase = True
+        operator_meta = mock.Mock(distgit_key="test-operator")
+        bundle_build = self._create_mock_bundle_build("bundle", "bundle-1-1", "operator-1-1")
+        importer = mock.AsyncMock()
+        rebaser = mock.AsyncMock()
+        builder = mock.AsyncMock()
+        builder.build.return_value = (
+            "test-pipelinerun",
+            {
+                "status": {
+                    "results": [
+                        {"name": "IMAGE_URL", "value": "quay.io/test/image:test-fbc-1.0.0-previous"},
+                        {"name": "IMAGE_DIGEST", "value": "sha256:abc123"},
+                    ]
+                }
+            },
+        )
+        with tempfile.TemporaryDirectory() as working_dir:
+            self.runtime.working_dir = working_dir
+            dockerfile = Path(
+                working_dir, constants.WORKING_SUBDIR_KONFLUX_FBC_SOURCES, "test-operator", "catalog.Dockerfile"
+            )
+            dockerfile.parent.mkdir(parents=True)
+            dockerfile.write_text('FROM scratch\nLABEL com.redhat.art.nvr="test-fbc-1.0.0-previous"\n')
+            with mock.patch.object(self.fbc_cli, "_check_existing_fbc_build", new=mock.AsyncMock()) as check:
+                result = await self.fbc_cli._rebase_and_build(
+                    importer, rebaser, builder, operator_meta, bundle_build, git_auth_secret="git-auth"
+                )
+            check.assert_not_awaited()
+        importer.import_from_index_image.assert_not_awaited()
+        rebaser.rebase.assert_not_awaited()
+        builder.build.assert_awaited_once_with(operator_meta, operator_nvr="operator-1-1", git_auth_secret="git-auth")
+        self.assertEqual(result, ("test-fbc-1.0.0-previous", "quay.io/test/image@sha256:abc123"))
+
+    async def test_default_build_resets_and_rebases(self):
+        self.assertFalse(self.fbc_cli.skip_rebase)
+        operator_meta = mock.Mock(distgit_key="test-operator")
+        bundle_build = self._create_mock_bundle_build("bundle", "bundle-1-1", "operator-1-1")
+        importer = mock.AsyncMock()
+        rebaser = mock.AsyncMock()
+        rebaser.rebase.return_value = "test-fbc-1.0.0-new"
+        builder = mock.AsyncMock()
+        builder.build.return_value = ("test-pipelinerun", {"status": {"results": []}})
+        with mock.patch.object(self.fbc_cli, "_check_existing_fbc_build", new=mock.AsyncMock(return_value=None)):
+            result = await self.fbc_cli._rebase_and_build(importer, rebaser, builder, operator_meta, bundle_build)
+        importer.import_from_index_image.assert_awaited_once_with(operator_meta, index_image=None, strict=False)
+        rebaser.rebase.assert_awaited_once_with(operator_meta, bundle_build, "1.0.0", "1")
+        builder.build.assert_awaited_once()
+        self.assertEqual(result[0], "test-fbc-1.0.0-new")
