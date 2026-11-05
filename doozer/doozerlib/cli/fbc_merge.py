@@ -24,6 +24,7 @@ from doozerlib.runtime import Runtime
 )
 @click.option('--major-minor', required=True, help='Target OCP MAJOR.MINOR version, e.g. 4.20 or 5.0.')
 @click.option('--fbc-repo', default=constants.ART_FBC_GIT_REPO, show_default=True)
+@click.option('--fbc-branch', help='Build this existing FBC source branch directly; implies --skip-rebase.')
 @click.option(
     '--image-repo',
     default=constants.KONFLUX_DEFAULT_FBC_REPO,
@@ -46,6 +47,7 @@ async def fbc_merge_layered(
     builds: tuple[str, ...],
     major_minor: str,
     fbc_repo: str,
+    fbc_branch: str | None,
     image_repo: str | None,
     konflux_kubeconfig: str | None,
     konflux_context: str | None,
@@ -66,6 +68,7 @@ async def fbc_merge_layered(
         runtime=runtime,
         target_version=major_minor,
         registry_auth=registry_auth,
+        fbc_branch=fbc_branch,
         fbc_git_repo=fbc_repo,
         fbc_git_username=os.environ.get('FBC_GIT_USERNAME'),
         fbc_git_password=os.environ.get('FBC_GIT_PASSWORD'),
@@ -78,6 +81,7 @@ async def fbc_merge_layered(
         skip_checks=skip_checks,
         skip_tasks=skip_tasks,
     )
+    skip_rebase = skip_rebase or bool(fbc_branch)
     if not skip_rebase:
         await merger.prepare(builds)
     result = await merger.merge(image_repo, skip_rebase=skip_rebase)

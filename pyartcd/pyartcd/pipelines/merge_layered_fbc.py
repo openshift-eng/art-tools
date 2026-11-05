@@ -26,6 +26,7 @@ class MergeLayeredFbcPipeline:
         product: str | None = None,
         data_path: str = constants.OCP_BUILD_DATA_URL,
         fbc_repo: str | None = None,
+        fbc_branch: str | None = None,
         image_repo: str | None = None,
         kubeconfig: str | None = None,
         registry_auth: str | None = None,
@@ -44,13 +45,14 @@ class MergeLayeredFbcPipeline:
         self.output_file = Path(output_file or runtime.working_dir / 'unified-fbc.json').absolute()
         self.options = {
             '--fbc-repo': fbc_repo,
+            '--fbc-branch': fbc_branch,
             '--image-repo': image_repo,
             '--konflux-kubeconfig': kubeconfig,
             '--registry-auth': registry_auth,
             '--plr-template': plr_template,
         }
         self.skip_checks = skip_checks
-        self.skip_rebase = skip_rebase
+        self.skip_rebase = skip_rebase or bool(fbc_branch)
         self.skip_tasks = skip_tasks
 
     async def _resolve_groups(self) -> list[str]:
@@ -148,6 +150,7 @@ class MergeLayeredFbcPipeline:
 @click.option('--product', help='Require all source builds to belong to this product.')
 @click.option('--data-path', default=constants.OCP_BUILD_DATA_URL)
 @click.option('--fbc-repo')
+@click.option('--fbc-branch', help='Build this existing FBC source branch directly; implies --skip-rebase.')
 @click.option('--image-repo')
 @click.option('--kubeconfig', type=click.Path())
 @click.option('--registry-auth', type=click.Path(exists=True), envvar='QUAY_AUTH_FILE')
