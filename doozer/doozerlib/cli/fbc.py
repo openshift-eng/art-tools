@@ -24,6 +24,7 @@ from artcommonlib.util import (
     resolve_konflux_kubeconfig_by_product,
     resolve_konflux_namespace_by_product,
 )
+from dockerfile_parse import DockerfileParser
 from tenacity import retry, stop_after_attempt, wait_exponential
 
 from doozerlib import constants, opm
@@ -511,6 +512,7 @@ class FbcRebaseAndBuildCli:
         insert_missing_entry: bool = False,
         skip_tasks: tuple[str, ...] = (),
         build_priority: str = FBC_BUILD_PRIORITY,
+        skip_rebase: bool = False,
     ):
         self.runtime = runtime
         self.version = version
@@ -533,6 +535,7 @@ class FbcRebaseAndBuildCli:
         self.major_minor = major_minor
         self.build_priority = build_priority
         self.insert_missing_entry = insert_missing_entry
+        self.skip_rebase = skip_rebase
         self._logger = LOGGER.getChild("FbcRebaseAndBuildCli")
         self._db_for_bundles = KonfluxDb()
         self._db_for_bundles.bind(KonfluxBundleBuildRecord)
@@ -687,24 +690,38 @@ class FbcRebaseAndBuildCli:
         """
         report = get_reporter().component('fbc', operator_meta.distgit_key, dry_run=self.dry_run)
         async with report.preparing():
-            existing_fbc_build = await self._check_existing_fbc_build(operator_meta, bundle_build)
-            if existing_fbc_build:
-                self._logger.info(f"Found existing FBC build: {existing_fbc_build.nvr}")
-                if not self.force:
-                    await report.set_status('Reused', reason='Existing successful FBC reused')
-                    return existing_fbc_build.nvr, existing_fbc_build.image_pullspec or ""
-                self._logger.info("Force flag is set, rebuilding FBC")
+            if self.skip_rebase:
+                self._logger.info("Skipping production reset and rebase; building existing FBC source")
+            else:
+                # Bundle NVRs cannot identify manual edits to existing FBC source.
+                existing_fbc_build = await self._check_existing_fbc_build(operator_meta, bundle_build)
+                if existing_fbc_build:
+                    self._logger.info(f"Found existing FBC build: {existing_fbc_build.nvr}")
+                    if not self.force:
+                        await report.set_status('Reused', reason='Existing successful FBC reused')
+                        return existing_fbc_build.nvr, existing_fbc_build.image_pullspec or ""
+                    self._logger.info("Force flag is set, rebuilding FBC")
 
-            if self.reset_to_prod:
-                self._logger.info(f"Resetting FBC source content to production index image for {operator_meta.name}...")
-                await importer.import_from_index_image(operator_meta, index_image=None, strict=False)
+                if self.reset_to_prod:
+                    self._logger.info(
+                        f"Resetting FBC source content to production index image for {operator_meta.name}..."
+                    )
+                    await importer.import_from_index_image(operator_meta, index_image=None, strict=False)
 
-            self._logger.info(f"Rebasing fbc for {operator_meta.name}...")
-            nvr = await rebaser.rebase(operator_meta, bundle_build, self.version, self.release)
+                self._logger.info(f"Rebasing fbc for {operator_meta.name}...")
+                nvr = await rebaser.rebase(operator_meta, bundle_build, self.version, self.release)
             self._logger.info(f"Building fbc for {operator_meta.name}...")
             _, pipelinerun_dict = await builder.build(
                 operator_meta, operator_nvr=bundle_build.operator_nvr, git_auth_secret=git_auth_secret
             )
+            if self.skip_rebase:
+                dockerfile = Path(
+                    self.runtime.working_dir,
+                    constants.WORKING_SUBDIR_KONFLUX_FBC_SOURCES,
+                    operator_meta.distgit_key,
+                    'catalog.Dockerfile',
+                )
+                nvr = DockerfileParser(str(dockerfile)).labels['com.redhat.art.nvr']
             results = pipelinerun_dict.get('status', {}).get('results', [])
             image_url = next((r['value'] for r in results if r['name'] == 'IMAGE_URL'), None)
             image_digest = next((r['value'] for r in results if r['name'] == 'IMAGE_DIGEST'), None)
@@ -913,6 +930,9 @@ class FbcRebaseAndBuildCli:
     help='The namespace to use for Konflux cluster connections.',
 )
 @click.option('--image-repo', default=constants.KONFLUX_DEFAULT_FBC_REPO, help='Push images to the specified repo.')
+@click.option(
+    '--skip-rebase', is_flag=True, help='Build existing FBC source without resetting to production or rebasing'
+)
 @click.option('--skip-checks', default=False, is_flag=True, help='Skip all post build checks')
 @click.option(
     '--skip-task',
@@ -996,6 +1016,7 @@ async def fbc_rebase_and_build(
     insert_missing_entry: bool,
     operator_nvrs: Tuple[str, ...],
     build_priority: str,
+    skip_rebase: bool,
 ):
     """
     Rebase FBC source content and then build it
@@ -1037,5 +1058,6 @@ async def fbc_rebase_and_build(
         prod_registry_auth=prod_registry_auth,
         major_minor=major_minor,
         insert_missing_entry=insert_missing_entry,
+        skip_rebase=skip_rebase,
     )
     await cli.run()

@@ -44,6 +44,7 @@ class BuildFbcPipeline:
         major_minor: Optional[str] = None,
         ignore_locks: bool = False,
         insert_missing_entry: bool = False,
+        skip_rebase: bool = False,
     ):
         self.runtime = runtime
         self.version = version
@@ -57,6 +58,7 @@ class BuildFbcPipeline:
         self.fbc_repo = fbc_repo
         self.kubeconfig = kubeconfig
         self.plr_template = plr_template
+        self.skip_rebase = skip_rebase
         self.skip_checks = skip_checks
         self.skip_tasks = skip_tasks
         self.reset_to_prod = reset_to_prod
@@ -110,7 +112,7 @@ class BuildFbcPipeline:
         # Early check: verify the production operator index image exists for the target OCP version.
         # For new OCP versions (e.g. 5.0), neither the index image nor the base images are published yet,
         # which causes all Konflux FBC builds to fail. Exit silently rather than wasting time.
-        if not await self._check_production_index_exists():
+        if not self.skip_rebase and not await self._check_production_index_exists():
             await get_reporter().note(
                 'Skipped FBC builds: production operator index image is not available', state='skipped'
             )
@@ -207,6 +209,8 @@ class BuildFbcPipeline:
                 owner=plr_template_owner, branch_name=plr_template_branch
             )
             doozer_opts.extend(['--plr-template', plr_template_url])
+        if self.skip_rebase:
+            doozer_opts.append('--skip-rebase')
         if self.skip_checks:
             doozer_opts.append('--skip-checks')
         for task_name in self.skip_tasks:
@@ -307,6 +311,9 @@ class BuildFbcPipeline:
     default='',
     help='Override the Pipeline Run template commit from openshift-priv/art-konflux-template; format: <owner>@<branch>',
 )
+@click.option(
+    "--skip-rebase", is_flag=True, help="Build existing FBC source without resetting to production or rebasing"
+)
 @click.option("--skip-checks", is_flag=True, help="Skip all post build checks in the FBC build pipeline")
 @click.option(
     '--skip-task',
@@ -363,6 +370,7 @@ async def build_fbc(
     major_minor: Optional[str],
     ignore_locks: bool,
     insert_missing_entry: bool,
+    skip_rebase: bool,
 ):
     # Validate that --major-minor is provided for non-OpenShift groups
     if not group.startswith('openshift-') and not major_minor:
@@ -389,6 +397,7 @@ async def build_fbc(
         major_minor=major_minor,
         ignore_locks=ignore_locks,
         insert_missing_entry=insert_missing_entry,
+        skip_rebase=skip_rebase,
     )
 
     lock_identifier = jenkins.get_build_path_or_random()
