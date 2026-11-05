@@ -1,14 +1,11 @@
 import asyncio
 import logging
 import sys
-from copy import copy
 from pathlib import Path
 
 import click
-from artcommonlib.model import Missing, Model
-from artcommonlib.util import (
-    deep_merge,
-)
+from artcommonlib.model import Missing
+from artcommonlib.okd_util import merge_okd_image_config
 from artcommonlib.variants import BuildVariant
 
 from doozerlib import Runtime, constants
@@ -154,30 +151,8 @@ class OkdRebaseCli:
             }
 
     def get_okd_image_config(self, image_meta: ImageMetadata):
-        image_config = copy(image_meta.config)
-        image_config.enabled_repos = []
-
-        if image_config.okd is not Missing:
-            # Merge the rest of the config, with okd taking precedence
-            # Certain fields like 'from' should be completely replaced, not merged
-            self.logger.info('Merging OKD configuration into image configuration for %s', image_meta.distgit_key)
-            base_config = image_config.primitive()
-            okd_config = image_meta.config.okd.primitive()
-
-            # Fields that should be completely replaced rather than merged
-            replace_fields = {'from'}
-
-            # First, do a deep merge for fields that should be merged
-            merged_config = deep_merge(base_config, okd_config)
-
-            # Then, replace fields that should be completely replaced
-            for field in replace_fields:
-                if field in okd_config:
-                    merged_config[field] = okd_config[field]
-
-            image_config = Model(merged_config)
-
-        return image_config
+        # Delegate to the shared helper so the rebase and konflux build paths stay in sync.
+        return merge_okd_image_config(image_meta, self.logger)
 
 
 @images_okd.command("rebase", short_help="Refresh a group's OKD source content.")

@@ -18,6 +18,7 @@ from artcommonlib.konflux.konflux_build_record import (
 )
 from artcommonlib.konflux.konflux_db import KonfluxDb
 from artcommonlib.model import Missing
+from artcommonlib.okd_util import merge_okd_image_config
 from artcommonlib.pipeline_report import get_reporter
 from artcommonlib.telemetry import start_as_current_span_async
 from artcommonlib.util import (
@@ -338,6 +339,15 @@ class KonfluxBuildCli:
         runtime.konflux_db.bind(KonfluxBuildRecord)
         assert runtime.source_resolver is not None, "source_resolver is not initialized. Doozer bug?"
         metas = _filter_okd_excluded_metas(runtime, runtime.ordered_image_metas())
+
+        # Honor per-image OKD config on the build path, mirroring the OKD rebase CLI.
+        # get_group_config() only merges the group-level okd stanza; without this, per-image
+        # okd.konflux overrides (network_mode, cachi2, lockfile, ...) would be ignored at build
+        # time. Applied only for variant=okd images that carry an okd stanza; OCP is unaffected.
+        if runtime.variant is BuildVariant.OKD:
+            for image_meta in metas:
+                if image_meta.config.okd is not Missing:
+                    image_meta.config = merge_okd_image_config(image_meta, runtime.logger)
 
         # Update span name to include metas count
         span = trace.get_current_span()

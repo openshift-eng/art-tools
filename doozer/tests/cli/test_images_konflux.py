@@ -10,7 +10,9 @@ from artcommonlib.konflux.konflux_build_record import (
     KonfluxBuildRecord,
     KonfluxBundleBuildRecord,
 )
-from artcommonlib.model import Model
+from artcommonlib.metadata import MetadataBase
+from artcommonlib.model import Missing, Model
+from artcommonlib.okd_util import merge_okd_image_config
 from artcommonlib.variants import BuildVariant
 from doozerlib.cli.images_konflux import (
     BundleStageReleaseRelatedImagesCli,
@@ -328,6 +330,66 @@ class TestKonfluxBuildSelection(unittest.TestCase):
         result = _filter_okd_excluded_metas(runtime, [public_meta, excluded_meta])
 
         self.assertEqual(result, [public_meta, excluded_meta])
+
+
+class TestOkdBuildConfigMerge(unittest.TestCase):
+    """The konflux build path must merge each image's okd stanza when variant=okd, so that
+    per-image okd.konflux overrides (network_mode, cachi2) are honored at build time -- the
+    same merge the OKD rebase CLI performs."""
+
+    @staticmethod
+    def _image_meta(config_dict, distgit_key="networking-console-plugin"):
+        return SimpleNamespace(distgit_key=distgit_key, config=Model(config_dict))
+
+    @staticmethod
+    def _resolved_network_mode(image_config, group_network_mode="open"):
+        # Exercise the real resolution used at build time against the merged image config.
+        runtime = SimpleNamespace(group_config=Model({"konflux": {"network_mode": group_network_mode}}))
+        fake_self = SimpleNamespace(runtime=runtime, config=image_config)
+        return MetadataBase.get_konflux_network_mode(fake_self)
+
+    def test_build_path_merges_okd_konflux_network_mode_and_cachi2(self):
+        """An image with okd.konflux overrides resolves hermetic + cachi2 enabled at build time."""
+        image_meta = self._image_meta(
+            {
+                "name": "openshift/ose-networking-console-plugin",
+                "konflux": {},
+                "okd": {
+                    "konflux": {
+                        "network_mode": "hermetic",
+                        "cachi2": {"enabled": True, "lockfile": {"enabled": True, "force": True}},
+                    },
+                },
+            }
+        )
+
+        merged = merge_okd_image_config(image_meta)
+
+        # okd.konflux values surface as image-level konflux config
+        self.assertEqual(merged.konflux.network_mode, "hermetic")
+        self.assertIs(merged.konflux.cachi2.enabled, True)
+        self.assertIs(merged.konflux.cachi2.lockfile.enabled, True)
+        self.assertIs(merged.konflux.cachi2.lockfile.force, True)
+        # and the network mode actually resolved at build time is hermetic (not the group default)
+        self.assertEqual(self._resolved_network_mode(merged, group_network_mode="open"), "hermetic")
+
+    def test_build_path_without_okd_konflux_override_falls_back_to_group_defaults(self):
+        """An okd image with no okd.konflux override inherits the group okd default (open)."""
+        image_meta = self._image_meta(
+            {
+                "name": "openshift/ose-foo",
+                "konflux": {},
+                "okd": {"content": {"source": {"modifications": []}}},
+            }
+        )
+
+        merged = merge_okd_image_config(image_meta)
+
+        # No image-level network_mode / cachi2 override after merge
+        self.assertIs(merged.konflux.network_mode, Missing)
+        self.assertIs(merged.konflux.cachi2.enabled, Missing)
+        # Resolution falls back to the group okd default
+        self.assertEqual(self._resolved_network_mode(merged, group_network_mode="open"), "open")
 
 
 class TestBaseImageReleasePrioritisation(unittest.IsolatedAsyncioTestCase):

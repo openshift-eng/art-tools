@@ -369,7 +369,6 @@ class KonfluxOkdPipeline:
         cmd.extend(
             [
                 'beta:images:konflux:build',
-                '--network-mode=open',
                 '--konflux-namespace=ocp-art-tenant',
                 f'--image-repo={OKD_DEFAULT_IMAGE_REPO}',
             ]
