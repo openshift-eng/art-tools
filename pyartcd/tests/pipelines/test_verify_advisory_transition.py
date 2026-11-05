@@ -13,6 +13,18 @@ MR_URL = "https://gitlab.cee.redhat.com/hybrid-platforms/art/ocp-shipment-data/-
 class TestVerifyAdvisoryTransition(unittest.IsolatedAsyncioTestCase):
     def setUp(self):
         self.temp_dir = self.enterContext(tempfile.TemporaryDirectory())
+        self.quay_auth_file = Path(self.temp_dir) / "quay-auth.json"
+        self.quay_auth_file.write_text(
+            json.dumps(
+                {
+                    "auths": {
+                        "quay.io/openshift-release-dev": {"auth": "test-namespace-auth"},
+                        "quay.io": {"auth": "test-unrelated-auth"},
+                    }
+                }
+            )
+        )
+        self.enterContext(patch.dict("os.environ", {"QUAY_AUTH_FILE": str(self.quay_auth_file)}))
         self.runtime = MagicMock(dry_run=False, working_dir=Path(self.temp_dir))
         self.pipeline = VerifyAdvisoryTransitionPipeline(self.runtime, "4.22", "4.22.9")
         self.config = {
@@ -62,6 +74,40 @@ class TestVerifyAdvisoryTransition(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(commands[-1][-2:], ["verify-advisory-status", "--mark"])
         self.inspect.assert_awaited_once()
         self.update.assert_not_called()
+
+    async def test_metadata_uses_prepared_quay_auth_and_removes_temp_file(self):
+        auth_paths = []
+
+        async def run_command(cmd):
+            if cmd[-1] != "verify-metadata-url":
+                return
+            auth_path = Path(next(arg.split("=", 1)[1] for arg in cmd if arg.startswith("--registry-config=")))
+            auth_paths.append(auth_path)
+            self.assertNotEqual(auth_path, self.quay_auth_file)
+            self.assertEqual(
+                json.loads(auth_path.read_text()),
+                {
+                    "auths": {
+                        "quay.io/openshift-release-dev": {"auth": "test-namespace-auth"},
+                    }
+                },
+            )
+
+        self.command.side_effect = run_command
+        await self.pipeline.run()
+
+        self.assertEqual(len(auth_paths), 1)
+        self.assertFalse(auth_paths[0].exists())
+        self.assertTrue(self.quay_auth_file.exists())
+
+    async def test_missing_quay_credentials_marks_failure_without_transitioning(self):
+        with patch.dict("os.environ", {"QUAY_AUTH_FILE": ""}):
+            with self.assertRaisesRegex(ValueError, "QUAY_AUTH_FILE"):
+                await self.pipeline.run()
+
+        self.assertEqual(self.command.await_count, 1)
+        self.assert_failure_marked()
+        self.inspect.assert_not_called()
 
     async def test_closed_and_merged_mrs_are_supported(self):
         for state in ("closed", "merged"):

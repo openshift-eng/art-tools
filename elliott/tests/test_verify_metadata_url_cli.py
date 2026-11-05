@@ -205,7 +205,7 @@ class TestVerifyMetadataUrl(IsolatedAsyncioTestCase):
                 self.assertEqual(result.release, release)
                 self.assertEqual(result.pullspec, pullspec)
                 self.assertEqual(result.metadata_url, mock_extract.return_value)
-                mock_extract.assert_awaited_once_with(pullspec)
+                mock_extract.assert_awaited_once_with(pullspec, registry_config=None)
                 mock_check.assert_awaited_once_with(mock_extract.return_value)
 
     @patch("elliottlib.cli.verify_metadata_url_cli.check_url_accessible")
@@ -240,6 +240,35 @@ class TestVerifyMetadataUrl(IsolatedAsyncioTestCase):
         self.assertIn("connection timeout", result.error)
 
 
+class TestMetadataRegistryAuthentication(IsolatedAsyncioTestCase):
+    @patch("elliottlib.cli.verify_metadata_url_cli.check_url_accessible", return_value=True)
+    @patch("elliottlib.cli.verify_metadata_url_cli.exectools.cmd_gather_async")
+    async def test_registry_credentials_reach_oc(self, mock_cmd, mock_check):
+        url = "https://access.redhat.com/errata/RHBA-2025:1234"
+        mock_cmd.return_value = (0, json.dumps({"metadata": {"metadata": {"url": url}}}), "")
+        for expected_auth in ("/jenkins/quay-auth.json", None):
+            with self.subTest(registry_config=expected_auth):
+                mock_cmd.reset_mock()
+                mock_check.reset_mock()
+                runtime = Runtime(assembly="4.21.41", registry_config=expected_auth)
+                result = await verify_metadata_url(runtime.assembly, registry_config=runtime.registry_config)
+
+                self.assertTrue(result.passed)
+                expected_cmd = [
+                    "oc",
+                    "adm",
+                    "release",
+                    "info",
+                    "quay.io/openshift-release-dev/ocp-release:4.21.41-x86_64",
+                    "-o",
+                    "json",
+                ]
+                if expected_auth:
+                    expected_cmd.append(f"--registry-config={expected_auth}")
+                mock_cmd.assert_awaited_once_with(expected_cmd, check=False)
+                mock_check.assert_awaited_once_with(url)
+
+
 class TestVerifyMetadataUrlCLI(TestCase):
     def setUp(self):
         loop = asyncio.new_event_loop()
@@ -266,8 +295,18 @@ class TestVerifyMetadataUrlCLI(TestCase):
 
                 self.assertEqual(result.exit_code, 0, result.output)
                 self.assertIn("Overall: PASS", result.output)
-                self.mock_verify.assert_awaited_once_with(release=release)
+                self.mock_verify.assert_awaited_once_with(release=release, registry_config=None)
                 self.mock_initialize.assert_not_called()
+
+    def test_explicit_registry_config_is_forwarded(self):
+        self.mock_verify.return_value = VerifyMetadataUrlResult(release="4.21.41", accessible=True)
+        runtime = Runtime(assembly="4.21.41", registry_config="/explicit/auth.json")
+
+        result = self.runner.invoke(verify_metadata_url_cli, [], obj=runtime)
+
+        self.assertEqual(result.exit_code, 0, result.output)
+        self.mock_verify.assert_awaited_once_with(release="4.21.41", registry_config="/explicit/auth.json")
+        self.mock_initialize.assert_not_called()
 
     def test_missing_or_default_assembly_is_rejected(self):
         for assembly in (None, "", "stream"):

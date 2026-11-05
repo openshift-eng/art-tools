@@ -56,8 +56,10 @@ class VerifyMetadataUrlResult(VerifyResultBase):
         return "\n".join(lines)
 
 
-async def extract_metadata_url(pullspec: str) -> str:
+async def extract_metadata_url(pullspec: str, registry_config: str | None = None) -> str:
     cmd = ["oc", "adm", "release", "info", pullspec, "-o", "json"]
+    if registry_config:
+        cmd.append(f"--registry-config={registry_config}")
     rc, stdout, stderr = await exectools.cmd_gather_async(cmd, check=False)
     if rc != 0:
         raise RuntimeError(f"oc adm release info failed: {stderr.strip()}")
@@ -102,12 +104,12 @@ async def check_url_accessible(url: str) -> bool:
         await session.close()
 
 
-async def verify_metadata_url(release: str) -> VerifyMetadataUrlResult:
+async def verify_metadata_url(release: str, registry_config: str | None = None) -> VerifyMetadataUrlResult:
     result = VerifyMetadataUrlResult(release=release, pullspec=PAYLOAD_TEMPLATE.format(assembly=release))
     try:
         LOGGER.info("Release %s pullspec: %s", release, result.pullspec)
 
-        result.metadata_url = await extract_metadata_url(result.pullspec)
+        result.metadata_url = await extract_metadata_url(result.pullspec, registry_config=registry_config)
         result.accessible = await check_url_accessible(result.metadata_url)
 
     except Exception as e:
@@ -141,5 +143,5 @@ async def verify_metadata_url_cli(runtime, output):
         )
 
     LOGGER.info("Verifying metadata URL for release %s", release)
-    result = await verify_metadata_url(release=release)
+    result = await verify_metadata_url(release=release, registry_config=runtime.registry_config)
     handle_verify_result(result, output)
