@@ -49,6 +49,7 @@ PRODUCT_CATALOG: tuple[ProductConfig, ...] = (
     ProductConfig(product_id=ProductId.OKD),
     ProductConfig(
         product_id=ProductId.ACM,
+        aliases=("rhacm5",),
         namespace="art-acm-tenant",
         kubeconfig_env="ACM_KONFLUX_SA_KUBECONFIG",
         base_image_release=ReleaseTarget(

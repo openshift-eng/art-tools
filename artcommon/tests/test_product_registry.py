@@ -17,6 +17,30 @@ from artcommonlib.variants import ProductId
 
 
 class TestProductCatalog(unittest.TestCase):
+    def test_acm_delivery_alias_preserves_historical_identity_and_configuration(self):
+        config = get_product_config("rhacm2")
+
+        for product_name in ("rhacm2", "rhacm5", " RHACM5 "):
+            with self.subTest(product_name=product_name):
+                self.assertIs(get_product_config(product_name), config)
+                self.assertIs(find_product_config(product_name), config)
+                self.assertIs(get_product_id_for_product(product_name), ProductId.ACM)
+        self.assertEqual(ProductId.ACM.value, "rhacm2")
+        self.assertEqual(config.product_name, "rhacm2")
+        self.assertEqual(config.namespace, "art-acm-tenant")
+        self.assertEqual(config.kubeconfig_env, "ACM_KONFLUX_SA_KUBECONFIG")
+        self.assertEqual(config.base_image_release.release_plan, "acm-images-base-silent")
+        self.assertEqual(config.base_image_release.application, "acm-images-base")
+        self.assertEqual(config.conforma_stage_policies.image_policy, "rhtap-releng-tenant/registry-art-acm-stage")
+        self.assertEqual(config.conforma_stage_policies.fbc_policy, "rhtap-releng-tenant/fbc-art-acm-stage")
+        self.assertEqual(config.cpe_name, "acm")
+        self.assertEqual(config.fbc_stage_release_plans[(5, 0)], "acm-advisory-stage-auto-5-0")
+
+        mce = get_product_config("multicluster-engine")
+        self.assertIs(mce.product_id, ProductId.MCE)
+        self.assertEqual(ProductId.MCE.value, "multicluster-engine")
+        self.assertIsNot(mce, config)
+
     def test_kueue_canonical_product_preserves_cpe_and_release_configuration(self):
         """Resolve canonical and legacy Kueue names without changing CPE or release configuration."""
         config = get_product_config("kueue")
