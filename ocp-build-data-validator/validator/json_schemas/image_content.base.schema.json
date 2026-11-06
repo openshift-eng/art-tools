@@ -355,6 +355,18 @@
         "git": {
           "type": "object",
           "properties": {
+            "url_pull": {
+              "description": "Optional repository to pull source from instead of url, including fork test builds.",
+              "type": "string",
+              "minLength": 1
+            },
+            "url_pull!": {
+              "$ref": "#/properties/source/properties/git/properties/url_pull"
+            },
+            "url_pull?": {
+              "$ref": "#/properties/source/properties/git/properties/url_pull"
+            },
+            "url_pull-": {},
             "branch": {
               "type": "object",
               "properties": {
@@ -489,6 +501,7 @@
               "pip",
               "npm",
               "yarn",
+              "cargo",
               "git-submodule"
             ]
           }

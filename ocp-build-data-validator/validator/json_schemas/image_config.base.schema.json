@@ -4,6 +4,25 @@
   "title": "Image Configuration",
   "type": "object",
   "properties": {
+    "ignore_incorrect_nvr": {
+      "description": "Allow a selected build whose NVR is older than the previously selected build.",
+      "type": "boolean"
+    },
+    "ignore_incorrect_nvr!": {
+      "$ref": "#/properties/ignore_incorrect_nvr"
+    },
+    "ignore_incorrect_nvr?": {
+      "$ref": "#/properties/ignore_incorrect_nvr"
+    },
+    "ignore_incorrect_nvr-": {},
+    "jira": {
+      "type": "object",
+      "properties": {
+        "project": {"type": "string", "minLength": 1},
+        "component": {"type": "string", "minLength": 1}
+      },
+      "additionalProperties": false
+    },
     "additional_tags": {
       "type": "array",
       "description": "Floating tags under which the resulting image can be pulled from regigistry-proxy.engineering.redhat.com",
@@ -1292,6 +1311,28 @@
       "description": "Konflux config",
       "type": "object",
       "properties": {
+        "no_shell": {
+          "description": "Skip shell-dependent rebase operations and RPM extraction for shell-less images.",
+          "type": "boolean"
+        },
+        "no_shell!": {
+          "$ref": "#/properties/konflux/properties/no_shell"
+        },
+        "no_shell?": {
+          "$ref": "#/properties/konflux/properties/no_shell"
+        },
+        "no_shell-": {},
+        "stage_release": {
+          "description": "Stage-release a standalone image after a successful Konflux build.",
+          "type": "boolean"
+        },
+        "stage_release!": {
+          "$ref": "#/properties/konflux/properties/stage_release"
+        },
+        "stage_release?": {
+          "$ref": "#/properties/konflux/properties/stage_release"
+        },
+        "stage_release-": {},
         "mode": {
           "description": "To enable/disable an image for konflux",
           "type": "string",
@@ -1365,6 +1406,17 @@
             "lockfile": {
               "type": "object",
               "properties": {
+                "inspect_parent": {
+                  "description": "Legacy lockfile compatibility flag for inspecting parent image packages.",
+                  "type": "boolean"
+                },
+                "inspect_parent!": {
+                  "$ref": "#/properties/konflux/properties/cachi2/properties/lockfile/properties/inspect_parent"
+                },
+                "inspect_parent?": {
+                  "$ref": "#/properties/konflux/properties/cachi2/properties/lockfile/properties/inspect_parent"
+                },
+                "inspect_parent-": {},
                 "enabled": {
                   "description": "Enable/disable lockfile generation",
                   "type": "boolean"

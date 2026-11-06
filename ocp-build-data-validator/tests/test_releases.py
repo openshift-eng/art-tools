@@ -193,3 +193,49 @@ class TestReleases(unittest.TestCase):
         }
         err = releases_schema.validate(None, invalid_releases)
         self.assertIsNotNone(err)
+
+
+def test_inherited_upgrades_suppress_child_default():
+    """A child default cannot override an inherited upgrades value."""
+    data = {
+        'releases': {
+            'base': {'assembly': {'group': {'upgrades': '0.9.0'}}},
+            '1.0.0': {'assembly': {'basis': {'assembly': 'base'}, 'group': {'upgrades?': '1.0.0'}}},
+        }
+    }
+    assert releases.validate(data, {}) is None
+
+
+def test_later_ordinary_upgrade_key_overrides_earlier_replacement():
+    """Assembly merge operators are applied in mapping order, matching Doozer."""
+    data = {'releases': {'1.0.0': {'assembly': {'group': {'upgrades!': '0.9.0', 'upgrades': '1.0.0'}}}}}
+    assert '1.0.0' in releases.validate(data, {})
+
+
+def test_inherited_upgrade_self_reference_is_rejected():
+    """An effective self-reference inherited from a base assembly remains invalid."""
+    data = {
+        'releases': {
+            'base': {'assembly': {'group': {'upgrades': '1.0.0'}}},
+            '1.0.0': {'assembly': {'basis': {'assembly': 'base'}}},
+        }
+    }
+    assert '1.0.0' in releases.validate(data, {})
+
+
+def test_group_defaults_apply_to_effective_assembly_upgrades():
+    """Root group upgrades must suppress an assembly's fallback default."""
+    data = {'releases': {'1.0.0': {'assembly': {'group': {'upgrades?': '1.0.0'}}}}}
+    assert releases.validate(data, {'upgrades': '0.9.0'}) is None
+
+
+def test_legacy_command_resolves_upgrades_with_the_metadata_group(tmp_path):
+    """The legacy OCP command must pass group defaults from the selected metadata checkout."""
+    from validator.__main__ import validate
+
+    (tmp_path / 'group.yml').write_text('name: test\nvars: {MAJOR: 1, MINOR: 0}\nupgrades: 0.9.0\n')
+    release_file = tmp_path / 'releases.yml'
+    release_file.write_text(
+        'releases:\n  1.0.0:\n    assembly:\n      type: standard\n      group:\n        upgrades?: 1.0.0\n'
+    )
+    assert validate(str(release_file), False, None) is None

@@ -132,16 +132,34 @@ def validate(file, data, images_dir=None):
     if images_dir:
         image_files = [os.path.splitext(f)[0] for f in os.listdir(images_dir) if f.endswith(".yml")]
 
-        # Validate 'from' members
+        variables = {}
+        group_file = Path(images_dir).parent / 'group.yml'
+        if group_file.is_file():
+            with group_file.open() as source:
+                group_data = YAML(typ='safe').load(source)
+            if isinstance(group_data, dict) and isinstance(group_data.get('vars'), dict):
+                variables = group_data['vars']
+
+        def check_member(member, location):
+            """Resolve member templates before the schema's file-existence check."""
+            if not isinstance(member, str):
+                return  # JSON schema reports invalid reference types.
+            try:
+                member = member.format_map(variables)
+            except KeyError as error:
+                errors.append(f'{location}: undefined group variable {error.args[0]}')
+                return
+            if member not in image_files:
+                errors.append(f"{location}: Image '{member}' not found in {images_dir}")
+
+        # Keep this check consistent for both the legacy CLI and the Prow entry point.
         if "from" in data:
             if "member" in data["from"]:
-                if data["from"]["member"] not in image_files:
-                    errors.append(f"from.member: Image '{data['from']['member']}' not found in {images_dir}")
+                check_member(data["from"]["member"], 'from.member')
             if "builder" in data["from"]:
                 for builder in data["from"]["builder"]:
                     if "member" in builder:
-                        if builder["member"] not in image_files:
-                            errors.append(f"from.builder.member: Image '{builder['member']}' not found in {images_dir}")
+                        check_member(builder["member"], 'from.builder.member')
 
         # Validate dependents
         if "dependents" in data:
