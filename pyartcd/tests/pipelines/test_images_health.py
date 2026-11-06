@@ -52,6 +52,15 @@ def _make_runtime():
     return runtime
 
 
+def _collect_logged(logger) -> str:
+    """Concatenate every positional arg of every warning/info/error log call into one string."""
+    parts = []
+    for logmethod in (logger.warning, logger.info, logger.error):
+        for call in logmethod.call_args_list:
+            parts.append(" ".join(str(a) for a in call.args))
+    return "\n".join(parts)
+
+
 class TestNotifyPublicChannel(IsolatedAsyncioTestCase):
     def setUp(self):
         self.mock_runtime = _make_runtime()
@@ -918,3 +927,297 @@ class TestNotifyChaiBot(IsolatedAsyncioTestCase):
         await pipeline.run()
 
         pipeline.notify_chai_bot.assert_not_called()
+
+    async def test_run_contains_prune_exceptions(self):
+        """A failing _prune_deleted_counters must not abort subsequent run() steps."""
+        pipeline = self._make_pipeline()
+        pipeline.get_report = AsyncMock()
+        pipeline.get_rebase_failures = AsyncMock()
+        pipeline.get_ec_failures = AsyncMock()
+        pipeline.get_release_failures = AsyncMock()
+        pipeline.notify_chai_bot = AsyncMock()
+        pipeline._prune_deleted_counters = AsyncMock(side_effect=RuntimeError("redis boom"))
+        pipeline.report = [
+            _make_concern('ironic', 'openshift-4.18', ConcernCode.LATEST_ATTEMPT_FAILED.value, latest_success_idx=3),
+        ]
+        pipeline.rebase_failures = {}
+        pipeline.scanned_versions = ['4.18']
+
+        # Must not raise despite the prune failure.
+        await pipeline.run()
+
+        # Later steps still ran.
+        pipeline._prune_deleted_counters.assert_awaited_once()
+        pipeline.notify_chai_bot.assert_awaited_once()
+
+
+class TestGetAllDefinedImages(IsolatedAsyncioTestCase):
+    def setUp(self):
+        self.mock_runtime = _make_runtime()
+
+    @patch("pyartcd.pipelines.images_health.exectools.cmd_gather_async", new_callable=AsyncMock)
+    async def test_loads_with_load_disabled_and_stream_assembly(self, mock_cmd):
+        """The 'A' load uses --load-disabled and --assembly stream and returns loaded_ok=True."""
+        mock_cmd.return_value = (0, "enabled-img\ndisabled-img\n", "")
+        pipeline = _make_pipeline(self.mock_runtime, versions="4.22")
+
+        images, loaded_ok = await pipeline._get_all_defined_images("4.22", "/tmp/doozer-4.22")
+
+        self.assertTrue(loaded_ok)
+        self.assertEqual(images, {"enabled-img", "disabled-img"})
+        cmd = mock_cmd.call_args[0][0]
+        self.assertIn("--load-disabled", cmd)
+        self.assertIn("--load-wip", cmd)
+        self.assertIn("--group=openshift-4.22", cmd)
+        self.assertIn("images:print", cmd)
+        # --assembly stream passed as two consecutive tokens
+        self.assertIn("--assembly", cmd)
+        self.assertEqual(cmd[cmd.index("--assembly") + 1], "stream")
+        # --assembly, --load-disabled and --load-wip are doozer GLOBAL options and MUST precede
+        # the images:print subcommand, otherwise Click rejects the command.
+        self.assertLess(cmd.index("--assembly"), cmd.index("images:print"))
+        self.assertLess(cmd.index("--load-disabled"), cmd.index("images:print"))
+        self.assertLess(cmd.index("--load-wip"), cmd.index("images:print"))
+        # --show-* flags remain subcommand options, after images:print
+        self.assertLess(cmd.index("images:print"), cmd.index("--show-base"))
+
+    @patch("pyartcd.pipelines.images_health.exectools.cmd_gather_async", new_callable=AsyncMock)
+    async def test_load_failure_returns_loaded_ok_false(self, mock_cmd):
+        """On a doozer exception, returns (set(), False) and never infers from emptiness."""
+        mock_cmd.side_effect = Exception("doozer blew up")
+        pipeline = _make_pipeline(self.mock_runtime, versions="4.22")
+
+        images, loaded_ok = await pipeline._get_all_defined_images("4.22", "/tmp/doozer-4.22")
+
+        self.assertEqual(images, set())
+        self.assertFalse(loaded_ok)
+
+    @patch("pyartcd.pipelines.images_health.exectools.cmd_gather_async", new_callable=AsyncMock)
+    async def test_load_failure_log_has_no_sensitive_values(self, mock_cmd):
+        """The load-failure warning must not leak the exception text (which embeds data_path/gitref)."""
+        sentinel_host = "art-stale-sentinel.invalid"
+        sentinel_ref = "sentinel-ref"
+        # Simulate a doozer failure whose message embeds the command (host + @gitref).
+        mock_cmd.side_effect = Exception(
+            f"Command failed: doozer --data-path=https://{sentinel_host}/repo.git "
+            f"--group=openshift-4.22@{sentinel_ref} images:print"
+        )
+        pipeline = _make_pipeline(self.mock_runtime, versions="4.22")
+        pipeline.data_path = f"https://{sentinel_host}/repo.git"
+        pipeline.data_gitref = sentinel_ref
+
+        images, loaded_ok = await pipeline._get_all_defined_images("4.22", "/tmp/doozer-4.22")
+
+        self.assertEqual(images, set())
+        self.assertFalse(loaded_ok)
+        blob = _collect_logged(self.mock_runtime.logger)
+        self.assertNotIn(sentinel_host, blob)
+        self.assertNotIn(sentinel_ref, blob)
+        # The exception class name is still logged for diagnosis.
+        self.assertIn("Exception", blob)
+
+    @patch("pyartcd.pipelines.images_health.exectools.cmd_gather_async", new_callable=AsyncMock)
+    async def test_cached_after_success(self, mock_cmd):
+        """A successful load is cached; doozer is not re-invoked."""
+        mock_cmd.return_value = (0, "enabled-img\n", "")
+        pipeline = _make_pipeline(self.mock_runtime, versions="4.22")
+
+        await pipeline._get_all_defined_images("4.22", "/tmp/doozer-4.22")
+        await pipeline._get_all_defined_images("4.22", "/tmp/doozer-4.22")
+
+        mock_cmd.assert_awaited_once()
+
+
+class TestPruneDeletedCounters(IsolatedAsyncioTestCase):
+    def setUp(self):
+        self.mock_runtime = _make_runtime()
+
+    def _pipeline(self, image_list="", delete_stale_counters=False):
+        pipeline = _make_pipeline(self.mock_runtime, versions="4.22", image_list=image_list)
+        pipeline.scanned_versions = ["4.22"]
+        pipeline.delete_stale_counters = delete_stale_counters
+        return pipeline
+
+    @staticmethod
+    def _only(counter_type_match, build_system_match, failures):
+        """Build a get_counter_failures side_effect returning failures only for one family."""
+
+        def side_effect(counter_type, group=None, build_system="konflux", logger=None):
+            if counter_type == counter_type_match and build_system == build_system_match:
+                return dict(failures)
+            return {}
+
+        return side_effect
+
+    @patch("pyartcd.pipelines.images_health.util.reset_fail_counter", new_callable=AsyncMock)
+    @patch("pyartcd.pipelines.images_health.util.get_counter_failures", new_callable=AsyncMock)
+    async def test_deleted_image_pruned(self, mock_get_failures, mock_reset):
+        """An image present in Redis but absent from A has its counter branch deleted."""
+        pipeline = self._pipeline(delete_stale_counters=True)
+        pipeline._get_all_defined_images = AsyncMock(return_value=({"enabled-img"}, True))
+        mock_get_failures.side_effect = self._only("build-failure", "konflux", {"deleted-img": {"failure_count": 3}})
+
+        await pipeline._prune_deleted_counters("4.22")
+
+        mock_reset.assert_awaited_once_with("count:build-failure:konflux:openshift-4.22:deleted-img")
+
+    @patch("pyartcd.pipelines.images_health.util.reset_fail_counter", new_callable=AsyncMock)
+    @patch("pyartcd.pipelines.images_health.util.get_counter_failures", new_callable=AsyncMock)
+    async def test_disabled_image_not_pruned(self, mock_get_failures, mock_reset):
+        """A disabled image (file present, so in A) keeps its counter."""
+        pipeline = self._pipeline(delete_stale_counters=True)
+        pipeline._get_all_defined_images = AsyncMock(return_value=({"disabled-img"}, True))
+        mock_get_failures.side_effect = self._only("build-failure", "konflux", {"disabled-img": {"failure_count": 2}})
+
+        await pipeline._prune_deleted_counters("4.22")
+
+        mock_reset.assert_not_awaited()
+
+    @patch("pyartcd.pipelines.images_health.util.reset_fail_counter", new_callable=AsyncMock)
+    @patch("pyartcd.pipelines.images_health.util.get_counter_failures", new_callable=AsyncMock)
+    async def test_enabled_failing_image_not_pruned(self, mock_get_failures, mock_reset):
+        """An enabled failing image (in A) is reported, not pruned."""
+        pipeline = self._pipeline(delete_stale_counters=True)
+        pipeline._get_all_defined_images = AsyncMock(return_value=({"enabled-img"}, True))
+        mock_get_failures.side_effect = self._only("build-failure", "konflux", {"enabled-img": {"failure_count": 5}})
+
+        await pipeline._prune_deleted_counters("4.22")
+
+        mock_reset.assert_not_awaited()
+
+    @patch("pyartcd.pipelines.images_health.util.reset_fail_counter", new_callable=AsyncMock)
+    @patch("pyartcd.pipelines.images_health.util.get_counter_failures", new_callable=AsyncMock)
+    async def test_a_load_failure_deletes_nothing(self, mock_get_failures, mock_reset):
+        """When the A load fails (loaded_ok False), nothing is deleted and no counters are fetched."""
+        pipeline = self._pipeline(delete_stale_counters=True)
+        pipeline._get_all_defined_images = AsyncMock(return_value=(set(), False))
+
+        await pipeline._prune_deleted_counters("4.22")
+
+        mock_reset.assert_not_awaited()
+        mock_get_failures.assert_not_awaited()
+
+    @patch("pyartcd.pipelines.images_health.util.reset_fail_counter", new_callable=AsyncMock)
+    @patch("pyartcd.pipelines.images_health.util.get_counter_failures", new_callable=AsyncMock)
+    async def test_image_list_restricted_deletes_nothing(self, mock_get_failures, mock_reset):
+        """With --image-list set, pruning is skipped entirely (A is never even loaded)."""
+        pipeline = self._pipeline(image_list="ironic", delete_stale_counters=True)
+        pipeline._get_all_defined_images = AsyncMock(return_value=({"enabled-img"}, True))
+
+        await pipeline._prune_deleted_counters("4.22")
+
+        mock_reset.assert_not_awaited()
+        mock_get_failures.assert_not_awaited()
+        pipeline._get_all_defined_images.assert_not_awaited()
+
+    @patch("pyartcd.pipelines.images_health.util.reset_fail_counter", new_callable=AsyncMock)
+    @patch("pyartcd.pipelines.images_health.util.get_counter_failures", new_callable=AsyncMock)
+    async def test_dry_run_logs_but_does_not_delete(self, mock_get_failures, mock_reset):
+        """Default (dry-run) logs a WOULD-delete line and does NOT call reset_fail_counter."""
+        pipeline = self._pipeline(delete_stale_counters=False)
+        pipeline._get_all_defined_images = AsyncMock(return_value=({"enabled-img"}, True))
+        mock_get_failures.side_effect = self._only("build-failure", "konflux", {"deleted-img": {"failure_count": 3}})
+
+        await pipeline._prune_deleted_counters("4.22")
+
+        mock_reset.assert_not_awaited()
+        warning_messages = [str(c.args[0]) for c in self.mock_runtime.logger.warning.call_args_list]
+        self.assertTrue(any("WOULD delete" in m for m in warning_messages))
+
+    @patch("pyartcd.pipelines.images_health.util.reset_fail_counter", new_callable=AsyncMock)
+    @patch("pyartcd.pipelines.images_health.util.get_counter_failures", new_callable=AsyncMock)
+    async def test_rebase_covers_brew_and_konflux(self, mock_get_failures, mock_reset):
+        """Rebase pruning deletes both brew and konflux counter branches for a deleted image."""
+        pipeline = self._pipeline(delete_stale_counters=True)
+        pipeline._get_all_defined_images = AsyncMock(return_value=({"enabled-img"}, True))
+
+        def side_effect(counter_type, group=None, build_system="konflux", logger=None):
+            if counter_type == "rebase-failure":
+                return {"deleted-img": {"failure_count": 4}}
+            return {}
+
+        mock_get_failures.side_effect = side_effect
+
+        await pipeline._prune_deleted_counters("4.22")
+
+        branches = {c.args[0] for c in mock_reset.await_args_list}
+        self.assertIn("count:rebase-failure:brew:openshift-4.22:deleted-img", branches)
+        self.assertIn("count:rebase-failure:konflux:openshift-4.22:deleted-img", branches)
+
+    @patch("pyartcd.pipelines.images_health.util.reset_fail_counter", new_callable=AsyncMock)
+    @patch("pyartcd.pipelines.images_health.util.get_counter_failures", new_callable=AsyncMock)
+    async def test_unscanned_version_deletes_nothing(self, mock_get_failures, mock_reset):
+        """A version not in scanned_versions (frozen/not build-permitted) is skipped."""
+        pipeline = self._pipeline(delete_stale_counters=True)
+        pipeline.scanned_versions = []
+        pipeline._get_all_defined_images = AsyncMock(return_value=({"enabled-img"}, True))
+
+        await pipeline._prune_deleted_counters("4.22")
+
+        mock_reset.assert_not_awaited()
+        mock_get_failures.assert_not_awaited()
+
+    @patch("pyartcd.pipelines.images_health.util.reset_fail_counter", new_callable=AsyncMock)
+    @patch("pyartcd.pipelines.images_health.util.get_counter_failures", new_callable=AsyncMock)
+    async def test_empty_a_load_deletes_nothing(self, mock_get_failures, mock_reset):
+        """A successful but EMPTY A load (set(), True) is treated as a failed load: delete nothing."""
+        pipeline = self._pipeline(delete_stale_counters=True)
+        pipeline._get_all_defined_images = AsyncMock(return_value=(set(), True))
+
+        await pipeline._prune_deleted_counters("4.22")
+
+        mock_reset.assert_not_awaited()
+        mock_get_failures.assert_not_awaited()
+
+    @patch("pyartcd.pipelines.images_health.util.reset_fail_counter", new_callable=AsyncMock)
+    @patch("pyartcd.pipelines.images_health.util.get_counter_failures", new_callable=AsyncMock)
+    async def test_non_default_data_path_skips_deletion(self, mock_get_failures, mock_reset):
+        """With a non-default data_path, deletion is forced to dry-run even when enabled."""
+        pipeline = self._pipeline(delete_stale_counters=True)
+        pipeline.data_path = "https://github.com/someone/ocp-build-data-fork"
+        pipeline._get_all_defined_images = AsyncMock(return_value=({"enabled-img"}, True))
+        mock_get_failures.side_effect = self._only("build-failure", "konflux", {"deleted-img": {"failure_count": 3}})
+
+        await pipeline._prune_deleted_counters("4.22")
+
+        mock_reset.assert_not_awaited()
+        warning_messages = [str(c.args[0]) for c in self.mock_runtime.logger.warning.call_args_list]
+        self.assertTrue(any("WOULD delete" in m for m in warning_messages))
+
+    @patch("pyartcd.pipelines.images_health.util.reset_fail_counter", new_callable=AsyncMock)
+    @patch("pyartcd.pipelines.images_health.util.get_counter_failures", new_callable=AsyncMock)
+    async def test_data_gitref_skips_deletion(self, mock_get_failures, mock_reset):
+        """With a pinned data_gitref, deletion is forced to dry-run even when enabled."""
+        pipeline = self._pipeline(delete_stale_counters=True)
+        pipeline.data_gitref = "some-branch"
+        pipeline._get_all_defined_images = AsyncMock(return_value=({"enabled-img"}, True))
+        mock_get_failures.side_effect = self._only("build-failure", "konflux", {"deleted-img": {"failure_count": 3}})
+
+        await pipeline._prune_deleted_counters("4.22")
+
+        mock_reset.assert_not_awaited()
+        warning_messages = [str(c.args[0]) for c in self.mock_runtime.logger.warning.call_args_list]
+        self.assertTrue(any("WOULD delete" in m for m in warning_messages))
+
+    @patch("pyartcd.pipelines.images_health.util.reset_fail_counter", new_callable=AsyncMock)
+    @patch("pyartcd.pipelines.images_health.util.get_counter_failures", new_callable=AsyncMock)
+    async def test_non_default_data_source_log_has_no_sensitive_values(self, mock_get_failures, mock_reset):
+        """The non-default-data-source skip log must not leak raw data_path / data_gitref values."""
+        # De-credentialed sentinels (no embedded credentials) so the scanner is not tripped.
+        sentinel_host = "art-stale-sentinel.invalid"
+        sentinel_url = f"https://{sentinel_host}/repo.git"
+        sentinel_ref = "sentinel-ref"
+        pipeline = self._pipeline(delete_stale_counters=True)
+        pipeline.data_path = sentinel_url
+        pipeline.data_gitref = sentinel_ref
+        pipeline._get_all_defined_images = AsyncMock(return_value=({"enabled-img"}, True))
+        mock_get_failures.side_effect = self._only("build-failure", "konflux", {"deleted-img": {"failure_count": 3}})
+
+        await pipeline._prune_deleted_counters("4.22")
+
+        # Deletion is suppressed for a non-default source.
+        mock_reset.assert_not_awaited()
+        # Neither the sentinel host nor the sentinel ref appears in ANY captured log call.
+        blob = _collect_logged(self.mock_runtime.logger)
+        self.assertNotIn(sentinel_host, blob)
+        self.assertNotIn(sentinel_ref, blob)
