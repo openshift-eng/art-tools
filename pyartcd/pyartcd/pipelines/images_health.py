@@ -14,6 +14,7 @@ from doozerlib.constants import ART_BUILD_FAILURES_URL, ART_BUILD_HISTORY_URL
 from pyartcd import util
 from pyartcd.cli import cli, click_coroutine, pass_runtime
 from pyartcd.constants import OCP_BUILD_DATA_URL
+from pyartcd.fbc_health import FbcHealthReport, collect_fbc_health
 from pyartcd.jira_client import JIRAClient
 from pyartcd.runtime import Runtime
 
@@ -53,19 +54,34 @@ class ImagesHealthPipeline:
         self.rebase_failures = {}  # version -> {image: {failure_count, url, build_system}}
         self.ec_failures = {}  # version -> {image: {failure_count, jenkins_url, nvr, pipeline_url, ...}}
         self.release_failures = {}  # version -> {image: {failure_count, jenkins_url, nvr, pipeline_url, ...}}
+        self.fbc_health: dict[str, FbcHealthReport] = {}
+        self.collection_errors: dict[str, bool] = {}
         self.jira_tickets: dict[tuple[str, str], str] = {}  # (image_name, group) -> ticket key
         self._valid_images_cache: dict[str, set[str]] = {}
 
     async def run(self):
-        await asyncio.gather(*(self.get_report(v) for v in self.versions))
-        await asyncio.gather(
-            *(self.get_rebase_failures(v) for v in self.versions),
-            *(self.get_ec_failures(v) for v in self.versions),
-            *(self.get_release_failures(v) for v in self.versions),
-        )
+        """Publish independent evidence before propagating incomplete image collection."""
+        results = await asyncio.gather(*(self.get_report(v) for v in self.versions), return_exceptions=True)
+        for version, result in zip(self.versions, results):
+            if isinstance(result, Exception):
+                self.collection_errors[version] = True
+        tasks = [
+            (version, method)
+            for version in self.scanned_versions
+            for method in (
+                self.get_rebase_failures,
+                self.get_ec_failures,
+                self.get_release_failures,
+                self.get_fbc_health,
+            )
+        ]
+        results = await asyncio.gather(*(method(version) for version, method in tasks), return_exceptions=True)
+        for (version, _), result in zip(tasks, results):
+            if isinstance(result, Exception):
+                self.collection_errors[version] = True
         self.runtime.logger.info('Found %s concerns', len(self.report))
 
-        if self._sync_jira and self.assembly == "stream":
+        if self._sync_jira and self.assembly == "stream" and not self.collection_errors:
             try:
                 self.sync_jira()
             except Exception:
@@ -88,6 +104,11 @@ class ImagesHealthPipeline:
                     multi_build_failures.get(version, []),
                     multi_rebase_failures.get(version, {}),
                 )
+        if self.collection_errors:
+            raise RuntimeError('Image health collection incomplete; available FBC evidence was retained')
+
+    async def get_fbc_health(self, version: str):
+        self.fbc_health[version] = await collect_fbc_health(f'openshift-{version}', self.runtime.logger, variant='ocp')
 
     async def get_report(self, version: str) -> Optional[list]:
         doozer_working = f'{self.doozer_working}-{version}'
@@ -555,6 +576,7 @@ class ImagesHealthPipeline:
 
     async def notify_release_channel(self, version):
         self.slack_client.bind_channel(version)
+        include_execution_links = not self.collection_errors.get(version)
 
         concerns = [
             concern
@@ -566,16 +588,28 @@ class ImagesHealthPipeline:
         rebase_failures = self.rebase_failures.get(version, {})
         ec_failures = self.ec_failures.get(version, {})
         release_failures = self.release_failures.get(version, {})
+        fbc_health = self.fbc_health.get(version, FbcHealthReport())
 
         version_tag = f'`openshift-{version}`'
         if self.assembly != 'stream':
             version_tag += f' (assembly `{self.assembly}`)'
 
-        if not concerns and not rebase_failures and not ec_failures and not release_failures:
-            await self.slack_client.say(f':white_check_mark: All images are healthy for {version_tag}')
+        if (
+            not concerns
+            and not rebase_failures
+            and not ec_failures
+            and not release_failures
+            and not fbc_health.summary()
+            and not self.collection_errors.get(version)
+        ):
+            await self.slack_client.say(f':white_check_mark: No tracked failures for {version_tag}')
             return
 
         summary_parts = []
+        if self.collection_errors.get(version):
+            summary_parts.append('Image collection incomplete; available FBC evidence retained')
+        if fbc_health.summary():
+            summary_parts.append(fbc_health.summary())
         if concerns:
             n = len(concerns)
             summary_parts.append(f'{n} image{"s" if n > 1 else ""} failed to build')
@@ -591,23 +625,26 @@ class ImagesHealthPipeline:
 
         issues = '\n- '.join(summary_parts)
         response = await self.slack_client.say(
-            f':alert: There are some issues to look into for {version_tag}:\n- {issues}'
+            f':alert: There are some issues to look into for {version_tag}:\n- {issues}',
+            link_build_url=include_execution_links,
         )
 
-        report = ''
+        report = fbc_health.details() + '\n' if fbc_health.summary() else ''
+        if self.collection_errors.get(version):
+            report += ':warning: Image collection incomplete; missing results do not establish recovery.\n'
 
         if concerns:
             report += f'*Build Failures ({len(concerns)}):*\n'
             for concern in concerns:
-                report += f'{self.get_message_for_release(concern)}\n'
+                report += f'{self.get_message_for_release(concern, include_execution_links=include_execution_links)}\n'
             report += '\n'
 
         if ec_failures:
             report += f'*ITS Verification Failures ({len(ec_failures)}):*\n'
             for image_name, failure_info in sorted(ec_failures.items()):
-                report += self._format_redis_failure_line(image_name, failure_info)
+                report += self._format_redis_failure_line(image_name, failure_info, include_execution_links)
                 pipeline_url = failure_info.get('pipeline_url', '')
-                if pipeline_url:
+                if pipeline_url and include_execution_links:
                     report += f' | {self.url_text(pipeline_url, "Pipeline")}'
                 report += '\n'
             report += '\n'
@@ -615,7 +652,7 @@ class ImagesHealthPipeline:
         if release_failures:
             report += f'*Release to Authz Failures ({len(release_failures)}):*\n'
             for image_name, failure_info in sorted(release_failures.items()):
-                report += self._format_redis_failure_line(image_name, failure_info)
+                report += self._format_redis_failure_line(image_name, failure_info, include_execution_links)
                 report += '\n'
             report += '\n'
 
@@ -628,11 +665,17 @@ class ImagesHealthPipeline:
                 report += (
                     f'- `{image_name}` ({build_system}): Failed {failure_count} time{"s" if failure_count != 1 else ""}'
                 )
-                if jenkins_url:
+                if jenkins_url and include_execution_links:
                     report += f' ({self.url_text(jenkins_url, "Last failure job")})'
                 report += '\n'
 
-        await self.slack_client.say(report, thread_ts=response['ts'], unfurl_links=False, unfurl_media=False)
+        await self.slack_client.say(
+            report,
+            thread_ts=response['ts'],
+            link_build_url=include_execution_links,
+            unfurl_links=False,
+            unfurl_media=False,
+        )
 
     async def notify_public_channel(self):
         """
@@ -658,10 +701,12 @@ class ImagesHealthPipeline:
             or any(self.ec_failures.values())
             or any(self.release_failures.values())
             or any(self.rebase_failures.values())
+            or any(report.summary() for report in self.fbc_health.values())
+            or bool(self.collection_errors)
         )
 
         if not has_failures:
-            await self.slack_client.say(':white_check_mark: All images are healthy for all monitored releases')
+            await self.slack_client.say(':white_check_mark: No tracked failures for monitored releases')
             return
 
         # Collect all groups that have actual failures (skip versions with empty dicts)
@@ -670,6 +715,8 @@ class ImagesHealthPipeline:
         all_groups.update(f'openshift-{v}' for v, f in self.ec_failures.items() if f)
         all_groups.update(f'openshift-{v}' for v, f in self.release_failures.items() if f)
         all_groups.update(f'openshift-{v}' for v, f in self.rebase_failures.items() if f)
+        all_groups.update(f'openshift-{v}' for v, report in self.fbc_health.items() if report.summary())
+        all_groups.update(f'openshift-{version}' for version in self.collection_errors)
 
         # Send the main alert message with just the dashboard link
         dashboard_url = ART_BUILD_FAILURES_URL
@@ -699,6 +746,8 @@ class ImagesHealthPipeline:
         for group in sorted(all_groups, key=sort_key):
             version = group.replace('openshift-', '')
             group_summary = []
+            if self.collection_errors.get(version):
+                group_summary.append('Image collection incomplete; missing results do not establish recovery')
 
             # Build failures for this group
             build_fails = version_build_failures.get(group, [])
@@ -725,10 +774,15 @@ class ImagesHealthPipeline:
                 group_summary.append(f'{n} image{"s" if n > 1 else ""} with rebase failures')
 
             # Send the group summary as a thread response
+            fbc_health = self.fbc_health.get(version, FbcHealthReport())
+            if fbc_health.summary():
+                group_summary.append(fbc_health.summary())
             if group_summary:
                 group_message = f'*{group}*:\n'
                 for item in group_summary:
                     group_message += f'- {item}\n'
+                if fbc_health.summary():
+                    group_message += '\n' + fbc_health.details()
 
                 await self.slack_client.say(
                     group_message.rstrip(),
@@ -759,20 +813,23 @@ class ImagesHealthPipeline:
                 )
         return grouped
 
-    def _format_redis_failure_line(self, image_name: str, failure_info: dict) -> str:
+    def _format_redis_failure_line(
+        self, image_name: str, failure_info: dict, include_execution_links: bool = True
+    ) -> str:
         """
         Format a single Redis failure entry for the release channel thread.
 
         Arg(s):
             image_name (str): Image distgit key
             failure_info (dict): Redis failure data with failure_count, jenkins_url, etc.
+            include_execution_links: Preserve legacy links only for complete reports.
         Return Value(s):
             str: Formatted line (without trailing newline)
         """
         failure_count = failure_info.get('failure_count', 0)
         jenkins_url = failure_info.get('jenkins_url', '')
         line = f'- `{image_name}`: Failed {failure_count} time{"s" if failure_count != 1 else ""}'
-        if jenkins_url:
+        if jenkins_url and include_execution_links:
             line += f' ({self.url_text(jenkins_url, "Last failure job")})'
         return line
 
@@ -794,12 +851,13 @@ class ImagesHealthPipeline:
             line += f' ({self.url_text(jenkins_url, "Last failure job")})'
         return line
 
-    def get_message_for_release(self, concern: dict):
+    def get_message_for_release(self, concern: dict, include_execution_links: bool = True):
         """
         Format a concern message for the release channel (#art-release-4-X).
 
         Arg(s):
             concern (dict): Concern data from doozer images:health
+            include_execution_links: Include metadata-derived logs only for complete reports.
         Return Value(s):
             str: Formatted message with links and details
         """
@@ -815,7 +873,10 @@ class ImagesHealthPipeline:
         message = f'- `{image_name}`: {self.url_text(search_url, "Build history")}'
 
         # Add logs link for failures
-        if code in [ConcernCode.LATEST_ATTEMPT_FAILED.value, ConcernCode.FAILING_AT_LEAST_FOR.value]:
+        if include_execution_links and code in [
+            ConcernCode.LATEST_ATTEMPT_FAILED.value,
+            ConcernCode.FAILING_AT_LEAST_FOR.value,
+        ]:
             logs_url = self.get_logs_url(concern)
             message += f' | {self.url_text(logs_url, "Latest failure logs")}'
             message += self._jira_link(concern)
@@ -945,18 +1006,20 @@ class ImagesHealthPipeline:
         """
         group = f'openshift-{version}'
         prompt_parts = [f'Please investigate and fix OCP build failures for *{group}*.\n']
+        include_execution_links = not self.collection_errors.get(version)
+        if not include_execution_links:
+            prompt_parts.append(':warning: Image collection incomplete; missing results do not establish recovery.')
 
         if failing_concerns:
             prompt_parts.append('*Failing Images (build failures):*')
             for concern in failing_concerns:
                 image_name = concern['image_name']
                 failure_count = concern.get('latest_success_idx', 0)
-                logs_url = self.get_logs_url(concern)
                 search_url = self.get_search_url(concern)
-                prompt_parts.append(
-                    f'- `{image_name}`: {failure_count} consecutive failures '
-                    f'({self.url_text(search_url, "history")} | {self.url_text(logs_url, "latest logs")})'
-                )
+                links = self.url_text(search_url, 'history')
+                if include_execution_links:
+                    links += f' | {self.url_text(self.get_logs_url(concern), "latest logs")}'
+                prompt_parts.append(f'- `{image_name}`: {failure_count} consecutive failures ({links})')
 
         if rebase_failures:
             prompt_parts.append('\n*Failing Images (rebase failures):*')
@@ -964,7 +1027,7 @@ class ImagesHealthPipeline:
                 failure_count = failure_info.get('failure_count', 0)
                 jenkins_url = failure_info.get('jenkins_url', '')
                 line = f'- `{image_name}`: {failure_count} consecutive rebase failures'
-                if jenkins_url:
+                if jenkins_url and include_execution_links:
                     line += f' ({self.url_text(jenkins_url, "last failure job")})'
                 prompt_parts.append(line)
 
@@ -1010,7 +1073,9 @@ class ImagesHealthPipeline:
         self.slack_client.bind_channel('#team-art-chai-bot')
 
         message = f'<@U0AKNPBBVT7> {prompt}'
-        await self.slack_client.say(message, unfurl_links=False, unfurl_media=False)
+        await self.slack_client.say(
+            message, link_build_url=not self.collection_errors.get(version), unfurl_links=False, unfurl_media=False
+        )
         self.runtime.logger.info(
             'Notified chai-bot in #team-art-chai-bot for %d build failure(s) and %d rebase failure(s) in openshift-%s',
             len(failing_concerns),

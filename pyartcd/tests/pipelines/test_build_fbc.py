@@ -7,6 +7,9 @@ from pyartcd.pipelines.build_fbc import BuildFbcPipeline
 
 class TestBuildFbcPipeline(unittest.IsolatedAsyncioTestCase):
     def setUp(self):
+        counter_patch = patch('pyartcd.pipelines.build_fbc.account_run', new_callable=AsyncMock)
+        self.increment_counter = counter_patch.start()
+        self.addCleanup(counter_patch.stop)
         runtime = MagicMock(dry_run=False, doozer_working="/tmp/doozer-working")
         self.pipeline = BuildFbcPipeline(
             runtime=runtime,

@@ -8,7 +8,7 @@ variants and an aggregated Slack report.
 
 import asyncio
 import json
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from urllib.parse import quote
 
@@ -21,6 +21,7 @@ from doozerlib.constants import ART_BUILD_FAILURES_URL, ART_BUILD_HISTORY_URL
 from pyartcd import util
 from pyartcd.cli import cli, click_coroutine, pass_runtime
 from pyartcd.constants import OCP_BUILD_DATA_URL
+from pyartcd.fbc_health import FbcHealthReport, collect_fbc_health
 from pyartcd.runtime import Runtime
 from pyartcd.slack import SlackClient
 
@@ -59,6 +60,7 @@ class LayeredProductHealthReport:
     release_failures: dict[str, dict]
     rebase_failures: dict[str, dict]
     error: str | None = None
+    fbc_health: FbcHealthReport = field(default_factory=FbcHealthReport)
 
 
 class LayeredProductsImageHealthPipeline:
@@ -117,32 +119,48 @@ class LayeredProductsImageHealthPipeline:
         Returns:
             A successful group report or a report containing the collection error.
         """
+        fbc_health = await collect_fbc_health(group, self.runtime.logger)
+        context = LayeredProductHealthReport(
+            group=group,
+            product='unknown',
+            variant=None,
+            build_concerns=[],
+            build_failures={},
+            its_failures={},
+            release_failures={},
+            rebase_failures={},
+            fbc_health=FbcHealthReport(
+                {key: entry for key, entry in fbc_health.failures.items() if entry['variant'] == 'unknown'},
+                error=True,
+            ),
+        )
         try:
-            return await self._collect_group(group)
-        except Exception as error:
+            return await self._collect_group(group, fbc_health, context=context)
+        except Exception:
             self.runtime.logger.exception("Failed to collect layered product health for %s", group)
-            return LayeredProductHealthReport(
-                group=group,
-                product="unknown",
-                variant=None,
-                build_concerns=[],
-                build_failures={},
-                its_failures={},
-                release_failures={},
-                rebase_failures={},
-                error=str(error),
-            )
+            context.error = 'Image collection incomplete'
+            return context
 
-    async def _collect_group(self, group: str) -> LayeredProductHealthReport:
+    async def _collect_group(
+        self,
+        group: str,
+        fbc_health: FbcHealthReport | None = None,
+        *,
+        context: LayeredProductHealthReport | None = None,
+    ) -> LayeredProductHealthReport:
         """
         Collect variant-aware health data for one layered-product group.
 
         Args:
             group: Layered-product group name.
+            fbc_health: Unmodified group-wide FBC snapshot, collected independently.
+            context: Per-group fallback updated only with established scope.
 
         Returns:
             Health data collected for the group.
         """
+        if fbc_health is None:
+            fbc_health = await collect_fbc_health(group, self.runtime.logger)
         group_config = await util.load_group_config(
             group=group,
             assembly=self.assembly,
@@ -152,7 +170,20 @@ class LayeredProductsImageHealthPipeline:
         product = group_config.get("product")
         if not product:
             raise ValueError(f"No product found in group config for {group}")
+        if context is not None:
+            context.product = product
         variant = get_build_variant_for_product(product)
+        fbc_health = FbcHealthReport(
+            {
+                key: entry
+                for key, entry in fbc_health.failures.items()
+                if entry['variant'] in {variant.value, 'unknown'}
+            },
+            error=fbc_health.error,
+        )
+        if context is not None:
+            context.variant = variant
+            context.fbc_health = fbc_health
 
         build_failures, its_failures, release_failures, rebase_failures = await asyncio.gather(
             util.get_counter_failures(
@@ -186,7 +217,13 @@ class LayeredProductsImageHealthPipeline:
         if self.image_list:
             failure_images &= set(self.image_list)
 
-        build_concerns = await self._get_build_concerns(group, variant, failure_images)
+        error = None
+        try:
+            build_concerns = await self._get_build_concerns(group, variant, failure_images)
+        except Exception:
+            self.runtime.logger.warning('Image concerns unavailable for %s', group)
+            build_concerns = []
+            error = 'Image collection incomplete'
         return LayeredProductHealthReport(
             group=group,
             product=product,
@@ -196,6 +233,8 @@ class LayeredProductsImageHealthPipeline:
             its_failures=its_failures,
             release_failures=release_failures,
             rebase_failures=rebase_failures,
+            fbc_health=fbc_health,
+            error=error,
         )
 
     async def _get_build_concerns(
@@ -276,15 +315,13 @@ class LayeredProductsImageHealthPipeline:
         """
         message_parts = [f":alert: Layered product image health report for `{variant_name}`:"]
         for report in reports:
-            if report.error:
-                message_parts.append(f"- `{report.group}`: :warning: incomplete ({report.error})")
-                continue
-
             failure_parts = self._get_failure_parts(report)
+            if report.error:
+                failure_parts.insert(0, f':warning: incomplete ({report.error})')
             if failure_parts:
                 message_parts.append(f"- `{report.group}`: {', '.join(failure_parts)}")
             else:
-                message_parts.append(f"- `{report.group}`: :white_check_mark: healthy")
+                message_parts.append(f"- `{report.group}`: :white_check_mark: no tracked failures")
 
         message_parts.append(f"\nFor details, see <{ART_BUILD_FAILURES_URL}|ART Build Failures Dashboard>.")
         return "\n".join(message_parts)
@@ -299,8 +336,6 @@ class LayeredProductsImageHealthPipeline:
         Returns:
             Slack-formatted group details.
         """
-        if report.error:
-            return f"*{report.group}*\n:warning: Report incomplete: {report.error}"
         return self._build_group_details(report)
 
     def _build_group_details(self, report: LayeredProductHealthReport) -> str:
@@ -314,20 +349,59 @@ class LayeredProductsImageHealthPipeline:
             Slack-formatted group details.
         """
         sections = [f"*{report.group}*"]
+        if report.error:
+            sections.append(f':warning: Report incomplete: {report.error}')
+        if report.fbc_health.summary():
+            sections.append(report.fbc_health.details())
         build_concerns = self._get_failure_concerns(report.build_concerns)
         if build_concerns:
             lines = [f"*Build Failures ({len(build_concerns)}):*"]
-            lines.extend(self._format_build_concern(concern, report.group) for concern in build_concerns)
+            lines.extend(
+                self._format_build_concern(concern, report.group, include_execution_links=not report.error)
+                for concern in build_concerns
+            )
             sections.append("\n".join(lines))
+        unvalidated_build_failures = self._get_unvalidated_build_failures(report)
+        if unvalidated_build_failures:
+            lines = [f'*Redis-tracked build failures ({len(unvalidated_build_failures)}; unvalidated):*']
+            lines.extend(
+                f"- `{image_name}`: Failed {failure['failure_count']} time(s) "
+                '(Redis counter; current image/build status unvalidated)'
+                for image_name, failure in sorted(unvalidated_build_failures.items())
+            )
+            sections.append('\n'.join(lines))
         if report.its_failures:
-            sections.append(self._format_counter_section("ITS Verification Failures", report.its_failures))
+            sections.append(
+                self._format_counter_section(
+                    "ITS Verification Failures", report.its_failures, include_execution_links=not report.error
+                )
+            )
         if report.release_failures:
-            sections.append(self._format_counter_section("Release to Authz Failures", report.release_failures))
+            sections.append(
+                self._format_counter_section(
+                    "Release to Authz Failures", report.release_failures, include_execution_links=not report.error
+                )
+            )
         if report.rebase_failures:
-            sections.append(self._format_counter_section("Rebase Failures", report.rebase_failures))
+            sections.append(
+                self._format_counter_section(
+                    "Rebase Failures", report.rebase_failures, include_execution_links=not report.error
+                )
+            )
         if len(sections) == 1:
             sections.append(":white_check_mark: Healthy")
         return "\n\n".join(sections)
+
+    def _get_unvalidated_build_failures(self, report: LayeredProductHealthReport) -> dict[str, dict]:
+        """Retain selected Redis counters without claiming missing current image/build evidence."""
+        if not report.error:
+            return {}
+        known_images = {concern['image_name'] for concern in report.build_concerns}
+        return {
+            image_name: failure
+            for image_name, failure in report.build_failures.items()
+            if image_name not in known_images and (not self.image_list or image_name in self.image_list)
+        }
 
     def _get_failure_parts(self, report: LayeredProductHealthReport) -> list[str]:
         """
@@ -340,9 +414,14 @@ class LayeredProductsImageHealthPipeline:
             Failure categories with their counts.
         """
         failure_parts = []
+        if report.fbc_health.summary():
+            failure_parts.append(report.fbc_health.summary())
         build_concerns = self._get_failure_concerns(report.build_concerns)
         if build_concerns:
             failure_parts.append(f"{len(build_concerns)} build failure(s)")
+        unvalidated_build_failures = self._get_unvalidated_build_failures(report)
+        if unvalidated_build_failures:
+            failure_parts.append(f'{len(unvalidated_build_failures)} Redis-tracked build failure(s) (unvalidated)')
         if report.its_failures:
             failure_parts.append(f"{len(report.its_failures)} ITS failure(s)")
         if report.release_failures:
@@ -376,11 +455,12 @@ class LayeredProductsImageHealthPipeline:
                 unfurl_media=False,
             )
             for report in variant_reports:
-                if not self._get_failure_parts(report):
+                if not report.error and not self._get_failure_parts(report):
                     continue
                 await self.slack_client.say(
                     self._build_group_message(report),
                     thread_ts=response["ts"],
+                    link_build_url=not report.error,
                     unfurl_links=False,
                     unfurl_media=False,
                 )
@@ -398,13 +478,14 @@ class LayeredProductsImageHealthPipeline:
         """
         return [concern for concern in concerns if concern.get("code") != ConcernCode.LATEST_BUILD_SUCCEEDED.value]
 
-    def _format_build_concern(self, concern: dict, group: str) -> str:
+    def _format_build_concern(self, concern: dict, group: str, include_execution_links: bool = True) -> str:
         """
         Format one build concern with history and optional log links.
 
         Args:
             concern: Doozer health concern.
             group: Layered-product group associated with the concern.
+            include_execution_links: Include metadata-derived logs only for complete reports.
 
         Returns:
             Slack-formatted build concern line.
@@ -415,7 +496,7 @@ class LayeredProductsImageHealthPipeline:
             return f"- `{image_name}`: No builds attempted during last {DELTA_DAYS} days"
 
         line = f"- `{image_name}`: {self._url_text(self._build_history_url(group, image_name), 'Build history')}"
-        logs_url = self._build_logs_url(concern)
+        logs_url = self._build_logs_url(concern) if include_execution_links else ''
         if logs_url:
             line += f" | {self._url_text(logs_url, 'Latest failure logs')}"
         if code == ConcernCode.FAILING_AT_LEAST_FOR.value:
@@ -425,13 +506,14 @@ class LayeredProductsImageHealthPipeline:
         return line
 
     @staticmethod
-    def _format_counter_section(title: str, failures: dict[str, dict]) -> str:
+    def _format_counter_section(title: str, failures: dict[str, dict], include_execution_links: bool = True) -> str:
         """
         Format a Redis failure-counter section.
 
         Args:
             title: Section title.
             failures: Image failure data keyed by image name.
+            include_execution_links: Retain legacy links unless collection is incomplete.
 
         Returns:
             Slack-formatted counter section.
@@ -441,7 +523,7 @@ class LayeredProductsImageHealthPipeline:
             count = failure.get("failure_count", 0)
             suffix = "" if count == 1 else "s"
             line = f"- `{image_name}`: Failed {count} time{suffix}"
-            url = failure.get("pipeline_url") or failure.get("jenkins_url")
+            url = (failure.get("pipeline_url") or failure.get("jenkins_url")) if include_execution_links else None
             if url:
                 line += f" ({LayeredProductsImageHealthPipeline._url_text(url, 'Last failure')})"
             lines.append(line)
