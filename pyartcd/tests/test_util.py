@@ -4,6 +4,7 @@ from pathlib import Path
 from unittest import IsolatedAsyncioTestCase
 from unittest.mock import AsyncMock, MagicMock, patch
 
+import yaml
 from artcommonlib.variants import BuildVariant
 from pyartcd.build_strategy import BuildStrategy
 from pyartcd.counter_models import (
@@ -16,6 +17,65 @@ from pyartcd.counter_models import (
 from pydantic import ValidationError
 
 from pyartcd import util
+
+
+class TestCreateOrUpdateAssemblyPr(IsolatedAsyncioTestCase):
+    async def _check_release_file(self, existing):
+        runtime = MagicMock()
+        runtime.dry_run = False
+        runtime.config = {'build_config': {'ocp_build_data_repo_push_url': 'https://github.com/example/build-data.git'}}
+        definition = {'releases': {'4.21.1': {'assembly': {'type': 'standard'}}}}
+        with tempfile.TemporaryDirectory() as directory:
+            working_dir = Path(directory)
+            build_data_path = working_dir / 'ocp-build-data-push'
+            build_data_path.mkdir()
+            releases_path = build_data_path / 'releases.yml'
+            if existing:
+                releases_path.write_text(
+                    '# existing release\nreleases:\n  4.21.0:\n    assembly:\n      type: standard\n'
+                )
+            with (
+                patch('pyartcd.util.GitRepository') as repository,
+                patch('pyartcd.util.get_github_client_for_org') as github,
+                patch('pyartcd.util.start_build_sync') as build_sync,
+            ):
+                repository.return_value.setup = AsyncMock()
+                repository.return_value.fetch_switch_branch = AsyncMock()
+                repository.return_value.commit_push = AsyncMock(return_value=False)
+                result = await util.create_or_update_assembly_pr(
+                    runtime,
+                    'openshift-4.21',
+                    '4.21.1',
+                    'konflux',
+                    definition,
+                    'Synthetic title',
+                    'Synthetic body',
+                    working_dir,
+                    MagicMock(),
+                )
+                self.assertIsNone(result)
+                repository.assert_called_once_with(build_data_path, dry_run=False)
+                repository.return_value.setup.assert_awaited_once_with('https://github.com/example/build-data.git')
+                repository.return_value.fetch_switch_branch.assert_awaited_once_with(
+                    'auto-gen-assembly-openshift-4.21-4.21.1', 'openshift-4.21'
+                )
+                repository.return_value.commit_push.assert_awaited_once_with('Synthetic title\nSynthetic body')
+                github.assert_not_called()
+                build_sync.assert_not_called()
+            text = releases_path.read_text()
+            parsed = yaml.safe_load(text)
+            self.assertEqual(parsed['releases']['4.21.1'], definition['releases']['4.21.1'])
+            self.assertEqual(list(parsed['releases']), ['4.21.1', '4.21.0'] if existing else ['4.21.1'])
+            self.assertNotIn('!!omap', text)
+            if existing:
+                self.assertEqual(parsed['releases']['4.21.0'], {'assembly': {'type': 'standard'}})
+                self.assertIn('# existing release', text)
+
+    async def test_initializes_missing_releases_file(self):
+        await self._check_release_file(existing=False)
+
+    async def test_preserves_existing_releases_file(self):
+        await self._check_release_file(existing=True)
 
 
 class TestUtil(IsolatedAsyncioTestCase):
