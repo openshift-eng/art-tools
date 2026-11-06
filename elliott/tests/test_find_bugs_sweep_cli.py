@@ -6,6 +6,12 @@ import elliottlib.cli.find_bugs_sweep_cli as sweep_cli
 from artcommonlib.constants import SHIPMENT_DATA_URL_TEMPLATE
 from click.testing import CliRunner
 from elliottlib import constants, errata
+from elliottlib.bug_sweep_plugins.contracts import (
+    PluginDecision,
+    PluginDisposition,
+    PluginEvaluation,
+    PluginResult,
+)
 from elliottlib.bzutil import JIRABugTracker
 from elliottlib.cli.common import Runtime, cli
 from elliottlib.cli.find_bugs_sweep_cli import (
@@ -962,6 +968,39 @@ class TestGetBuildsByAdvisoryKind(unittest.TestCase):
         self.assertEqual(result['rpm'], ['rpm-package-1-1.0.0-1.el9'])
         self.assertEqual(result['image'], ['brew-image-container-v1.0.0-1', 'konflux-image-container-v1.0.0-1'])
         self.assertEqual(result['extras'], ['konflux-extras-1.0.0-1.el9'])
+
+
+class TestEvidencePluginLogging(unittest.TestCase):
+    def test_plugin_logging_includes_sanitized_warning_and_decision_details(self):
+        safe_reason = "RHCOS_VERIFICATION_REQUIRES_REVIEW: The latest verifier result is not passing"
+        safe_warning = "JIRA_VERIFICATION_COMMENTS_UNAVAILABLE: Unable to read verification comments"
+        plugin_result = PluginResult(
+            plugin_name="rhcos-rpm",
+            decisions=(
+                PluginDecision(
+                    "OCPBUGS-1",
+                    PluginDisposition.REVIEW,
+                    safe_reason,
+                ),
+            ),
+            domain_search_complete=True,
+            warnings=(safe_warning,),
+        )
+        evaluation = PluginEvaluation(
+            claimed_issue_keys=frozenset({"OCPBUGS-1"}),
+            included_issue_keys=frozenset(),
+            results=(plugin_result,),
+        )
+
+        with (
+            patch.object(sweep_cli, "create_plugins", return_value=(Mock(),)),
+            patch.object(sweep_cli, "evaluate_plugins", return_value=evaluation),
+            self.assertLogs(sweep_cli.logger, level="WARNING") as captured_logs,
+        ):
+            sweep_cli._run_evidence_plugins(Mock(), Mock(), ("rhcos-rpm",), set())
+
+        self.assertIn(safe_reason, "\n".join(captured_logs.output))
+        self.assertIn(safe_warning, "\n".join(captured_logs.output))
 
 
 if __name__ == '__main__':

@@ -76,8 +76,8 @@ class RHCOSRpmEvidenceService:
         try:
             target_releases = self._tracker_repository.target_releases()
             trackers = self._tracker_repository.find_trackers()
-        except Exception as exc:
-            warning = f"RHCOS Jira tracker search incomplete: {exc}"
+        except Exception:
+            warning = "RHCOS_TRACKER_SEARCH_FAILED: RHCOS Jira tracker search incomplete"
             LOGGER.warning(warning)
             return self._report(warnings=[warning], tracker_search_complete=False)
 
@@ -85,8 +85,8 @@ class RHCOSRpmEvidenceService:
             selected_images = self._inventory_source.collect()
             if not selected_images:
                 raise ValueError("No selected RHCOS image inventories were returned")
-        except Exception as exc:
-            warning = f"Selected RHCOS RPM inventory unavailable: {exc}"
+        except Exception:
+            warning = "SELECTED_RHCOS_INVENTORY_UNAVAILABLE: Selected RHCOS RPM inventory unavailable"
             LOGGER.warning(warning)
             findings = tuple(
                 self._finding(
@@ -110,8 +110,8 @@ class RHCOSRpmEvidenceService:
             if not basis_images:
                 raise ValueError("No basis RHCOS image inventories were returned")
             baseline_inventory_complete = True
-        except Exception as exc:
-            warning = f"Basis RHCOS RPM inventory unavailable: {exc}"
+        except Exception:
+            warning = "BASIS_RHCOS_INVENTORY_UNAVAILABLE: Basis RHCOS RPM inventory unavailable"
             LOGGER.warning(warning)
             warnings.append(warning)
 
@@ -119,8 +119,8 @@ class RHCOSRpmEvidenceService:
             try:
                 rpm_changes = compare_rpm_inventories(basis_images, selected_images, self._rhcos_rpms)
                 rpm_discovery_complete = True
-            except Exception as exc:
-                warning = f"RHCOS RPM comparison incomplete: {exc}"
+            except Exception:
+                warning = "RHCOS_RPM_COMPARISON_INCOMPLETE: RHCOS RPM comparison incomplete"
                 LOGGER.warning(warning)
                 warnings.append(warning)
                 baseline_inventory_complete = False
@@ -141,8 +141,8 @@ class RHCOSRpmEvidenceService:
                             for evidence in build_evidence
                         )
                     )
-            except Exception as exc:
-                warning = f"RHCOS RPM changelog and advisory evidence collection failed: {exc}"
+            except Exception:
+                warning = "RHCOS_BUILD_EVIDENCE_COLLECTION_FAILED: RHCOS RPM evidence collection failed"
                 LOGGER.warning(warning)
                 warnings.append(warning)
                 rpm_discovery_complete = False
@@ -215,15 +215,15 @@ class RHCOSRpmEvidenceService:
             return self._finding(
                 bug,
                 TrackerDisposition.STATUS_NOT_ELIGIBLE,
-                f"Tracker status {status!r} is not eligible for automatic verification",
+                "Tracker status is not eligible for automatic verification",
             )
         if not cve_id:
             return self._finding(bug, TrackerDisposition.NEEDS_REVIEW, "Tracker has no CVE ID")
 
         try:
             comments = self._tracker_repository.comments(issue_key)
-        except Exception as exc:
-            warning = f"Unable to read verification comments: {exc}"
+        except Exception:
+            warning = "JIRA_VERIFICATION_COMMENTS_UNAVAILABLE: Unable to read verification comments"
             return self._finding(
                 bug,
                 TrackerDisposition.EVIDENCE_INCOMPLETE,
@@ -338,8 +338,8 @@ class RHCOSRpmEvidenceService:
 
         try:
             updated = self._transition(bug, verification, checks, selected_images, rpm_evidence, dry_run)
-        except Exception as exc:
-            warning = f"Evidence passed but Jira status update failed: {exc}"
+        except Exception:
+            warning = "JIRA_STATUS_UPDATE_FAILED: Evidence passed but Jira status update failed"
             return self._finding(
                 bug,
                 TrackerDisposition.STATUS_UPDATE_FAILED,

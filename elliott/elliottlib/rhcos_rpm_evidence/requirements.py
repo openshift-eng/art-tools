@@ -135,14 +135,14 @@ def parse_latest_verification(comments: Iterable[VerificationComment], cve_id: s
                     result=VerificationResult.UNSUPPORTED,
                     comment_created=comment.created,
                     requirements=(),
-                    reason=f"Latest RHCOS verification contains an unsupported package record: {package_name}",
+                    reason="Latest RHCOS verification contains an unsupported package record",
                 )
             if not _rhel_branches_compatible(installed.rhel_branch, required.rhel_branch):
                 return ParsedVerification(
                     result=VerificationResult.UNSUPPORTED,
                     comment_created=comment.created,
                     requirements=(),
-                    reason=f"Installed and required RPMs have different RHEL major versions for {package_name}",
+                    reason="Installed and required RPMs have different RHEL major versions",
                 )
 
             # The verifier's Required field can name a source RPM while Package and
@@ -165,7 +165,7 @@ def parse_latest_verification(comments: Iterable[VerificationComment], cve_id: s
                         result=VerificationResult.UNSUPPORTED,
                         comment_created=comment.created,
                         requirements=(),
-                        reason=f"Latest RHCOS verification contains an unsupported required RPM: {value}",
+                        reason="Latest RHCOS verification contains an unsupported required RPM",
                     )
                 requirements.append(requirement)
 

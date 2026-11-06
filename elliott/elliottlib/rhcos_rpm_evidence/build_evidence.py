@@ -29,9 +29,9 @@ class KojiErrataRpmBuildEvidenceSource:
         try:
             koji = self._runtime.build_retrying_koji_client(caching=True)
             koji_warning = None
-        except Exception as exc:
+        except Exception:
             koji = None
-            koji_warning = f"Unable to initialize Brew changelog client: {exc}"
+            koji_warning = "BREW_CHANGELOG_CLIENT_UNAVAILABLE: Unable to initialize Brew changelog client"
 
         evidence = []
         for nvr in sorted(nvrs):
@@ -39,10 +39,10 @@ class KojiErrataRpmBuildEvidenceSource:
             changelog_cves: set[str] = set()
             changelog_complete = False
             if koji is None:
-                warnings.append(koji_warning or "Brew changelog client unavailable")
+                warnings.append(koji_warning or "BREW_CHANGELOG_CLIENT_UNAVAILABLE: Brew changelog client unavailable")
             else:
                 try:
-                    entries = koji.getChangelogEntries(nvr)
+                    entries = koji.getChangelogEntries(nvr, strict=True)
                     if entries is None:
                         raise ValueError("No changelog returned")
                     for entry in entries:
@@ -52,8 +52,8 @@ class KojiErrataRpmBuildEvidenceSource:
                             text = str(entry)
                         changelog_cves.update(cve.upper() for cve in _CVE_RE.findall(text))
                     changelog_complete = True
-                except Exception as exc:
-                    warnings.append(f"Changelog lookup failed for {nvr}: {exc}")
+                except Exception:
+                    warnings.append(f"BREW_CHANGELOG_LOOKUP_FAILED: Changelog lookup failed for build {nvr}")
 
             advisories: list[RpmAdvisoryEvidence] = []
             advisory_lookup_complete = False
@@ -70,8 +70,8 @@ class KojiErrataRpmBuildEvidenceSource:
                         )
                     )
                 advisory_lookup_complete = True
-            except Exception as exc:
-                warnings.append(f"Errata advisory lookup failed for {nvr}: {exc}")
+            except Exception:
+                warnings.append(f"ERRATA_ADVISORY_LOOKUP_FAILED: Advisory lookup failed for build {nvr}")
 
             evidence.append(
                 RpmBuildEvidence(

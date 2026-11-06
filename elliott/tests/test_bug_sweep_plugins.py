@@ -155,11 +155,20 @@ class TestRHCOSPlugin(unittest.TestCase):
             True,
             (),
             (
-                TrackerFinding("OCPBUGS-1", "CVE-1", "rhcos", "NEW", TrackerDisposition.READY_TO_VERIFY, "ready"),
-                TrackerFinding("OCPBUGS-2", "CVE-2", "rhcos", "NEW", TrackerDisposition.NO_EVIDENCE, "none"),
+                TrackerFinding(
+                    "OCPBUGS-1",
+                    "CVE-1",
+                    "rhcos",
+                    "NEW",
+                    TrackerDisposition.READY_TO_VERIFY,
+                    "RHCOS evidence qualifies this tracker",
+                ),
+                TrackerFinding(
+                    "OCPBUGS-2", "CVE-2", "rhcos", "NEW", TrackerDisposition.NO_EVIDENCE, "No changed RPM evidence"
+                ),
             ),
             True,
-            warnings=("warning",),
+            warnings=("RHCOS_BUILD_EVIDENCE_COLLECTION_FAILED: RHCOS RPM evidence collection failed",),
         )
         runtime = Mock(assembly="4.22.22")
         tracker = object.__new__(JIRABugTracker)
@@ -187,7 +196,11 @@ class TestRHCOSPlugin(unittest.TestCase):
             [decision.disposition for decision in result.decisions],
             [PluginDisposition.INCLUDE, PluginDisposition.SUPPRESS],
         )
-        self.assertEqual(result.warnings, ("warning",))
+        self.assertEqual(
+            result.warnings,
+            ("RHCOS_BUILD_EVIDENCE_COLLECTION_FAILED: RHCOS RPM evidence collection failed",),
+        )
+        self.assertEqual(result.decisions[0].reason, "RHCOS evidence qualifies this tracker")
 
 
 class TestBugSweepPluginOverlay(unittest.IsolatedAsyncioTestCase):

@@ -166,14 +166,28 @@ class TestVerificationRequirements(unittest.TestCase):
         self.assertEqual(comment_text(value), "first second third")
 
     def test_unsupported_records_and_pass_without_requirements_are_reviewable(self):
+        private_value = "PRIVATE_JIRA_COMMENT_VALUE"
         unsupported = VerificationComment(
             "2026-11-01",
-            "CVE-2026-12345 verified in RHCOS build. Package: libre. Installed: invalid. Required: invalid. Result: PASS",
+            f"CVE-2026-12345 verified in RHCOS build. Package: {private_value}. Installed: invalid. "
+            "Required: invalid. Result: PASS",
+        )
+        unsupported_required = VerificationComment(
+            "2026-11-02",
+            f"CVE-2026-12345 verified in RHCOS build. Required: {private_value}. Result: PASS",
         )
         no_requirements = VerificationComment("2026-11-02", "CVE-2026-12345 verified in RHCOS build. Result: PASS")
 
+        parsed_package = parse_latest_verification([unsupported], "CVE-2026-12345")
+        parsed_required = parse_latest_verification([unsupported_required], "CVE-2026-12345")
+        self.assertNotIn(private_value, parsed_package.reason)
+        self.assertNotIn(private_value, parsed_required.reason)
         self.assertEqual(
-            parse_latest_verification([unsupported], "CVE-2026-12345").result,
+            parsed_package.result,
+            VerificationResult.UNSUPPORTED,
+        )
+        self.assertEqual(
+            parsed_required.result,
             VerificationResult.UNSUPPORTED,
         )
         self.assertEqual(
@@ -419,21 +433,40 @@ class TestRHCOSService(unittest.TestCase):
         self.assertEqual(result.findings[0].disposition, TrackerDisposition.NEEDS_REVIEW)
         self.assertEqual(repository.marked, [])
 
-        repository = self.Repository([self.bug], comments_error=RuntimeError("Jira comments unavailable"))
+        private_error = "PRIVATE_JIRA_EXCEPTION_TEXT"
+        repository = self.Repository([self.bug], comments_error=RuntimeError(private_error))
         result = self._service(repository=repository).run()
         self.assertEqual(result.findings[0].disposition, TrackerDisposition.EVIDENCE_INCOMPLETE)
-        self.assertIn("Unable to read verification comments", result.findings[0].reason)
+        self.assertIn("JIRA_VERIFICATION_COMMENTS_UNAVAILABLE", result.findings[0].reason)
+        self.assertNotIn(private_error, json.dumps(result.to_dict()))
+
+    def test_unsupported_jira_comment_values_are_not_copied_to_findings(self):
+        private_value = "PRIVATE_JIRA_COMMENT_VALUE"
+        comment = VerificationComment(
+            "2026-11-01",
+            f"CVE-2026-12345 verified in RHCOS build. Required: {private_value}. Result: PASS",
+        )
+        repository = self.Repository([self.bug], {self.bug.id: [comment]})
+
+        result = self._service(repository=repository).run()
+
+        self.assertEqual(result.findings[0].disposition, TrackerDisposition.NEEDS_REVIEW)
+        self.assertIn("unsupported required RPM", result.findings[0].reason)
+        self.assertNotIn(private_value, json.dumps(result.to_dict()))
 
     def test_tracker_search_and_selected_inventory_failures_are_reported(self):
-        repo = self.Repository([self.bug], target_error=RuntimeError("Jira unavailable"))
+        private_error = "PRIVATE_EXTERNAL_ERROR_TEXT"
+        repo = self.Repository([self.bug], target_error=RuntimeError(private_error))
         result = self._service(repository=repo).run()
         self.assertFalse(result.tracker_search_complete)
         self.assertIn("Jira tracker search incomplete", result.warnings[0])
+        self.assertNotIn(private_error, json.dumps(result.to_dict()))
 
-        inventory_source = self.Inventory((), (), selected_error=RuntimeError("image unavailable"))
+        inventory_source = self.Inventory((), (), selected_error=RuntimeError(private_error))
         result = self._service(inventory_source=inventory_source).run()
         self.assertEqual(result.findings[0].disposition, TrackerDisposition.EVIDENCE_INCOMPLETE)
         self.assertIn("Selected RHCOS RPM inventory unavailable", result.findings[0].reason)
+        self.assertNotIn(private_error, json.dumps(result.to_dict()))
 
     def test_new_changelog_evidence_can_qualify_without_verifier_comment(self):
         basis = _image("x86_64", (_rpm("kernel-core", release="100.el9_8"),))
@@ -678,8 +711,32 @@ class TestReportAndAdapters(unittest.TestCase):
 
         self.assertEqual(result[0].changelog_cves, ("CVE-2026-12345", "CVE-2026-99999"))
         self.assertTrue(result[0].changelog_complete)
+        koji.getChangelogEntries.assert_called_once_with("kernel-1-1.el9", strict=True)
         self.assertEqual(result[0].advisory_cves, {"CVE-2026-12345", "CVE-2026-88888"})
         self.assertTrue(result[0].advisory_lookup_complete)
+
+    def test_build_evidence_source_marks_missing_changelog_incomplete(self):
+        runtime = MagicMock()
+        koji = MagicMock()
+        private_error = "PRIVATE_BREW_EXCEPTION_TEXT"
+        koji.getChangelogEntries.side_effect = RuntimeError(private_error)
+        runtime.build_retrying_koji_client.return_value = koji
+        with (
+            patch.object(build_evidence, "Build") as build_class,
+            patch.object(build_evidence, "Erratum"),
+        ):
+            build_class.return_value.all_errata_ids = []
+
+            result = build_evidence.KojiErrataRpmBuildEvidenceSource(runtime).collect({"kernel-1-1.el9"})
+
+        self.assertFalse(result[0].changelog_complete)
+        self.assertEqual(result[0].changelog_cves, ())
+        self.assertEqual(
+            result[0].warnings,
+            ("BREW_CHANGELOG_LOOKUP_FAILED: Changelog lookup failed for build kernel-1-1.el9",),
+        )
+        self.assertNotIn(private_error, json.dumps(result[0].to_dict()))
+        koji.getChangelogEntries.assert_called_once_with("kernel-1-1.el9", strict=True)
 
     def test_build_evidence_source_keeps_advisory_results_when_brew_client_fails(self):
         runtime = MagicMock()
@@ -700,7 +757,25 @@ class TestReportAndAdapters(unittest.TestCase):
         self.assertEqual(len(results), 2)
         self.assertTrue(all(not item.changelog_complete for item in results))
         self.assertTrue(all(item.advisory_lookup_complete for item in results))
-        self.assertTrue(all("Unable to initialize Brew changelog client" in item.warnings[0] for item in results))
+        self.assertTrue(all("BREW_CHANGELOG_CLIENT_UNAVAILABLE" in item.warnings[0] for item in results))
+        self.assertNotIn("Brew unavailable", json.dumps([item.to_dict() for item in results]))
+
+    def test_build_evidence_source_redacts_advisory_lookup_errors(self):
+        runtime = MagicMock()
+        koji = MagicMock()
+        koji.getChangelogEntries.return_value = []
+        runtime.build_retrying_koji_client.return_value = koji
+        private_error = "PRIVATE_ERRATA_EXCEPTION_TEXT"
+        with patch.object(build_evidence, "Build") as build_class:
+            build_class.return_value.all_errata_ids = [123]
+            with patch.object(build_evidence, "Erratum", side_effect=RuntimeError(private_error)):
+                result = build_evidence.KojiErrataRpmBuildEvidenceSource(runtime).collect({"private-package-1-1.el9"})
+
+        self.assertEqual(
+            result[0].warnings,
+            ("ERRATA_ADVISORY_LOOKUP_FAILED: Advisory lookup failed for build private-package-1-1.el9",),
+        )
+        self.assertNotIn(private_error, json.dumps(result[0].to_dict()))
 
     def test_jira_repository_scopes_search_and_refuses_unconfigured_releases(self):
         tracker = MagicMock()
@@ -742,9 +817,13 @@ class TestReportAndAdapters(unittest.TestCase):
         )
 
     def test_jira_repository_marks_verified_safely(self):
+        events = []
         tracker = MagicMock()
-        tracker.client.return_value.issue.return_value = SimpleNamespace(status="NEW")
-        tracker.update_bug_status.return_value = True
+        tracker.client.return_value.issue.side_effect = lambda _issue_key: (
+            events.append("read") or SimpleNamespace(status="NEW")
+        )
+        tracker.update_bug_status.side_effect = lambda *_args, **_kwargs: events.append("transition") or True
+        tracker.add_comment.side_effect = lambda *_args, **_kwargs: events.append("comment")
         adapter = repository.JiraRHCOSTrackerRepository(tracker)
         bug = _tracker()
 
@@ -752,8 +831,10 @@ class TestReportAndAdapters(unittest.TestCase):
         tracker.add_comment.assert_not_called()
         tracker.update_bug_status.assert_called_with(bug, "VERIFIED", comment="evidence", log_comment=True, noop=True)
 
+        events.clear()
         with patch.object(repository, "JIRABug", return_value=SimpleNamespace(status="NEW")) as jira_bug:
             self.assertTrue(adapter.mark_verified(bug, "evidence", dry_run=False))
+        self.assertEqual(events, ["read", "transition", "comment"])
         tracker.add_comment.assert_called_once_with(bug.id, "evidence", private=True)
         tracker.update_bug_status.assert_called_with(
             jira_bug.return_value,
@@ -761,6 +842,23 @@ class TestReportAndAdapters(unittest.TestCase):
             log_comment=False,
             noop=False,
         )
+
+    def test_jira_repository_does_not_comment_when_already_verified_or_transition_fails(self):
+        tracker = MagicMock()
+        adapter = repository.JiraRHCOSTrackerRepository(tracker)
+        bug = _tracker()
+
+        with patch.object(repository, "JIRABug", return_value=SimpleNamespace(status="VERIFIED")):
+            self.assertFalse(adapter.mark_verified(bug, "evidence", dry_run=False))
+        tracker.update_bug_status.assert_not_called()
+        tracker.add_comment.assert_not_called()
+
+        tracker.client.return_value.issue.return_value = SimpleNamespace(status="NEW")
+        tracker.update_bug_status.return_value = False
+        with patch.object(repository, "JIRABug", return_value=SimpleNamespace(status="NEW")):
+            self.assertFalse(adapter.mark_verified(bug, "evidence", dry_run=False))
+        tracker.update_bug_status.assert_called_once()
+        tracker.add_comment.assert_not_called()
 
 
 if __name__ == "__main__":

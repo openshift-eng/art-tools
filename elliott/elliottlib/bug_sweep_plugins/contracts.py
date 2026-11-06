@@ -27,6 +27,9 @@ class PluginDisposition(StrEnum):
 class PluginDecision:
     """
     A plugin decision claims an issue and prevents ordinary-sweep fallback.
+
+    Reasons are suitable for logs and reports. Plugins must not include raw
+    external data or exception messages in them.
     """
 
     issue_key: str
@@ -41,6 +44,7 @@ class PluginResult:
 
     A complete result owns exactly the issues listed in ``decisions``. Issues not
     listed are outside the plugin's domain and remain eligible for the normal sweep.
+    Warnings must use sanitized diagnostic messages and omit exception text.
     """
 
     plugin_name: str

@@ -54,7 +54,7 @@ class JiraRHCOSTrackerRepository:
 
     def mark_verified(self, bug: RHCOSTracker, comment: str, dry_run: bool) -> bool:
         """
-        Attach the evidence comment, then transition a tracker to VERIFIED.
+        Transition a tracker to VERIFIED and attach its evidence comment.
         """
         if dry_run:
             return self.tracker.update_bug_status(
@@ -65,13 +65,17 @@ class JiraRHCOSTrackerRepository:
                 noop=True,
             )
 
-        self.tracker.add_comment(bug.id, comment, private=True)
         current_bug = JIRABug(self.tracker.client().issue(bug.id))
         if current_bug.status.strip().upper() == "VERIFIED":
             return False
-        return self.tracker.update_bug_status(
+        updated = self.tracker.update_bug_status(
             current_bug,
             "VERIFIED",
             log_comment=False,
             noop=False,
         )
+        if not updated:
+            return False
+
+        self.tracker.add_comment(bug.id, comment, private=True)
+        return True
