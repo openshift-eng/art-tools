@@ -21,6 +21,7 @@ from doozerlib.runtime import Runtime
     multiple=True,
     help='Source FBC NVR or pullspec. Repeat for each source version; optional when --fbc-branch is set.',
 )
+@click.option('--assembly-inputs-file', type=click.Path(exists=True, dir_okay=False), hidden=True)
 @click.option('--major-minor', required=True, help='Target OCP MAJOR.MINOR version, e.g. 4.20 or 5.0.')
 @click.option('--fbc-repo', default=constants.ART_FBC_GIT_REPO, show_default=True)
 @click.option('--fbc-branch', help='Build this existing FBC source branch directly; implies --skip-rebase.')
@@ -44,6 +45,7 @@ from doozerlib.runtime import Runtime
 async def fbc_merge_layered(
     runtime: Runtime,
     builds: tuple[str, ...],
+    assembly_inputs_file: str | None,
     major_minor: str,
     fbc_repo: str,
     fbc_branch: str | None,
@@ -61,6 +63,8 @@ async def fbc_merge_layered(
 ):
     if not builds and not fbc_branch:
         raise click.ClickException('At least one FBC build is required unless --fbc-branch is set')
+    if assembly_inputs_file and (skip_rebase or fbc_branch):
+        raise click.ClickException('Assembly inputs cannot be used when skipping rebase')
     runtime.initialize(build_system='konflux', config_only=True)
     if runtime.product == 'ocp' or runtime.group.startswith('openshift-'):
         raise click.ClickException('Use beta:fbc:merge for OpenShift FBCs')
@@ -84,7 +88,11 @@ async def fbc_merge_layered(
     )
     skip_rebase = skip_rebase or bool(fbc_branch)
     if not skip_rebase:
-        await merger.prepare(builds)
+        if assembly_inputs_file:
+            inputs = json.loads(Path(assembly_inputs_file).read_text())
+            await merger.prepare(builds, assembly_inputs=inputs)
+        else:
+            await merger.prepare(builds)
     result = await merger.merge(image_repo, skip_rebase=skip_rebase)
     output = json.dumps(result, indent=2) + '\n'
     if output_file:

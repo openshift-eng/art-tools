@@ -764,6 +764,58 @@ class TestLayeredFbcMerger(unittest.IsolatedAsyncioTestCase):
         self.arch_lookup.assert_awaited_once_with(self.runtime.data_path, (4, 20), self.merger._logger)
         self.assertEqual(self.merger._get_build_arches(), ['x86_64'])
 
+    async def test_prepare_records_and_validates_selected_assembly_provenance(self):
+        selected = self.merger.inputs[0]
+        selected.catalog = [
+            package(default='stable-3.18'),
+            channel('stable-3.18', [{'name': 'quay.v3.18.1'}]),
+            bundle('quay.v3.18.1'),
+        ]
+        self._fbc_query(selected.record)
+        self.merger.bundle_db.get_build_records_by_nvrs = AsyncMock(return_value=[selected.bundle])
+        self.merger._load_group = Mock(return_value=({}, 'c' * 40))
+        labels = {
+            'operators.operatorframework.io.bundle.package.v1': 'quay',
+            'operators.operatorframework.io.bundle.channels.v1': 'stable-3.18',
+        }
+        provenance = {
+            selected.record.nvr: {
+                'assembly': '3.18.1',
+                'group': selected.record.group,
+                'operator': 'quay-operator',
+                'group_revision': 'd' * 40,
+                'pullspec': selected.record.image_pullspec,
+            }
+        }
+        for wrong_group in (False, True):
+            with self.subTest(wrong_group=wrong_group):
+                self.merger._pin_image = AsyncMock(
+                    side_effect=[
+                        selected.record.image_pullspec,
+                        'registry.redhat.io/redhat/redhat-operator-index@sha256:' + 'b' * 64,
+                    ]
+                )
+                if wrong_group:
+                    provenance[selected.record.nvr]['group'] = 'quay-3.17'
+                with (
+                    patch(
+                        'doozerlib.backend.konflux_fbc_merge.util.oc_image_info_for_arch_async',
+                        new=AsyncMock(return_value={'config': {'config': {'Labels': labels}}}),
+                    ),
+                    patch(
+                        'doozerlib.backend.konflux_fbc_merge.opm.render',
+                        new=AsyncMock(side_effect=[[bundle(selected.csv_name)], selected.catalog, []]),
+                    ),
+                ):
+                    if wrong_group:
+                        with self.assertRaisesRegex(ValueError, 'Invalid assembly provenance'):
+                            await self.merger.prepare((selected.record.nvr,), assembly_inputs=provenance)
+                    else:
+                        await self.merger.prepare((selected.record.nvr,), assembly_inputs=provenance)
+                        source = self.merger.provenance['inputs'][0]
+                        self.assertEqual(source['assembly'], '3.18.1')
+                        self.assertEqual(source['assembly_group_revision'], 'd' * 40)
+
     async def test_dry_run_renders_and_validates_without_remote_writes(self):
         directory = self.merger.working_dir
         repo = Mock(local_dir=directory)

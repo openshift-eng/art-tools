@@ -217,7 +217,7 @@ class LayeredFbcMerger(KonfluxFbcFragmentMerger):
             raise ValueError(f'{group} does not support product {self.product} on OCP {self.target_version}')
         return config, gitdata.commit_hash
 
-    async def prepare(self, builds: tuple[str, ...]):
+    async def prepare(self, builds: tuple[str, ...], assembly_inputs: dict | None = None):
         if not builds:
             raise ValueError('At least one FBC build is required')
         self._build_arches = None
@@ -295,6 +295,21 @@ class LayeredFbcMerger(KonfluxFbcFragmentMerger):
                 LayeredFbcInput(record, bundle, package, channels, catalog, revisions[record.group], csv_name)
             )
 
+        if assembly_inputs is not None:
+            if not isinstance(assembly_inputs, dict) or set(assembly_inputs) != {s.record.nvr for s in self.inputs}:
+                raise ValueError('Assembly provenance does not match selected FBC builds')
+            for source in self.inputs:
+                selected = assembly_inputs[source.record.nvr]
+                if (
+                    not isinstance(selected, dict)
+                    or selected.get('group') != source.record.group
+                    or f"{selected.get('operator')}-fbc" != source.record.name
+                    or selected.get('pullspec') != source.record.image_pullspec
+                    or not re.fullmatch(r'[0-9]+\.[0-9]+\.[0-9]+', selected.get('assembly', ''))
+                    or not re.fullmatch(r'[0-9a-f]{40}', selected.get('group_revision', ''))
+                ):
+                    raise ValueError(f'Invalid assembly provenance for {source.record.nvr}')
+
         baseline = await self._pin_image(
             PRODUCTION_INDEX_PULLSPEC_FORMAT.format(
                 major=self.major_minor_override[0], minor=self.major_minor_override[1]
@@ -323,6 +338,11 @@ class LayeredFbcMerger(KonfluxFbcFragmentMerger):
                 for source in sorted(self.inputs, key=lambda source: source.record.nvr)
             ],
         }
+        if assembly_inputs is not None:
+            for source in self.provenance['inputs']:
+                selected = assembly_inputs[source['nvr']]
+                source['assembly'] = selected['assembly']
+                source['assembly_group_revision'] = selected['group_revision']
 
     async def _render_catalog(self, fragments):
         return self.catalog

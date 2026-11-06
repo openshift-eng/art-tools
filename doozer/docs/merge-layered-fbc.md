@@ -1,5 +1,30 @@
 # Build a unified layered-product FBC
 
+Prepare each named Quay assembly with `prepare-release-lp --unified-fbc` first.
+That mode records successful per-operator FBCs in
+`releases.<assembly>.assembly.group.fbc_builds`, keyed by OCP target, and creates
+only the operand/bundle image shipment. FBC records include immutable pullspecs
+and the effective operand pins used during preparation.
+
+The unified job accepts full assembly versions:
+
+```sh
+artcd --working-dir=/tmp/artcd lp-unified-fbc --product=quay \
+  --assembly=3.18.5 --assembly=3.17.9 --ocp-target-version=4.22
+```
+
+ARTCD derives `quay-3.18` and `quay-3.17`, reads each branch at an exact commit,
+and selects that assembly's recorded catalogs for OCP 4.22. Missing assemblies,
+missing target records, stale operand pins, unsuccessful FBCs, and multiple
+assemblies from the same group are rejected. No latest-build fallback is used.
+The committed unified provenance includes `assembly` and
+`assembly_group_revision` for each input. Assembly mode cannot be combined with
+explicit `--fbc-build`, `--fbc-branch`, or `--skip-rebase` inputs.
+The GitLab pipeline exposes a comma-separated `assemblies` parameter.
+
+The explicit-build CLI below remains available for existing callers. Custom
+`--fbc-branch` builds still accept no source inputs and use committed provenance.
+
 `artcd lp-unified-fbc` combines explicit FBC builds for one or more operators and
 one OCP target. Source groups are inferred from the explicit build records; no group
 parameter or new ocp-build-data groups are required.
