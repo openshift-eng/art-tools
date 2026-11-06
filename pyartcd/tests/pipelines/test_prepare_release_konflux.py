@@ -890,7 +890,7 @@ class TestPrepareReleaseKonfluxPipeline(unittest.IsolatedAsyncioTestCase):
         mock_errata_api_instance.close.assert_called_once()
 
         # assert bug finding was done and MR updated with the right shipment configs
-        mock_find_bugs.assert_awaited_once_with(filter_attached_bugs=True)
+        mock_find_bugs.assert_awaited_once_with(filter_attached_bugs=True, evidence_plugins=())
 
         # update_shipment_mr is called 3 times: builds, bugs (via sweep_bugs), CVE flaws (via finalize_shipment)
         self.assertEqual(mock_update_shipment_mr.call_count, 3)
