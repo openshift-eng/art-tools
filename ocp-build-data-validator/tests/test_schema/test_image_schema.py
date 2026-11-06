@@ -84,6 +84,43 @@ class TestImageSchema(unittest.TestCase):
             'from': {},
             'name': 'my-name',
             'for_payload': True,
+            'payload_name': 'test-payload',
+            'delivery': {'delivery_repo_names': ['foo', 'bar']},
+        }
+        self.assertIsNone(image_schema.validate('filename', valid_data))
+
+    def test_validate_for_payload_without_payload_name_is_invalid(self):
+        invalid_data = {
+            'from': {},
+            'name': 'my-name',
+            'for_payload': True,
+            'delivery': {'delivery_repo_names': ['foo', 'bar']},
+        }
+        error = image_schema.validate('filename', invalid_data)
+        self.assertIsNotNone(error)
+        self.assertIn('is not valid under any of the given schemas', error)
+
+    def test_validate_for_payload_override_variants_require_payload_name_override(self):
+        for for_payload_key in ('for_payload', 'for_payload!', 'for_payload?'):
+            with self.subTest(for_payload_key=for_payload_key):
+                invalid_data = {
+                    'from': {},
+                    'name': 'my-name',
+                    for_payload_key: True,
+                    'delivery': {'delivery_repo_names': ['foo', 'bar']},
+                }
+                self.assertIsNotNone(image_schema.validate('filename', invalid_data))
+
+                for payload_name_key in ('payload_name', 'payload_name!', 'payload_name?'):
+                    with self.subTest(for_payload_key=for_payload_key, payload_name_key=payload_name_key):
+                        valid_data = {**invalid_data, payload_name_key: 'test-payload'}
+                        self.assertIsNone(image_schema.validate('filename', valid_data))
+
+    def test_validate_for_payload_false_does_not_require_payload_name(self):
+        valid_data = {
+            'from': {},
+            'name': 'my-name',
+            'for_payload': False,
             'delivery': {'delivery_repo_names': ['foo', 'bar']},
         }
         self.assertIsNone(image_schema.validate('filename', valid_data))
@@ -132,6 +169,7 @@ class TestImageSchema(unittest.TestCase):
             'name': '1234',
             'from': {},
             'for_payload': True,
+            'payload_name': 'test-payload',
             'delivery': {'delivery_repo_names': ['foo', 'bar']},
         }
         self.assertIsNone(image_schema.validate('filename', valid_data))
@@ -222,6 +260,7 @@ class TestImageSchema(unittest.TestCase):
             'from': {},
             'name': 'my-name',
             'for_payload': True,
+            'payload_name': 'test-payload',
             'delivery': {'delivery_repo_names': ['foo', 'bar']},
             'update-csv': {
                 'manifests-dir': '...',
@@ -237,6 +276,7 @@ class TestImageSchema(unittest.TestCase):
             'from': {},
             'name': 'my-name',
             'for_payload': True,
+            'payload_name': 'test-payload',
             'update-csv': {
                 'manifests-dir': '...',
                 'bundle-dir': '...',
@@ -253,6 +293,7 @@ class TestImageSchema(unittest.TestCase):
             'from': {},
             'name': 'my-name',
             'for_payload': True,
+            'payload_name': 'test-payload',
             'delivery': {'delivery_repo_names': ['foo', 'bar']},
             'bridge_release': {'bug_mirroring': {'enabled': False}},
         }
@@ -263,6 +304,7 @@ class TestImageSchema(unittest.TestCase):
             'from': {},
             'name': 'my-name',
             'for_payload': True,
+            'payload_name': 'test-payload',
             'delivery': {'delivery_repo_names': ['foo', 'bar']},
             'bridge_release': {'bug_mirroring': {'enabled': 'nope'}},
         }
@@ -274,6 +316,7 @@ class TestImageSchema(unittest.TestCase):
             'from': {},
             'name': 'my-name',
             'for_payload': True,
+            'payload_name': 'test-payload',
             'delivery': {'delivery_repo_names': ['foo', 'bar']},
             'konflux': {
                 'mode': 'enabled',
@@ -290,6 +333,7 @@ class TestImageSchema(unittest.TestCase):
             'from': {},
             'name': 'my-name',
             'for_payload': True,
+            'payload_name': 'test-payload',
             'delivery': {'delivery_repo_names': ['foo', 'bar']},
             'konflux': {'skip_validate_slsa': True},
         }
@@ -300,6 +344,7 @@ class TestImageSchema(unittest.TestCase):
             'from': {},
             'name': 'my-name',
             'for_payload': True,
+            'payload_name': 'test-payload',
             'delivery': {'delivery_repo_names': ['foo', 'bar']},
             'konflux': {'skip_validate_slsa': 'true'},
         }
@@ -311,6 +356,7 @@ class TestImageSchema(unittest.TestCase):
             'from': {},
             'name': 'my-name',
             'for_payload': True,
+            'payload_name': 'test-payload',
             'delivery': {'delivery_repo_names': ['foo', 'bar']},
             'konflux': {'cachi2': {'lockfile': {'rpms': []}}},
         }
@@ -322,6 +368,7 @@ class TestImageSchema(unittest.TestCase):
             'from': {},
             'name': 'my-name',
             'for_payload': True,
+            'payload_name': 'test-payload',
             'konflux': {'cachi2': {'lockfile': {'rpms': 'not-an-array'}}},
         }
         self.assertIn("'not-an-array' is not of type 'array'", image_schema.validate('filename', invalid_data))
@@ -332,6 +379,7 @@ class TestImageSchema(unittest.TestCase):
             'from': {},
             'name': 'my-name',
             'for_payload': True,
+            'payload_name': 'test-payload',
             'konflux': {'cachi2': {'lockfile': {'rpms': ['valid-package', 123, 'another-valid-package']}}},
         }
         self.assertIn("123 is not of type 'string'", image_schema.validate('filename', invalid_data))
@@ -342,6 +390,7 @@ class TestImageSchema(unittest.TestCase):
             'from': {},
             'name': 'my-name',
             'for_payload': True,
+            'payload_name': 'test-payload',
             'delivery': {'delivery_repo_names': ['foo', 'bar']},
             'konflux': {'cachi2': {'lockfile': {'enabled': True}}},
         }
@@ -353,6 +402,7 @@ class TestImageSchema(unittest.TestCase):
             'from': {},
             'name': 'my-name',
             'for_payload': True,
+            'payload_name': 'test-payload',
             'konflux': {'cachi2': {'lockfile': {'enabled': 'not-a-boolean'}}},
         }
         self.assertIn("'not-a-boolean' is not of type 'boolean'", image_schema.validate('filename', invalid_data))
@@ -363,6 +413,7 @@ class TestImageSchema(unittest.TestCase):
             'from': {},
             'name': 'my-name',
             'for_payload': True,
+            'payload_name': 'test-payload',
             'delivery': {'delivery_repo_names': ['foo', 'bar']},
             'konflux': {'cachi2': {'enabled': True}},
         }
@@ -374,6 +425,7 @@ class TestImageSchema(unittest.TestCase):
             'from': {},
             'name': 'my-name',
             'for_payload': True,
+            'payload_name': 'test-payload',
             'delivery': {'delivery_repo_names': ['foo', 'bar']},
             'konflux': {
                 'mode': 'enabled',
@@ -394,6 +446,7 @@ class TestImageSchema(unittest.TestCase):
             'from': {},
             'name': 'my-name',
             'for_payload': True,
+            'payload_name': 'test-payload',
             'delivery': {'delivery_repo_names': ['foo', 'bar']},
             'dependents': ['image1', 'image2'],
         }
@@ -403,6 +456,7 @@ class TestImageSchema(unittest.TestCase):
             'from': {},
             'name': 'my-name',
             'for_payload': True,
+            'payload_name': 'test-payload',
             'dependents': ['image1', 'image3'],
         }
         self.assertIn(
@@ -415,6 +469,7 @@ class TestImageSchema(unittest.TestCase):
             'from': {},
             'name': 'my-name',
             'for_payload': True,
+            'payload_name': 'test-payload',
             'delivery': {'delivery_repo_names': ['foo', 'bar']},
             'konflux': {
                 'cachi2': {
@@ -433,6 +488,7 @@ class TestImageSchema(unittest.TestCase):
             'from': {},
             'name': 'my-name',
             'for_payload': True,
+            'payload_name': 'test-payload',
             'delivery': {'delivery_repo_names': ['foo', 'bar']},
             'konflux': {
                 'cachi2': {
@@ -460,6 +516,7 @@ class TestImageSchema(unittest.TestCase):
             'from': {},
             'name': 'my-name',
             'for_payload': True,
+            'payload_name': 'test-payload',
             'delivery': {'delivery_repo_names': ['foo', 'bar']},
             'konflux': {
                 'cachi2': {
@@ -487,6 +544,7 @@ class TestImageSchema(unittest.TestCase):
             'from': {},
             'name': 'my-name',
             'for_payload': True,
+            'payload_name': 'test-payload',
             'konflux': {'cachi2': {'artifact_lockfile': {'enabled': 'not-a-boolean'}}},
         }
         self.assertIn("'not-a-boolean' is not of type 'boolean'", image_schema.validate('filename', invalid_data))
@@ -497,6 +555,7 @@ class TestImageSchema(unittest.TestCase):
             'from': {},
             'name': 'my-name',
             'for_payload': True,
+            'payload_name': 'test-payload',
             'konflux': {'cachi2': {'artifact_lockfile': {'resources': 'not-an-array'}}},
         }
         self.assertIn("'not-an-array' is not of type 'array'", image_schema.validate('filename', invalid_data))
@@ -521,6 +580,7 @@ class TestImageSchema(unittest.TestCase):
             'from': {},
             'name': 'test-image',
             'for_payload': True,
+            'payload_name': 'test-payload',
             'delivery': {'delivery_repo_names': ['foo']},
             'enabled_repos': ['rhel-9-appstream-rpms', 'rhel-9-baseos-rpms'],
         }
@@ -531,6 +591,7 @@ class TestImageSchema(unittest.TestCase):
             'from': {},
             'name': 'test-image',
             'for_payload': True,
+            'payload_name': 'test-payload',
             'delivery': {'delivery_repo_names': ['foo']},
             'enabled_repos': ['rhel-9-appstream-rpms', 'rhel-9-invalid-repo'],
         }
@@ -562,6 +623,7 @@ class TestImageSchema(unittest.TestCase):
             'from': {},
             'name': 'test-image',
             'for_payload': True,
+            'payload_name': 'test-payload',
             'delivery': {'delivery_repo_names': ['foo']},
             'enabled_repos': ['rhel-8-server-rpms', 'rhel-8-fast-datapath-rpms'],
         }
@@ -572,6 +634,7 @@ class TestImageSchema(unittest.TestCase):
             'from': {},
             'name': 'test-image',
             'for_payload': True,
+            'payload_name': 'test-payload',
             'delivery': {'delivery_repo_names': ['foo']},
             'enabled_repos': ['rhel-8-server-rpms', 'rhel-8-nonexistent-rpms'],
         }
@@ -601,6 +664,7 @@ class TestImageSchema(unittest.TestCase):
             'from': {},
             'name': 'test-image',
             'for_payload': True,
+            'payload_name': 'test-payload',
             'delivery': {'delivery_repo_names': ['foo']},
             'enabled_repos': ['rhel-9-appstream-rpms', 'rhel-8-server-rpms'],
         }
@@ -614,6 +678,7 @@ class TestImageSchema(unittest.TestCase):
             'from': {},
             'name': 'test-image',
             'for_payload': True,
+            'payload_name': 'test-payload',
             'delivery': {'delivery_repo_names': ['foo']},
             'okd': {
                 'arches': ['x86_64', 'aarch64'],
@@ -629,6 +694,7 @@ class TestImageSchema(unittest.TestCase):
             'from': {},
             'name': 'test-image',
             'for_payload': True,
+            'payload_name': 'test-payload',
             'delivery': {'delivery_repo_names': ['foo']},
             'okd': {
                 'arches': 'x86_64',  # Should be an array
@@ -646,6 +712,7 @@ class TestImageSchema(unittest.TestCase):
             'from': {},
             'name': 'test-image',
             'for_payload': True,
+            'payload_name': 'test-payload',
             'delivery': {'delivery_repo_names': ['foo']},
             'okd': {
                 'arches': ['x86_64', 'invalid_arch'],
@@ -660,6 +727,7 @@ class TestImageSchema(unittest.TestCase):
             'from': {},
             'name': 'my-name',
             'for_payload': True,
+            'payload_name': 'test-payload',
             'delivery': {'delivery_repo_names': ['foo']},
             'el_target': 9,
         }
@@ -695,6 +763,7 @@ class TestImageSchema(unittest.TestCase):
             },
             'name': 'my-name',
             'for_payload': True,
+            'payload_name': 'test-payload',
             'delivery': {'delivery_repo_names': ['foo', 'bar']},
         }
         self.assertIsNone(image_schema.validate('filename', valid_data))
@@ -709,6 +778,7 @@ class TestImageSchema(unittest.TestCase):
             },
             'name': 'my-name',
             'for_payload': True,
+            'payload_name': 'test-payload',
             'delivery': {'delivery_repo_names': ['foo', 'bar']},
         }
         self.assertIsNone(image_schema.validate('filename', valid_data))
@@ -723,6 +793,7 @@ class TestImageSchema(unittest.TestCase):
             },
             'name': 'my-name',
             'for_payload': True,
+            'payload_name': 'test-payload',
             'delivery': {'delivery_repo_names': ['foo', 'bar']},
         }
         self.assertIsNone(image_schema.validate('filename', valid_data))
@@ -737,6 +808,7 @@ class TestImageSchema(unittest.TestCase):
             },
             'name': 'my-name',
             'for_payload': True,
+            'payload_name': 'test-payload',
             'delivery': {'delivery_repo_names': ['foo', 'bar']},
         }
         self.assertIn("'yes' is not of type 'boolean'", image_schema.validate('filename', invalid_data))
