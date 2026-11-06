@@ -1175,6 +1175,18 @@ class JIRABugTracker(BugTracker):
         """Create a JIRA issue link between two issues."""
         self._client.create_issue_link(link_name, inward_issue, outward_issue)
 
+    def client(self) -> JIRA:
+        """
+        Return the configured Jira client for operations without a tracker wrapper.
+        """
+        return self._client
+
+    def available_target_versions(self) -> list[str]:
+        """
+        Return the Jira target versions available to this project.
+        """
+        return self._get_available_target_versions()
+
     def remove_bugs(self, advisory_obj, bugids: List, noop=False):
         if noop:
             print(f"Would've removed bugs: {bugids}")

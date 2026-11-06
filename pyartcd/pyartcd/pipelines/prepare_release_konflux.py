@@ -495,7 +495,11 @@ class PrepareReleaseKonfluxPipeline:
         bug categorization sees builds from both brew and konflux sources.
         """
         self.logger.info("Finding bugs for all advisories and shipments...")
-        bugs_by_kind = await self.find_bugs(filter_attached_bugs=True)
+        evidence_plugins = ("rhcos-rpm",) if "rhcos" in impetus_advisories else ()
+        bugs_by_kind = await self.find_bugs(
+            filter_attached_bugs=True,
+            evidence_plugins=evidence_plugins,
+        )
 
         # Attach bugs to ET advisories
         # Process bugs
@@ -1311,6 +1315,7 @@ class PrepareReleaseKonfluxPipeline:
         permissive: bool | None = None,
         exclude_trackers: bool | None = None,
         filter_attached_bugs: bool = True,
+        evidence_plugins: tuple[str, ...] = (),
     ) -> Dict[str, List[str]]:
         """Find bugs for the current assembly.
 
@@ -1318,6 +1323,7 @@ class PrepareReleaseKonfluxPipeline:
         :param permissive: Whether to use permissive mode. None means use default behavior.
         :param exclude_trackers: Whether to exclude tracker bugs. None means use default behavior.
         :param filter_attached_bugs: Whether to filter bugs already attached to advisories/shipments.
+        :param evidence_plugins: Named evidence plugins used to determine issue eligibility.
         :return: A dictionary mapping advisory kinds to lists of bug IDs
         """
         match build_system:
@@ -1343,8 +1349,26 @@ class PrepareReleaseKonfluxPipeline:
             find_bugs_cmd.append("--filter-attached-bugs")
         else:
             find_bugs_cmd.append("--no-filter-attached-bugs")
+        for plugin_name in evidence_plugins:
+            find_bugs_cmd.extend(["--evidence-plugin", plugin_name])
         stdout = await self.execute_command_with_logging(find_bugs_cmd)
-        return json.loads(stdout)
+        result = json.loads(stdout)
+        if "bugs_by_kind" not in result:
+            return result
+
+        review_decisions = [
+            f"{decision['issue_key']}: {decision['reason']}"
+            for decisions in result.get("evidence_plugins", {}).values()
+            for decision in decisions
+            if decision.get("disposition") == "review"
+        ]
+        if review_decisions:
+            raise RuntimeError(
+                "Evidence plugin review is required before release preparation can continue:\n"
+                + "\n".join(f"- {decision}" for decision in review_decisions)
+            )
+
+        return result["bugs_by_kind"]
 
     async def attach_cve_flaws(self, kind: str, shipment: ShipmentConfig):
         """Attach CVE flaws to the given shipment.
