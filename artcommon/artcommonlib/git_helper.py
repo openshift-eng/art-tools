@@ -1,10 +1,13 @@
 import copy
 import logging
 import os
+import re
+import subprocess
 import sys
 import tempfile
 from pathlib import Path
 from typing import Dict, Optional, Sequence
+from urllib.parse import urlparse
 
 from artcommonlib import constants, exectools
 from artcommonlib import util as art_util
@@ -12,6 +15,44 @@ from artcommonlib.github_auth import get_github_git_auth_env
 from artcommonlib.lock import get_named_semaphore
 
 LOGGER = logging.getLogger(__name__)
+
+
+def validate_git_branch(branch: str | None) -> None:
+    """Allow literal Git branch names, retaining an omitted or empty override."""
+    if branch is None or branch == '':
+        return
+    if not isinstance(branch, str) or branch.startswith('-') or '@{' in branch:
+        raise ValueError('Invalid Git branch name')
+    result = subprocess.run(
+        ['git', 'check-ref-format', '--branch', branch],
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+        check=False,
+    )
+    if result.returncode:
+        raise ValueError('Invalid Git branch name')
+
+
+def validate_git_group_name(group: str) -> None:
+    """Restrict build-data group names to a single safe branch/path component."""
+    if not isinstance(group, str) or not re.fullmatch(r'[A-Za-z0-9_][A-Za-z0-9_.-]*', group) or '..' in group:
+        raise ValueError('Invalid source group name')
+    validate_git_branch(group)
+
+
+def validate_git_remote_url(url: str) -> None:
+    """Reject embedded credentials before remote URLs reach commands or logs."""
+    if not isinstance(url, str) or not url:
+        raise ValueError('Invalid Git repository URL')
+    try:
+        parsed = urlparse(url)
+        has_credentials = parsed.password is not None or (
+            parsed.scheme in ('http', 'https') and parsed.username is not None
+        )
+    except ValueError:
+        raise ValueError('Invalid Git repository URL') from None
+    if has_credentials:
+        raise ValueError('Git repository URLs must not contain embedded credentials; use configured authentication')
 
 
 def git_clone(remote_url: str, target_dir: str, gitargs=[], set_env={}, timeout=0, git_cache_dir: Optional[str] = None):

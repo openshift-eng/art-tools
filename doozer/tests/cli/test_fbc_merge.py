@@ -86,3 +86,23 @@ class TestFbcMergeLayeredCli(unittest.IsolatedAsyncioTestCase):
             ):
                 await inspect.unwrap(fbc_merge_layered.callback)(runtime, **options)
             merger.prepare.assert_awaited_once_with(('fbc-nvr',), assembly_inputs=inputs)
+
+    async def test_unsafe_repository_or_branch_is_rejected_before_runtime_initialization(self):
+        for mode in ('rebase', 'existing'):
+            for invalid in (
+                '--fbc-repo=https://user:dummy-secret@example.invalid/fbc.git',
+                '--fbc-branch=--upload-pack=command',
+            ):
+                args = ['--major-minor=4.22', invalid]
+                if mode == 'rebase':
+                    args.append('--fbc-build=source-nvr')
+                elif not invalid.startswith('--fbc-branch='):
+                    args.append('--fbc-branch=codex/production')
+                with self.subTest(mode=mode, invalid=invalid):
+                    with fbc_merge_layered.make_context('beta:fbc:merge-layered', args) as context:
+                        options = context.params
+                    runtime = Mock(spec=Runtime)
+                    with self.assertRaises(ValueError) as exc:
+                        await inspect.unwrap(fbc_merge_layered.callback)(runtime, **options)
+                    runtime.initialize.assert_not_called()
+                    self.assertNotIn('dummy-secret', str(exc.exception))

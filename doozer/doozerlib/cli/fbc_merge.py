@@ -5,6 +5,7 @@ import os
 from pathlib import Path
 
 import click
+from artcommonlib.git_helper import validate_git_branch, validate_git_remote_url
 from artcommonlib.util import resolve_konflux_kubeconfig_by_product, resolve_konflux_namespace_by_product
 
 from doozerlib import constants
@@ -61,6 +62,8 @@ async def fbc_merge_layered(
     dry_run: bool,
     output_file: str | None,
 ):
+    validate_git_branch(fbc_branch)
+    validate_git_remote_url(fbc_repo)
     if not builds and not fbc_branch:
         raise click.ClickException('At least one FBC build is required unless --fbc-branch is set')
     if assembly_inputs_file and (skip_rebase or fbc_branch):

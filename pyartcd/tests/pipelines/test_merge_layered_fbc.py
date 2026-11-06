@@ -268,3 +268,23 @@ class TestMergeLayeredFbcPipeline(unittest.IsolatedAsyncioTestCase):
             client.return_value.get_repo.return_value = repo
             await pipeline.run()
         self.assertEqual(pipeline.target, '4.22')
+
+    def test_unsafe_git_inputs_are_rejected_before_commands_or_clients(self):
+        for kwargs in (
+            {'fbc_branch': '--upload-pack=command'},
+            {'fbc_repo': 'https://user:dummy-secret@example.invalid/fbc.git'},
+            {'data_path': 'https://dummy-secret@github.com/example/build-data'},
+        ):
+            with self.subTest(kwargs=kwargs), self.assertRaises(ValueError) as exc:
+                MergeLayeredFbcPipeline(self.runtime, **kwargs)
+            self.assertNotIn('dummy-secret', str(exc.exception))
+
+    async def test_custom_branch_provenance_rejects_unsafe_source_groups(self):
+        for group in ('.', '..', '--detach', 'quay/3.18'):
+            p = MergeLayeredFbcPipeline(self.runtime, '4.22', fbc_branch='codex/production')
+            repo = Mock()
+            repo.get_contents.return_value.decoded_content = json.dumps({'execution_group': group}).encode()
+            with patch('pyartcd.pipelines.merge_layered_fbc.get_github_client_for_org') as client:
+                client.return_value.get_repo.return_value = repo
+                with self.subTest(group=group), self.assertRaisesRegex(ValueError, 'execution_group'):
+                    await p._resolve_branch_group()

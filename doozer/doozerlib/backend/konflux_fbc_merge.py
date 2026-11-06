@@ -12,6 +12,7 @@ from pathlib import Path
 from urllib.parse import urlparse
 
 from artcommonlib.config import BuildDataLoader
+from artcommonlib.git_helper import validate_git_branch, validate_git_group_name, validate_git_remote_url
 from artcommonlib.gitdata import GitData
 from artcommonlib.github_auth import get_github_client_for_org
 from artcommonlib.konflux.konflux_build_record import (
@@ -139,6 +140,10 @@ class LayeredFbcMerger(KonfluxFbcFragmentMerger):
     ):
         if not re.fullmatch(r'\d+\.\d+', target_version):
             raise ValueError('OCP target must have MAJOR.MINOR format')
+        validate_git_branch(fbc_branch)
+        validate_git_remote_url(runtime.data_path)
+        if kwargs.get('fbc_git_repo') is not None:
+            validate_git_remote_url(kwargs['fbc_git_repo'])
         self.runtime = runtime
         self.target_version = target_version
         self.fbc_branch = fbc_branch
@@ -198,10 +203,17 @@ class LayeredFbcMerger(KonfluxFbcFragmentMerger):
         return f'{repository}@{digest}'
 
     def _load_group(self, group: str, revision: str | None = None, assembly: str = 'stream') -> tuple[dict, str]:
+        validate_git_group_name(group)
+        if revision is not None and (not isinstance(revision, str) or not re.fullmatch(r'[0-9a-f]{40}', revision)):
+            raise ValueError('Invalid source group revision')
+        clone_base = Path(self.runtime.working_dir).resolve() / 'fbc-merge-build-data'
+        clone_dir = clone_base / group
+        if clone_dir.resolve() != clone_dir or not clone_dir.is_relative_to(clone_base):
+            raise ValueError('Source group clone directory escapes its dedicated base')
         # Each source group gets its own clone; never switch the execution runtime's checkout.
         gitdata = GitData(
             data_path=self.runtime.data_path,
-            clone_dir=str(Path(self.runtime.working_dir) / 'fbc-merge-build-data' / group),
+            clone_dir=str(clone_dir),
             commitish=revision or group,
             reclone=True,
         )
@@ -229,6 +241,7 @@ class LayeredFbcMerger(KonfluxFbcFragmentMerger):
         self.inputs = []
         seen = set()
         revisions = {}
+        group_selections = {}
         auth = opm.OpmRegistryAuth(self.registry_auth) if self.registry_auth else None
         migrate_level = 'bundle-object-to-csv-metadata' if self.major_minor_override >= (4, 17) else 'none'
         for build in builds:
@@ -250,27 +263,39 @@ class LayeredFbcMerger(KonfluxFbcFragmentMerger):
             )
             if not record or extract_ocp_version_from_fbc_nvr(record.nvr) != self.target_version:
                 raise ValueError(f'{build} is not a successful FBC for OCP {self.target_version}')
-            if not record.group or not re.fullmatch(r'[\w.-]+', record.group):
-                raise ValueError(f'Invalid source group for {build}')
+            validate_git_group_name(record.group)
             if not record.rebase_repo_url or not re.fullmatch(r'[0-9a-f]{40}', record.rebase_commitish or ''):
                 raise ValueError(f'{build} has no immutable FBC source revision')
+            validate_git_remote_url(record.rebase_repo_url)
+            source_selection = None
+            if assembly_inputs is not None:
+                source_selection = assembly_inputs.get(nvr)
+                if (
+                    not isinstance(source_selection, dict)
+                    or source_selection.get('group') != record.group
+                    or f"{source_selection.get('operator')}-fbc" != record.name
+                    or not isinstance(source_selection.get('group_revision'), str)
+                    or not re.fullmatch(r'[0-9a-f]{40}', source_selection['group_revision'])
+                    or not isinstance(source_selection.get('assembly'), str)
+                    or not re.fullmatch(r'[0-9]+\.[0-9]+\.[0-9]+', source_selection['assembly'])
+                ):
+                    raise ValueError(f'Invalid assembly provenance for {nvr}')
+                selection_key = (source_selection['assembly'], source_selection['group_revision'])
+                if record.group in group_selections and group_selections[record.group] != selection_key:
+                    raise ValueError(f'Conflicting assembly selections for source group {record.group}')
+                group_selections[record.group] = selection_key
             if record.group not in revisions:
-                if assembly_inputs is not None:
-                    selection = assembly_inputs.get(nvr)
-                    if (
-                        not isinstance(selection, dict)
-                        or not re.fullmatch(r'[0-9a-f]{40}', selection.get('group_revision', ''))
-                        or not re.fullmatch(r'[0-9]+\.[0-9]+\.[0-9]+', selection.get('assembly', ''))
-                    ):
-                        raise ValueError(f'Invalid assembly provenance for {nvr}')
+                if source_selection is not None:
                     _, revisions[record.group] = await asyncio.to_thread(
                         self._load_group,
                         record.group,
-                        revision=selection['group_revision'],
-                        assembly=selection['assembly'],
+                        revision=source_selection['group_revision'],
+                        assembly=source_selection['assembly'],
                     )
                 else:
                     _, revisions[record.group] = await asyncio.to_thread(self._load_group, record.group)
+            if source_selection is not None and revisions[record.group] != source_selection['group_revision']:
+                raise ValueError(f'Resolved source group revision does not match assembly provenance for {nvr}')
             if len(record.bundle_nvrs) != 1:
                 raise ValueError(f'{build} must reference exactly one source bundle')
             pinned = await self._pin_image(record.image_pullspec)
@@ -318,12 +343,8 @@ class LayeredFbcMerger(KonfluxFbcFragmentMerger):
             for source in self.inputs:
                 selected = assembly_inputs[source.record.nvr]
                 if (
-                    not isinstance(selected, dict)
-                    or selected.get('group') != source.record.group
-                    or f"{selected.get('operator')}-fbc" != source.record.name
-                    or selected.get('pullspec') != source.record.image_pullspec
-                    or not re.fullmatch(r'[0-9]+\.[0-9]+\.[0-9]+', selected.get('assembly', ''))
-                    or not re.fullmatch(r'[0-9a-f]{40}', selected.get('group_revision', ''))
+                    selected.get('pullspec') != source.record.image_pullspec
+                    or selected['group_revision'] != source.group_revision
                 ):
                     raise ValueError(f'Invalid assembly provenance for {source.record.nvr}')
 
