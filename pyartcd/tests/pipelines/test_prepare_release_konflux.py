@@ -931,6 +931,78 @@ class TestPrepareReleaseKonfluxPipeline(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(pipeline.bundle_build_errors, [])
         self.assertEqual(pipeline.fbc_build_errors, [])
 
+    async def test_sweep_bugs_unwraps_plugin_json_and_attaches_all_advisory_kinds(self):
+        pipeline = PrepareReleaseKonfluxPipeline(
+            slack_client=self.mock_slack_client,
+            runtime=self.runtime,
+            group=self.group,
+            assembly=self.assembly,
+        )
+        pipeline.assembly_type = AssemblyTypes.STANDARD
+        pipeline._elliott_base_command = ["elliott", "--assembly=test-assembly"]
+        pipeline.execute_command_with_logging = AsyncMock(
+            return_value=json.dumps(
+                {
+                    "bugs_by_kind": {
+                        "rhcos": ["OCPBUGS-RHCOS"],
+                        "image": ["OCPBUGS-IMAGE"],
+                    },
+                    "evidence_plugins": {"rhcos-rpm": []},
+                }
+            )
+        )
+        pipeline.run_cmd_with_retry = AsyncMock()
+
+        await pipeline.sweep_bugs({"rhcos": 123, "image": 456}, None)
+
+        command = pipeline.execute_command_with_logging.await_args.args[0]
+        self.assertEqual(command[command.index("--evidence-plugin") + 1], "rhcos-rpm")
+        pipeline.run_cmd_with_retry.assert_has_awaits(
+            [
+                call(pipeline._elliott_base_command, ["attach-bugs", "OCPBUGS-RHCOS", "--advisory=123"]),
+                call(pipeline._elliott_base_command, ["attach-bugs", "OCPBUGS-IMAGE", "--advisory=456"]),
+            ]
+        )
+
+    async def test_sweep_bugs_fails_when_evidence_plugin_requires_review(self):
+        pipeline = PrepareReleaseKonfluxPipeline(
+            slack_client=self.mock_slack_client,
+            runtime=self.runtime,
+            group=self.group,
+            assembly=self.assembly,
+        )
+        pipeline.assembly_type = AssemblyTypes.STANDARD
+        pipeline._elliott_base_command = ["elliott", "--assembly=test-assembly"]
+        pipeline.execute_command_with_logging = AsyncMock(
+            return_value=json.dumps(
+                {
+                    "bugs_by_kind": {"rhcos": []},
+                    "evidence_plugins": {
+                        "rhcos-rpm": [
+                            {
+                                "issue_key": "OCPBUGS-1",
+                                "disposition": "review",
+                                "reason": "Selected image evidence is incomplete",
+                            },
+                            {
+                                "issue_key": "OCPBUGS-2",
+                                "disposition": "review",
+                                "reason": "Latest verifier result is unsupported",
+                            },
+                        ]
+                    },
+                }
+            )
+        )
+        pipeline.run_cmd_with_retry = AsyncMock()
+
+        with self.assertRaises(RuntimeError) as error:
+            await pipeline.sweep_bugs({"rhcos": 123}, None)
+
+        self.assertIn("OCPBUGS-1: Selected image evidence is incomplete", str(error.exception))
+        self.assertIn("OCPBUGS-2: Latest verifier result is unsupported", str(error.exception))
+        pipeline.run_cmd_with_retry.assert_not_awaited()
+
     @patch('pyartcd.pipelines.prepare_release_konflux.exectools.cmd_gather_async', new_callable=AsyncMock)
     @patch.object(PrepareReleaseKonfluxPipeline, 'filter_olm_operators', new_callable=AsyncMock)
     async def test_find_or_build_bundle_builds_allows_partial_failures(
