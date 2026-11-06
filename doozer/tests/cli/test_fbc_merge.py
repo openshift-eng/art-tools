@@ -1,5 +1,8 @@
 import inspect
+import json
+import tempfile
 import unittest
+from pathlib import Path
 from unittest.mock import AsyncMock, Mock, patch
 
 import click
@@ -59,3 +62,27 @@ class TestFbcMergeLayeredCli(unittest.IsolatedAsyncioTestCase):
                     else:
                         with self.assertRaisesRegex(click.ClickException, 'unless --fbc-branch is set'):
                             await inspect.unwrap(fbc_merge_layered.callback)(runtime, **options)
+
+    async def test_assembly_selection_file_is_passed_to_catalog_preparation(self):
+        runtime = Mock(spec=Runtime, product='quay', group='quay-3.18', upcycle=False)
+        inputs = {'fbc-nvr': {'assembly': '3.18.5', 'group_revision': 'a' * 40}}
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / 'inputs.json'
+            path.write_text(json.dumps(inputs))
+            with fbc_merge_layered.make_context(
+                'beta:fbc:merge-layered',
+                [
+                    '--major-minor=4.22',
+                    '--fbc-build=fbc-nvr',
+                    '--assembly-inputs-file=' + str(path),
+                ],
+            ) as context:
+                options = context.params
+            merger = Mock(prepare=AsyncMock(), merge=AsyncMock(return_value={}))
+            with (
+                patch('doozerlib.cli.fbc_merge.LayeredFbcMerger', return_value=merger),
+                patch('doozerlib.cli.fbc_merge.resolve_konflux_kubeconfig_by_product', return_value=None),
+                patch('doozerlib.cli.fbc_merge.click.echo'),
+            ):
+                await inspect.unwrap(fbc_merge_layered.callback)(runtime, **options)
+            merger.prepare.assert_awaited_once_with(('fbc-nvr',), assembly_inputs=inputs)

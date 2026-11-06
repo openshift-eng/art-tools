@@ -9,11 +9,17 @@ from artcommonlib import exectools
 from artcommonlib.github_auth import get_github_client_for_org
 from artcommonlib.konflux.konflux_build_record import KonfluxBuildOutcome, KonfluxFbcBuildRecord
 from artcommonlib.konflux.konflux_db import KonfluxDb
-from artcommonlib.util import extract_ocp_version_from_fbc_nvr, oc_image_info_for_arch_async, split_git_url
+from artcommonlib.util import (
+    extract_ocp_version_from_fbc_nvr,
+    new_roundtrip_yaml_handler,
+    oc_image_info_for_arch_async,
+    split_git_url,
+)
 
 from pyartcd import constants, locks
 from pyartcd.cli import cli, click_coroutine, pass_runtime
 from pyartcd.locks import Lock
+from pyartcd.lp_fbc import recorded_assembly_fbcs
 from pyartcd.runtime import Runtime
 from pyartcd.util import load_group_config
 
@@ -24,6 +30,7 @@ class MergeLayeredFbcPipeline:
         runtime: Runtime,
         ocp_target_version: str,
         fbc_builds: tuple[str, ...] = (),
+        assemblies: tuple[str, ...] = (),
         product: str | None = None,
         data_path: str = constants.OCP_BUILD_DATA_URL,
         fbc_repo: str | None = None,
@@ -42,6 +49,8 @@ class MergeLayeredFbcPipeline:
         self.product = product
         self.target = ocp_target_version
         self.builds = fbc_builds
+        self.assemblies = assemblies
+        self.assembly_inputs = {}
         self.data_path = data_path
         self.output_file = Path(output_file or runtime.working_dir / 'unified-fbc.json').absolute()
         self.options = {
@@ -55,6 +64,47 @@ class MergeLayeredFbcPipeline:
         self.skip_checks = skip_checks
         self.skip_rebase = skip_rebase or bool(fbc_branch)
         self.skip_tasks = skip_tasks
+
+    async def _resolve_assemblies(self) -> None:
+        if self.product not in (None, 'quay'):
+            raise ValueError('Assembly inputs currently support product quay only')
+        if self.builds or self.options['--fbc-branch'] or self.skip_rebase:
+            raise ValueError('--assembly cannot be combined with --fbc-build, --fbc-branch, or --skip-rebase')
+        self.product = 'quay'
+        selections = {}
+        for assembly in self.assemblies:
+            if not re.fullmatch(r'[0-9]+\.[0-9]+\.[0-9]+', assembly):
+                raise ValueError(f'Assembly {assembly} must have MAJOR.MINOR.PATCH format')
+            group = 'quay-' + '.'.join(assembly.split('.')[:2])
+            if group in selections:
+                raise ValueError(f'Multiple assemblies supplied for {group}')
+            selections[group] = assembly
+        host, owner, name = split_git_url(self.data_path)
+        if host != 'github.com':
+            raise ValueError('Assembly inputs require a GitHub build-data repository')
+
+        def read_assemblies():
+            repo = get_github_client_for_org(owner).get_repo(f'{owner}/{name}')
+            inputs = {}
+            for group, assembly in sorted(selections.items()):
+                revision = repo.get_branch(group).commit.sha
+                releases = new_roundtrip_yaml_handler().load(
+                    repo.get_contents('releases.yml', ref=revision).decoded_content
+                )
+                entries = recorded_assembly_fbcs(releases, assembly, self.target)
+                for operator, record in sorted(entries.items()):
+                    inputs[record['nvr']] = {
+                        'assembly': assembly,
+                        'group': group,
+                        'group_revision': revision,
+                        'operator': operator,
+                        'pullspec': record['pullspec'],
+                    }
+            return inputs
+
+        self.assembly_inputs = await exectools.to_thread(read_assemblies)
+        # Immutable pullspecs are also checked against successful database records by Doozer.
+        self.builds = tuple(record['pullspec'] for record in self.assembly_inputs.values())
 
     async def _resolve_groups(self) -> list[str]:
         if not self.builds:
@@ -77,6 +127,10 @@ class MergeLayeredFbcPipeline:
                 raise ValueError(f'{build} is not a successful FBC for OCP {self.target}')
             if not record.group or not re.fullmatch(r'[\w.-]+', record.group):
                 raise ValueError(f'Invalid source group for {build}')
+            if self.assembly_inputs:
+                source = self.assembly_inputs.get(record.nvr)
+                if not source or source['group'] != record.group or f"{source['operator']}-fbc" != record.name:
+                    raise ValueError(f'{build} does not match its recorded assembly FBC identity')
             groups.add(record.group)
         return sorted(groups)
 
@@ -109,10 +163,12 @@ class MergeLayeredFbcPipeline:
         return [group]
 
     async def run(self) -> dict:
-        if not self.builds and not self.options['--fbc-branch']:
-            raise ValueError('At least one FBC build is required unless --fbc-branch is set')
         if not re.fullmatch(r'\d+\.\d+', self.target):
             raise ValueError('OCP target must have MAJOR.MINOR format')
+        if self.assemblies:
+            await self._resolve_assemblies()
+        if not self.builds and not self.options['--fbc-branch']:
+            raise ValueError('At least one assembly or FBC build is required unless --fbc-branch is set')
         groups = await self._resolve_groups()
         product = self.product
         for group in groups:
@@ -147,6 +203,10 @@ class MergeLayeredFbcPipeline:
             f'--major-minor={self.target}',
             f'--output-file={self.output_file}',
         ]
+        if self.assembly_inputs:
+            inputs_file = Path(self.runtime.working_dir) / 'unified-fbc-assembly-inputs.json'
+            inputs_file.write_text(json.dumps(self.assembly_inputs, indent=2) + '\n')
+            cmd.extend(['--assembly-inputs-file', str(inputs_file)])
         for build in self.builds:
             cmd.extend(['--fbc-build', build])
         for option, value in self.options.items():
@@ -177,6 +237,7 @@ class MergeLayeredFbcPipeline:
     multiple=True,
     help='FBC NVR or pullspec; repeat for each source version. Optional when --fbc-branch is set.',
 )
+@click.option('--assembly', 'assemblies', multiple=True, help='Full Quay assembly version; repeat for each release.')
 @click.option('--product', help='Require all source builds to belong to this product.')
 @click.option('--data-path', default=constants.OCP_BUILD_DATA_URL)
 @click.option('--fbc-repo')
