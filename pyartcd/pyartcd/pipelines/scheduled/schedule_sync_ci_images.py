@@ -21,6 +21,9 @@ async def run_for(version: str, runtime: Runtime, lock_manager: LockManager, ser
         serial: If True, wait for job to complete before returning
     """
     # Atomically acquire lock to prevent duplicate scheduling
+    if runtime.dry_run:
+        runtime.logger.warning('[DRY RUN] Would trigger %s job for %s', 'sync-ci-images', version)
+        return
     lock_name = Lock.SYNC_CI_IMAGES.value.format(version=version)
     lock = None
     try:
