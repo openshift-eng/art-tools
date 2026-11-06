@@ -2,6 +2,7 @@ import asyncio
 import logging
 import pathlib
 import re
+import shlex
 import shutil
 import time
 from os import PathLike
@@ -425,6 +426,8 @@ if [[ -n "$REAL_GO_PATH" ]]; then
 cat > $GOSHIM_DIR/go << 'EOF'
 #!/bin/sh
 export GO_COMPLIANCE_COVER={'1' if rpm.runtime.group_config.build_profiles.enable_go_cover is True else '0'}
+export __doozer_group={shlex.quote(rpm.runtime.group)}
+export __doozer_key={shlex.quote(rpm.distgit_key)}
 {rpm_builder_go_wrapper_sh}
 EOF
     chmod +x $GOSHIM_DIR/go

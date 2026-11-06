@@ -20,6 +20,7 @@ class TestRPMBuilder(IsolatedAsyncioTestCase):
             {"private": "https://github.com/openshift-priv", "public": "https://github.com/openshift"}
         ]
         runtime.brew_logs_dir = "/path/to/brew-logs"
+        runtime.group = "openshift-4.8"
         runtime.assembly = assembly
         stream = io.StringIO()
         logging.basicConfig(level=logging.INFO, stream=stream)
@@ -362,6 +363,65 @@ Some description
         self.assertIn("%autosetup -n foo-1.2.3 -p1\n", specfile_content)
         self.assertIn("Version:        1.2.3\n", specfile_content)
         self.assertIn("AOS Automation Release Team <noreply@redhat.com>", specfile_content[17])
+
+    @mock.patch("aiofiles.open")
+    async def test_populate_specfile_async_go_compliance_shim(self, mocked_open: mock.Mock):
+        """The go compliance shim is inlined into %build, with the context it needs baked in."""
+        source_sha = "3f17b42b8aa7d294c0d2b6f946af5fe488f3a722"
+        distgit_sha = "4cd7f576ad005aadd3c25ea56c7986bc6a7e7340"
+        runtime = self._make_runtime()
+        rpm = self._make_rpm_meta(runtime, source_sha, distgit_sha)
+        rpm.set_nvr("1.2.3", "202104070000.yuxzhu_test.p0")
+        rpm.get_jira_info = mock.MagicMock(return_value=("My Product", "My Component"))
+        mocked_file = mocked_open.return_value.__aenter__.return_value
+        mocked_file.readlines.return_value = """
+Name:           foo
+%build
+make
+%changelog
+        """.splitlines()
+
+        specfile_content = await RPMBuilder._populate_specfile_async(
+            rpm,
+            "foo-1.2.3.tar.gz",
+            "https://example.com/foo/archive/commit/shasum",
+            go_compliance_shim=True,
+        )
+        build_section = next(line for line in specfile_content if line.startswith("%build"))
+
+        # The shim resolves the real compiler relative to its own location, so
+        # it is only useful alongside the go.real symlink.
+        self.assertIn("$GOSHIM_DIR/go.real", build_section)
+        self.assertIn("LOG_PREFIX=", build_section)
+        # Baked-in context. __doozer_group in particular is not decoration: the
+        # shim reads it to decide whether the OCP group being built wants the Go
+        # built-in FIPS module.
+        self.assertIn("export __doozer_group=openshift-4.8\n", build_section)
+        self.assertIn("export __doozer_key=foo\n", build_section)
+        self.assertIn("export GO_COMPLIANCE_COVER=0\n", build_section)
+
+    @mock.patch("aiofiles.open")
+    async def test_populate_specfile_async_no_go_compliance_shim(self, mocked_open: mock.Mock):
+        """Without the shim enabled, %build is left exactly as the upstream spec wrote it."""
+        source_sha = "3f17b42b8aa7d294c0d2b6f946af5fe488f3a722"
+        distgit_sha = "4cd7f576ad005aadd3c25ea56c7986bc6a7e7340"
+        runtime = self._make_runtime()
+        rpm = self._make_rpm_meta(runtime, source_sha, distgit_sha)
+        rpm.set_nvr("1.2.3", "202104070000.yuxzhu_test.p0")
+        rpm.get_jira_info = mock.MagicMock(return_value=("My Product", "My Component"))
+        mocked_file = mocked_open.return_value.__aenter__.return_value
+        mocked_file.readlines.return_value = """
+Name:           foo
+%build
+make
+%changelog
+        """.splitlines()
+
+        specfile_content = await RPMBuilder._populate_specfile_async(
+            rpm, "foo-1.2.3.tar.gz", "https://example.com/foo/archive/commit/shasum"
+        )
+
+        self.assertNotIn("GOSHIM_DIR", "".join(specfile_content))
 
     @mock.patch("aiofiles.open")
     async def test_populate_specfile_async_autosetup_with_s_git(self, mocked_open: mock.Mock):
