@@ -34,3 +34,34 @@ for version policy and FBC refresh. A local path combined with an explicit ref
 is rejected because Doozer reads local working-tree contents without checking
 out that ref. For a local checkout, select the revision yourself and unset
 `DOOZER_DATA_GITREF`; alternatively, use a remote Git URL with the requested ref.
+
+## Preparing inputs for unified layered-product catalogs
+
+Run `artcd prepare-release-lp -g quay-3.18 --assembly=3.18.5 --create-mr
+--unified-fbc` to prepare an image shipment containing operands and bundles while
+recording the generated FBCs for a separate unified catalog build. Without the
+flag, individual FBC shipments are still generated as before.
+
+After all FBC builds and provenance checks succeed, the command writes each
+catalog to `releases.<assembly>.assembly.group.fbc_builds` on the group's
+build-data branch:
+
+```yaml
+fbc_builds:
+  "4.22":
+    quay-operator:
+      nvr: quay-operator-fbc-3.18.5-<release>.ocp4.22
+      pullspec: quay.io/example/art-fbc@sha256:<64-character-digest>
+      operand_nvrs:
+      - quay-operator-container-3.18.5-<release>
+      # All effective assembly operand pins, including inherited pins.
+```
+
+FBCs remain separate from `members.images`. Records are replaced as a complete
+set when preparing or refreshing this assembly; unrelated assembly fields are
+preserved. Concurrent operand or FBC-record changes cause preparation to stop
+rather than overwrite another release. Identical records require no new commit.
+Dry runs do not write records. Configure
+`build_config.ocp_build_data_repo_push_url` for the write destination, including
+when testing against a build-data fork. Reusing an existing shipment MR removes
+its obsolete individual FBC shipment files through normal reconciliation.
