@@ -293,13 +293,12 @@ class KonfluxOlmBundleRebaser:
                         f"Please update the upstream CSV to use the correct tag from image-references."
                     )
 
-        # For Konflux engine on layered products (non-OCP), resolve operand NVRs
-        # from DB instead of relying on predicted tags from operator rebase.
-        # OCP operators still use the legacy tag-based resolution until this
-        # is validated with layered products first.
-        is_layered = not metadata.runtime.group.startswith("openshift-")
+        # Resolve operand NVRs from the DB for Konflux builds instead of relying
+        # on predicted tags from operator rebase. Operator rebase now retains the
+        # upstream specs for both OCP and layered products (ART-21795).
         resolved_operands: dict[str, tuple[str, str, str]] = {}
-        if operator_build.engine is Engine.KONFLUX and image_references and is_layered:
+        resolve_from_db = operator_build.engine is Engine.KONFLUX and bool(image_references)
+        if resolve_from_db:
             delivery_override_map, delivery_namespace_map = self._build_delivery_maps(metadata)
             external_image_names = self._get_external_image_names(operator_manifests_dir)
             resolved_operands = await self._resolve_operands_from_db(
@@ -323,11 +322,10 @@ class KonfluxOlmBundleRebaser:
             async with aiofiles.open(src, "r") as f:
                 content = await f.read()
 
-            if operator_build.engine is Engine.KONFLUX and resolved_operands:
+            if resolve_from_db:
                 # Replace operand references using upstream specs from image-references.
-                # For layered products, operator rebase no longer writes predicted tags
-                # (ART-18061), so the CSV retains original upstream specs. We replace
-                # them directly with DB-resolved SHA pullspecs.
+                # The CSV retains the upstream specs, so replace them directly with
+                # DB-resolved SHA pullspecs.
                 found_images: dict[str, tuple[str, str, str]] = {}
                 for delivery_name, (upstream_spec, new_pullspec, operand_nvr) in resolved_operands.items():
                     replaced_content = _replace_pullspec(content, upstream_spec, new_pullspec)
@@ -799,8 +797,8 @@ class KonfluxOlmBundleRebaser:
         """
         Replace image references in the content by their corresponding SHA.
 
-        Legacy path used by Brew engine. For Konflux, _resolve_operands_from_db
-        is used instead.
+        Legacy path used by Brew builds and by Konflux builds without an
+        image-references file. Other Konflux builds use _resolve_operands_from_db.
 
         Arg(s):
             old_registry: Registry prefix to match (e.g. "registry.redhat.io").
