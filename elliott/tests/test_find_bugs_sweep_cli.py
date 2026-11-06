@@ -40,6 +40,36 @@ class TestFindBugsMode(unittest.TestCase):
         bugs = find_bugs.search(bug_tracker_obj=bug_tracker)
         self.assertEqual(bug_ids, bugs)
 
+    def test_find_bugs_mode_cutoff_status_defaults_to_status(self):
+        # By default, a mode's cutoff floor matches its search statuses (no behavior change for other modes).
+        find_bugs = FindBugsMode(status=['MODIFIED', 'ON_QA'], cve_only=False)
+        self.assertEqual(find_bugs.cutoff_status, find_bugs.status)
+        self.assertEqual(find_bugs.cutoff_status, {'MODIFIED', 'ON_QA'})
+
+    def test_find_bugs_sweep_cutoff_status_loosened(self):
+        # ART-25075: the sweep searches for VERIFIED-now but accepts ON_QA-or-higher at the basis.time cutoff.
+        find_bugs = sweep_cli.FindBugsSweep()
+        self.assertEqual(find_bugs.status, {'VERIFIED'})
+        self.assertEqual(find_bugs.cutoff_status, {'ON_QA', 'VERIFIED'})
+
+    def test_include_status_extends_cutoff_status(self):
+        # ART-25075: an explicitly included status must be accepted both in the search and at the cutoff,
+        # otherwise the extra bugs would be searched but dropped by the cutoff filter.
+        find_bugs = sweep_cli.FindBugsSweep()
+        find_bugs.include_status(['MODIFIED'])
+        self.assertIn('MODIFIED', find_bugs.status)
+        self.assertIn('MODIFIED', find_bugs.cutoff_status)
+        self.assertEqual(find_bugs.status, {'VERIFIED', 'MODIFIED'})
+        self.assertEqual(find_bugs.cutoff_status, {'ON_QA', 'VERIFIED', 'MODIFIED'})
+
+    def test_exclude_status_shrinks_cutoff_status(self):
+        # exclude_status keeps the two sets in sync by removing from both.
+        find_bugs = sweep_cli.FindBugsSweep()
+        find_bugs.exclude_status(['ON_QA'])
+        self.assertNotIn('ON_QA', find_bugs.cutoff_status)
+        self.assertEqual(find_bugs.status, {'VERIFIED'})
+        self.assertEqual(find_bugs.cutoff_status, {'VERIFIED'})
+
 
 class FindBugsSweepTestCase(unittest.IsolatedAsyncioTestCase):
     def test_filter_art_managed_jira_trackers(self):

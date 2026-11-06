@@ -33,14 +33,26 @@ yaml = new_roundtrip_yaml_handler()
 class FindBugsMode:
     def __init__(self, status: List, cve_only: bool = False, art_managed_trackers_only: bool = False):
         self.status = set(status)
+        # Statuses a bug must have had at the assembly basis.time cutoff to qualify for the sweep.
+        # Defaults to the same set as `status`; subclasses may loosen it independently (see FindBugsSweep / ART-25075).
+        self.cutoff_status = set(status)
         self.cve_only = cve_only
         self.art_managed_trackers_only = art_managed_trackers_only
 
     def include_status(self, status: List):
+        """Adds the given statuses to both the search set and the cutoff floor.
+
+        ART-25075: the cutoff floor is kept in sync with the search statuses. An explicitly included status
+        must also be accepted at the basis.time cutoff, otherwise the extra bugs would be searched but then
+        dropped by filter_bugs_by_cutoff_event.
+        """
         self.status |= set(status)
+        self.cutoff_status |= set(status)
 
     def exclude_status(self, status: List):
+        """Removes the given statuses from both the search set and the cutoff floor (keeping them in sync)."""
         self.status -= set(status)
+        self.cutoff_status -= set(status)
 
     def search(self, bug_tracker_obj: BugTracker, verbose: bool = False):
         func = bug_tracker_obj.cve_tracker_search if self.cve_only else bug_tracker_obj.search
@@ -55,6 +67,13 @@ class FindBugsSweep(FindBugsMode):
         # Policy document: https://docs.google.com/document/d/1RkyN1hp1_mUqeks0kVzPscDeZVo-RDCYCTq6VLNB9i4/edit?tab=t.0#heading=h.m52kbuqe0dss
         # Accordingly, ART only sweeps VERIFIED by default.
         super().__init__(status={'VERIFIED'}, cve_only=cve_only, art_managed_trackers_only=art_managed_trackers_only)
+        # ART-25075: the basis.time cutoff is the max image build-COMPLETION time of the nightly. The
+        # MODIFIED->ON_QA transition (find-bugs:qe) fires off that same build cycle and races within minutes,
+        # while VERIFIED lands hours later. Requiring VERIFIED *at the cutoff* dropped fixes that were already
+        # in the payload but only reached VERIFIED shortly after the nightly (e.g. OCPBUGS-129375, OCPBUGS-71202).
+        # We still SEARCH for VERIFIED-now (self.status, above) and keep the no-regression guard; we only loosen
+        # the status-at-cutoff floor to ON_QA-or-higher.
+        self.cutoff_status = {'ON_QA', 'VERIFIED'}
 
 
 def get_art_managed_image_components(runtime: Runtime) -> Set[str]:
@@ -281,7 +300,7 @@ async def get_bugs_sweep(runtime: Runtime, find_bugs_obj, bug_tracker, filter_at
             unqualified_bugs = []
             for chunk_of_bugs in chunk(bugs, constants.BUG_LOOKUP_CHUNK_SIZE):
                 qualified_bugs_chunk = bug_tracker.filter_bugs_by_cutoff_event(
-                    chunk_of_bugs, find_bugs_obj.status, sweep_cutoff_timestamp, verbose=runtime.debug
+                    chunk_of_bugs, find_bugs_obj.cutoff_status, sweep_cutoff_timestamp, verbose=runtime.debug
                 )
                 qualified_bugs.extend(qualified_bugs_chunk)
                 not_qualified = {b.id for b in chunk_of_bugs} - {b.id for b in qualified_bugs_chunk}
