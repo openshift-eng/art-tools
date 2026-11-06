@@ -4,6 +4,44 @@
   "title": "Assembly Group Configuration",
   "type": "object",
   "properties": {
+    "ignore_patch_version": {
+      "description": "Allow FBC patch versions to differ when selecting the recorded bundle identity.",
+      "type": "boolean"
+    },
+    "ignore_patch_version!": {
+      "$ref": "#/properties/ignore_patch_version"
+    },
+    "ignore_patch_version?": {
+      "$ref": "#/properties/ignore_patch_version"
+    },
+    "ignore_patch_version-": {},
+    "OCP_RELEASE_NOTES_VERSION": {
+      "description": "OCP version used for layered-product release-notes replacements.",
+      "type": "string",
+      "minLength": 1
+    },
+    "OCP_RELEASE_NOTES_VERSION!": {
+      "$ref": "#/properties/OCP_RELEASE_NOTES_VERSION"
+    },
+    "OCP_RELEASE_NOTES_VERSION?": {
+      "$ref": "#/properties/OCP_RELEASE_NOTES_VERSION"
+    },
+    "OCP_RELEASE_NOTES_VERSION-": {},
+    "ignore_incorrect_nvr": {
+      "description": "Allow a selected build whose NVR is older than the previously selected build.",
+      "type": "boolean"
+    },
+    "ignore_incorrect_nvr!": {
+      "$ref": "#/properties/ignore_incorrect_nvr"
+    },
+    "ignore_incorrect_nvr?": {
+      "$ref": "#/properties/ignore_incorrect_nvr"
+    },
+    "ignore_incorrect_nvr-": {},
+    "product": {"type": "string", "minLength": 1, "description": "Product identifier for layered-product build and release workflows."},
+    "version": {"type": "string", "minLength": 1, "description": "Layered-product release version; independent of OCP MAJOR/MINOR variables."},
+    "OCP_TARGET_VERSIONS": {"type": "array", "items": {"type": "string", "pattern": "^\\d+\\.\\d+$"}, "uniqueItems": true},
+
     "arches": {
       "type": "array",
       "items": {
@@ -204,6 +242,7 @@
       "additionalProperties": false,
       "type": "object",
       "properties": {
+        "mr": {"type": "string", "pattern": "^https://[^/]+/.+/-/merge_requests/\\d+$"},
         "url": {
           "type": "string"
         },
@@ -408,6 +447,18 @@
       "description": "Konflux configuration",
       "type": "object",
       "properties": {
+        "image_repo": {
+          "description": "Default Konflux build repository for images in this group.",
+          "type": "string",
+          "minLength": 1
+        },
+        "image_repo!": {
+          "$ref": "#/properties/konflux/properties/image_repo"
+        },
+        "image_repo?": {
+          "$ref": "#/properties/konflux/properties/image_repo"
+        },
+        "image_repo-": {},
         "arches": {
           "type": "array",
           "items": {
@@ -826,7 +877,7 @@
     "okd-": {},
     "operator_index_mode": {
       "type": "string",
-      "enum": ["pre-release", "pre-ga", "ga"]
+      "enum": ["pre-release", "pre-ga", "ga", "ga-plus"]
     },
     "release_date": {
       "type": "string"

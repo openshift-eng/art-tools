@@ -45,6 +45,34 @@ class TestImageSchema(unittest.TestCase):
         data = {"from": {}, "name": "test-image", "for_release": True, "konflux": {"its": {"enabled": False}}}
         self.assertIn("delivery.delivery_repo_names", image_schema.validate("images/test-image.yml", data))
 
+    def test_quay_dependency_and_lockfile_configuration(self):
+        """Quay's supported Cargo/RPM dependencies and legacy lockfile flag pass validation."""
+        data = {
+            'from': {},
+            'name': 'test-image',
+            'for_release': False,
+            'ignore_incorrect_nvr': True,
+            'cachito': {'enabled': True, 'packages': {'rpm': [{'path': '.'}], 'cargo': [{'path': 'rust-builddeps'}]}},
+            'content': {'source': {'git': {'url': 'git@github.com:team/quay.git'}, 'pkg_managers': ['cargo']}},
+            'konflux': {'cachi2': {'lockfile': {'inspect_parent': False}}},
+        }
+        self.assertIsNone(image_schema.validate('images/test-image.yml', data))
+
+    def test_quay_options_reject_invalid_types(self):
+        """New compatibility fields remain typed and package-manager names remain restricted."""
+        for options in (
+            {'ignore_incorrect_nvr': 'true'},
+            {'cachito': {'packages': {'rpm': 'wrong'}}},
+            {'cachito': {'packages': {'cargo': [7]}}},
+            {'content': {'source': {'git': {'url_pull': 7}}}},
+            {'content': {'source': {'git': {'url_pull': ''}}}},
+            {'content': {'source': {'pkg_managers': ['typo-manager']}}},
+            {'konflux': {'cachi2': {'lockfile': {'inspect_parent': 'false'}}}},
+        ):
+            with self.subTest(options=options):
+                data = {'from': {}, 'name': 'test-image', 'for_release': False, **options}
+                self.assertIsNotNone(image_schema.validate('images/test-image.yml', data))
+
     def setUp(self):
         self.temp_dir = tempfile.mkdtemp()
 
@@ -712,3 +740,13 @@ class TestImageSchema(unittest.TestCase):
             'delivery': {'delivery_repo_names': ['foo', 'bar']},
         }
         self.assertIn("'yes' is not of type 'boolean'", image_schema.validate('filename', invalid_data))
+
+
+def test_layered_product_jira_ownership_is_valid():
+    data = {
+        'from': {},
+        'name': 'product/operator',
+        'for_release': False,
+        'jira': {'project': 'ZTWIM', 'component': 'Zero Trust Workload Identity Manager'},
+    }
+    assert image_schema.validate('images/operator.yml', data) is None

@@ -29,6 +29,26 @@
       "description": "Allow user to customize `packages` option for Cachito configuration. See https://osbs.readthedocs.io/en/osbs_ocp3/users.html#remote-source-keys",
       "type": "object",
       "properties": {
+        "rpm": {
+          "$ref": "#/properties/packages/properties/gomod"
+        },
+        "rpm!": {
+          "$ref": "#/properties/packages/properties/rpm"
+        },
+        "rpm?": {
+          "$ref": "#/properties/packages/properties/rpm"
+        },
+        "rpm-": {},
+        "cargo": {
+          "$ref": "#/properties/packages/properties/gomod"
+        },
+        "cargo!": {
+          "$ref": "#/properties/packages/properties/cargo"
+        },
+        "cargo?": {
+          "$ref": "#/properties/packages/properties/cargo"
+        },
+        "cargo-": {},
         "gomod": {
           "type": "array",
           "items": {
