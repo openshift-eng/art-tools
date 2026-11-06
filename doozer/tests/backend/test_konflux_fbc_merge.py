@@ -815,6 +815,11 @@ class TestLayeredFbcMerger(unittest.IsolatedAsyncioTestCase):
                         source = self.merger.provenance['inputs'][0]
                         self.assertEqual(source['assembly'], '3.18.1')
                         self.assertEqual(source['assembly_group_revision'], 'd' * 40)
+                        self.merger._load_group.assert_called_once_with(
+                            selected.record.group,
+                            revision='d' * 40,
+                            assembly='3.18.1',
+                        )
 
     async def test_dry_run_renders_and_validates_without_remote_writes(self):
         directory = self.merger.working_dir
@@ -1020,3 +1025,19 @@ class TestLayeredFbcMerger(unittest.IsolatedAsyncioTestCase):
                 loader.return_value.load_group_config.return_value = config
                 with self.assertRaisesRegex(ValueError, 'does not support product'):
                     self.merger._load_group('quay-3.18')
+
+    async def test_source_group_reads_named_assembly_at_the_recorded_revision(self):
+        revision = 'd' * 40
+        config = {'product': 'quay', 'OCP_TARGET_VERSIONS': ['4.20']}
+        with (
+            patch('doozerlib.backend.konflux_fbc_merge.GitData') as gitdata,
+            patch('doozerlib.backend.konflux_fbc_merge.BuildDataLoader') as loader,
+        ):
+            gitdata.return_value.commit_hash = revision
+            loader.return_value.load_group_config.return_value = config
+            self.assertEqual(
+                self.merger._load_group('quay-3.18', revision=revision, assembly='3.18.5'), (config, revision)
+            )
+        self.assertEqual(gitdata.call_args.kwargs['commitish'], revision)
+        self.assertEqual(loader.call_args.kwargs['commitish'], revision)
+        loader.return_value.load_group_config.assert_called_once_with(assembly='3.18.5', releases_config=None)

@@ -1,95 +1,246 @@
 import asyncio
+import hashlib
 import json
-from io import StringIO
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock, patch
 
 import pytest
-from artcommonlib.util import new_roundtrip_yaml_handler
 from pyartcd.pipelines.merge_layered_fbc import MergeLayeredFbcPipeline
 
-SHA = 'c' * 40
-DIGEST = 'quay.io/test/fbc@sha256:' + 'a' * 64
-NVR = 'quay-operator-fbc-3.18.5-1.ocp4.22'
-PIN = 'quay-operator-container-3.18.5-1'
+
+def pipeline(tmp_path, target=None, assemblies=('3.18.5', '3.17.9'), **kwargs):
+    runtime = Mock(working_dir=tmp_path, doozer_working=tmp_path / 'doozer', dry_run=True)
+    return MergeLayeredFbcPipeline(runtime, target, assemblies=assemblies, **kwargs)
 
 
-def definition():
-    return {
-        'releases': {
-            '3.18.5': {
-                'assembly': {
-                    'members': {'images': [{'distgit_key': 'quay-operator', 'metadata': {'is': {'nvr': PIN}}}]},
-                    'group': {
-                        'fbc_builds': {
-                            '4.22': {
-                                'quay-operator': {
-                                    'nvr': NVR,
-                                    'pullspec': DIGEST,
-                                    'operand_nvrs': [PIN],
-                                }
-                            }
-                        }
-                    },
+@pytest.fixture
+def sources(monkeypatch):
+    targets = {'quay-3.18': ['4.22', '4.21'], 'quay-3.17': ['4.21', '4.20']}
+    versions = {'quay-3.18': '3.18.5', 'quay-3.17': '3.17.9'}
+    revisions = {group: hashlib.sha1(group.encode()).hexdigest() for group in targets}
+    documents = {}
+    for group, assembly in versions.items():
+        pin = f'quay-operator-container-{assembly}-1'
+        records = {
+            target: {
+                'quay-operator': {
+                    'nvr': f'quay-operator-fbc-{assembly}-1.ocp{target}',
+                    'pullspec': 'quay.io/test/fbc@sha256:'
+                    + hashlib.sha256(f'{assembly}/{target}'.encode()).hexdigest(),
+                    'operand_nvrs': [pin],
+                }
+            }
+            for target in targets[group]
+        }
+        documents[group] = {
+            'releases': {
+                assembly: {
+                    'assembly': {
+                        'members': {'images': [{'distgit_key': 'quay-operator', 'metadata': {'is': {'nvr': pin}}}]},
+                        'group': {'fbc_builds': records},
+                    }
                 }
             }
         }
-    }
-
-
-def pipeline(tmp_path, **kwargs):
-    runtime = Mock(working_dir=tmp_path, doozer_working=tmp_path / 'doozer', dry_run=True)
-    return MergeLayeredFbcPipeline(runtime, '4.22', assemblies=('3.18.5',), **kwargs)
-
-
-def test_reads_exact_named_assembly_from_derived_branch_and_forwards_provenance(tmp_path):
-    p = pipeline(tmp_path)
     repo = Mock()
-    repo.get_branch.return_value.commit.sha = SHA
-    out = StringIO()
-    new_roundtrip_yaml_handler().dump(definition(), out)
-    repo.get_contents.return_value.decoded_content = out.getvalue().encode()
-    with patch('pyartcd.pipelines.merge_layered_fbc.get_github_client_for_org') as client:
-        client.return_value.get_repo.return_value = repo
-        asyncio.run(p._resolve_assemblies())
-    repo.get_branch.assert_called_once_with('quay-3.18')
-    repo.get_contents.assert_called_once_with('releases.yml', ref=SHA)
-    assert p.builds == (DIGEST,)
-    assert p.assembly_inputs[NVR]['assembly'] == '3.18.5'
-    assert p.assembly_inputs[NVR]['group_revision'] == SHA
-    p.group = 'quay-3.18'
-    p.output_file.write_text(json.dumps({'dry_run': True}))
-    with patch('pyartcd.pipelines.merge_layered_fbc.exectools.cmd_assert_async', new=AsyncMock()) as cmd:
-        asyncio.run(p._build())
-    args = cmd.call_args.args[0]
-    assert args[args.index('--fbc-build') + 1] == DIGEST
-    inputs_file = args[args.index('--assembly-inputs-file') + 1]
-    assert json.loads(open(inputs_file).read())[NVR]['group_revision'] == SHA
+    repo.get_branch.side_effect = lambda group: SimpleNamespace(commit=SimpleNamespace(sha=revisions[group]))
+    by_revision = {revision: group for group, revision in revisions.items()}
+    repo.get_contents.side_effect = lambda path, ref: SimpleNamespace(
+        decoded_content=json.dumps(documents[by_revision[ref]]).encode(),
+    )
+    client = Mock()
+    client.get_repo.return_value = repo
+    monkeypatch.setattr('pyartcd.pipelines.merge_layered_fbc.get_github_client_for_org', lambda owner: client)
+
+    async def group_config(group, assembly, **kwargs):
+        assert assembly == versions[group]
+        assert kwargs['doozer_data_gitref'] == revisions[group]
+        return {'product': 'quay', 'OCP_TARGET_VERSIONS': targets[group]}
+
+    config = AsyncMock(side_effect=group_config)
+    monkeypatch.setattr('pyartcd.pipelines.merge_layered_fbc.load_group_config', config)
+    return SimpleNamespace(repo=repo, documents=documents, targets=targets, revisions=revisions)
+
+
+def test_discovers_union_and_selects_only_compatible_assemblies(tmp_path, sources):
+    p = pipeline(tmp_path)
+    plans = asyncio.run(p._resolve_assemblies())
+    assert [plan.target for plan in plans] == ['4.20', '4.21', '4.22']
+    assert [{s['assembly'] for s in plan.inputs.values()} for plan in plans] == [
+        {'3.17.9'},
+        {'3.17.9', '3.18.5'},
+        {'3.18.5'},
+    ]
+    assert sources.repo.get_branch.call_count == 2
+    assert sources.repo.get_contents.call_count == 2
+    for plan in plans:
+        for record in plan.inputs.values():
+            assert record['group_revision'] == sources.revisions[record['group']]
+
+
+def test_optional_filter_selects_only_matching_groups(tmp_path, sources):
+    plans = asyncio.run(pipeline(tmp_path, target='4.22')._resolve_assemblies())
+    assert len(plans) == 1
+    assert {s['assembly'] for s in plans[0].inputs.values()} == {'3.18.5'}
+
+
+def test_numeric_target_ordering(tmp_path, sources):
+    sources.targets['quay-3.18'] = ['4.10', '4.9']
+    records = sources.documents['quay-3.18']['releases']['3.18.5']['assembly']['group']['fbc_builds']
+    example = records['4.22']['quay-operator']
+    for target in ('4.10', '4.9'):
+        records[target] = {'quay-operator': {**example, 'nvr': example['nvr'].replace('ocp4.22', 'ocp' + target)}}
+    plans = asyncio.run(pipeline(tmp_path, assemblies=('3.18.5',))._resolve_assemblies())
+    assert [p.target for p in plans] == ['4.9', '4.10']
 
 
 @pytest.mark.parametrize('assemblies', [('quay-3.18',), ('3.18',), ('3.18.5', '3.18.6')])
-def test_rejects_invalid_or_ambiguous_versions_before_remote_reads(tmp_path, assemblies):
-    p = pipeline(tmp_path)
-    p.assemblies = assemblies
-    with patch('pyartcd.pipelines.merge_layered_fbc.get_github_client_for_org') as client:
-        with pytest.raises(ValueError, match='format|Multiple assemblies'):
-            asyncio.run(p._resolve_assemblies())
-    client.assert_not_called()
+def test_rejects_invalid_or_ambiguous_versions_before_remote_reads(tmp_path, sources, assemblies):
+    with pytest.raises(ValueError, match='format|Multiple assemblies'):
+        asyncio.run(pipeline(tmp_path, assemblies=assemblies)._resolve_assemblies())
+    sources.repo.get_branch.assert_not_called()
 
 
-@pytest.mark.parametrize('options', [{'fbc_branch': 'custom'}, {'skip_rebase': True}, {'fbc_builds': (NVR,)}])
+@pytest.mark.parametrize('options', [{'fbc_branch': 'custom'}, {'skip_rebase': True}, {'fbc_builds': ('nvr',)}])
 def test_rejects_assembly_inputs_with_existing_source_modes(tmp_path, options):
     with pytest.raises(ValueError, match='cannot be combined'):
         asyncio.run(pipeline(tmp_path, **options)._resolve_assemblies())
 
 
-def test_rejects_record_resolved_to_another_group(tmp_path):
+@pytest.mark.parametrize('failure', ['missing', 'stale', 'config', 'unknown_assembly'])
+def test_preflight_failures_start_no_builds_and_remove_stale_result(tmp_path, sources, failure):
+    definition = sources.documents['quay-3.18']['releases']['3.18.5']['assembly']
+    if failure == 'missing':
+        del definition['group']['fbc_builds']['4.21']
+    elif failure == 'stale':
+        definition['members']['images'][0]['metadata']['is']['nvr'] += '.changed'
+    elif failure == 'config':
+        sources.targets['quay-3.18'] = []
+    else:
+        sources.documents['quay-3.18']['releases'] = {}
     p = pipeline(tmp_path)
-    p.builds = (NVR,)
-    p.assembly_inputs = {NVR: {'group': 'quay-3.18', 'operator': 'quay-operator'}}
+    p.output_file.write_text('{"old": true}')
+    with patch.object(MergeLayeredFbcPipeline, '_build', new=AsyncMock()) as build:
+        with pytest.raises(ValueError):
+            asyncio.run(p.run())
+    build.assert_not_called()
+    assert not p.output_file.exists()
+
+
+def test_successful_record_preflight_finishes_for_all_targets_before_building(tmp_path, sources):
+    checks = []
+
+    async def resolve(worker):
+        checks.append(worker.target)
+        if worker.target == '4.22':
+            raise ValueError('No successful FBC record')
+        return sorted({s['group'] for s in worker.assembly_inputs.values()})
+
+    with (
+        patch.object(MergeLayeredFbcPipeline, '_resolve_groups', resolve),
+        patch.object(MergeLayeredFbcPipeline, '_build', new=AsyncMock()) as build,
+    ):
+        with pytest.raises(ValueError, match='successful FBC'):
+            asyncio.run(pipeline(tmp_path).run())
+    assert checks == ['4.20', '4.21', '4.22']
+    build.assert_not_called()
+
+
+def test_workers_have_isolated_files_pinned_configuration_and_per_target_locks(tmp_path, sources):
+    observed = []
+
+    async def resolve(worker):
+        return sorted({s['group'] for s in worker.assembly_inputs.values()})
+
+    async def command(args):
+        output = next(a.split('=', 1)[1] for a in args if a.startswith('--output-file='))
+        target = next(a.split('=', 1)[1] for a in args if a.startswith('--major-minor='))
+        from pathlib import Path
+
+        Path(output).write_text(
+            json.dumps({'nvr': 'unified-' + target, 'pullspec': 'image@sha256:abc', 'build_url': 'url'})
+        )
+        observed.append(args)
+
+    async def locked(**kwargs):
+        return await kwargs['coro']
+
+    p = pipeline(tmp_path)
+    p.runtime.dry_run = False
+    with (
+        patch.object(MergeLayeredFbcPipeline, '_resolve_groups', resolve),
+        patch('pyartcd.pipelines.merge_layered_fbc.exectools.cmd_assert_async', new=AsyncMock(side_effect=command)),
+        patch('pyartcd.pipelines.merge_layered_fbc.locks.run_with_lock', new=AsyncMock(side_effect=locked)) as locks,
+    ):
+        result = asyncio.run(p.run())
+    assert list(result['results']) == ['4.20', '4.21', '4.22']
+    assert result['failed_targets'] == []
+    assert {c.kwargs['lock_name'] for c in locks.call_args_list} == {
+        f'lock:fbc-merge:quay:ocp-{target}' for target in result['results']
+    }
+    for prefix in ('--working-dir=', '--output-file='):
+        assert len({next(a for a in args if a.startswith(prefix)) for args in observed}) == 3
+    input_files = [args[args.index('--assembly-inputs-file') + 1] for args in observed]
+    assert len(set(input_files)) == 3
+    for args, filename in zip(observed, input_files):
+        from pathlib import Path
+
+        selections = json.loads(Path(filename).read_text())
+        assert next(a for a in args if a.startswith('--group=')).split('@')[1] in sources.revisions.values()
+        assert all(record['group_revision'] == sources.revisions[record['group']] for record in selections.values())
+    assert json.loads(p.output_file.read_text()) == result
+
+
+def test_failure_preserves_successes_waits_for_remaining_targets_and_limits_concurrency(tmp_path, sources):
+    active = 0
+    peak = 0
+    completed = []
+
+    async def resolve(worker):
+        return sorted({s['group'] for s in worker.assembly_inputs.values()})
+
+    async def build(worker):
+        nonlocal active, peak
+        active += 1
+        peak = max(active, peak)
+        await asyncio.sleep(0)
+        active -= 1
+        completed.append(worker.target)
+        if worker.target == '4.21':
+            raise RuntimeError('target failed')
+        return {'nvr': 'unified-' + worker.target, 'dry_run': True}
+
+    p = pipeline(tmp_path)
+    with (
+        patch.object(MergeLayeredFbcPipeline, '_resolve_groups', resolve),
+        patch.object(MergeLayeredFbcPipeline, '_build', build),
+        patch('pyartcd.pipelines.merge_layered_fbc.locks.run_with_lock') as locks,
+    ):
+        with pytest.raises(RuntimeError, match='4.21'):
+            asyncio.run(p.run())
+    locks.assert_not_called()
+    assert peak == 2
+    assert set(completed) == {'4.20', '4.21', '4.22'}
+    result = json.loads(p.output_file.read_text())
+    assert result['failed_targets'] == ['4.21']
+    assert result['results']['4.20']['status'] == 'Succeeded'
+    assert result['results']['4.22']['nvr'] == 'unified-4.22'
+    assert result['results']['4.21']['error'] == 'target failed'
+
+
+def test_unsupported_filter_starts_no_builds(tmp_path, sources):
+    with pytest.raises(ValueError, match='No selected assembly supports'):
+        asyncio.run(pipeline(tmp_path, target='5.0').run())
+
+
+def test_rejects_record_resolved_to_another_group(tmp_path):
+    p = pipeline(tmp_path, target='4.22')
+    nvr = 'quay-operator-fbc-3.18.5-1.ocp4.22'
+    p.builds = (nvr,)
+    p.assembly_inputs = {nvr: {'group': 'quay-3.18', 'operator': 'quay-operator'}}
 
     async def records(**kwargs):
-        yield SimpleNamespace(nvr=NVR, group='quay-3.17', name='quay-operator-fbc')
+        yield SimpleNamespace(nvr=nvr, group='quay-3.17', name='quay-operator-fbc')
 
     with patch('pyartcd.pipelines.merge_layered_fbc.KonfluxDb') as db:
         db.return_value.search_builds_by_fields = records

@@ -6,21 +6,46 @@ That mode records successful per-operator FBCs in
 only the operand/bundle image shipment. FBC records include immutable pullspecs
 and the effective operand pins used during preparation.
 
-The unified job accepts full assembly versions:
+The unified job accepts full assembly versions and discovers their OCP targets:
 
 ```sh
 artcd --working-dir=/tmp/artcd lp-unified-fbc --product=quay \
-  --assembly=3.18.5 --assembly=3.17.9 --ocp-target-version=4.22
+  --assembly=3.18.5 --assembly=3.17.9
 ```
 
-ARTCD derives `quay-3.18` and `quay-3.17`, reads each branch at an exact commit,
-and selects that assembly's recorded catalogs for OCP 4.22. Missing assemblies,
-missing target records, stale operand pins, unsuccessful FBCs, and multiple
-assemblies from the same group are rejected. No latest-build fallback is used.
-The committed unified provenance includes `assembly` and
-`assembly_group_revision` for each input. Assembly mode cannot be combined with
-explicit `--fbc-build`, `--fbc-branch`, or `--skip-rebase` inputs.
-The GitLab pipeline exposes a comma-separated `assemblies` parameter.
+ARTCD derives `quay-3.18` and `quay-3.17`, snapshots each branch once, and
+reads the named assembly and its effective `OCP_TARGET_VERSIONS` at that exact
+revision. It builds one unified catalog for every target in the union, using
+only the assemblies that support that target. All expected target records and
+successful source-build records are checked before starting a build. Missing
+assemblies, missing target records, stale pins, and duplicate group selections
+fail rather than falling back to latest builds.
+
+Use optional `--ocp-target-version=4.22` to build only that target. It can exclude
+assemblies that do not support 4.22, but fails if none support it. Explicit
+`--fbc-build` inputs still require an OCP target. A custom `--fbc-branch` can infer
+its single target from committed provenance when the option is omitted.
+
+Targets run with separate working directories, output files, source selections,
+and locks, with at most two concurrent builds. Assembly names and snapshot
+revisions are committed in each output's provenance; group configuration reads
+use those same source snapshots. If one build fails, other targets finish and
+successful outputs are retained. The job writes an aggregate JSON report keyed
+by target and then fails overall when any target failed. A filtered assembly run
+uses this same aggregate result format. Custom-branch and legacy explicit-build
+CLI invocations retain their existing single-target JSON format.
+
+Assembly mode cannot be combined with explicit `--fbc-build`, `--fbc-branch`, or
+`--skip-rebase`. The GitLab pipeline takes comma-separated `assemblies`; its
+optional `ocp-target-version` defaults to empty. It publishes a bounded
+`build-results` status/NVR map and prints full per-target pullspecs, build URLs,
+provenance URLs, selected assemblies, and failures in the task log, even if the
+job exits unsuccessfully. Oversized Tekton summaries omit NVRs or report totals;
+the full report remains in the log and local output file.
+
+For fork runs, preparation's `--build-data-repo-url` and the unified job's
+`--data-path` must point at the repository receiving the recorded FBCs. See the
+[complete fork configuration example](../../pyartcd/README.md#preparing-inputs-for-unified-layered-product-catalogs).
 
 The explicit-build CLI below remains available for existing callers. Custom
 `--fbc-branch` builds still accept no source inputs and use committed provenance.
