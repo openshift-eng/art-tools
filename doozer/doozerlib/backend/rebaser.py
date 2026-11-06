@@ -3047,57 +3047,17 @@ class KonfluxRebaser:
                 else:
                     self._logger.info(f"Source image {source} not found in {refs_path}, nothing to replace")
 
-    def _get_external_image_names(self, dest_dir: Path, csv_config: dict) -> Set[str]:
-        """Get the set of image names defined in external-images config from art.yaml.
-
-        These images are not ART-built and will be handled separately by _replace_external_image_refs.
-
-        Args:
-            dest_dir: The destination directory containing the operator bundle.
-            csv_config: The 'update-csv' configuration from the image metadata.
-
-        Returns:
-            Set of image names defined in external-images config, or empty set if none.
-        """
-        manifests_dir, _, _ = self._get_bundle_paths(csv_config)
-        manifests_base = os.path.join(dest_dir, manifests_dir)
-        art_yaml_path = os.path.join(manifests_base, 'art.yaml')
-
-        if not os.path.isfile(art_yaml_path):
-            return set()
-
-        try:
-            with io.open(art_yaml_path, 'r', encoding="utf-8") as art_file:
-                art_yaml_data = yaml.full_load(art_file.read())
-        except Exception:
-            return set()
-
-        external_images = art_yaml_data.get('external-images', [])
-        if not external_images:
-            return set()
-
-        return {ext_img.get('name') for ext_img in external_images if ext_img.get('name')}
-
     @start_as_current_span_async(TRACER, "rebase.update_csv")
     async def _update_csv(self, metadata: ImageMetadata, dest_dir: Path, version: str, release: str):
         csv_config = metadata.config.get('update-csv', None)
         if not csv_config:
             return
 
-        csv_file, image_refs = self._get_csv_file_and_refs(metadata, dest_dir, csv_config)
-        registry = csv_config['registry'].rstrip("/")
-        image_map = csv_config.get('image-map', {})
-
-        # Get external image names to skip in internal image replacement
-        external_image_names = self._get_external_image_names(dest_dir, csv_config)
-
-        # Replace internal ART-built image references with predicted v-r tags.
-        # For layered products, skip this — operand NVRs are resolved from Konflux DB
-        # at bundle rebase time instead (ART-18061).
-        if self._runtime.group.startswith("openshift-"):
-            await self._replace_internal_image_refs(
-                metadata, csv_file, image_refs, registry, image_map, external_image_names
-            )
+        csv_file, _ = self._get_csv_file_and_refs(metadata, dest_dir, csv_config)
+        # Keep upstream image references in the operator build. The Konflux bundle
+        # rebase resolves the selected operand builds and writes their pullspecs into
+        # bundle manifests, avoiding stale predicted tags for both OCP and layered
+        # product operators (ART-21795).
 
         # Apply art.yaml search-and-replace updates and get parsed art.yaml data.
         # The returned art_yaml_data is passed to _replace_external_image_refs to avoid
