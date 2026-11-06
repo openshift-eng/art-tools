@@ -4,6 +4,49 @@
   "title": "Assembly Group Configuration",
   "type": "object",
   "properties": {
+    "fbc_builds": {
+      "description": "Validated FBCs recorded on a named assembly for later unified catalog builds.",
+      "type": "object",
+      "minProperties": 1,
+      "patternProperties": {
+        "^\\d+\\.\\d+$": {
+          "type": "object",
+          "minProperties": 1,
+          "patternProperties": {
+            "^[A-Za-z0-9_.-]+$": {
+              "type": "object",
+              "required": [
+                "nvr",
+                "pullspec",
+                "operand_nvrs"
+              ],
+              "properties": {
+                "nvr": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "pullspec": {
+                  "type": "string",
+                  "pattern": "^[^\\s@]+@sha256:[0-9a-f]{64}$"
+                },
+                "operand_nvrs": {
+                  "type": "array",
+                  "minItems": 1,
+                  "uniqueItems": true,
+                  "items": {
+                    "type": "string",
+                    "minLength": 1
+                  }
+                }
+              },
+              "additionalProperties": false
+            }
+          },
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    },
     "ignore_patch_version": {
       "description": "Allow FBC patch versions to differ when selecting the recorded bundle identity.",
       "type": "boolean"
