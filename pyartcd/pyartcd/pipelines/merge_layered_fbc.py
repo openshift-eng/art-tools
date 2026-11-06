@@ -9,6 +9,7 @@ from pathlib import Path
 
 import click
 from artcommonlib import exectools
+from artcommonlib.git_helper import validate_git_branch, validate_git_group_name, validate_git_remote_url
 from artcommonlib.github_auth import get_github_client_for_org
 from artcommonlib.konflux.konflux_build_record import KonfluxBuildOutcome, KonfluxFbcBuildRecord
 from artcommonlib.konflux.konflux_db import KonfluxDb
@@ -53,6 +54,10 @@ class MergeLayeredFbcPipeline:
         skip_tasks: tuple[str, ...] = (),
         output_file: str | None = None,
     ):
+        validate_git_branch(fbc_branch)
+        validate_git_remote_url(data_path)
+        if fbc_repo is not None:
+            validate_git_remote_url(fbc_repo)
         self.runtime = runtime
         self.group = None
         self.product = product
@@ -220,8 +225,7 @@ class MergeLayeredFbcPipeline:
             )
             if not record or extract_ocp_version_from_fbc_nvr(record.nvr) != self.target:
                 raise ValueError(f'{build} is not a successful FBC for OCP {self.target}')
-            if not record.group or not re.fullmatch(r'[\w.-]+', record.group):
-                raise ValueError(f'Invalid source group for {build}')
+            validate_git_group_name(record.group)
             if self.assembly_inputs:
                 source = self.assembly_inputs.get(record.nvr)
                 if not source or source['group'] != record.group or f"{source['operator']}-fbc" != record.name:
@@ -245,8 +249,10 @@ class MergeLayeredFbcPipeline:
         if not isinstance(provenance, dict):
             raise ValueError('FBC branch provenance must be a JSON object')
         group = provenance.get('execution_group')
-        if not isinstance(group, str) or not re.fullmatch(r'[\w.-]+', group):
-            raise ValueError('FBC branch provenance has no valid execution_group')
+        try:
+            validate_git_group_name(group)
+        except ValueError:
+            raise ValueError('FBC branch provenance has no valid execution_group') from None
         if self.target is None:
             self.target = provenance.get('ocp_target_version')
         if not isinstance(self.target, str) or not re.fullmatch(r'[0-9]+\.[0-9]+', self.target):

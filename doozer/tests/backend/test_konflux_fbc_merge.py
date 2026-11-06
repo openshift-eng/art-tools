@@ -773,7 +773,7 @@ class TestLayeredFbcMerger(unittest.IsolatedAsyncioTestCase):
         ]
         self._fbc_query(selected.record)
         self.merger.bundle_db.get_build_records_by_nvrs = AsyncMock(return_value=[selected.bundle])
-        self.merger._load_group = Mock(return_value=({}, 'c' * 40))
+        self.merger._load_group = Mock(return_value=({}, 'd' * 40))
         labels = {
             'operators.operatorframework.io.bundle.package.v1': 'quay',
             'operators.operatorframework.io.bundle.channels.v1': 'stable-3.18',
@@ -936,7 +936,7 @@ class TestLayeredFbcMerger(unittest.IsolatedAsyncioTestCase):
         with self.assertRaisesRegex(ValueError, 'not a successful FBC for OCP 4.20'):
             await self._prepare_inputs(selected)
 
-    async def _prepare_inputs(self, selected):
+    async def _prepare_inputs(self, selected, assembly_inputs=None):
         async def search(**kwargs):
             yield next(item.record for item in selected if item.record.nvr == kwargs['where']['nvr'])
 
@@ -973,7 +973,10 @@ class TestLayeredFbcMerger(unittest.IsolatedAsyncioTestCase):
                 ),
             ),
         ):
-            await self.merger.prepare(tuple(item.record.nvr for item in selected))
+            if assembly_inputs is None:
+                await self.merger.prepare(tuple(item.record.nvr for item in selected))
+            else:
+                await self.merger.prepare(tuple(item.record.nvr for item in selected), assembly_inputs=assembly_inputs)
 
     async def test_retries_and_records_failed_attempt_before_success(self):
         self.merger.dry_run = False
@@ -1041,3 +1044,121 @@ class TestLayeredFbcMerger(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(gitdata.call_args.kwargs['commitish'], revision)
         self.assertEqual(loader.call_args.kwargs['commitish'], revision)
         loader.return_value.load_group_config.assert_called_once_with(assembly='3.18.5', releases_config=None)
+
+    async def test_invalid_groups_and_revisions_never_reach_gitdata(self):
+        for group in ('.', '..', '--detach', 'quay/3.18', 'quay-3..18'):
+            with self.subTest(group=group), patch('doozerlib.backend.konflux_fbc_merge.GitData') as gitdata:
+                with self.assertRaises(ValueError):
+                    self.merger._load_group(group)
+                gitdata.assert_not_called()
+        with patch('doozerlib.backend.konflux_fbc_merge.GitData') as gitdata:
+            with self.assertRaisesRegex(ValueError, 'Invalid source group revision'):
+                self.merger._load_group('quay-3.18', revision='--detach')
+            gitdata.assert_not_called()
+
+    async def test_symlinked_clone_paths_are_rejected_without_touching_other_checkouts(self):
+        root = Path(self.temp.name)
+        outside = root / 'other-checkout'
+        outside.mkdir()
+        marker = outside / 'keep.txt'
+        marker.write_text('preserve')
+        base = root / 'fbc-merge-build-data'
+        base.mkdir()
+        (base / 'quay-3.18').symlink_to(outside, target_is_directory=True)
+        with patch('doozerlib.backend.konflux_fbc_merge.GitData') as gitdata:
+            with self.assertRaisesRegex(ValueError, 'escapes'):
+                self.merger._load_group('quay-3.18')
+        gitdata.assert_not_called()
+        self.assertEqual(marker.read_text(), 'preserve')
+
+    async def test_option_like_branch_is_rejected_before_creating_clients(self):
+        with patch('doozerlib.backend.konflux_fbc_merge.KonfluxDb') as db:
+            with self.assertRaisesRegex(ValueError, 'Invalid Git branch'):
+                LayeredFbcMerger(
+                    runtime=self.runtime, target_version='4.20', registry_auth=None, fbc_branch='--upload-pack=command'
+                )
+        db.assert_not_called()
+
+    async def test_credential_urls_are_rejected_before_rebase_or_existing_source_logs(self):
+        for branch in (None, 'codex/production'):
+            for url in (
+                'https://user:dummy-secret@example.invalid/fbc.git',
+                'https://dummy-secret@github.com/example/fbc.git',
+            ):
+                with (
+                    self.subTest(branch=branch, url=url),
+                    self.assertNoLogs('doozerlib.backend.konflux_fbc', level='DEBUG'),
+                ):
+                    with patch('doozerlib.backend.konflux_fbc_merge.KonfluxDb') as db:
+                        with self.assertRaisesRegex(ValueError, 'embedded credentials') as exc:
+                            LayeredFbcMerger(
+                                runtime=self.runtime,
+                                target_version='4.20',
+                                registry_auth=None,
+                                fbc_branch=branch,
+                                fbc_git_repo=url,
+                            )
+                    db.assert_not_called()
+                    self.assertNotIn('dummy-secret', str(exc.exception))
+
+    async def test_credential_bearing_source_record_is_rejected_before_clone(self):
+        selected = self.merger.inputs[0]
+        selected.record.rebase_repo_url = 'https://user:dummy-secret@github.com/example/fbc.git'
+        self._fbc_query(selected.record)
+        with patch.object(self.merger, '_load_group') as load:
+            with self.assertRaisesRegex(ValueError, 'embedded credentials') as exc:
+                await self.merger.prepare((selected.record.nvr,))
+        load.assert_not_called()
+        self.assertNotIn('dummy-secret', str(exc.exception))
+
+    async def test_group_selections_must_be_consistent_for_every_operator(self):
+        selected = [
+            source(
+                '3.18',
+                [
+                    package(pkg, 'stable-3.18'),
+                    channel('stable-3.18', [{'name': f'{pkg}.v3.18.1'}], pkg),
+                    bundle(f'{pkg}.v3.18.1', pkg),
+                ],
+                pkg=pkg,
+            )
+            for pkg in ('one', 'two')
+        ]
+        for i, item in enumerate(selected):
+            item.record.image_pullspec = 'quay.io/test/fbc@sha256:' + str(i + 1) * 64
+        inputs = {
+            s.record.nvr: {
+                'group': s.record.group,
+                'assembly': '3.18.1',
+                'group_revision': 'c' * 40,
+                'operator': s.record.name.removesuffix('-fbc'),
+                'pullspec': s.record.image_pullspec,
+            }
+            for s in selected
+        }
+        await self._prepare_inputs(selected, assembly_inputs=inputs)
+        self.merger._load_group.assert_called_once_with('quay-3.18', revision='c' * 40, assembly='3.18.1')
+        self.assertTrue(
+            all(p['group_revision'] == p['assembly_group_revision'] for p in self.merger.provenance['inputs'])
+        )
+        for field, value in (('assembly', '3.18.2'), ('group_revision', 'd' * 40), ('group_revision', None)):
+            changed = copy.deepcopy(inputs)
+            changed[selected[1].record.nvr][field] = value
+            expected = 'Invalid assembly provenance' if value is None else 'Conflicting assembly selections'
+            with self.subTest(field=field, value=value), self.assertRaisesRegex(ValueError, expected):
+                await self._prepare_inputs(selected, assembly_inputs=changed)
+            self.assertEqual(self.merger._load_group.call_count, 1)
+
+    async def test_resolved_revision_must_equal_the_requested_assembly_revision(self):
+        selected = source('3.18', [package()])
+        inputs = {
+            selected.record.nvr: {
+                'group': selected.record.group,
+                'assembly': '3.18.1',
+                'group_revision': 'd' * 40,
+                'operator': 'quay-operator',
+                'pullspec': selected.record.image_pullspec,
+            }
+        }
+        with self.assertRaisesRegex(ValueError, 'Resolved source group revision'):
+            await self._prepare_inputs([selected], assembly_inputs=inputs)
