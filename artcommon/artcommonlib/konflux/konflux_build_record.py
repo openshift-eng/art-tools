@@ -29,6 +29,7 @@ class KonfluxBuildOutcome(KonfluxEnum):
     - PENDING: in-progress or awaiting further processing (intermediate row).
     - BUILD_ERROR: build PipelineRun failed (canonical PLR failure; prefer over FAILURE).
     - ITS_ERROR: Enterprise Contract / IntegrationTestScenario verification failed after a successful build.
+    - POST_BUILD_ERROR: a required post-build callback failed after a successful build.
     - RELEASE_ERROR: base-image snapshot/release failed after a successful build.
     - FAILURE: legacy generic failure; retained for old rows and out-of-scope writers (FBC/OLM may still emit it).
     - TIMEOUT / CANCELLED: pipelinerun terminal states from Tekton Succeeded condition.
@@ -41,6 +42,7 @@ class KonfluxBuildOutcome(KonfluxEnum):
     CANCELLED = 'cancelled'
     BUILD_ERROR = 'build_error'
     ITS_ERROR = 'its_error'
+    POST_BUILD_ERROR = 'post_build_error'
     RELEASE_ERROR = 'release_error'
 
     @classmethod
@@ -51,6 +53,7 @@ class KonfluxBuildOutcome(KonfluxEnum):
             cls.FAILURE.value,
             cls.BUILD_ERROR.value,
             cls.ITS_ERROR.value,
+            cls.POST_BUILD_ERROR.value,
             cls.RELEASE_ERROR.value,
             cls.TIMEOUT.value,
             cls.CANCELLED.value,
@@ -64,6 +67,7 @@ class KonfluxBuildOutcome(KonfluxEnum):
             KonfluxBuildOutcome.FAILURE,
             KonfluxBuildOutcome.BUILD_ERROR,
             KonfluxBuildOutcome.ITS_ERROR,
+            KonfluxBuildOutcome.POST_BUILD_ERROR,
             KonfluxBuildOutcome.RELEASE_ERROR,
             KonfluxBuildOutcome.TIMEOUT,
             KonfluxBuildOutcome.CANCELLED,

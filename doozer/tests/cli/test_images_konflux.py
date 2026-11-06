@@ -347,14 +347,17 @@ class TestBaseImageReleasePrioritisation(unittest.IsolatedAsyncioTestCase):
         # Build three mock metas: leaf-a, base-b (base_image_release), leaf-c
         leaf_a = mock.Mock()
         leaf_a.distgit_key = "leaf-a"
+        leaf_a.config = Model({})
         leaf_a.should_trigger_base_image_release.return_value = False
 
         base_b = mock.Mock()
         base_b.distgit_key = "base-b"
+        base_b.config = Model({})
         base_b.should_trigger_base_image_release.return_value = True
 
         leaf_c = mock.Mock()
         leaf_c.distgit_key = "leaf-c"
+        leaf_c.config = Model({})
         leaf_c.should_trigger_base_image_release.return_value = False
 
         runtime = mock.Mock(spec=Runtime)
@@ -436,10 +439,12 @@ class TestBaseImageReleasePrioritisation(unittest.IsolatedAsyncioTestCase):
 
         leaf_a = mock.Mock()
         leaf_a.distgit_key = "leaf-a"
+        leaf_a.config = Model({})
         leaf_a.should_trigger_base_image_release.return_value = False
 
         leaf_b = mock.Mock()
         leaf_b.distgit_key = "leaf-b"
+        leaf_b.config = Model({})
         leaf_b.should_trigger_base_image_release.return_value = False
 
         runtime = mock.Mock(spec=Runtime)
@@ -1218,3 +1223,72 @@ class TestKonfluxBuildCliStandaloneStageRelease(unittest.IsolatedAsyncioTestCase
 
         self.assertIsNone(result)
         mock_handler._create_release_from_snapshot.assert_not_called()
+
+
+class TestKonfluxBuildPostBuildWiring(unittest.IsolatedAsyncioTestCase):
+    """The build command delegates post-build callback assembly to the registry factory."""
+
+    @mock.patch("doozerlib.cli.images_konflux.asyncio.sleep", new_callable=mock.AsyncMock)
+    @mock.patch("doozerlib.cli.images_konflux.build_post_build_callbacks")
+    @mock.patch("doozerlib.cli.images_konflux.KonfluxImageBuilder")
+    @mock.patch("doozerlib.cli.images_konflux.trace.get_current_span")
+    async def test_run_delegates_to_build_post_build_callbacks(
+        self, mock_get_span, mock_builder_cls, mock_build_callbacks, _mock_sleep
+    ):
+        mock_get_span.return_value = mock.Mock()
+
+        leaf_a = mock.Mock()
+        leaf_a.distgit_key = "leaf-a"
+        leaf_a.config = Model({})
+        leaf_a.should_trigger_base_image_release.return_value = False
+
+        runtime = mock.Mock(spec=Runtime)
+        runtime.working_dir = "/tmp"
+        runtime.group = "test-group"
+        runtime.assembly = "test"
+        runtime.variant = BuildVariant.OCP
+        runtime.product = "ocp"
+        runtime.source_resolver = mock.Mock(spec=SourceResolver)
+        runtime.konflux_db = mock.Mock()
+        runtime.konflux_db.bind = mock.Mock()
+        runtime.ordered_image_metas.return_value = [leaf_a]
+        runtime.exclude = ()
+        runtime.group_config = Model({})
+        runtime.record_logger = mock.Mock()
+        runtime.logger = mock.Mock()
+
+        sentinel_callbacks = {"rhcos_node_image": mock.Mock()}
+        mock_build_callbacks.return_value = sentinel_callbacks
+
+        async def build_side_effect(meta, **kwargs):
+            return ("nvr", "plr-name", {})
+
+        mock_builder = mock.Mock()
+        mock_builder.build = mock.AsyncMock(side_effect=build_side_effect)
+        mock_builder.validate_custom_integration_test_scenarios = mock.AsyncMock()
+        mock_builder._konflux_client.ensure_git_auth_secret = mock.AsyncMock(return_value="test-secret")
+        mock_builder._konflux_client.token_refresh_loop = mock.AsyncMock()
+        mock_builder._konflux_client.delete_git_auth_secret = mock.AsyncMock()
+        mock_builder._konflux_client.cleanup_stale_git_auth_secrets = mock.AsyncMock()
+        mock_builder_cls.return_value = mock_builder
+
+        cli = KonfluxBuildCli(
+            runtime=runtime,
+            konflux_kubeconfig="/path/to/kubeconfig",
+            konflux_context="test-context",
+            konflux_namespace="test-namespace",
+            image_repo="test-repo",
+            registry_auth_file="/path/to/auth",
+            skip_checks=False,
+            dry_run=False,
+            plr_template="test-template",
+            build_priority="auto",
+        )
+
+        await cli.run()
+
+        # The factory is invoked once with the selected metas, the runtime, and the skip flag.
+        mock_build_callbacks.assert_called_once_with(metas=[leaf_a], runtime=runtime, skip=False)
+        # And its result is forwarded verbatim to the image builder config.
+        config = mock_builder_cls.call_args.kwargs["config"]
+        self.assertIs(config.post_build_callbacks, sentinel_callbacks)
