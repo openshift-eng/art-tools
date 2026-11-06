@@ -197,22 +197,22 @@ class LayeredFbcMerger(KonfluxFbcFragmentMerger):
             repository = repository.rsplit(':', 1)[0]
         return f'{repository}@{digest}'
 
-    def _load_group(self, group: str) -> tuple[dict, str]:
+    def _load_group(self, group: str, revision: str | None = None, assembly: str = 'stream') -> tuple[dict, str]:
         # Each source group gets its own clone; never switch the execution runtime's checkout.
         gitdata = GitData(
             data_path=self.runtime.data_path,
             clone_dir=str(Path(self.runtime.working_dir) / 'fbc-merge-build-data' / group),
-            commitish=group,
+            commitish=revision or group,
             reclone=True,
         )
         loader = BuildDataLoader(
             data_path=self.runtime.data_path,
             clone_dir=gitdata.clone_dir,
-            commitish=group,
+            commitish=revision or group,
             build_system='konflux',
             gitdata=gitdata,
         )
-        config = loader.load_group_config(assembly='stream', releases_config=None)
+        config = loader.load_group_config(assembly=assembly, releases_config=None)
         if config.get('product') != self.product or self.target_version not in config.get('OCP_TARGET_VERSIONS', []):
             raise ValueError(f'{group} does not support product {self.product} on OCP {self.target_version}')
         return config, gitdata.commit_hash
@@ -220,6 +220,8 @@ class LayeredFbcMerger(KonfluxFbcFragmentMerger):
     async def prepare(self, builds: tuple[str, ...], assembly_inputs: dict | None = None):
         if not builds:
             raise ValueError('At least one FBC build is required')
+        if assembly_inputs is not None and not isinstance(assembly_inputs, dict):
+            raise ValueError('Assembly provenance must be an object')
         self._build_arches = None
         self._build_arches = await get_target_fbc_arches(
             self.runtime.data_path, self.major_minor_override, self._logger
@@ -253,7 +255,22 @@ class LayeredFbcMerger(KonfluxFbcFragmentMerger):
             if not record.rebase_repo_url or not re.fullmatch(r'[0-9a-f]{40}', record.rebase_commitish or ''):
                 raise ValueError(f'{build} has no immutable FBC source revision')
             if record.group not in revisions:
-                _, revisions[record.group] = await asyncio.to_thread(self._load_group, record.group)
+                if assembly_inputs is not None:
+                    selection = assembly_inputs.get(nvr)
+                    if (
+                        not isinstance(selection, dict)
+                        or not re.fullmatch(r'[0-9a-f]{40}', selection.get('group_revision', ''))
+                        or not re.fullmatch(r'[0-9]+\.[0-9]+\.[0-9]+', selection.get('assembly', ''))
+                    ):
+                        raise ValueError(f'Invalid assembly provenance for {nvr}')
+                    _, revisions[record.group] = await asyncio.to_thread(
+                        self._load_group,
+                        record.group,
+                        revision=selection['group_revision'],
+                        assembly=selection['assembly'],
+                    )
+                else:
+                    _, revisions[record.group] = await asyncio.to_thread(self._load_group, record.group)
             if len(record.bundle_nvrs) != 1:
                 raise ValueError(f'{build} must reference exactly one source bundle')
             pinned = await self._pin_image(record.image_pullspec)

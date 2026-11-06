@@ -235,3 +235,36 @@ class TestMergeLayeredFbcPipeline(unittest.IsolatedAsyncioTestCase):
             with self.assertRaisesRegex(ValueError, 'belongs to logging, expected product quay'):
                 await self.pipeline.run()
         build.assert_not_awaited()
+
+    def test_cli_accepts_assemblies_without_target(self):
+        with cli.commands['lp-unified-fbc'].make_context('lp-unified-fbc', ['--assembly=3.18.5']) as context:
+            self.assertIsNone(context.params['ocp_target_version'])
+            self.assertEqual(context.params['assemblies'], ('3.18.5',))
+
+    async def test_explicit_builds_still_require_target(self):
+        pipeline = MergeLayeredFbcPipeline(self.runtime, fbc_builds=self.pipeline.builds)
+        with self.assertRaisesRegex(ValueError, 'required for explicit FBC'):
+            await pipeline.run()
+
+    async def test_custom_branch_infers_target_when_omitted(self):
+        self.runtime.dry_run = True
+        pipeline = MergeLayeredFbcPipeline(self.runtime, fbc_branch='custom')
+        repo = Mock()
+        repo.get_contents.return_value.decoded_content = json.dumps(
+            {
+                'execution_group': 'quay-3.18',
+                'product': 'quay',
+                'ocp_target_version': '4.22',
+            }
+        ).encode()
+        with (
+            patch('pyartcd.pipelines.merge_layered_fbc.get_github_client_for_org') as client,
+            patch(
+                'pyartcd.pipelines.merge_layered_fbc.load_group_config',
+                new=AsyncMock(return_value={'product': 'quay', 'OCP_TARGET_VERSIONS': ['4.22']}),
+            ),
+            patch.object(pipeline, '_build', new=AsyncMock(return_value=self.result)),
+        ):
+            client.return_value.get_repo.return_value = repo
+            await pipeline.run()
+        self.assertEqual(pipeline.target, '4.22')
