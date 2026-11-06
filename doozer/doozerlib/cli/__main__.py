@@ -32,6 +32,7 @@ from doozerlib.cli.config_plashet import config_plashet
 from doozerlib.cli.config_tag_rpms import config_tag_rpms
 from doozerlib.cli.detect_embargo import detect_embargo
 from doozerlib.cli.fbc import fbc_import, fbc_rebase_and_build
+from doozerlib.cli.fbc_merge import fbc_merge_layered
 from doozerlib.cli.get_nightlies import get_nightlies
 from doozerlib.cli.golang_builder_shipment import golang_builder_shipment
 from doozerlib.cli.images import (
