@@ -18,7 +18,6 @@ import truststore
 from artcommonlib import exectools, git_helper
 from artcommonlib import util as artlib_util
 from artcommonlib.assembly import AssemblyTypes, assembly_config_struct, assembly_type
-from artcommonlib.constants import KONFLUX_DEFAULT_IMAGE_SHARE_REPO
 from artcommonlib.konflux.konflux_build_record import (
     Engine,
     KonfluxBuildOutcome,
@@ -34,7 +33,6 @@ from doozerlib import constants, opm, util
 from doozerlib.backend.build_repo import BuildRepo
 from doozerlib.backend.konflux_client import ImageBuildParams, KonfluxClient
 from doozerlib.backend.pipelinerun_utils import PipelineRunInfo
-from doozerlib.constants import KONFLUX_DEFAULT_IMAGE_REPO
 from doozerlib.image import ImageMetadata
 from doozerlib.record_logger import RecordLogger
 from elliottlib.shipment_utils import get_shipment_config_from_mr
@@ -814,6 +812,58 @@ class KonfluxFbcRebaser:
                 # Each subsequent entry replaces the previous one
                 entries[i]['replaces'] = entries[i - 1]['name']
 
+    @classmethod
+    def _insert_mid_stream_entry(cls, entries: list, new_entry: dict) -> None:
+        """Insert into a linear replaces chain without changing unrelated edges.
+
+        Existing skips and skipRange edges are left intact. A channel with a
+        non-linear or non-monotonic replaces graph needs an explicit repair,
+        rather than an automatic mid-stream insertion.
+
+        :param entries: Existing entries in one channel
+        :param new_entry: Entry to insert; its name must not already be present
+        :raises IOError: If the insertion point or existing graph is ambiguous
+        """
+        names = [entry['name'] for entry in entries]
+        if len(names) != len(set(names)) or new_entry['name'] in names:
+            raise IOError("Cannot mid-stream insert into a channel with duplicate bundle names")
+
+        try:
+            versions = {name: cls._extract_version_from_bundle_name(name) for name in [*names, new_entry['name']]}
+        except ValueError as e:
+            raise IOError(f"Cannot mid-stream insert with an unparseable bundle version: {e}") from e
+        if len(set(versions.values())) != len(versions):
+            raise IOError("Cannot mid-stream insert into a channel with duplicate bundle versions")
+
+        ordered = sorted(entries, key=lambda entry: versions[entry['name']])
+        for index, entry in enumerate(ordered):
+            if index and entry.get('replaces') != ordered[index - 1]['name']:
+                raise IOError("Cannot mid-stream insert into a non-linear replaces graph")
+            if not index and entry.get('replaces') in names:
+                raise IOError("Cannot mid-stream insert into a cyclic replaces graph")
+            if new_entry['name'] in entry.get('skips', []):
+                raise IOError("Cannot mid-stream insert a bundle already skipped by this channel")
+
+        successor = next((entry for entry in ordered if versions[entry['name']] > versions[new_entry['name']]), None)
+        if successor is None:
+            raise IOError("Cannot mid-stream insert a bundle newer than the channel head")
+        predecessor_index = ordered.index(successor) - 1
+        predecessor = ordered[predecessor_index] if predecessor_index >= 0 else None
+
+        if predecessor:
+            new_entry['replaces'] = predecessor['name']
+        elif external_tail := successor.get('replaces'):
+            try:
+                tail_version = cls._extract_version_from_bundle_name(external_tail)
+            except ValueError as e:
+                raise IOError(f"Cannot safely preserve the channel's external tail edge: {e}") from e
+            if tail_version >= versions[new_entry['name']]:
+                raise IOError("Cannot mid-stream insert below a non-monotonic external tail edge")
+            new_entry['replaces'] = external_tail
+
+        successor['replaces'] = new_entry['name']
+        entries.insert(entries.index(successor), new_entry)
+
     _VERSIONED_CHANNEL_RE = re.compile(r'^(.+)-v?(\d+(?:\.\d+)*)$')
 
     @staticmethod
@@ -1281,6 +1331,13 @@ class KonfluxFbcRebaser:
             # (e.g. ACM). These graphs are deliberately managed — preserve them
             # as-is and do NOT migrate skips onto the new head entry.
             has_replaces_graph = any(e.get('replaces') for e in channel['entries'])
+            # Detect skips-only channels (e.g. kueue) before skip migration mutates entries.
+            # LP invents/rebuilds replaces unless the channel is already skips-only.
+            disable_channel_skips = bool(getattr(group_config.vars, "FBC_DISABLE_CHANNEL_SKIPS", False))
+            has_skips_graph = any(e.get('skips') for e in channel['entries'])
+            use_replaces = (not self.group.startswith("openshift-")) and (
+                has_replaces_graph or disable_channel_skips or not has_skips_graph
+            )
 
             if has_replaces_graph:
                 logger.info("Channel has replaces-based update graph; preserving existing entries")
@@ -1343,6 +1400,7 @@ class KonfluxFbcRebaser:
                         channel['entries'].append(assembly_entry)
 
             # Add the current bundle to the specified channel in the catalog
+            mid_stream_rewire = False
             entry = next((entry for entry in channel['entries'] if entry['name'] == olm_bundle_name), None)
             if not entry:
                 logger.info("Adding bundle %s to channel %s", olm_bundle_name, channel['name'])
@@ -1355,21 +1413,19 @@ class KonfluxFbcRebaser:
                     logger.info("Sorting channel entries by version order")
                     channel['entries'].sort(key=lambda e: self._extract_version_from_bundle_name(e['name']))
 
-                    # Rebuild replaces chain for non-OpenShift groups (operators using replaces)
-                    if not self.group.startswith('openshift-'):
+                    # Rebuild replaces chain for LP channels that use replaces
+                    # (skip for skips-only channels like kueue)
+                    if use_replaces:
                         logger.info("Rebuilding replaces chain after version sorting")
                         self._rebuild_replaces_chain(channel['entries'])
                 else:
-                    # For an operator bundle that uses replaces -- such as OADP.
-                    # Default (tip-of-channel): new bundle replaces the current head.
-                    # Mid-stream (new CSV older than head, e.g. 1.0.3 while head is 1.1.2):
-                    # refuse replaces:HEAD (invalid downgrade edge). With
-                    # FBC_ENABLE_MID_STREAM_REWIRE, sort/rewire instead; otherwise fail closed.
+                    # A tip add replaces the current head. A mid-stream add
+                    # requires an explicit opt-in and changes only its adjacent
+                    # replaces edges; it must never replace a newer head.
                     # --insert-missing-entry is a separate branch above and is unaffected.
                     replaces = None
-                    mid_stream_rewire = False
                     current_head_name = None
-                    if not self.group.startswith('openshift-'):
+                    if use_replaces:
                         # Find the current head - the entry not superseded
                         # (not replaced or skipped) by any other entry
                         all_entries = list(channel['entries'])
@@ -1379,8 +1435,8 @@ class KonfluxFbcRebaser:
                         current_head = next((it for it in all_entries if it['name'] not in superseded_names), None)
                         if current_head:
                             current_head_name = current_head['name']
-                            enable_mid_stream_rewire = bool(
-                                getattr(group_config.vars, "FBC_ENABLE_MID_STREAM_REWIRE", False)
+                            enable_mid_stream_rewire = (
+                                getattr(group_config.vars, "FBC_ENABLE_MID_STREAM_REWIRE", False) is True
                             )
                             try:
                                 new_ver = self._extract_version_from_bundle_name(olm_bundle_name)
@@ -1394,14 +1450,10 @@ class KonfluxFbcRebaser:
                                             f"channel head ({head_ver}), which would create an "
                                             f"invalid downgrade edge. Set "
                                             f"FBC_ENABLE_MID_STREAM_REWIRE: true in group.yml vars "
-                                            f"to insert by semver and rebuild the replaces chain "
+                                            f"to insert by semver into a linear replaces chain "
                                             f"for shared OLM channels, or use --insert-missing-entry "
                                             f"to fill a hole in version order."
                                         )
-                                    # Sort/rewire parses every channel entry; refuse mid-stream
-                                    # if any name is unparseable rather than crashing later.
-                                    for it in all_entries:
-                                        self._extract_version_from_bundle_name(it['name'])
                                     mid_stream_rewire = True
                                 else:
                                     replaces = current_head_name
@@ -1416,20 +1468,25 @@ class KonfluxFbcRebaser:
                                 # Tip path with unparseable names: keep historical HEAD-append
                                 replaces = current_head_name
 
-                    channel['entries'].append(entry)
                     if mid_stream_rewire:
                         logger.info(
                             "Mid-stream insert for %s in channel %s "
                             "(new version older than head %s); "
-                            "sorting entries and rebuilding replaces chain",
+                            "updating adjacent replaces edges",
                             olm_bundle_name,
                             channel['name'],
                             current_head_name,
                         )
-                        channel['entries'].sort(key=lambda e: self._extract_version_from_bundle_name(e['name']))
-                        self._rebuild_replaces_chain(channel['entries'])
-                    elif replaces:
-                        entry["replaces"] = replaces
+                        try:
+                            self._insert_mid_stream_entry(channel['entries'], entry)
+                        except IOError as e:
+                            raise IOError(
+                                f"cannot mid-stream insert into channel {channel['name']}: {e}. Refusing replaces:HEAD."
+                            ) from e
+                    else:
+                        channel['entries'].append(entry)
+                        if replaces:
+                            entry["replaces"] = replaces
             else:
                 logger.warning("Bundle %s already exists in channel %s. Replacing...", olm_bundle_name, channel['name'])
                 existing_replaces = entry.get("replaces")
@@ -1439,8 +1496,7 @@ class KonfluxFbcRebaser:
                     entry["replaces"] = existing_replaces
             if olm_skip_range:
                 entry["skipRange"] = olm_skip_range
-            if skips:
-                disable_channel_skips = bool(getattr(group_config.vars, "FBC_DISABLE_CHANNEL_SKIPS", False))
+            if skips and not mid_stream_rewire:
                 if self.group.startswith("openshift-") or not disable_channel_skips:
                     entry["skips"] = sorted(skips)
 
@@ -1552,7 +1608,7 @@ class KonfluxFbcRebaser:
         dfp.labels['com.redhat.art.name'] = name
         nvr = f'{name}-{version}-{release}'
         dfp.labels['com.redhat.art.nvr'] = nvr
-        dfp.labels['com.redhat.art.bundle.pullspec'] = bundle_build.image_pullspec
+        dfp.labels['com.redhat.art.bundle.pullspec'] = bundle_prod_pullspec
         return nvr
 
     @staticmethod
@@ -1821,63 +1877,35 @@ class KonfluxFbcBuilder:
 
         return commits
 
-    async def _check_image_exists(self, pullspec: str, logger: Optional[logging.Logger] = None) -> bool:
-        """Check if an image exists in the registry.
+    async def _resolve_upstream_commit(self, labels: Dict[str, str], logger: logging.Logger) -> Optional[str]:
+        """Resolve the upstream operator source SHA, independently of the build repo SHA.
 
-        :param pullspec: Image pullspec to check
-        :param logger: Logger instance
-        :return: True if image exists, False otherwise
+        The rebaser copies the upstream SHA from the bundle build record into the
+        catalog label. If it is absent, inspect the referenced bundle in stage,
+        where bundles are published under a tag equal to their source digest.
         """
-        logger = logger or self._logger
-        try:
-            logger.debug(f"Checking if image exists: {pullspec}")
-            registry_config = os.getenv("QUAY_AUTH_FILE")
-            await util.oc_image_info_for_arch_async(pullspec, registry_config=registry_config)
-            logger.debug(f"Image exists: {pullspec}")
-            return True
-        except Exception as e:
-            logger.debug(f"Image does not exist or is not accessible: {pullspec} - {e}")
-            return False
-
-    async def _sync_fbc_related_images_to_share(
-        self, fbc_pullspec: str, product: str, logger: Optional[logging.Logger] = None
-    ):
-        """Sync FBC related images to art-images-share repository if they don't exist.
-
-        :param fbc_pullspec: FBC image pullspec
-        :param product: Product name (e.g., 'openshift', 'oadp')
-        :param logger: Logger instance
-        """
-        logger = logger or self._logger
-
-        try:
-            logger.info("Extracting related images from FBC...")
-            related_images = await artlib_util.extract_related_images_from_fbc(fbc_pullspec, product)
-            logger.info(f"Found {len(related_images)} related images in FBC")
-
-            if not related_images:
-                logger.info("No related images to sync")
-                return
-
-            # Check each image and sync if missing from art-images-share
-            for image_pullspec in related_images:
-                share_pullspec = image_pullspec.replace(KONFLUX_DEFAULT_IMAGE_REPO, KONFLUX_DEFAULT_IMAGE_SHARE_REPO)
-
-                if await self._check_image_exists(share_pullspec, logger):
-                    logger.info(f"Image already exists in art-images-share: {share_pullspec}")
-                else:
-                    logger.info(f"Syncing {image_pullspec} to art-images-share")
-                    try:
-                        destination_repo = share_pullspec.split('@')[0]  # Remove digest for destination
-                        await artlib_util.sync_to_quay(image_pullspec, destination_repo)
-                        logger.info(f"Successfully synced to art-images-share: {share_pullspec}")
-                    except Exception as e:
-                        logger.warning(f"Failed to sync {image_pullspec} to art-images-share: {e}")
-
-            logger.info("FBC related images sync complete")
-
-        except Exception:
-            logger.exception("Error while syncing FBC related images to art-images-share")
+        bundle_pullspec = labels.get("com.redhat.art.bundle.pullspec")
+        catalog_commit = labels.get("io.openshift.build.commit.id")
+        if catalog_commit:
+            commit = catalog_commit
+        elif bundle_pullspec:
+            match = re.fullmatch(r"registry\.redhat\.io/(.+)@sha256:([a-f0-9]{64})", bundle_pullspec)
+            if not match:
+                raise ValueError(f"Invalid FBC bundle pullspec: {bundle_pullspec}")
+            stage_pullspec = f"registry.stage.redhat.io/{match[1]}:{match[2]}"
+            image_info = await util.oc_image_info_for_arch_async(
+                stage_pullspec, registry_config=os.getenv("REGISTRY_AUTH_FILE") or os.getenv("QUAY_AUTH_FILE")
+            )
+            bundle_labels = image_info.get("config", {}).get("config", {}).get("Labels") or {}
+            commit = bundle_labels.get("io.openshift.build.commit.id")
+        else:
+            commit = catalog_commit
+            if not commit:
+                logger.warning("No upstream source metadata in catalog.Dockerfile; skipping upstream SHA tags")
+                return None
+        if not isinstance(commit, str) or not re.fullmatch(r"[a-fA-F0-9]{40}", commit):
+            raise ValueError(f"Invalid or missing upstream source commit SHA for FBC: {commit!r}")
+        return commit.lower()
 
     async def _get_build_arches(self, metadata: ImageMetadata, logger: logging.Logger) -> list[str]:
         if not self.major_minor_override:
@@ -1995,6 +2023,7 @@ class KonfluxFbcBuilder:
                 record["message"] = str(exc)
                 raise
 
+            upstream_commit = await self._resolve_upstream_commit(dfp.labels, logger)
             for attempt in range(build_attempts):
                 logger.info("Build attempt %s/%s", attempt + 1, build_attempts)
                 pipelinerun_info, url = await self._start_build(
@@ -2005,6 +2034,7 @@ class KonfluxFbcBuilder:
                     logger=logger,
                     operator_nvr=operator_nvr,
                     git_auth_secret=git_auth_secret,
+                    upstream_commit=upstream_commit,
                 )
                 pipelinerun_name = pipelinerun_info.name
                 await report.observe(pipelinerun_info, self._konflux_client, attempt=attempt + 1)
@@ -2050,35 +2080,6 @@ class KonfluxFbcBuilder:
                     record["message"] = "Success"
                     record["status"] = 0
 
-                    # Sync FBC related images to art-images-share (OCP groups only)
-                    if not self.group.startswith("openshift-"):
-                        logger.info(
-                            "Skipping FBC related images sync to art-images-share for non-OCP group '%s'", self.group
-                        )
-                    elif self.assembly == "stream":
-                        if not self.dry_run:
-                            try:
-                                results = pipelinerun_dict.get('status', {}).get('results', [])
-                                image_pullspec = next((r['value'] for r in results if r['name'] == 'IMAGE_URL'), None)
-                                image_digest = next((r['value'] for r in results if r['name'] == 'IMAGE_DIGEST'), None)
-
-                                if image_pullspec and image_digest:
-                                    fbc_pullspec = f"{image_pullspec.split(':')[0]}@{image_digest}"
-                                    await self._sync_fbc_related_images_to_share(
-                                        fbc_pullspec, self.product, logger=logger
-                                    )
-                                else:
-                                    logger.warning(
-                                        "Could not extract FBC pullspec from pipelinerun results, "
-                                        "skipping related images sync"
-                                    )
-                            except Exception as e:
-                                logger.warning(f"Failed to sync FBC related images: {e}")
-                        else:
-                            logger.info("Dry run: Would have synced FBC related images to art-images-share")
-                    else:
-                        logger.info(f"Skipping FBC related images sync for non-stream assembly '{self.assembly}'")
-
                     break
             if error:
                 record['message'] = str(error)
@@ -2100,10 +2101,73 @@ class KonfluxFbcBuilder:
         logger: logging.Logger,
         operator_nvr: Optional[str] = None,
         git_auth_secret: Optional[str] = None,
+        upstream_commit: Optional[str] = None,
     ) -> Tuple[PipelineRunInfo, str]:
         """Start a build with Konflux."""
         if not build_repo.commit_hash:
             raise IOError("Bundle repository must have a commit to build. Did you rebase?")
+        additional_tags = []
+        group_name = metadata.runtime.group
+        if metadata.runtime.assembly == "stream":
+            delivery_repo_names = metadata.config.delivery.delivery_repo_names
+            for delivery_repo in delivery_repo_names:
+                delivery_repo_name = delivery_repo.split('/')[-1]
+                if group_name.startswith("openshift-"):
+                    product_name = "ocp"
+                    version = group_name.removeprefix("openshift-")
+                    additional_tags.append(f"{product_name}__{version}__{delivery_repo_name}")
+                    # Add operator NVR tag for openshift- groups
+                    if operator_nvr:
+                        additional_tags.append(f"operator_nvr__{operator_nvr}")
+                else:
+                    # eg: oadp-1.5 / mta-1.2
+                    if self.major_minor_override:
+                        tag_with_version = (
+                            f"{self.group}__v{'.'.join(map(str, self.major_minor_override))}__{delivery_repo_name}"
+                        )
+                        additional_tags.append(f"{tag_with_version}")
+                        for commit in self.source_git_commits:
+                            additional_tags.append(f"{tag_with_version}__{commit}")
+                        # Add operator NVR tag for non-openshift groups
+                        if operator_nvr:
+                            version_tag = f"v{'.'.join(map(str, self.major_minor_override))}"
+                            additional_tags.append(f"{version_tag}__operator_nvr__{operator_nvr}")
+
+        if upstream_commit:
+            if self.major_minor_override:
+                ocp_version = '.'.join(map(str, self.major_minor_override))
+            elif group_name.startswith("openshift-"):
+                ocp_version = group_name.removeprefix("openshift-")
+            else:
+                group_vars = metadata.runtime.group_config.get("vars", {})
+                major, minor = group_vars.get("MAJOR"), group_vars.get("MINOR")
+                if not str(major).isdigit() or not str(minor).isdigit():
+                    raise ValueError("OCP target version is required for upstream SHA tags")
+                ocp_version = f"{major}.{minor}"
+            tag_prefix = (
+                f"ocp__{ocp_version}" if group_name.startswith("openshift-") else f"{self.group}__v{ocp_version}"
+            )
+
+            # Both formats float to the latest rebuild of this upstream commit.
+            # Generate them for every assembly, independently of stream-only tags.
+            sha_tags = [
+                f"{tag_prefix}__{repo.rsplit('/', 1)[-1]}__{upstream_commit[:7]}"
+                for repo in metadata.config.delivery.delivery_repo_names
+            ]
+            sha_tags.append(f"sha-{upstream_commit}__v{ocp_version}")
+            for tag in sha_tags:
+                if len(tag) > 128:
+                    raise ValueError(f"FBC upstream SHA tag exceeds the 128-character limit: {tag}")
+                if tag not in additional_tags:
+                    additional_tags.append(tag)
+
+        if additional_tags:
+            logger.info(
+                f"Additional tags being added: {additional_tags}",
+            )
+        else:
+            logger.info("No additional tags to be added")
+
         # Ensure the Application resource exists
         app_name = self.get_application_name(self.group)
         logger.info(f"Using Konflux application: {app_name}")
@@ -2135,40 +2199,6 @@ class KonfluxFbcBuilder:
             logger.info(f"Konflux component {component_name} created")
         # Create a new pipeline run
         logger.info("Starting Konflux pipeline run...")
-
-        additional_tags = []
-        group_name = metadata.runtime.group
-        if metadata.runtime.assembly == "stream":
-            delivery_repo_names = metadata.config.delivery.delivery_repo_names
-            for delivery_repo in delivery_repo_names:
-                delivery_repo_name = delivery_repo.split('/')[-1]
-                if group_name.startswith("openshift-"):
-                    product_name = "ocp"
-                    version = group_name.removeprefix("openshift-")
-                    additional_tags.append(f"{product_name}__{version}__{delivery_repo_name}")
-                    # Add operator NVR tag for openshift- groups
-                    if operator_nvr:
-                        additional_tags.append(f"operator_nvr__{operator_nvr}")
-                else:
-                    # eg: oadp-1.5 / mta-1.2
-                    if self.major_minor_override:
-                        tag_with_version = (
-                            f"{self.group}__v{'.'.join(map(str, self.major_minor_override))}__{delivery_repo_name}"
-                        )
-                        additional_tags.append(f"{tag_with_version}")
-                        for commit in self.source_git_commits:
-                            additional_tags.append(f"{tag_with_version}__{commit}")
-                        # Add operator NVR tag for non-openshift groups
-                        if operator_nvr:
-                            version_tag = f"v{'.'.join(map(str, self.major_minor_override))}"
-                            additional_tags.append(f"{version_tag}__operator_nvr__{operator_nvr}")
-
-        if additional_tags:
-            logger.info(
-                f"Additional tags being added: {additional_tags}",
-            )
-        else:
-            logger.info("No additional tags to be added")
 
         group_skip_tasks = metadata.runtime.group_config.get("konflux", {}).get("skip_tasks", [])
         merged_skip_tasks = tuple(dict.fromkeys([*self.skip_tasks, *group_skip_tasks]))

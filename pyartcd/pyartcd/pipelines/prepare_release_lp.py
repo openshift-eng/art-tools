@@ -14,19 +14,26 @@ from urllib.parse import urlparse
 import click
 import yaml as stdlib_yaml
 from artcommonlib import exectools
+from artcommonlib.assembly import assembly_image_pins
 from artcommonlib.constants import SHIPMENT_DATA_URL_TEMPLATE
 from artcommonlib.gitdata import SafeFormatter
 from artcommonlib.github_auth import build_git_auth_env, get_github_client_for_org
 from artcommonlib.gitlab import GitLabClient
+from artcommonlib.konflux.konflux_build_record import KonfluxBundleBuildRecord, KonfluxFbcBuildRecord
+from artcommonlib.konflux.konflux_db import KonfluxDb
+from artcommonlib.model import Model
 from artcommonlib.rpm_utils import parse_nvr
 from artcommonlib.util import (
     new_roundtrip_yaml_handler,
     resolve_konflux_kubeconfig_by_product,
     resolve_konflux_namespace_by_product,
 )
+from elliottlib.cli.konflux_release_cli import validate_snapshot_against_rpa
 from elliottlib.shipment_model import (
     Data,
     Environments,
+    Mapping,
+    MappingDefaults,
     Metadata,
     ReleaseNotes,
     Shipment,
@@ -40,6 +47,7 @@ from github import GithubException
 
 from pyartcd import constants, locks
 from pyartcd.cli import cli, click_coroutine, pass_runtime
+from pyartcd.fbc_build import build_fbc_catalogs
 from pyartcd.fbc_util import (
     validate_fbc_related_images,
     validate_layered_product_fbc_nvrs,
@@ -47,13 +55,15 @@ from pyartcd.fbc_util import (
 )
 from pyartcd.git import GitRepository
 from pyartcd.lp_shipment import (
+    FbcRefreshRecord,
     ShipmentMRValidationError,
+    add_fbc_refresh_comment,
     add_superseded_mr_comment,
     close_superseded_shipment_mr,
     create_shipment_mr_with_retry,
     get_shipment_mr_url,
     reconcile_shipment_mr,
-    set_shipment_mr_draft,
+    resolve_shipment_release_plans,
     update_shipment_mr_url,
     validate_shipment_mr_for_operation,
     verify_shipment_mr_url,
@@ -108,6 +118,7 @@ class PrepareReleaseLPPipeline:
         shipment_data_repo_url: Optional[str] = None,
         create_mr: bool = False,
         force: bool = False,
+        refresh_fbcs: bool = False,
         jira_bugs: Optional[List[str]] = None,
         target_release_date: Optional[str] = None,
     ) -> None:
@@ -121,6 +132,7 @@ class PrepareReleaseLPPipeline:
             shipment_data_repo_url: Optional shipment-data repository override.
             create_mr: Create or reuse a shipment merge request.
             force: Replace the configured shipment MR instead of reusing it.
+            refresh_fbcs: Force FBC rebuilds from the latest production catalogs.
             jira_bugs: Jira issues to include in generated release notes.
             target_release_date: Optional normalized target ship date.
         """
@@ -130,6 +142,7 @@ class PrepareReleaseLPPipeline:
         self.assembly = assembly
         self.create_mr = create_mr
         self.force = force
+        self.refresh_fbcs = refresh_fbcs
         self.dry_run = self.runtime.dry_run
         self.jira_bugs = jira_bugs
         self.target_release_date = target_release_date
@@ -147,6 +160,9 @@ class PrepareReleaseLPPipeline:
         self.job_url: Optional[str] = None
 
         self.product: Optional[str] = None
+        self._auto_version = False
+        self._releases_config: Optional[Dict] = None
+        self._fbc_refresh_records: list[FbcRefreshRecord] = []
 
         shipment_data_pull_url = (
             shipment_data_repo_url
@@ -168,12 +184,14 @@ class PrepareReleaseLPPipeline:
             group_param,
             f'--assembly={assembly}',
             '--build-system=konflux',
+            f'--data-path={self.build_data_repo_url}',
         ]
         self._elliott_base_command = [
             'elliott',
             group_param,
             f'--assembly={assembly}',
             '--build-system=konflux',
+            f'--data-path={self.build_data_repo_url}',
             f'--working-dir={self._elliott_working_dir}',
         ]
 
@@ -202,14 +220,13 @@ class PrepareReleaseLPPipeline:
         return self._gitlab.get_project(project_path)
 
     async def _load_product_from_group_config(self) -> str:
-        try:
-            cmd = ['doozer', f'--group={self.group}', 'config:read-group', 'product']
-            _, product_output, _ = await exectools.cmd_gather_async(cmd)
-            product = product_output.strip()
-            if product and product not in ('None', 'null'):
-                return product
-        except Exception as e:
-            self._logger.warning("Failed to load product from group config: %s", e)
+        """Load the product and version policy from the effective assembly group config."""
+        group_config = await load_group_config(
+            group=self.group, assembly=self.assembly, doozer_data_path=self.build_data_repo_url
+        )
+        self._auto_version = group_config.get('version') == 'auto'
+        if group_config.get('product'):
+            return group_config['product']
         product = self.group.split('-')[0]
         if product == 'openshift':
             product = 'ocp'
@@ -261,27 +278,31 @@ class PrepareReleaseLPPipeline:
         if assembly is None:
             raise click.ClickException(f"Assembly '{self.assembly}' not found in releases.yml")
 
+        self._releases_config = releases_config
         self._configured_shipment_mr_url = get_shipment_mr_url(releases_config, self.assembly)
         return assembly
 
     def _extract_operand_nvrs(self, assembly_config: Dict) -> List[str]:
         """Extract pinned operand NVRs from the assembly definition.
 
-        Walks the members.images list and collects NVRs from is.nvr or is.nvr! entries.
+        Resolve the assembly's basis chain and collect the effective NVR for
+        every image member. Child ``nvr!`` entries replace inherited NVRs.
 
-        NOTE: For inherited (delta) assemblies, only NVRs explicitly listed
-        in this assembly's members.images are returned. Parent chain
-        resolution is not performed -- doozer/elliott commands handle
-        inheritance internally via --assembly.
+        Args:
+            assembly_config: Direct configuration for ``self.assembly``.
+
+        Returns:
+            Effective operand NVRs in assembly order.
+
+        Raises:
+            ValueError: If the assembly basis chain contains a cycle.
         """
-        members_images = assembly_config.get('assembly', {}).get('members', {}).get('images', [])
-        nvrs = []
-        for entry in members_images:
-            is_spec = entry.get('metadata', {}).get('is', {})
-            nvr = is_spec.get('nvr') or is_spec.get('nvr!')
-            if nvr:
-                nvrs.append(nvr)
-        return nvrs
+        releases = self._releases_config
+        if releases is None:
+            # Standalone callers can supply a direct definition without its basis chain.
+            definition = {**assembly_config, 'assembly': {**assembly_config.get('assembly', {}), 'basis': {}}}
+            releases = {'releases': {self.assembly: definition}}
+        return list(assembly_image_pins(Model(releases), self.assembly).values())
 
     async def _find_existing_bundles(self) -> Dict[str, List[str]]:
         """Check for existing bundle builds that match the assembly's pinned operands.
@@ -298,6 +319,7 @@ class PrepareReleaseLPPipeline:
             'find-builds',
             '--kind=image',
             '--all-image-types',
+            '--include-shipped',
             '--json=-',
         ]
 
@@ -308,11 +330,10 @@ class PrepareReleaseLPPipeline:
         try:
             stdout, _ = exectools.cmd_assert(cmd)
         except Exception as e:
-            self._logger.warning("find-builds failed, will rebuild all bundles: %s", e)
-            return {"metadata": [], "olm_builds_not_found": []}
+            raise RuntimeError("Cannot discover assembly operators and bundles") from e
 
         if not stdout.strip():
-            return {"metadata": [], "olm_builds_not_found": []}
+            raise RuntimeError("find-builds returned no assembly build information")
 
         out = json.loads(stdout)
         result = {
@@ -342,9 +363,9 @@ class PrepareReleaseLPPipeline:
     async def _trigger_bundle_build(self, operand_nvrs: List[str]) -> Tuple[List[str], List[str]]:
         """Build OLM bundles, reusing existing ones when possible.
 
-        First calls ``_find_existing_bundles`` to see which bundles already
-        exist with the correct operand pins.  Only operators listed in
-        ``olm_builds_not_found`` whose NVR is pinned in the assembly are rebuilt.
+        Discover OLM operators by component name, then use their exact assembly
+        pins. Rebuild missing bundles and bundles whose provenance does not
+        match those pins, even when a bundle already exists for the operator.
 
         Returns ``(bundle_nvrs, assembly_operator_nvrs)`` where
         ``bundle_nvrs`` is the combined list of bundle NVRs (existing + newly
@@ -352,57 +373,42 @@ class PrepareReleaseLPPipeline:
         NVRs that are pinned in this assembly (used to scope FBC builds).
         """
         existing = await self._find_existing_bundles()
-        existing_bundle_nvrs = existing["metadata"]
-        missing_operator_nvrs = existing["olm_builds_not_found"]
-        all_operator_nvrs = existing.get("olm_operator_nvrs", [])
-
-        # Compute the assembly-scoped operator NVRs for downstream FBC builds.
-        # elliott find-builds returns ALL OLM operators in the group, but LP
-        # assemblies typically only pin a subset.  Compare by NVR name
-        # component only — the release timestamp may differ between the
-        # assembly-pinned NVR and the latest build returned by elliott.
-        assembly_operator_nvrs: List[str] = []
-        if operand_nvrs:
-            pinned_names = {parse_nvr(nvr)['name'] for nvr in operand_nvrs}
-            assembly_operator_nvrs = [nvr for nvr in all_operator_nvrs if parse_nvr(nvr)['name'] in pinned_names]
-
-            # Also filter missing operators to assembly scope for bundle builds.
-            scoped = [nvr for nvr in missing_operator_nvrs if parse_nvr(nvr)['name'] in pinned_names]
-            if len(scoped) < len(missing_operator_nvrs):
-                skipped = sorted(set(missing_operator_nvrs) - set(scoped))
-                self._logger.info("Skipping %d operator(s) not pinned in assembly: %s", len(skipped), skipped)
-            missing_operator_nvrs = scoped
-
-        # Detect stale bundles whose operands no longer match the assembly pins.
-        # When an operand image is swapped in the assembly, existing bundles
-        # still reference the old image and must be rebuilt.
+        pinned_by_name = {parse_nvr(nvr)['name']: nvr for nvr in operand_nvrs}
+        discovered_operators = existing.get("olm_operator_nvrs", []) + existing["olm_builds_not_found"]
+        assembly_operator_nvrs = list(
+            dict.fromkeys(
+                pinned_by_name[parse_nvr(nvr)['name']]
+                for nvr in discovered_operators
+                if parse_nvr(nvr)['name'] in pinned_by_name
+            )
+        )
         builds_detail = existing.get("olm_builds_detail", {})
-        if operand_nvrs and existing_bundle_nvrs and builds_detail:
-            pinned_by_name = {parse_nvr(nvr)['name']: nvr for nvr in operand_nvrs}
-            stale_bundles = []
-            for bundle_nvr in existing_bundle_nvrs:
-                detail = builds_detail.get(bundle_nvr, {})
-                for bop_nvr in detail.get('operand_nvrs', []):
-                    bop_name = parse_nvr(bop_nvr)['name']
-                    if bop_name in pinned_by_name and pinned_by_name[bop_name] != bop_nvr:
-                        self._logger.info(
-                            "Bundle %s is stale: references %s but assembly pins %s",
-                            bundle_nvr,
-                            bop_nvr,
-                            pinned_by_name[bop_name],
-                        )
-                        stale_bundles.append(bundle_nvr)
-                        operator_nvr = detail.get('operator_nvr')
-                        if operator_nvr and operator_nvr not in missing_operator_nvrs:
-                            missing_operator_nvrs.append(operator_nvr)
-                        break
-            if stale_bundles:
-                existing_bundle_nvrs = [nvr for nvr in existing_bundle_nvrs if nvr not in stale_bundles]
+        existing_bundle_nvrs = []
+        reusable_operators = set()
+        for bundle_nvr in existing["metadata"]:
+            detail = builds_detail.get(bundle_nvr, {})
+            operator_nvr = detail.get('operator_nvr')
+            if operator_nvr not in assembly_operator_nvrs:
+                continue
+            operands = detail.get('operand_nvrs')
+            if not operands:
+                self._logger.info("Rebuilding bundle %s without operand provenance", bundle_nvr)
+                continue
+            mismatches = [
+                nvr
+                for nvr in operands
+                # Digest-pinned external images have no ART NVR.
+                if nvr != 'external'
+                if parse_nvr(nvr)['name'] in pinned_by_name and pinned_by_name[parse_nvr(nvr)['name']] != nvr
+            ]
+            if mismatches:
                 self._logger.info(
-                    "Removed %d stale bundle(s); %d operator(s) need fresh bundles",
-                    len(stale_bundles),
-                    len(missing_operator_nvrs),
+                    "Rebuilding bundle %s with operands that differ from assembly pins: %s", bundle_nvr, mismatches
                 )
+                continue
+            existing_bundle_nvrs.append(bundle_nvr)
+            reusable_operators.add(operator_nvr)
+        missing_operator_nvrs = [nvr for nvr in assembly_operator_nvrs if nvr not in reusable_operators]
 
         if existing_bundle_nvrs:
             self._logger.info(
@@ -422,6 +428,7 @@ class PrepareReleaseLPPipeline:
 
         cmd = self._doozer_base_command + [
             'beta:images:konflux:bundle',
+            '--force',
             *self._konflux_build_args(),
             '--output=json',
             '--',
@@ -444,14 +451,16 @@ class PrepareReleaseLPPipeline:
         new_bundle_nvrs = output_data.get("nvrs", [])
         errors = output_data.get("errors", [])
 
-        if errors:
-            self._logger.warning(
-                "Bundle build completed with %d failure(s) and %d success(es)",
-                output_data.get("failed_count", 0),
-                output_data.get("success_count", 0),
+        if (
+            rc != 0
+            or errors
+            or output_data.get("failed_count", 0)
+            or len(new_bundle_nvrs) != len(missing_operator_nvrs)
+        ):
+            raise RuntimeError(
+                f"Bundle build incomplete: rc={rc}, errors={errors}, "
+                f"returned {len(new_bundle_nvrs)} bundles for {len(missing_operator_nvrs)} operators"
             )
-            for error in errors:
-                self._logger.error("Bundle build error: %s", error)
 
         all_bundle_nvrs = existing_bundle_nvrs + new_bundle_nvrs
         self._logger.info(
@@ -496,108 +505,86 @@ class PrepareReleaseLPPipeline:
         return []
 
     async def _trigger_fbc_build(self, operator_nvrs: Optional[List[str]] = None) -> Tuple[List[str], List[str]]:
-        """Trigger FBC builds for each OCP target version.
+        """Build FBCs for every configured OCP target version.
 
         For non-OpenShift groups, reads ``OCP_TARGET_VERSIONS`` from the
         group config and builds one FBC per version using ``--major-minor``.
         Falls back to a single build if no target versions are configured.
 
-        When *operator_nvrs* is provided, only the given operators are
-        processed (passed as positional args to ``doozer beta:fbc:rebase-and-build``).
+        Args:
+            operator_nvrs: Exact assembly-scoped operator NVRs.
 
-        Returns a tuple of (NVR list, pullspec list) produced across all versions.
+        Returns:
+            A tuple containing the complete FBC NVR and pullspec lists.
         """
         self._logger.info("Triggering FBC builds for assembly '%s'...", self.assembly)
-
-        version = self.assembly
-        release_str = datetime.now(timezone.utc).strftime("%Y%m%d%H%M%S")
-        message = f"Rebase FBC segment with release {release_str}"
-
+        if not operator_nvrs:
+            self._logger.info("No pinned OLM operators; skipping FBC builds")
+            return [], []
         ocp_target_versions = await self._load_ocp_target_versions()
-
         if ocp_target_versions:
             self._logger.info(
                 "Building FBCs for %d OCP target versions: %s",
                 len(ocp_target_versions),
                 ocp_target_versions,
             )
-            all_fbc_nvrs: List[str] = []
-            all_fbc_pullspecs: List[str] = []
-            for target_version in ocp_target_versions:
-                self._logger.info("Building FBC for OCP %s...", target_version)
-                cmd = self._doozer_base_command + [
-                    'beta:fbc:rebase-and-build',
-                    *self._konflux_build_args(),
-                    f'--version={version}',
-                    f'--release={release_str}',
-                    f'--message={message}',
-                    f'--major-minor={target_version}',
-                    '--output=json',
-                ]
-                if operator_nvrs:
-                    cmd.extend(['--', *operator_nvrs])
+            requests = {target_version: operator_nvrs or [] for target_version in ocp_target_versions}
+        else:
+            self._logger.info("No OCP_TARGET_VERSIONS configured; building single FBC")
+            requests = {None: operator_nvrs or []}
 
-                if self.dry_run:
-                    self._logger.info("[DRY-RUN] Would run: %s", ' '.join(cmd))
-                    continue
-
-                rc, stdout, _ = await exectools.cmd_gather_async(cmd, check=False, stderr=None)
-                if rc != 0:
-                    self._logger.error("FBC build for OCP %s exited with rc=%s", target_version, rc)
-                try:
-                    output_data = json.loads(stdout)
-                except json.JSONDecodeError:
-                    raise RuntimeError(
-                        f"FBC build for OCP {target_version} failed (rc={rc}) and did not produce valid JSON output."
-                    )
-                nvrs = output_data.get("nvrs", [])
-                pullspecs = output_data.get("pullspecs", [])
-                errors = output_data.get("errors", [])
-                if errors:
-                    self._logger.warning(
-                        "FBC build for OCP %s had %d error(s): %s",
-                        target_version,
-                        len(errors),
-                        errors,
-                    )
-                all_fbc_nvrs.extend(nvrs)
-                all_fbc_pullspecs.extend(pullspecs)
-
-            self._logger.info(
-                "FBC builds produced %d total NVRs across %d OCP versions", len(all_fbc_nvrs), len(ocp_target_versions)
-            )
-            return all_fbc_nvrs, all_fbc_pullspecs
-
-        self._logger.info("No OCP_TARGET_VERSIONS configured; building single FBC")
-        cmd = self._doozer_base_command + [
-            'beta:fbc:rebase-and-build',
-            *self._konflux_build_args(),
-            f'--version={version}',
-            f'--release={release_str}',
-            f'--message={message}',
-            '--output=json',
-        ]
-        if operator_nvrs:
-            cmd.extend(['--', *operator_nvrs])
-
-        if self.dry_run:
-            self._logger.info("[DRY-RUN] Would run: %s", ' '.join(cmd))
-            return [], []
-
-        rc, stdout, _ = await exectools.cmd_gather_async(cmd, check=False, stderr=None)
-        if rc != 0:
-            self._logger.error("FBC build exited with rc=%s", rc)
-        try:
-            output_data = json.loads(stdout)
-        except json.JSONDecodeError:
-            raise RuntimeError(f"FBC build failed (rc={rc}) and did not produce valid JSON output.")
-        fbc_nvrs = output_data.get("nvrs", [])
-        fbc_pullspecs = output_data.get("pullspecs", [])
-        errors = output_data.get("errors", [])
-        if errors:
-            self._logger.warning("FBC build had %d error(s): %s", len(errors), errors)
+        results = await build_fbc_catalogs(
+            runtime=self.runtime,
+            group=self.group,
+            assembly=self.assembly,
+            version=self.assembly,
+            product=self.product or "ocp",
+            operator_nvrs_by_target=requests,
+            data_path=self.build_data_repo_url,
+            force=self.refresh_fbcs,
+            # This preserves prepare-release-lp's existing behavior. Doozer's
+            # rebase-and-build command resets to production by default.
+            reset_to_prod=True,
+            allow_partial=False,
+        )
+        fbc_nvrs = [nvr for result in results for nvr in result.nvrs]
+        fbc_pullspecs = [pullspec for result in results for pullspec in result.pullspecs]
+        if self.refresh_fbcs:
+            self._fbc_refresh_records = [
+                FbcRefreshRecord(result.target_version, (), result.pullspecs) for result in results
+            ]
         self._logger.info("FBC builds produced %d NVRs", len(fbc_nvrs))
         return fbc_nvrs, fbc_pullspecs
+
+    async def _validate_fbc_pins(self, fbc_nvrs: List[str], bundle_nvrs: List[str], operand_nvrs: List[str]) -> None:
+        """Validate selected bundle provenance without rejecting historical catalog entries."""
+        if not fbc_nvrs or self.dry_run:
+            return
+        db = KonfluxDb()
+        db.bind(KonfluxFbcBuildRecord)
+        catalogs = await db.get_build_records_by_nvrs(fbc_nvrs, where={'group': self.group}, strict=True)
+        selected_bundles = set()
+        for catalog in catalogs:
+            if not catalog.bundle_nvrs:
+                raise ValueError(f"FBC {catalog.nvr} has no selected bundle provenance")
+            selected_bundles.update(catalog.bundle_nvrs)
+        if selected_bundles != set(bundle_nvrs):
+            raise ValueError(
+                f"FBC selected bundles {sorted(selected_bundles)} differ from prepared bundles {bundle_nvrs}"
+            )
+        db.bind(KonfluxBundleBuildRecord)
+        bundles = await db.get_build_records_by_nvrs(sorted(selected_bundles), where={'group': self.group}, strict=True)
+        pins = {parse_nvr(nvr)['name']: nvr for nvr in operand_nvrs}
+        for bundle in bundles:
+            if not bundle.operator_nvr or not bundle.operand_nvrs:
+                raise ValueError(f"Bundle {bundle.nvr} has incomplete operator/operand provenance")
+            for nvr in [bundle.operator_nvr, *bundle.operand_nvrs]:
+                if nvr == 'external':
+                    # The bundle rebaser records this marker for external images.
+                    continue
+                expected = pins.get(parse_nvr(nvr)['name'])
+                if expected and nvr != expected:
+                    raise ValueError(f"Bundle {bundle.nvr} references {nvr}, expected assembly pin {expected}")
 
     async def _create_snapshot(self, builds: List[str]) -> List[Snapshot]:
         """Create Konflux snapshot(s) from a list of build NVRs using elliott.
@@ -654,17 +641,10 @@ class PrepareReleaseLPPipeline:
         stage_rpa = "n/a"
         prod_rpa = "n/a"
         if self.create_mr:
-            try:
-                config_path = self.shipment_data_repo._directory / "config.yaml"
-                if config_path.exists():
-                    with open(config_path, 'r') as f:
-                        shipment_config = stdlib_yaml.safe_load(f) or {}
-                    application = snapshot.spec.application if snapshot else "default-app"
-                    app_env = shipment_config.get("applications", {}).get(application, {}).get("environments", {})
-                    stage_rpa = app_env.get("stage", {}).get("releasePlan", "n/a")
-                    prod_rpa = app_env.get("prod", {}).get("releasePlan", "n/a")
-            except Exception as e:
-                self._logger.warning("Failed to read shipment config: %s", e)
+            stage_rpa, prod_rpa = resolve_shipment_release_plans(
+                self.shipment_data_repo,
+                snapshot.spec.application if snapshot else "default-app",
+            )
 
         environments = Environments(
             stage=ShipmentEnv(releasePlan=stage_rpa),
@@ -672,8 +652,14 @@ class PrepareReleaseLPPipeline:
         )
 
         data = None
-        if kind == 'image' and release_notes:
-            data = Data(releaseNotes=release_notes)
+        if kind == 'image':
+            mapping = None
+            if self._auto_version:
+                mapping = Mapping(
+                    defaults=MappingDefaults(tags=['v{{ assembly }}', 'v{{ assembly }}-{{ release_timestamp }}'])
+                )
+            if release_notes or mapping:
+                data = Data(releaseNotes=release_notes, mapping=mapping)
 
         shipment = Shipment(metadata=metadata, environments=environments, snapshot=snapshot, data=data)
         return ShipmentConfig(shipment=shipment)
@@ -810,8 +796,8 @@ class PrepareReleaseLPPipeline:
         timestamp = datetime.now(timezone.utc).strftime('%Y%m%d%H%M%S')
         source_branch = f"prepare-shipment-lp-{self.assembly}-{timestamp}"
 
-        # Validation of an existing MR checks out its source branch. A forced
-        # replacement must always start cleanly from main.
+        # Fetch main again immediately before cutting a forced replacement so
+        # concurrent shipment-data changes are included in the new branch.
         if self.force:
             await self.shipment_data_repo.fetch_switch_branch("main")
 
@@ -1004,10 +990,11 @@ class PrepareReleaseLPPipeline:
                 "Refusing to create shipment data."
             )
         validate_layered_product_fbc_nvrs(self.assembly, fbc_nvrs)
+        await self._validate_fbc_pins(fbc_nvrs, bundle_nvrs, operand_nvrs)
 
-        if len(fbc_pullspecs) > 1:
-            self._logger.info("Validating FBC consistency across OCP target versions...")
-            await validate_fbc_related_images(fbc_pullspecs, self.product)
+        if fbc_pullspecs:
+            self._logger.info("Validating FBC related-image consistency...")
+            await validate_fbc_related_images(fbc_pullspecs, self.product, assembly=self.assembly)
         elif len(fbc_nvrs) > 1 and not fbc_pullspecs:
             self._logger.warning("FBC pullspecs not available; skipping FBC consistency validation")
 
@@ -1025,8 +1012,9 @@ class PrepareReleaseLPPipeline:
 
         shipments_by_kind: Dict[str, ShipmentConfig] = {}
 
-        if operand_nvrs:
-            image_snapshots = await self._create_snapshot(operand_nvrs)
+        image_nvrs = list(dict.fromkeys(operand_nvrs + bundle_nvrs))
+        if image_nvrs:
+            image_snapshots = await self._create_snapshot(image_nvrs)
             for i, snapshot in enumerate(image_snapshots, start=1):
                 key = 'image' if len(image_snapshots) == 1 else f'image{i:02d}'
                 shipments_by_kind[key] = self._create_shipment_config(
@@ -1047,8 +1035,13 @@ class PrepareReleaseLPPipeline:
 
         if shipments_by_kind:
             if self.create_mr:
+                for config in shipments_by_kind.values():
+                    shipment = config.shipment
+                    kind = "fbc" if shipment.metadata.fbc else "image"
+                    await validate_snapshot_against_rpa(shipment, "prod", kind)
+
                 if existing_mr:
-                    # Revalidate around the draft transition because CI or MR state may have changed
+                    # Revalidate before updating the MR because CI or MR state may have changed
                     # since the initial check performed before the expensive build work.
                     existing_mr, _ = await validate_shipment_mr_for_operation(
                         self._gitlab,
@@ -1063,8 +1056,7 @@ class PrepareReleaseLPPipeline:
                         allow_active_stage=False,
                     )
                     await self._verify_assembly_shipment_url()
-                    set_shipment_mr_draft(existing_mr, self.dry_run)
-                    # Drafting mutates the MR; check again before replacing its shipment files.
+                    # Check CI again immediately before reconciling the shipment files.
                     await validate_shipment_mr_for_operation(
                         self._gitlab,
                         self.shipment_data_repo,
@@ -1133,7 +1125,18 @@ class PrepareReleaseLPPipeline:
                                 operation="prepare-release-lp",
                                 run_url=self.job_url,
                             )
-                    await self._set_shipment_mr_ready()
+                    if self.refresh_fbcs:
+                        add_fbc_refresh_comment(
+                            self._gitlab,
+                            mr_url,
+                            self.assembly,
+                            self._fbc_refresh_records,
+                            operation="prepare-release-lp",
+                            run_url=self.job_url,
+                            dry_run=self.dry_run,
+                        )
+                    if not existing_mr:
+                        await self._set_shipment_mr_ready()
             else:
                 timestamp = datetime.now(timezone.utc).strftime('%Y%m%d%H%M%S')
                 for kind, config in shipments_by_kind.items():
@@ -1188,6 +1191,11 @@ class PrepareReleaseLPPipeline:
     ),
 )
 @click.option(
+    "--refresh-fbcs",
+    is_flag=True,
+    help="Force FBC rebuilds from the latest production catalogs before creating shipment data.",
+)
+@click.option(
     "--jira-bugs",
     default=None,
     help="Comma-separated JIRA issue IDs for release notes.",
@@ -1207,6 +1215,7 @@ async def prepare_release_lp(
     shipment_data_repo_url: Optional[str],
     create_mr: bool,
     force: bool,
+    refresh_fbcs: bool,
     jira_bugs: Optional[str],
     target_release_date: Optional[str],
 ):
@@ -1247,6 +1256,7 @@ async def prepare_release_lp(
         shipment_data_repo_url=shipment_data_repo_url,
         create_mr=create_mr,
         force=force,
+        refresh_fbcs=refresh_fbcs,
         jira_bugs=jira_bugs_list,
         target_release_date=normalized_date,
     )

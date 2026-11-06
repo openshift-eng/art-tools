@@ -101,12 +101,12 @@ class KonfluxImageBuilderConfig:
     dry_run: bool = False
     build_priority: Optional[str] = None
     ec_policy_configuration: Optional[str] = None
-    prega_ec_policy_configuration: Optional[str] = None
     skip_ec_verify: bool = False
     effective_time: str = "now"
     integration_test_scenarios: tuple[str, ...] = ()
     integration_test_snapshot_annotations: Dict[str, str] = field(default_factory=dict)
     skip_custom_its: bool = False
+    build_args: Dict[str, str] = field(default_factory=dict)
 
 
 class KonfluxImageBuilder:
@@ -177,6 +177,27 @@ class KonfluxImageBuilder:
             "base_image_release_failed": "false",
         }
         try:
+            ec_policy = self._config.ec_policy_configuration
+
+            its_eligible = metadata.config.get("konflux", {}).get("its", {}).get("enabled", metadata.for_release)
+            checks = []
+            if (
+                metadata.runtime.variant is not BuildVariant.OKD
+                and ec_policy is not None
+                and not self._config.skip_ec_verify
+                and its_eligible
+            ):
+                checks.append({'kind': 'conforma', 'name': 'Conforma', 'blocking': True})
+            if its_eligible and not self._config.skip_custom_its:
+                checks.extend(
+                    {
+                        'kind': 'custom',
+                        'name': name,
+                        'blocking': name in self._blocking_custom_integration_test_scenarios,
+                    }
+                    for name in self._config.integration_test_scenarios
+                )
+            await report.configure_checks(checks)
             if dest_dir.exists():
                 # Load exiting build source repository
                 build_repo = await BuildRepo.from_local_dir(dest_dir, logger)
@@ -297,6 +318,7 @@ class KonfluxImageBuilder:
             for attempt in range(build_attempts):
                 logger.info("Build attempt %s/%s", attempt + 1, build_attempts)
                 custom_its_blocking_failed = False
+                shipment_refused = False
                 image_pullspec = None
                 image_digest = None
                 definitive_image_pullspec = None
@@ -379,22 +401,12 @@ class KonfluxImageBuilder:
                         raise IOError("PipelineRun succeeded but IMAGE_URL or IMAGE_DIGEST missing from results")
 
                 # Run enterprise-contract (EC) verification after a successful build
-                # TODO: Expose EC failure links (ITS/PLR URLs) via Slack notification or dashboard column
-                lifecycle_phase = metadata.runtime.group_config.software_lifecycle.phase
-                if (
-                    lifecycle_phase is not Missing
-                    and SoftwareLifecyclePhase.from_name(lifecycle_phase) == SoftwareLifecyclePhase.PRE_RELEASE
-                ):
-                    ec_policy = self._config.prega_ec_policy_configuration
-                else:
-                    ec_policy = self._config.ec_policy_configuration
-
                 should_run_ec = (
                     outcome is KonfluxBuildOutcome.SUCCESS
                     and metadata.runtime.variant is not BuildVariant.OKD
                     and ec_policy is not None
                     and not self._config.skip_ec_verify
-                    and metadata.for_release
+                    and its_eligible
                     and definitive_image_pullspec is not None
                 )
                 if should_run_ec:
@@ -413,6 +425,7 @@ class KonfluxImageBuilder:
                         ec_policy=ec_policy,
                         logger=logger,
                         effective_time=self._config.effective_time,
+                        on_check_update=report.check_callback('conforma'),
                     )
                     # Always save EC pipeline URL for tracking, regardless of pass/fail
                     ec_pipeline_url = ec_result.ec_pipeline_url
@@ -436,9 +449,9 @@ class KonfluxImageBuilder:
                             metadata.distgit_key,
                             self._config.group_name,
                         )
-                    elif not metadata.for_release:
+                    elif not its_eligible:
                         logger.info(
-                            "Skipping EC verification for %s: image is not for_release",
+                            "Skipping EC verification for %s: konflux.its.enabled is false or image is not for_release",
                             metadata.distgit_key,
                         )
 
@@ -446,7 +459,7 @@ class KonfluxImageBuilder:
                     outcome is KonfluxBuildOutcome.SUCCESS
                     and bool(self._config.integration_test_scenarios)
                     and not self._config.skip_custom_its
-                    and metadata.for_release
+                    and its_eligible
                     and definitive_image_pullspec is not None
                 )
                 if should_run_custom_its:
@@ -460,6 +473,7 @@ class KonfluxImageBuilder:
                         commit_sha=build_repo.commit_hash,
                         blocking_scenario_names=self._blocking_custom_integration_test_scenarios,
                         snapshot_annotations=self._config.integration_test_snapshot_annotations,
+                        on_check_update=report.check_callback('custom'),
                         namespace=self._config.namespace,
                     )
                     for pipeline_url in custom_its_result.pipeline_urls:
@@ -527,10 +541,21 @@ class KonfluxImageBuilder:
                                 container_image=definitive_image_pullspec,
                                 rebase_repo_url=build_repo.https_url,
                                 rebase_commitish=build_repo.commit_hash,
+                                distgit_key=metadata.distgit_key,
                             )
                             if mr_url:
                                 logger.info("Golang builder shipment MR: %s", mr_url)
                                 record["shipment_mr"] = mr_url
+                        except util.GolangBuilderComponentNameError as e:
+                            logger.error(
+                                "Golang builder shipment refused for %s, persisting build record as %s: %s",
+                                nvr,
+                                KonfluxBuildOutcome.RELEASE_ERROR,
+                                e,
+                            )
+                            record["shipment_error"] = str(e)
+                            outcome = KonfluxBuildOutcome.RELEASE_ERROR
+                            shipment_refused = True
                         except Exception:
                             logger.exception("Golang builder shipment MR creation failed (non-fatal)")
 
@@ -548,14 +573,18 @@ class KonfluxImageBuilder:
                     if build_record:
                         record["record_id"] = build_record.record_id
 
+                await report.finish_checks()
                 if not outcome.is_success():
                     record["outcome"] = str(outcome)
+                    error_message = f"Konflux image build for {metadata.distgit_key} failed with output={outcome}"
+                    if shipment_refused:
+                        error_message += f": {record['shipment_error']}"
                     error = KonfluxImageBuildError(
-                        f"Konflux image build for {metadata.distgit_key} failed with output={outcome}",
+                        error_message,
                         pipelinerun_name,
                         pipelinerun_info.to_dict(),
                     )
-                    if ec_pipeline_url or custom_its_blocking_failed:
+                    if ec_pipeline_url or custom_its_blocking_failed or shipment_refused:
                         # EC and blocking custom ITS failures are not recoverable by rebuilding.
                         # Retrying would rebuild the same image and repeat verification.
                         break
@@ -581,13 +610,16 @@ class KonfluxImageBuilder:
             raise
 
         finally:
-            if self._record_logger:
-                if 'okd' in self._config.group_name:
-                    key = 'image_build_okd'
-                else:
-                    key = 'image_build_konflux'
-                self._record_logger.add_record(key, **record)
-            metadata.build_event.set()
+            try:
+                await report.finish_checks()
+                if self._record_logger:
+                    if 'okd' in self._config.group_name:
+                        key = 'image_build_okd'
+                    else:
+                        key = 'image_build_konflux'
+                    self._record_logger.add_record(key, **record)
+            finally:
+                metadata.build_event.set()
         return nvr, pipelinerun_name, pipelinerun_info.to_dict()
 
     @staticmethod
@@ -904,6 +936,10 @@ class KonfluxImageBuilder:
         build_args = None
         if raw_ba:
             build_args = [str(arg.primitive()) if hasattr(arg, 'primitive') else str(arg) for arg in raw_ba]
+        if self._config.build_args:
+            merged_args = {arg.split('=', 1)[0]: arg for arg in (build_args or [])}
+            merged_args.update({key: f'{key}={value}' for key, value in self._config.build_args.items()})
+            build_args = list(merged_args.values())
 
         raw_secret = _get_konflux_config(metadata, "additional_secret")
         additional_secret = str(raw_secret) if raw_secret else None

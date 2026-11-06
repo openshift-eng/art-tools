@@ -1569,7 +1569,7 @@ class TestRebaserResolveMemberParentRegistryRedhat(IsolatedAsyncioTestCase):
         rebaser.image_repo = "quay.io/fake"
         rebaser.uuid_tag = "v4.18-tag"
         rebaser.derived_group = "openshift-4.18"
-        rebaser._registry_pullspec_exists = AsyncMock(return_value=True)
+        rebaser._registry_pullspec_status = AsyncMock(return_value=(True, ""))
 
         resolved, emb = await rebaser._resolve_member_parent("golang-builder", "orig")
         self.assertEqual(
@@ -1578,7 +1578,7 @@ class TestRebaserResolveMemberParentRegistryRedhat(IsolatedAsyncioTestCase):
         self.assertFalse(emb)
 
     async def test_resolve_member_parent_late_resolve_fails_when_art_base_missing(self):
-        """Late-resolved base-image-release parent fails when art-images-base tag is unreachable."""
+        """Late-resolved base-image-release parent fails clearly when the image was never published."""
         parent = MagicMock()
         parent.distgit_key = "golang-builder"
         parent.should_trigger_base_image_release.return_value = True
@@ -1602,13 +1602,54 @@ class TestRebaserResolveMemberParentRegistryRedhat(IsolatedAsyncioTestCase):
         rebaser.image_repo = "quay.io/fake"
         rebaser.uuid_tag = "v4.18-tag"
         rebaser.derived_group = "openshift-4.18"
-        rebaser._registry_pullspec_exists = AsyncMock(return_value=False)
+        # Simulate a NOT-FOUND registry read (image never published to art-images-base).
+        rebaser._registry_pullspec_status = AsyncMock(
+            return_value=(False, 'reading manifest sha256:deadbeef: manifest unknown')
+        )
 
         rh_pullspec = "registry.redhat.io/openshift/golang-builder:openshift-golang-builder-container-v1.21-1.el9"
         with self.assertRaises(IOError) as ctx:
             await rebaser._resolve_member_parent("golang-builder", "orig")
+        self.assertIn("base-image release has not completed", str(ctx.exception))
         self.assertIn("golang-builder", str(ctx.exception))
         self.assertIn(rh_pullspec, str(ctx.exception))
+
+    async def test_resolve_member_parent_late_resolve_fails_on_registry_error(self):
+        """Late-resolved base-image-release parent surfaces a genuine registry read error distinctly."""
+        parent = MagicMock()
+        parent.distgit_key = "golang-builder"
+        parent.should_trigger_base_image_release.return_value = True
+        parent.branch_el_target.return_value = 9
+        kb = MagicMock()
+        kb.nvr = "openshift-golang-builder-container-v1.21-1.el9"
+        kb.image_pullspec = "quay.io/k@sha256:beef"
+        kb.released_pullspec = ""
+        kb.embargoed = False
+        parent.get_latest_build = AsyncMock(return_value=kb)
+
+        runtime = MagicMock()
+        runtime.resolve_image.return_value = None
+        runtime.ignore_missing_base = True
+        runtime.latest_parent_version = True
+        runtime.late_resolve_image = MagicMock(return_value=parent)
+        runtime.group_config = Model({"konflux": Model({})})
+
+        rebaser = KonfluxRebaser(runtime, self.base_dir, MagicMock(), "unsigned")
+        rebaser.variant = BuildVariant.OCP
+        rebaser.image_repo = "quay.io/fake"
+        rebaser.uuid_tag = "v4.18-tag"
+        rebaser.derived_group = "openshift-4.18"
+        # Simulate a transport-style error that is NOT a not-found condition.
+        rebaser._registry_pullspec_status = AsyncMock(
+            return_value=(False, 'dial tcp: connection reset by peer (i/o timeout)')
+        )
+
+        rh_pullspec = "registry.redhat.io/openshift/golang-builder:openshift-golang-builder-container-v1.21-1.el9"
+        with self.assertRaises(IOError) as ctx:
+            await rebaser._resolve_member_parent("golang-builder", "orig")
+        self.assertIn("could not read", str(ctx.exception))
+        self.assertIn(rh_pullspec, str(ctx.exception))
+        self.assertNotIn("was never published to art-images-base", str(ctx.exception))
 
     async def test_resolve_member_parent_late_resolve_uses_db_released_pullspec_when_set(self):
         parent = MagicMock()
@@ -1634,8 +1675,8 @@ class TestRebaserResolveMemberParentRegistryRedhat(IsolatedAsyncioTestCase):
         rebaser.image_repo = "quay.io/fake"
         rebaser.uuid_tag = "v4.18-tag"
         rebaser.derived_group = "openshift-4.18"
-        rebaser._registry_pullspec_exists = AsyncMock(
-            side_effect=AssertionError("_registry_pullspec_exists should not be consulted")
+        rebaser._registry_pullspec_status = AsyncMock(
+            side_effect=AssertionError("_registry_pullspec_status should not be consulted")
         )
 
         resolved, emb = await rebaser._resolve_member_parent("golang-builder", "orig")

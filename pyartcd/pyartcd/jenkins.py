@@ -55,9 +55,14 @@ class Jobs(Enum):
     BUILD_CONFORMA_VERIFY = 'aos-cd-builds/build%2Fbuild-conforma-verify'
     SCAN_OPERATOR = 'aos-cd-builds/build%2Fscan-operator'
     SYNC_CI_IMAGES = 'aos-cd-builds/build%2Fsync-ci-images'
+    MIRROR_IMAGES_TO_CI = 'aos-cd-builds/build%2Fmirror-images-to-ci'
+    SYNC_CI_BUILDCONFIGS = 'aos-cd-builds/build%2Fsync-ci-buildconfigs'
     OPEN_RECONCILIATION_PRS = 'aos-cd-builds/build%2Fopen-reconciliation-prs'
     OPEN_RECONCILIATION_PRS_LAYERED = 'aos-cd-builds/build%2Fopen-reconciliation-prs-layered-products'
     VERIFY_STAGE_TESTING = 'verify%2Fverify-stage-testing'
+    VERIFY_CDN_PUSH = 'verify%2Fverify-cdn-push'
+    VERIFY_RELEASE = 'verify%2Fverify-release'
+    VERIFY_ADVISORY_TRANSITION = 'verify%2Fverify-advisory-transition'
 
 
 def get_jenkins_url():
@@ -107,7 +112,15 @@ def get_build_path():
     """
 
     url = get_build_url()
-    return '/'.join(url.split('/')[3:]) if url else None
+    if not url:
+        return None
+    # Display URLs can use the ART UI while Redis keeps Kubernetes resource identities.
+    fragment_path = urlparse(urlparse(url).fragment).path
+    parts = fragment_path.strip('/').split('/')
+    if len(parts) == 3 and parts[0] == 'run':
+        namespace, run_name = parts[1:]
+        return f'k8s/ns/{namespace}/tekton.dev~v1~PipelineRun/{run_name}'
+    return '/'.join(url.split('/')[3:])
 
 
 def get_build_path_or_random():
@@ -571,10 +584,92 @@ def start_sync_ci_images(version: str, **kwargs) -> Optional[str]:
     )
 
 
-def start_open_reconciliation_prs(version: str, **kwargs) -> Optional[str]:
+def start_mirror_images_to_ci(
+    version: str,
+    assembly: str = '',
+    data_path: str = '',
+    data_gitref: str = '',
+    only_stream: str = '',
+    images: str = '',
+    update_images_only_when_missing: bool = False,
+    dry_run: bool = False,
+    **kwargs,
+) -> Optional[str]:
     params = {
         'VERSION': version,
     }
+    if assembly:
+        params['ASSEMBLY'] = assembly
+    if data_path:
+        params['DATA_PATH'] = data_path
+    if data_gitref:
+        params['DATA_GITREF'] = data_gitref
+    if only_stream:
+        params['ONLY_STREAM'] = only_stream
+    if images:
+        params['IMAGES'] = images
+    if update_images_only_when_missing:
+        params['UPDATE_IMAGES_ONLY_WHEN_MISSING'] = True
+    if dry_run:
+        params['DRY_RUN'] = True
+    return start_build(
+        job=Jobs.MIRROR_IMAGES_TO_CI,
+        params=params,
+        **kwargs,
+    )
+
+
+def start_sync_ci_buildconfigs(
+    version: str,
+    assembly: str = '',
+    data_path: str = '',
+    data_gitref: str = '',
+    only_stream: str = '',
+    images: str = '',
+    dry_run: bool = False,
+    **kwargs,
+) -> Optional[str]:
+    params = {
+        'VERSION': version,
+    }
+    if assembly:
+        params['ASSEMBLY'] = assembly
+    if data_path:
+        params['DATA_PATH'] = data_path
+    if data_gitref:
+        params['DATA_GITREF'] = data_gitref
+    if only_stream:
+        params['ONLY_STREAM'] = only_stream
+    if images:
+        params['IMAGES'] = images
+    if dry_run:
+        params['DRY_RUN'] = True
+    return start_build(
+        job=Jobs.SYNC_CI_BUILDCONFIGS,
+        params=params,
+        **kwargs,
+    )
+
+
+def start_open_reconciliation_prs(
+    version: str,
+    assembly: str = '',
+    data_path: str = '',
+    data_gitref: str = '',
+    dry_run: bool = False,
+    **kwargs,
+) -> Optional[str]:
+    params = {
+        'VERSION': version,
+    }
+    if assembly:
+        params['ASSEMBLY'] = assembly
+    if data_path:
+        params['DATA_PATH'] = data_path
+    if data_gitref:
+        params['DATA_GITREF'] = data_gitref
+    if dry_run:
+        params['DRY_RUN'] = True
     return start_build(
         job=Jobs.OPEN_RECONCILIATION_PRS,
         params=params,
@@ -600,6 +695,30 @@ def start_verify_stage_testing(version: str, assembly: str, **kwargs) -> Optiona
     }
     return start_build(
         job=Jobs.VERIFY_STAGE_TESTING,
+        params=params,
+        **kwargs,
+    )
+
+
+def start_verify_release(version: str, assembly: str, **kwargs) -> Optional[str]:
+    params = {
+        'BUILD_VERSION': version,
+        'ASSEMBLY': assembly,
+    }
+    return start_build(
+        job=Jobs.VERIFY_RELEASE,
+        params=params,
+        **kwargs,
+    )
+
+
+def start_verify_advisory_transition(version: str, assembly: str, **kwargs) -> Optional[str]:
+    params = {
+        'BUILD_VERSION': version,
+        'ASSEMBLY': assembly,
+    }
+    return start_build(
+        job=Jobs.VERIFY_ADVISORY_TRANSITION,
         params=params,
         **kwargs,
     )
@@ -831,14 +950,45 @@ def start_build_microshift_bootc(
     )
 
 
-def start_rhcos_sync(release_tag_or_pullspec: str, dry_run: bool, sign_only: bool = False, **kwargs) -> Optional[str]:
+def start_rhcos_sync(
+    release_tag_or_pullspec: str,
+    dry_run: bool,
+    sign_only: bool = False,
+    force: bool = False,
+    propagate_params: Optional[dict] = None,
+    **kwargs,
+) -> Optional[str]:
+    """Trigger the RHCOS_SYNC Jenkins job.
+
+    Args:
+        release_tag_or_pullspec: Release tag (e.g. ``4.19.54-x86_64``) or pullspec with a tag.
+        dry_run: Pass through to the job's ``DRY_RUN`` parameter.
+        sign_only: Only sign RHCOS container images; skip boot-image mirroring.
+        force: Forward to the job's ``FORCE`` parameter so the downstream job mirrors even
+            if its own needsHappening check would otherwise deem the sync unnecessary.
+        propagate_params: Optional parameters (e.g. ``ART_TOOLS_COMMIT``/``PLR_TEMPLATE_COMMIT``
+            from :func:`get_propagatable_params`) to forward to the downstream job so it runs
+            the same art-tools/PLR-template revision as this orchestrator.
+
+    Returns:
+        The queued build item URL, or None depending on ``start_build``.
+    """
+    params = {
+        'RELEASE_TAG': release_tag_or_pullspec,
+        'DRY_RUN': dry_run,
+        'SIGN_ONLY': sign_only,
+        'FORCE': force,
+    }
+
+    # Automatically propagate parameters if provided
+    # Note: params.update() will override existing parameter values if keys match
+    if propagate_params:
+        params.update(propagate_params)
+        logger.info("Propagating parameters to rhcos_sync: %s", propagate_params)
+
     return start_build(
         job=Jobs.RHCOS_SYNC,
-        params={
-            'RELEASE_TAG': release_tag_or_pullspec,
-            'DRY_RUN': dry_run,
-            'SIGN_ONLY': sign_only,
-        },
+        params=params,
         **kwargs,
     )
 
@@ -1040,6 +1190,18 @@ def update_description(description: str, append: bool = True):
         description = current_description + description
 
     set_build_description(build, description)
+
+
+def start_verify_cdn_push(version: str, assembly: str, **kwargs) -> Optional[str]:
+    params = {
+        'BUILD_VERSION': version,
+        'ASSEMBLY': assembly,
+    }
+    return start_build(
+        job=Jobs.VERIFY_CDN_PUSH,
+        params=params,
+        **kwargs,
+    )
 
 
 def is_api_reachable() -> bool:

@@ -757,8 +757,12 @@ class KonfluxBuildRecordInspector(BuildRecordInspector):
                 *(group_repos[repo_name].get_repodata(arch) for repo_name in enabled_repos)
             )
             logger.info('Looking for outdated RPMs in build %s...', self._build_record.nvr)
+            # Merge noarch RPMs into each build arch's list so they are compared
+            # against the repo repodata. Without this, noarch packages (e.g.
+            # ca-certificates, tzdata) would be silently skipped.
+            arch_rpms = installed_rpms_for_arch.get(arch, []) + installed_rpms_for_arch.get('noarch', [])
             non_latest_rpms = OutdatedRPMFinder().find_non_latest_rpms(
-                installed_rpms_for_arch[arch], repodatas, logger=cast(logging.Logger, logger)
+                arch_rpms, repodatas, logger=cast(logging.Logger, logger)
             )
             if non_latest_rpms:
                 logger.warning('Found outdated RPMs in %s for arch %s', self._build_record.nvr, arch)

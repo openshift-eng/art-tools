@@ -9,7 +9,7 @@ from artcommonlib.constants import SHIPMENT_DATA_URL_TEMPLATE
 from artcommonlib.github_auth import build_git_auth_env
 from artcommonlib.jira_config import JIRA_DOMAIN_NAME
 from artcommonlib.model import Model
-from artcommonlib.util import convert_remote_git_to_ssh
+from artcommonlib.util import convert_remote_git_to_ssh, new_roundtrip_yaml_handler
 from elliottlib.errata_async import AsyncErrataAPI
 from elliottlib.shipment_model import (
     ComponentSource,
@@ -158,6 +158,54 @@ class TestPrepareReleaseKonfluxPipeline(unittest.IsolatedAsyncioTestCase):
         # Verify config parsing
         self.assertEqual(pipeline.releases_config, {'releases_key': 'releases_value'})
         self.assertEqual(pipeline.group_config, {'group_key': 'group_value'})
+
+    async def test_update_build_data_preserves_microshift_bootc_inheritance(self) -> None:
+        """
+        Saving an assembly repeatedly must not restore its parent's bootc shipment URL.
+        """
+        yaml = new_roundtrip_yaml_handler()
+        parent_group = {
+            "microshift_bootc_shipment": {"url": "https://gitlab.example.com/shipments/parent"},
+            "shipment": {"url": "https://gitlab.example.com/shipments/ocp-parent"},
+            "advisories": {"rpm": 123},
+        }
+        for has_basis in (True, False):
+            for shipment in ({}, {"url": "https://gitlab.example.com/shipments/child"}):
+                with self.subTest(has_basis=has_basis, shipment=shipment):
+                    pipeline = PrepareReleaseKonfluxPipeline(
+                        slack_client=self.mock_slack_client,
+                        runtime=self.runtime,
+                        group=self.group,
+                        assembly=self.assembly,
+                    )
+                    shipment_key = "microshift_bootc_shipment!" if has_basis else "microshift_bootc_shipment"
+                    assembly_def = {"group": {shipment_key: copy.deepcopy(shipment)}}
+                    if has_basis:
+                        assembly_def["basis"] = {"assembly": "parent"}
+                    pipeline.releases_config = {
+                        "releases": {
+                            "parent": {"assembly": {"group": copy.deepcopy(parent_group)}},
+                            self.assembly: {"assembly": assembly_def},
+                        }
+                    }
+                    pipeline.build_data_repo = AsyncMock(spec=GitRepository)
+                    pipeline.build_data_repo.does_branch_exist_on_remote.return_value = False
+                    pipeline.build_data_repo.commit_push.return_value = True
+                    expected_group = pipeline.assembly_group_config.primitive()
+
+                    # Resolve and save again to cover subsequent prepare-release runs.
+                    for _ in range(2):
+                        pipeline.updated_assembly_group_config = Model(pipeline.assembly_group_config.copy())
+                        self.assertTrue(await pipeline.update_build_data("update-assembly"))
+                        filename, content = pipeline.build_data_repo.write_file.call_args.args
+                        self.assertEqual(filename, "releases.yml")
+                        pipeline.releases_config = yaml.load(content)
+                        saved_group = pipeline.releases_config["releases"][self.assembly]["assembly"]["group"]
+                        self.assertEqual(saved_group[shipment_key], shipment)
+                        self.assertEqual(pipeline.assembly_group_config.primitive(), expected_group)
+                        self.assertEqual(
+                            pipeline.releases_config["releases"]["parent"]["assembly"]["group"], parent_group
+                        )
 
     async def test_validate_assembly_valid(self):
         pipeline = PrepareReleaseKonfluxPipeline(
@@ -809,8 +857,12 @@ class TestPrepareReleaseKonfluxPipeline(unittest.IsolatedAsyncioTestCase):
         mock_get_snapshot.assert_any_call(['fbc-nvr'])
         self.assertEqual(mock_get_snapshot.call_count, 4)
 
-        # Verify RPA validation was called for each shipment kind
-        self.assertTrue(mock_validate_rpa.await_count > 0, "validate_snapshot_against_rpa should have been called")
+        # Pass the shipment itself so validation uses its configured ReleasePlans.
+        self.assertEqual(mock_validate_rpa.await_count, 4)
+        mock_validate_rpa.assert_any_await(mock_shipment_image.shipment, "prod", "image")
+        mock_validate_rpa.assert_any_await(mock_shipment_extras.shipment, "prod", "extras")
+        mock_validate_rpa.assert_any_await(mock_shipment_metadata.shipment, "prod", "metadata")
+        mock_validate_rpa.assert_any_await(mock_shipment_fbc.shipment, "prod", "fbc")
 
         # copy and modify mocks to what is expected after init and build finding, i.e., at create shipment MR time
         mock_shipment_image_create = copy.deepcopy(mock_shipment_image)
@@ -921,6 +973,7 @@ class TestPrepareReleaseKonfluxPipeline(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(errors[0]["error"], "build failed")
         mock_cmd_gather_async.assert_awaited_once()
 
+    @patch.object(PrepareReleaseKonfluxPipeline, 'trigger_verify_cdn_push')
     @patch.object(PrepareReleaseKonfluxPipeline, 'report_deferred_build_failures', new_callable=AsyncMock)
     @patch.object(PrepareReleaseKonfluxPipeline, 'verify_payload', new_callable=AsyncMock)
     @patch.object(PrepareReleaseKonfluxPipeline, 'set_shipment_mr_ready', new_callable=AsyncMock)
@@ -955,6 +1008,7 @@ class TestPrepareReleaseKonfluxPipeline(unittest.IsolatedAsyncioTestCase):
         mock_set_shipment_mr_ready,
         mock_verify_payload,
         mock_report_deferred_build_failures,
+        mock_trigger_verify_cdn_push,
     ):
         mock_registry_config.return_value.__enter__ = Mock(return_value='/tmp/fake-auth.json')
         mock_registry_config.return_value.__exit__ = Mock(return_value=False)

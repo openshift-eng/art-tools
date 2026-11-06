@@ -32,6 +32,18 @@ from pyartcd.signatory import AsyncSignatory
 S3_BUCKET = "s3://art-srv-enterprise"
 
 
+def get_rhcos_mirror_path(prefix: str, version: str, stream_suffix: str = "") -> str:
+    """
+    Compute the release directory while preserving primary-stream paths.
+
+    Stable variants use sibling prefixes such as 5.0-el10/5.0.0. Pre-release
+    variants use suffixed release directories such as pre-release/5.0.0-rc.8-el10.
+    """
+    if prefix == "pre-release":
+        return f"{prefix}/{version}{stream_suffix}"
+    return f"{prefix}{stream_suffix}/{version}"
+
+
 class SyncRhcosPipeline:
     """Pipeline to sync RHCOS boot images to mirror.openshift.com."""
 
@@ -46,6 +58,7 @@ class SyncRhcosPipeline:
         synclist: str,
         no_latest: bool = False,
         signing_env: Optional[str] = None,
+        stream_suffix: str = "",
     ):
         self.runtime = runtime
         self.arch = arch
@@ -56,9 +69,10 @@ class SyncRhcosPipeline:
         self.synclist = synclist
         self.no_latest = no_latest
         self.signing_env = signing_env
+        self.stream_suffix = stream_suffix
         self.logger = runtime.logger
 
-        self.staging_dir = Path(runtime.working_dir) / f"staging-{version}"
+        self.staging_dir = Path(runtime.working_dir) / f"staging-{version}-{arch}-{build_id}{stream_suffix}"
 
     async def run(self):
         self.logger.info(
@@ -81,7 +95,8 @@ class SyncRhcosPipeline:
         if self.signing_env:
             await self._sign_sha256sum()
 
-        versioned_dest = f"{S3_BUCKET}{self.base_dir}/{self.mirror_prefix}/{self.version}/"
+        mirror_path = get_rhcos_mirror_path(self.mirror_prefix, self.version, self.stream_suffix)
+        versioned_dest = f"{S3_BUCKET}{self.base_dir}/{mirror_path}/"
         await self._sync_to_s3(str(self.staging_dir), versioned_dest)
 
         if not self.no_latest:
@@ -268,23 +283,25 @@ class SyncRhcosPipeline:
         major_minor = self._extract_major_minor()
         next_major_minor = self._next_major_minor(major_minor)
 
-        y_stream_latest = f"{S3_BUCKET}{self.base_dir}/{self.mirror_prefix}/latest-{major_minor}/"
+        y_stream_latest = f"{S3_BUCKET}{self.base_dir}/{self.mirror_prefix}/latest-{major_minor}{self.stream_suffix}/"
         await self._sync_to_s3(source, y_stream_latest)
 
-        if await self._should_update_global_latest(f"{self.mirror_prefix}/latest-{next_major_minor}"):
-            global_latest = f"{S3_BUCKET}{self.base_dir}/{self.mirror_prefix}/latest/"
+        if await self._should_update_global_latest(
+            f"{self.mirror_prefix}/latest-{next_major_minor}{self.stream_suffix}"
+        ):
+            global_latest = f"{S3_BUCKET}{self.base_dir}/{self.mirror_prefix}/latest{self.stream_suffix}/"
             await self._sync_to_s3(source, global_latest)
         else:
             self.logger.info("Skipping global latest update (newer Y-stream exists)")
 
     async def _update_latest_stable(self, source: str):
         """Update stable latest directories."""
-        stable_latest = f"{S3_BUCKET}{self.base_dir}/{self.mirror_prefix}/latest/"
+        stable_latest = f"{S3_BUCKET}{self.base_dir}/{self.mirror_prefix}{self.stream_suffix}/latest/"
         await self._sync_to_s3(source, stable_latest)
 
         next_major_minor = self._next_major_minor(self._extract_major_minor())
-        if await self._should_update_global_latest(next_major_minor):
-            global_latest = f"{S3_BUCKET}{self.base_dir}/latest/"
+        if await self._should_update_global_latest(f"{next_major_minor}{self.stream_suffix}"):
+            global_latest = f"{S3_BUCKET}{self.base_dir}/latest{self.stream_suffix}/"
             await self._sync_to_s3(source, global_latest)
         else:
             self.logger.info("Skipping global latest update (newer Y-stream exists)")

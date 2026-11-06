@@ -13,8 +13,8 @@ from artcommonlib.konflux.konflux_build_record import (
     KonfluxFbcBuildRecord,
 )
 from artcommonlib.konflux.konflux_db import CacheRecordsType, KonfluxDb
-from artcommonlib.variants import BuildVariant
-from google.cloud.bigquery import SchemaField
+from artcommonlib.variants import BuildVariant, ProductId
+from google.cloud.bigquery import Row, SchemaField
 
 
 class TestKonfluxDB(IsolatedAsyncioTestCase):
@@ -31,6 +31,41 @@ class TestKonfluxDB(IsolatedAsyncioTestCase):
     def tearDown(self):
         # Clear the shared cache after each test to ensure test isolation
         KonfluxDb.clear_shared_cache()
+
+    def test_kueue_build_variants_load_and_serialize_canonically(self):
+        """Decode legacy and canonical stored variants through real records and result rows."""
+        for stored_variant in ("kueue-operator", "kueue"):
+            with self.subTest(stored_variant=stored_variant):
+                row = Row((stored_variant,), {"build_variant": 0})
+                records = (
+                    KonfluxBuildRecord(build_variant=stored_variant),
+                    self.db.from_result_row(row),
+                )
+                for record in records:
+                    self.assertIs(record.build_variant, ProductId.KUEUE)
+                    self.assertEqual(record.to_dict()["build_variant"], "kueue")
+
+    @patch('artcommonlib.bigquery.BigQueryClient.select')
+    async def test_group_cache_loads_mixed_kueue_build_variants(self, select_mock):
+        """Load mixed legacy and canonical history using the actual cache and row decoder."""
+        fields = ("name", "group", "version", "release", "start_time", "build_variant")
+        field_indexes = {field: index for index, field in enumerate(fields)}
+        now = datetime.now(tz=timezone.utc)
+        select_mock.return_value = [
+            Row(("test-image", "test-group", "1.0", release, now, variant), field_indexes)
+            for release, variant in (("1", "kueue-operator"), ("2", "kueue"))
+        ]
+
+        await self.db._ensure_group_cached("test-group")
+
+        select_mock.assert_awaited_once()
+        self.assertTrue(self.db.cache.is_group_loaded("test-group"))
+        builds = self.db.cache.get_builds_by_name("test-image", "test-group")
+        self.assertEqual(len(builds), 2)
+        self.assertEqual({build.release for build in builds}, {"1", "2"})
+        for build in builds:
+            self.assertIs(build.build_variant, ProductId.KUEUE)
+            self.assertEqual(build.to_dict()["build_variant"], "kueue")
 
     @patch('artcommonlib.bigquery.BigQueryClient.query')
     def test_add_builds(self, query_mock):

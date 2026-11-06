@@ -1,7 +1,7 @@
 import os
 import unittest
 from datetime import datetime
-from unittest.mock import MagicMock, Mock, patch
+from unittest.mock import MagicMock, Mock, call, patch
 
 from artcommonlib.model import Model
 from elliottlib import shipment_utils
@@ -172,6 +172,73 @@ shipment:
 
         self.assertEqual(context.exception.file_path, 'shipment/test-product/test-group/fbc/prod/fbc.yaml')
         self.assertEqual(context.exception.source_project_id, 288573)
+
+    def test_shipment_mr_project_and_revision(self):
+        """Read merged results from the target project, including squash and FF merges."""
+        cases = (
+            ('opened', 'merge-result', 'squash-result', 'source-head', 'source-project', 'feature-branch'),
+            ('merged', 'merge-result', 'squash-result', 'source-head', 'target-project', 'merge-result'),
+            ('merged', None, 'squash-result', 'source-head', 'target-project', 'squash-result'),
+            ('merged', None, None, 'source-head', 'target-project', 'source-head'),
+        )
+        for state, merge_sha, squash_sha, source_sha, project_id, ref in cases:
+            with self.subTest(state=state, merge_sha=merge_sha, squash_sha=squash_sha):
+                gitlab_client = Mock()
+                mr = Mock(
+                    state=state,
+                    source_project_id='source-project',
+                    target_project_id='target-project',
+                    source_branch='feature-branch' if state == 'opened' else 'deleted-branch',
+                    merge_commit_sha=merge_sha,
+                    squash_commit_sha=squash_sha,
+                    sha=source_sha,
+                )
+                mr.diffs.list.return_value = [Mock(id='diff-id')]
+                mr.diffs.get.return_value = Mock(diffs=[{'new_path': 'image.yaml'}])
+                gitlab_client.get_mr_from_url.return_value = mr
+                project = gitlab_client.get_project.return_value
+                project.files.get.return_value = self.mock_file_content
+                self.mock_file_content.decode.return_value.decode.return_value = self.sample_yaml_content
+
+                with patch('elliottlib.shipment_utils.GitLabClient.from_url', return_value=gitlab_client):
+                    result = shipment_utils.get_shipment_configs_from_mr(self.test_mr_url, ('image',))
+
+                self.assertEqual(result['image'].shipment.snapshot.nvrs[0], 'test-rpm-1.0.0-1.el8')
+                gitlab_client.get_project.assert_called_once_with(project_id)
+                project.files.get.assert_called_once_with('image.yaml', ref)
+
+    def test_merged_shipment_mr_without_revision_fails_before_reading_file(self):
+        """Do not silently read a default branch if no merged revision is available."""
+        mr = Mock(state='merged', merge_commit_sha=None, squash_commit_sha=None, sha=None)
+        mr.diffs.list.return_value = [Mock(id='diff-id')]
+        mr.diffs.get.return_value = Mock(diffs=[{'new_path': 'image.yaml'}])
+        project = Mock()
+
+        with self.assertRaisesRegex(ValueError, 'No commit SHA available'):
+            shipment_utils.get_shipment_config_records(mr, project)
+
+        project.files.get.assert_not_called()
+
+    def test_get_shipment_configs_reuses_supplied_gitlab_client(self):
+        """Use a caller's authenticated GitLab client to fetch the MR config."""
+        gitlab_client = Mock()
+        mr = Mock()
+        mr.source_project_id = "source-project-id"
+        mr.diffs.list.return_value = []
+        gitlab_client.get_mr_from_url.return_value = mr
+
+        with patch("elliottlib.shipment_utils.GitLabClient") as mock_gitlab_client_class:
+            result = shipment_utils.get_shipment_configs_from_mr(
+                self.test_mr_url,
+                kinds=("image",),
+                group="openshift-4.18",
+                gitlab_client=gitlab_client,
+            )
+
+        self.assertEqual(result, {})
+        mock_gitlab_client_class.from_url.assert_not_called()
+        gitlab_client.get_mr_from_url.assert_called_once_with(self.test_mr_url)
+        gitlab_client.get_project.assert_called_once_with("source-project-id")
 
     @patch('artcommonlib.gitlab.gitlab.Gitlab')
     @patch.dict(os.environ, {'GITLAB_TOKEN': 'test-token'})
@@ -845,20 +912,121 @@ class TestGetBugIdsFromOpenShipmentMrs(unittest.TestCase):
 
     @patch("elliottlib.shipment_utils.get_shipment_configs_from_mr")
     @patch("elliottlib.shipment_utils.GitLabClient")
-    def test_passes_group_to_get_shipment_configs(self, mock_gitlab_cls, mock_get_configs):
-        """get_shipment_configs_from_mr should be called with group kwarg for pre-filtering."""
+    def test_reuses_gitlab_client_for_each_mr_and_passes_group(self, mock_gitlab_cls, mock_get_configs):
+        """Reuse one authenticated client for every MR config lookup."""
         mock_client = Mock()
         mock_gitlab_cls.from_url.return_value = mock_client
 
-        mr_url = "https://gitlab.example.com/project/-/merge_requests/1"
-        mock_mr = Mock()
-        mock_mr.web_url = mr_url
-        mock_client.list_merge_requests.return_value = [mock_mr]
+        mr_urls = [
+            "https://gitlab.example.com/project/-/merge_requests/1",
+            "https://gitlab.example.com/project/-/merge_requests/2",
+        ]
+        mock_mrs = [Mock(web_url=mr_url) for mr_url in mr_urls]
+        mock_client.list_merge_requests.return_value = mock_mrs
 
         mock_get_configs.return_value = {}
 
         self._call(group="openshift-4.18")
-        mock_get_configs.assert_called_once_with(mr_url, group="openshift-4.18")
+        mock_get_configs.assert_has_calls(
+            [call(mr_url, group="openshift-4.18", gitlab_client=mock_client) for mr_url in mr_urls]
+        )
+        self.assertEqual(mock_get_configs.call_count, len(mr_urls))
+        mock_gitlab_cls.from_url.assert_called_once_with(self.SHIPMENT_URL)
+
+    @staticmethod
+    def _make_typed_releases_config(assembly: str, mr_url: str, assembly_type: str) -> Model:
+        """
+        Build a releases_config Model with an assembly that has an explicit type
+        (e.g. "candidate", "preview", "standard") and a matching shipment URL.
+        """
+        return Model(
+            dict_to_model={
+                "releases": {
+                    assembly: {
+                        "assembly": {
+                            "type": assembly_type,
+                            "group": {"shipment": {"url": mr_url}},
+                        }
+                    }
+                }
+            }
+        )
+
+    @patch("elliottlib.shipment_utils.get_shipment_configs_from_mr")
+    @patch("elliottlib.shipment_utils.GitLabClient")
+    def test_skips_candidate_assembly_mrs(self, mock_gitlab_cls, mock_get_configs):
+        """RC/FC (candidate) assembly MRs should be skipped — their bugs should flow into GA."""
+        mock_client = Mock()
+        mock_gitlab_cls.from_url.return_value = mock_client
+
+        mr_url = "https://gitlab.example.com/project/-/merge_requests/10"
+        mock_mr = Mock()
+        mock_mr.web_url = mr_url
+        mock_client.list_merge_requests.return_value = [mock_mr]
+
+        mock_shipment = Mock()
+        mock_shipment.shipment.metadata.group = "openshift-4.18"
+        mock_shipment.shipment.metadata.assembly = "4.18.0-rc.1"
+        mock_shipment.shipment.metadata.fbc = False
+        mock_shipment.shipment.data.releaseNotes.issues.fixed = [
+            Mock(id="OCPBUGS-1100", source="issues.redhat.com"),
+            Mock(id="OCPBUGS-1200", source="issues.redhat.com"),
+        ]
+        mock_get_configs.return_value = {"image": mock_shipment}
+
+        releases_config = self._make_typed_releases_config("4.18.0-rc.1", mr_url, "candidate")
+        result = self._call(releases_config=releases_config)
+        self.assertEqual(result, set())
+
+    @patch("elliottlib.shipment_utils.get_shipment_configs_from_mr")
+    @patch("elliottlib.shipment_utils.GitLabClient")
+    def test_skips_preview_assembly_mrs(self, mock_gitlab_cls, mock_get_configs):
+        """EC (preview) assembly MRs should be skipped — their bugs should flow into GA."""
+        mock_client = Mock()
+        mock_gitlab_cls.from_url.return_value = mock_client
+
+        mr_url = "https://gitlab.example.com/project/-/merge_requests/11"
+        mock_mr = Mock()
+        mock_mr.web_url = mr_url
+        mock_client.list_merge_requests.return_value = [mock_mr]
+
+        mock_shipment = Mock()
+        mock_shipment.shipment.metadata.group = "openshift-4.18"
+        mock_shipment.shipment.metadata.assembly = "4.18.0-ec.3"
+        mock_shipment.shipment.metadata.fbc = False
+        mock_shipment.shipment.data.releaseNotes.issues.fixed = [
+            Mock(id="OCPBUGS-1300", source="issues.redhat.com"),
+        ]
+        mock_get_configs.return_value = {"image": mock_shipment}
+
+        releases_config = self._make_typed_releases_config("4.18.0-ec.3", mr_url, "preview")
+        result = self._call(releases_config=releases_config)
+        self.assertEqual(result, set())
+
+    @patch("elliottlib.shipment_utils.get_shipment_configs_from_mr")
+    @patch("elliottlib.shipment_utils.GitLabClient")
+    def test_standard_assembly_bugs_still_filtered(self, mock_gitlab_cls, mock_get_configs):
+        """Standard z-stream assembly MRs should still have their bugs filtered (existing behavior)."""
+        mock_client = Mock()
+        mock_gitlab_cls.from_url.return_value = mock_client
+
+        mr_url = "https://gitlab.example.com/project/-/merge_requests/12"
+        mock_mr = Mock()
+        mock_mr.web_url = mr_url
+        mock_client.list_merge_requests.return_value = [mock_mr]
+
+        mock_shipment = Mock()
+        mock_shipment.shipment.metadata.group = "openshift-4.18"
+        mock_shipment.shipment.metadata.assembly = "4.18.39"
+        mock_shipment.shipment.metadata.fbc = False
+        mock_shipment.shipment.data.releaseNotes.issues.fixed = [
+            Mock(id="OCPBUGS-1400", source="issues.redhat.com"),
+        ]
+        mock_get_configs.return_value = {"image": mock_shipment}
+
+        releases_config = self._make_typed_releases_config("4.18.39", mr_url, "standard")
+        result = self._call(releases_config=releases_config)
+        self.assertEqual(result, {"OCPBUGS-1400"})
 
 
 def _make_shipment_config(kind: str, **release_notes_kwargs) -> ShipmentConfig:

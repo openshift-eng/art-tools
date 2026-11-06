@@ -29,6 +29,7 @@ from tenacity import before_sleep_log, retry, retry_if_exception_type, stop_afte
 
 from pyartcd import constants, jenkins
 from pyartcd.cli import cli, click_coroutine, pass_runtime
+from pyartcd.plashets import plashet_config_for_major_minor
 from pyartcd.runtime import Runtime
 from pyartcd.util import default_release_suffix, kinit
 
@@ -433,10 +434,6 @@ class UpdateGolangPipeline:
             self.validate_tag_builds_go_latest(branch, allowed_major_minors, build_major_minor)
         process_rpm_builds = self.major_bump or build_major_minor == allowed_major_minors["GO_LATEST"]
 
-        # el10 is only supported for build roots (RPM tagging), not for golang-builder images yet
-        el_nvr_map_for_images = {el_v: nvr for el_v, nvr in el_nvr_map.items() if el_v != 10}
-        if el_nvr_map.keys() - el_nvr_map_for_images.keys():
-            _LOGGER.info("RHEL 10 NVRs will only be used for build root tagging, not for golang-builder images")
         self._slack_client.bind_channel(self.ocp_version)
         running_in_jenkins = os.environ.get('BUILD_ID', False)
         if running_in_jenkins:
@@ -476,7 +473,7 @@ class UpdateGolangPipeline:
             await self._slack_client.say_in_thread("All golang RPM builds are tagged and available!")
 
             # Build plashets for golang RPMs before building images
-            await self._build_golang_plashets(go_version, el_nvr_map_for_images.keys())
+            await self._build_golang_plashets(go_version, el_nvr_map.keys())
         else:
             matching_vars = sorted(
                 var_name for var_name, major_minor in allowed_major_minors.items() if major_minor == build_major_minor
@@ -489,21 +486,18 @@ class UpdateGolangPipeline:
             )
 
         # Check if openshift-golang-builder image builds exist for the provided compiler builds
-        # Only for RHEL versions that support golang-builder images (excludes el10 for now)
         brew_nvrs = {}
         konflux_records: dict[int, KonfluxBuildRecord] = {}
         if not self.force_image_build:
             if self.build_system in ['both', 'brew']:
-                brew_nvrs = self.get_existing_builders_brew(el_nvr_map_for_images, go_version)
+                brew_nvrs = self.get_existing_builders_brew(el_nvr_map, go_version)
             if self.build_system in ['both', 'konflux']:
-                konflux_records = await self.get_existing_builders_konflux(el_nvr_map_for_images, go_version)
+                konflux_records = await self.get_existing_builders_konflux(el_nvr_map, go_version)
 
         # Determine which rhel versions need builds
-        brew_missing = (
-            el_nvr_map_for_images.keys() - brew_nvrs.keys() if self.build_system in ['both', 'brew'] else set()
-        )
+        brew_missing = el_nvr_map.keys() - brew_nvrs.keys() if self.build_system in ['both', 'brew'] else set()
         konflux_missing = (
-            el_nvr_map_for_images.keys() - konflux_records.keys() if self.build_system in ['both', 'konflux'] else set()
+            el_nvr_map.keys() - konflux_records.keys() if self.build_system in ['both', 'konflux'] else set()
         )
 
         if brew_missing or konflux_missing:
@@ -520,7 +514,7 @@ class UpdateGolangPipeline:
                 )
 
             if not self.external_golang_rpms:
-                for el_v in el_nvr_map_for_images.keys():
+                for el_v in el_nvr_map.keys():
                     self.verify_golang_builder_repo(el_v, go_version)
 
             # Rebase and build missing images
@@ -529,7 +523,7 @@ class UpdateGolangPipeline:
                 build_targets.extend(
                     (
                         f"RHEL {el_v} (brew)",
-                        self._rebase_and_build_brew(el_v, go_version, el_nvr_map_for_images[el_v]),
+                        self._rebase_and_build_brew(el_v, go_version, el_nvr_map[el_v]),
                     )
                     for el_v in sorted(brew_missing)
                 )
@@ -537,7 +531,7 @@ class UpdateGolangPipeline:
                 build_targets.extend(
                     (
                         f"RHEL {el_v} (konflux)",
-                        self._rebase_and_build_konflux(el_v, go_version, el_nvr_map_for_images[el_v]),
+                        self._rebase_and_build_konflux(el_v, go_version, el_nvr_map[el_v]),
                     )
                     for el_v in sorted(konflux_missing)
                 )
@@ -559,17 +553,15 @@ class UpdateGolangPipeline:
 
             # Now all builders should be available, fetch again
             if self.build_system in ['both', 'brew']:
-                brew_nvrs = self.get_existing_builders_brew(el_nvr_map_for_images, go_version)
+                brew_nvrs = self.get_existing_builders_brew(el_nvr_map, go_version)
             if self.build_system in ['both', 'konflux']:
-                konflux_records = await self.get_existing_builders_konflux(el_nvr_map_for_images, go_version)
+                konflux_records = await self.get_existing_builders_konflux(el_nvr_map, go_version)
 
             brew_still_missing = (
-                el_nvr_map_for_images.keys() - brew_nvrs.keys() if self.build_system in ['both', 'brew'] else set()
+                el_nvr_map.keys() - brew_nvrs.keys() if self.build_system in ['both', 'brew'] else set()
             )
             konflux_still_missing = (
-                el_nvr_map_for_images.keys() - konflux_records.keys()
-                if self.build_system in ['both', 'konflux']
-                else set()
+                el_nvr_map.keys() - konflux_records.keys() if self.build_system in ['both', 'konflux'] else set()
             )
             if brew_still_missing or konflux_still_missing:
                 error_parts = []
@@ -643,6 +635,7 @@ class UpdateGolangPipeline:
 
     async def process_build(self, el_v, nvr):
         await self.ensure_signed(el_v, nvr)
+        await self.ensure_plashet_packages_signed(el_v)
         if not is_latest(self.ocp_version, el_v, nvr, self.koji_session):
             if not self.tag_builds:
                 return False
@@ -715,6 +708,9 @@ class UpdateGolangPipeline:
             return
 
         signing_tag = f'rhaos-{self.ocp_version}-rhel-{el_v}-golang'
+        if any(tag['name'] == signing_tag for tag in self.koji_session.listTags(build=nvr)):
+            _LOGGER.info(f"{nvr} is already in {signing_tag}, waiting for auto-signing")
+            return
         self.brew_login()
         if self.dry_run:
             _LOGGER.info(f"[DRY RUN] Would have tagged {nvr} into {signing_tag} for auto-signing")
@@ -723,6 +719,25 @@ class UpdateGolangPipeline:
             _LOGGER.info(f"Tagged {nvr} into {signing_tag} for auto-signing")
             await self._slack_client.say_in_thread(f"Tagged {nvr} into {signing_tag} for auto-signing")
             # Polling for the signed RPM to appear in brewroot is handled by the plashet build
+
+    async def ensure_plashet_packages_signed(self, el_v):
+        """
+        The golang plashet requires every package it includes to be signed, not only golang.
+        Send the latest build of each companion package (e.g. goversioninfo) for auto-signing too.
+
+        :param el_v: RHEL major version of the golang plashet
+        """
+        if not self.is_production_assembly:
+            return
+        major, minor = self.ocp_version.split('.')
+        plashet = plashet_config_for_major_minor(major, minor).get(f"rhel-{el_v}-golang-rpms")
+        if not plashet:
+            return
+        for package in plashet.get("include_packages", []):
+            if package == "golang":
+                continue
+            for build in self.koji_session.listTagged(plashet["tag"], package=package, latest=True, inherit=True):
+                await self.ensure_signed(el_v, build["nvr"])
 
     @staticmethod
     def is_rpm_signed(parsed_nvr):
@@ -1000,8 +1015,9 @@ class UpdateGolangPipeline:
 
                 for _, info in streams_content.items():
                     if isinstance(info, dict) and _pullspecs_match(info.get('image'), latest_go):
-                        info['image'] = pullspec
-                        update_streams = True
+                        if info['image'] != pullspec:
+                            info['image'] = pullspec
+                            update_streams = True
         # This is to bump minor golang for GO_PREVIOUS
         elif previous_major_minor and build_major_minor == previous_major_minor:
             for el_v, pullspec in builder_pullspecs.items():
@@ -1011,8 +1027,9 @@ class UpdateGolangPipeline:
 
                 for _, info in streams_content.items():
                     if isinstance(info, dict) and _pullspecs_match(info.get('image'), previous_go):
-                        info['image'] = pullspec
-                        update_streams = True
+                        if info['image'] != pullspec:
+                            info['image'] = pullspec
+                            update_streams = True
         # This is to bump minor golang for GO_EXTRA
         elif extra_major_minor and build_major_minor == extra_major_minor:
             for el_v, pullspec in builder_pullspecs.items():
@@ -1043,8 +1060,9 @@ class UpdateGolangPipeline:
 
                 for _, info in streams_content.items():
                     if isinstance(info, dict) and _pullspecs_match(info.get('image'), extra_go):
-                        info['image'] = pullspec
-                        update_streams = True
+                        if info['image'] != pullspec:
+                            info['image'] = pullspec
+                            update_streams = True
         # This is to bump major golang for GO_LATEST and update GO_PREVIOUS to current GO_LATEST
         elif build_major_minor_tuple > latest_major_minor_tuple:
             for el_v, pullspec in builder_pullspecs.items():

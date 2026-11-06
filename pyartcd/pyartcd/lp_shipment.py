@@ -2,19 +2,23 @@
 
 This module owns the ``assembly.group.shipment.mr`` pointer in ``releases.yml``
 and reconciles generated shipment files with an existing GitLab merge request.
-On reuse, the previous layered-product shipment files are discarded and rebuilt
-from the current release inputs.
+On reuse, shipment files are reconciled with the current release inputs while
+preserving stage results for unchanged shipments.
 """
 
 import asyncio
 import logging
 import re
 from collections import Counter
+from copy import deepcopy
+from dataclasses import dataclass
 from io import StringIO
 from pathlib import Path
-from typing import Dict
+from time import monotonic
+from typing import Dict, Sequence
 from urllib.parse import urlparse
 
+import yaml as stdlib_yaml
 from artcommonlib import exectools
 from artcommonlib.rpm_utils import parse_nvr
 from artcommonlib.util import new_roundtrip_yaml_handler
@@ -30,8 +34,7 @@ YAML = new_roundtrip_yaml_handler()
 _TIMESTAMP_RE = re.compile(r"(\d{14})$")
 _PROD_RELEASE_LABEL_PREFIX = "prod-release"
 _STAGE_RELEASE_SUCCESS_LABEL = "stage-release-success"
-_MR_CREATION_ATTEMPTS = 3
-_MR_CREATION_RETRY_DELAY_SECONDS = 5
+_MR_CREATION_RETRY_DELAYS_SECONDS = (5, 10, 20, 30, 30, 30)
 
 
 class ShipmentMRValidationError(ValueError):
@@ -50,12 +53,67 @@ class ShipmentMRActiveStageError(ValueError):
     """Indicate that active stage work makes in-place MR reuse unsafe."""
 
 
+@dataclass(frozen=True)
+class FbcRefreshRecord:
+    """Describe refreshed FBC pullspecs for one OCP target.
+
+    Attributes:
+        target_version: Target OCP major/minor version, or ``None`` when the
+            group has no target-specific configuration.
+        source_pullspecs: FBC pullspecs supplied for refresh. This is empty for
+            assembly-driven workflows such as ``prepare-release-lp``.
+        refreshed_pullspecs: Replacement FBC pullspecs produced by the build.
+    """
+
+    target_version: str | None
+    source_pullspecs: tuple[str, ...]
+    refreshed_pullspecs: tuple[str, ...]
+
+
+def resolve_shipment_release_plans(repo: GitRepository, application: str) -> tuple[str, str]:
+    """Resolve stage and production ReleasePlans from shipment-data ``main``.
+
+    Callers must ensure that the repository is checked out to ``main``. This
+    helper deliberately rejects missing mappings instead of producing a
+    shipment file with the nonfunctional ``n/a`` placeholder.
+
+    Args:
+        repo: Shipment-data repository checked out to ``main``.
+        application: Konflux application recorded in the shipment snapshot.
+
+    Returns:
+        The stage and production ReleasePlan names.
+
+    Raises:
+        ValueError: If ``config.yaml`` cannot be read or either ReleasePlan is
+            missing or set to ``n/a``.
+    """
+    config_path = repo._directory / "config.yaml"
+    try:
+        with config_path.open() as config_file:
+            shipment_config = stdlib_yaml.safe_load(config_file) or {}
+        app_env = shipment_config.get("applications", {}).get(application, {}).get("environments", {})
+    except Exception as exc:
+        raise ValueError(f"Unable to read shipment ReleasePlan configuration from {config_path}: {exc}") from exc
+
+    stage_rpa = app_env.get("stage", {}).get("releasePlan")
+    prod_rpa = app_env.get("prod", {}).get("releasePlan")
+    release_plans = (stage_rpa, prod_rpa)
+    if not all(isinstance(plan, str) and plan.strip() and plan != "n/a" for plan in release_plans):
+        raise ValueError(
+            f"stage/prod releasePlan is not registered for {application!r} in {config_path}. "
+            "Cannot create a layered-product shipment MR with unresolved ReleasePlans."
+        )
+    return stage_rpa, prod_rpa
+
+
 async def create_shipment_mr_with_retry(source_project, attributes: dict, logger: logging.Logger) -> object:
     """Create a shipment MR after GitLab recognizes its newly pushed branch.
 
     GitLab can briefly return ``source_branch: does not exist`` immediately
     after accepting a new branch push. Retry only that known transient error;
-    all other MR creation failures remain immediate and unchanged.
+    all other MR creation failures remain immediate and unchanged. Allow seven
+    attempts with 125 seconds of total backoff, reusing the pushed branch.
 
     Args:
         source_project: Python-gitlab project that owns the source branch.
@@ -70,7 +128,9 @@ async def create_shipment_mr_with_retry(source_project, attributes: dict, logger
             source branch remains unavailable after all attempts.
     """
     source_branch = attributes.get('source_branch', '<unknown>')
-    for attempt in range(1, _MR_CREATION_ATTEMPTS + 1):
+    attempts = len(_MR_CREATION_RETRY_DELAYS_SECONDS) + 1
+    started_at = monotonic()
+    for attempt in range(1, attempts + 1):
         try:
             return source_project.mergerequests.create(attributes)
         except GitlabCreateError as exc:
@@ -79,17 +139,93 @@ async def create_shipment_mr_with_retry(source_project, attributes: dict, logger
             missing_source_branch = exc.response_code == 400 and any(
                 'does not exist' in str(error).lower() for error in source_errors
             )
-            if not missing_source_branch or attempt == _MR_CREATION_ATTEMPTS:
+            if not missing_source_branch:
                 raise
+            elapsed = monotonic() - started_at
+            if attempt == attempts:
+                logger.error(
+                    "GitLab still cannot find branch %s in project %s after %d MR creation attempts (%.1fs elapsed)",
+                    source_branch,
+                    source_project.path_with_namespace,
+                    attempts,
+                    elapsed,
+                )
+                raise
+            delay = _MR_CREATION_RETRY_DELAYS_SECONDS[attempt - 1]
             logger.warning(
-                "GitLab has not recognized newly pushed branch %s yet; retrying MR creation (%d/%d)",
+                "GitLab cannot find newly pushed branch %s in project %s (%.1fs elapsed); "
+                "retrying MR creation in %ds (%d/%d)",
                 source_branch,
+                source_project.path_with_namespace,
+                elapsed,
+                delay,
                 attempt + 1,
-                _MR_CREATION_ATTEMPTS,
+                attempts,
             )
-            await asyncio.sleep(_MR_CREATION_RETRY_DELAY_SECONDS)
+            await asyncio.sleep(delay)
 
     raise AssertionError("Unreachable")
+
+
+def add_fbc_refresh_comment(
+    gitlab_client,
+    mr_url: str,
+    assembly: str,
+    records: Sequence[FbcRefreshRecord],
+    operation: str,
+    run_url: str | None = None,
+    dry_run: bool = False,
+) -> None:
+    """Append an audit comment describing a successful FBC refresh.
+
+    Args:
+        gitlab_client: Authenticated ART GitLab client.
+        mr_url: Shipment merge request receiving the comment.
+        assembly: Named release assembly used for the FBC builds.
+        records: Source and refreshed pullspecs grouped by OCP target.
+        operation: Release operation that performed the refresh.
+        run_url: Optional Jenkins build or Tekton PipelineRun URL.
+        dry_run: Log the comment instead of changing GitLab.
+    """
+    if not records:
+        return
+
+    lines = [
+        "### FBC refresh",
+        "",
+        f"FBC catalogs were rebuilt against the latest production content using assembly `{assembly}`.",
+        "",
+        "| OCP target | Previous FBC | Refreshed FBC |",
+        "| --- | --- | --- |",
+    ]
+    for record in records:
+        target = record.target_version or "default"
+        row_count = max(len(record.source_pullspecs), len(record.refreshed_pullspecs))
+        for index in range(row_count):
+            source = (
+                f"`{record.source_pullspecs[index]}`"
+                if index < len(record.source_pullspecs)
+                else "_assembly-driven build_"
+            )
+            refreshed = (
+                f"`{record.refreshed_pullspecs[index]}`"
+                if index < len(record.refreshed_pullspecs)
+                else "_not produced_"
+            )
+            lines.append(f"| {target} | {source} | {refreshed} |")
+    if run_url:
+        lines.extend(["", f"Initiated by the [{operation} run]({run_url})."])
+    else:
+        lines.extend(["", f"Initiated by `{operation}`."])
+    body = "\n".join(lines)
+
+    if dry_run:
+        LOGGER.info("[DRY-RUN] Would add FBC refresh comment to %s:\n%s", mr_url, body)
+        return
+    try:
+        gitlab_client.add_mr_comment(mr_url, body)
+    except Exception as exc:
+        LOGGER.warning("Failed to comment on refreshed FBCs in shipment MR %s: %s", mr_url, exc)
 
 
 def close_superseded_shipment_mr(mr, dry_run: bool) -> None:
@@ -439,6 +575,18 @@ def _identity_sort_key(item: tuple) -> tuple[str, ...]:
     return tuple("" if value is None else str(value) for value in item[0])
 
 
+def _without_stage_outputs(config: dict) -> dict:
+    """Compare release inputs independently of results recorded by stage CI."""
+    config = deepcopy(config)
+    environments = config.get('shipment', {}).get('environments')
+    if isinstance(environments, dict):
+        stage = environments.get('stage')
+        if isinstance(stage, dict):
+            stage.pop('advisory', None)
+            stage.pop('result', None)
+    return config
+
+
 def _shipment_path_matches(
     path: str,
     group: str,
@@ -566,7 +714,8 @@ async def validate_shipment_mr_for_operation(
             stage work on the previous MR continues.
 
     Returns:
-        The validated MR and its inspected Shipment CI state.
+        The validated MR and its inspected Shipment CI state. The repository is
+        restored to ``main`` after content inspection.
 
     Raises:
         ShipmentMRValidationError: If the MR is invalid or unrelated.
@@ -583,7 +732,12 @@ async def validate_shipment_mr_for_operation(
         push_url,
         allowed_states=allowed_states,
     )
-    await validate_shipment_mr_reuse_state(repo, mr, product, group, assembly)
+    try:
+        await validate_shipment_mr_reuse_state(repo, mr, product, group, assembly)
+    finally:
+        # Scope validation inspects files on the MR source branch. Always return
+        # to canonical main so later shipment generation cannot read stale config.
+        await repo.fetch_switch_branch("main")
     state = validate_shipment_mr_ci_state(
         gitlab_client,
         mr_url,
@@ -619,12 +773,12 @@ async def reconcile_shipment_mr(
     include_fbc_ocp_version: bool,
     dry_run: bool,
 ) -> bool:
-    """Replace a reusable MR's layered-product shipment files from scratch.
+    """Reconcile a reusable MR's shipment files with current release inputs.
 
-    Every MR-owned file for the generated product, group, and assembly is
-    removed (or restored from ``main``), then the current shipment set is
-    written with deterministic filenames. No content or CI mutation from the
-    previous files is carried into the replacement.
+    Unchanged shipments retain their files and stage results. Changed shipments
+    are regenerated without previous stage outputs, and obsolete MR-owned files
+    are removed (or restored from ``main``). Stage success is cleared only when
+    the shipment set changes.
 
     Args:
         repo: Initialized shipment-data repository.
@@ -639,8 +793,8 @@ async def reconcile_shipment_mr(
         returns ``False`` and is considered successful.
 
     Raises:
-        ValueError: If the MR branch lacks a timestamp or desired files contain
-            duplicate semantic identities or scopes.
+        ValueError: If the MR branch lacks a timestamp or shipment files contain
+            duplicate semantic identities or desired scopes.
         RuntimeError: If GitLab truncates the MR change list or a stale file
             cannot be restored safely.
     """
@@ -665,7 +819,8 @@ async def reconcile_shipment_mr(
     if change_data.get('overflow'):
         raise RuntimeError("GitLab truncated the shipment MR change list; refusing an incomplete reconciliation")
     changes = change_data.get('changes', [])
-    existing_files: list[tuple[str, bool]] = []
+    existing_files: dict[str, bool] = {}
+    existing_by_identity: dict[tuple, tuple[str, dict]] = {}
     for change in changes:
         path = change['new_path']
         if not _shipment_path_matches(path, desired_scope[1], desired_scope[2], product=desired_scope[0]):
@@ -674,31 +829,69 @@ async def reconcile_shipment_mr(
         if not absolute_path.exists():
             continue
         is_new = change.get('new_file') is True or change.get('new_file') == 'true'
-        existing_files.append((path, is_new))
+        existing_files[path] = is_new
+        existing = YAML.load(absolute_path)
+        try:
+            identity = _identity(existing)
+        except (AttributeError, TypeError, ValueError):
+            # Path ownership still allows malformed shipment inputs to be replaced.
+            continue
+        if identity in existing_by_identity:
+            raise ValueError(f"Existing shipment configurations contain duplicate identity: {identity}")
+        existing_by_identity[identity] = (path, existing)
 
-    for path, is_new in existing_files:
+    retained_paths = {path for identity, (path, _) in existing_by_identity.items() if identity in desired_by_identity}
+    changed = False
+    for path, is_new in existing_files.items():
+        if path in retained_paths:
+            continue
         if is_new:
             (repo._directory / path).unlink()
         else:
             await _restore_from_main(repo, path)
+        changed = True
 
     next_counter = 1
+    used_paths = set(retained_paths)
     for identity, (kind, desired) in sorted(desired_by_identity.items(), key=_identity_sort_key):
-        metadata = desired['shipment']['metadata']
-        target_dir = Path('shipment') / metadata['product'] / metadata['group'] / metadata['application'] / 'prod'
-        if metadata.get('fbc'):
-            ocp_part = f".ocp{identity[-1]}" if include_fbc_ocp_version and identity[-1] else ""
-            filename = f"{metadata['assembly']}.fbc{ocp_part}.{timestamp}{next_counter:02d}.yaml"
-            next_counter += 1
+        if identity in existing_by_identity:
+            existing_path, existing = existing_by_identity[identity]
+            if _without_stage_outputs(existing) == _without_stage_outputs(desired):
+                continue
+            path = Path(existing_path)
         else:
-            filename = f"{metadata['assembly']}.{kind.rstrip('0123456789')}.{timestamp}.yaml"
+            metadata = desired['shipment']['metadata']
+            target_dir = Path('shipment') / metadata['product'] / metadata['group'] / metadata['application'] / 'prod'
+            if metadata.get('fbc'):
+                ocp_part = f".ocp{identity[-1]}" if include_fbc_ocp_version and identity[-1] else ""
+                while True:
+                    filename = f"{metadata['assembly']}.fbc{ocp_part}.{timestamp}{next_counter:02d}.yaml"
+                    next_counter += 1
+                    path = target_dir / filename
+                    if str(path) not in used_paths and not (repo._directory / path).exists():
+                        break
+            else:
+                filename = f"{metadata['assembly']}.{kind.rstrip('0123456789')}.{timestamp}.yaml"
+                path = target_dir / filename
+                if str(path) in used_paths or ((repo._directory / path).exists() and str(path) not in existing_files):
+                    raise ValueError(f"Cannot create shipment at occupied path {path}")
+            used_paths.add(str(path))
         out = StringIO()
         YAML.dump(desired, out)
-        path = target_dir / filename
         (repo._directory / path).parent.mkdir(parents=True, exist_ok=True)
         await repo.write_file(path, out.getvalue())
+        changed = True
+
+    if not changed:
+        LOGGER.info("Shipment inputs are unchanged; preserving stage results and MR status")
+        return False
 
     await repo.log_diff()
     if dry_run:
         return True
+    labels = list(mr.labels or [])
+    if _STAGE_RELEASE_SUCCESS_LABEL in labels:
+        labels.remove(_STAGE_RELEASE_SUCCESS_LABEL)
+        mr.labels = labels
+        mr.save()
     return await repo.commit_push(f"Update shipment configurations for {desired_identities[0][2]}", safe=True)

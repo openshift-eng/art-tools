@@ -5,8 +5,6 @@ import itertools
 import json
 import logging
 import os
-import shutil
-import tempfile
 import uuid
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
@@ -16,6 +14,7 @@ from typing import BinaryIO, Dict, Iterable, List, Optional, Set, Tuple, cast
 import aiofiles
 import aiohttp
 from artcommonlib import exectools
+from artcommonlib.registry_config import RegistryConfig
 from artcommonlib.util import run_limited_unordered
 from cryptography import x509
 from cryptography.x509.oid import NameOID
@@ -289,45 +288,160 @@ class SigstoreSignatory:
         concurrency_limit: int,
         batch_retries: int = 3,
         batch_retry_delay: float = 30.0,
+        force_resign: bool = False,
     ) -> None:
         self._logger = logger
         self.dry_run = dry_run  # if true, run discovery but do not sign anything
         self.signing_key_ids = signing_key_ids  # key ids for signing
         self.rekor_url = rekor_url  # rekor server for cosign tlog storage
+        self.force_resign = force_resign  # re-sign even when our signature already exists (backfills)
+        # Instance-local copy of the class ENV: __init__/close() mutate DOCKER_CONFIG and delete its
+        # temp dir, so sharing the class dict would let a later instance inherit a deleted path.
+        self.ENV = dict(type(self).ENV)
         self.ENV["AWS_SHARED_CREDENTIALS_FILE"] = signing_creds  # filename for KMS credentials
-        # cosign uses go-containerregistry which does hostname-only auth lookup.
-        # QUAY_AUTH_FILE has path-scoped keys (e.g. "quay.io/openshift-release-dev")
-        # so we must add hostname-only entries (e.g. "quay.io") for cosign to find them.
+        # cosign/go-containerregistry looks up credentials by HOST only, but QUAY_AUTH_FILE keys are
+        # path-scoped (e.g. "quay.io/openshift-release-dev"). Collapsing every path-scoped key onto a
+        # single host entry is ambiguous when a host has several robots: the wrong one gets picked,
+        # the existing-signature check can't read the .sig, fails open, and re-signs -- piling
+        # signatures onto the .sig until cosign hits 413. So build a per-pullspec DOCKER_CONFIG whose
+        # host entry is the LONGEST-PREFIX match for the image repo (_docker_config_dir_for_pullspec),
+        # with a hostname-collapsed global config as fallback. Both use RegistryConfig and are closed
+        # in close()/__del__.
+        self._registry_auths: Dict[str, dict] = {}  # full registry-key -> auth entry mapping
+        self._quay_auth_file: Optional[str] = None
+        self._global_docker_config_dir: Optional[str] = None  # hostname-collapsed fallback config dir
+        self._registry_configs: List[RegistryConfig] = []  # open contexts to clean up
+        self._pullspec_config_cache: Dict[Tuple[str, str], str] = {}  # (host, chosen-key) -> config dir
         quay_auth_file = os.environ.get("QUAY_AUTH_FILE")
         if quay_auth_file:
-            docker_config_dir = tempfile.mkdtemp(prefix="cosign-docker-config-")
-            config_json_path = os.path.join(docker_config_dir, "config.json")
+            self._quay_auth_file = quay_auth_file
             try:
                 with open(quay_auth_file) as f:
                     auth_data = json.load(f)
-                auths = auth_data.get("auths", {})
-                # Add hostname-only entries for any path-scoped keys
-                hostname_auths = {}
-                for key, value in auths.items():
-                    hostname = key.split("/")[0]
-                    if hostname != key and hostname not in auths:
-                        hostname_auths[hostname] = value
-                if hostname_auths:
-                    auths.update(hostname_auths)
-                    auth_data["auths"] = auths
-                    logger.info("Added hostname-only auth entries for cosign: %s", list(hostname_auths.keys()))
-                with open(config_json_path, "w") as f:
-                    json.dump(auth_data, f)
+                self._registry_auths = dict(auth_data.get("auths", {}))
             except Exception as e:
-                logger.warning("Could not rewrite auth file for cosign, falling back to copy: %s", e)
-                shutil.copy2(quay_auth_file, config_json_path)
-            self.ENV["DOCKER_CONFIG"] = docker_config_dir
-            logger.info("Set DOCKER_CONFIG=%s for cosign (from QUAY_AUTH_FILE=%s)", docker_config_dir, quay_auth_file)
+                logger.warning("Could not parse QUAY_AUTH_FILE for repo-aware auth: %s", e)
+            # Fallback config: collapse every usable key to a host alias (arbitrary when a host has
+            # several); used only when a pullspec matches no path-scoped entry.
+            fallback_registries = [
+                key for key, value in self._registry_auths.items() if isinstance(value, dict) and value.get("auth")
+            ]
+            self._global_docker_config_dir = self._new_registry_config_dir(fallback_registries)
+            if self._global_docker_config_dir:
+                self.ENV["DOCKER_CONFIG"] = self._global_docker_config_dir
+                # Keep credential paths out of the logs.
+                logger.debug("Configured fallback DOCKER_CONFIG for cosign from QUAY_AUTH_FILE")
         else:
             logger.warning("QUAY_AUTH_FILE not set; cosign may lack registry credentials")
         self.concurrency_limit = concurrency_limit  # limit on concurrent lookups or signings
         self.batch_retries = batch_retries  # number of batch-level retries for failed images
         self.batch_retry_delay = batch_retry_delay  # seconds to wait between batch retries
+
+    def _new_registry_config_dir(self, registries: List[str]) -> Optional[str]:
+        """
+        Build a DOCKER_CONFIG directory for ``registries`` via RegistryConfig (collapse_to_host adds
+        the hostname-only alias cosign needs). The context is retained and closed in close()/__del__.
+        Fails OPEN: returns None on any error so the caller falls back rather than aborting.
+
+        :return: path to the temp DOCKER_CONFIG directory, or None on failure / no credentials.
+        """
+        if not registries:
+            return None
+        try:
+            registry_config = RegistryConfig(
+                source_files=[self._quay_auth_file],
+                registries=registries,
+                collapse_to_host=True,
+                output_dir=True,
+            )
+            config_dir = registry_config.__enter__()
+        except Exception as e:
+            self._logger.warning("Could not build DOCKER_CONFIG via RegistryConfig: %s", e)
+            return None
+        self._registry_configs.append(registry_config)
+        return config_dir
+
+    @staticmethod
+    def _image_repo(pullspec: str) -> str:
+        """
+        Return the repository portion of a pullspec, stripping any ``@sha256:...`` digest or
+        trailing ``:tag`` while leaving a ``registry:port`` prefix intact.
+        """
+        repo = pullspec.split("@", 1)[0]  # drop any digest
+        last_slash = repo.rfind("/")
+        last_colon = repo.rfind(":")
+        if last_colon > last_slash:  # a ":" after the last "/" is a tag, not a registry port
+            repo = repo[:last_colon]
+        return repo
+
+    def _find_longest_prefix_key(self, repo: str) -> Optional[str]:
+        """
+        Find the stored auth key that is the longest path-boundary prefix of ``repo`` (``repo == key``
+        or ``repo.startswith(key + "/")``), so a path-scoped entry wins over a bare hostname entry.
+
+        :return: the matching key, or None if no stored key is a prefix of the repo
+        """
+        best: Optional[str] = None
+        for key in self._registry_auths:
+            if repo == key or repo.startswith(key + "/"):
+                if best is None or len(key) > len(best):
+                    best = key
+        return best
+
+    def _docker_config_dir_for_pullspec(self, pullspec: str) -> Optional[str]:
+        """
+        Return a DOCKER_CONFIG directory whose host entry is the longest-prefix path-scoped match for
+        ``pullspec``'s repository, so cosign/skopeo (host-only lookup) use the right credential.
+        Cached per (host, chosen-key). Falls back to the global config dir when nothing matches.
+        """
+        if not self._registry_auths or not self._quay_auth_file:
+            return self._global_docker_config_dir
+        repo = self._image_repo(pullspec)
+        host = repo.split("/", 1)[0]
+        chosen_key = self._find_longest_prefix_key(repo)
+        if chosen_key is None:
+            self._logger.debug("No path-scoped credential matched repo %s; using fallback DOCKER_CONFIG", repo)
+            return self._global_docker_config_dir
+        cache_key = (host, chosen_key)
+        cached = self._pullspec_config_cache.get(cache_key)
+        if cached:
+            return cached
+        config_dir = self._new_registry_config_dir([chosen_key])
+        if config_dir is None:
+            return self._global_docker_config_dir  # fail open
+        self._pullspec_config_cache[cache_key] = config_dir
+        # Log only the host; never the chosen auth key/path or the credential.
+        self._logger.debug("Built repo-aware DOCKER_CONFIG for host %s", host)
+        return config_dir
+
+    def _env_for_pullspec(self, pullspec: str) -> Dict[str, str]:
+        """
+        Return a copy of the base ENV with DOCKER_CONFIG pointed at the repo-aware config for this
+        pullspec (falls back to the base ENV when there is no config dir). Used by every cosign/skopeo
+        call site so the existing-signature checks read the .sig with the correct credential.
+        """
+        env = dict(self.ENV)
+        docker_config_dir = self._docker_config_dir_for_pullspec(pullspec)
+        if docker_config_dir:
+            env["DOCKER_CONFIG"] = docker_config_dir
+        return env
+
+    def close(self) -> None:
+        """Remove any temporary DOCKER_CONFIG directories by exiting the retained RegistryConfig contexts."""
+        while self._registry_configs:
+            registry_config = self._registry_configs.pop()
+            try:
+                registry_config.__exit__(None, None, None)
+            except Exception:
+                pass
+        self._pullspec_config_cache = {}
+        self._global_docker_config_dir = None
+
+    def __del__(self):
+        try:
+            self.close()
+        except Exception:
+            pass
 
     @staticmethod
     def redigest_pullspec(pullspec: str, digest: str) -> str:
@@ -626,8 +740,24 @@ class SigstoreSignatory:
 
         log.info(f"Signing manifest {pullspec} with identities: {identities}")
 
+        env = self._env_for_pullspec(pullspec)
+
+        # Cheap read-only pre-check: if no signature object exists at all, skip the per-identity verify
+        # / KMS round-trips and just sign. force_resign bypasses all checks.
+        # COSIGN_REPOSITORY would redirect where signatures live, so the repo-derived checks could
+        # wrongly report "not signed"; ART doesn't set it, so rather than support redirect we just
+        # always sign when it is present (worst case we sign when we could have skipped, which is safe).
+        if os.environ.get("COSIGN_REPOSITORY"):
+            check_existing = False
+        else:
+            check_existing = (not self.force_resign) and await self._any_signature_exists(pullspec)
+
         for identity in identities:
             for signing_key_id in self.signing_key_ids:
+                if check_existing and await self._signature_exists(pullspec, identity, signing_key_id):
+                    log.debug(f"Signature already present, skipping: pullspec={pullspec}, identity={identity}")
+                    continue
+
                 cmd = [
                     "cosign",
                     "sign",
@@ -650,7 +780,7 @@ class SigstoreSignatory:
 
                 log.debug(f"Running: {cmd}")
                 try:
-                    stdout = await self._retrying_cosign(cmd)
+                    stdout = await self._retrying_cosign(cmd, env)
                     log.debug(f"Signed {pullspec} (identity={identity}): {stdout}")
                     await asyncio.sleep(uniform(0, self.THROTTLE_DELAY))
                 except Exception as exc:
@@ -685,12 +815,164 @@ class SigstoreSignatory:
                     self._logger.info(f"found sig file at {url}")
                     return True
 
+    async def _any_signature_exists(self, pullspec: str) -> bool:
+        """
+        Cheaply check whether ANY cosign signature OBJECT exists for a manifest, without verifying it.
+        cosign stores it at a digest-derived tag ``<repo>:sha256-<hex>.sig``; a registry existence
+        check on that tag lets the common (unsigned) case skip the per-identity verify entirely.
+
+        FAILS OPEN: returns True on anything but a clear registry not-found, so the caller only skips
+        the verify when we are confident no signature object exists (avoids a wrong "not signed").
+
+        :param pullspec: Digest-based pullspec (``<repo>@sha256:<hex>``) to check.
+        :return: True if a signature object exists OR the result is ambiguous; False only on a clear
+            registry not-found for the derived ``.sig`` tag.
+        """
+        log = self._logger
+
+        # Can't derive the .sig tag for a non-digest pullspec; fall through to the per-identity verify.
+        if "@sha256:" not in pullspec:
+            log.debug(
+                "Cannot derive cosign .sig tag for non-digest pullspec %s; assuming signature may exist", pullspec
+            )
+            return True
+        repo, digest_hex = pullspec.split("@sha256:", 1)
+        sig_tag = f"{repo}:sha256-{digest_hex}.sig"
+
+        cmd = ["skopeo", "inspect", "--raw"]
+        # QUAY_AUTH_FILE has path-scoped auth keys that skopeo (unlike cosign) can use directly.
+        quay_auth_file = os.environ.get("QUAY_AUTH_FILE")
+        if quay_auth_file:
+            cmd.extend(["--authfile", quay_auth_file])
+        cmd.append(f"docker://{sig_tag}")
+
+        env = self._env_for_pullspec(pullspec)
+
+        try:
+            rc, stdout, stderr = await exectools.cmd_gather_async(cmd, check=False, env=env)
+        except Exception as exc:
+            # cmd_gather_async can raise (e.g. skopeo missing) rather than return a non-zero rc.
+            # Fail OPEN. Not BaseException, so asyncio.CancelledError still propagates.
+            log.debug(
+                "Could not launch signature existence check for %s (sig tag %s): %s; assuming signature may exist",
+                pullspec,
+                sig_tag,
+                exc,
+            )
+            return True
+        if rc == 0:
+            return True  # the .sig object exists
+
+        # Match only tight registry "no such manifest" signals; a bare "not found" stays ambiguous
+        # (so e.g. "skopeo: command not found" is not mistaken for "no signature").
+        stderr_lc = (stderr or "").lower()
+        not_found_signals = (
+            "manifest unknown",
+            "manifestunknown",
+            "name unknown",
+            "nameunknown",
+            "was deleted or has expired",
+            "http 404",
+            "status 404",
+            " 404 ",
+        )
+        if any(signal in stderr_lc for signal in not_found_signals):
+            log.debug("No cosign signature object for %s (sig tag %s not found)", pullspec, sig_tag)
+            return False
+
+        # Ambiguous (auth/network error, unrecognized output): fail OPEN.
+        log.debug(
+            "Ambiguous signature existence check for %s (sig tag %s, rc=%s): %s; assuming signature may exist",
+            pullspec,
+            sig_tag,
+            rc,
+            exectools._redact_url_credentials(stderr),
+        )
+        return True
+
+    async def _signature_exists(self, pullspec: str, identity: str, signing_key_id: str) -> bool:
+        """
+        Check whether OUR cosign signature for a specific identity already exists on a manifest,
+        verified against the given key and matching the exact docker-reference identity.
+
+        FAILS OPEN: any verify failure, non-zero exit, or parse error returns False so the caller signs.
+
+        :param pullspec: Digest-based pullspec to verify
+        :param identity: The docker-reference identity the signature must match
+        :param signing_key_id: AWS KMS key id the signature must be verifiable against
+        :return: True only if a signature for this exact identity exists and verifies
+        """
+        log = self._logger
+
+        cmd = [
+            "cosign",
+            "verify",
+            "--key",
+            f"awskms:///{signing_key_id}",
+            "--output",
+            "json",
+        ]
+
+        # Ignore the tlog for this idempotency check: verifying against our internal Rekor fails with
+        # "rekor log public key not found" (not in the TUF root cosign consults), which would fail open
+        # and re-sign every time. Signing itself still records to the tlog.
+        cmd.append("--insecure-ignore-tlog=true")
+
+        cmd.append(pullspec)
+
+        env = self._env_for_pullspec(pullspec)
+
+        try:
+            rc, stdout, stderr = await exectools.cmd_gather_async(cmd, check=False, env=env)
+        except Exception as exc:
+            # cmd_gather_async can raise (e.g. cosign missing) rather than return a non-zero rc.
+            # Fail OPEN (treat as not signed). Not BaseException, so asyncio.CancelledError propagates.
+            log.warning(
+                f"Could not launch cosign verify for {pullspec} (identity={identity}): {exc}; treating as not signed"
+            )
+            return False
+        if rc != 0:
+            # Not signed by us (or not verifiable) -> re-sign. Redact URL credentials from stderr.
+            log.debug(
+                f"cosign verify returned rc={rc} for {pullspec} (identity={identity}): "
+                f"{exectools._redact_url_credentials(stderr)}"
+            )
+            return False
+
+        try:
+            payloads = json.loads(stdout)
+        except json.JSONDecodeError as exc:
+            log.warning(f"Could not parse cosign verify output for {pullspec} (identity={identity}): {exc}")
+            return False  # fail open
+
+        # cosign may exit 0 yet emit a non-list (e.g. `null`); treat any unexpected shape as not signed.
+        if not isinstance(payloads, list):
+            log.warning(
+                f"Unexpected cosign verify output (not a list) for {pullspec} (identity={identity}); "
+                "treating as not signed"
+            )
+            return False
+
+        for payload in payloads:
+            if not isinstance(payload, dict):
+                continue
+            critical = payload.get("critical")
+            if not isinstance(critical, dict):
+                continue
+            identity_obj = critical.get("identity")
+            if not isinstance(identity_obj, dict):
+                continue
+            if identity_obj.get("docker-reference") == identity:
+                return True
+        return False
+
     @retry(wait=wait_random_exponential(), stop=stop_after_attempt(5), reraise=True)
-    async def _retrying_cosign(self, cmd: List[str]) -> str:
+    async def _retrying_cosign(self, cmd: List[str], env: Optional[Dict[str, str]] = None) -> str:
         """Execute cosign with retry on failure."""
+        if env is None:
+            env = self.ENV
         await asyncio.sleep(uniform(0, self.THROTTLE_DELAY))
-        self._logger.debug("cosign ENV DOCKER_CONFIG=%s", self.ENV.get("DOCKER_CONFIG"))
-        rc, stdout, stderr = await exectools.cmd_gather_async(cmd, check=False, env=self.ENV)
+        rc, stdout, stderr = await exectools.cmd_gather_async(cmd, check=False, env=env)
         if rc:
             raise RuntimeError(stderr)
         return stdout

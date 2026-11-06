@@ -1,10 +1,14 @@
+import hashlib
 import html
+import json
 import os
 import re
 from typing import Dict, Optional
+from uuid import uuid4
 
 import click
 from artcommonlib.constants import KONFLUX_DEFAULT_IMAGE_REPO, RHCOS_IMAGE_REPO
+from artcommonlib.exectools import cmd_gather_async
 from artcommonlib.registry_config import RegistryConfig
 from artcommonlib.util import sync_to_quay
 
@@ -20,6 +24,7 @@ class RhcosNodeImagePostBuildPipeline:
 
     _RELEASE_PATTERN = re.compile(r'^(?P<version>\d+\.\d+)-(?P<rhel_version>\d+\.\d+)$')
     _DIGEST_PULLSPEC_PATTERN = re.compile(rf'^{re.escape(RHCOS_IMAGE_REPO)}@sha256:[0-9a-f]{{64}}$')
+    _RELEASE_LABEL_TIMESTAMP_PATTERN = re.compile(r'^(\d{12})\.')
     _INTEGRATION_TEST_TIMEOUT = 90 * 60
 
     def __init__(self, runtime: Runtime, release: str, node_image: str, extensions_image: str):
@@ -69,6 +74,119 @@ class RhcosNodeImagePostBuildPipeline:
 
         return tags
 
+    async def _extract_timestamp_from_nvr(self, pullspec: str, auth_file: str) -> Optional[str]:
+        """Extract the 12-digit build timestamp from the ``release`` label of a source image.
+
+        Uses ``oc image info`` to read the image labels and parses the
+        ``YYYYMMDDHHMI`` timestamp from the ``release`` label value
+        (e.g. ``202610151443.p2.g62965e8.assembly.stream.el9``).
+
+        Returns ``None`` when the label is absent or its format is
+        unrecognised so that older groups whose images lack the label
+        can still be promoted with floating tags only.
+        """
+
+        cmd = [
+            'oc',
+            'image',
+            'info',
+            '-o',
+            'json',
+            pullspec,
+            '--filter-by-os=linux/amd64',
+            f'--registry-config={auth_file}',
+        ]
+
+        self.runtime.logger.info('Reading release label from image %s', pullspec)
+        _, stdout, _ = await cmd_gather_async(cmd, check=True)
+        info = json.loads(stdout)
+
+        release_label = info.get('config', {}).get('config', {}).get('Labels', {}).get('release', '')
+        if not release_label:
+            self.runtime.logger.warning('Image %s has no release label; skipping timestamped tags', pullspec)
+            return None
+
+        match = self._RELEASE_LABEL_TIMESTAMP_PATTERN.match(release_label)
+        if not match:
+            self.runtime.logger.warning(
+                'Could not extract timestamp from release label %r of image %s; skipping timestamped tags',
+                release_label,
+                pullspec,
+            )
+            return None
+
+        timestamp = match.group(1)
+        self.runtime.logger.info('Extracted timestamp %s from release label %s', timestamp, release_label)
+        return timestamp
+
+    async def _apply_manifest_list_tag_label(
+        self,
+        source_pullspec: str,
+        dest_repo: str,
+        dest_tag: str,
+        label_value: str,
+        auth_file: str,
+    ) -> str:
+        """Label every platform config and publish the list by its immutable digest.
+
+        A unique staging tag isolates concurrent promotions. Keep that tag rather
+        than deleting its manifest, which is also referenced by the published tags.
+        """
+
+        dest = f'{dest_repo}:{dest_tag}'
+        staging_pullspec = f'{dest_repo}:rhcos-label-{uuid4().hex}'
+        label_patch = json.dumps({'Labels': {'coreos.build.manifest-list-tag': label_value}})
+        self.runtime.logger.info(
+            'Applying coreos.build.manifest-list-tag=%s to every platform in %s via %s',
+            label_value,
+            source_pullspec,
+            staging_pullspec,
+        )
+        await cmd_gather_async(
+            [
+                'oc',
+                'image',
+                'append',
+                f'--from={source_pullspec}',
+                f'--to={staging_pullspec}',
+                f'--image={label_patch}',
+                '--keep-manifest-list',
+                f'--registry-config={auth_file}',
+            ],
+            check=True,
+        )
+        _, raw_manifest, _ = await cmd_gather_async(
+            ['skopeo', 'inspect', '--raw', f'--authfile={auth_file}', f'docker://{staging_pullspec}'],
+            check=True,
+        )
+        try:
+            manifest_list = json.loads(raw_manifest)
+        except json.JSONDecodeError as error:
+            raise ValueError(f'Invalid manifest-list JSON for {staging_pullspec}') from error
+        if (
+            not isinstance(manifest_list, dict)
+            or not isinstance(manifest_list.get('manifests'), list)
+            or not manifest_list['manifests']
+        ):
+            raise ValueError(f'Expected a non-empty manifest list for {staging_pullspec}')
+        digest_pullspec = f'{dest_repo}@sha256:{hashlib.sha256(raw_manifest.encode()).hexdigest()}'
+        await cmd_gather_async(
+            [
+                'oc',
+                'image',
+                'mirror',
+                '--keep-manifest-list',
+                digest_pullspec,
+                dest,
+                f'--registry-config={auth_file}',
+            ],
+            check=True,
+        )
+        self.runtime.logger.info(
+            'Labeled image available at %s (%s); retaining staging tag %s', dest, digest_pullspec, staging_pullspec
+        )
+        return digest_pullspec
+
     async def _promote(self, tags: Dict[str, str]):
         quay_auth_file = os.environ.get('QUAY_AUTH_FILE')
         rhcos_quay_auth_file = os.environ.get('RHCOS_QUAY_AUTH_FILE')
@@ -82,8 +200,86 @@ class RhcosNodeImagePostBuildPipeline:
             previous_auth_file = os.environ.get('QUAY_AUTH_FILE')
             os.environ['QUAY_AUTH_FILE'] = merged_auth_file
             try:
-                await sync_to_quay(self.node_image, KONFLUX_DEFAULT_IMAGE_REPO, [tags['node']])
-                await sync_to_quay(self.extensions_image, KONFLUX_DEFAULT_IMAGE_REPO, [tags['extensions']])
+                # Extract the build timestamp from the NVR tag on the source node image.
+                # Returns None when the release label is absent or has an unexpected
+                # format (e.g. older groups that predate the label convention).
+                timestamp = await self._extract_timestamp_from_nvr(self.node_image, merged_auth_file)
+
+                node_tags = [tags['node']]
+                extensions_tags = [tags['extensions']]
+                node_pullspec = self.node_image
+                extensions_pullspec = self.extensions_image
+                node_labeled_tags = set()
+                extensions_labeled_tags = set()
+
+                if timestamp:
+                    # Build timestamped tags from the release stream and extracted timestamp
+                    node_timestamped_tag = f'{self.release}-{timestamp}-node-image'
+                    extensions_timestamped_tag = f'{self.release}-{timestamp}-node-image-extensions'
+                    self.runtime.logger.info(
+                        'Timestamped tags from NVR: node=%s, extensions=%s',
+                        node_timestamped_tag,
+                        extensions_timestamped_tag,
+                    )
+
+                    node_pullspec = await self._apply_manifest_list_tag_label(
+                        source_pullspec=self.node_image,
+                        dest_repo=KONFLUX_DEFAULT_IMAGE_REPO,
+                        dest_tag=node_timestamped_tag,
+                        label_value=node_timestamped_tag,
+                        auth_file=merged_auth_file,
+                    )
+                    extensions_pullspec = await self._apply_manifest_list_tag_label(
+                        source_pullspec=self.extensions_image,
+                        dest_repo=KONFLUX_DEFAULT_IMAGE_REPO,
+                        dest_tag=extensions_timestamped_tag,
+                        label_value=extensions_timestamped_tag,
+                        auth_file=merged_auth_file,
+                    )
+                    node_tags.append(node_timestamped_tag)
+                    node_tags.insert(0, f'sha256-{node_pullspec.split("@sha256:", 1)[1]}')
+                    node_labeled_tags.add(node_timestamped_tag)
+                    extensions_tags.append(extensions_timestamped_tag)
+                    extensions_tags.insert(0, f'sha256-{extensions_pullspec.split("@sha256:", 1)[1]}')
+                    extensions_labeled_tags.add(extensions_timestamped_tag)
+                else:
+                    self.runtime.logger.info('No timestamp available; promoting with floating tags only')
+
+                for pullspec, image_tags, labeled_tags in (
+                    (node_pullspec, node_tags, node_labeled_tags),
+                    (extensions_pullspec, extensions_tags, extensions_labeled_tags),
+                ):
+                    source_repo = pullspec.split('@', 1)[0]
+                    if ':' in source_repo.rsplit('/', 1)[-1]:
+                        source_repo = source_repo.rsplit(':', 1)[0]
+                    if source_repo != KONFLUX_DEFAULT_IMAGE_REPO:
+                        await sync_to_quay(pullspec, KONFLUX_DEFAULT_IMAGE_REPO, image_tags)
+                        continue
+
+                    self.runtime.logger.info(
+                        'Skipping sync for %s; image is already in destination repository %s',
+                        pullspec,
+                        KONFLUX_DEFAULT_IMAGE_REPO,
+                    )
+                    for tag in image_tags:
+                        if tag in labeled_tags:
+                            continue
+                        destination = f'{KONFLUX_DEFAULT_IMAGE_REPO}:{tag}'
+                        self.runtime.logger.info(
+                            'Mirroring labeled image from %s to remaining tag %s', pullspec, destination
+                        )
+                        await cmd_gather_async(
+                            [
+                                'oc',
+                                'image',
+                                'mirror',
+                                '--keep-manifest-list',
+                                pullspec,
+                                destination,
+                                f'--registry-config={merged_auth_file}',
+                            ],
+                            check=True,
+                        )
             finally:
                 if previous_auth_file is None:
                     os.environ.pop('QUAY_AUTH_FILE', None)

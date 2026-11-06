@@ -1,16 +1,17 @@
 from unittest.mock import MagicMock, patch
 
 import pytest
-from pyartcd.tekton_locks import is_pipelinerun_active, parse_k8s_lock_path
+from pyartcd.tekton_locks import is_tekton_run_active, parse_k8s_lock_path
 
 
 def test_parse_k8s_lock_path_valid():
     """Test parsing a valid k8s lock path"""
     lock_path = 'k8s/ns/art-quay-tenant/tekton.dev~v1~PipelineRun/build-layered-products-quay-5-0-vrzgj'
-    namespace, resource_name = parse_k8s_lock_path(lock_path)
+    namespace, resource_name, resource_kind = parse_k8s_lock_path(lock_path)
 
     assert namespace == 'art-quay-tenant'
     assert resource_name == 'build-layered-products-quay-5-0-vrzgj'
+    assert resource_kind == 'PipelineRun'
 
 
 def test_parse_k8s_lock_path_invalid_prefix():
@@ -30,14 +31,14 @@ def test_parse_k8s_lock_path_malformed():
 
 
 def test_parse_k8s_lock_path_unsupported_resource_type():
-    """Test parsing fails for non-PipelineRun resource types"""
-    lock_path = 'k8s/ns/art-quay-tenant/tekton.dev~v1~TaskRun/task-abc'
+    """Test parsing fails for resources that are not runs"""
+    lock_path = 'k8s/ns/art-quay-tenant/tekton.dev~v1~Task/task-abc'
     result = parse_k8s_lock_path(lock_path)
 
     assert result is None
 
 
-def test_is_pipelinerun_active_running():
+def test_is_tekton_run_active_running():
     """Test active running PipelineRun"""
     with patch('pyartcd.tekton_locks.config.load_kube_config'):
         with patch('pyartcd.tekton_locks.client.CustomObjectsApi') as mock_api_class:
@@ -50,12 +51,12 @@ def test_is_pipelinerun_active_running():
                 'status': {'conditions': [{'type': 'Started', 'status': 'True'}]},
             }
 
-            result = is_pipelinerun_active('/path/to/kubeconfig', 'art-quay-tenant', 'build-abc')
+            result = is_tekton_run_active('/path/to/kubeconfig', 'art-quay-tenant', 'build-abc')
 
             assert result is True
 
 
-def test_is_pipelinerun_active_completed():
+def test_is_tekton_run_active_completed():
     """Test completed PipelineRun"""
     with patch('pyartcd.tekton_locks.config.load_kube_config'):
         with patch('pyartcd.tekton_locks.client.CustomObjectsApi') as mock_api_class:
@@ -68,12 +69,12 @@ def test_is_pipelinerun_active_completed():
                 'status': {'conditions': [{'type': 'Succeeded', 'status': 'True'}]},
             }
 
-            result = is_pipelinerun_active('/path/to/kubeconfig', 'art-quay-tenant', 'build-abc')
+            result = is_tekton_run_active('/path/to/kubeconfig', 'art-quay-tenant', 'build-abc')
 
             assert result is False
 
 
-def test_is_pipelinerun_active_failed():
+def test_is_tekton_run_active_failed():
     """Test failed/timed-out PipelineRun"""
     with patch('pyartcd.tekton_locks.config.load_kube_config'):
         with patch('pyartcd.tekton_locks.client.CustomObjectsApi') as mock_api_class:
@@ -86,12 +87,12 @@ def test_is_pipelinerun_active_failed():
                 'status': {'conditions': [{'type': 'Succeeded', 'status': 'False'}]},
             }
 
-            result = is_pipelinerun_active('/path/to/kubeconfig', 'art-quay-tenant', 'build-abc')
+            result = is_tekton_run_active('/path/to/kubeconfig', 'art-quay-tenant', 'build-abc')
 
             assert result is False
 
 
-def test_is_pipelinerun_active_not_found():
+def test_is_tekton_run_active_not_found():
     """Test PipelineRun doesn't exist"""
     with patch('pyartcd.tekton_locks.config.load_kube_config'):
         with patch('pyartcd.tekton_locks.client.CustomObjectsApi') as mock_api_class:
@@ -103,12 +104,12 @@ def test_is_pipelinerun_active_not_found():
             # 404 error
             mock_api.get_namespaced_custom_object.side_effect = client.exceptions.ApiException(status=404)
 
-            result = is_pipelinerun_active('/path/to/kubeconfig', 'art-quay-tenant', 'build-abc')
+            result = is_tekton_run_active('/path/to/kubeconfig', 'art-quay-tenant', 'build-abc')
 
             assert result is None
 
 
-def test_is_pipelinerun_active_query_error():
+def test_is_tekton_run_active_query_error():
     """Test query error other than 404 raises exception"""
     with patch('pyartcd.tekton_locks.config.load_kube_config'):
         with patch('pyartcd.tekton_locks.client.CustomObjectsApi') as mock_api_class:
@@ -121,4 +122,4 @@ def test_is_pipelinerun_active_query_error():
             mock_api.get_namespaced_custom_object.side_effect = client.exceptions.ApiException(status=500)
 
             with pytest.raises(client.exceptions.ApiException):
-                is_pipelinerun_active('/path/to/kubeconfig', 'art-quay-tenant', 'build-abc')
+                is_tekton_run_active('/path/to/kubeconfig', 'art-quay-tenant', 'build-abc')

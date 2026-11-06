@@ -13,6 +13,13 @@ PRODUCT_CATALOG: tuple[ProductConfig, ...] = (
         product_id=ProductId.OCP,
         namespace="ocp-art-tenant",
         kubeconfig_env="KONFLUX_SA_KUBECONFIG",
+        conforma_stage_policies=ConformaPolicies(
+            image_policy="rhtap-releng-tenant/registry-ocp-art-stage",
+            fbc_policy="rhtap-releng-tenant/fbc-ocp-art-stage",
+            pre_release_image_policy="rhtap-releng-tenant/registry-ocp-art-ec-stage",
+            test_image_policy="ocp-art-tenant/conforma-build-stage-test",
+            test_pre_release_image_policy="ocp-art-tenant/conforma-build-ec-stage-test",
+        ),
         base_image_release=ReleaseTarget(
             release_plan="ocp-art-images-base-silent",
             application="art-images-base",
@@ -53,6 +60,9 @@ PRODUCT_CATALOG: tuple[ProductConfig, ...] = (
             fbc_policy="rhtap-releng-tenant/fbc-art-acm-stage",
         ),
         fbc_stage_release_plans={
+            (2, 11): "acm-advisory-stage-auto-2-11",
+            (2, 13): "acm-advisory-stage-auto-2-13",
+            (2, 14): "acm-advisory-stage-auto-2-14",
             (2, 15): "acm-advisory-stage-auto-2-15",
             (2, 16): "acm-advisory-stage-auto-2-16",
             (2, 17): "acm-advisory-stage-auto-2-17",
@@ -68,6 +78,10 @@ PRODUCT_CATALOG: tuple[ProductConfig, ...] = (
             release_plan="oap-cm-images-base-silent",
             application="oap-images-base",
         ),
+        conforma_stage_policies=ConformaPolicies(
+            image_policy="rhtap-releng-tenant/registry-art-oap-stage",
+            fbc_policy="rhtap-releng-tenant/fbc-stage",
+        ),
         fbc_stage_release_plans={(1, 19): "cm-advisory-stage-auto-1-19"},
         cpe_product_name="cert_manager",
     ),
@@ -79,6 +93,10 @@ PRODUCT_CATALOG: tuple[ProductConfig, ...] = (
             release_plan="coo-images-base-silent",
             application="coo-images-base",
         ),
+        conforma_stage_policies=ConformaPolicies(
+            image_policy="rhtap-releng-tenant/registry-art-coo-stage",
+            fbc_policy="rhtap-releng-tenant/fbc-stage",
+        ),
         fbc_stage_release_plans={(1, 5): "coo-advisory-stage-auto-1-5"},
         cpe_product_name="cluster_observability_operator",
     ),
@@ -86,12 +104,22 @@ PRODUCT_CATALOG: tuple[ProductConfig, ...] = (
     # konflux-release-data. Reviewers must confirm these exist or create them.
     ProductConfig(
         product_id=ProductId.KUEUE,
+        aliases=("kueue-operator",),
         namespace="art-kueue-tenant",
         kubeconfig_env="KUEUE_KONFLUX_SA_KUBECONFIG",
         base_image_release=ReleaseTarget(
             release_plan="kueue-images-base-silent",
             application="kueue-images-base",
         ),
+        conforma_stage_policies=ConformaPolicies(
+            image_policy="rhtap-releng-tenant/registry-art-kueue-stage",
+            fbc_policy="rhtap-releng-tenant/fbc-stage",
+        ),
+        fbc_stage_release_plans={
+            (1, 4): "kueue-advisory-stage-1-4",
+            (1, 5): "kueue-advisory-stage-1-5",
+        },
+        cpe_product_name="kueue_operator",
     ),
     ProductConfig(
         product_id=ProductId.EXTERNAL_SECRETS,
@@ -100,6 +128,10 @@ PRODUCT_CATALOG: tuple[ProductConfig, ...] = (
         base_image_release=ReleaseTarget(
             release_plan="oap-eso-images-base-silent",
             application="oap-images-base",
+        ),
+        conforma_stage_policies=ConformaPolicies(
+            image_policy="rhtap-releng-tenant/registry-art-oap-stage",
+            fbc_policy="rhtap-releng-tenant/fbc-stage",
         ),
         fbc_stage_release_plans={(1, 1): "eso-advisory-stage-auto-1-1"},
         cpe_product_name="external_secrets_operator",
@@ -117,9 +149,14 @@ PRODUCT_CATALOG: tuple[ProductConfig, ...] = (
             fbc_policy="rhtap-releng-tenant/fbc-art-acm-stage",
         ),
         fbc_stage_release_plans={
+            (2, 6): "mce-advisory-stage-auto-2-6",
+            (2, 8): "mce-advisory-stage-auto-2-8",
+            (2, 9): "mce-advisory-stage-auto-2-9",
+            (2, 10): "mce-advisory-stage-auto-2-10",
             (2, 11): "mce-advisory-stage-auto-2-11",
             (2, 17): "mce-advisory-stage-auto-2-17",
             (5, 0): "mce-advisory-stage-auto-5-0",
+            (5, 1): "mce-advisory-stage-auto-5-1",
         },
         cpe_product_name="multicluster_engine",
     ),
@@ -160,10 +197,10 @@ PRODUCT_CATALOG: tuple[ProductConfig, ...] = (
             fbc_policy="rhtap-releng-tenant/fbc-stage",
         ),
         fbc_stage_release_plans={
-            (8, 0): "mta-advisory-stage-8-0",
-            (8, 1): "mta-advisory-stage-8-1",
-            (8, 2): "mta-advisory-stage-8-2",
-            (8, 3): "mta-advisory-stage-8-3",
+            (8, 0): "mta-advisory-stage-auto-8-0",
+            (8, 1): "mta-advisory-stage-auto-8-1",
+            (8, 2): "mta-advisory-stage-auto-8-2",
+            (8, 3): "mta-advisory-stage-auto-8-3",
         },
         cpe_product_name="migration_toolkit_applications",
     ),
@@ -175,13 +212,21 @@ PRODUCT_CATALOG: tuple[ProductConfig, ...] = (
             release_plan="quay-images-base-silent",
             application="quay-images-base",
         ),
+        conforma_stage_policies=ConformaPolicies(
+            image_policy="rhtap-releng-tenant/registry-art-quay-stage",
+            fbc_policy="rhtap-releng-tenant/fbc-stage",
+        ),
         fbc_stage_release_plans={
-            (3, 9): "quay-advisory-stage-3-9",
-            (3, 10): "quay-advisory-stage-3-10",
-            (3, 16): "quay-advisory-stage-3-16",
-            (3, 17): "quay-advisory-stage-3-17",
-            (3, 18): "quay-advisory-stage-3-18",
-            (5, 0): "quay-advisory-stage-5-0",
+            (3, 9): "quay-advisory-stage-auto-3-9",
+            (3, 10): "quay-advisory-stage-auto-3-10",
+            (3, 12): "quay-advisory-stage-auto-3-12",
+            (3, 14): "quay-advisory-stage-auto-3-14",
+            (3, 15): "quay-advisory-stage-auto-3-15",
+            (3, 16): "quay-advisory-stage-auto-3-16",
+            (3, 17): "quay-advisory-stage-auto-3-17",
+            (3, 18): "quay-advisory-stage-auto-3-18",
+            (5, 0): "quay-advisory-stage-auto-5-0",
+            (5, 1): "quay-advisory-stage-auto-5-1",
         },
     ),
     ProductConfig(
@@ -201,7 +246,7 @@ PRODUCT_CATALOG: tuple[ProductConfig, ...] = (
             image_policy="rhtap-releng-tenant/registry-art-mtc-stage",
             fbc_policy="rhtap-releng-tenant/fbc-stage",
         ),
-        fbc_stage_release_plans={(1, 8): "mtc-advisory-stage-1-8"},
+        fbc_stage_release_plans={(1, 8): "mtc-advisory-stage-auto-1-8"},
         cpe_product_name="rhmt",
     ),
     ProductConfig(
@@ -217,10 +262,10 @@ PRODUCT_CATALOG: tuple[ProductConfig, ...] = (
             fbc_policy="rhtap-releng-tenant/fbc-art-oadp-stage",
         ),
         fbc_stage_release_plans={
-            (1, 3): "oadp-advisory-stage-1-3",
-            (1, 4): "oadp-advisory-stage-1-4",
-            (1, 5): "oadp-advisory-stage-1-5",
-            (1, 6): "oadp-advisory-stage-1-6",
+            (1, 3): "oadp-advisory-stage-auto-1-3",
+            (1, 4): "oadp-advisory-stage-auto-1-4",
+            (1, 5): "oadp-advisory-stage-auto-1-5",
+            (1, 6): "oadp-advisory-stage-auto-1-6",
         },
         cpe_product_name="openshift_api_data_protection",
     ),
@@ -238,7 +283,7 @@ PRODUCT_CATALOG: tuple[ProductConfig, ...] = (
         namespace="art-oc-mirror-tenant",
         kubeconfig_env="OC_MIRROR_KONFLUX_SA_KUBECONFIG",
         conforma_stage_policies=ConformaPolicies(
-            image_policy="rhtap-releng-tenant/registry-standard",
+            image_policy="rhtap-releng-tenant/registry-art-oc-mirror-mirror-gui-stage",
         ),
         fbc_stage_release_plans={(1, 0): "mirror-gui-stage"},
     ),
@@ -250,6 +295,10 @@ PRODUCT_CATALOG: tuple[ProductConfig, ...] = (
             release_plan="rhosdt-images-base-silent",
             application="rhosdt-images-base",
         ),
+        conforma_stage_policies=ConformaPolicies(
+            image_policy="rhtap-releng-tenant/registry-art-rhosdt-stage",
+            fbc_policy="rhtap-releng-tenant/fbc-stage",
+        ),
         fbc_stage_release_plans={(0, 158): "rhosdt-advisory-stage-auto-0-158"},
         cpe_product_name="openshift_distributed_tracing",
     ),
@@ -260,6 +309,10 @@ PRODUCT_CATALOG: tuple[ProductConfig, ...] = (
         base_image_release=ReleaseTarget(
             release_plan="oap-zt-images-base-silent",
             application="oap-images-base",
+        ),
+        conforma_stage_policies=ConformaPolicies(
+            image_policy="rhtap-releng-tenant/registry-art-oap-stage",
+            fbc_policy="rhtap-releng-tenant/fbc-stage",
         ),
         fbc_stage_release_plans={
             (1, 0): "zt-advisory-stage-auto-1-0",

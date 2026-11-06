@@ -403,6 +403,69 @@ class TestKonfluxFbcImporter(unittest.IsolatedAsyncioTestCase):
         source_resolver.resolve_source.assert_called_once_with(metadata)
 
 
+class TestMidStreamInsertion(unittest.TestCase):
+    def test_preserves_unrelated_edges_and_external_tail(self):
+        """A mid-stream insert changes only its successor and the new entry."""
+        entries = [
+            {'name': 'operator.v1.0.2', 'replaces': 'operator.v1.0.1', 'skipRange': '>=1.0.0 <1.0.2'},
+            {'name': 'operator.v1.1.0', 'replaces': 'operator.v1.0.2', 'skips': ['operator.v1.0.0']},
+            {'name': 'operator.v1.1.2', 'replaces': 'operator.v1.1.0', 'skipRange': '>=1.1.0 <1.1.2'},
+        ]
+        new_entry = {'name': 'operator.v1.0.3'}
+
+        KonfluxFbcRebaser._insert_mid_stream_entry(entries, new_entry)
+
+        self.assertEqual(
+            [entry['name'] for entry in entries],
+            ['operator.v1.0.2', 'operator.v1.0.3', 'operator.v1.1.0', 'operator.v1.1.2'],
+        )
+        self.assertEqual(entries[0]['replaces'], 'operator.v1.0.1')
+        self.assertEqual(new_entry['replaces'], 'operator.v1.0.2')
+        self.assertEqual(entries[2]['replaces'], 'operator.v1.0.3')
+        self.assertEqual(entries[2]['skips'], ['operator.v1.0.0'])
+        self.assertEqual(
+            entries[3], {'name': 'operator.v1.1.2', 'replaces': 'operator.v1.1.0', 'skipRange': '>=1.1.0 <1.1.2'}
+        )
+
+    def test_new_tail_inherits_external_bridge(self):
+        """Inserting below the oldest entry transfers its external bridge."""
+        entries = [
+            {'name': 'operator.v1.0.2', 'replaces': 'operator.v1.0.0'},
+            {'name': 'operator.v1.1.0', 'replaces': 'operator.v1.0.2'},
+        ]
+        new_entry = {'name': 'operator.v1.0.1'}
+
+        KonfluxFbcRebaser._insert_mid_stream_entry(entries, new_entry)
+
+        self.assertEqual(new_entry['replaces'], 'operator.v1.0.0')
+        self.assertEqual(entries[1]['replaces'], 'operator.v1.0.1')
+        self.assertEqual(entries[2]['replaces'], 'operator.v1.0.2')
+
+    def test_rejects_non_linear_graph_without_mutating_it(self):
+        """A damaged or branched graph is not silently rebuilt."""
+        entries = [
+            {'name': 'operator.v1.0.2'},
+            {'name': 'operator.v1.1.0', 'replaces': 'operator.v1.0.1'},
+            {'name': 'operator.v1.1.2', 'replaces': 'operator.v1.1.0'},
+        ]
+        original = [entry.copy() for entry in entries]
+
+        with self.assertRaisesRegex(IOError, 'non-linear replaces graph'):
+            KonfluxFbcRebaser._insert_mid_stream_entry(entries, {'name': 'operator.v1.0.3'})
+
+        self.assertEqual(entries, original)
+
+    def test_rejects_bundle_already_skipped(self):
+        """Do not insert a bundle that an existing edge intentionally skips."""
+        entries = [
+            {'name': 'operator.v1.0.2'},
+            {'name': 'operator.v1.1.0', 'replaces': 'operator.v1.0.2', 'skips': ['operator.v1.0.3']},
+        ]
+
+        with self.assertRaisesRegex(IOError, 'already skipped'):
+            KonfluxFbcRebaser._insert_mid_stream_entry(entries, {'name': 'operator.v1.0.3'})
+
+
 class TestKonfluxFbcRebaser(unittest.IsolatedAsyncioTestCase):
     def setUp(self):
         self.base_dir = Path("/tmp/konflux_fbc_rebaser")
@@ -684,7 +747,7 @@ class TestKonfluxFbcRebaser(unittest.IsolatedAsyncioTestCase):
         expected_labels = {
             "io.openshift.build.source-location": "https://example.com/foo-operator.git",
             "io.openshift.build.commit.id": "beefdead",
-            "com.redhat.art.bundle.pullspec": f"dev.example.com/foo-bundle@{bundle_digest}",
+            "com.redhat.art.bundle.pullspec": f"registry.redhat.io/openshift4/foo-bundle@{bundle_digest}",
         }
         for k, v in expected_labels.items():
             self.assertIn(k, mock_dfp.labels)
@@ -694,6 +757,7 @@ class TestKonfluxFbcRebaser(unittest.IsolatedAsyncioTestCase):
         result_catalog_blobs = list(yaml.load_all(result_catalog_file))
         result_catalog_blobs = self.rebaser._catagorize_catalog_blobs(result_catalog_blobs)
         self.assertEqual(result_catalog_blobs.keys(), {"test-package"})
+        # Skips-only LP channel: accumulate skips onto new head, do NOT invent replaces
         self.assertEqual(
             result_catalog_blobs["test-package"]["olm.channel"]["test-channel"]["entries"],
             [
@@ -702,7 +766,6 @@ class TestKonfluxFbcRebaser(unittest.IsolatedAsyncioTestCase):
                 {"name": "test-bundle-name.1.1.0", "skipRange": ">=4.8.0 <4.17.0"},
                 {
                     "name": "test-bundle-name.1.2.3",
-                    "replaces": "test-bundle-name.1.0.0",
                     "skipRange": ">=4.8.0 <4.17.0",
                     "skips": [
                         "test-bundle-name.0.0.9",
@@ -720,6 +783,7 @@ class TestKonfluxFbcRebaser(unittest.IsolatedAsyncioTestCase):
         bundle_blob = result_catalog_blobs["test-package"]["olm.bundle"]["test-bundle-name.1.2.3"]
         delivery_pullspec = f"registry.redhat.io/openshift4/foo-bundle@{bundle_digest}"
         self.assertEqual(bundle_blob["image"], delivery_pullspec)
+        self.assertEqual(mock_dfp.labels["com.redhat.art.bundle.pullspec"], delivery_pullspec)
         self.assertEqual(bundle_blob["relatedImages"][0]["image"], delivery_pullspec)
 
         images_mirror_set_file.seek(0)
@@ -749,7 +813,10 @@ class TestKonfluxFbcRebaser(unittest.IsolatedAsyncioTestCase):
 
             await self.rebaser._rebase_dir(metadata, build_repo, bundle_build, version, release, logger)
 
-            self.assertEqual(mock_dfp.labels["com.redhat.art.bundle.pullspec"], bundle_build.image_pullspec)
+            self.assertEqual(
+                mock_dfp.labels["com.redhat.art.bundle.pullspec"],
+                f"registry.redhat.io/openshift4/foo-bundle@sha256:{'b' * 64}",
+            )
             self.assertEqual(mock_dfp.envs["__doozer_bundle_nvrs"], bundle_build.nvr)
 
     @patch("doozerlib.opm.generate_dockerfile")
@@ -1584,9 +1651,8 @@ class TestKonfluxFbcRebaser(unittest.IsolatedAsyncioTestCase):
     ):
         """LP mid-stream insert with FBC_ENABLE_MID_STREAM_REWIRE rebuilds replaces chain.
 
-        Shared-channel case: catalog already has 1.0.2 -> 1.1.0 -> 1.1.2. Adding 1.0.3
-        must insert by version order (not replaces: HEAD) and rewire:
-        1.0.2 -> 1.0.3 -> 1.1.0 -> 1.1.2.
+        A bundle in both stable-v1 and stable-v1.0 rewires only the shared channel.
+        The shared channel's external tail edge remains connected.
         """
         rebaser = KonfluxFbcRebaser(
             base_dir=self.base_dir,
@@ -1634,7 +1700,7 @@ class TestKonfluxFbcRebaser(unittest.IsolatedAsyncioTestCase):
                 "config": {
                     "Labels": {
                         "name": "zt-operator",
-                        "operators.operatorframework.io.bundle.channels.v1": "stable-v1",
+                        "operators.operatorframework.io.bundle.channels.v1": "stable-v1,stable-v1.0",
                         "operators.operatorframework.io.bundle.channel.default.v1": "stable-v1",
                         "operators.operatorframework.io.bundle.package.v1": "openshift-zt",
                         "operators.operatorframework.io.bundle.manifests.v1": "manifests/",
@@ -1661,7 +1727,10 @@ class TestKonfluxFbcRebaser(unittest.IsolatedAsyncioTestCase):
                 "name": "stable-v1",
                 "package": "openshift-zt",
                 "entries": [
-                    {"name": "zero-trust-workload-identity-manager.v1.0.2"},
+                    {
+                        "name": "zero-trust-workload-identity-manager.v1.0.2",
+                        "replaces": "zero-trust-workload-identity-manager.v1.0.1",
+                    },
                     {
                         "name": "zero-trust-workload-identity-manager.v1.1.0",
                         "replaces": "zero-trust-workload-identity-manager.v1.0.2",
@@ -1671,6 +1740,12 @@ class TestKonfluxFbcRebaser(unittest.IsolatedAsyncioTestCase):
                         "replaces": "zero-trust-workload-identity-manager.v1.1.0",
                     },
                 ],
+            },
+            {
+                "schema": "olm.channel",
+                "name": "stable-v1.0",
+                "package": "openshift-zt",
+                "entries": [{"name": "zero-trust-workload-identity-manager.v1.0.2"}],
             },
             {
                 "schema": "olm.bundle",
@@ -1712,14 +1787,24 @@ class TestKonfluxFbcRebaser(unittest.IsolatedAsyncioTestCase):
                 "zero-trust-workload-identity-manager.v1.1.2",
             ],
         )
-        self.assertNotIn("replaces", entries[0])
+        self.assertEqual(entries[0]["replaces"], "zero-trust-workload-identity-manager.v1.0.1")
         self.assertEqual(entries[1]["replaces"], "zero-trust-workload-identity-manager.v1.0.2")
         self.assertEqual(entries[2]["replaces"], "zero-trust-workload-identity-manager.v1.0.3")
         self.assertEqual(entries[3]["replaces"], "zero-trust-workload-identity-manager.v1.1.0")
+        stream_entries = result_catalog_blobs["openshift-zt"]["olm.channel"]["stable-v1.0"]["entries"]
+        self.assertEqual(
+            stream_entries,
+            [
+                {"name": "zero-trust-workload-identity-manager.v1.0.2"},
+                {
+                    "name": "zero-trust-workload-identity-manager.v1.0.3",
+                    "replaces": "zero-trust-workload-identity-manager.v1.0.2",
+                    "skips": ["zero-trust-workload-identity-manager.v1.0.2"],
+                },
+            ],
+        )
         logger.info.assert_any_call(
-            "Mid-stream insert for %s in channel %s "
-            "(new version older than head %s); "
-            "sorting entries and rebuilding replaces chain",
+            "Mid-stream insert for %s in channel %s (new version older than head %s); updating adjacent replaces edges",
             "zero-trust-workload-identity-manager.v1.0.3",
             "stable-v1",
             "zero-trust-workload-identity-manager.v1.1.2",
@@ -1909,7 +1994,7 @@ class TestKonfluxFbcRebaser(unittest.IsolatedAsyncioTestCase):
         metadata.runtime.group_config.vars.MAJOR = "4"
         metadata.runtime.group_config.vars.MINOR = "21"
         metadata.runtime.group_config.vars.FBC_DISABLE_CHANNEL_SKIPS = False
-        metadata.runtime.group_config.vars.FBC_ENABLE_MID_STREAM_REWIRE = False
+        metadata.runtime.group_config.vars.FBC_ENABLE_MID_STREAM_REWIRE = "false"
         metadata.runtime.konflux_db = MagicMock()
         metadata.config = MagicMock()
         metadata.config.delivery = MagicMock()
@@ -3389,7 +3474,318 @@ class TestKonfluxFbcRebaser(unittest.IsolatedAsyncioTestCase):
                     f"Entry {entry['name']} should not retain skips after migration",
                 )
 
-        self.assertIn("replaces", new_entry)
+        # Skips-only channel: do not invent a bogus replaces edge
+        self.assertNotIn("replaces", new_entry)
+
+    @patch("doozerlib.opm.generate_dockerfile")
+    @patch("pathlib.Path.unlink")
+    @patch("doozerlib.backend.konflux_fbc.KonfluxFbcRebaser._load_csv_from_bundle")
+    @patch("doozerlib.backend.konflux_fbc.KonfluxFbcRebaser._get_referenced_images")
+    @patch("doozerlib.backend.konflux_fbc.DockerfileParser")
+    @patch("pathlib.Path.mkdir")
+    @patch("pathlib.Path.is_file", return_value=True)
+    @patch("pathlib.Path.open")
+    @patch("doozerlib.backend.konflux_fbc.KonfluxFbcRebaser._fetch_olm_bundle_image_info", new_callable=AsyncMock)
+    @patch("doozerlib.backend.konflux_fbc.KonfluxFbcRebaser._fetch_olm_bundle_blob", new_callable=AsyncMock)
+    async def test_rebase_dir_lp_skips_only_no_replaces(
+        self,
+        mock_fetch_olm_bundle_blob,
+        mock_fetch_olm_bundle_image_info,
+        mock_open,
+        mock_is_file,
+        mock_mkdir,
+        MockDockerfileParser,
+        mock_get_referenced_images,
+        mock_load_csv_from_bundle: AsyncMock,
+        mock_path_unlink: Mock,
+        mock_generate_dockerfile: AsyncMock,
+    ):
+        """A skips-only LP channel remains skips-only even with mid-stream rewire enabled."""
+        rebaser = KonfluxFbcRebaser(
+            base_dir=self.base_dir,
+            group="kueue-1.4",
+            assembly=self.assembly,
+            version="1.4.4",
+            release="1",
+            commit_message="test",
+            push=False,
+            fbc_repo="https://example.com/fbc.git",
+            upcycle=False,
+        )
+
+        metadata = MagicMock(spec=ImageMetadata)
+        metadata.distgit_key = "kueue-operator"
+        metadata.runtime = MagicMock()
+        metadata.runtime.group_config = MagicMock()
+        metadata.runtime.group_config.vars = MagicMock()
+        metadata.runtime.group_config.vars.MAJOR = "1"
+        metadata.runtime.group_config.vars.MINOR = "4"
+        metadata.runtime.group_config.vars.FBC_DISABLE_CHANNEL_SKIPS = False
+        metadata.runtime.group_config.vars.FBC_ENABLE_MID_STREAM_REWIRE = True
+        metadata.runtime.konflux_db = MagicMock()
+        metadata.config = MagicMock()
+        metadata.config.delivery = MagicMock()
+        metadata.config.delivery.delivery_repo_names = ["kueue-repo"]
+        metadata.get_olm_bundle_delivery_repo_name.return_value = "kueue-repo"
+
+        build_repo = MagicMock()
+        build_repo.local_dir = self.base_dir
+        bundle_build = MagicMock(
+            spec=KonfluxBundleBuildRecord,
+            nvr="kueue-operator-bundle-1.4.4-1",
+            operator_nvr="kueue-operator-1.4.4-1",
+            operand_nvrs=[],
+            image_pullspec="example.com/kueue-bundle@sha256:abc",
+            image_tag="abc123",
+            source_repo="https://example.com/kueue-operator.git",
+            commitish="abc123def",
+        )
+        logger = MagicMock()
+
+        mock_fetch_olm_bundle_image_info.return_value = {
+            "config": {
+                "config": {
+                    "Labels": {
+                        "name": "kueue-operator",
+                        "operators.operatorframework.io.bundle.channels.v1": "stable-v1.4",
+                        "operators.operatorframework.io.bundle.channel.default.v1": "stable-v1.4",
+                        "operators.operatorframework.io.bundle.package.v1": "kueue-operator",
+                        "operators.operatorframework.io.bundle.manifests.v1": "manifests/",
+                    },
+                },
+            },
+        }
+
+        mock_fetch_olm_bundle_blob.return_value = (
+            "kueue-operator.v1.4.4",
+            "kueue-operator",
+            {
+                "schema": "olm.bundle",
+                "name": "kueue-operator.v1.4.4",
+                "package": "kueue-operator",
+                "properties": [],
+                "relatedImages": [{"name": "", "image": "example.com/kueue-bundle@sha256:abc"}],
+            },
+        )
+
+        org_catalog_blobs = [
+            {"schema": "olm.package", "name": "kueue-operator", "defaultChannel": "stable-v1.4"},
+            {
+                "schema": "olm.channel",
+                "name": "stable-v1.4",
+                "package": "kueue-operator",
+                "entries": [
+                    {"name": "kueue-operator.v1.4.0"},
+                    {"name": "kueue-operator.v1.4.1"},
+                    {"name": "kueue-operator.v1.4.2"},
+                    {
+                        "name": "kueue-operator.v1.4.3",
+                        "skips": [
+                            "kueue-operator.v1.4.0",
+                            "kueue-operator.v1.4.1",
+                            "kueue-operator.v1.4.2",
+                        ],
+                    },
+                ],
+            },
+            {
+                "schema": "olm.bundle",
+                "name": "kueue-operator.v1.4.3",
+                "package": "kueue-operator",
+                "properties": [],
+                "relatedImages": [],
+            },
+        ]
+
+        org_catalog_file = StringIO()
+        yaml.dump_all(org_catalog_blobs, org_catalog_file)
+        org_catalog_file.seek(0)
+        result_catalog_file = StringIO()
+        images_mirror_set_file = StringIO()
+        mock_open.return_value.__enter__.side_effect = [org_catalog_file, result_catalog_file, images_mirror_set_file]
+
+        mock_get_referenced_images.return_value = []
+        mock_load_csv_from_bundle.return_value = {
+            "metadata": {
+                "name": "kueue-operator",
+                "annotations": {},
+            },
+            "spec": {"icon": []},
+        }
+
+        mock_dfp = MockDockerfileParser.return_value
+        mock_dfp.envs = {}
+        mock_dfp.labels = {}
+
+        mock_generate_dockerfile.return_value = None
+
+        await rebaser._rebase_dir(metadata, build_repo, bundle_build, "1.4.4", "1", logger)
+
+        result_catalog_file.seek(0)
+        result_catalog_blobs = list(yaml.load_all(result_catalog_file))
+        result_catalog_blobs = rebaser._catagorize_catalog_blobs(result_catalog_blobs)
+
+        entries = result_catalog_blobs["kueue-operator"]["olm.channel"]["stable-v1.4"]["entries"]
+        new_entry = next(e for e in entries if e["name"] == "kueue-operator.v1.4.4")
+
+        self.assertEqual(
+            sorted(new_entry["skips"]),
+            sorted(
+                [
+                    "kueue-operator.v1.4.0",
+                    "kueue-operator.v1.4.1",
+                    "kueue-operator.v1.4.2",
+                    "kueue-operator.v1.4.3",
+                ]
+            ),
+        )
+        self.assertNotIn("replaces", new_entry)
+        for entry in entries:
+            if entry["name"] != "kueue-operator.v1.4.4":
+                self.assertNotIn("skips", entry)
+
+    @patch("doozerlib.opm.generate_dockerfile")
+    @patch("pathlib.Path.unlink")
+    @patch("doozerlib.backend.konflux_fbc.KonfluxFbcRebaser._load_csv_from_bundle")
+    @patch("doozerlib.backend.konflux_fbc.KonfluxFbcRebaser._get_referenced_images")
+    @patch("doozerlib.backend.konflux_fbc.DockerfileParser")
+    @patch("pathlib.Path.mkdir")
+    @patch("pathlib.Path.is_file", return_value=True)
+    @patch("pathlib.Path.open")
+    @patch("doozerlib.backend.konflux_fbc.KonfluxFbcRebaser._fetch_olm_bundle_image_info", new_callable=AsyncMock)
+    @patch("doozerlib.backend.konflux_fbc.KonfluxFbcRebaser._fetch_olm_bundle_blob", new_callable=AsyncMock)
+    async def test_rebase_dir_lp_cold_start_invents_replaces(
+        self,
+        mock_fetch_olm_bundle_blob,
+        mock_fetch_olm_bundle_image_info,
+        mock_open,
+        mock_is_file,
+        mock_mkdir,
+        MockDockerfileParser,
+        mock_get_referenced_images,
+        mock_load_csv_from_bundle: AsyncMock,
+        mock_path_unlink: Mock,
+        mock_generate_dockerfile: AsyncMock,
+    ):
+        """LP cold-start (single entry, no skips, no FBC_DISABLE) still invents replaces (BC)."""
+        rebaser = KonfluxFbcRebaser(
+            base_dir=self.base_dir,
+            group="oadp-1.5",
+            assembly=self.assembly,
+            version="1.5.1",
+            release="1",
+            commit_message="test",
+            push=False,
+            fbc_repo="https://example.com/fbc.git",
+            upcycle=False,
+        )
+
+        metadata = MagicMock(spec=ImageMetadata)
+        metadata.distgit_key = "oadp-operator"
+        metadata.runtime = MagicMock()
+        metadata.runtime.group_config = MagicMock()
+        metadata.runtime.group_config.vars = MagicMock()
+        metadata.runtime.group_config.vars.MAJOR = "1"
+        metadata.runtime.group_config.vars.MINOR = "5"
+        metadata.runtime.group_config.vars.FBC_DISABLE_CHANNEL_SKIPS = False
+        metadata.runtime.konflux_db = MagicMock()
+        metadata.config = MagicMock()
+        metadata.config.delivery = MagicMock()
+        metadata.config.delivery.delivery_repo_names = ["oadp-repo"]
+        metadata.get_olm_bundle_delivery_repo_name.return_value = "oadp-repo"
+
+        build_repo = MagicMock()
+        build_repo.local_dir = self.base_dir
+        bundle_build = MagicMock(
+            spec=KonfluxBundleBuildRecord,
+            nvr="oadp-operator-bundle-1.5.1-1",
+            operator_nvr="oadp-operator-1.5.1-1",
+            operand_nvrs=[],
+            image_pullspec="example.com/oadp-bundle@sha256:abc",
+            image_tag="abc123",
+            source_repo="https://example.com/oadp-operator.git",
+            commitish="abc123def",
+        )
+        logger = MagicMock()
+
+        mock_fetch_olm_bundle_image_info.return_value = {
+            "config": {
+                "config": {
+                    "Labels": {
+                        "name": "oadp-operator",
+                        "operators.operatorframework.io.bundle.channels.v1": "stable-1.5",
+                        "operators.operatorframework.io.bundle.channel.default.v1": "stable-1.5",
+                        "operators.operatorframework.io.bundle.package.v1": "redhat-oadp-operator",
+                        "operators.operatorframework.io.bundle.manifests.v1": "manifests/",
+                    },
+                },
+            },
+        }
+
+        mock_fetch_olm_bundle_blob.return_value = (
+            "oadp-operator.v1.5.1",
+            "redhat-oadp-operator",
+            {
+                "schema": "olm.bundle",
+                "name": "oadp-operator.v1.5.1",
+                "package": "redhat-oadp-operator",
+                "properties": [],
+                "relatedImages": [{"name": "", "image": "example.com/oadp-bundle@sha256:abc"}],
+            },
+        )
+
+        org_catalog_blobs = [
+            {"schema": "olm.package", "name": "redhat-oadp-operator", "defaultChannel": "stable-1.5"},
+            {
+                "schema": "olm.channel",
+                "name": "stable-1.5",
+                "package": "redhat-oadp-operator",
+                "entries": [
+                    {"name": "oadp-operator.v1.5.0", "skipRange": ">=1.4.0 <1.5.0"},
+                ],
+            },
+            {
+                "schema": "olm.bundle",
+                "name": "oadp-operator.v1.5.0",
+                "package": "redhat-oadp-operator",
+                "properties": [],
+                "relatedImages": [],
+            },
+        ]
+
+        org_catalog_file = StringIO()
+        yaml.dump_all(org_catalog_blobs, org_catalog_file)
+        org_catalog_file.seek(0)
+        result_catalog_file = StringIO()
+        images_mirror_set_file = StringIO()
+        mock_open.return_value.__enter__.side_effect = [org_catalog_file, result_catalog_file, images_mirror_set_file]
+
+        mock_get_referenced_images.return_value = []
+        mock_load_csv_from_bundle.return_value = {
+            "metadata": {
+                "name": "oadp-operator",
+                "annotations": {"olm.skipRange": ">=1.4.0 <1.5.1"},
+            },
+            "spec": {"icon": []},
+        }
+
+        mock_dfp = MockDockerfileParser.return_value
+        mock_dfp.envs = {}
+        mock_dfp.labels = {}
+
+        mock_generate_dockerfile.return_value = None
+
+        await rebaser._rebase_dir(metadata, build_repo, bundle_build, "1.5.1", "1", logger)
+
+        result_catalog_file.seek(0)
+        result_catalog_blobs = list(yaml.load_all(result_catalog_file))
+        result_catalog_blobs = rebaser._catagorize_catalog_blobs(result_catalog_blobs)
+
+        entries = result_catalog_blobs["redhat-oadp-operator"]["olm.channel"]["stable-1.5"]["entries"]
+        new_entry = next(e for e in entries if e["name"] == "oadp-operator.v1.5.1")
+
+        self.assertEqual(new_entry["replaces"], "oadp-operator.v1.5.0")
+        self.assertEqual(new_entry["skips"], ["oadp-operator.v1.5.0"])
 
 
 class TestFetchCsvFromGit(unittest.IsolatedAsyncioTestCase):

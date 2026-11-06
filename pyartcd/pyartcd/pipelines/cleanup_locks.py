@@ -8,7 +8,7 @@ from pyartcd import constants, jenkins
 from pyartcd.cli import cli, click_coroutine, pass_runtime
 from pyartcd.locks import LockManager
 from pyartcd.runtime import Runtime
-from pyartcd.tekton_locks import is_pipelinerun_active, parse_k8s_lock_path
+from pyartcd.tekton_locks import is_tekton_run_active, parse_k8s_lock_path
 
 
 @cli.command('cleanup-locks')
@@ -49,20 +49,21 @@ async def cleanup_locks(runtime: Runtime, dry_run: bool):
                 )
                 continue
 
-            # Kubernetes/Tekton PipelineRun locks - query cluster directly for this specific resource
+            # Query the exact Tekton resource kind recorded in the lock identifier
             if build_path.startswith('k8s/'):
                 if kubeconfig_path:
-                    # Parse lock path to extract namespace and resource name
+                    # Parse the namespace, resource name, and kind
                     parsed = parse_k8s_lock_path(build_path)
                     if parsed:
-                        namespace, resource_name = parsed
+                        namespace, resource_name, resource_kind = parsed
                         try:
-                            is_active = is_pipelinerun_active(kubeconfig_path, namespace, resource_name)
+                            is_active = is_tekton_run_active(kubeconfig_path, namespace, resource_name, resource_kind)
                         except Exception as e:
                             # Query error - skip this lock to be safe
                             runtime.logger.warning(
-                                'Skipping k8s lock %s - error querying PipelineRun %s/%s: %s',
+                                'Skipping k8s lock %s - error querying %s %s/%s: %s',
                                 lock_name,
+                                resource_kind,
                                 namespace,
                                 resource_name,
                                 e,
@@ -70,28 +71,31 @@ async def cleanup_locks(runtime: Runtime, dry_run: bool):
                             continue
 
                         if is_active is True:
-                            # PipelineRun exists and is Running/Pending - protect this lock
+                            # Run exists and is Running/Pending - protect this lock
                             runtime.logger.info(
-                                'Skipping lock %s - PipelineRun %s/%s is Running/Pending',
+                                'Skipping lock %s - %s %s/%s is Running/Pending',
                                 lock_name,
+                                resource_kind,
                                 namespace,
                                 resource_name,
                             )
                             continue
                         elif is_active is False:
-                            # PipelineRun exists but is completed - safe to delete
+                            # Run exists but is completed - safe to delete
                             if dry_run:
                                 runtime.logger.warning(
-                                    '[DRY RUN] WOULD DELETE orphaned k8s lock: %s (PipelineRun %s/%s is completed)',
+                                    '[DRY RUN] WOULD DELETE orphaned k8s lock: %s (%s %s/%s is completed)',
                                     lock_name,
+                                    resource_kind,
                                     namespace,
                                     resource_name,
                                 )
                                 removed_locks.append(lock_name)
                             else:
                                 runtime.logger.warning(
-                                    'DELETING orphaned k8s lock: %s (PipelineRun %s/%s is completed)',
+                                    'DELETING orphaned k8s lock: %s (%s %s/%s is completed)',
                                     lock_name,
+                                    resource_kind,
                                     namespace,
                                     resource_name,
                                 )
@@ -100,19 +104,21 @@ async def cleanup_locks(runtime: Runtime, dry_run: bool):
                                 removed_locks.append(lock_name)
                             continue
                         else:
-                            # is_active is None - PipelineRun doesn't exist, safe to delete
+                            # is_active is None - run doesn't exist, safe to delete
                             if dry_run:
                                 runtime.logger.warning(
-                                    '[DRY RUN] WOULD DELETE orphaned k8s lock: %s (PipelineRun %s/%s not found)',
+                                    '[DRY RUN] WOULD DELETE orphaned k8s lock: %s (%s %s/%s not found)',
                                     lock_name,
+                                    resource_kind,
                                     namespace,
                                     resource_name,
                                 )
                                 removed_locks.append(lock_name)
                             else:
                                 runtime.logger.warning(
-                                    'DELETING orphaned k8s lock: %s (PipelineRun %s/%s not found)',
+                                    'DELETING orphaned k8s lock: %s (%s %s/%s not found)',
                                     lock_name,
+                                    resource_kind,
                                     namespace,
                                     resource_name,
                                 )

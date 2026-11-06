@@ -12,7 +12,6 @@ import click
 import yaml
 from artcommonlib import exectools
 from artcommonlib.arch_util import go_arch_for_brew_arch, go_suffix_for_arch
-from artcommonlib.constants import REGISTRY_QUAY_PROXY_CI
 from artcommonlib.util import oc_image_info_for_arch_async
 from artcommonlib.variants import BuildVariant
 from doozerlib.cli.images_okd import OKD_DEFAULT_IMAGE_REPO
@@ -121,7 +120,6 @@ class KonfluxOkdPipeline:
 
         await self.rebase_and_build_images()
         await self.update_imagestreams()
-        await self.mirror_coreos_imagestreams()
         self.finalize()
 
     async def initialize(self):
@@ -737,70 +735,6 @@ class KonfluxOkdPipeline:
             failure_msg = f'Imagestream update failures: {", ".join(failed_tags)}'
             jenkins.update_description(f'{failure_msg}<br>')
             self.logger.warning(failure_msg)
-
-    async def mirror_coreos_imagestreams(self):
-        """
-        Mirror OKD CoreOS imagestream tags from RHCOS team's tags to ART's imagestreams.
-
-        Only version 4.23 still needs ART mirroring because it has no dedicated
-        scos-4.23 CoreOS stream (master builds 5.0) and must source CoreOS tags
-        from scos-5.0.  All other versions are handled by openshift/release
-        postsubmit jobs and no longer require ART-side mirroring.
-
-        Mirrors (4.23 only):
-        - QCI proxy:<namespace>_scos-5.0_stream-coreos -> origin/scos-4.23-art:stream-coreos
-        - QCI proxy:<namespace>_scos-5.0_stream-coreos-extensions -> origin/scos-4.23-art:stream-coreos-extensions
-        """
-
-        if self.assembly != 'stream':
-            self.logger.info('Assembly is not "stream"; skipping CoreOS imagestream mirroring')
-            return
-
-        if not self.built_images:
-            self.logger.warning('No images were successfully built; skipping CoreOS imagestream mirroring')
-            return
-
-        if self.version != '4.23':
-            self.logger.info(
-                'Version %s CoreOS mirroring is handled by openshift/release postsubmits; skipping ART mirror',
-                self.version,
-            )
-            return
-
-        tags_to_mirror = ['stream-coreos', 'stream-coreos-extensions']
-
-        # 4.23 has no own scos-4.23 stream; it sources from scos-5.0.
-        source_version = '5.0'
-
-        if self.runtime.dry_run:
-            self.logger.info('[DRY RUN] Would mirror CoreOS imagestream tags')
-            for tag in tags_to_mirror:
-                self.logger.info(
-                    f'[DRY RUN] From: {REGISTRY_QUAY_PROXY_CI}:{self.imagestream_namespace}_scos-{source_version}_{tag}'
-                )
-                self.logger.info(f'[DRY RUN] To: {self.imagestream_namespace}/scos-{self.version}-art:{tag}')
-            return
-
-        env = os.environ.copy()
-
-        for tag in tags_to_mirror:
-            source_pullspec = f'{REGISTRY_QUAY_PROXY_CI}:{self.imagestream_namespace}_scos-{source_version}_{tag}'
-            target_tag = f'{self.imagestream_namespace}/scos-{self.version}-art:{tag}'
-
-            self.logger.info('Mirroring CoreOS imagestream from %s to %s', source_pullspec, target_tag)
-
-            try:
-                await self._tag_image_to_stream(source_pullspec=source_pullspec, target_tag=target_tag, env=env)
-                success_msg = f'Mirrored CoreOS tag: {source_pullspec} -> {target_tag}'
-                jenkins.update_description(f'{success_msg}<br>')
-                self.logger.info(success_msg)
-
-            except Exception as e:
-                failure_msg = f'Failed to mirror CoreOS imagestream tag: {e}'
-                jenkins.update_description(f'{failure_msg}<br>')
-                self.logger.warning(failure_msg)
-                # Don't fail the entire pipeline if CoreOS mirroring fails
-                self.logger.warning('Continuing pipeline despite CoreOS mirroring failure')
 
     async def _tag_image_to_stream(self, source_pullspec: str, target_tag: str, env: dict):
         """

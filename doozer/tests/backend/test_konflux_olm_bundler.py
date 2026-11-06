@@ -6,6 +6,7 @@ from unittest import IsolatedAsyncioTestCase
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import yaml
+from artcommonlib.assembly import AssemblyTypes
 from artcommonlib.konflux.konflux_build_record import KonfluxBuildOutcome, KonfluxBundleBuildRecord
 from artcommonlib.konflux.konflux_db import Engine
 from artcommonlib.model import Model
@@ -14,6 +15,7 @@ from doozerlib import constants
 from doozerlib.backend.konflux_client import ImageBuildParams
 from doozerlib.backend.konflux_olm_bundler import (
     KonfluxOlmBundleBuilder,
+    KonfluxOlmBundleBuildError,
     KonfluxOlmBundleRebaseError,
     KonfluxOlmBundleRebaser,
     _replace_pullspec,
@@ -372,6 +374,36 @@ class TestKonfluxOlmBundleRebaser(IsolatedAsyncioTestCase):
         tags = self.rebaser._get_operator_framework_tags(channel_name, package_name)
         self.assertEqual(tags['operators.operatorframework.io.bundle.channel.default.v1'], 'test-channel')
         self.assertEqual(tags['operators.operatorframework.io.bundle.channels.v1'], 'test-channel')
+
+    def test_get_operator_framework_tags_multi_channel(self):
+        """Multiple package.yaml channels are advertised on the bundle labels."""
+        self.rebaser._group_config.get = lambda key, default=None: default
+        self.rebaser._group_config.operator_channel_stable = None
+        tags = self.rebaser._get_operator_framework_tags(
+            'stable',
+            'cluster-observability-operator',
+            channel_names=['stable', 'fast'],
+            package_default_channel='stable',
+        )
+        self.assertEqual(tags['operators.operatorframework.io.bundle.channels.v1'], 'stable,fast')
+        self.assertEqual(tags['operators.operatorframework.io.bundle.channel.default.v1'], 'stable')
+        self.assertEqual(
+            tags['operators.operatorframework.io.bundle.package.v1'],
+            'cluster-observability-operator',
+        )
+
+    def test_get_operator_framework_tags_multi_channel_with_art3107(self):
+        """ART-3107 must not duplicate stable when package.yaml already lists it."""
+        self.rebaser._group_config.get = lambda key, default=None: default
+        self.rebaser._group_config.operator_channel_stable = 'default'
+        tags = self.rebaser._get_operator_framework_tags(
+            'stable',
+            'test-package',
+            channel_names=['stable', 'fast'],
+            package_default_channel='stable',
+        )
+        self.assertEqual(tags['operators.operatorframework.io.bundle.channels.v1'], 'stable,fast')
+        self.assertEqual(tags['operators.operatorframework.io.bundle.channel.default.v1'], 'stable')
 
     def test_create_dockerfile(self):
         metadata = MagicMock()
@@ -1719,6 +1751,142 @@ spec:
 
 
 class TestKonfluxOlmBundleBuilder(IsolatedAsyncioTestCase):
+    async def test_build_stage_policy_and_eligibility(self):
+        ocp_policies = {
+            ("stream", None): "rhtap-releng-tenant/registry-ocp-art-stage",
+            ("test", None): "ocp-art-tenant/conforma-build-stage-test",
+            ("stream", "release"): "rhtap-releng-tenant/registry-ocp-art-stage",
+            ("stream", "pre-release"): "rhtap-releng-tenant/registry-ocp-art-ec-stage",
+            ("test", "release"): "ocp-art-tenant/conforma-build-stage-test",
+            ("test", "pre-release"): "ocp-art-tenant/conforma-build-ec-stage-test",
+        }
+        for group, assembly, assembly_type, phase, skip, outcome, product in (
+            ("openshift-4.23", "stream", AssemblyTypes.STANDARD, None, False, KonfluxBuildOutcome.SUCCESS, "ocp"),
+            ("openshift-4.23", "test", AssemblyTypes.STANDARD, None, False, KonfluxBuildOutcome.SUCCESS, "ocp"),
+            ("openshift-4.23", "stream", AssemblyTypes.STANDARD, None, False, KonfluxBuildOutcome.SUCCESS, "logging"),
+            ("openshift-4.23", "stream", AssemblyTypes.PREVIEW, "release", False, KonfluxBuildOutcome.SUCCESS, None),
+            (
+                "openshift-4.23",
+                "stream",
+                AssemblyTypes.STANDARD,
+                "pre-release",
+                False,
+                KonfluxBuildOutcome.SUCCESS,
+                "ocp",
+            ),
+            ("openshift-4.23", "test", AssemblyTypes.PREVIEW, "release", False, KonfluxBuildOutcome.SUCCESS, None),
+            (
+                "openshift-4.23",
+                "test",
+                AssemblyTypes.STANDARD,
+                "pre-release",
+                False,
+                KonfluxBuildOutcome.SUCCESS,
+                "ocp",
+            ),
+            ("openshift-4.23", "stream", AssemblyTypes.STANDARD, "release", True, KonfluxBuildOutcome.SUCCESS, None),
+            ("logging-6.2", "stream", AssemblyTypes.STANDARD, "release", False, KonfluxBuildOutcome.SUCCESS, "logging"),
+            ("openshift-4.23", "stream", AssemblyTypes.STANDARD, "release", False, KonfluxBuildOutcome.FAILURE, None),
+            (
+                "openshift-4.23",
+                "stream",
+                AssemblyTypes.STANDARD,
+                "release",
+                False,
+                KonfluxBuildOutcome.SUCCESS,
+                "openshift-logging",
+            ),
+            (
+                "openshift-4.23",
+                "test",
+                AssemblyTypes.PREVIEW,
+                "pre-release",
+                False,
+                KonfluxBuildOutcome.SUCCESS,
+                "logging",
+            ),
+        ):
+            with self.subTest(
+                group=group,
+                assembly=assembly,
+                assembly_type=assembly_type,
+                phase=phase,
+                skip=skip,
+                outcome=outcome,
+                product=product,
+            ):
+                self.builder.group = group
+                self.builder.assembly = assembly
+                self.builder.assembly_type = assembly_type
+                self.builder.skip_ec_verify = skip
+                metadata = MagicMock()
+                metadata.runtime.group = group
+                metadata.runtime.group_config = Model(
+                    {"product": product, "software_lifecycle": None if phase is None else {"phase": phase}}
+                )
+                metadata.runtime.product = metadata.runtime.group_config.product or "ocp"
+                metadata.get_olm_bundle_short_name.return_value = "test-bundle"
+                metadata.get_konflux_build_attempts.return_value = 1
+                repo = MagicMock(commit_hash="commit", url="https://example.com/bundle")
+                plr = MagicMock(name="bundle-plr")
+                plr.to_dict.return_value = {
+                    "status": {
+                        "results": [
+                            {"name": "IMAGE_URL", "value": "quay.io/example/bundle:tag"},
+                            {"name": "IMAGE_DIGEST", "value": "sha256:123"},
+                        ]
+                    }
+                }
+                self.konflux_client.wait_for_pipelinerun.return_value = plr
+                self.konflux_client.verify_enterprise_contract.reset_mock()
+                self.konflux_client.verify_enterprise_contract.return_value = MagicMock(
+                    ec_failed=False, ec_pipeline_url="ec-url"
+                )
+                bundle_file = MagicMock()
+                bundle_file.__aenter__.return_value.read = AsyncMock(
+                    return_value=yaml.safe_dump(
+                        {
+                            "package_name": "package",
+                            "csv_name": "csv",
+                            "operator": {"nvr": "operator-1-1"},
+                            "operands": {},
+                        }
+                    )
+                )
+                with (
+                    patch("pathlib.Path.exists", return_value=True),
+                    patch(
+                        "doozerlib.backend.konflux_olm_bundler.BuildRepo.from_local_dir",
+                        new=AsyncMock(return_value=repo),
+                    ),
+                    patch("doozerlib.backend.konflux_olm_bundler.DockerfileParser") as parser,
+                    patch("doozerlib.backend.konflux_olm_bundler.aiofiles.open", return_value=bundle_file),
+                    patch("doozerlib.backend.konflux_olm_bundler.get_reporter") as reporter,
+                    patch.object(self.builder, "_start_build", new=AsyncMock(return_value=(plr, "url"))),
+                    patch.object(self.builder, "_update_konflux_db", new=AsyncMock()),
+                    patch.object(
+                        KonfluxBuildOutcome, "extract_from_pipelinerun_succeeded_condition", return_value=outcome
+                    ),
+                ):
+                    parser.return_value.labels = {"com.redhat.component": "bundle", "version": "1", "release": "1"}
+                    reporter.return_value.component.return_value = AsyncMock()
+                    if outcome is KonfluxBuildOutcome.FAILURE:
+                        with self.assertRaises(KonfluxOlmBundleBuildError):
+                            await self.builder.build(metadata)
+                    else:
+                        await self.builder.build(metadata)
+                verify = self.konflux_client.verify_enterprise_contract
+                if group.startswith("openshift-") and not skip and outcome is KonfluxBuildOutcome.SUCCESS:
+                    verify.assert_awaited_once()
+                    self.assertEqual(
+                        verify.call_args.kwargs["ec_policy"],
+                        "rhtap-releng-tenant/registry-art-logging-stage"
+                        if product in ("logging", "openshift-logging")
+                        else ocp_policies[(assembly, phase)],
+                    )
+                else:
+                    verify.assert_not_awaited()
+
     def setUp(self):
         self.base_dir = Path("/path/to/base/dir")
         self.group = "test-group"
@@ -2461,3 +2629,136 @@ class TestReplacePullspec(IsolatedAsyncioTestCase):
         content = "registry.redhat.io/foo:v1"
         result = _replace_pullspec(content, "registry.redhat.io/foo:v1", "registry.redhat.io/foo@sha256:abc")
         self.assertEqual(result, "registry.redhat.io/foo@sha256:abc")
+
+
+class TestNamedReleasePins(IsolatedAsyncioTestCase):
+    pin = 'quay-quay-container-3.18.2-202610201426.p3.g16cba93.assembly.stream.el9'
+
+    def setUp(self):
+        self.db = MagicMock()
+        self.rebaser = KonfluxOlmBundleRebaser(
+            base_dir=Path('/tmp/nonexistent-bundle-pin-tests'),
+            group='quay-3.18',
+            assembly='3.18.3',
+            group_config=Model({'csv_namespace': 'quay', 'operator_image_ref_mode': 'manifest-list'}),
+            konflux_db=self.db,
+            source_resolver=MagicMock(),
+        )
+        self.metadata = MagicMock()
+        self.metadata.distgit_key = 'quay-operator'
+        self.metadata.runtime.data_dir = '/tmp/nonexistent-bundle-pin-tests'
+        self.releases = {
+            'releases': {
+                '3.18.3': {
+                    'assembly': {
+                        'type': 'standard',
+                        'members': {
+                            'images': [
+                                {'distgit_key': 'quay-quay-container', 'metadata': {'is': {'nvr': self.pin}}},
+                            ]
+                        },
+                    }
+                }
+            }
+        }
+        self.metadata.runtime.get_releases_config.side_effect = lambda: Model(self.releases)
+        self.operand = MagicMock()
+        self.operand.distgit_key = 'quay-quay'
+        self.operand.get_component_name.return_value = 'quay-quay-container'
+        self.operand.image_name_short = 'quay-rhel9'
+        self.operand.config = Model({'delivery': {'delivery_repo_names': ['quay/quay-rhel9']}})
+        self.operand.branch_el_target.return_value = 9
+        self.operand.get_latest_konflux_build = AsyncMock()
+        self.metadata.runtime.name_in_bundle_map = {'quay': 'quay-quay'}
+        self.metadata.runtime.image_map = {'quay-quay': self.operand}
+        self.build = MagicMock(
+            nvr=self.pin,
+            assembly='stream',
+            version='3.18.2',
+            release=self.pin.rsplit('-', 1)[1],
+            image_pullspec='quay.io/private@sha256:pinned',
+        )
+        self.db.get_build_record_by_nvr = AsyncMock(return_value=self.build)
+        self.info = {
+            'config': {
+                'config': {
+                    'Labels': {
+                        'com.redhat.component': 'quay-quay-container',
+                        'version': '3.18.2',
+                        'release': self.build.release,
+                    }
+                }
+            },
+            'listDigest': 'sha256:pinned',
+            'contentDigest': 'sha256:pinned-arch',
+        }
+        self.refs = [{'name': 'quay', 'from': {'name': 'quay.io/quay/quay:latest'}}]
+
+    @patch('doozerlib.backend.konflux_olm_bundler.util.oc_image_info_for_arch_async')
+    async def test_exact_private_pin_from_stream_is_preserved_for_all_release_types(self, inspect):
+        inspect.return_value = self.info
+        for kind in ('standard', 'candidate', 'custom', 'preview'):
+            with self.subTest(kind=kind):
+                self.releases['releases']['3.18.3']['assembly']['type'] = kind
+                result = await self.rebaser._resolve_operands_from_db(self.metadata, self.refs, {}, {})
+                self.assertEqual(result['quay-rhel9'][2], self.pin)
+                self.assertIn('@sha256:pinned', result['quay-rhel9'][1])
+        self.operand.get_latest_konflux_build.assert_not_called()
+        self.db.get_build_record_by_nvr.assert_awaited_with(self.pin, strict=True, exclude_large_columns=True)
+
+    @patch('doozerlib.backend.konflux_olm_bundler.util.oc_image_info_for_arch_async')
+    async def test_pinned_image_label_mismatch_fails(self, inspect):
+        self.info['config']['config']['Labels']['release'] = 'wrong.p2'
+        inspect.return_value = self.info
+        with self.assertRaisesRegex(KonfluxOlmBundleRebaseError, 'inspected image labels'):
+            await self.rebaser._resolve_operands_from_db(self.metadata, self.refs, {}, {})
+
+    async def test_missing_pin_fails_without_public_fallback(self):
+        self.db.get_build_record_by_nvr.side_effect = IOError('pinned build missing')
+        with self.assertRaisesRegex(IOError, 'pinned build missing'):
+            await self.rebaser._resolve_operands_from_db(self.metadata, self.refs, {}, {})
+        self.operand.get_latest_konflux_build.assert_not_called()
+
+    @patch('doozerlib.backend.konflux_olm_bundler.util.oc_image_info_for_arch_async')
+    async def test_legacy_reference_is_replaced_by_exact_private_pin(self, inspect):
+        import copy
+
+        public_info = copy.deepcopy(self.info)
+        public_info['config']['config']['Labels']['release'] = 'old.p2'
+        inspect.side_effect = [public_info, self.info]
+        content, found = await self.rebaser._replace_image_references(
+            'registry.redhat.io', 'image: registry.redhat.io/quay/quay-rhel9:old', Engine.KONFLUX, self.metadata
+        )
+        self.assertIn('@sha256:pinned', content)
+        self.assertEqual(found['quay-rhel9'][2], self.pin)
+        self.operand.get_latest_konflux_build.assert_not_called()
+
+    @patch('doozerlib.backend.konflux_olm_bundler.util.oc_image_info_for_arch_async')
+    async def test_unpinned_private_operand_still_uses_public_substitute(self, inspect):
+        self.releases['releases']['3.18.3']['assembly']['members']['images'] = []
+        self.build.assembly = '3.18.3'
+        public = MagicMock(
+            nvr=self.pin.replace('.p3.', '.p2.'),
+            assembly='3.18.3',
+            version='3.18.2',
+            release=self.build.release.replace('.p3.', '.p2.'),
+        )
+        self.operand.get_latest_konflux_build.side_effect = [self.build, public]
+        self.info['config']['config']['Labels']['release'] = public.release
+        inspect.return_value = self.info
+        result = await self.rebaser._resolve_operands_from_db(self.metadata, self.refs, {}, {})
+        self.assertEqual(result['quay-rhel9'][2], public.nvr)
+        self.assertTrue(self.operand.get_latest_konflux_build.await_args.kwargs['embargoed'] is False)
+        self.db.get_build_record_by_nvr.assert_not_awaited()
+
+    async def test_db_cannot_return_another_build_for_a_pin(self):
+        self.build.nvr = self.pin.replace('.p3.', '.p2.')
+        with self.assertRaisesRegex(KonfluxOlmBundleRebaseError, 'Expected assembly pin'):
+            await self.rebaser._resolve_operands_from_db(self.metadata, self.refs, {}, {})
+
+    def test_stream_and_ocp_do_not_gain_pin_exception(self):
+        self.releases['releases']['3.18.3']['assembly']['type'] = 'stream'
+        self.assertEqual(self.rebaser._release_image_pins(self.metadata), {})
+        self.releases['releases']['3.18.3']['assembly']['type'] = 'standard'
+        self.rebaser.group = 'openshift-4.18'
+        self.assertEqual(self.rebaser._release_image_pins(self.metadata), {})

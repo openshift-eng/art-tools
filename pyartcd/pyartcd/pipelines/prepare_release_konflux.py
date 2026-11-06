@@ -60,7 +60,7 @@ from elliottlib.shipment_utils import (
 )
 from tenacity import retry, stop_after_attempt, wait_fixed
 
-from pyartcd import constants
+from pyartcd import constants, jenkins
 from pyartcd.cli import cli, click_coroutine, pass_runtime
 from pyartcd.git import GitRepository
 from pyartcd.jira_client import JIRAClient
@@ -321,6 +321,8 @@ class PrepareReleaseKonfluxPipeline:
 
         await self.verify_payload()
         await self.set_shipment_mr_ready()
+
+        self.trigger_verify_cdn_push()
 
         # Check for deferred bundle/FBC build errors and exit with code 2 for UNSTABLE status
         deferred_build_errors = self._deferred_build_errors()
@@ -688,8 +690,7 @@ class PrepareReleaseKonfluxPipeline:
         # Validate snapshot components against RPA before finalizing
         for kind, shipment in shipments_by_kind.items():
             if shipment.shipment.snapshot and shipment.shipment.snapshot.spec.components:
-                component_names = [c.name for c in shipment.shipment.snapshot.spec.components]
-                await validate_snapshot_against_rpa(self.group, env, kind, component_names)
+                await validate_snapshot_against_rpa(shipment.shipment, env, kind)
 
         # Update shipment MR with found builds
         await self.update_shipment_mr(shipments_by_kind, env, shipment_url)
@@ -1499,6 +1500,23 @@ class PrepareReleaseKonfluxPipeline:
             except Exception as e:
                 self.logger.warning(f"Failed to trigger CI MR pipeline for branch {mr.source_branch}: {e}")
 
+    def trigger_verify_cdn_push(self):
+        """Trigger verify-cdn-push Jenkins job (non-blocking) to poll until CDN staging pushes complete."""
+        major, minor = self.release_name.split('.')[:2]
+        version = f"{major}.{minor}"
+        if self.dry_run:
+            self.logger.info("[DRY-RUN] Would have triggered verify-cdn-push for %s/%s", version, self.assembly)
+            return
+        try:
+            jenkins.start_verify_cdn_push(
+                version=version,
+                assembly=self.assembly,
+                block_until_building=False,
+            )
+            self.logger.info("Triggered verify-cdn-push job for %s/%s", version, self.assembly)
+        except Exception as ex:
+            self.logger.warning("Failed to trigger verify-cdn-push: %s", ex)
+
     async def update_shipment_data(
         self, shipments_by_kind: Dict[str, ShipmentConfig], env: str, commit_message: str, branch: str
     ) -> bool:
@@ -1659,16 +1677,13 @@ class PrepareReleaseKonfluxPipeline:
         new_releases_config = self.releases_config.copy()
         updated_group_config = self.updated_assembly_group_config.primitive()
 
-        # If this assembly has a basis assembly, use the override marker (!) for shipment and advisories
-        # to prevent inheritance from causing deletion markers to be lost on subsequent runs
+        # Restore override markers consumed while resolving the assembly so saving it
+        # cannot reintroduce parent shipment URLs or advisories on subsequent runs.
         assembly_def = new_releases_config["releases"][self.assembly]["assembly"]
         if assembly_def.get("basis", {}).get("assembly"):
-            # Use override markers to ensure these fields completely replace parent values
-            # This prevents issues where deletion markers (like url-:) are lost after merge
-            if "shipment" in updated_group_config:
-                updated_group_config["shipment!"] = updated_group_config.pop("shipment")
-            if "advisories" in updated_group_config:
-                updated_group_config["advisories!"] = updated_group_config.pop("advisories")
+            for key in ("shipment", "advisories", "microshift_bootc_shipment"):
+                if key in updated_group_config:
+                    updated_group_config[f"{key}!"] = updated_group_config.pop(key)
 
         new_releases_config["releases"][self.assembly]["assembly"]["group"] = updated_group_config
 

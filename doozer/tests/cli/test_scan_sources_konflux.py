@@ -1,12 +1,13 @@
 import base64
 import json
+from datetime import datetime, timezone
 from unittest import IsolatedAsyncioTestCase
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import aiohttp
 import yaml
 from artcommonlib.konflux.konflux_build_record import KonfluxBuildRecord
-from artcommonlib.model import Missing
+from artcommonlib.model import Missing, Model
 from doozerlib.cli.scan_sources_konflux import ConfigScanSources
 from doozerlib.image import ImageMetadata
 from doozerlib.metadata import RebuildHintCode
@@ -1663,6 +1664,240 @@ class TestOkdBaseChainUpstreamChanges(TestScanSourcesKonflux):
         child.get_latest_build.assert_not_called()
 
 
+class TestBuilderBuildCreatedFallback(TestScanSourcesKonflux):
+    """Tests for the config.created fallback in builder/parent image build time detection."""
+
+    def setUp(self):
+        super().setUp()
+        self.image_meta.qualified_key = 'image:test-image'
+        self.build_record.start_time = datetime(2026, 1, 1, tzinfo=timezone.utc)
+        self.build_record.nvr = 'test-image-1-1'
+
+    @patch('doozerlib.cli.scan_sources_konflux.Model')
+    @patch('doozerlib.cli.scan_sources_konflux.oc_image_info_for_arch_async', new_callable=AsyncMock)
+    async def test_get_builder_build_nvr_returns_tuple_with_created(self, mock_oc_image_info, mock_model):
+        """get_builder_build_nvr returns (nvr, image_created) tuple with parsed config.created."""
+        self.runtime.group = 'openshift-4.20'
+        self.runtime.registry_config = None
+
+        mock_info = MagicMock()
+        mock_info.config.config.Labels = {
+            'com.redhat.component': 'rhel9-minimal-container',
+            'version': '9.6',
+            'release': '1493',
+        }
+        mock_info.config.created = '2026-10-15T10:30:00Z'
+        mock_model.return_value = mock_info
+
+        nvr, image_created = await self.scanner.get_builder_build_nvr('registry.redhat.io/rhel9/rhel-minimal:latest')
+
+        self.assertEqual(nvr, 'rhel9-minimal-container-9.6-1493')
+        self.assertIsNotNone(image_created)
+        self.assertEqual(image_created.year, 2026)
+        self.assertEqual(image_created.month, 10)
+        self.assertEqual(image_created.day, 15)
+        self.assertIsNotNone(image_created.tzinfo)
+
+    @patch('doozerlib.cli.scan_sources_konflux.Model')
+    @patch('doozerlib.cli.scan_sources_konflux.oc_image_info_for_arch_async', new_callable=AsyncMock)
+    async def test_get_builder_build_nvr_returns_none_tuple_when_labels_missing(self, mock_oc_image_info, mock_model):
+        """get_builder_build_nvr returns (None, None) when NVR labels are missing."""
+        self.runtime.group = 'openshift-4.20'
+        self.runtime.registry_config = None
+
+        mock_info = MagicMock()
+        mock_info.config.config.Labels = {
+            'com.redhat.component': '',
+            'version': '',
+            'release': '',
+        }
+        mock_info.config.created = '2026-10-15T10:30:00Z'
+        mock_model.return_value = mock_info
+
+        nvr, image_created = await self.scanner.get_builder_build_nvr('registry.example/no-labels:latest')
+
+        self.assertIsNone(nvr)
+        self.assertIsNone(image_created)
+
+    @patch('doozerlib.cli.scan_sources_konflux.Model')
+    @patch('doozerlib.cli.scan_sources_konflux.oc_image_info_for_arch_async', new_callable=AsyncMock)
+    async def test_get_builder_build_nvr_handles_missing_created(self, mock_oc_image_info, mock_model):
+        """get_builder_build_nvr returns (nvr, None) when config.created is Missing."""
+        self.runtime.group = 'openshift-4.20'
+        self.runtime.registry_config = None
+
+        mock_info = MagicMock()
+        mock_info.config.config.Labels = {
+            'com.redhat.component': 'component',
+            'version': '1',
+            'release': '1',
+        }
+        mock_info.config.created = Missing
+        mock_model.return_value = mock_info
+
+        nvr, image_created = await self.scanner.get_builder_build_nvr('registry.example/builder:latest')
+
+        self.assertEqual(nvr, 'component-1-1')
+        self.assertIsNone(image_created)
+
+    async def test_get_builder_build_start_time_uses_fallback_when_db_and_brew_fail(self):
+        """get_builder_build_start_time uses image_created fallback when both Konflux DB and Brew fail."""
+        fallback_time = datetime(2026, 10, 15, 10, 30, 0, tzinfo=timezone.utc)
+
+        # Konflux DB returns no build
+        self.runtime.konflux_db.get_latest_build = AsyncMock(return_value=None)
+
+        # Brew returns no build
+        mock_koji_api = MagicMock()
+        mock_koji_api.getBuild.return_value = None
+        self.runtime.pooled_koji_client_session.return_value.__enter__ = MagicMock(return_value=mock_koji_api)
+        self.runtime.pooled_koji_client_session.return_value.__exit__ = MagicMock(return_value=False)
+
+        result = await self.scanner.get_builder_build_start_time(
+            'rhel9-minimal-container-9.6-1493', image_created=fallback_time
+        )
+
+        self.assertEqual(result, fallback_time)
+
+    async def test_get_builder_build_start_time_prefers_konflux_db_over_fallback(self):
+        """get_builder_build_start_time returns Konflux DB time when available, ignoring fallback."""
+        db_time = datetime(2026, 10, 20, 12, 0, 0, tzinfo=timezone.utc)
+        fallback_time = datetime(2026, 10, 15, 10, 30, 0, tzinfo=timezone.utc)
+
+        mock_build = MagicMock()
+        mock_build.start_time = db_time
+        self.runtime.konflux_db.get_latest_build = AsyncMock(return_value=mock_build)
+
+        result = await self.scanner.get_builder_build_start_time('component-1-1', image_created=fallback_time)
+
+        self.assertEqual(result, db_time)
+
+    async def test_get_builder_build_start_time_prefers_brew_over_fallback(self):
+        """get_builder_build_start_time returns Brew time when Konflux DB fails, ignoring fallback."""
+        brew_time = datetime(2026, 10, 18, 8, 0, 0, tzinfo=timezone.utc)
+        fallback_time = datetime(2026, 10, 15, 10, 30, 0, tzinfo=timezone.utc)
+
+        # Konflux DB returns no build
+        self.runtime.konflux_db.get_latest_build = AsyncMock(return_value=None)
+
+        # Brew returns a build
+        mock_koji_api = MagicMock()
+        mock_koji_api.getBuild.return_value = {'creation_time': '2026-10-18 08:00:00'}
+        self.runtime.pooled_koji_client_session.return_value.__enter__ = MagicMock(return_value=mock_koji_api)
+        self.runtime.pooled_koji_client_session.return_value.__exit__ = MagicMock(return_value=False)
+
+        result = await self.scanner.get_builder_build_start_time('component-1-1', image_created=fallback_time)
+
+        self.assertEqual(result, brew_time)
+
+    async def test_get_builder_build_start_time_returns_none_when_no_fallback(self):
+        """get_builder_build_start_time returns None when all sources fail and no fallback provided."""
+        # Konflux DB returns no build
+        self.runtime.konflux_db.get_latest_build = AsyncMock(return_value=None)
+
+        # Brew returns no build
+        mock_koji_api = MagicMock()
+        mock_koji_api.getBuild.return_value = None
+        self.runtime.pooled_koji_client_session.return_value.__enter__ = MagicMock(return_value=mock_koji_api)
+        self.runtime.pooled_koji_client_session.return_value.__exit__ = MagicMock(return_value=False)
+
+        result = await self.scanner.get_builder_build_start_time('unknown-nvr-1-1')
+
+        self.assertIsNone(result)
+
+    @patch('doozerlib.cli.scan_sources_konflux.oc_image_info_for_arch_async', new_callable=AsyncMock)
+    async def test_scan_builders_changes_uses_fallback_to_trigger_rebuild(self, mock_oc_image_info):
+        """End-to-end: non-ART builder image triggers rebuild via config.created fallback."""
+        # Set up image_meta with a stream builder
+        builder_config = MagicMock()
+        builder_config.member = None
+        builder_config.stream = 'rhel9'
+        builder_config.image = None
+
+        from_config = MagicMock()
+        from_config.builder = [builder_config]
+        from_config.member = None
+        from_config.stream = 'rhel9'
+        from_config.image = None
+        self.image_meta.config.__getitem__ = MagicMock(return_value=from_config)
+
+        stream_config = MagicMock()
+        stream_config.image = 'registry.redhat.io/rhel9-8-els/rhel-minimal:latest'
+        stream_config.get = MagicMock(return_value=False)
+        self.runtime.resolve_stream = MagicMock(return_value=stream_config)
+
+        # Builder image is newer than the build
+        builder_created = datetime(2026, 10, 20, 12, 0, 0, tzinfo=timezone.utc)
+        self.build_record.start_time = datetime(2026, 10, 10, 12, 0, 0, tzinfo=timezone.utc)
+
+        with (
+            patch.object(
+                self.scanner,
+                'get_builder_build_nvr',
+                new_callable=AsyncMock,
+                return_value=('rhel9-minimal-container-9.6-1493', builder_created),
+            ),
+            patch.object(
+                self.scanner,
+                'get_builder_build_start_time',
+                new_callable=AsyncMock,
+                return_value=builder_created,
+            ) as mock_start_time,
+        ):
+            await self.scanner.scan_builders_changes(self.image_meta)
+
+            # Verify image_created was passed as fallback
+            mock_start_time.assert_called_once_with('rhel9-minimal-container-9.6-1493', image_created=builder_created)
+
+        self.assertIn('test-image', self.scanner.changing_image_names)
+        self.assertEqual(
+            self.scanner.assessment_code['image:test-image+True'],
+            RebuildHintCode.BUILDER_CHANGING,
+        )
+
+    @patch('doozerlib.cli.scan_sources_konflux.oc_image_info_for_arch_async', new_callable=AsyncMock)
+    async def test_scan_builders_changes_no_rebuild_when_builder_older(self, mock_oc_image_info):
+        """Builder with config.created fallback older than latest build does not trigger rebuild."""
+        builder_config = MagicMock()
+        builder_config.member = None
+        builder_config.stream = 'rhel9'
+        builder_config.image = None
+
+        from_config = MagicMock()
+        from_config.builder = [builder_config]
+        from_config.member = None
+        from_config.stream = 'rhel9'
+        from_config.image = None
+        self.image_meta.config.__getitem__ = MagicMock(return_value=from_config)
+
+        stream_config = MagicMock()
+        stream_config.image = 'registry.redhat.io/rhel9-8-els/rhel-minimal:latest'
+        stream_config.get = MagicMock(return_value=False)
+        self.runtime.resolve_stream = MagicMock(return_value=stream_config)
+
+        # Builder image is OLDER than the build
+        builder_created = datetime(2026, 9, 1, 12, 0, 0, tzinfo=timezone.utc)
+        self.build_record.start_time = datetime(2026, 10, 10, 12, 0, 0, tzinfo=timezone.utc)
+
+        with (
+            patch.object(
+                self.scanner,
+                'get_builder_build_nvr',
+                new_callable=AsyncMock,
+                return_value=('rhel9-minimal-container-9.6-1493', builder_created),
+            ),
+            patch.object(
+                self.scanner,
+                'get_builder_build_start_time',
+                new_callable=AsyncMock,
+                return_value=builder_created,
+            ),
+        ):
+            await self.scanner.scan_builders_changes(self.image_meta)
+
+        self.assertNotIn('test-image', self.scanner.changing_image_names)
+
+
 class TestCheckChangingRpmsBuildRoot(TestScanSourcesKonflux):
     """Test BUILD_ROOT_CHANGING detection in check_changing_rpms."""
 
@@ -1792,3 +2027,142 @@ class TestCheckChangingRpmsBuildRoot(TestScanSourcesKonflux):
             await self.scanner.check_changing_rpms()
 
         self.assertNotIn('test-rpm', self.scanner.changing_rpm_names)
+
+
+class TestScanBuildersChanges(TestScanSourcesKonflux):
+    FLOATING = 'registry.redhat.io/openshift/golang-builder:golang-builder-v1.25-rhel9'
+    PINNED = (
+        'registry.redhat.io/openshift/golang-builder:'
+        'openshift-golang-builder-container-v1.25.3-202510011200.p0.gabc1234.el9'
+    )
+    OLD_NVR = 'openshift-golang-builder-container-v1.25.3-202510011200.p0.gabc1234.el9'
+    NEW_NVR = 'openshift-golang-builder-container-v1.25.5-202510150900.p0.gdef5678.el9'
+    BASE_NVR = 'openshift-enterprise-base-rhel9-container-v4.23.0-202510160000.p0.g1111111.el9'
+
+    def setUp(self):
+        super().setUp()
+        self.image_meta.config = Model(
+            {'from': {'builder': [{'stream': 'golang'}], 'member': 'openshift-enterprise-base-rhel9'}}
+        )
+        self.image_meta.qualified_key = 'image:test-image'
+        self.image_meta.get_descendants.return_value = []
+        self.build_record.start_time = datetime(2026, 10, 10, tzinfo=timezone.utc)
+
+    async def _scan_async(self, pullspec, current_nvr, builder_start_time):
+        self.runtime.resolve_stream.return_value = Model({'image': pullspec})
+        nvr_mock = AsyncMock(return_value=(current_nvr, None))
+        start_mock = AsyncMock(return_value=builder_start_time)
+        with (
+            patch.object(self.scanner, 'get_builder_build_nvr', nvr_mock),
+            patch.object(self.scanner, 'get_builder_build_start_time', start_mock),
+        ):
+            await self.scanner.scan_builders_changes(self.image_meta)
+        nvr_mock.assert_awaited_once_with(pullspec)
+        return start_mock
+
+    def _reason(self):
+        return self.scanner.assessment_reason['image:test-image+True']
+
+    def _code(self):
+        return self.scanner.assessment_code['image:test-image+True']
+
+    async def test_floating_tag_moved_triggers_rebuild(self):
+        self.build_record.parent_images = [self.OLD_NVR, self.BASE_NVR]
+        start_mock = await self._scan_async(self.FLOATING, self.NEW_NVR, datetime(2026, 10, 1, tzinfo=timezone.utc))
+
+        self.assertIn('test-image', self.scanner.changing_image_names)
+        self.assertEqual(self._code(), RebuildHintCode.BUILDER_CHANGING)
+        self.assertEqual(
+            self._reason(),
+            f'Floating builder tag {self.FLOATING} now points to {self.NEW_NVR}, '
+            f'but latest test-image build used {self.OLD_NVR}',
+        )
+        start_mock.assert_not_awaited()
+
+    async def test_floating_tag_unchanged_no_rebuild(self):
+        self.build_record.parent_images = [self.NEW_NVR, self.BASE_NVR]
+        start_mock = await self._scan_async(self.FLOATING, self.NEW_NVR, datetime(2026, 10, 20, tzinfo=timezone.utc))
+
+        self.assertNotIn('test-image', self.scanner.changing_image_names)
+        start_mock.assert_not_awaited()
+
+    async def test_floating_tag_mixed_recorded_nvrs_triggers_rebuild(self):
+        self.build_record.parent_images = [self.OLD_NVR, self.NEW_NVR, self.BASE_NVR]
+        start_mock = await self._scan_async(self.FLOATING, self.NEW_NVR, datetime(2026, 10, 1, tzinfo=timezone.utc))
+
+        self.assertIn('test-image', self.scanner.changing_image_names)
+        self.assertEqual(self._code(), RebuildHintCode.BUILDER_CHANGING)
+        self.assertEqual(
+            self._reason(),
+            f'Floating builder tag {self.FLOATING} now points to {self.NEW_NVR}, '
+            f'but latest test-image build used {", ".join(sorted([self.OLD_NVR, self.NEW_NVR]))}',
+        )
+        start_mock.assert_not_awaited()
+
+    async def test_floating_tag_without_recorded_nvr_uses_build_time(self):
+        self.build_record.parent_images = [self.FLOATING, self.BASE_NVR]
+        start_mock = await self._scan_async(self.FLOATING, self.NEW_NVR, datetime(2026, 10, 20, tzinfo=timezone.utc))
+
+        self.assertIn('test-image', self.scanner.changing_image_names)
+        self.assertEqual(self._code(), RebuildHintCode.BUILDER_CHANGING)
+        self.assertIn('is newer than latest test-image build', self._reason())
+        start_mock.assert_awaited_once_with(self.NEW_NVR, image_created=None)
+
+    async def test_floating_tag_other_stream_recorded_uses_build_time(self):
+        other_stream_nvr = 'openshift-golang-builder-container-v1.24.9-202510011200.p0.gabc1234.el9'
+        self.build_record.parent_images = [other_stream_nvr, self.FLOATING, self.BASE_NVR]
+        start_mock = await self._scan_async(self.FLOATING, self.NEW_NVR, datetime(2026, 10, 1, tzinfo=timezone.utc))
+
+        self.assertNotIn('test-image', self.scanner.changing_image_names)
+        start_mock.assert_awaited_once_with(self.NEW_NVR, image_created=None)
+
+    def test_builder_stream_key(self):
+        self.assertEqual(
+            ConfigScanSources.builder_stream_key(self.NEW_NVR),
+            ('openshift-golang-builder-container', '1.25', 'el9'),
+        )
+        self.assertEqual(
+            ConfigScanSources.builder_stream_key(self.OLD_NVR),
+            ConfigScanSources.builder_stream_key(self.NEW_NVR),
+        )
+        self.assertNotEqual(
+            ConfigScanSources.builder_stream_key(self.NEW_NVR.replace('.el9', '.el8')),
+            ConfigScanSources.builder_stream_key(self.NEW_NVR),
+        )
+        self.assertIsNone(ConfigScanSources.builder_stream_key('notannvr'))
+
+    async def test_non_floating_newer_builder_triggers_rebuild(self):
+        self.build_record.parent_images = [self.OLD_NVR, self.BASE_NVR]
+        start_mock = await self._scan_async(self.PINNED, self.OLD_NVR, datetime(2026, 10, 20, tzinfo=timezone.utc))
+
+        self.assertIn('test-image', self.scanner.changing_image_names)
+        self.assertEqual(
+            self._reason(),
+            f'A builder or parent image build {self.OLD_NVR} is newer than latest test-image build',
+        )
+        start_mock.assert_awaited_once_with(self.OLD_NVR, image_created=None)
+
+    async def test_non_floating_older_builder_ignores_recorded_nvr(self):
+        self.build_record.parent_images = [self.NEW_NVR, self.BASE_NVR]
+        start_mock = await self._scan_async(self.PINNED, self.OLD_NVR, datetime(2026, 10, 1, tzinfo=timezone.utc))
+
+        self.assertNotIn('test-image', self.scanner.changing_image_names)
+        start_mock.assert_awaited_once_with(self.OLD_NVR, image_created=None)
+
+    def test_is_floating_builder_tag(self):
+        self.assertTrue(ConfigScanSources.is_floating_builder_tag(self.FLOATING))
+        self.assertTrue(
+            ConfigScanSources.is_floating_builder_tag(
+                'registry.redhat.io/openshift/golang-builder:golang-builder-v1.26-rhel10'
+            )
+        )
+        self.assertFalse(ConfigScanSources.is_floating_builder_tag(self.PINNED))
+        self.assertFalse(ConfigScanSources.is_floating_builder_tag('registry.redhat.io/ubi9/ubi:latest'))
+        self.assertFalse(ConfigScanSources.is_floating_builder_tag(f'{self.FLOATING.split(":")[0]}@sha256:abc'))
+        self.assertFalse(
+            ConfigScanSources.is_floating_builder_tag(
+                f'{self.FLOATING}@sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855'
+            )
+        )
+        self.assertFalse(ConfigScanSources.is_floating_builder_tag('golang-builder-v1.25-rhel9'))
+        self.assertFalse(ConfigScanSources.is_floating_builder_tag(f'{self.FLOATING}-extra'))

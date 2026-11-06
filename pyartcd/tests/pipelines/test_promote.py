@@ -2861,3 +2861,65 @@ class TestFixDocsAfterAdvisoryDrop(IsolatedAsyncioTestCase):
             )
 
         mock_file.save.assert_not_called()
+
+
+class TestCreateCincinnatiPrs(IsolatedAsyncioTestCase):
+    def _make_pipeline(self):
+        runtime = MagicMock(
+            config={
+                "build_config": {"ocp_build_data_url": "https://example.com/ocp-build-data.git"},
+                "jira": {"url": JIRA_SERVER_URL},
+            },
+            dry_run=False,
+            logger=MagicMock(),
+            new_slack_client=MagicMock(return_value=AsyncMock()),
+        )
+        runtime.working_dir = Path(tempfile.mkdtemp())
+        pipeline = PromotePipeline(runtime, group="openshift-4.14", assembly="4.14.76", signing_env="prod")
+        pipeline.skip_ota_notification = True
+        return pipeline
+
+    async def _run(self, assembly_type, release_info):
+        """Run create_cincinnati_prs with a mocked GitHub repo and return the PR body.
+
+        :param assembly_type: AssemblyTypes value of the release
+        :param release_info: release data dict as built by the promote pipeline
+        """
+        pipeline = self._make_pipeline()
+        repo = MagicMock()
+        repo.get_branches.return_value = []
+        repo.get_contents.return_value.decoded_content = b"name: candidate"
+        github_client = MagicMock()
+        github_client.get_repo.return_value = repo
+        with patch("pyartcd.pipelines.promote.get_github_client_for_org", return_value=github_client):
+            await pipeline.create_cincinnati_prs(assembly_type, release_info)
+        return repo.create_pull.call_args.kwargs["body"]
+
+    @staticmethod
+    def _release_info(**extra):
+        info = {"name": "4.14.76", "content": {"x86_64": {}}, "justifications": []}
+        info.update(extra)
+        return info
+
+    @patch("pyartcd.jira_client.JIRAClient.from_url", return_value=None)
+    async def test_errata_advisory(self, _):
+        body = await self._run(AssemblyTypes.STANDARD, self._release_info(advisory=12345))
+        self.assertIn("https://errata.devel.redhat.com/advisory/12345", body)
+        self.assertNotIn("hotfix", body)
+
+    @patch("pyartcd.jira_client.JIRAClient.from_url", return_value=None)
+    async def test_shipment_live_url_without_advisory(self, _):
+        live_url = "https://access.redhat.com/errata/RHSA-2026:82785"
+        body = await self._run(AssemblyTypes.STANDARD, self._release_info(live_url=live_url))
+        self.assertIn(f"the associated advisory is {live_url} .", body)
+        self.assertNotIn("hotfix", body)
+
+    @patch("pyartcd.jira_client.JIRAClient.from_url", return_value=None)
+    async def test_candidate_without_advisory(self, _):
+        body = await self._run(AssemblyTypes.CANDIDATE, self._release_info())
+        self.assertIn("This is a release candidate", body)
+
+    @patch("pyartcd.jira_client.JIRAClient.from_url", return_value=None)
+    async def test_no_advisory_falls_back_to_hotfix(self, _):
+        body = await self._run(AssemblyTypes.STANDARD, self._release_info())
+        self.assertIn("Promoting a hotfix release", body)

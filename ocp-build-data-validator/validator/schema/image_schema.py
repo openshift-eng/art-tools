@@ -112,6 +112,23 @@ def validate(file, data, images_dir=None):
                 "Image must have a 'delivery.delivery_repo_names' field unless 'mode' is 'disabled' or 'for_release' is false."
             )
 
+    # Reject 'url_pull' (and its ocp-build-data merge-operator suffix variants) in content.source.git.
+    # url_pull is schema-valid here because the same base schema is shared with releases.yml's
+    # assembly.members.images[].metadata override, where it is a legitimate, deliberate, one-off way to
+    # redirect a single assembly's build to a fork for fork-based test builds. Permanently setting it in
+    # images/*.yml would silently redirect this component's real upstream source for every future stream
+    # build, which is a provenance/supply-chain concern, so it is rejected here unconditionally.
+    git_config = data.get("content", {}).get("source", {}).get("git", {})
+    for url_pull_key in ("url_pull", "url_pull!", "url_pull?", "url_pull-"):
+        if url_pull_key in git_config:
+            errors.append(
+                f"content.source.git.{url_pull_key}: '{url_pull_key}' must not be set permanently in images/*.yml — it silently redirects this "
+                f"component's real upstream source for every future build, which is a provenance/supply-chain concern for a "
+                f"component's ground-truth definition. It is only appropriate as a one-off override scoped to a specific isolated "
+                f"assembly: set it under that assembly's 'members.images[].metadata.content.source.git.url_pull' in releases.yml "
+                f"instead (see e.g. https://github.com/openshift-eng/ocp-build-data/pull/14297), not here."
+            )
+
     if images_dir:
         image_files = [os.path.splitext(f)[0] for f in os.listdir(images_dir) if f.endswith(".yml")]
 

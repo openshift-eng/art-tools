@@ -7,6 +7,44 @@ from validator.schema import image_schema
 
 
 class TestImageSchema(unittest.TestCase):
+    def test_its_enabled_boolean_and_merge_variants(self):
+        for its_key in ("its", "its!", "its?"):
+            for enabled_key in ("enabled", "enabled!", "enabled?"):
+                for value in (True, False):
+                    with self.subTest(its_key=its_key, enabled_key=enabled_key, value=value):
+                        data = {
+                            "from": {},
+                            "name": "test-image",
+                            "for_release": False,
+                            "konflux": {its_key: {enabled_key: value}},
+                        }
+                        self.assertIsNone(image_schema.validate("images/test-image.yml", data))
+                        self.assertFalse(data["for_release"])
+
+    def test_its_enabled_rejects_non_boolean_types(self):
+        for value in ("true", "false", 0, 1, None, [], {}):
+            with self.subTest(value=value):
+                data = {"from": {}, "name": "test-image", "konflux": {"its": {"enabled": value}}}
+                error = image_schema.validate("images/test-image.yml", data)
+                self.assertIsNotNone(error)
+                self.assertIn("is not of type 'boolean'", error)
+
+    def test_its_rejects_non_object_and_unknown_fields(self):
+        for value in (True, None, [], {"unknown": True}):
+            with self.subTest(value=value):
+                data = {"from": {}, "name": "test-image", "konflux": {"its": value}}
+                self.assertIsNotNone(image_schema.validate("images/test-image.yml", data))
+
+    def test_its_removal_merge_variants(self):
+        for its in ({"its-": None}, {"its": {"enabled-": None}}):
+            with self.subTest(its=its):
+                data = {"from": {}, "name": "test-image", "for_release": False, "konflux": its}
+                self.assertIsNone(image_schema.validate("images/test-image.yml", data))
+
+    def test_its_enabled_does_not_exempt_release_image_from_delivery_requirements(self):
+        data = {"from": {}, "name": "test-image", "for_release": True, "konflux": {"its": {"enabled": False}}}
+        self.assertIn("delivery.delivery_repo_names", image_schema.validate("images/test-image.yml", data))
+
     def setUp(self):
         self.temp_dir = tempfile.mkdtemp()
 
@@ -69,6 +107,87 @@ class TestImageSchema(unittest.TestCase):
             'delivery': {'delivery_repo_names': ['foo', 'bar']},
         }
         self.assertIsNone(image_schema.validate('filename', valid_data))
+
+    def test_validate_with_valid_content_source_git_no_url_pull(self):
+        """A plain images/*.yml image that does not set url_pull should validate cleanly."""
+        valid_data = {
+            'content': {
+                'source': {
+                    'git': {
+                        'branch': {
+                            'target': 'test',
+                        },
+                        'url': 'git@github.com:openshift/csi-node-driver-registrar.git',
+                    },
+                },
+            },
+            'name': '1234',
+            'from': {},
+            'for_payload': True,
+            'delivery': {'delivery_repo_names': ['foo', 'bar']},
+        }
+        self.assertIsNone(image_schema.validate('filename', valid_data))
+
+    def test_validate_rejects_content_source_git_url_pull(self):
+        """
+        url_pull must never be set permanently in images/*.yml: it would silently and permanently
+        redirect this component's real upstream source for every future stream build. It is only
+        a legitimate one-off override scoped to a specific isolated assembly in releases.yml (see
+        test_releases_schema.py for the still-accepted releases.yml override path).
+        """
+        invalid_data = {
+            'content': {
+                'source': {
+                    'git': {
+                        'branch': {
+                            'target': 'test',
+                        },
+                        'url': 'git@github.com:openshift/csi-node-driver-registrar.git',
+                        'url_pull': 'https://github.com/some-fork/csi-node-driver-registrar',
+                    },
+                },
+            },
+            'name': '1234',
+            'from': {},
+            'for_payload': True,
+            'delivery': {'delivery_repo_names': ['foo', 'bar']},
+        }
+        error = image_schema.validate('filename', invalid_data)
+        self.assertIsNotNone(error)
+        self.assertIn("must not be set permanently in images/*.yml", error)
+
+    def test_validate_rejects_content_source_git_url_pull_merge_variants(self):
+        for url_pull_key in ("url_pull", "url_pull!", "url_pull?", "url_pull-"):
+            with self.subTest(url_pull_key=url_pull_key):
+                data = {
+                    'content': {
+                        'source': {
+                            'git': {
+                                url_pull_key: 'https://github.com/some-fork/csi-node-driver-registrar',
+                            },
+                        },
+                    },
+                    'name': '1234',
+                    'from': {},
+                }
+                error = image_schema.validate('filename', data)
+                self.assertIsNotNone(error)
+                self.assertIn("must not be set permanently in images/*.yml", error)
+                self.assertIn(url_pull_key, error)
+
+    def test_validate_with_invalid_content_source_git_url_pull_type(self):
+        invalid_data = {
+            'content': {
+                'source': {
+                    'git': {
+                        'url_pull': 123,
+                    },
+                },
+            },
+            'name': '1234',
+            'from': {},
+        }
+        self.assertIn("123 is not of type 'string'", image_schema.validate('filename', invalid_data))
 
     def test_validate_with_valid_subscription_label(self):
         data = {
@@ -537,3 +656,59 @@ class TestImageSchema(unittest.TestCase):
         error = image_schema.validate('filename', invalid_data)
         self.assertIsNotNone(error)
         self.assertIn("is less than the minimum of 1", error)
+
+    def test_builder_no_rpms_true_is_valid(self):
+        """Builder entry with no_rpms: true should be valid."""
+        valid_data = {
+            'from': {
+                'builder': [
+                    {'stream': 'golang', 'no_rpms': True},
+                ],
+            },
+            'name': 'my-name',
+            'for_payload': True,
+            'delivery': {'delivery_repo_names': ['foo', 'bar']},
+        }
+        self.assertIsNone(image_schema.validate('filename', valid_data))
+
+    def test_builder_no_rpms_false_is_valid(self):
+        """Builder entry with no_rpms: false should be valid."""
+        valid_data = {
+            'from': {
+                'builder': [
+                    {'stream': 'golang', 'no_rpms': False},
+                ],
+            },
+            'name': 'my-name',
+            'for_payload': True,
+            'delivery': {'delivery_repo_names': ['foo', 'bar']},
+        }
+        self.assertIsNone(image_schema.validate('filename', valid_data))
+
+    def test_builder_without_no_rpms_is_valid(self):
+        """Builder entry without no_rpms key should be valid (backward compat)."""
+        valid_data = {
+            'from': {
+                'builder': [
+                    {'stream': 'golang'},
+                ],
+            },
+            'name': 'my-name',
+            'for_payload': True,
+            'delivery': {'delivery_repo_names': ['foo', 'bar']},
+        }
+        self.assertIsNone(image_schema.validate('filename', valid_data))
+
+    def test_builder_no_rpms_wrong_type_is_invalid(self):
+        """Builder entry with no_rpms as string should be invalid."""
+        invalid_data = {
+            'from': {
+                'builder': [
+                    {'stream': 'golang', 'no_rpms': 'yes'},
+                ],
+            },
+            'name': 'my-name',
+            'for_payload': True,
+            'delivery': {'delivery_repo_names': ['foo', 'bar']},
+        }
+        self.assertIn("'yes' is not of type 'boolean'", image_schema.validate('filename', invalid_data))

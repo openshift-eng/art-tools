@@ -8,13 +8,16 @@ from artcommonlib import build_util, release_util, util
 from artcommonlib.model import Model
 from artcommonlib.release_util import SoftwareLifecyclePhase
 from artcommonlib.util import (
+    _extract_versioned_images_from_catalog_json,
     deep_merge,
     extract_related_images_from_fbc,
+    extract_versioned_related_images_from_fbc,
     get_inflight,
     get_registry_namespace_pattern,
     isolate_major_minor_in_group,
     normalize_group_name_for_k8s,
     normalize_k8s_dns_label,
+    parse_version_from_fbc_pullspec,
     product_version_from_group_name,
     resolve_konflux_fbc_stage_release_plan,
     validate_k8s_dns_label,
@@ -846,7 +849,9 @@ class TestExtractRelatedImagesFromFBC(unittest.TestCase):
         )
 
     def test_get_registry_namespace_pattern(self):
+        """Match each product's registry namespace, including canonical Kueue."""
         self.assertEqual(get_registry_namespace_pattern("ocp"), r"openshift\d+")
+        self.assertEqual(get_registry_namespace_pattern("kueue"), "kueue")
         self.assertEqual(get_registry_namespace_pattern("oadp"), "oadp")
 
     @patch('artcommonlib.util.cmd_gather_async', new_callable=AsyncMock)
@@ -1217,6 +1222,535 @@ class TestExtractRelatedImagesFromFBC(unittest.TestCase):
         self.assertIn('sha256:555', str(result))
 
 
+class TestExtractVersionedRelatedImagesFromFBC(unittest.TestCase):
+    """Tests for LP version-scoped rendered-catalog extraction."""
+
+    def setUp(self):
+        self.fbc_pullspec = (
+            "quay.io/redhat-user-workloads/ocp-art-tenant/art-fbc:test-operator-fbc-1.0.0-20260101120000.ocp4.18"
+        )
+        self.product = "ocp"
+        self.catalog_json_content = '\n'.join(
+            [
+                json.dumps({"schema": "olm.package", "name": "test-operator", "defaultChannel": "stable"}),
+                json.dumps(
+                    {
+                        "schema": "olm.bundle",
+                        "name": "test-operator.v1.0.0",
+                        "package": "test-operator",
+                        "relatedImages": [
+                            {"name": "operator", "image": "registry.redhat.io/openshift4/ose-operator@sha256:444"},
+                            {"name": "cli", "image": "registry.redhat.io/openshift4/ose-cli@sha256:555"},
+                        ],
+                    }
+                ),
+            ]
+        )
+        self.catalog_multi_bundle = '\n'.join(
+            [
+                json.dumps({"schema": "olm.package", "name": "test-operator", "defaultChannel": "stable"}),
+                json.dumps(
+                    {
+                        "schema": "olm.bundle",
+                        "name": "test-operator.v1.0.0",
+                        "package": "test-operator",
+                        "relatedImages": [
+                            {"name": "old-op", "image": "registry.redhat.io/openshift4/ose-operator@sha256:old111"},
+                        ],
+                    }
+                ),
+                json.dumps(
+                    {
+                        "schema": "olm.bundle",
+                        "name": "test-operator.v1.1.0",
+                        "package": "test-operator",
+                        "relatedImages": [
+                            {"name": "new-op", "image": "registry.redhat.io/openshift4/ose-operator@sha256:new222"},
+                            {"name": "postgres", "image": "registry.redhat.io/rhel9/postgresql-15@sha256:pg"},
+                        ],
+                    }
+                ),
+            ]
+        )
+        self.catalog_json_content_pretty = '\n'.join(
+            [
+                json.dumps(
+                    {
+                        "schema": "olm.bundle",
+                        "name": "test-operator.v1.0.0",
+                        "package": "test-operator",
+                        "relatedImages": [
+                            {"name": "operator", "image": "registry.redhat.io/openshift4/ose-operator@sha256:444"},
+                            {"name": "cli", "image": "registry.redhat.io/openshift4/ose-cli@sha256:555"},
+                        ],
+                    },
+                    indent=4,
+                ),
+            ]
+        )
+
+    def _virtual_assembly_catalog(self):
+        return [
+            {
+                'schema': 'olm.bundle',
+                'name': f'opentelemetry-operator.v{version}',
+                'image': f'registry.redhat.io/rhosdt/bundle@sha256:{digest * 64}',
+                'properties': [{'type': 'olm.package', 'value': {'version': version}}],
+                'relatedImages': [{'name': 'operator', 'image': image}],
+            }
+            for version, digest, image in [
+                ('0.158.0-3', 'a', 'registry.redhat.io/rhosdt/operator@sha256:old'),
+                ('0.158.4', 'b', 'registry.redhat.io/rhosdt/operator@sha256:historical'),
+                ('0.158.0-202610221301', 'c', 'registry.redhat.io/rhosdt/operator@sha256:new'),
+            ]
+        ]
+
+    @patch('artcommonlib.util.oc_image_info_for_arch_async', new_callable=AsyncMock)
+    @patch('artcommonlib.util.cmd_gather_async', new_callable=AsyncMock)
+    @patch('builtins.open', new_callable=MagicMock)
+    @patch('os.path.exists')
+    @patch('os.listdir')
+    def test_virtual_assembly_selects_recorded_bundle_over_history(
+        self, mock_listdir, mock_exists, mock_open, mock_cmd, mock_info
+    ):
+        catalog = '\n'.join(json.dumps(entry) for entry in self._virtual_assembly_catalog())
+        self._mock_catalog_extraction(mock_listdir, mock_exists, mock_open, mock_cmd, catalog)
+        mock_info.return_value = {
+            'config': {
+                'config': {
+                    'Labels': {
+                        'com.redhat.art.bundle.pullspec': f'quay.io/other/bundle@sha256:{"c" * 64}',
+                    }
+                }
+            }
+        }
+        fbc = f'quay.io/test/art-fbc@sha256:{"d" * 64}'
+        with patch.dict('os.environ', {'QUAY_AUTH_FILE': '/test/auth.json'}):
+            result = asyncio.run(
+                extract_versioned_related_images_from_fbc(
+                    fbc,
+                    'openshift-opentelemetry-operator',
+                    assembly='0.158.4',
+                    ignore_patch_version=True,
+                )
+            )
+        self.assertEqual(
+            result,
+            [
+                'quay.io/redhat-user-workloads/ocp-art-tenant/art-images@sha256:new',
+            ],
+        )
+        mock_info.assert_awaited_once_with(fbc, registry_config='/test/auth.json')
+
+    @patch('artcommonlib.util._parse_catalog_json_entries')
+    def test_recorded_bundle_requires_unambiguous_same_train_identity(self, mock_entries):
+        identity = f'quay.io/test/bundle@sha256:{"c" * 64}'
+        for label, assembly, entries, error in [
+            (None, '0.158.4', self._virtual_assembly_catalog()[-1:], 'Missing or malformed'),
+            (158, '0.158.4', self._virtual_assembly_catalog(), 'Missing or malformed'),
+            ('quay.io/test/bundle:latest', '0.158.4', self._virtual_assembly_catalog(), 'Missing or malformed'),
+            ('quay.io/test/bundle@sha256:short', '0.158.4', self._virtual_assembly_catalog(), 'Missing or malformed'),
+            (identity, 'stream', self._virtual_assembly_catalog(), 'Cannot determine'),
+            (identity, '0.159.4', self._virtual_assembly_catalog(), 'major/minor release train'),
+            (identity, '1.158.4', self._virtual_assembly_catalog(), 'major/minor release train'),
+            (identity, '0.158.4', self._virtual_assembly_catalog()[:2], 'found 0'),
+            (identity, '0.158.4', self._virtual_assembly_catalog() + [self._virtual_assembly_catalog()[-1]], 'found 2'),
+        ]:
+            with self.subTest(label=label, assembly=assembly, error=error):
+                mock_entries.return_value = entries
+                with self.assertRaisesRegex(RuntimeError, error):
+                    util._extract_fbc_bundle_images_from_catalog_json('catalog.json', label, assembly)
+
+    @patch('artcommonlib.util._parse_catalog_json_entries')
+    def test_recorded_bundle_rejects_missing_or_malformed_package_version(self, mock_entries):
+        identity = f'quay.io/test/bundle@sha256:{"c" * 64}'
+        for version in [None, '', 'not-a-version', 158]:
+            with self.subTest(version=version):
+                entries = self._virtual_assembly_catalog()
+                entries[-1]['properties'][0]['value']['version'] = version
+                mock_entries.return_value = entries
+                with self.assertRaisesRegex(RuntimeError, 'Missing or malformed olm.package version'):
+                    util._extract_fbc_bundle_images_from_catalog_json('catalog.json', identity, '0.158.4')
+        entries[-1]['properties'] = []
+        mock_entries.return_value = entries
+        with self.assertRaisesRegex(RuntimeError, 'Missing or malformed olm.package version'):
+            util._extract_fbc_bundle_images_from_catalog_json('catalog.json', identity, '0.158.4')
+
+    @patch('artcommonlib.util.oc_image_info_for_arch_async', new_callable=AsyncMock)
+    @patch('artcommonlib.util.cmd_gather_async', new_callable=AsyncMock)
+    @patch('builtins.open', new_callable=MagicMock)
+    @patch('os.path.exists')
+    @patch('os.listdir')
+    def test_virtual_assembly_missing_provenance_reports_fbc_and_assembly(
+        self, mock_listdir, mock_exists, mock_open, mock_cmd, mock_info
+    ):
+        self._mock_catalog_extraction(mock_listdir, mock_exists, mock_open, mock_cmd, self.catalog_multi_bundle)
+        mock_info.return_value = {'config': {'config': {'Labels': {}}}}
+        with self.assertRaisesRegex(RuntimeError, 'Missing or malformed') as raised:
+            asyncio.run(
+                extract_versioned_related_images_from_fbc(
+                    self.fbc_pullspec,
+                    self.product,
+                    assembly='1.1.0',
+                    ignore_patch_version=True,
+                )
+            )
+        self.assertIn(self.fbc_pullspec, str(raised.exception))
+        self.assertIn('1.1.0', str(raised.exception))
+
+    def test_parse_version_from_fbc_pullspec(self):
+        self.assertEqual(
+            parse_version_from_fbc_pullspec("quay.io/x/art-fbc:quay-operator-fbc-3.18.2-20261016202302.ocp4.12"),
+            "3.18.2",
+        )
+        self.assertEqual(
+            parse_version_from_fbc_pullspec("cluster-logging-operator-fbc-6.4.5-20260529.ocp4.18"),
+            "6.4.5",
+        )
+        self.assertIsNone(parse_version_from_fbc_pullspec("quay.io/x/art-fbc@sha256:abc123"))
+
+    def test_extract_versioned_images_from_catalog_json(self):
+        import os
+        import tempfile
+
+        with tempfile.NamedTemporaryFile('w', suffix='.json', delete=False) as f:
+            f.write(self.catalog_multi_bundle)
+            path = f.name
+        try:
+            images = _extract_versioned_images_from_catalog_json(path, "1.1.0")
+            self.assertEqual(len(images), 2)
+            self.assertTrue(any("new222" in i for i in images))
+            self.assertFalse(any("old111" in i for i in images))
+            with self.assertRaises(RuntimeError) as ctx:
+                _extract_versioned_images_from_catalog_json(path, "9.9.9")
+            self.assertIn("No olm.bundle named", str(ctx.exception))
+        finally:
+            os.unlink(path)
+
+    def _create_discover_response(
+        self, include_related_images=False, include_rendered_catalog=True, use_manifests=False
+    ):
+        items = []
+        if include_related_images:
+            items.append(
+                {
+                    'digest': 'sha256:related-digest-111',
+                    'artifactType': 'application/vnd.konflux-ci.attached-artifact',
+                    'annotations': {
+                        'attachedMediaType': 'application/vnd.konflux-ci.attached-artifact.related-images+json'
+                    },
+                }
+            )
+        if include_rendered_catalog:
+            items.append(
+                {
+                    'digest': 'sha256:catalog-digest-222',
+                    'artifactType': 'application/vnd.konflux-ci.attached-artifact',
+                    'annotations': {
+                        'attachedMediaType': 'application/vnd.konflux-ci.attached-artifact.rendered-catalog+json'
+                    },
+                }
+            )
+        key = 'manifests' if use_manifests else 'referrers'
+        return json.dumps({key: items})
+
+    def _mock_catalog_extraction(
+        self, mock_listdir, mock_exists, mock_open, mock_cmd, catalog_content, use_manifests=False
+    ):
+        mock_cmd.side_effect = [
+            (0, self._create_discover_response(include_rendered_catalog=True, use_manifests=use_manifests), ''),
+            (0, 'Pulled artifact successfully', ''),
+        ]
+        mock_listdir.return_value = ['catalog.json']
+        mock_exists.side_effect = lambda path: 'catalog.json' in path
+        mock_file = MagicMock()
+        mock_file.__enter__.return_value.read.return_value = catalog_content
+        mock_open.return_value = mock_file
+
+    @patch('artcommonlib.util.cmd_gather_async', new_callable=AsyncMock)
+    @patch('builtins.open', new_callable=MagicMock)
+    @patch('os.path.exists')
+    @patch('os.listdir')
+    def test_kueue_extraction_uses_canonical_registry_namespace(self, mock_listdir, mock_exists, mock_open, mock_cmd):
+        """Rewrite canonical Kueue images while preserving unrelated registry images."""
+        unchanged = [
+            'registry.redhat.io/rhel9/base@sha256:333',
+            'registry.redhat.io/kueue-operator/operator@sha256:444',
+        ]
+        raw_images = [
+            'registry.redhat.io/kueue/kueue-rhel9-operator@sha256:111',
+            'registry.redhat.io/kueue/kueue-operator-bundle@sha256:222',
+            *unchanged,
+        ]
+        catalog_content = json.dumps(
+            {
+                'schema': 'olm.bundle',
+                'name': 'kueue-operator.v1.0.0',
+                'relatedImages': [{'name': f'image-{index}', 'image': image} for index, image in enumerate(raw_images)],
+            }
+        )
+        for extractor in (extract_related_images_from_fbc, extract_versioned_related_images_from_fbc):
+            with self.subTest(extractor=extractor.__name__):
+                self._mock_catalog_extraction(mock_listdir, mock_exists, mock_open, mock_cmd, catalog_content)
+                result = asyncio.run(extractor(self.fbc_pullspec, 'kueue'))
+                self.assertEqual(
+                    sorted(result),
+                    sorted(
+                        [
+                            'quay.io/redhat-user-workloads/ocp-art-tenant/art-images@sha256:111',
+                            'quay.io/redhat-user-workloads/ocp-art-tenant/art-images@sha256:222',
+                            *unchanged,
+                        ]
+                    ),
+                )
+
+    @patch('artcommonlib.util.cmd_gather_async', new_callable=AsyncMock)
+    @patch('builtins.open', new_callable=MagicMock)
+    @patch('os.path.exists')
+    @patch('os.listdir')
+    def test_assembly_selects_matching_bundle_only(self, mock_listdir, mock_exists, mock_open, mock_cmd):
+        self._mock_catalog_extraction(mock_listdir, mock_exists, mock_open, mock_cmd, self.catalog_multi_bundle)
+        result = asyncio.run(
+            extract_versioned_related_images_from_fbc(self.fbc_pullspec, self.product, assembly="1.1.0")
+        )
+        self.assertEqual(len(result), 2)
+        self.assertIn('sha256:new222', str(result))
+        self.assertNotIn('sha256:old111', str(result))
+
+    @patch('artcommonlib.util.cmd_gather_async', new_callable=AsyncMock)
+    @patch('builtins.open', new_callable=MagicMock)
+    @patch('os.path.exists')
+    @patch('os.listdir')
+    def test_stream_assembly_falls_back_to_fbc_tag_version(self, mock_listdir, mock_exists, mock_open, mock_cmd):
+        """assembly=stream must not match *.vstream; use version from FBC tag."""
+        self._mock_catalog_extraction(mock_listdir, mock_exists, mock_open, mock_cmd, self.catalog_json_content)
+        result = asyncio.run(
+            extract_versioned_related_images_from_fbc(self.fbc_pullspec, self.product, assembly="stream")
+        )
+        self.assertEqual(len(result), 2)
+        self.assertIn('sha256:444', str(result))
+
+    @patch('artcommonlib.util.cmd_gather_async', new_callable=AsyncMock)
+    @patch('builtins.open', new_callable=MagicMock)
+    @patch('os.path.exists')
+    @patch('os.listdir')
+    def test_falls_back_to_fbc_tag_version_after_assembly_miss(self, mock_listdir, mock_exists, mock_open, mock_cmd):
+        self._mock_catalog_extraction(mock_listdir, mock_exists, mock_open, mock_cmd, self.catalog_json_content)
+        result = asyncio.run(
+            extract_versioned_related_images_from_fbc(self.fbc_pullspec, self.product, assembly="9.9.9")
+        )
+        self.assertEqual(len(result), 2)
+        self.assertIn('sha256:444', str(result))
+
+    @patch('artcommonlib.util.cmd_gather_async', new_callable=AsyncMock)
+    @patch('builtins.open', new_callable=MagicMock)
+    @patch('os.path.exists')
+    @patch('os.listdir')
+    def test_uses_fbc_tag_version_when_assembly_absent(self, mock_listdir, mock_exists, mock_open, mock_cmd):
+        self._mock_catalog_extraction(mock_listdir, mock_exists, mock_open, mock_cmd, self.catalog_json_content)
+        result = asyncio.run(extract_versioned_related_images_from_fbc(self.fbc_pullspec, self.product))
+        self.assertEqual(len(result), 2)
+
+    @patch('artcommonlib.util.cmd_gather_async', new_callable=AsyncMock)
+    def test_error_when_related_images_only(self, mock_cmd):
+        mock_cmd.return_value = (
+            0,
+            self._create_discover_response(include_related_images=True, include_rendered_catalog=False),
+            '',
+        )
+        with self.assertRaises(RuntimeError) as ctx:
+            asyncio.run(extract_versioned_related_images_from_fbc(self.fbc_pullspec, self.product, assembly="1.0.0"))
+        self.assertIn('rendered-catalog', str(ctx.exception))
+
+    @patch('artcommonlib.util.cmd_gather_async', new_callable=AsyncMock)
+    @patch('builtins.open', new_callable=MagicMock)
+    @patch('os.path.exists')
+    @patch('os.listdir')
+    def test_prefers_rendered_catalog_artifact(self, mock_listdir, mock_exists, mock_open, mock_cmd):
+        mock_cmd.side_effect = [
+            (
+                0,
+                self._create_discover_response(include_related_images=True, include_rendered_catalog=True),
+                '',
+            ),
+            (0, 'Pulled artifact successfully', ''),
+        ]
+        mock_listdir.return_value = ['catalog.json']
+        mock_exists.side_effect = lambda path: 'catalog.json' in path
+        mock_file = MagicMock()
+        mock_file.__enter__.return_value.read.return_value = self.catalog_json_content
+        mock_open.return_value = mock_file
+
+        result = asyncio.run(
+            extract_versioned_related_images_from_fbc(self.fbc_pullspec, self.product, assembly="1.0.0")
+        )
+        self.assertGreater(len(result), 0)
+        pull_call = mock_cmd.call_args_list[1]
+        self.assertIn('sha256:catalog-digest-222', str(pull_call))
+
+    @patch('artcommonlib.util.cmd_gather_async', new_callable=AsyncMock)
+    @patch('builtins.open', new_callable=MagicMock)
+    @patch('os.path.exists')
+    @patch('os.listdir')
+    def test_discover_accepts_manifests_key(self, mock_listdir, mock_exists, mock_open, mock_cmd):
+        self._mock_catalog_extraction(
+            mock_listdir, mock_exists, mock_open, mock_cmd, self.catalog_json_content, use_manifests=True
+        )
+        result = asyncio.run(
+            extract_versioned_related_images_from_fbc(self.fbc_pullspec, self.product, assembly="1.0.0")
+        )
+        self.assertEqual(len(result), 2)
+
+    @patch('artcommonlib.util.cmd_gather_async', new_callable=AsyncMock)
+    @patch('builtins.open', new_callable=MagicMock)
+    @patch('os.path.exists')
+    @patch('os.listdir')
+    def test_error_when_neither_assembly_nor_fbc_version_matches(self, mock_listdir, mock_exists, mock_open, mock_cmd):
+        digest_only = "quay.io/redhat-user-workloads/ocp-art-tenant/art-fbc@sha256:abc123"
+        self._mock_catalog_extraction(mock_listdir, mock_exists, mock_open, mock_cmd, self.catalog_json_content)
+        with self.assertRaises(RuntimeError) as ctx:
+            asyncio.run(extract_versioned_related_images_from_fbc(digest_only, self.product, assembly="9.9.9"))
+        self.assertIn("could not parse a version", str(ctx.exception).lower())
+
+    @patch('artcommonlib.util.cmd_gather_async', new_callable=AsyncMock)
+    @patch('builtins.open', new_callable=MagicMock)
+    @patch('os.path.exists')
+    @patch('os.listdir')
+    def test_explicit_source_bundle_version(self, mock_listdir, mock_exists, mock_open, mock_cmd):
+        digest_only = "quay.io/test/art-fbc@sha256:abc123"
+        for assembly in ("1.0.1", "stream", None):
+            with self.subTest(assembly=assembly):
+                self._mock_catalog_extraction(mock_listdir, mock_exists, mock_open, mock_cmd, self.catalog_multi_bundle)
+                result = asyncio.run(
+                    extract_versioned_related_images_from_fbc(
+                        digest_only,
+                        self.product,
+                        assembly=assembly,
+                        bundle_version="1.0.0",
+                    )
+                )
+                self.assertEqual(len(result), 1)
+                self.assertIn('sha256:old111', result[0])
+                self.assertNotIn('sha256:new222', str(result))
+
+    @patch('artcommonlib.util.cmd_gather_async', new_callable=AsyncMock)
+    @patch('builtins.open', new_callable=MagicMock)
+    @patch('os.path.exists')
+    @patch('os.listdir')
+    def test_source_bundle_version_precedes_destination(self, mock_listdir, mock_exists, mock_open, mock_cmd):
+        self._mock_catalog_extraction(mock_listdir, mock_exists, mock_open, mock_cmd, self.catalog_multi_bundle)
+        result = asyncio.run(
+            extract_versioned_related_images_from_fbc(
+                "quay.io/test/art-fbc@sha256:abc123",
+                self.product,
+                assembly="1.1.0",
+                bundle_version="1.0.0",
+            )
+        )
+        self.assertEqual(len(result), 1)
+        self.assertIn('sha256:old111', str(result))
+
+    @patch('artcommonlib.util.cmd_gather_async', new_callable=AsyncMock)
+    @patch('builtins.open', new_callable=MagicMock)
+    @patch('os.path.exists')
+    @patch('os.listdir')
+    def test_missing_source_bundle_fails_closed(self, mock_listdir, mock_exists, mock_open, mock_cmd):
+        self._mock_catalog_extraction(mock_listdir, mock_exists, mock_open, mock_cmd, self.catalog_multi_bundle)
+        with self.assertRaisesRegex(RuntimeError, "No olm.bundle named.*1.0.2"):
+            asyncio.run(
+                extract_versioned_related_images_from_fbc(
+                    "quay.io/test/art-fbc@sha256:abc123",
+                    self.product,
+                    assembly="1.0.3",
+                    bundle_version="1.0.2",
+                )
+            )
+
+    @patch('artcommonlib.util.cmd_gather_async', new_callable=AsyncMock)
+    @patch('builtins.open', new_callable=MagicMock)
+    @patch('os.path.exists')
+    @patch('os.listdir')
+    def test_catalog_json_pretty_printed_multiline(self, mock_listdir, mock_exists, mock_open, mock_cmd):
+        self._mock_catalog_extraction(mock_listdir, mock_exists, mock_open, mock_cmd, self.catalog_json_content_pretty)
+        result = asyncio.run(
+            extract_versioned_related_images_from_fbc(self.fbc_pullspec, self.product, assembly="1.0.0")
+        )
+        self.assertEqual(len(result), 2)
+
+
+class TestGetAssemblyReleaseDate(unittest.TestCase):
+    def _get_date(self, tasks, asynchronous, release_name='4.18.1'):
+        if asynchronous:
+            with patch('artcommonlib.util.aiohttp.ClientSession') as mock_session:
+                session = mock_session.return_value.__aenter__.return_value
+                session.post = AsyncMock()
+                session.get = MagicMock()
+                response = session.get.return_value.__aenter__.return_value
+                response.raise_for_status = MagicMock()
+                response.json = AsyncMock(return_value={'all_ga_tasks': tasks})
+                return asyncio.run(util.get_assembly_release_date_async(release_name))
+        with patch('artcommonlib.util.requests.Session') as mock_session:
+            mock_session.return_value.get.return_value.json.return_value = {'all_ga_tasks': tasks}
+            return util.get_assembly_release_date(release_name, 'openshift-4.18')
+
+    def test_does_not_confuse_patch_version_prefixes(self):
+        tasks = [
+            {'name': '4.18.10 in Fast Channel', 'date_start': '2026-10-20'},
+            {'name': '4.18.1 in Fast Channel', 'date_start': '2026-09-01'},
+        ]
+        for asynchronous in (False, True):
+            with self.subTest(asynchronous=asynchronous):
+                self.assertEqual(self._get_date(tasks, asynchronous), '2026-Sep-01')
+
+    def test_near_versions_do_not_satisfy_missing_release(self):
+        for title in (
+            '4.18.10 in Fast Channel',
+            '14.18.1 in Fast Channel',
+            '4.18.11 in Fast Channel',
+            '4x18x1 in Fast Channel',
+            '4.18.1.1 in Fast Channel',
+            '4.18.1-rc.1 in Fast Channel',
+            '4.18.1+build.1 in Fast Channel',
+            'prefix4.18.1 in Fast Channel',
+            '4.18.1suffix in Fast Channel',
+        ):
+            for asynchronous in (False, True):
+                with self.subTest(title=title, asynchronous=asynchronous):
+                    tasks = [{'name': title, 'date_start': '2026-10-20'}]
+                    with self.assertRaisesRegex(ValueError, 'Assembly release date not found for 4.18.1'):
+                        self._get_date(tasks, asynchronous)
+
+    def test_matches_exact_and_decorated_titles(self):
+        for title in ('4.18.1', '4.18.1 in Fast Channel', 'OpenShift (4.18.1): GA', '[4.18.1], release'):
+            for asynchronous in (False, True):
+                with self.subTest(title=title, asynchronous=asynchronous):
+                    tasks = [{'name': title, 'date_start': '2026-09-01'}]
+                    self.assertEqual(self._get_date(tasks, asynchronous), '2026-Sep-01')
+
+    def test_matches_complete_prerelease_and_build_names(self):
+        for release_name in ('4.18.1-rc.1', '4.18.1+build.1'):
+            for asynchronous in (False, True):
+                with self.subTest(release_name=release_name, asynchronous=asynchronous):
+                    tasks = [
+                        {'name': f'{release_name}0 in Fast Channel', 'date_start': '2026-10-20'},
+                        {'name': f'{release_name} in Fast Channel', 'date_start': '2026-09-01'},
+                    ]
+                    self.assertEqual(self._get_date(tasks, asynchronous, release_name), '2026-Sep-01')
+
+    def test_empty_schedule_raises(self):
+        for asynchronous in (False, True):
+            with self.subTest(asynchronous=asynchronous):
+                with self.assertRaisesRegex(ValueError, 'Assembly release date not found for 4.18.1'):
+                    self._get_date([], asynchronous)
+
+    @patch('artcommonlib.util.requests.Session')
+    def test_explicit_date_does_not_query_schedule(self, mock_session):
+        for date in ('2026-09-01', '2026-Sep-01'):
+            with self.subTest(date=date):
+                self.assertEqual(util.get_assembly_release_date('4.18.1', 'openshift-4.18', date), '2026-Sep-01')
+        mock_session.assert_not_called()
+
+
 class TestGetInflight(unittest.TestCase):
     """Tests for get_inflight() — ART-18958 fix."""
 
@@ -1365,9 +1899,14 @@ class TestResolveKonfluxFbcStageReleasePlan(unittest.TestCase):
         expected_plans = {
             ("cert-manager", 1, 19): "cm-advisory-stage-auto-1-19",
             ("external-secrets-operator", 1, 1): "eso-advisory-stage-auto-1-1",
+            ("multicluster-engine", 2, 6): "mce-advisory-stage-auto-2-6",
+            ("multicluster-engine", 2, 8): "mce-advisory-stage-auto-2-8",
+            ("multicluster-engine", 2, 9): "mce-advisory-stage-auto-2-9",
+            ("multicluster-engine", 2, 10): "mce-advisory-stage-auto-2-10",
             ("multicluster-engine", 2, 11): "mce-advisory-stage-auto-2-11",
             ("multicluster-engine", 2, 17): "mce-advisory-stage-auto-2-17",
             ("multicluster-engine", 5, 0): "mce-advisory-stage-auto-5-0",
+            ("multicluster-engine", 5, 1): "mce-advisory-stage-auto-5-1",
             ("ocp", 4, 12): "ocp-art-advisory-stage-auto-4-12",
             ("ocp", 4, 13): "ocp-art-advisory-stage-auto-4-13",
             ("ocp", 4, 14): "ocp-art-advisory-stage-auto-4-14",
@@ -1389,6 +1928,15 @@ class TestResolveKonfluxFbcStageReleasePlan(unittest.TestCase):
             ("openshift-opentelemetry-operator", 0, 158): "rhosdt-advisory-stage-auto-0-158",
             ("zero-trust-workload-identity-manager", 1, 0): "zt-advisory-stage-auto-1-0",
             ("zero-trust-workload-identity-manager", 1, 1): "zt-advisory-stage-auto-1-1",
+            ("oadp", 1, 3): "oadp-advisory-stage-auto-1-3",
+            ("oadp", 1, 4): "oadp-advisory-stage-auto-1-4",
+            ("oadp", 1, 5): "oadp-advisory-stage-auto-1-5",
+            ("oadp", 1, 6): "oadp-advisory-stage-auto-1-6",
+            ("mta", 8, 0): "mta-advisory-stage-auto-8-0",
+            ("mta", 8, 1): "mta-advisory-stage-auto-8-1",
+            ("mta", 8, 2): "mta-advisory-stage-auto-8-2",
+            ("mta", 8, 3): "mta-advisory-stage-auto-8-3",
+            ("rhmtc", 1, 8): "mtc-advisory-stage-auto-1-8",
         }
 
         for (product, major, minor), expected_plan in expected_plans.items():

@@ -18,8 +18,9 @@ from artcommonlib.util import (
 )
 from artcommonlib.variants import BuildVariant, get_build_variant_for_product
 from doozerlib.constants import KONFLUX_DEFAULT_IMAGE_REPO
+from semver import VersionInfo
 
-from pyartcd import constants, jenkins, locks, tekton
+from pyartcd import constants, jenkins, locks, oc, tekton
 from pyartcd import record as record_util
 from pyartcd.build_strategy import BuildStrategy
 from pyartcd.cli import cli, click_coroutine, pass_runtime
@@ -31,6 +32,7 @@ from pyartcd.util import (
     increment_fail_counter,
     load_group_config,
     reset_fail_counter,
+    resolve_build_version,
     update_build_fail_counters,
     update_rebase_fail_counters,
 )
@@ -57,6 +59,7 @@ class BuildLayeredProductsPipeline:
         skip_ec_verify: bool = False,
         skip_custom_its: bool = False,
         logger: Optional[logging.Logger] = None,
+        payload: Optional[str] = None,
     ):
         self.runtime = runtime
         self.group = group
@@ -72,6 +75,8 @@ class BuildLayeredProductsPipeline:
         self.plr_template = plr_template
         self.skip_ec_verify = skip_ec_verify
         self.skip_custom_its = skip_custom_its
+        self.payload = payload.strip() if payload is not None else None
+        self._build_args: dict[str, str] = {}
         self._logger = logger or runtime.logger
         # Operator NVRs that were dropped from the bundle build trigger because they are embargoed.
         # The caller uses this to mark the Jenkins job UNSTABLE instead of a plain SUCCESS.
@@ -198,6 +203,13 @@ class BuildLayeredProductsPipeline:
             doozer_data_gitref=self.data_gitref,
         )
 
+        product = group_config.get('product') or 'ocp'
+        if product == 'openshift_agent_installer':
+            if not self.payload:
+                raise click.UsageError('--payload is required for product openshift_agent_installer')
+        elif self.payload is not None:
+            raise click.UsageError('--payload is only supported for product openshift_agent_installer')
+
         # Set version from group config or the OpenShift group name if not provided
         if not self.version:
             self.version = group_config.get('version')
@@ -207,10 +219,12 @@ class BuildLayeredProductsPipeline:
                     self.version = '.'.join(str(part) for part in group_version)
             if not self.version:
                 raise ValueError(f"No version found in group config for {self.group}")
-            self._logger.info(f"Using version {self.version} from group configuration or name")
 
-        # Extract product from group config
-        product = group_config.get('product') or 'ocp'
+        self.version = resolve_build_version(self.group, self.version)
+        self._logger.info(f"Using build version {self.version}")
+        if product == 'openshift_agent_installer':
+            await self._configure_installer_payload(group_config)
+
         image_repo = group_config.get('konflux', {}).get('image_repo') or KONFLUX_DEFAULT_IMAGE_REPO
         await self._rebase_and_build(product, image_repo)
         self.trigger_bundle_build()
@@ -224,6 +238,28 @@ class BuildLayeredProductsPipeline:
             # Exit with code 2 to mark Jenkins job as UNSTABLE
             # The Jenkinsfile should catch this exit code and set currentBuild.result = 'UNSTABLE'
             sys.exit(2)
+
+    async def _configure_installer_payload(self, group_config: dict):
+        info = await oc.get_release_image_info(
+            self.payload, raise_if_not_found=True, registry_config=os.getenv('QUAY_AUTH_FILE')
+        )
+        payload_version = VersionInfo.parse(info['metadata']['version'])
+        major_minor = f'{payload_version.major}.{payload_version.minor}'
+        for source, version in (('group', group_config['version']), ('build', self.version)):
+            version = resolve_build_version(self.group, str(version))
+            if version.count('.') == 1:
+                version += '.0'
+            version = VersionInfo.parse(version)
+            if (payload_version.major, payload_version.minor) != (version.major, version.minor):
+                raise ValueError(
+                    f'Payload version {payload_version} does not match installer {source} version {version}'
+                )
+        self._build_args = {
+            'RELEASE_FLAG': '--release-image-url',
+            'RELEASE_VALUE': self.payload,
+            'MAJOR_MINOR_VERSION': major_minor,
+            'PATCH_VERSION': str(payload_version.patch),
+        }
 
     def _group_param(self) -> str:
         if self.data_gitref:
@@ -264,6 +300,13 @@ class BuildLayeredProductsPipeline:
             build_image_list = ','.join(remaining)
         else:
             build_image_list = None
+
+        if excluded and tekton.is_tekton_context() and not self.runtime.dry_run:
+            tekton.annotate_current_pipelinerun(
+                {
+                    "art.openshift.io/rebase-warning": ("Images excluded after rebase failure: " + ', '.join(excluded)),
+                }
+            )
 
         try:
             await self._build(strategy, build_image_list, excluded, product, image_repo, build_variant)
@@ -433,7 +476,7 @@ class BuildLayeredProductsPipeline:
             [
                 "beta:images:konflux:build",
                 f"--image-repo={image_repo}",
-                "--build-priority=1",
+                "--build-priority=2",
             ]
         )
 
@@ -449,6 +492,8 @@ class BuildLayeredProductsPipeline:
             )
 
         build_cmd.extend(["--konflux-kubeconfig", kubeconfig])
+        for key, value in self._build_args.items():
+            build_cmd.extend(['--build-arg', f'{key}={value}'])
         if self.plr_template:
             plr_template_owner, plr_template_branch = (
                 self.plr_template.split("@") if self.plr_template else ["openshift-priv", "main"]
@@ -496,7 +541,7 @@ class BuildLayeredProductsPipeline:
     "--version",
     metavar='NAME',
     required=False,
-    help="Layered product version (if not provided, will be read from group config)",
+    help="Layered product version (defaults to group config); 'auto' derives MAJOR.MINOR.0 from the group name",
 )
 @click.option(
     "--assembly",
@@ -517,6 +562,11 @@ class BuildLayeredProductsPipeline:
 )
 @click.option("--skip-bundle-build", is_flag=True, default=False, help="(For testing) Skip the bundle build step")
 @click.option("--skip-rebase", is_flag=True, default=False, help="(For testing) Skip the rebase step")
+@click.option(
+    '--payload',
+    metavar='PULLSPEC',
+    help='Release image pullspec. Required for openshift_agent_installer; not supported for other products.',
+)
 @click.option(
     "--kubeconfig",
     metavar="KUBECONFIG_PATH",
@@ -564,6 +614,7 @@ async def build_layered_products(
     skip_custom_its: bool,
     ignore_locks: bool,
     plr_template: str,
+    payload: Optional[str],
 ):
     """Rebase and build layered product image for an assembly"""
     try:
@@ -583,6 +634,7 @@ async def build_layered_products(
             plr_template=plr_template,
             skip_ec_verify=skip_ec_verify,
             skip_custom_its=skip_custom_its,
+            payload=payload,
         )
 
         lock_identifier = jenkins.get_build_path_or_random()

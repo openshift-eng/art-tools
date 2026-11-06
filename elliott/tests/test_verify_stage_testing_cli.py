@@ -1,6 +1,7 @@
 from unittest import TestCase
 from unittest.mock import MagicMock, patch
 
+from artcommonlib.assembly import AssemblyTypes
 from click import ClickException
 from elliottlib.cli.verify_stage_testing_cli import (
     LabelCheckResult,
@@ -244,35 +245,24 @@ class TestGetMrLabels(TestCase):
 
 
 class TestSetMrLabel(TestCase):
-    @patch("elliottlib.cli.verify_stage_testing_cli._get_gitlab_headers")
-    @patch("elliottlib.cli.verify_stage_testing_cli._get_session")
-    def test_set_success_label(self, mock_session, mock_headers):
-        mock_headers.return_value = {"PRIVATE-TOKEN": "token"}
-        mock_response = MagicMock()
-        mock_response.status_code = 200
-        mock_session.return_value.put.return_value = mock_response
+    @patch("elliottlib.cli.verify_stage_testing_cli.GitLabClient.from_url")
+    def test_replaces_other_stage_testing_labels_for_every_state(self, from_url):
+        mr_url = "https://gitlab.example.com/group/project/-/merge_requests/1"
+        labels = {"stage-testing-triggered", "stage-testing-success", "stage-testing-fail"}
+        for label in sorted(labels):
+            with self.subTest(label=label):
+                from_url.reset_mock()
+                _set_mr_label(mr_url, label)
+                from_url.assert_called_once_with(mr_url)
+                from_url.return_value.add_mr_labels.assert_called_once_with(
+                    mr_url, [label], remove_labels=sorted(labels - {label})
+                )
 
-        _set_mr_label("https://gitlab.cee.redhat.com/group/project/-/merge_requests/1", "stage-testing-success")
-
-        call_kwargs = mock_session.return_value.put.call_args
-        json_body = call_kwargs.kwargs["json"]
-        self.assertEqual(json_body["add_labels"], "stage-testing-success")
-        removed = set(json_body["remove_labels"].split(","))
-        self.assertIn("stage-testing-fail", removed)
-        self.assertIn("stage-testing-triggered", removed)
-        self.assertNotIn("stage-testing-success", removed)
-
-    @patch("elliottlib.cli.verify_stage_testing_cli._get_gitlab_headers")
-    @patch("elliottlib.cli.verify_stage_testing_cli._get_session")
-    def test_set_label_http_error(self, mock_session, mock_headers):
-        mock_headers.return_value = {"PRIVATE-TOKEN": "token"}
-        mock_response = MagicMock()
-        mock_response.status_code = 403
-        mock_response.reason = "Forbidden"
-        mock_session.return_value.put.return_value = mock_response
-
-        with self.assertRaises(ClickException):
-            _set_mr_label("https://gitlab.cee.redhat.com/group/project/-/merge_requests/1", "stage-testing-success")
+    @patch("elliottlib.cli.verify_stage_testing_cli.GitLabClient.from_url")
+    def test_label_update_error_is_propagated(self, from_url):
+        from_url.return_value.add_mr_labels.side_effect = RuntimeError("403 Forbidden")
+        with self.assertRaisesRegex(RuntimeError, "403 Forbidden"):
+            _set_mr_label("https://gitlab.example.com/group/project/-/merge_requests/1", "stage-testing-success")
 
 
 class TestTriggerResult(TestCase):
@@ -353,6 +343,7 @@ class TestHandleTrigger(TestCase):
         runtime = MagicMock()
         runtime.group = "openshift-4.22"
         runtime.assembly = "4.22.9"
+        runtime.assembly_type = AssemblyTypes.STANDARD
 
         _handle_trigger(runtime, "json")
 

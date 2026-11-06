@@ -238,21 +238,15 @@ class ImagesHealthPipeline:
             group_param,
             'images:print',
             '--short',
+            '--show-base',
+            '--show-non-release',
             '{distgit_key}',
         ]
 
-        try:
-            _, out, _ = await exectools.cmd_gather_async(cmd, stderr=None)
-            # Parse the output - one image name per line
-            valid_images = {line.strip() for line in out.strip().split('\n') if line.strip()}
-            self.runtime.logger.info('Found %d valid OKD images for openshift-%s', len(valid_images), version)
-            return valid_images
-        except Exception as e:
-            self.runtime.logger.warning(
-                'Failed to fetch valid OKD images for openshift-%s: %s. Proceeding without filtering.', version, e
-            )
-            # On failure, return empty set to fail safe (don't process any images from Redis)
-            return set()
+        _, out, _ = await exectools.cmd_gather_async(cmd, stderr=None)
+        valid_images = {line.strip() for line in out.strip().split('\n') if line.strip()}
+        self.runtime.logger.info('Found %d valid OKD images for openshift-%s', len(valid_images), version)
+        return valid_images
 
     async def notify_release_channel(self, version):
         """
@@ -345,18 +339,19 @@ class ImagesHealthPipeline:
             okd_group = group.replace('openshift-', 'okd-')
             version_build_failures.setdefault(okd_group, []).append(concern)
 
-        # Rebase failures are already keyed by version in self.rebase_failures
-        # Need to collect all groups that have any kind of failure
+        # Keep only versions that have actual rebase failures. get_rebase_failures()
+        # also stores empty dictionaries for versions with no failures.
+        version_rebase_failures = {version: failures for version, failures in self.rebase_failures.items() if failures}
 
         # If no concerns and no rebase failures, report all healthy
-        if not version_build_failures and not self.rebase_failures:
+        if not version_build_failures and not version_rebase_failures:
             await self.slack_client.say(':white_check_mark: All OKD images are healthy for all monitored releases')
             return
 
         # Collect all groups that have any kind of failure
         all_groups = set()
         all_groups.update(version_build_failures.keys())
-        all_groups.update(f'okd-{v}' for v in self.rebase_failures.keys())
+        all_groups.update(f'okd-{v}' for v in version_rebase_failures)
 
         # Build message grouped by version
         message_parts = [':alert: There are some issues to look into for OKD builds:\n']
@@ -372,7 +367,7 @@ class ImagesHealthPipeline:
                 group_summary.append(f'{n} image{"s" if n > 1 else ""} with build failures')
 
             # Rebase failures for this group
-            rebase_fails = self.rebase_failures.get(version, {})
+            rebase_fails = version_rebase_failures.get(version, {})
             if rebase_fails:
                 n = len(rebase_fails)
                 group_summary.append(f'{n} image{"s" if n > 1 else ""} with rebase failures')
@@ -383,7 +378,7 @@ class ImagesHealthPipeline:
                     message_parts.append(f'- {item}')
 
         # Link to art-build-failures dashboard
-        dashboard_url = ART_BUILD_FAILURES_URL
+        dashboard_url = f'{ART_BUILD_FAILURES_URL.rstrip("/")}/?variant=okd'
         message_parts.append(
             f'\nFor detailed information, please check the {self.url_text(dashboard_url, "ART Build Failures Dashboard")}'
         )

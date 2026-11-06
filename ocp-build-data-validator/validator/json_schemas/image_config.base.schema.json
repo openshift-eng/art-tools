@@ -84,7 +84,7 @@
                     },
                     "member-": {},
                     "image": {
-                      "description": "Currently unused",
+                      "description": "External registry image not managed by ocp-build-data",
                       "type": "string",
                       "minLength": 1
                     },
@@ -94,7 +94,18 @@
                     "image?": {
                       "$ref": "#/properties/from/properties/builder/items/properties/image"
                     },
-                    "image-": {}
+                    "image-": {},
+                    "no_rpms": {
+                      "description": "If true, skip RPM lockfile resolution for this builder stage. Use for builder images whose only purpose is content copying (e.g., operator-index catalog images).",
+                      "type": "boolean"
+                    },
+                    "no_rpms!": {
+                      "$ref": "#/properties/from/properties/builder/items/properties/no_rpms"
+                    },
+                    "no_rpms?": {
+                      "$ref": "#/properties/from/properties/builder/items/properties/no_rpms"
+                    },
+                    "no_rpms-": {}
                   }
                 }
               },
@@ -482,7 +493,7 @@
               },
               "member-": {},
               "image": {
-                "description": "Currently unused",
+                "description": "External registry image not managed by ocp-build-data",
                 "type": "string",
                 "minLength": 1
               },
@@ -492,7 +503,18 @@
               "image?": {
                 "$ref": "#/properties/from/properties/builder/items/properties/image"
               },
-              "image-": {}
+              "image-": {},
+              "no_rpms": {
+                "description": "If true, skip RPM lockfile resolution for this builder stage. Use for builder images whose only purpose is content copying (e.g., operator-index catalog images).",
+                "type": "boolean"
+              },
+              "no_rpms!": {
+                "$ref": "#/properties/from/properties/builder/items/properties/no_rpms"
+              },
+              "no_rpms?": {
+                "$ref": "#/properties/from/properties/builder/items/properties/no_rpms"
+              },
+              "no_rpms-": {}
             }
           }
         },
@@ -1595,6 +1617,31 @@
           "$ref": "#/properties/konflux/properties/build_attempts"
         },
         "build_attempts-": {},
+        "its": {
+          "description": "Image-level build-time EC and custom IntegrationTestScenario eligibility. When enabled is absent, for_release determines eligibility.",
+          "type": "object",
+          "properties": {
+            "enabled": {
+              "description": "Override for_release to enable or disable build-time EC and configured custom IntegrationTestScenarios. Existing prerequisites and explicit skip flags still apply.",
+              "type": "boolean"
+            },
+            "enabled?": {
+              "$ref": "#/properties/konflux/properties/its/properties/enabled"
+            },
+            "enabled!": {
+              "$ref": "#/properties/konflux/properties/its/properties/enabled"
+            },
+            "enabled-": {}
+          },
+          "additionalProperties": false
+        },
+        "its!": {
+          "$ref": "#/properties/konflux/properties/its"
+        },
+        "its?": {
+          "$ref": "#/properties/konflux/properties/its"
+        },
+        "its-": {},
         "skip_validate_slsa": {
           "description": "Skip SLSA attestation and source image signature validation after a successful Konflux build",
           "type": "boolean"

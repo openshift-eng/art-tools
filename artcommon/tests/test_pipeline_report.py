@@ -48,6 +48,77 @@ def build(name='build-1', status='Unknown'):
 
 
 class PipelineReportTests(IsolatedAsyncioTestCase):
+    async def test_checks_preserve_build_success_and_attempt_history(self):
+        reporter = MemoryReporter()
+        report = reporter.component('image', 'operator')
+        await report.configure_checks([{'kind': 'conforma', 'name': 'Conforma', 'blocking': True}])
+        await report.observe(build(status='True'), Client(), attempt=1)
+        first = report.check_callback('conforma')
+        await first('Conforma', 'Failed', url='https://konflux.example/check-1', reason='Policy failed')
+        self.assertEqual(reporter.entry()['status'], 'Succeeded')
+        self.assertEqual(reporter.entry()['checks'][0]['status'], 'Failed')
+
+        await report.observe(build('build-2', 'True'), Client(), attempt=2)
+        await report.check_callback('conforma')('Conforma', 'Succeeded', url='https://konflux.example/check-2')
+        await first('Conforma', 'Failed', reason='Delayed first-attempt update')
+        entry = reporter.entry()
+        self.assertEqual(entry['checks'][0]['status'], 'Succeeded')
+        self.assertEqual([r['checks'][0]['status'] for r in entry['pipelineRuns']], ['Failed', 'Succeeded'])
+        await report.observe(build('build-2', 'True'), Client(), attempt=2)
+        self.assertEqual(reporter.entry()['checks'][0]['url'], 'https://konflux.example/check-2')
+
+    async def test_enabled_checks_survive_interrupted_wait(self):
+        reporter = MemoryReporter()
+        report = reporter.component('image', 'operator')
+        await report.configure_checks([{'kind': 'custom', 'name': 'qe', 'blocking': True}])
+        await report.observe(build(status='True'), Client(), attempt=1)
+        await report.check_callback('custom')('qe', 'Running', url='https://konflux.example/qe')
+        await report.failed('interrupted')
+        await report.finish_checks()
+        self.assertEqual(reporter.entry()['checks'][0]['status'], 'Running')
+        self.assertEqual(reporter.entry()['status'], 'Succeeded')
+
+    async def test_failed_build_skips_checks_and_retry_starts_fresh(self):
+        reporter = MemoryReporter()
+        report = reporter.component('image', 'operator')
+        await report.configure_checks([{'kind': 'conforma', 'name': 'Conforma', 'blocking': True}])
+        await report.observe(build(status='False'), Client(), attempt=1)
+        self.assertEqual(reporter.entry()['checks'][0]['status'], 'Skipped')
+        await report.observe(build('retry'), Client(), attempt=2)
+        self.assertEqual(reporter.entry()['checks'][0]['status'], 'Pending')
+
+    async def test_preparation_failure_marks_enabled_checks_not_run(self):
+        reporter = MemoryReporter()
+        report = reporter.component('image', 'operator')
+        await report.configure_checks([{'kind': 'conforma', 'name': 'Conforma', 'blocking': True}])
+        await report.failed('preparation failed')
+        await report.finish_checks()
+        self.assertEqual(reporter.entry()['checks'][0]['status'], 'Skipped')
+        self.assertEqual(reporter.entry()['pipelineRuns'], [])
+
+    async def test_check_reporting_failure_is_nonfatal(self):
+        reporter = MemoryReporter()
+        report = reporter.component('image', 'operator')
+        await report.configure_checks([{'kind': 'conforma', 'name': 'Conforma', 'blocking': True}])
+        await report.observe(build(status='True'), Client(), attempt=1)
+        reporter._command = AsyncMock(side_effect=RuntimeError('forbidden'))
+        await report.check_callback('conforma')('Conforma', 'Failed')
+        self.assertTrue(reporter._partial)
+        self.assertEqual(reporter.entry()['status'], 'Succeeded')
+
+    async def test_new_invocation_clears_current_checks_but_keeps_history(self):
+        reporter = MemoryReporter()
+        report = reporter.component('image', 'operator')
+        await report.configure_checks([{'kind': 'conforma', 'name': 'Conforma', 'blocking': True}])
+        await report.observe(build(status='True'), Client(), attempt=1)
+        await report.check_callback('conforma')('Conforma', 'Failed')
+        later = MemoryReporter(reporter.run).component('image', 'operator')
+        await later.set_status('Pending')
+        await later.configure_checks([])
+        await later.observe(build('retry', 'True'), Client(), attempt=1)
+        self.assertEqual(reporter.entry()['checks'], [])
+        self.assertEqual(reporter.entry()['pipelineRuns'][0]['checks'][0]['status'], 'Failed')
+
     async def test_disabled_outside_art_tekton(self):
         with patch.dict(os.environ, {}, clear=True):
             reporter = get_reporter()

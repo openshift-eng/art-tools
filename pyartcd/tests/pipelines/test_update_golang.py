@@ -4,7 +4,7 @@ import tempfile
 import unittest
 from pathlib import Path
 from unittest import IsolatedAsyncioTestCase
-from unittest.mock import ANY, AsyncMock, Mock, patch
+from unittest.mock import ANY, AsyncMock, Mock, call, patch
 
 import click
 import koji
@@ -1149,6 +1149,65 @@ repos:
     @patch("pyartcd.pipelines.update_golang.kinit", new_callable=AsyncMock)
     @patch("pyartcd.pipelines.update_golang.move_golang_bugs", new_callable=AsyncMock)
     @patch("pyartcd.pipelines.update_golang.KonfluxDb")
+    @patch.dict(os.environ, {"BUILD_ID": ""})
+    async def test_run_includes_el10_builders(self, mock_konflux_db, move_golang_bugs, mock_kinit):
+        for els in ([10], [9, 10]):
+            for reuse_existing in (False, True):
+                with self.subTest(els=els, reuse_existing=reuse_existing):
+                    rpm_nvrs = {el: f"golang-1.26.5-1.el{el}" for el in els}
+                    pipeline = UpdateGolangPipeline(
+                        runtime=self._make_test_runtime(),
+                        ocp_version="5.0",
+                        cves=None,
+                        force_update_tracker=False,
+                        go_nvrs=list(rpm_nvrs.values()),
+                        art_jira="ART-1234",
+                        tag_builds=False,
+                        build_system="konflux",
+                    )
+                    pipeline.validate_go_version_matches_group_vars = Mock(
+                        return_value=("openshift-5.0", {"GO_LATEST": "1.26"}, "1.26")
+                    )
+                    pipeline.process_build = AsyncMock(return_value=True)
+                    pipeline._build_golang_plashets = AsyncMock()
+                    records = {
+                        el: Mock(nvr=f"openshift-golang-builder-container-v1.26.5-202610221200.p0.el{el}") for el in els
+                    }
+                    pipeline.get_existing_builders_konflux = AsyncMock(
+                        side_effect=[records] if reuse_existing else [{}, records]
+                    )
+                    pipeline.verify_golang_builder_repo = Mock()
+                    pipeline._rebase_and_build_konflux = AsyncMock()
+                    pipeline.update_golang_streams = AsyncMock()
+
+                    await pipeline.run()
+
+                    pipeline.process_build.assert_has_awaits([call(el, nvr) for el, nvr in rpm_nvrs.items()])
+                    pipeline._build_golang_plashets.assert_awaited_once()
+                    self.assertEqual(list(pipeline._build_golang_plashets.await_args.args[1]), els)
+                    self.assertEqual(
+                        pipeline.get_existing_builders_konflux.await_args_list,
+                        [call(rpm_nvrs, "1.26.5")] * (1 if reuse_existing else 2),
+                    )
+                    if reuse_existing:
+                        pipeline.verify_golang_builder_repo.assert_not_called()
+                        pipeline._rebase_and_build_konflux.assert_not_awaited()
+                    else:
+                        pipeline.verify_golang_builder_repo.assert_has_calls([call(el, "1.26.5") for el in els])
+                        pipeline._rebase_and_build_konflux.assert_has_awaits(
+                            [call(el, "1.26.5", nvr) for el, nvr in rpm_nvrs.items()]
+                        )
+                    pipeline.update_golang_streams.assert_awaited_once_with(
+                        "1.26.5",
+                        {
+                            el: f"registry.redhat.io/openshift/golang-builder:{record.nvr}"
+                            for el, record in records.items()
+                        },
+                    )
+
+    @patch("pyartcd.pipelines.update_golang.kinit", new_callable=AsyncMock)
+    @patch("pyartcd.pipelines.update_golang.move_golang_bugs", new_callable=AsyncMock)
+    @patch("pyartcd.pipelines.update_golang.KonfluxDb")
     async def test_run_test_assembly_skips_production_operations(self, mock_konflux_db, move_golang_bugs, mock_kinit):
         pipeline = UpdateGolangPipeline(
             runtime=self._make_test_runtime(),
@@ -1360,9 +1419,10 @@ repos:
     @patch("pyartcd.pipelines.update_golang.KonfluxDb")
     @patch("pyartcd.pipelines.update_golang.is_available", new_callable=AsyncMock, return_value=True)
     @patch("pyartcd.pipelines.update_golang.is_latest", return_value=True)
+    @patch.object(UpdateGolangPipeline, "ensure_plashet_packages_signed", new_callable=AsyncMock)
     @patch.object(UpdateGolangPipeline, "ensure_signed", new_callable=AsyncMock)
     async def test_process_build_already_latest_and_available(
-        self, mock_ensure_signed, mock_is_latest, mock_is_available, mock_konflux_db
+        self, mock_ensure_signed, mock_ensure_pkgs_signed, mock_is_latest, mock_is_available, mock_konflux_db
     ):
         """Test process_build when build is already latest and available"""
         mock_runtime = Mock(
@@ -1389,8 +1449,11 @@ repos:
 
     @patch("pyartcd.pipelines.update_golang.KonfluxDb")
     @patch("pyartcd.pipelines.update_golang.is_latest", return_value=False)
+    @patch.object(UpdateGolangPipeline, "ensure_plashet_packages_signed", new_callable=AsyncMock)
     @patch.object(UpdateGolangPipeline, "ensure_signed", new_callable=AsyncMock)
-    async def test_process_build_not_latest_no_tag(self, mock_ensure_signed, mock_is_latest, mock_konflux_db):
+    async def test_process_build_not_latest_no_tag(
+        self, mock_ensure_signed, mock_ensure_pkgs_signed, mock_is_latest, mock_konflux_db
+    ):
         """Test process_build when build is not latest and tag_builds is False"""
         mock_runtime = Mock(
             dry_run=False,
@@ -1415,9 +1478,10 @@ repos:
     @patch("pyartcd.pipelines.update_golang.KonfluxDb")
     @patch("pyartcd.pipelines.update_golang.is_available", new_callable=AsyncMock, side_effect=[False, False, True])
     @patch("pyartcd.pipelines.update_golang.is_latest", return_value=True)
+    @patch.object(UpdateGolangPipeline, "ensure_plashet_packages_signed", new_callable=AsyncMock)
     @patch.object(UpdateGolangPipeline, "ensure_signed", new_callable=AsyncMock)
     async def test_process_build_available_after_retries(
-        self, mock_ensure_signed, mock_is_latest, mock_is_available, mock_konflux_db
+        self, mock_ensure_signed, mock_ensure_pkgs_signed, mock_is_latest, mock_is_available, mock_konflux_db
     ):
         """Test process_build succeeds after retrying request_repo"""
         mock_runtime = Mock(
@@ -2268,6 +2332,7 @@ class TestEnsureSigned(IsolatedAsyncioTestCase):
         )
         pipeline.is_rpm_signed = Mock(return_value=False)
         pipeline.koji_session = Mock(logged_in=True)
+        pipeline.koji_session.listTags.return_value = []
 
         await pipeline.ensure_signed(9, "golang-1.22.9-1.el9")
 
@@ -2291,6 +2356,7 @@ class TestEnsureSigned(IsolatedAsyncioTestCase):
         )
         pipeline.is_rpm_signed = Mock(return_value=False)
         pipeline.koji_session = Mock(logged_in=True)
+        pipeline.koji_session.listTags.return_value = []
 
         await pipeline.ensure_signed(9, "golang-1.22.9-1.el9")
 
@@ -2314,6 +2380,7 @@ class TestEnsureSigned(IsolatedAsyncioTestCase):
         )
         pipeline.is_rpm_signed = Mock(return_value=False)
         pipeline.koji_session = Mock(logged_in=True)
+        pipeline.koji_session.listTags.return_value = []
 
         await pipeline.ensure_signed(9, "golang-1.25.3-1.el9")
 
@@ -2339,6 +2406,75 @@ class TestEnsureSigned(IsolatedAsyncioTestCase):
 
         pipeline.is_rpm_signed.assert_not_called()
         pipeline.koji_session.tagBuild.assert_not_called()
+
+    @patch("pyartcd.pipelines.update_golang.KonfluxDb")
+    async def test_unsigned_already_in_signing_tag_skips(self, mock_konflux_db):
+        pipeline = UpdateGolangPipeline(
+            runtime=Mock(dry_run=False, working_dir=Path("/tmp/working")),
+            ocp_version="4.21",
+            cves=None,
+            force_update_tracker=False,
+            go_nvrs=["golang-1.24.13-11.el10"],
+            art_jira="ART-1234",
+            tag_builds=True,
+        )
+        pipeline.is_rpm_signed = Mock(return_value=False)
+        pipeline.koji_session = Mock(logged_in=True)
+        pipeline.koji_session.listTags.return_value = [{"name": "rhaos-4.21-rhel-10-golang"}]
+
+        await pipeline.ensure_signed(10, "goversioninfo-1.4.0-1.el10")
+
+        pipeline.koji_session.tagBuild.assert_not_called()
+
+
+class TestEnsurePlashetPackagesSigned(IsolatedAsyncioTestCase):
+    """Test the ensure_plashet_packages_signed method"""
+
+    def _pipeline(self, assembly="stream"):
+        pipeline = UpdateGolangPipeline(
+            runtime=Mock(dry_run=False, working_dir=Path("/tmp/working")),
+            ocp_version="4.21",
+            cves=None,
+            force_update_tracker=False,
+            go_nvrs=["golang-1.24.13-11.el10"],
+            art_jira="ART-1234",
+            tag_builds=True,
+            build_system="konflux",
+            assembly=assembly,
+        )
+        pipeline.koji_session = Mock(logged_in=True)
+        pipeline.ensure_signed = AsyncMock()
+        return pipeline
+
+    @patch("pyartcd.pipelines.update_golang.KonfluxDb")
+    async def test_signs_latest_goversioninfo_from_override_tag(self, mock_konflux_db):
+        pipeline = self._pipeline()
+        pipeline.koji_session.listTagged.return_value = [{"nvr": "goversioninfo-1.4.0-1.el10"}]
+
+        await pipeline.ensure_plashet_packages_signed(10)
+
+        pipeline.koji_session.listTagged.assert_called_once_with(
+            "rhaos-4.21-rhel-10-override", package="goversioninfo", latest=True, inherit=True
+        )
+        pipeline.ensure_signed.assert_awaited_once_with(10, "goversioninfo-1.4.0-1.el10")
+
+    @patch("pyartcd.pipelines.update_golang.KonfluxDb")
+    async def test_non_stream_assembly_skips(self, mock_konflux_db):
+        pipeline = self._pipeline(assembly="test")
+
+        await pipeline.ensure_plashet_packages_signed(10)
+
+        pipeline.koji_session.listTagged.assert_not_called()
+        pipeline.ensure_signed.assert_not_awaited()
+
+    @patch("pyartcd.pipelines.update_golang.KonfluxDb")
+    async def test_no_golang_plashet_for_el_version(self, mock_konflux_db):
+        pipeline = self._pipeline()
+
+        await pipeline.ensure_plashet_packages_signed(7)
+
+        pipeline.koji_session.listTagged.assert_not_called()
+        pipeline.ensure_signed.assert_not_awaited()
 
 
 class TestIsRpmSigned(unittest.TestCase):
@@ -2768,6 +2904,42 @@ class TestUpdateGolangStreamsFloatingTags(IsolatedAsyncioTestCase):
             'group': group,
             'streams': streams,
         }
+
+    @patch("pyartcd.pipelines.update_golang.get_github_client_for_org")
+    async def test_unchanged_pullspecs_skip_pr(self, mock_get_github_client):
+        """Unchanged floating or pinned pullspecs must not trigger GitHub writes."""
+        for go_var, group_vars in (
+            ("GO_LATEST", {"go_latest": "1.22"}),
+            ("GO_PREVIOUS", {"go_latest": "1.23", "go_previous": "1.22"}),
+            ("GO_EXTRA", {"go_latest": "1.21", "go_extra": "1.22"}),
+        ):
+            for tag in (
+                "golang-builder-v1.22-rhel{el}",
+                "openshift-golang-builder-container-v1.22.12-202608131106.p2.g7d3050a.assembly.stream.el{el}",
+            ):
+                with self.subTest(go_var=go_var, tag=tag):
+                    mock_get_github_client.reset_mock()
+                    pullspecs = {
+                        el: f"registry.redhat.io/openshift/golang-builder:{tag.format(el=el)}" for el in (8, 9)
+                    }
+                    streams = {
+                        f"rhel-{el}-golang": {
+                            "aliases": [f"rhel-{el}-golang-{{{go_var}}}"],
+                            "image": pullspec,
+                        }
+                        for el, pullspec in pullspecs.items()
+                    }
+                    pipeline = self._make_pipeline()
+                    pipeline._branch_content = self._make_branch_content(streams, **group_vars)
+
+                    with self.assertLogs("pyartcd.pipelines.update_golang", level="INFO") as logs:
+                        await pipeline.update_golang_streams("1.22.12", pullspecs)
+
+                    self.assertTrue(any("No update needed" in line for line in logs.output))
+                    mock_get_github_client.assert_not_called()
+                    pipeline._branch_content["repo"].create_pull.assert_not_called()
+                    for el, pullspec in pullspecs.items():
+                        self.assertEqual(streams[f"rhel-{el}-golang"]["image"], pullspec)
 
     async def test_floating_branch_minor_bump(self):
         """t4d: floating-tag branch gets floating pullspecs after minor bump."""

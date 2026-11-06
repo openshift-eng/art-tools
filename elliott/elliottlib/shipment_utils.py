@@ -5,7 +5,7 @@ from datetime import datetime
 from typing import Callable, Dict, Iterable, List, Tuple
 from urllib.parse import urlparse
 
-from artcommonlib.assembly import assembly_config_struct
+from artcommonlib.assembly import AssemblyTypes, assembly_config_struct, assembly_type
 from artcommonlib.constants import SHIPMENT_CONFIG_KINDS
 from artcommonlib.gitlab import GitLabClient
 from artcommonlib.jira_config import JIRA_DOMAIN_NAME
@@ -482,7 +482,8 @@ def get_shipment_config_records(
 
     Args:
         mr: Loaded python-gitlab merge request object.
-        source_project: Loaded source project containing the MR branch. May be
+        source_project: Project containing the selected revision: the target
+            project for merged MRs, or the source project otherwise. May be
             ``None`` when ``source_project_loader`` is supplied.
         kinds: Shipment kinds to include. ``None`` includes every shipment
             YAML path, including binary and product-specific kinds.
@@ -491,8 +492,8 @@ def get_shipment_config_records(
         environment: Optional environment path segment, such as ``prod``.
         product_aliases: Additional product names accepted while locating and
             validating records for ``product``.
-        source_project_loader: Optional callback that loads the source project
-            on demand when a matching file needs to be read.
+        source_project_loader: Optional callback that loads the project containing
+            the selected revision on demand when a matching file needs to be read.
 
     Returns:
         Matching path-aware shipment configuration records.
@@ -534,7 +535,13 @@ def get_shipment_config_records(
                 source_project = source_project_loader()
             except GitlabGetError as exc:
                 raise ShipmentSourceProjectError(file_path, getattr(mr, 'source_project_id', None), exc) from exc
-        file_content = source_project.files.get(file_path, mr.source_branch)
+        if mr.state == 'merged':
+            ref = mr.merge_commit_sha or mr.squash_commit_sha or mr.sha
+            if not ref:
+                raise ValueError("No commit SHA available for merged shipment MR")
+        else:
+            ref = mr.source_branch
+        file_content = source_project.files.get(file_path, ref)
         content = file_content.decode().decode('utf-8')
         yaml_data = Model(yaml.load(content)).primitive()
         shipment_config = ShipmentConfig(**yaml_data)
@@ -553,6 +560,7 @@ def get_shipment_config_records_from_mr(
     group: str | None = None,
     product: str | None = None,
     environment: str | None = None,
+    gitlab_client: GitLabClient | None = None,
 ) -> list[ShipmentConfigRecord]:
     """Fetch validated shipment configuration records from a merge request URL.
 
@@ -563,6 +571,7 @@ def get_shipment_config_records_from_mr(
         group: Optional exact group path segment.
         product: Optional exact product path segment and metadata value.
         environment: Optional environment path segment, such as ``prod``.
+        gitlab_client: Optional authenticated GitLab client to reuse.
 
     Returns:
         Matching path-aware shipment configuration records.
@@ -570,12 +579,13 @@ def get_shipment_config_records_from_mr(
     Raises:
         ValueError: If a matching path disagrees with parsed shipment metadata.
     """
-    gl = GitLabClient.from_url(mr_url)
+    gl = gitlab_client if gitlab_client is not None else GitLabClient.from_url(mr_url)
     mr = gl.get_mr_from_url(mr_url)
-    source_project = gl.get_project(mr.source_project_id)
+    project_id = mr.target_project_id if mr.state == 'merged' else mr.source_project_id
+    project = gl.get_project(project_id)
     return get_shipment_config_records(
         mr,
-        source_project,
+        project,
         kinds=kinds,
         group=group,
         product=product,
@@ -587,6 +597,7 @@ def get_shipment_configs_from_mr(
     mr_url: str,
     kinds: Tuple[str, ...] = SHIPMENT_CONFIG_KINDS,
     group: str | None = None,
+    gitlab_client: GitLabClient | None = None,
 ) -> Dict[str, ShipmentConfig]:
     """
     Fetch shipment configs from a merge request URL.
@@ -597,13 +608,14 @@ def get_shipment_configs_from_mr(
         group (str | None): When provided, only files whose path has this group
             at position 2 (shipment/{product}/{group}/...) are parsed. Skips
             non-matching files entirely, avoiding parse errors on unrelated products.
+        gitlab_client (GitLabClient | None): Optional authenticated GitLab client to reuse.
 
     Return Value(s):
         Dict[str, ShipmentConfig]: Dict of {kind: ShipmentConfig}.
     """
 
     shipment_configs: Dict[str, ShipmentConfig] = {}
-    for record in get_shipment_config_records_from_mr(mr_url, kinds=kinds, group=group):
+    for record in get_shipment_config_records_from_mr(mr_url, kinds=kinds, group=group, gitlab_client=gitlab_client):
         filename = record.path.split('/')[-1]
         parts = filename.replace('.yaml', '').replace('.yml', '')
         kind = next((k for k in kinds if k in parts), None)
@@ -714,7 +726,7 @@ def get_bug_ids_from_open_shipment_mrs(
     bug_ids: set[str] = set()
     for mr in open_mrs:
         try:
-            shipment_configs = get_shipment_configs_from_mr(mr.web_url, group=group)
+            shipment_configs = get_shipment_configs_from_mr(mr.web_url, group=group, gitlab_client=gl)
         except (ValueError, TypeError, KeyError, GitlabGetError) as exc:
             if isinstance(exc, GitlabGetError) and exc.response_code != 404:
                 raise
@@ -730,6 +742,15 @@ def get_bug_ids_from_open_shipment_mrs(
             if not _is_assembly_shipment_valid(releases_config, metadata.assembly, mr.web_url):
                 continue
             if metadata.fbc:
+                continue
+            mr_assembly_type = assembly_type(releases_config, metadata.assembly)
+            if mr_assembly_type in (AssemblyTypes.CANDIDATE, AssemblyTypes.PREVIEW):
+                logger.info(
+                    "Skipping %s assembly %s MR %s — pre-release bugs should not be filtered",
+                    mr_assembly_type.value,
+                    metadata.assembly,
+                    mr.web_url,
+                )
                 continue
             if not config.shipment.data or not config.shipment.data.releaseNotes:
                 continue

@@ -416,6 +416,13 @@ class RpmLockfilePrototypeGenerator:
 
         stages_with_bare_updates = _detect_stages_with_bare_updates(entries)
 
+        no_rpms_stages: set[int] = set()
+        builders = image_meta.config.get('from', {}).get('builder', [])
+        if isinstance(builders, list):
+            for i, builder_entry in enumerate(builders):
+                if isinstance(builder_entry, dict) and builder_entry.get('no_rpms', False):
+                    no_rpms_stages.add(i)
+
         out_file_path = dest_dir / filename
         if total_stages == 0:
             self._write_lockfile(None, out_file_path, image_meta.distgit_key)
@@ -432,6 +439,7 @@ class RpmLockfilePrototypeGenerator:
             image_meta.distgit_key,
             dockerfile_path,
             entries,
+            no_rpms_stages=no_rpms_stages,
         )
         lockfile = self._assemble_lockfile(stage_lockfiles, image_meta)
         self._write_lockfile(lockfile, out_file_path, image_meta.distgit_key)
@@ -537,6 +545,7 @@ class RpmLockfilePrototypeGenerator:
         distgit_key: str,
         dockerfile_path: Path,
         entries: list[dict],
+        no_rpms_stages: set[int] | None = None,
     ) -> list[LockfileData]:
         """
         Resolve RPM packages for each Dockerfile stage.
@@ -555,8 +564,14 @@ class RpmLockfilePrototypeGenerator:
         stage_lockfiles: list[LockfileData] = []
         final_stage_num = total_stages - 1
         stages_with_installroot_only = _detect_stages_with_installroot_only(entries)
+        if no_rpms_stages is None:
+            no_rpms_stages = set()
 
         for stage_num in range(total_stages):
+            if stage_num in no_rpms_stages:
+                self.logger.info(f"{distgit_key}: stage {stage_num}: no_rpms=true in config, skipping RPM resolution")
+                continue
+
             if stage_num != final_stage_num:
                 if (
                     stage_num not in stages_with_runs
@@ -573,14 +588,15 @@ class RpmLockfilePrototypeGenerator:
                 if self._has_rhel_version_mismatch(stage_num, repo_list, distgit_key):
                     continue
 
+            extra_packages: list[str] = list(cat_packages.get(stage_num, []))
+            dynamic_package_set = dynamic_packages.get(stage_num)
+
             if bare_context:
                 self.logger.info(
                     f"{distgit_key}: stage {stage_num}: installroot-only stage, resolving with bare context"
                 )
 
-            extra_packages: list[str] = list(cat_packages.get(stage_num, []))
             dockerfile_install_pkgs = _extract_install_packages(entries, stage_num)
-            dynamic_package_set = dynamic_packages.get(stage_num)
             dynamic_arch_specific_packages = dynamic_package_set.arch_specific if dynamic_package_set else None
             if dynamic_package_set:
                 extra_packages.extend(dynamic_package_set.common)
@@ -611,13 +627,19 @@ class RpmLockfilePrototypeGenerator:
 
             if stage_num in stages_with_bare_updates and not bare_context:
                 if not image_pullspec:
-                    # No base image to query (stage alias) — can't determine
-                    # upgrade targets, so mark dropped to strip the bare update
-                    self.upgrades_dropped = True
-                    self.logger.info(
-                        f"{distgit_key}: stage {stage_num}: bare update detected but no "
-                        "base image available, marking upgrades as dropped"
-                    )
+                    # Check fallback data before dropping upgrades
+                    bare_update_base = await self._get_base_image_packages(stage_num, None, distgit_key, arches)
+                    if bare_update_base:
+                        extra = [p for p in bare_update_base if p not in extra_packages]
+                        extra_packages.extend(extra)
+                    else:
+                        # No base image to query (stage alias) — can't determine
+                        # upgrade targets, so mark dropped to strip the bare update
+                        self.upgrades_dropped = True
+                        self.logger.info(
+                            f"{distgit_key}: stage {stage_num}: bare update detected but no "
+                            "base image or fallback package data available, marking upgrades as dropped"
+                        )
                 elif stage_num != final_stage_num and not upgrade_pkgs:
                     # Final stage already populated upgrade_pkgs from base image;
                     # only query again for non-final stages with bare updates.
@@ -731,6 +753,16 @@ class RpmLockfilePrototypeGenerator:
         if image_pullspec and "/" not in image_pullspec:
             image_pullspec = None
         if image_pullspec:
+            # If parent was rebased in the same run, its source directory is
+            # available locally and fallback_installed holds the package data.
+            # Skip the registry pull — the pinned digest may be x86-only and
+            # rpm-lockfile-prototype would fail for other architectures.
+            if stage_num in self.parent_source_dirs:
+                self.logger.info(
+                    f"{distgit_key}: stage {stage_num}: parent rebased in same run, "
+                    "resolving in bare mode to avoid stale parent digest"
+                )
+                return None
             resolved = await self._container.resolve_to_digest(image_pullspec)
             if resolved == image_pullspec and DIGEST_PREFIX not in image_pullspec:
                 self.logger.warning(

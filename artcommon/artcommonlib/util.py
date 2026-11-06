@@ -16,6 +16,7 @@ import aiohttp
 import requests
 import requests_gssapi
 from artcommonlib import logutil
+from artcommonlib.assembly import AssemblyTypes
 from artcommonlib.constants import (
     GOLANG_BUILDER_IMAGE_NAME,
     KONFLUX_DEFAULT_IMAGE_REPO,
@@ -290,6 +291,11 @@ def is_future_release_date(date_str):
     raise ValueError(f"Unable to parse date string '{date_str}' with any of the supported formats: {formats}")
 
 
+def _release_name_matches_task(release_name: str, task_name: str) -> bool:
+    """Match a literal release token, excluding version, prerelease and build continuations."""
+    return re.search(rf'(?<![\w.+-]){re.escape(release_name)}(?![\w.+-])', task_name) is not None
+
+
 def get_assembly_release_date(assembly, group, date=None):
     """
     Get assembly release release date from release schedule API.
@@ -323,7 +329,7 @@ def get_assembly_release_date(assembly, group, date=None):
     try:
         data = response.json()
         for release in data['all_ga_tasks']:
-            if assembly in release['name']:
+            if _release_name_matches_task(assembly, release['name']):
                 # convert date format for advisory usage, 2024-02-13 -> 2024-Feb-13
                 return datetime.strptime(release['date_start'], "%Y-%m-%d").strftime("%Y-%b-%d")
     except KeyError:
@@ -348,7 +354,7 @@ async def get_assembly_release_date_async(release_name: str):
             response.raise_for_status()
             data = await response.json()
             for release in data['all_ga_tasks']:
-                if release_name in release['name']:
+                if _release_name_matches_task(release_name, release['name']):
                     # convert date format for advisory usage, 2024-02-13 -> 2024-Feb-13
                     return datetime.strptime(release['date_start'], "%Y-%m-%d").strftime("%Y-%b-%d")
     raise ValueError(f'Assembly release date not found for {release_name}')
@@ -543,6 +549,42 @@ def isolate_major_minor_in_group(group_name: str) -> Tuple[Optional[int], Option
     if not match:
         return None, None
     return int(match[1]), int(match[2])
+
+
+def get_release_name(
+    assembly_type: AssemblyTypes,
+    group_name: str,
+    assembly_name: str,
+    release_offset: Optional[int] = None,
+) -> str:
+    """Derive the OCP release name from assembly metadata.
+
+    STANDARD  -> assembly name as-is  (e.g. "4.22.9")
+    CANDIDATE / PREVIEW -> {major}.{minor}.0-{assembly}  (e.g. "5.0.0-rc.5")
+    CUSTOM    -> {major}.{minor}.{offset}-assembly.{assembly}
+    """
+
+    major, minor = isolate_major_minor_in_group(group_name)
+
+    if assembly_type == AssemblyTypes.STANDARD:
+        if release_offset is not None:
+            raise ValueError("release_offset can't be set for a STANDARD release.")
+        return assembly_name
+
+    if major is None or minor is None:
+        raise ValueError(f"Cannot determine major.minor from group name: {group_name}")
+
+    if assembly_type == AssemblyTypes.CUSTOM:
+        if release_offset is None:
+            raise ValueError("release_offset is required for a CUSTOM release.")
+        return f"{major}.{minor}.{release_offset}-assembly.{assembly_name}"
+
+    if assembly_type in (AssemblyTypes.CANDIDATE, AssemblyTypes.PREVIEW):
+        if release_offset is not None:
+            raise ValueError(f"release_offset can't be set for a {assembly_type.value} release.")
+        return f"{major}.{minor}.0-{assembly_name}"
+
+    raise ValueError(f"Assembly type {assembly_type} is not supported.")
 
 
 def uses_konflux_imagestream_override(version: str) -> bool:
@@ -1002,16 +1044,34 @@ async def sync_to_quay(source_pullspec, destination_repo, tags=None):
             LOGGER.info(f"Tagging from {destination_repo}@sha256:{shasum} to {destination_repo}:{tag} completed")
 
 
-def _extract_images_from_catalog_json(catalog_path: str) -> list[str]:
-    """Parse catalog.json (FBC format) and return relatedImages from olm.bundle entries.
+# Version segment in layered-product FBC NVR/tag: name-fbc-{version}-{timestamp}[.ocpX.Y]
+_FBC_VERSION_FROM_PULLSPEC_RE = re.compile(r'-fbc-(.+?)-(\d{8,})')
+
+
+def parse_version_from_fbc_pullspec(fbc_pullspec: str) -> Optional[str]:
+    """Parse the operator/release version encoded in an FBC pullspec tag or NVR.
+
+    Examples:
+      quay-operator-fbc-3.18.2-20261016202302.ocp4.12 → 3.18.2
+      cluster-logging-operator-fbc-6.4.5-20260529.ocp4.18 → 6.4.5
+    """
+    tag = fbc_pullspec
+    if '@' in tag:
+        # Digest-only refs have no version; callers need an explicit bundle version or assembly.
+        return None
+    if ':' in tag:
+        tag = tag.rsplit(':', 1)[-1]
+    match = _FBC_VERSION_FROM_PULLSPEC_RE.search(tag)
+    return match.group(1) if match else None
+
+
+def _parse_catalog_json_entries(catalog_path: str) -> list[dict]:
+    """Parse catalog.json into a list of FBC schema objects.
 
     Handles three catalog.json formats:
       1. Single JSON document (array or object)
       2. Compact NDJSON (one JSON object per line)
       3. Pretty-printed concatenated JSON (multiple multi-line objects)
-
-    Only extracts from entries where schema == "olm.bundle", mirroring:
-        jq -r 'select(.schema == "olm.bundle") | .relatedImages[].image'
     """
     with open(catalog_path, 'r') as f:
         content = f.read()
@@ -1057,23 +1117,142 @@ def _extract_images_from_catalog_json(catalog_path: str) -> list[str]:
 
     if not entries:
         raise RuntimeError(f"Failed to parse catalog.json: no valid JSON entries found in {catalog_path}")
+    return entries
 
+
+def _extract_images_from_catalog_json(catalog_path: str) -> list[str]:
+    """Return relatedImages from *all* olm.bundle entries in catalog.json.
+
+    Used by the OCP/share-sync path when falling back from related-images.json.
+    Does not version-scope; that is intentional for catch-up sync.
+    """
+    entries = _parse_catalog_json_entries(catalog_path)
     images: list[str] = []
     bundle_count = 0
     for entry in entries:
         if entry.get('schema') != 'olm.bundle':
             continue
         bundle_count += 1
-        for ri in entry.get('relatedImages', []):
+        for ri in entry.get('relatedImages') or []:
             img = ri.get('image')
             if img:
                 images.append(img)
 
     LOGGER.info(
-        f"Parsed catalog.json: {len(entries)} entries, {bundle_count} olm.bundle(s), "
-        f"{len(images)} relatedImages extracted"
+        "Parsed catalog.json: %d entries, %d olm.bundle(s), %d relatedImages extracted",
+        len(entries),
+        bundle_count,
+        len(images),
     )
     return images
+
+
+def _bundle_version_suffix(bundle_version: str) -> str:
+    """Normalize assembly/version to the OLM bundle name suffix ``.v{version}``."""
+    version = bundle_version.lstrip('v')
+    return f".v{version}"
+
+
+def _extract_versioned_images_from_catalog_json(catalog_path: str, bundle_version: str) -> list[str]:
+    """Return relatedImages from olm.bundle entries matching ``.v{bundle_version}``.
+
+    FBC rendered catalogs often include full upgrade history. Shipping must use
+    only the release bundle for this assembly/version, not the union of all bundles.
+    """
+    if not bundle_version:
+        raise ValueError("bundle_version is required to select the release olm.bundle from catalog.json")
+
+    entries = _parse_catalog_json_entries(catalog_path)
+    suffix = _bundle_version_suffix(bundle_version)
+    matching_bundles = [
+        entry
+        for entry in entries
+        if entry.get('schema') == 'olm.bundle' and str(entry.get('name', '')).endswith(suffix)
+    ]
+
+    total_bundles = sum(1 for entry in entries if entry.get('schema') == 'olm.bundle')
+    if not matching_bundles:
+        raise RuntimeError(
+            f"No olm.bundle named '*{suffix}' found in catalog.json "
+            f"({total_bundles} bundle(s) present). Cannot extract relatedImages for version '{bundle_version}'."
+        )
+
+    image_sets: list[frozenset[str]] = []
+    for bundle in matching_bundles:
+        images = frozenset(ri.get('image') for ri in bundle.get('relatedImages') or [] if ri.get('image'))
+        image_sets.append(images)
+
+    unique_sets = {s for s in image_sets}
+    if len(unique_sets) > 1:
+        names = [b.get('name') for b in matching_bundles]
+        raise RuntimeError(f"Multiple olm.bundle entries match '*{suffix}' with differing relatedImages: {names}")
+
+    images = sorted(unique_sets.pop()) if unique_sets else []
+    LOGGER.info(
+        "Parsed catalog.json: %d entries, %d olm.bundle(s), %d matching '*%s', %d relatedImages extracted",
+        len(entries),
+        total_bundles,
+        len(matching_bundles),
+        suffix,
+        len(images),
+    )
+    return images
+
+
+def _extract_fbc_bundle_images_from_catalog_json(
+    catalog_path: str, bundle_pullspec: Optional[str], assembly: Optional[str]
+) -> tuple[list[str], str]:
+    """Select the FBC's recorded bundle while preserving a virtual release assembly."""
+    identity = (
+        re.fullmatch(r'[^@\s]+@(sha256:[0-9a-f]{64})', bundle_pullspec) if isinstance(bundle_pullspec, str) else None
+    )
+    if not identity:
+        raise RuntimeError(
+            "Missing or malformed digest-pinned com.redhat.art.bundle.pullspec "
+            f"for assembly {assembly!r}: {bundle_pullspec!r}"
+        )
+    assembly_match = re.fullmatch(r'v?([0-9]+)\.([0-9]+)(?:\.[0-9]+)?', assembly or '')
+    if not assembly_match:
+        raise RuntimeError(f"Cannot determine the major/minor release train for assembly {assembly!r}")
+
+    digest = identity.group(1)
+    bundles = [
+        entry
+        for entry in _parse_catalog_json_entries(catalog_path)
+        if entry.get('schema') == 'olm.bundle' and str(entry.get('image', '')).endswith(f'@{digest}')
+    ]
+    if len(bundles) != 1:
+        raise RuntimeError(
+            f"Expected exactly one olm.bundle for recorded bundle {bundle_pullspec!r}, "
+            f"found {len(bundles)} (assembly {assembly!r})"
+        )
+    bundle = bundles[0]
+    versions = [
+        prop.get('value', {}).get('version')
+        for prop in bundle.get('properties') or []
+        if prop.get('type') == 'olm.package' and isinstance(prop.get('value'), dict)
+    ]
+    try:
+        if len(versions) != 1 or not isinstance(versions[0], str):
+            raise ValueError("Expected one olm.package version")
+        version = VersionInfo.parse(versions[0].lstrip('v'))
+    except ValueError as exc:
+        raise RuntimeError(f"Missing or malformed olm.package version on bundle {bundle.get('name')!r}") from exc
+    if (version.major, version.minor) != tuple(int(part) for part in assembly_match.groups()):
+        raise RuntimeError(
+            f"Bundle {bundle.get('name')!r} version {version} does not belong to "
+            f"assembly {assembly!r}'s major/minor release train"
+        )
+
+    LOGGER.info(
+        "Selected recorded FBC bundle %s (%s), version %s, for virtual assembly %s",
+        bundle.get('name'),
+        digest,
+        version,
+        assembly,
+    )
+    images = sorted({ri['image'] for ri in bundle.get('relatedImages') or [] if ri.get('image')})
+    return images, str(version)
 
 
 def get_registry_namespace_pattern(product: str) -> str:
@@ -1086,9 +1265,56 @@ def get_registry_namespace_pattern(product: str) -> str:
     return re.escape(product)
 
 
+def _transform_related_image_urls(raw_images: list[str], product: str) -> list[str]:
+    """Rewrite product registry.redhat.io relatedImages to the art-images quay repo."""
+    if not product:
+        raise ValueError("Product parameter is required to determine the registry namespace for image transformation")
+
+    registry_namespace = get_registry_namespace_pattern(product)
+    LOGGER.info(f"Using registry namespace '{registry_namespace}' for product '{product}'")
+    registry_transform_pattern = rf'registry\.redhat\.io/{registry_namespace}/[^@]*'
+
+    related_images = []
+    for img_url in raw_images:
+        if re.search(rf'registry\.redhat\.io/{registry_namespace}/', img_url):
+            transformed_url = re.sub(
+                registry_transform_pattern,
+                KONFLUX_DEFAULT_IMAGE_REPO,
+                img_url,
+            )
+            related_images.append(transformed_url)
+            LOGGER.debug(f"Transformed: {img_url} -> {transformed_url}")
+        else:
+            related_images.append(img_url)
+            LOGGER.debug(f"Using as-is: {img_url}")
+    return related_images
+
+
+def _fbc_artifact_base_pullspec(fbc_pullspec: str) -> str:
+    """Strip tag/digest from an FBC pullspec, preserving registry:port/repo form."""
+    if '@' in fbc_pullspec:
+        return fbc_pullspec.split('@')[0]
+    if ':' in fbc_pullspec:
+        parts = fbc_pullspec.split(':')
+        if len(parts) > 2:  # registry:port/repo:tag format
+            return ':'.join(parts[:-1])
+        return parts[0]
+    return fbc_pullspec
+
+
 async def extract_related_images_from_fbc(fbc_pullspec: str, product: str) -> list[str]:
-    """
-    Extract related image pullspecs from FBC image using ORAS workflow.
+    """Extract related image pullspecs from an OCP FBC without version filtering.
+
+    Prefer Konflux's ``related-images.json`` attachment (unreleased delta vs the
+    production index). If that artifact is absent, fall back to relatedImages
+    from *all* olm.bundle entries in the rendered catalog.
+
+    This path is intentionally *not* version-scoped. OCP nightlies use
+    ``assembly=stream`` and digest-only FBC refs; extraction includes related
+    images regardless of the bundle version.
+
+    For layered-product shipping / related-image consistency checks, use
+    :func:`extract_versioned_related_images_from_fbc` instead.
 
     :param fbc_pullspec: FBC image pullspec
     :param product: Product name for URL transformation (e.g., 'openshift', 'oadp')
@@ -1162,22 +1388,7 @@ async def extract_related_images_from_fbc(fbc_pullspec: str, product: str) -> li
 
         # Step 2: Pull the attached artifact
         LOGGER.info(f"Pulling attached artifact with digest: {digest}")
-        # Extract the base registry and repo from the original FBC pullspec
-        # We need to preserve the full repository path, only remove the tag/digest
-        if '@' in fbc_pullspec:
-            # Format: repo@digest
-            base_pullspec = fbc_pullspec.split('@')[0]
-        elif ':' in fbc_pullspec:
-            # Format: repo:tag - need to find the last : that separates tag
-            # Split by : and rejoin all but the last part (which is the tag)
-            parts = fbc_pullspec.split(':')
-            if len(parts) > 2:  # registry:port/repo:tag format
-                # Find the tag part (everything after the last / and :)
-                base_pullspec = ':'.join(parts[:-1])
-            else:
-                base_pullspec = parts[0]
-        else:
-            base_pullspec = fbc_pullspec
+        base_pullspec = _fbc_artifact_base_pullspec(fbc_pullspec)
         artifact_pullspec = f"{base_pullspec}@{digest}"
         pull_cmd = ['oras', 'pull', artifact_pullspec]
         LOGGER.info(f"Pulling from: {artifact_pullspec}")
@@ -1200,7 +1411,6 @@ async def extract_related_images_from_fbc(fbc_pullspec: str, product: str) -> li
                     content = f.read()
                     LOGGER.debug(f"{file}: {content[:200]}...")  # First 200 chars
 
-        # Transform the URLs - require product name to be specified
         if not product:
             raise ValueError(
                 "Product parameter is required to determine the registry namespace for image transformation"
@@ -1208,7 +1418,6 @@ async def extract_related_images_from_fbc(fbc_pullspec: str, product: str) -> li
 
         registry_namespace = get_registry_namespace_pattern(product)
         LOGGER.info(f"Using registry namespace '{registry_namespace}' for product '{product}'")
-
         registry_transform_pattern = rf'registry\.redhat\.io/{registry_namespace}/[^@]*'
 
         related_images = []
@@ -1221,9 +1430,7 @@ async def extract_related_images_from_fbc(fbc_pullspec: str, product: str) -> li
             LOGGER.info(f"Found {len(raw_images)} images in related-images.json")
 
             for img_url in raw_images:
-                # Check if the URL matches the registry namespace pattern
                 if re.search(rf'registry\.redhat\.io/{registry_namespace}/', img_url):
-                    # Apply the transformation to quay.io/redhat-user-workloads/ocp-art-tenant/art-images
                     transformed_url = re.sub(
                         registry_transform_pattern,
                         KONFLUX_DEFAULT_IMAGE_REPO,
@@ -1237,7 +1444,6 @@ async def extract_related_images_from_fbc(fbc_pullspec: str, product: str) -> li
 
             LOGGER.info(f"Processed {len(related_images)} images from related-images.json")
 
-            # Print all transformed pull specs for debugging
             LOGGER.info("=== TRANSFORMED PULL SPECS ===")
             for i, img in enumerate(related_images, 1):
                 LOGGER.info(f"{i:2d}. {img}")
@@ -1272,6 +1478,203 @@ async def extract_related_images_from_fbc(fbc_pullspec: str, product: str) -> li
         if not related_images:
             LOGGER.error("No image URLs found in catalog file")
             raise RuntimeError("No image URLs extracted from FBC catalog")
+
+    LOGGER.info(f"Extracted {len(related_images)} image pullspecs from FBC")
+    return related_images
+
+
+async def extract_versioned_related_images_from_fbc(
+    fbc_pullspec: str,
+    product: str,
+    assembly: Optional[str] = None,
+    *,
+    ignore_patch_version: bool = False,
+    bundle_version: Optional[str] = None,
+) -> list[str]:
+    """Extract related images for layered-product shipping / validation.
+
+    Unlike :func:`extract_related_images_from_fbc` (unscoped OCP extraction), this path:
+
+    * Requires the Konflux ``rendered-catalog`` attachment (not the per-OCP
+      ``related-images.json`` delta vs the production index)
+    * Selects relatedImages from the olm.bundle matching the release version
+
+    Version selection:
+
+      With ``ignore_patch_version``, require the FBC's recorded bundle identity
+      and select it by digest, validating the assembly's major/minor train.
+      Otherwise use the existing assembly/tag selection below:
+
+      1. Use an explicit ``bundle_version`` from selected bundle provenance when
+         provided. It must exist in the catalog; no fallback is allowed.
+      2. Prefer caller-provided ``assembly`` when it is a real release version
+         (e.g. ``3.18.2``). ``assembly='stream'`` is *not* treated as a version —
+         nightlies use stream, so we fall through to the FBC tag/NVR instead.
+      3. Fall back to the version encoded in the FBC pullspec/NVR tag
+         (``…-fbc-{version}-{timestamp}…``).
+      4. If a non-stream assembly misses the catalog, also fall back to (3).
+
+    :param fbc_pullspec: FBC image pullspec
+    :param product: Product name for URL transformation (e.g., 'openshift', 'oadp')
+    :param assembly: Optional assembly/release version used to select the olm.bundle
+    :param ignore_patch_version: Select the FBC's recorded bundle by digest instead of
+        assembly version; require the same major/minor release train. Missing provenance fails.
+    :param bundle_version: Actual selected source bundle version, independent of NVR versions
+    :return: List of image pullspecs (product images rewritten to art-images)
+    """
+    ATTACHED_ARTIFACT_TYPE = 'application/vnd.konflux-ci.attached-artifact'
+    RENDERED_CATALOG_MEDIA_TYPE = 'rendered-catalog'
+
+    LOGGER.info(f"Extracting versioned related images from FBC: {fbc_pullspec}")
+
+    with tempfile.TemporaryDirectory() as temp_dir:
+        LOGGER.info("Discovering attached artifacts...")
+        discover_cmd = ['oras', 'discover', '--format', 'json', fbc_pullspec]
+        rc, discover_output, discover_stderr = await cmd_gather_async(discover_cmd, cwd=temp_dir)
+
+        if rc != 0:
+            raise RuntimeError(
+                f"ORAS discover command failed: {' '.join(discover_cmd)}\nReturn code: {rc}\nStdout: {discover_output}\nStderr: {discover_stderr}"
+            )
+
+        discover_data = json.loads(discover_output)
+        LOGGER.debug(f"ORAS discover response: {discover_data}")
+
+        # oras ≥1.3 uses "referrers"; older CLIs used "manifests"
+        referrers = discover_data.get('referrers') or discover_data.get('manifests') or []
+        LOGGER.info(f"Found {len(referrers)} referrers")
+
+        digest = None
+        for i, referrer in enumerate(referrers):
+            artifact_type = referrer.get('artifactType')
+            annotations = referrer.get('annotations', {})
+            attached_media_type = annotations.get('attachedMediaType', '')
+            LOGGER.debug(
+                f"Referrer {i}: artifactType={artifact_type}, attachedMediaType={attached_media_type}, digest={referrer.get('digest')}"
+            )
+
+            if artifact_type == ATTACHED_ARTIFACT_TYPE and RENDERED_CATALOG_MEDIA_TYPE in attached_media_type:
+                digest = referrer.get('digest')
+                LOGGER.info(f"Found '{RENDERED_CATALOG_MEDIA_TYPE}' artifact with digest: {digest}")
+                break
+
+        if not digest:
+            available_artifacts = [
+                {
+                    'artifactType': r.get('artifactType'),
+                    'attachedMediaType': r.get('annotations', {}).get('attachedMediaType', 'N/A'),
+                }
+                for r in referrers
+            ]
+            raise RuntimeError(
+                f"No attached artifact found with type '{ATTACHED_ARTIFACT_TYPE}' and media type containing "
+                f"'{RENDERED_CATALOG_MEDIA_TYPE}'. "
+                f"Available artifacts: {available_artifacts}"
+            )
+
+        LOGGER.info(f"Pulling attached artifact with digest: {digest}")
+        base_pullspec = _fbc_artifact_base_pullspec(fbc_pullspec)
+        artifact_pullspec = f"{base_pullspec}@{digest}"
+        pull_cmd = ['oras', 'pull', artifact_pullspec]
+        LOGGER.info(f"Pulling from: {artifact_pullspec}")
+        rc, pull_output, pull_stderr = await cmd_gather_async(pull_cmd, cwd=temp_dir)
+
+        if rc != 0:
+            raise RuntimeError(
+                f"ORAS pull command failed: {' '.join(pull_cmd)}\nReturn code: {rc}\nStdout: {pull_output}\nStderr: {pull_stderr}"
+            )
+
+        pulled_files = os.listdir(temp_dir)
+        LOGGER.info(f"Files found in pulled artifact: {pulled_files}")
+
+        catalog_json_path = os.path.join(temp_dir, 'catalog.json')
+        if not os.path.exists(catalog_json_path):
+            raise RuntimeError(f"catalog.json not found in rendered-catalog artifact. Available files: {pulled_files}")
+
+        # stream is the OCP nightly assembly name, not a product release version
+        assembly_for_match = None if not assembly or assembly == "stream" else assembly
+        if assembly == "stream":
+            LOGGER.info("assembly='stream' is not a release version; selecting olm.bundle from FBC pullspec/NVR tag")
+
+        raw_images: list[str] = []
+        selected_version: Optional[str] = None
+        assembly_missed = False
+
+        if ignore_patch_version:
+            try:
+                image_info = await oc_image_info_for_arch_async(
+                    fbc_pullspec, registry_config=os.getenv('QUAY_AUTH_FILE')
+                )
+                bundle_pullspec = (
+                    image_info.get('config', {})
+                    .get('config', {})
+                    .get('Labels', {})
+                    .get('com.redhat.art.bundle.pullspec')
+                )
+                raw_images, selected_version = _extract_fbc_bundle_images_from_catalog_json(
+                    catalog_json_path, bundle_pullspec, assembly
+                )
+            except (RuntimeError, ChildProcessError) as exc:
+                raise RuntimeError(
+                    f"Cannot select bundle for FBC {fbc_pullspec}, assembly {assembly!r}: {exc}"
+                ) from exc
+
+        elif bundle_version:
+            raw_images = _extract_versioned_images_from_catalog_json(catalog_json_path, bundle_version)
+            selected_version = bundle_version.lstrip('v')
+            LOGGER.info("Selected relatedImages using source bundle version '%s'", selected_version)
+        elif assembly_for_match:
+            try:
+                raw_images = _extract_versioned_images_from_catalog_json(catalog_json_path, assembly_for_match)
+                selected_version = assembly_for_match.lstrip('v')
+                LOGGER.info("Selected relatedImages using assembly version '%s'", selected_version)
+            except RuntimeError as exc:
+                if "No olm.bundle named" in str(exc):
+                    assembly_missed = True
+                    LOGGER.warning(
+                        "No olm.bundle matching assembly '%s' in catalog for %s; "
+                        "falling back to version parsed from FBC pullspec",
+                        assembly_for_match,
+                        fbc_pullspec,
+                    )
+                else:
+                    raise
+
+        if not selected_version:
+            fbc_version = parse_version_from_fbc_pullspec(fbc_pullspec)
+            if not fbc_version:
+                if assembly_missed:
+                    raise RuntimeError(
+                        f"No olm.bundle matching assembly '{assembly_for_match}' and could not parse a version "
+                        f"from FBC pullspec '{fbc_pullspec}'"
+                    )
+                raise RuntimeError(
+                    f"No assembly provided and could not parse a version from FBC pullspec '{fbc_pullspec}'"
+                )
+            raw_images = _extract_versioned_images_from_catalog_json(catalog_json_path, fbc_version)
+            selected_version = fbc_version
+            if assembly_missed:
+                LOGGER.warning(
+                    "Fell back to FBC-derived version '%s' after assembly '%s' miss for %s",
+                    fbc_version,
+                    assembly_for_match,
+                    fbc_pullspec,
+                )
+            else:
+                LOGGER.info("Selected relatedImages using FBC-derived version '%s'", selected_version)
+
+        related_images = sorted(set(_transform_related_image_urls(raw_images, product)))
+
+        LOGGER.info("=== TRANSFORMED PULL SPECS (bundle v%s) ===", selected_version)
+        for i, img in enumerate(related_images, 1):
+            LOGGER.info(f"{i:2d}. {img}")
+        LOGGER.info("=== END TRANSFORMED PULL SPECS ===")
+
+        if not related_images:
+            LOGGER.error("No image URLs found in catalog file")
+            raise RuntimeError(
+                f"No relatedImages found on olm.bundle matching version '{selected_version}' in FBC catalog"
+            )
 
     LOGGER.info(f"Extracted {len(related_images)} image pullspecs from FBC")
     return related_images

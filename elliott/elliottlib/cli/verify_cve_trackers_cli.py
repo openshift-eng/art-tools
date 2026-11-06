@@ -17,7 +17,11 @@ from elliottlib.cli.find_bugs_sweep_cli import (
     get_builds_by_advisory_kind,
 )
 from elliottlib.shipment_utils import get_shipment_configs_from_mr
-from elliottlib.verify_common import get_assembly_advisory_ids, get_assembly_shipment_kinds, get_assembly_shipment_url
+from elliottlib.verify_common import (
+    get_assembly_shipment_kinds,
+    get_assembly_shipment_url,
+    get_ocp_release_advisory_ids,
+)
 
 LOGGER = logging.getLogger(__name__)
 
@@ -130,7 +134,7 @@ async def verify_cve_trackers(runtime, permissive: bool = True) -> VerifyCVETrac
         LOGGER.info("  %s: %s", kind, [b.id for b in bugs])
 
     # Get advisory IDs and determine which are RHSA
-    advisories = get_assembly_advisory_ids(runtime)
+    advisories = get_ocp_release_advisory_ids(runtime)
     if not advisories:
         LOGGER.warning("No advisory IDs found in assembly config")
 

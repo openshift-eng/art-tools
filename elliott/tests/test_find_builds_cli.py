@@ -2,6 +2,7 @@ import unittest
 from unittest import IsolatedAsyncioTestCase, TestCase, mock
 from unittest.mock import AsyncMock, MagicMock, patch
 
+from artcommonlib.model import Model
 from elliottlib import errata as erratalib
 from elliottlib.brew import Build
 from elliottlib.cli.find_builds_cli import (
@@ -16,6 +17,7 @@ from elliottlib.cli.find_builds_cli import (
     get_rhcos_nvrs_from_assembly,
 )
 from elliottlib.exceptions import ElliottFatalError
+from elliottlib.imagecfg import ImageMetadata
 from flexmock import flexmock
 
 
@@ -91,6 +93,22 @@ class TestFindBuildsCli(TestCase):
 
 
 class TestFindBuildsKonflux(IsolatedAsyncioTestCase):
+    async def test_its_enabled_does_not_include_non_release_image(self):
+        runtime = MagicMock(assembly=None)
+        runtime.get_releases_config.return_value = None
+        image = object.__new__(ImageMetadata)
+        image.config = Model({"for_release": False, "base_only": False, "konflux": {"its": {"enabled": True}}})
+        image.get_latest_build = AsyncMock()
+        runtime.image_metas.return_value = [image]
+
+        self.assertFalse(image.is_release)
+        for payload in (True, False):
+            with self.subTest(payload=payload):
+                self.assertEqual(await find_builds_konflux(runtime, payload=payload, include_shipped=True), [])
+        builds = await find_builds_konflux_all_types(runtime, include_shipped=True)
+        self.assertTrue(all(not records for records in builds.values()))
+        image.get_latest_build.assert_not_awaited()
+
     @mock.patch("elliottlib.cli.find_builds_cli.KonfluxBuildRecord")
     async def test_find_builds_konflux(self, MockKonfluxBuildRecord: mock.MagicMock):
         runtime = flexmock(konflux_db=flexmock(), assembly=None, registry_config=None)

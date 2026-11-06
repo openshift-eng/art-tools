@@ -12,9 +12,11 @@ import logging
 import os
 import re
 from collections import defaultdict
-from typing import Dict, List, Optional
+from typing import Collection, Dict, List, Optional
 
 from artcommonlib import exectools
+from artcommonlib.konflux.konflux_build_record import KonfluxBundleBuildRecord, KonfluxFbcBuildRecord
+from artcommonlib.konflux.konflux_db import KonfluxDb
 from artcommonlib.rpm_utils import parse_nvr
 from artcommonlib.util import extract_ocp_version_from_fbc_nvr
 from elliottlib.util import extract_nvrs_from_fbc
@@ -24,6 +26,26 @@ logger = logging.getLogger(__name__)
 
 _LP_GROUP_VERSION_RE = re.compile(r'-(\d+)\.(\d+)$')
 _LP_ASSEMBLY_VERSION_RE = re.compile(r'^v?(\d+)\.(\d+)(?:\.(\d+))?$')
+
+
+def is_nvr_from_assembly(nvr: str, assembly: str) -> bool:
+    """Match an NVR to an assembly's major/minor version for external classification.
+
+    Preserve prefix matching for versions without a minor component. Unparseable
+    NVRs remain included so they cannot silently bypass consistency checks.
+    """
+    try:
+        nvr_version = parse_nvr(nvr).get('version', '').lstrip('v')
+    except ValueError:
+        logger.error("Failed to parse NVR %s; treating it as belonging to assembly %s", nvr, assembly)
+        return True
+
+    assembly_version = assembly.lstrip('v')
+    nvr_parts = nvr_version.split('.')
+    assembly_parts = assembly_version.split('.')
+    if len(assembly_parts) < 2 or len(nvr_parts) < 2:
+        return nvr_version.startswith(assembly_version)
+    return nvr_parts[:2] == assembly_parts[:2]
 
 
 def extract_ocp_version_from_nvr(nvr: str) -> Optional[str]:
@@ -164,8 +186,46 @@ async def extract_fbc_labels(fbc_pullspec: str) -> Dict[str, Optional[str]]:
         return {'nvr': None, 'doozer_key': None}
 
 
+async def _get_source_bundle_versions(fbc_nvrs: List[str]) -> Dict[str, str]:
+    """Resolve actual selected CSV versions from FBC and bundle provenance."""
+    if any(not nvr for nvr in fbc_nvrs):
+        raise RuntimeError("Cannot resolve source bundles without FBC NVR identity labels")
+    db = KonfluxDb()
+    db.bind(KonfluxFbcBuildRecord)
+    catalogs = await db.get_build_records_by_nvrs(sorted(set(fbc_nvrs)), strict=True)
+    for catalog in catalogs:
+        if not catalog.bundle_nvrs:
+            raise RuntimeError(f"FBC {catalog.nvr} has no selected bundle provenance")
+    bundle_nvrs = sorted({nvr for catalog in catalogs for nvr in catalog.bundle_nvrs})
+    db.bind(KonfluxBundleBuildRecord)
+    bundles = await db.get_build_records_by_nvrs(bundle_nvrs, strict=True)
+    bundles_by_nvr = {bundle.nvr: bundle for bundle in bundles}
+    versions = {}
+    for catalog in catalogs:
+        csv_names = {bundles_by_nvr[nvr].bundle_csv_name for nvr in catalog.bundle_nvrs}
+        if len(csv_names) != 1 or not all(csv_names):
+            raise RuntimeError(f"FBC {catalog.nvr} must select exactly one identifiable source bundle: {csv_names}")
+        csv_name = csv_names.pop()
+        version_match = re.search(r'\.v?(\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.+-]+)?)$', csv_name)
+        if not version_match:
+            raise RuntimeError(f"Cannot determine source bundle version from CSV '{csv_name}'")
+        versions[catalog.nvr] = version_match.group(1)
+    return versions
+
+
 async def validate_fbc_related_images(
-    fbc_pullspecs: List[str], product: str, operator_groups_out: Optional[Dict[str, List[str]]] = None
+    fbc_pullspecs: List[str],
+    product: str,
+    operator_groups_out: Optional[Dict[str, List[str]]] = None,
+    operator_by_fbc_out: Optional[Dict[str, str]] = None,
+    related_nvrs_by_fbc_out: Optional[Dict[str, List[str]]] = None,
+    *,
+    assembly: Optional[str] = None,
+    version_scoped: bool = True,
+    ignore_patch_version: bool = False,
+    use_source_bundle: bool = False,
+    image_components: Optional[Collection[str]] = None,
+    image_overrides: Optional[Dict[str, str]] = None,
 ) -> List[str]:
     """
     Validate that FBC pullspecs from the same operator have the same related images.
@@ -174,19 +234,70 @@ async def validate_fbc_related_images(
     multiple FBC builds for the *same* operator (targeting different OCP versions)
     must contain identical related-image NVR sets.
 
-    If `operator_groups_out` is provided, it is populated with the operator-to-pullspecs
-    grouping computed internally, so callers can reuse it (e.g. to resolve mr_approvers)
-    without re-extracting FBC labels.
+    When `assembly` is supplied, external dependencies whose major/minor version
+    differs from the assembly are excluded from comparison, but retained in the
+    returned NVR union and provenance outputs. Without an assembly, all related
+    images are compared.
 
-    Returns the combined list of all unique related images across all operators.
-    Raises RuntimeError if any same-operator FBCs have mismatched related images.
+    When ``version_scoped`` is true (layered-product default), related images
+    come from version-scoped rendered-catalog extraction
+    (:func:`elliottlib.util.extract_nvrs_from_fbc` →
+    ``extract_versioned_related_images_from_fbc``): assembly when it is a real
+    release version, otherwise the version parsed from the FBC tag. With
+    ``use_source_bundle``, the selected bundle's recorded CSV version takes
+    precedence; FBC and operand NVR versions are not used to select a bundle.
+    All source FBCs for an operator must select the same bundle version.
+
+    With ``ignore_patch_version``, version-scoped extraction selects the bundle
+    recorded in FBC metadata and checks only the assembly's major/minor train.
+
+    When ``version_scoped`` is false (``--ocp-optional``), use the unscoped
+    OCP extractor (``related-images.json`` / all catalog bundles) so
+    build-suffixed OCP bundle names still resolve.
+
+    Optional output mappings expose the resolved operator grouping and each
+    catalog's related NVRs so callers can reuse the inspected provenance
+    without rendering the FBC images again.
+
+    Args:
+        fbc_pullspecs: FBC images to inspect.
+        product: Product name used by the FBC extraction helper.
+        operator_groups_out: Optional operator-to-pullspecs output mapping.
+        operator_by_fbc_out: Optional pullspec-to-operator output mapping.
+        related_nvrs_by_fbc_out: Optional pullspec-to-related-NVRs output mapping.
+        assembly: Optional assembly/release version used to select the olm.bundle
+            when ``version_scoped`` is true. Also excludes external dependencies
+            from consistency comparison.
+        version_scoped: When true (default), use LP version-scoped extraction.
+            When false, use the unscoped OCP extractor.
+        use_source_bundle: Resolve the actual selected bundle's CSV version from
+            build provenance, independently of the destination assembly or NVR versions.
+        image_components: Product component identities for consistency comparison,
+            replacing version-based external classification when supplied.
+        image_overrides: Component-to-NVR pins applied before consistency comparison.
+
+    Returns:
+        The combined list of all unique related images across all operators.
+
+    Raises:
+        RuntimeError: If an operator cannot be identified or catalogs for the
+            same operator have inconsistent related images.
     """
-    logger.info("Validating related images for %d FBC builds (grouped by operator)...", len(fbc_pullspecs))
+    logger.info(
+        "Validating related images for %d FBC builds (grouped by operator, version_scoped=%s)...",
+        len(fbc_pullspecs),
+        version_scoped,
+    )
 
     # Step 1: Extract operator identifiers from all FBCs in parallel
     logger.info("Extracting operator identifiers from FBC images...")
     label_tasks = [extract_fbc_labels(fbc) for fbc in fbc_pullspecs]
     fbc_labels_list = await asyncio.gather(*label_tasks)
+    source_versions = {}
+    if use_source_bundle:
+        if not version_scoped:
+            raise ValueError("Source bundle selection requires version-scoped extraction")
+        source_versions = await _get_source_bundle_versions([labels.get('nvr') for labels in fbc_labels_list])
 
     # Step 2: Map FBCs to operators
     fbc_to_operator = {}
@@ -234,24 +345,67 @@ async def validate_fbc_related_images(
     for operator, fbcs in operator_groups.items():
         logger.info("  %s: %d FBC(s)", operator, len(fbcs))
 
+    if use_source_bundle:
+        versions_by_operator = defaultdict(set)
+        for fbc, labels in zip(fbc_pullspecs, fbc_labels_list):
+            versions_by_operator[fbc_to_operator[fbc]].add(source_versions[labels['nvr']])
+        for operator, versions in versions_by_operator.items():
+            if len(versions) != 1:
+                raise RuntimeError(f"Inconsistent source bundle versions for operator '{operator}': {sorted(versions)}")
+
     if operator_groups_out is not None:
         operator_groups_out.update(operator_groups)
+    if operator_by_fbc_out is not None:
+        operator_by_fbc_out.update(fbc_to_operator)
 
     # Step 4: Extract related images from each FBC sequentially to avoid temp directory conflicts
     logger.info("Extracting related images from all FBCs...")
     fbc_related_images = {}
-    for fbc_pullspec in fbc_pullspecs:
-        related_nvrs = await extract_nvrs_from_fbc(fbc_pullspec, product)
+    all_related_images = set()
+    for fbc_pullspec, labels in zip(fbc_pullspecs, fbc_labels_list):
+        related_nvrs = set(
+            await extract_nvrs_from_fbc(
+                fbc_pullspec,
+                product,
+                assembly=assembly if version_scoped else None,
+                version_scoped=version_scoped,
+                ignore_patch_version=ignore_patch_version if version_scoped else False,
+                bundle_version=source_versions[labels['nvr']] if use_source_bundle else None,
+            )
+        )
+        if image_overrides:
+            related_nvrs = {nvr for nvr in related_nvrs if parse_nvr(nvr)['name'] not in image_overrides}
+            related_nvrs.update(image_overrides.values())
+        all_related_images.update(related_nvrs)
+        if related_nvrs_by_fbc_out is not None:
+            related_nvrs_by_fbc_out[fbc_pullspec] = sorted(related_nvrs)
+        if image_components is not None or assembly is not None:
+            external_nvrs = {
+                nvr
+                for nvr in related_nvrs
+                if (
+                    parse_nvr(nvr)['name'] not in image_components
+                    if image_components is not None
+                    else not is_nvr_from_assembly(nvr, assembly)
+                )
+            }
+            if external_nvrs:
+                logger.info(
+                    "Skipping %d external NVRs in consistency comparison for FBC %s (assembly %s): %s",
+                    len(external_nvrs),
+                    fbc_pullspec,
+                    assembly,
+                    sorted(external_nvrs),
+                )
+            related_nvrs -= external_nvrs
         fbc_related_images[fbc_pullspec] = sorted(related_nvrs)
 
     # Step 5: Validate related images within each operator group
-    all_related_images = set()
     validation_errors = []
 
     for operator, fbcs_in_group in operator_groups.items():
         if len(fbcs_in_group) == 1:
             logger.info("Operator '%s': single FBC, no validation needed", operator)
-            all_related_images.update(fbc_related_images[fbcs_in_group[0]])
             continue
 
         logger.info("Validating %d FBCs for operator '%s'...", len(fbcs_in_group), operator)
@@ -289,7 +443,6 @@ async def validate_fbc_related_images(
                 len(fbcs_in_group),
                 len(reference_images),
             )
-            all_related_images.update(reference_images)
 
     # Step 6: Report validation results
     if validation_errors:

@@ -11,10 +11,10 @@ from typing import Optional, Tuple
 import click
 import yaml
 from artcommonlib import exectools, redis
-from artcommonlib.build_visibility import is_release_embargoed
+from artcommonlib.build_visibility import is_nvr_embargoed, is_release_embargoed
 from artcommonlib.constants import (
     KONFLUX_DEFAULT_IMAGE_REPO,
-    KONFLUX_DEFAULT_IMAGE_SHARE_REPO,
+    KONFLUX_IMAGE_TEST_REPO,
     REGISTRY_BREW,
     REGISTRY_CI_OPENSHIFT,
     REGISTRY_QUAY_OCP_RELEASE_DEV,
@@ -28,7 +28,6 @@ from artcommonlib.registry_config import RegistryConfig, RegistryCredential
 from artcommonlib.util import (
     new_roundtrip_yaml_handler,
     run_safe,
-    sync_to_quay,
     uses_konflux_imagestream_override,
     validate_build_priority,
 )
@@ -40,6 +39,7 @@ from pyartcd.build_strategy import BuildStrategy
 from pyartcd.cli import cli, click_coroutine, pass_runtime
 from pyartcd.counter_models import BuildFailCounterContext, RebaseCounterContext
 from pyartcd.locks import Lock
+from pyartcd.pipelines.sync_nvr_to_quay import sync_image_to_quay
 from pyartcd.runtime import Runtime
 from pyartcd.util import (
     build_history_link_url,
@@ -1046,29 +1046,35 @@ class KonfluxOcpPipeline:
         if self.mass_rebuild:
             await self.slack_client.say(f':done_it_is: Mass rebuild for {self.version} complete :done_it_is:')
 
-    async def mirror_images(self):
+    async def mirror_test_builds_to_quay(self):
         """
-        Mirror non-RHCOS, non-embargoed builds to art-images-share.
+        For TEST builds only, sync non-RHCOS, non-embargoed built images to the
+        art-images-test repo by default.
 
-        RHCOS pairs are promoted separately after their integration tests pass.
+        This is the test-build counterpart of the removed ``mirror_images`` method
+        (which synced stream builds to art-images-share). It runs only when
+        ``self.assembly == 'test'``; for any other assembly it is a no-op.
+
+        RHCOS pairs are promoted separately after their integration tests pass, so
+        they are excluded here. Embargoed builds are NEVER synced.
         """
+        if self.assembly != 'test':
+            LOGGER.info('Not mirroring test builds to quay for %s assembly', self.assembly)
+            return
 
         if not self.building_images():
             LOGGER.warning('No images will be mirrored')
             return
 
-        if self.runtime.dry_run:
-            LOGGER.info('Not mirroring images in dry run mode')
-            return
-
-        LOGGER.info(f'Mirroring images to {KONFLUX_DEFAULT_IMAGE_SHARE_REPO}...')
+        LOGGER.info(f'Mirroring test builds to {KONFLUX_IMAGE_TEST_REPO}...')
 
         record_log = self.parse_record_log()
         if not record_log:
             LOGGER.error('record.log not found!')
             return
 
-        # RHCOS builds are promoted separately after their pair-specific integration tests.
+        # RHCOS builds are promoted separately after their pair-specific integration tests,
+        # and failed entries (truthy status) are skipped.
         builds_to_mirror = [
             entry
             for entry in record_log.get('image_build_konflux', [])
@@ -1076,22 +1082,39 @@ class KonfluxOcpPipeline:
         ]
 
         async def sync_build(build):
-            release = build["nvrs"].split("-")[-1]
             image_pullspec = build["image_pullspec"]
 
-            if self.assembly != "stream":
-                LOGGER.info(f"Not syncing {image_pullspec} because assembly {self.assembly} != stream")
-                return
+            # Embargo gate: prefer checking the full NVR when available, otherwise fall back
+            # to the release field (consistent with the previous implementation).
+            nvr = build.get("nvrs")
+            if nvr:
+                embargoed = is_nvr_embargoed(nvr)
+            else:
+                release = build.get("release") or ""
+                embargoed = is_release_embargoed(release=release, build_system="konflux")
 
-            if is_release_embargoed(release=release, build_system="konflux"):
+            if embargoed:
                 LOGGER.info(f"Not syncing {image_pullspec} because it is in an embargoed release")
                 return
 
+            # Only apply the build-specific image_tag (plus the sha256-<digest> GC tag that
+            # sync_to_quay adds internally). No floating "<name>-<X.Y>" tag: it would be
+            # overwritten by any later build of the same component in this pull-for-testing repo.
             image_tag = build["image_tag"]
-            latest_tag = f'{build["name"]}-{self.version}'
-            await sync_to_quay(image_pullspec, KONFLUX_DEFAULT_IMAGE_SHARE_REPO, [image_tag, latest_tag])
+            await sync_image_to_quay(
+                image_pullspec,
+                KONFLUX_IMAGE_TEST_REPO,
+                [image_tag],
+                dry_run=self.runtime.dry_run,
+                logger=LOGGER,
+            )
 
-        await asyncio.gather(*[sync_build(build) for build in builds_to_mirror])
+        # Wait for all eligible syncs even if one fails, then surface the first failure so
+        # run_safe records it (a single bad sync should not skip the remaining builds).
+        results = await asyncio.gather(*[sync_build(build) for build in builds_to_mirror], return_exceptions=True)
+        for result in results:
+            if isinstance(result, BaseException):
+                raise result
 
     async def run(self):
         # Unset XDG_RUNTIME_DIR to ensure we don't use default auth.json
@@ -1143,8 +1166,8 @@ class KonfluxOcpPipeline:
             registries=[
                 REGISTRY_QUAY_OCP_RELEASE_DEV,  # For: ART release images
                 KONFLUX_DEFAULT_IMAGE_REPO,  # For: Konflux builds (cosign attestations)
+                KONFLUX_IMAGE_TEST_REPO,  # For: test-build auto-sync (mirror_test_builds_to_quay)
                 RHCOS_IMAGE_REPO,  # For: ART-built RHCOS images
-                KONFLUX_DEFAULT_IMAGE_SHARE_REPO,  # For: Konflux image sharing (sync_images)
                 REGISTRY_REDHAT_IO,  # For: RHEL base images
                 REGISTRY_BREW,  # For: parent images (uses registry.redhat.io creds via alias)
                 REGISTRY_CI_OPENSHIFT,  # For: CI operations
@@ -1239,11 +1262,12 @@ class KonfluxOcpPipeline:
 
             self.trigger_bundle_build()
 
-            # Keep generic image mirroring and build-sync ordering unchanged. RHCOS images
-            # are promoted to art-images only after their integration tests pass.
-            await run_safe(self.mirror_images, critical_failures)
+            # RHCOS images are promoted to art-images only after their integration tests pass.
             await run_safe(self.trigger_rhcos_node_image_post_build, critical_failures)
             await run_safe(self.mirror_streams_to_ci, critical_failures)
+
+            # For test assemblies, auto-sync non-embargoed built images to the art-images-test repo.
+            await run_safe(self.mirror_test_builds_to_quay, critical_failures)
 
             await self.clean_up()
 
