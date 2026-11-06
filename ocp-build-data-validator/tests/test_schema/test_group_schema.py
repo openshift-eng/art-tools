@@ -4,6 +4,12 @@ from validator.schema import group_schema
 
 
 class TestGroupSchema(unittest.TestCase):
+    def test_ignore_incorrect_nvr_is_boolean(self):
+        """The existing group-level NVR override accepts booleans and rejects strings."""
+        for value in (True, False):
+            self.assertEqual('', group_schema.validate('group.yml', {'ignore_incorrect_nvr': value}))
+        self.assertIn('boolean', group_schema.validate('group.yml', {'ignore_incorrect_nvr': 'true'}))
+
     def test_validate_custom_integration_test_scenarios(self):
         valid_data = {
             "konflux": {
@@ -182,3 +188,21 @@ class TestGroupSchema(unittest.TestCase):
             "el_target": -1,
         }
         self.assertIn("is less than the minimum of 1", group_schema.validate("group.yml", invalid_data))
+
+
+def test_layered_product_group_fields_are_valid():
+    from validator.schema import group_schema
+
+    assert (
+        group_schema.validate(
+            'group.yml',
+            {
+                'name': 'zero-trust-1.1',
+                'product': 'zero-trust-workload-identity-manager',
+                'version': '1.1.2',
+                'OCP_TARGET_VERSIONS': ['4.20', '5.0'],
+                'operator_index_mode': 'ga-plus',
+            },
+        )
+        == ''
+    )
