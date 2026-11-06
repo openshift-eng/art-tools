@@ -4,8 +4,14 @@ from unittest import IsolatedAsyncioTestCase, TestCase
 from unittest.mock import ANY, AsyncMock, MagicMock, Mock, patch
 
 import defusedxml.ElementTree as ET
+from aiohttp import ClientResponseError, RequestInfo
+from doozerlib.assembly_inspector import AssemblyInspector
 from doozerlib.repodata import OutdatedRPMFinder, Repodata, RepodataLoader, Rpm, RpmModule
+from doozerlib.repos import Repo
+from multidict import CIMultiDict, CIMultiDictProxy
 from ruamel.yaml import YAML
+from tenacity import wait_none
+from yarl import URL
 
 
 class TestRpm(TestCase):
@@ -898,6 +904,93 @@ data:
 
 
 class TestRepodataLoader(IsolatedAsyncioTestCase):
+    async def check_optional_repo_http_failure(self, metadata_path):
+        repo_url = "https://example.invalid/repo/"
+        url = URL(f"{repo_url}{metadata_path}")
+        request = RequestInfo(url, "GET", CIMultiDictProxy(CIMultiDict()), url)
+        error = ClientResponseError(request, (), status=404, message="metadata unavailable")
+        repo = Repo(
+            "optional",
+            {"conf": {"baseurl": repo_url}, "content_set": {"optional": True}},
+            ["x86_64"],
+        )
+        runtime = MagicMock()
+        runtime.repos = {"optional": repo}
+        inspector = AssemblyInspector(runtime, MagicMock())
+        inspector._external_rpm_binary_names = Mock(return_value={"x86_64": {"kernel-core"}})
+        build = MagicMock()
+        build.get_image_meta.return_value.get_enabled_repos.return_value = {"optional"}
+        with (
+            patch("aiohttp.ClientSession", autospec=True) as client_session,
+            patch("doozerlib.repodata.cmd_gather_async", new_callable=AsyncMock) as diagnostic,
+            patch.object(RepodataLoader.load.retry, "wait", wait_none()),
+            patch("doozerlib.repodata.wait_exponential", return_value=wait_none()),
+        ):
+            diagnostic.return_value = (0, "", "")
+            session = client_session.return_value.__aenter__.return_value = Mock()
+            index_response = Mock()
+            index_response.text = AsyncMock(
+                return_value='''<repomd xmlns="http://linux.duke.edu/metadata/repo">
+                <data type="primary"><location href="repodata/primary.xml.gz"/></data>
+                </repomd>'''
+            )
+            missing_response = Mock()
+            missing_response.raise_for_status.side_effect = error
+
+            def get_response(request_url):
+                response = AsyncMock()
+                response.__aenter__.return_value = missing_response if request_url == str(url) else index_response
+                return response
+
+            session.get.side_effect = get_response
+            if metadata_path == "repodata/repomd.xml":
+                self.assertTrue(await inspector._external_rpm_is_unavailable(build, {}, "kernel-2-1", None))
+                runtime.logger.info.assert_called_once_with(
+                    "Skipping absent optional repository %s for %s (HTTP 404)", "optional", "x86_64"
+                )
+                diagnostic.assert_awaited()
+            else:
+                with self.assertRaises(ClientResponseError) as raised:
+                    await inspector._external_rpm_is_unavailable(build, {}, "kernel-2-1", None)
+                self.assertIs(raised.exception, error)
+                self.assertEqual(index_response.raise_for_status.call_count, 3)
+                self.assertEqual(index_response.text.await_count, 3)
+                runtime.logger.info.assert_not_called()
+                diagnostic.assert_not_awaited()
+            self.assertEqual(
+                missing_response.raise_for_status.call_count, 3 if metadata_path.endswith("repomd.xml") else 15
+            )
+            session.get.assert_any_call(str(url))
+
+    async def test_optional_repo_repomd_404_is_skipped(self):
+        await self.check_optional_repo_http_failure("repodata/repomd.xml")
+
+    async def test_optional_repo_primary_metadata_404_propagates(self):
+        await self.check_optional_repo_http_failure("repodata/primary.xml.gz")
+
+    @patch("doozerlib.repodata.cmd_gather_async", new_callable=AsyncMock)
+    @patch("aiohttp.ClientSession", autospec=True)
+    async def test_load_reraises_http_error_after_retries(self, ClientSession: Mock, cmd_gather_async: AsyncMock):
+        """Exhausted real loader retries preserve the HTTP status for repository policy."""
+        repo_url = "https://example.invalid/repo/"
+        url = URL(f"{repo_url}repodata/repomd.xml")
+        request = RequestInfo(url, "GET", CIMultiDictProxy(CIMultiDict()), url)
+        error = ClientResponseError(request, (), status=404, message="metadata unavailable")
+        session = ClientSession.return_value.__aenter__.return_value = Mock(name="session")
+        response = Mock(name="response")
+        session.get.return_value = AsyncMock()
+        session.get.return_value.__aenter__.return_value = response
+        response.raise_for_status.side_effect = error
+        cmd_gather_async.return_value = (0, "", "")
+        with patch.object(RepodataLoader.load.retry, "wait", wait_none()):
+            with self.assertRaises(ClientResponseError) as raised:
+                await RepodataLoader().load("test-x86_64", repo_url)
+        self.assertIs(raised.exception, error)
+        self.assertEqual(raised.exception.status, 404)
+        self.assertEqual(session.get.call_count, 3)
+        session.get.assert_called_with(str(url))
+        self.assertEqual(response.raise_for_status.call_count, 3)
+
     @patch("doozerlib.repodata.RepodataLoader._fetch_remote_compressed", autospec=True)
     @patch("aiohttp.ClientSession", autospec=True)
     async def test_load(self, ClientSession: Mock, _fetch_remote_compressed: AsyncMock):

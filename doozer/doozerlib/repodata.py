@@ -423,7 +423,7 @@ class RepodataLoader:
         else:
             raise IOError(f'Unknown compression for: {url}')
 
-    @retry(stop=stop_after_attempt(3), wait=wait_fixed(5))
+    @retry(stop=stop_after_attempt(3), wait=wait_fixed(5), reraise=True)
     async def load(self, repo_name: str, repo_url: str):
         if not repo_url.endswith("/"):
             repo_url += "/"
