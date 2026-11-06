@@ -60,6 +60,38 @@ set when preparing or refreshing this assembly; unrelated assembly fields are
 preserved. Concurrent operand or FBC-record changes cause preparation to stop
 rather than overwrite another release. Identical records require no new commit.
 Dry runs do not write records. Configure
-`build_config.ocp_build_data_repo_push_url` for the write destination, including
-when testing against a build-data fork. Reusing an existing shipment MR removes
+`build_config.ocp_build_data_repo_push_url` for the write destination. Reusing an existing shipment MR removes
 its obsolete individual FBC shipment files through normal reconciliation.
+
+For fork runs, point all three repository settings at the same fork:
+
+- `build_config.ocp_build_data_repo_push_url` is the preparation write destination.
+- `prepare-release-lp --build-data-repo-url` reads the assembly used during preparation.
+- `lp-unified-fbc --data-path` reads the recorded FBCs for the unified build.
+
+For example, configure `/tmp/artcd-fork.toml` with the following build-data setting
+alongside the other configuration required for release preparation:
+
+```toml
+[build_config]
+ocp_build_data_repo_push_url = "https://github.com/ashwindasr/ocp-build-data"
+```
+
+Then prepare and consume the assembly from that fork:
+
+```sh
+artcd --config=/tmp/artcd-fork.toml prepare-release-lp \
+  --group=quay-3.18 --assembly=3.18.5 --create-mr --unified-fbc \
+  --build-data-repo-url=https://github.com/ashwindasr/ocp-build-data
+
+artcd lp-unified-fbc --product=quay --assembly=3.18.5 \
+  --ocp-target-version=4.22 \
+  --data-path=https://github.com/ashwindasr/ocp-build-data
+```
+
+Setting only the push URL leaves preparation reading upstream, which can cause
+its concurrent-change comparison to fail on pre-existing fork differences.
+The unified job also cannot see fork-only records when it reads upstream. If the
+read and write repositories intentionally differ, make the same assembly pins
+and recorded FBCs available to both readers before using them. Production runs
+using matching upstream read/write settings keep their existing behavior.
