@@ -1,6 +1,7 @@
 from unittest import IsolatedAsyncioTestCase
 from unittest.mock import ANY, AsyncMock, MagicMock, Mock, patch
 
+from artcommonlib.konflux.konflux_build_record import Engine, KonfluxBuildOutcome
 from artcommonlib.model import Model
 from artcommonlib.util import (
     normalize_group_name_for_k8s,
@@ -47,6 +48,7 @@ class TestCreateSnapshotCli(IsolatedAsyncioTestCase):
         build_records = [
             Mock(
                 nvr='component1-container-v1.0.0-1',
+                outcome=KonfluxBuildOutcome.FAILURE,
                 image_pullspec='registry/image@sha256:digest1',
                 image_tag='tag1',
                 rebase_repo_url='https://github.com/test/repo1',
@@ -82,12 +84,13 @@ class TestCreateSnapshotCli(IsolatedAsyncioTestCase):
         self.konflux_client._create.side_effect = lambda data: data
         self.konflux_client.resource_url = MagicMock(return_value="https://whatever")
 
-        with patch.object(CreateSnapshotCli, 'fetch_build_records', return_value=build_records):
+        with patch("elliottlib.cli.snapshot_cli._get_konflux_db") as mock_get_konflux_db:
+            mock_get_konflux_db.return_value.get_build_records_by_nvrs = AsyncMock(return_value=build_records)
             cli = CreateSnapshotCli(
                 runtime=self.runtime,
                 konflux_config=self.konflux_config,
                 image_repo_pull_secret=self.image_repo_pull_secret,
-                builds=['test-nvr-1', 'test-nvr-2', 'test-nvr-3'],
+                builds=[record.nvr for record in build_records],
                 dry_run=self.dry_run,
             )
 
@@ -146,16 +149,19 @@ class TestCreateSnapshotCli(IsolatedAsyncioTestCase):
                 }
             )
 
-    @patch("elliottlib.cli.snapshot_cli.KonfluxDb")
+    @patch("elliottlib.cli.snapshot_cli._get_konflux_db")
     @patch("doozerlib.backend.konflux_client.KonfluxClient.from_kubeconfig")
     @patch('elliottlib.runtime.Runtime')
-    async def test_fetch_build_records_validation(self, mock_runtime, mock_konflux_client_init, MockKonfluxDb):
+    async def test_fetch_build_records_validation(self, mock_runtime, mock_konflux_client_init, mock_get_konflux_db):
         mock_runtime.return_value = self.runtime
         mock_konflux_client_init.return_value = self.konflux_client
-        db = MockKonfluxDb.return_value
+        db = mock_get_konflux_db.return_value
 
         builds = ['openshift-container-v4.18.0-4.el9', 'openshift-clientst-container-v4.18.0-4.el8']
-        mock_records = [Mock(nvr=builds[0]), Mock(nvr=builds[1])]
+        mock_records = [
+            Mock(nvr=builds[0], outcome=KonfluxBuildOutcome.SUCCESS),
+            Mock(nvr=builds[1], outcome=KonfluxBuildOutcome.FAILURE),
+        ]
         db.get_build_records_by_nvrs = AsyncMock(return_value=mock_records)
 
         cli = CreateSnapshotCli(
@@ -168,7 +174,39 @@ class TestCreateSnapshotCli(IsolatedAsyncioTestCase):
 
         records = await cli.fetch_build_records()
         self.assertEqual(records, mock_records)
-        db.get_build_records_by_nvrs.assert_called_once_with(builds, where=ANY, strict=True, exclude_large_columns=True)
+        db.get_build_records_by_nvrs.assert_awaited_once_with(
+            builds,
+            outcome=None,
+            where={"group": self.runtime.group, "engine": Engine.KONFLUX.value},
+            strict=True,
+            exclude_large_columns=True,
+        )
+
+    @patch("elliottlib.cli.snapshot_cli._get_konflux_db")
+    @patch("doozerlib.backend.konflux_client.KonfluxClient.from_kubeconfig")
+    async def test_fetch_build_records_missing_nvr(self, mock_konflux_client_init, mock_get_konflux_db):
+        mock_konflux_client_init.return_value = self.konflux_client
+        db = mock_get_konflux_db.return_value
+        db.get_build_records_by_nvrs = AsyncMock(side_effect=IOError("Build record not found"))
+        builds = ['missing-container-v4.18.0-4.el9']
+        cli = CreateSnapshotCli(
+            runtime=self.runtime,
+            konflux_config=self.konflux_config,
+            image_repo_pull_secret=self.image_repo_pull_secret,
+            builds=builds,
+            dry_run=self.dry_run,
+        )
+
+        with self.assertRaisesRegex(IOError, "Build record not found"):
+            await cli.fetch_build_records()
+
+        db.get_build_records_by_nvrs.assert_awaited_once_with(
+            builds,
+            outcome=None,
+            where={"group": self.runtime.group, "engine": Engine.KONFLUX.value},
+            strict=True,
+            exclude_large_columns=True,
+        )
 
 
 class TestGetSnapshotCli(IsolatedAsyncioTestCase):
