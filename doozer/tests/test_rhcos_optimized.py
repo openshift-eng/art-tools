@@ -32,7 +32,9 @@ class TestRhcosOptimized(unittest.TestCase):
 
             # Mock repos
             repo9 = MagicMock()
+            repo9._data.get.return_value = {}  # scan_sources not set, so not ignorable
             repo10 = MagicMock()
+            repo10._data.get.return_value = {}  # scan_sources not set, so not ignorable
             self.runtime.repos = {"rhel-9-baseos": repo9, "rhel-10-baseos": repo10}
 
             # Mock repodata
