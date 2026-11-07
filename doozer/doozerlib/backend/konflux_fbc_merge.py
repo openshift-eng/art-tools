@@ -353,7 +353,9 @@ class LayeredFbcMerger(KonfluxFbcFragmentMerger):
                 major=self.major_minor_override[0], minor=self.major_minor_override[1]
             )
         )
-        baseline_blobs = await opm.render(baseline, auth=auth, migrate_level=migrate_level)
+        baseline_blobs = await opm.render_packages(
+            baseline, packages={source.package for source in self.inputs}, auth=auth, migrate_level=migrate_level
+        )
         self.catalog = merge_layered_catalogs(baseline_blobs, self.inputs)
         self._set_product_identity()
         self.provenance = {
