@@ -249,6 +249,10 @@ class TestLayeredFbcMerger(unittest.IsolatedAsyncioTestCase):
         self.arch_lookup = lookup_patch.start()
         self.arch_lookup.return_value = ['x86_64']
         self.addCleanup(lookup_patch.stop)
+        baseline_patch = patch('doozerlib.backend.konflux_fbc_merge.opm.render_packages', new_callable=AsyncMock)
+        self.baseline_render = baseline_patch.start()
+        self.baseline_render.return_value = []
+        self.addCleanup(baseline_patch.stop)
 
     async def test_prepares_release_labels_and_provenance(self):
         directory = Path(self.temp.name)
@@ -546,7 +550,7 @@ class TestLayeredFbcMerger(unittest.IsolatedAsyncioTestCase):
                     ),
                     patch(
                         'doozerlib.backend.konflux_fbc_merge.opm.render',
-                        new=AsyncMock(side_effect=[[bundle(selected.csv_name)], selected.catalog, []]),
+                        new=AsyncMock(side_effect=[[bundle(selected.csv_name)], selected.catalog]),
                     ),
                 ):
                     await self.merger.prepare((selected.record.nvr,))
@@ -746,7 +750,7 @@ class TestLayeredFbcMerger(unittest.IsolatedAsyncioTestCase):
             ),
             patch(
                 'doozerlib.backend.konflux_fbc_merge.opm.render',
-                new=AsyncMock(side_effect=[[bundle(selected.csv_name)], selected.catalog, []]),
+                new=AsyncMock(side_effect=[[bundle(selected.csv_name)], selected.catalog]),
             ),
         ):
             await self.merger.prepare((selected.record.nvr,))
@@ -761,6 +765,12 @@ class TestLayeredFbcMerger(unittest.IsolatedAsyncioTestCase):
             'registry.redhat.io/redhat/redhat-operator-index@sha256:' + 'b' * 64,
         )
         self.merger._pin_image.assert_any_await('registry.redhat.io/redhat/redhat-operator-index:v4.20')
+        self.baseline_render.assert_awaited_once_with(
+            'registry.redhat.io/redhat/redhat-operator-index@sha256:' + 'b' * 64,
+            packages={'quay'},
+            auth=None,
+            migrate_level='bundle-object-to-csv-metadata',
+        )
         self.arch_lookup.assert_awaited_once_with(self.runtime.data_path, (4, 20), self.merger._logger)
         self.assertEqual(self.merger._get_build_arches(), ['x86_64'])
 
@@ -804,7 +814,7 @@ class TestLayeredFbcMerger(unittest.IsolatedAsyncioTestCase):
                     ),
                     patch(
                         'doozerlib.backend.konflux_fbc_merge.opm.render',
-                        new=AsyncMock(side_effect=[[bundle(selected.csv_name)], selected.catalog, []]),
+                        new=AsyncMock(side_effect=[[bundle(selected.csv_name)], selected.catalog]),
                     ),
                 ):
                     if wrong_group:

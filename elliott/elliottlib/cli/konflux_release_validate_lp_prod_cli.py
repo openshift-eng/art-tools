@@ -4,7 +4,6 @@ This command is a fail-fast preflight rather than a lock. Two pipelines that
 validate before either exposes active GitLab or Konflux state can still race.
 """
 
-import json
 import logging
 import os
 import time
@@ -12,7 +11,7 @@ from collections import defaultdict
 from dataclasses import dataclass
 from pathlib import Path
 from tempfile import TemporaryDirectory
-from typing import Iterable, Iterator, TextIO
+from typing import Iterable
 
 import click
 import psutil
@@ -30,6 +29,7 @@ from artcommonlib.util import (
 from doozerlib.backend.konflux_client import KonfluxClient
 from doozerlib.backend.konflux_fbc import PRODUCTION_INDEX_PULLSPEC_FORMAT
 from doozerlib.opm import OpmRegistryAuth, gather_opm
+from doozerlib.opm import iter_json_objects as _iter_json_objects
 from tenacity import retry, stop_after_attempt, wait_fixed
 
 from elliottlib.cli.common import click_coroutine
@@ -171,53 +171,6 @@ def _memory_status_from_system() -> str:
         f'host_total={_format_memory_bytes(host_memory.total)} '
         f'process_rss={_format_memory_bytes(process_rss)}'
     )
-
-
-def _iter_json_objects(stream: TextIO) -> Iterator[dict]:
-    """Yield whitespace-delimited JSON objects from a text stream.
-
-    Args:
-        stream: Text stream containing the JSON object stream emitted by ``opm render``.
-
-    Yields:
-        Parsed JSON objects.
-
-    Raises:
-        ValueError: If the stream contains invalid JSON or a non-object value.
-    """
-    decoder = json.JSONDecoder()
-    buffer = ''
-    eof = False
-    while True:
-        chunk = stream.read(1024 * 1024)
-        if chunk:
-            buffer += chunk
-        else:
-            eof = True
-
-        position = 0
-        while True:
-            while position < len(buffer) and buffer[position].isspace():
-                position += 1
-            if position >= len(buffer):
-                buffer = ''
-                break
-            try:
-                value, end = decoder.raw_decode(buffer, position)
-            except json.JSONDecodeError as exc:
-                if eof:
-                    raise ValueError('Invalid JSON in opm render output') from exc
-                buffer = buffer[position:]
-                break
-            if not isinstance(value, dict):
-                raise ValueError(f'Expected JSON object in opm render output, found {type(value).__name__}')
-            yield value
-            position = end
-
-        if eof:
-            if buffer.strip():
-                raise ValueError('Trailing data in opm render output')
-            return
 
 
 def _compact_catalog_blob(blob: dict, packages: set[str] | None) -> dict | None:

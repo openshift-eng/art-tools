@@ -191,7 +191,10 @@ def test_workers_have_isolated_files_pinned_configuration_and_per_target_locks(t
     assert json.loads(p.output_file.read_text()) == result
 
 
-def test_failure_preserves_successes_waits_for_remaining_targets_and_limits_concurrency(tmp_path, sources):
+@pytest.mark.parametrize('concurrency,expected_peak', [(None, 1), (2, 2)])
+def test_failure_preserves_successes_waits_for_remaining_targets_and_limits_concurrency(
+    tmp_path, sources, concurrency, expected_peak
+):
     active = 0
     peak = 0
     completed = []
@@ -210,7 +213,7 @@ def test_failure_preserves_successes_waits_for_remaining_targets_and_limits_conc
             raise RuntimeError('target failed')
         return {'nvr': 'unified-' + worker.target, 'dry_run': True}
 
-    p = pipeline(tmp_path)
+    p = pipeline(tmp_path, **({} if concurrency is None else {'max_concurrent_targets': concurrency}))
     with (
         patch.object(MergeLayeredFbcPipeline, '_resolve_groups', resolve),
         patch.object(MergeLayeredFbcPipeline, '_build', build),
@@ -219,7 +222,7 @@ def test_failure_preserves_successes_waits_for_remaining_targets_and_limits_conc
         with pytest.raises(RuntimeError, match='4.21'):
             asyncio.run(p.run())
     locks.assert_not_called()
-    assert peak == 2
+    assert peak == expected_peak
     assert set(completed) == {'4.20', '4.21', '4.22'}
     result = json.loads(p.output_file.read_text())
     assert result['failed_targets'] == ['4.21']
@@ -246,3 +249,22 @@ def test_rejects_record_resolved_to_another_group(tmp_path):
         db.return_value.search_builds_by_fields = records
         with pytest.raises(ValueError, match='recorded assembly FBC identity'):
             asyncio.run(p._resolve_groups())
+
+
+@pytest.mark.parametrize('value', [0, -1])
+def test_rejects_invalid_target_concurrency(tmp_path, value):
+    with pytest.raises(ValueError, match='at least 1'):
+        pipeline(tmp_path, max_concurrent_targets=value)
+
+
+def test_cli_target_concurrency_defaults_to_serial_and_rejects_zero():
+    from click import BadParameter
+    from pyartcd.cli import cli
+
+    command = cli.commands['lp-unified-fbc']
+    with command.make_context('lp-unified-fbc', []) as context:
+        assert context.params['max_concurrent_targets'] == 1
+    with command.make_context('lp-unified-fbc', ['--max-concurrent-targets=2']) as context:
+        assert context.params['max_concurrent_targets'] == 2
+    with pytest.raises(BadParameter):
+        command.make_context('lp-unified-fbc', ['--max-concurrent-targets=0'])

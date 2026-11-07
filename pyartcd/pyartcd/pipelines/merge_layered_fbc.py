@@ -53,7 +53,11 @@ class MergeLayeredFbcPipeline:
         skip_rebase: bool = False,
         skip_tasks: tuple[str, ...] = (),
         output_file: str | None = None,
+        max_concurrent_targets: int = 1,
     ):
+        if max_concurrent_targets < 1:
+            raise ValueError('max_concurrent_targets must be at least 1')
+        self.max_concurrent_targets = max_concurrent_targets
         validate_git_branch(fbc_branch)
         validate_git_remote_url(data_path)
         if fbc_repo is not None:
@@ -177,7 +181,10 @@ class MergeLayeredFbcPipeline:
             expected = sorted({source['group'] for source in worker.assembly_inputs.values()})
             if groups != expected:
                 raise ValueError(f'OCP {worker.target} resolved unexpected source groups: {groups}')
-        semaphore = asyncio.Semaphore(2)
+        self.runtime.logger.info(
+            'Building %d OCP targets with concurrency %d', len(workers), self.max_concurrent_targets
+        )
+        semaphore = asyncio.Semaphore(self.max_concurrent_targets)
 
         async def build_target(worker):
             assemblies = sorted({source['assembly'] for source in worker.assembly_inputs.values()})
@@ -357,6 +364,13 @@ class MergeLayeredFbcPipeline:
     help='FBC NVR or pullspec; repeat for each source version. Optional when --fbc-branch is set.',
 )
 @click.option('--assembly', 'assemblies', multiple=True, help='Full Quay assembly version; repeat for each release.')
+@click.option(
+    '--max-concurrent-targets',
+    type=click.IntRange(min=1),
+    default=1,
+    show_default=True,
+    help='Maximum assembly targets built at once; serial execution bounds catalog memory.',
+)
 @click.option('--product', help='Require all source builds to belong to this product.')
 @click.option('--data-path', default=constants.OCP_BUILD_DATA_URL)
 @click.option('--fbc-repo')

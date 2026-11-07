@@ -27,7 +27,11 @@ assemblies that do not support 4.22, but fails if none support it. Explicit
 its single target from committed provenance when the option is omitted.
 
 Targets run with separate working directories, output files, source selections,
-and locks, with at most two concurrent builds. Assembly names and snapshot
+and locks. Targets run serially by default to bound catalog-rendering memory;
+`--max-concurrent-targets=N` explicitly enables parallel target builds when
+sufficient memory is available. Production catalogs are streamed as JSON from
+a temporary file and only complete blobs for the selected packages are retained.
+Assembly names and snapshot
 revisions are committed in each output's provenance; group configuration reads
 use those same source snapshots. If one build fails, other targets finish and
 successful outputs are retained. The job writes an aggregate JSON report keyed
