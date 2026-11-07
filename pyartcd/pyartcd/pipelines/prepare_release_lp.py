@@ -54,6 +54,7 @@ from pyartcd.fbc_util import (
     validate_layered_product_group_assembly,
 )
 from pyartcd.git import GitRepository
+from pyartcd.lp_fbc import assembly_fbc_records, update_assembly_fbcs
 from pyartcd.lp_shipment import (
     FbcRefreshRecord,
     ShipmentMRValidationError,
@@ -119,6 +120,7 @@ class PrepareReleaseLPPipeline:
         create_mr: bool = False,
         force: bool = False,
         refresh_fbcs: bool = False,
+        unified_fbc: bool = False,
         jira_bugs: Optional[List[str]] = None,
         target_release_date: Optional[str] = None,
     ) -> None:
@@ -133,6 +135,7 @@ class PrepareReleaseLPPipeline:
             create_mr: Create or reuse a shipment merge request.
             force: Replace the configured shipment MR instead of reusing it.
             refresh_fbcs: Force FBC rebuilds from the latest production catalogs.
+            unified_fbc: Record FBCs in the assembly and omit individual FBC shipments.
             jira_bugs: Jira issues to include in generated release notes.
             target_release_date: Optional normalized target ship date.
         """
@@ -143,6 +146,7 @@ class PrepareReleaseLPPipeline:
         self.create_mr = create_mr
         self.force = force
         self.refresh_fbcs = refresh_fbcs
+        self.unified_fbc = unified_fbc
         self.dry_run = self.runtime.dry_run
         self.jira_bugs = jira_bugs
         self.target_release_date = target_release_date
@@ -555,6 +559,18 @@ class PrepareReleaseLPPipeline:
             ]
         self._logger.info("FBC builds produced %d NVRs", len(fbc_nvrs))
         return fbc_nvrs, fbc_pullspecs
+
+    async def _record_assembly_fbcs(self, nvrs: List[str], pullspecs: List[str], operand_nvrs: List[str]) -> None:
+        if self.dry_run:
+            self._logger.info('[DRY-RUN] Would record FBC builds in %s assembly %s', self.group, self.assembly)
+            return
+        records = assembly_fbc_records(self.assembly, nvrs, pullspecs, operand_nvrs)
+        push_url = self.runtime.config.get('build_config', {}).get('ocp_build_data_repo_push_url')
+        if not push_url:
+            raise ValueError('build_config.ocp_build_data_repo_push_url is required to record assembly FBCs')
+        repo = GitRepository(self._working_dir / 'ocp-build-data-fbcs', dry_run=False)
+        await repo.setup(push_url)
+        await update_assembly_fbcs(repo, self.group, self.assembly, records, self._releases_config)
 
     async def _validate_fbc_pins(self, fbc_nvrs: List[str], bundle_nvrs: List[str], operand_nvrs: List[str]) -> None:
         """Validate selected bundle provenance without rejecting historical catalog entries."""
@@ -998,6 +1014,9 @@ class PrepareReleaseLPPipeline:
         elif len(fbc_nvrs) > 1 and not fbc_pullspecs:
             self._logger.warning("FBC pullspecs not available; skipping FBC consistency validation")
 
+        if self.unified_fbc:
+            await self._record_assembly_fbcs(fbc_nvrs, fbc_pullspecs, operand_nvrs)
+
         release_notes = self._generate_release_notes()
 
         errata_type = release_notes.type if release_notes is not None else "RHBA"
@@ -1024,7 +1043,7 @@ class PrepareReleaseLPPipeline:
                 )
 
         fbc_counter = 1
-        for fbc_nvr in fbc_nvrs:
+        for fbc_nvr in [] if self.unified_fbc else fbc_nvrs:
             fbc_snapshots = await self._create_snapshot([fbc_nvr])
             for snapshot in fbc_snapshots:
                 shipments_by_kind[f'fbc{fbc_counter:02d}'] = self._create_shipment_config(
@@ -1196,6 +1215,11 @@ class PrepareReleaseLPPipeline:
     help="Force FBC rebuilds from the latest production catalogs before creating shipment data.",
 )
 @click.option(
+    "--unified-fbc",
+    is_flag=True,
+    help="Record FBCs in the assembly for unified catalogs and omit individual FBC shipments.",
+)
+@click.option(
     "--jira-bugs",
     default=None,
     help="Comma-separated JIRA issue IDs for release notes.",
@@ -1216,6 +1240,7 @@ async def prepare_release_lp(
     create_mr: bool,
     force: bool,
     refresh_fbcs: bool,
+    unified_fbc: bool,
     jira_bugs: Optional[str],
     target_release_date: Optional[str],
 ):
@@ -1257,11 +1282,12 @@ async def prepare_release_lp(
         create_mr=create_mr,
         force=force,
         refresh_fbcs=refresh_fbcs,
+        unified_fbc=unified_fbc,
         jira_bugs=jira_bugs_list,
         target_release_date=normalized_date,
     )
 
-    if create_mr and not runtime.dry_run:
+    if (create_mr or unified_fbc) and not runtime.dry_run:
         lock_name = locks.Lock.LAYERED_PRODUCT_SHIPMENT.value.format(group=group, assembly=assembly)
         await locks.run_with_lock(
             coro=pipeline.run(),

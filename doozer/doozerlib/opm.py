@@ -7,7 +7,7 @@ from dataclasses import dataclass
 from io import StringIO
 from pathlib import Path
 from tempfile import TemporaryDirectory
-from typing import List, Optional
+from typing import Iterator, List, Optional, TextIO
 
 from artcommonlib import exectools
 from ruamel.yaml import YAML
@@ -141,6 +141,97 @@ async def render(
         raise IOError(f"opm render failed with exit code {rc}: {err}")
     blobs = yaml.load_all(StringIO(out))
     return list(blobs)
+
+
+def iter_json_objects(stream: TextIO) -> Iterator[dict]:
+    """Yield whitespace-delimited JSON objects from a text stream.
+
+    Args:
+        stream: Text stream containing the JSON object stream emitted by ``opm render``.
+
+    Yields:
+        Parsed JSON objects.
+
+    Raises:
+        ValueError: If the stream contains invalid JSON or a non-object value.
+    """
+    decoder = json.JSONDecoder()
+    buffer = ''
+    eof = False
+    while True:
+        chunk = stream.read(1024 * 1024)
+        if chunk:
+            buffer += chunk
+        else:
+            eof = True
+
+        position = 0
+        while True:
+            while position < len(buffer) and buffer[position].isspace():
+                position += 1
+            if position >= len(buffer):
+                buffer = ''
+                break
+            try:
+                value, end = decoder.raw_decode(buffer, position)
+            except json.JSONDecodeError as exc:
+                if eof:
+                    raise ValueError('Invalid JSON in opm render output') from exc
+                buffer = buffer[position:]
+                break
+            if not isinstance(value, dict):
+                raise ValueError(f'Expected JSON object in opm render output, found {type(value).__name__}')
+            yield value
+            position = end
+
+        if eof:
+            if buffer.strip():
+                raise ValueError('Trailing data in opm render output')
+            return
+
+
+@retry(reraise=True, stop=stop_after_attempt(3), wait=wait_fixed(5))
+async def render_packages(
+    *input: str,
+    packages: set[str],
+    migrate_level: str = "none",
+    auth: Optional[OpmRegistryAuth] = None,
+) -> List[dict]:
+    """Stream an index as JSON, retaining complete blobs only for selected packages.
+
+    Like LP production validation, spool OPM output to disk instead of keeping
+    the full rendered index and its parsed objects in memory simultaneously.
+    Keep all fields and history for selected packages, which catalog merging
+    needs beyond the validator's compact ownership/channel projection.
+    """
+    if not input or not packages:
+        raise ValueError("input and packages must not be empty")
+    env = os.environ.copy()
+    env.setdefault('GOGC', '20')
+    with TemporaryDirectory(prefix='_doozer_opm_render_') as directory:
+        output_path = Path(directory, 'catalog.json')
+        with output_path.open('w', encoding='utf-8') as output:
+            rc, _, err = await gather_opm(
+                ['render', '--migrate-level', migrate_level, '-o', 'json', '--', *input],
+                auth=auth,
+                check=False,
+                env=env,
+                stdout=output,
+            )
+        if rc != 0:
+            raise IOError(f'opm render failed with exit code {rc}: {err}')
+        retained = []
+        objects_read = 0
+        with output_path.open(encoding='utf-8') as stream:
+            for blob in iter_json_objects(stream):
+                objects_read += 1
+                package = blob.get('name') if blob.get('schema') == 'olm.package' else blob.get('package')
+                if package in packages:
+                    retained.append(blob)
+        if not objects_read:
+            raise ValueError(f'opm render returned no objects for {input}')
+    LOGGER.info('Rendered %s: retained %d/%d objects for %s', input, len(retained), objects_read, sorted(packages))
+    return retained
 
 
 async def generate_basic_template(catalog_file: Path, template_file: Path, output_format: str = "yaml"):
