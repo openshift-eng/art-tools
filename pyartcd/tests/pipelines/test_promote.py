@@ -115,6 +115,7 @@ class TestPromotePipeline(IsolatedAsyncioTestCase):
     ]
 
     def setUp(self) -> None:
+        """Set up deterministic promotion state and isolate external services."""
         self._saved_env = {k: os.environ.get(k) for k in self._ENV_KEYS}
         os.environ.update(
             {
@@ -141,8 +142,14 @@ class TestPromotePipeline(IsolatedAsyncioTestCase):
             return_value={},
         )
         self._runtime_load_group_config_patcher.start()
+        self._installer_trigger_patcher = patch(
+            "pyartcd.pipelines.promote.trigger_installer_build", new_callable=AsyncMock
+        )
+        self.installer_trigger = self._installer_trigger_patcher.start()
 
     def tearDown(self) -> None:
+        """Restore the environment and external service patches."""
+        self._installer_trigger_patcher.stop()
         self._runtime_load_group_config_patcher.stop()
         for key, value in self._saved_env.items():
             if value is None:
@@ -295,6 +302,7 @@ class TestPromotePipeline(IsolatedAsyncioTestCase):
         _,
         __,
     ):
+        """Verify run with custom assembly."""
         runtime = MagicMock(
             config={
                 "build_config": {
@@ -360,6 +368,7 @@ class TestPromotePipeline(IsolatedAsyncioTestCase):
             keep_manifest_list=False,
         )
         pipeline._slack_client.bind_channel.assert_called_once_with("4.10.99-assembly.art0001")
+        self.installer_trigger.assert_not_awaited()
 
     @patch("pyartcd.pipelines.promote.RegistryConfig")
     @patch("pyartcd.jira_client.JIRAClient.from_url", return_value=None)
@@ -617,6 +626,8 @@ class TestPromotePipeline(IsolatedAsyncioTestCase):
         run_with_lock: AsyncMock,
         mock_registry_config: MagicMock,
     ):
+        """Verify run with standard assembly."""
+
         def fake_run_with_lock(*args, **kwargs):
             async def inner():
                 return await kwargs["coro"]
@@ -754,6 +765,17 @@ class TestPromotePipeline(IsolatedAsyncioTestCase):
         sign_artifacts.assert_awaited_once_with("4.10.99", "ocp", ANY, [])
         for arch in ["x86_64", "s390x", "ppc64le", "aarch64"]:
             start_rhcos_sync.assert_any_call(f"4.10.99-{arch}", dry_run=False, sign_only=True)
+
+        self.installer_trigger.assert_awaited_once()
+        self.assertIn('4.10.99-x86_64', self.installer_trigger.await_args.args[0])
+        # Neither acceptance failure nor a later promotion failure may submit an ISO build.
+        for step in ('wait_for_stable', 'ocp_doomsday_backup'):
+            with self.subTest(failed_step=step):
+                self.installer_trigger.reset_mock()
+                with patch.object(pipeline, step, AsyncMock(side_effect=RuntimeError('promotion failed'))):
+                    with self.assertRaises(RuntimeError):
+                        await pipeline.run()
+                self.installer_trigger.assert_not_awaited()
 
     @patch("pyartcd.jira_client.JIRAClient.from_url", return_value=None)
     @patch("pyartcd.pipelines.promote.PromotePipeline.tag_release", return_value=None)
@@ -2923,3 +2945,88 @@ class TestCreateCincinnatiPrs(IsolatedAsyncioTestCase):
     async def test_no_advisory_falls_back_to_hotfix(self, _):
         body = await self._run(AssemblyTypes.STANDARD, self._release_info())
         self.assertIn("Promoting a hotfix release", body)
+
+
+class TestPromoteInstallerTrigger(IsolatedAsyncioTestCase):
+    def setUp(self):
+        """Set up deterministic promotion state and isolate external services."""
+        self.pipeline = PromotePipeline.__new__(PromotePipeline)
+        self.pipeline.runtime = Mock(dry_run=False)
+        self.pipeline.group = "openshift-4.22"
+        self.pipeline._logger = Mock()
+        self.pipeline._slack_client = AsyncMock()
+
+    @patch('pyartcd.pipelines.promote.trigger_installer_build', new_callable=AsyncMock)
+    async def test_selects_amd64_digest_from_multi_only_promotion(self, trigger):
+        """Verify selects amd64 digest from multi only promotion."""
+        await self.pipeline._trigger_installer_build(
+            {
+                'multi': {
+                    'image': 'quay.io/example/release:4.22.1-multi',
+                    'manifests': [
+                        {'platform': {'os': 'linux', 'architecture': 'arm64'}, 'digest': 'sha256:' + 'b' * 64},
+                        {'platform': {'os': 'linux', 'architecture': 'amd64'}, 'digest': 'sha256:' + 'a' * 64},
+                    ],
+                },
+            }
+        )
+        trigger.assert_awaited_once_with('quay.io/example/release@sha256:' + 'a' * 64, dry_run=False)
+
+    @patch('pyartcd.pipelines.promote.trigger_installer_build', new_callable=AsyncMock)
+    async def test_prefers_homogeneous_payload(self, trigger):
+        """Verify prefers homogeneous payload."""
+        await self.pipeline._trigger_installer_build(
+            {
+                'x86_64': {'image': 'quay.io/example/release:4.22.1-x86_64', 'digest': 'sha256:' + 'a' * 64},
+                'multi': {'image': 'quay.io/example/release:4.22.1-multi'},
+            }
+        )
+        trigger.assert_awaited_once_with('quay.io/example/release@sha256:' + 'a' * 64, dry_run=False)
+
+    @patch('pyartcd.pipelines.promote.trigger_installer_build', new_callable=AsyncMock)
+    async def test_no_amd64_payload_does_not_submit(self, trigger):
+        """Verify no amd64 payload does not submit."""
+        await self.pipeline._trigger_installer_build({'aarch64': {'image': 'quay.io/example/release:arm64'}})
+        trigger.assert_not_awaited()
+
+    @patch('pyartcd.pipelines.promote.trigger_installer_build', new_callable=AsyncMock)
+    async def test_submission_failure_reports_manual_recovery_without_retry(self, trigger):
+        """Verify submission failure reports manual recovery without retry."""
+        trigger.side_effect = RuntimeError('Forbidden')
+        await self.pipeline._trigger_installer_build(
+            {
+                'x86_64': {'image': 'quay.io/example/release:4.22.1-x86_64', 'digest': 'sha256:' + 'a' * 64},
+            }
+        )
+        trigger.assert_awaited_once()
+        self.pipeline._slack_client.say_in_thread.assert_awaited_once()
+        self.assertIn('manual', self.pipeline._slack_client.say_in_thread.await_args.args[0].lower())
+
+    @patch('pyartcd.pipelines.promote.trigger_installer_build', new_callable=AsyncMock)
+    async def test_notification_failure_does_not_retry_or_fail_completed_promotion(self, trigger):
+        """Verify notification failure does not retry or fail completed promotion."""
+        trigger.return_value = 'installer-run'
+        self.pipeline._slack_client.say_in_thread.side_effect = RuntimeError('Slack unavailable')
+        await self.pipeline._trigger_installer_build(
+            {
+                'x86_64': {'image': 'quay.io/example/release:4.22.1-x86_64', 'digest': 'sha256:' + 'a' * 64},
+            }
+        )
+        trigger.assert_awaited_once()
+        self.pipeline._slack_client.say_in_thread.assert_awaited_once()
+
+    @patch('pyartcd.pipelines.promote.trigger_installer_build', new_callable=AsyncMock)
+    async def test_dry_run_does_not_inspect_unpublished_placeholder_payload(self, trigger):
+        """Verify dry run does not inspect unpublished placeholder payload."""
+        self.pipeline.runtime.dry_run = True
+        await self.pipeline._trigger_installer_build(
+            {
+                'multi': {
+                    'image': 'quay.io/example/release:4.22.1-multi',
+                    'digest': 'fake:deadbeef-multi',
+                    'manifests': [{'platform': {'os': 'linux', 'architecture': 'amd64'}, 'digest': 'fake:deadbeef'}],
+                },
+            }
+        )
+        trigger.assert_not_awaited()
+        self.pipeline._slack_client.say_in_thread.assert_not_awaited()

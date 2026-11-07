@@ -95,6 +95,8 @@ def start_pipeline_run(
     parent_run: Optional[dict] = None,
     rebuilt_from: Optional[dict] = None,
     use_current_parent: bool = True,
+    kubeconfig: Optional[str] = None,
+    run_name: Optional[str] = None,
 ) -> Optional[str]:
     """Create a Tekton PipelineRun to trigger a downstream pipeline.
 
@@ -109,6 +111,10 @@ def start_pipeline_run(
     Recovery jobs can supply an explicit ``parent_run`` and ``rebuilt_from``
     ART attempt. Set ``use_current_parent=False`` to keep the recovery scan
     as provenance without making it the build-chain parent.
+
+    ``kubeconfig`` selects the target cluster without changing process environment.
+    ``run_name`` uses a deterministic name and reuses a matching existing run on
+    AlreadyExists. Other failures propagate; deduplication lasts while the run exists.
 
     Returns the created PipelineRun name, or None if it could not be parsed.
     """
@@ -139,7 +145,7 @@ def start_pipeline_run(
             labels["art.openshift.io/parent-pipeline"] = parent_pipeline
         labels["art.openshift.io/parent-pipelinerun"] = parent_pr_name
         annotations["art.openshift.io/parent-pipelinerun-console-url"] = _build_console_pipelinerun_url(
-            parent_pr_name, namespace
+            parent_pr_name, parent_run['metadata']['namespace'] if parent_run is not None else _get_namespace()
         )
 
     if rebuilt_from is not None:
@@ -181,13 +187,20 @@ def start_pipeline_run(
         },
     }
 
+    if run_name:
+        pipeline_run['metadata'].pop('generateName')
+        pipeline_run['metadata']['name'] = run_name
+    oc_command = ['oc']
+    if kubeconfig:
+        oc_command.extend(['--kubeconfig', kubeconfig])
+
     pr_json = json.dumps(pipeline_run)
     logger.info("Creating PipelineRun for pipeline %s in namespace %s", pipeline_name, namespace)
-    logger.debug("PipelineRun spec: %s", pr_json)
+    logger.debug("PipelineRun parameter names: %s", sorted(merged_params))
 
     try:
         result = subprocess.run(
-            ["oc", "create", "-f", "-"],
+            [*oc_command, "create", "-f", "-"],
             input=pr_json,
             capture_output=True,
             text=True,
@@ -195,6 +208,23 @@ def start_pipeline_run(
             timeout=60,
         )
     except subprocess.CalledProcessError as e:
+        if run_name and '(AlreadyExists)' in (e.stderr or ''):
+            existing = subprocess.run(
+                [*oc_command, 'get', 'pipelinerun', run_name, '-n', namespace, '-o', 'json'],
+                capture_output=True,
+                text=True,
+                check=True,
+                timeout=60,
+            )
+            spec = json.loads(existing.stdout)['spec']
+            existing_params = {item['name']: item['value'] for item in spec.get('params', [])}
+            expected_params = {item['name']: item['value'] for item in pipeline_run['spec']['params']}
+            if spec.get('pipelineRef') != pipeline_run['spec']['pipelineRef'] or any(
+                existing_params.get(key) != value for key, value in expected_params.items()
+            ):
+                raise ValueError(f'Existing PipelineRun {run_name} has different pipeline or parameters') from e
+            logger.info('Reusing existing PipelineRun %s/%s', namespace, run_name)
+            return run_name
         logger.error("Failed to create PipelineRun for %s: %s", pipeline_name, e.stderr)
         raise
     stdout = result.stdout.strip()

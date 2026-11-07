@@ -81,6 +81,7 @@ from pyartcd.oc import (
     get_release_image_pullspec,
 )
 from pyartcd.pipelines.advisory_drop import drop_advisory
+from pyartcd.pipelines.trigger_installer_build import trigger_installer_build
 from pyartcd.runtime import GroupRuntime, Runtime
 from pyartcd.signatory import AsyncSignatory, SigstoreSignatory
 
@@ -204,6 +205,7 @@ class PromotePipeline:
                     logger.warning(msg)
 
     async def run(self):
+        """Promote and verify an OCP release, then submit its optional installer build."""
         logger = self.runtime.logger
         self.check_environment_variables()
 
@@ -731,6 +733,53 @@ class PromotePipeline:
         json.dump(data, sys.stdout)
 
         await self._slack_client.say_in_thread(f":white_check_mark: promote completed for {release_name}.")
+
+        # Only accepted payloads are eligible. Custom assemblies bypass acceptance.
+        if tag_stable:
+            await self._trigger_installer_build(release_infos)
+
+    async def _trigger_installer_build(self, release_infos: Dict) -> None:
+        """Submit the x86_64 ISO build once, without waiting for it or retrying it.
+
+        Submission errors need manual follow-up and must not invalidate the OCP
+        promotion that has already completed successfully.
+        """
+        if self.runtime.dry_run:
+            self._logger.info(
+                '[DRY RUN] Would submit installer ISO build after successful promotion for %s', self.group
+            )
+            return
+        message = None
+        try:
+            payload = release_infos.get('x86_64')
+            if payload is None:
+                multi = release_infos.get('multi', {})
+                for manifest in multi.get('manifests', []):
+                    platform = manifest.get('platform', {})
+                    if platform.get('os') == 'linux' and platform.get('architecture') == 'amd64':
+                        payload = {'image': multi['image'], 'digest': manifest['digest']}
+                        break
+            if payload is None:
+                self._logger.info('No x86_64 payload promoted; skipping installer build')
+                return
+            repository = payload['image'].partition('@')[0]
+            if ':' in repository.rsplit('/', 1)[-1]:
+                repository = repository.rsplit(':', 1)[0]
+            pullspec = f"{repository}@{payload['digest']}"
+            run_name = await trigger_installer_build(pullspec, dry_run=self.runtime.dry_run)
+            if run_name:
+                message = f'Installer ISO build submitted: `{run_name}`.'
+        except Exception:
+            self._logger.exception('Installer ISO build submission failed; manual follow-up required')
+            message = (
+                ':warning: OCP promotion succeeded, but installer ISO build submission failed. '
+                'No automatic retry; the ISO team must check the build and trigger it manually if needed.'
+            )
+        if message:
+            try:
+                await self._slack_client.say_in_thread(message)
+            except Exception:
+                self._logger.exception('Could not send installer build notification: %s', message)
 
     def _get_release_stream_name(self, assembly_type: AssemblyTypes, arch: str):
         major, _ = isolate_major_minor_in_group(self.group)

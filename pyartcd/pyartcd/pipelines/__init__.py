@@ -52,6 +52,7 @@ from . import (
     sync_rhcos_specialized,
     tag_rpms,
     tarball_sources,
+    trigger_installer_build,
     update_golang,
     verify_advisory_transition,
     verify_cdn_push,
@@ -60,6 +61,7 @@ from . import (
 )
 
 __all__ = [
+    'trigger_installer_build',
     'advisory_drop',
     'art_notify',
     'binary_release_konflux',
