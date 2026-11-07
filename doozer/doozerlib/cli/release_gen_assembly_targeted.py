@@ -27,11 +27,13 @@ import logging
 import os
 import sys
 import tempfile
+from pathlib import Path
 
 import click
 import koji
 import requests
 import semver
+from artcommonlib.assembly import assembly_group_config
 from artcommonlib.constants import BREW_HUB
 from artcommonlib.exectools import cmd_assert
 from artcommonlib.model import Missing
@@ -52,6 +54,8 @@ from doozerlib.cli import click_coroutine, pass_runtime
 from doozerlib.cli.release_gen_assembly import releases_gen_assembly
 from doozerlib.rhcos import RHCOSBuildFinder
 from doozerlib.runtime import Runtime
+from doozerlib.targeted_rpm_evidence import TargetedRpmEvidence
+from doozerlib.targeted_rpms import find_rhcos_rpm_pins
 from doozerlib.util import infer_assembly_type
 
 logger = logging.getLogger(__name__)
@@ -213,6 +217,8 @@ class GenAssemblyTargetedCli:
         self.kernel_info: list[KernelInfo] = []
         self.rhcos_config: dict = {}
         self.dtk_nvrs: dict[str, str] = {}
+        self.rpm_pins: list[dict] = []
+        self.discovered_bug_ids: list[str] = []
         self.upgrades: str = ""
 
         self._ocp_major: int = 0
@@ -232,6 +238,20 @@ class GenAssemblyTargetedCli:
             self._validate_and_parse_kernel_nvrs()
             await self._find_rhcos_build()
             await self._find_dtk_build()
+            review = TargetedRpmEvidence(
+                self.runtime, self.params.basis_assembly, self.params.bug_ids, self.params.cve_ids
+            )
+            self.rpm_pins = find_rhcos_rpm_pins(
+                self.runtime, self.rhcos_config, self.params.basis_assembly, review=review
+            )
+            self.discovered_bug_ids = review.discover_rhcos_issues()
+            self.logger.info(
+                "Automatically discovered RHCOS issue additions: %s", ", ".join(self.discovered_bug_ids) or "none"
+            )
+            review.write(Path(self.runtime.working_dir))
+            self.logger.info(
+                "RPM pin reasons and kernel CVE claim candidates: %s/targeted-rpm-review.log", self.runtime.working_dir
+            )
         await self._compute_upgrades()
         return self._build_assembly_definition()
 
@@ -574,9 +594,12 @@ class GenAssemblyTargetedCli:
                         f"DTK may need rebuilding with the target kernel headers."
                     )
 
-        missing_targets = kernels_by_el.keys() - matched_targets
-        if missing_targets:
-            raise RuntimeError(f"No driver-toolkit image configured for RHEL targets {sorted(missing_targets)}")
+        rhcos_only_targets = kernels_by_el.keys() - matched_targets
+        if rhcos_only_targets:
+            self.logger.info(
+                "No payload driver-toolkit image configured for RHEL targets %s; retaining kernel pins without DTK overrides",
+                sorted(rhcos_only_targets),
+            )
 
     async def _compute_upgrades(self) -> None:
         """
@@ -610,6 +633,28 @@ class GenAssemblyTargetedCli:
             self.upgrades = ",".join(sorted(all_sources, key=functools.cmp_to_key(semver.compare)))
             self.logger.info("Computed %d upgrade sources", len(all_sources))
 
+    def _kernel_dependencies(self, why: str) -> dict[str, list[dict]]:
+        """
+        Replace an existing RPM dependency list, or introduce it without a merge operator.
+        Preserve dependencies other than the requested kernel targets.
+        """
+        basis_group = assembly_group_config(
+            self.runtime.get_releases_config(), self.params.basis_assembly, self.runtime.group_config
+        )
+        has_rpms = "rpms" in basis_group.dependencies
+        dependencies = []
+        target_keys = {f"el{ki.el_ver}" for ki in self.kernel_info}
+        for entry in basis_group.dependencies.rpms or []:
+            preserved = {
+                key: value
+                for key, value in entry.primitive().items()
+                if key not in target_keys or parse_nvr(value)["name"] != "kernel"
+            }
+            if any(key.startswith("el") for key in preserved):
+                dependencies.append(preserved)
+        dependencies.extend({f"el{ki.el_ver}": ki.nvr, "why": why, "non_gc_tag": "hotfix"} for ki in self.kernel_info)
+        return {"rpms!" if has_rpms else "rpms": dependencies}
+
     def _build_assembly_definition(self) -> dict:
         """
         Construct the assembly YAML definition.
@@ -641,16 +686,15 @@ class GenAssemblyTargetedCli:
         }
 
         if self.kernel_info:
-            group_config["dependencies"] = {
-                "rpms!": [{f"el{ki.el_ver}": ki.nvr, "why": why, "non_gc_tag": "hotfix"} for ki in self.kernel_info]
-            }
+            group_config["dependencies"] = self._kernel_dependencies(why)
 
         issues_config = {}
-        if self.params.bug_ids:
+        bug_ids = list(dict.fromkeys([*self.params.bug_ids, *self.discovered_bug_ids]))
+        if bug_ids:
             issues_config["targeted_fixes_only"] = True
-            issues_config["include"] = [{"id": bug_id} for bug_id in self.params.bug_ids]
+            issues_config["include"] = [{"id": bug_id} for bug_id in bug_ids]
 
-        members = {"rpms": []}
+        members = {"rpms": self.rpm_pins}
         if image_pins:
             members["images"] = image_pins
 

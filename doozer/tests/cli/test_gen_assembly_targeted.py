@@ -1,7 +1,10 @@
 from unittest import IsolatedAsyncioTestCase, TestCase
-from unittest.mock import MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
+from artcommonlib.assembly import assembly_group_config
+from artcommonlib.model import Model
 from doozerlib.cli.release_gen_assembly_targeted import AssemblyParams, GenAssemblyTargetedCli, KernelInfo
+from doozerlib.image import ImageMetadata
 from pydantic import ValidationError
 
 
@@ -12,6 +15,8 @@ def _make_runtime():
     runtime.group_config.vars.MINOR = 17
     runtime.group_config.arches = ["x86_64", "aarch64"]
     runtime.group_config.rhcos.get.return_value = False
+    runtime.group_config.primitive.return_value = {}
+    runtime.get_releases_config.return_value = Model({"releases": {"4.17.4": {"assembly": {}}}})
     return runtime
 
 
@@ -296,7 +301,7 @@ class TestBuildAssemblyDefinition(TestCase):
         self.assertEqual(assembly["issues"]["include"], [{"id": "OCPBUGS-12345"}])
 
         self.assertEqual(assembly["members"]["rpms"], [])
-        kernel_dependency = assembly["group"]["dependencies"]["rpms!"][0]
+        kernel_dependency = assembly["group"]["dependencies"]["rpms"][0]
         self.assertEqual(kernel_dependency["el9"], "kernel-5.14.0-284.28.1.el9_2")
         self.assertEqual(kernel_dependency["non_gc_tag"], "hotfix")
         self.assertIn("CVE-2025-1234", kernel_dependency["why"])
@@ -330,7 +335,7 @@ class TestBuildAssemblyDefinition(TestCase):
         result = cli._build_assembly_definition()
         assembly = result["releases"]["4.17.5"]["assembly"]
         self.assertEqual(assembly["members"]["rpms"], [])
-        dependencies = assembly["group"]["dependencies"]["rpms!"]
+        dependencies = assembly["group"]["dependencies"]["rpms"]
         self.assertEqual(
             dependencies,
             [
@@ -339,6 +344,51 @@ class TestBuildAssemblyDefinition(TestCase):
             ],
         )
         self.assertEqual(len(assembly["issues"]["include"]), 2)
+
+    def test_generated_kernel_dependencies_resolve_for_consumers(self):
+        """
+        Select the operator using resolved basis dependencies, including inherited lists.
+        Preserve unrelated dependencies while replacing an old kernel pin.
+        """
+        for parent_group in (
+            {},
+            {"dependencies": {"rpms": []}},
+            {
+                "dependencies": {
+                    "rpms": [
+                        {"el9": "kernel-5.14.0-284.27.1.el9_2", "el10": "kernel-6.12.0-1.el10_2"},
+                        {"el9": "cri-tools-1.32.0-1.el9"},
+                    ]
+                }
+            },
+        ):
+            with self.subTest(parent_group=parent_group):
+                cli = _make_cli()
+                cli.kernel_info = [_make_kernel_info()]
+                parents = {
+                    "releases": {
+                        "4.17.4": {"assembly": {"basis": {"assembly": "4.17.3"}}},
+                        "4.17.3": {"assembly": {"group": parent_group}},
+                    }
+                }
+                cli.runtime.get_releases_config.return_value = Model(parents)
+                generated = cli._build_assembly_definition()
+                raw_deps = generated["releases"]["4.17.5"]["assembly"]["group"]["dependencies"]
+                self.assertIn("rpms!" if parent_group else "rpms", raw_deps)
+                generated["releases"].update(parents["releases"])
+                resolved = assembly_group_config(Model(generated), "4.17.5", Model({}))
+                self.assertIn("rpms", resolved.dependencies)
+                self.assertNotIn("rpms!", resolved.dependencies)
+                image = MagicMock()
+                image.runtime.get_group_config.return_value = resolved
+                image.config = Model({})
+                _, overrides = ImageMetadata.get_assembly_rpm_package_dependencies(image, 9)
+                self.assertEqual(overrides["kernel"], cli.kernel_info[0].nvr)
+                if parent_group.get("dependencies", {}).get("rpms"):
+                    self.assertEqual(overrides["cri-tools"], "cri-tools-1.32.0-1.el9")
+                    _, el10_overrides = ImageMetadata.get_assembly_rpm_package_dependencies(image, 10)
+                    self.assertEqual(el10_overrides["kernel"], "kernel-6.12.0-1.el10_2")
+                    self.assertNotIn("kernel-5.14.0-284.27.1.el9_2", str(resolved.dependencies))
 
     def test_candidate_assembly_type_for_rc(self):
         """
@@ -422,7 +472,9 @@ class TestBuildAssemblyDefinition(TestCase):
 
 
 class TestFindDtkBuildKonflux(IsolatedAsyncioTestCase):
-    async def _run_lookup(self, missing_name: str | None = None) -> GenAssemblyTargetedCli:
+    async def _run_lookup(
+        self, missing_name: str | None = None, dtk_targets: dict[str, int] | None = None
+    ) -> GenAssemblyTargetedCli:
         """
         Run DTK selection with RHEL 9 and RHEL 10 image metadata.
         """
@@ -436,7 +488,7 @@ class TestFindDtkBuildKonflux(IsolatedAsyncioTestCase):
                 kernel_devel_nvr="kernel-devel-6.12.0-211.73.1.el10_2",
             ),
         ]
-        targets = {"driver-toolkit": 9, "driver-toolkit-rhel10": 10}
+        targets = dtk_targets if dtk_targets is not None else {"driver-toolkit": 9, "driver-toolkit-rhel10": 10}
         metas = []
         for name, target in targets.items():
             meta = MagicMock(distgit_key=name, is_payload=True)
@@ -481,13 +533,65 @@ class TestFindDtkBuildKonflux(IsolatedAsyncioTestCase):
         with self.assertRaisesRegex(RuntimeError, "No driver-toolkit-rhel10 build found"):
             await self._run_lookup(missing_name="driver-toolkit-rhel10")
 
-    async def test_missing_dtk_configuration_fails(self):
+    async def test_rhel10_rhcos_without_rhel10_dtk(self):
         """
-        A requested kernel must have a configured DTK image.
+        OCP 4.22 pins both RHCOS kernels while only its configured RHEL 9 DTK is required.
+        """
+        cli = await self._run_lookup(dtk_targets={"driver-toolkit": 9})
+        assembly = cli._build_assembly_definition()["releases"]["4.17.5"]["assembly"]
+        self.assertEqual(cli.dtk_nvrs, {"driver-toolkit": "driver-toolkit-container-v5.0.0-test.el9"})
+        self.assertEqual([pin["distgit_key"] for pin in assembly["members"]["images"]], ["driver-toolkit"])
+        dependencies = assembly["group"]["dependencies"]["rpms"]
+        self.assertEqual(dependencies[0]["el9"], cli.kernel_info[0].nvr)
+        self.assertEqual(dependencies[1]["el10"], cli.kernel_info[1].nvr)
+
+    async def test_rhcos_only_targets_need_no_dtk(self):
+        """
+        Kernels with no configured payload DTK do not require a DTK build.
+        """
+        cli = await self._run_lookup(dtk_targets={})
+        self.assertEqual(cli.dtk_nvrs, {})
+
+
+class TestTargetedRpmPinIntegration(IsolatedAsyncioTestCase):
+    @patch("doozerlib.cli.release_gen_assembly_targeted.TargetedRpmEvidence")
+    @patch("doozerlib.cli.release_gen_assembly_targeted.find_rhcos_rpm_pins")
+    async def test_selected_rhcos_rpm_overrides_are_emitted(self, find_pins, review_cls):
+        """
+        Wire detected CRI-O source builds into member pins while preserving kernel dependencies.
         """
         cli = _make_cli()
+        cli.runtime.working_dir = "/tmp/targeted-rpm-test"
         cli.kernel_info = [_make_kernel_info()]
-        cli.runtime.image_metas.return_value = []
-        with patch("artcommonlib.konflux.konflux_db.KonfluxDb"):
-            with self.assertRaisesRegex(RuntimeError, "No driver-toolkit image configured"):
-                await cli._find_dtk_build_konflux()
+        cli.rhcos_config = {"rhel-coreos": {"images": {"x86_64": "repo/image@sha256:new"}}}
+        cli.dtk_nvrs = {"driver-toolkit": "driver-toolkit-container-v4.17.0-test.el9"}
+        cli._validate_and_parse_kernel_nvrs = MagicMock()
+        cli._find_rhcos_build = AsyncMock()
+        cli._find_dtk_build = AsyncMock()
+        cli._compute_upgrades = AsyncMock()
+        find_pins.return_value = [
+            {
+                "distgit_key": "cri-o",
+                "why": "Match RHCOS",
+                "metadata": {"is": {"el9": "cri-o-5.0.0-202610292257.p2.g9186725.assembly.stream.el9"}},
+            }
+        ]
+        review_cls.return_value.discover_rhcos_issues.return_value = ["OCPBUGS-128369", "OCPBUGS-12345"]
+        result = await cli.run()
+        assembly = result["releases"]["4.17.5"]["assembly"]
+        self.assertEqual(assembly["members"]["rpms"], find_pins.return_value)
+        self.assertEqual(assembly["issues"]["include"], [{"id": "OCPBUGS-12345"}, {"id": "OCPBUGS-128369"}])
+        self.assertEqual(assembly["group"]["dependencies"]["rpms"][0]["el9"], cli.kernel_info[0].nvr)
+        find_pins.assert_called_once_with(cli.runtime, cli.rhcos_config, "4.17.4", review=review_cls.return_value)
+        review_cls.return_value.write.assert_called_once()
+
+    @patch("doozerlib.cli.release_gen_assembly_targeted.find_rhcos_rpm_pins")
+    async def test_image_only_assembly_skips_rhcos_rpm_detection(self, find_pins):
+        """
+        An image-only pin does not select RHCOS and must not trigger RPM inventory lookups.
+        """
+        cli = _make_cli(kernel_nvrs=(), image_nvrs=("ose-installer-container-v4.17.0-test.el9",))
+        cli._compute_upgrades = AsyncMock()
+        assembly = (await cli.run())["releases"]["4.17.5"]["assembly"]
+        self.assertEqual(assembly["members"]["rpms"], [])
+        find_pins.assert_not_called()
