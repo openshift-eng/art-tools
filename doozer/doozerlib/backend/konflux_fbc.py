@@ -70,7 +70,8 @@ yaml = opm.yaml
 PRODUCTION_INDEX_PULLSPEC_FORMAT = "registry.redhat.io/redhat/redhat-operator-index:v{major}.{minor}"
 BASE_IMAGE_RHEL9_PULLSPEC_FORMAT = "registry.redhat.io/openshift{major}/ose-operator-registry-rhel9:v{major}.{minor}"
 BASE_IMAGE_RHEL8_PULLSPEC_FORMAT = "registry.redhat.io/openshift{major}/ose-operator-registry:v{major}.{minor}"
-FBC_BUILD_PRIORITY = "2"
+# Temporarily prioritize FBC builds; restore priority 2 after the temporary boost.
+FBC_BUILD_PRIORITY = "1"
 LIFECYCLE_SCHEMA = "io.openshift.operators.lifecycles.v1alpha1"
 
 
