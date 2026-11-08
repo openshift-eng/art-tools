@@ -1,4 +1,4 @@
-"""Reconstruct scan-to-FBC build chains from explicit PipelineRun relationships."""
+"""Reconstruct scan-to-FBC build chains and identify matching scan recoveries."""
 
 from collections import defaultdict
 
@@ -13,6 +13,7 @@ def health_run(run: dict, summary: dict) -> dict:
     labels = metadata.get("labels") or {}
     annotations = metadata.get("annotations") or {}
     params = {param["name"]: param.get("value") for param in run.get("spec", {}).get("params", [])}
+    operator_nvrs = params.get("operator-nvrs")
     condition = next(
         (item for item in run.get("status", {}).get("conditions", []) if item.get("type") == "Succeeded"), {}
     )
@@ -29,6 +30,12 @@ def health_run(run: dict, summary: dict) -> dict:
         "target": labels.get(f"{LABEL_PREFIX}ocp-version") or params.get("ocp-target-version") or "",
         "parent": labels.get(f"{LABEL_PREFIX}parent-pipelinerun"),
         "rebuiltFrom": annotations.get(f"{LABEL_PREFIX}rebuilt-from"),
+        "recoveryScan": annotations.get(f"{LABEL_PREFIX}recovery-scan"),
+        "operatorNvrs": (
+            sorted({nvr.strip() for nvr in operator_nvrs.split(",") if nvr.strip()})
+            if isinstance(operator_nvrs, str)
+            else []
+        ),
         "triggered": [
             value
             for key, value in annotations.items()
@@ -45,7 +52,7 @@ def build_health(runs: list[dict], incomplete_namespaces: set[str] | None = None
     """A group is green only when a complete, unambiguous, non-dry-run chain succeeded."""
     incomplete_namespaces = incomplete_namespaces or set()
     runs = [
-        run
+        dict(run)
         for run in runs
         if run["pipeline"] in PIPELINES and run["group"] and run["uid"] and run["assembly"] == "stream"
     ]
@@ -87,6 +94,51 @@ def build_health(runs: list[dict], incomplete_namespaces: set[str] | None = None
                     children[run["uid"]][target["uid"]] = target
             else:
                 issues[run["uid"]].add("A triggered PipelineRun is missing or ambiguous")
+
+    # Older scan recovery runs can lack rebuilt-from and parent labels. Match
+    # only an explicitly recorded recovery scan and an unambiguous FBC input set.
+    def fbc_inputs(run):
+        return identity(run), run["target"], tuple(sorted(set(run.get("operatorNvrs") or [])))
+
+    fbc_sources = defaultdict(dict)
+    for parent_uid, linked in children.items():
+        if by_uid[parent_uid]["pipeline"] not in (PIPELINES[0], PIPELINES[2]):
+            continue
+        for source in linked.values():
+            if (
+                source["pipeline"] == PIPELINES[-1]
+                and source["target"]
+                and source.get("operatorNvrs")
+                and not source["dryRun"]
+                and not source["rebuiltFrom"]
+                and not source.get("recoveryScan")
+            ):
+                fbc_sources[fbc_inputs(source)][source["uid"]] = source
+    for run in runs:
+        if run["pipeline"] != PIPELINES[-1] or run["rebuiltFrom"] or run["parent"] or run["dryRun"]:
+            continue
+        scans = by_name.get((run["namespace"], run.get("recoveryScan")), [])
+        if len(scans) != 1:
+            continue
+        scan = scans[0]
+        if (
+            scan["pipeline"] != PIPELINES[0]
+            or identity(scan) != identity(run)
+            or scan["dryRun"]
+            or not scan["created"]
+            or not run["created"]
+            or scan["created"] > run["created"]
+        ):
+            continue
+        sources = [
+            source
+            for source in fbc_sources.get(fbc_inputs(run), {}).values()
+            if source["created"] and source["created"] < scan["created"]
+        ]
+        if len(sources) == 1:
+            source = sources[0]
+            run["rebuiltFrom"] = source["uid"]
+            retries[source["uid"]].append(run)
 
     family_cache = {}
 
