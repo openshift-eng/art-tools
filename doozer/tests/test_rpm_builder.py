@@ -558,3 +558,31 @@ Task info: https://brewweb.example.com/brew/taskinfo?taskID=123456
 
         self.assertEqual(actual, {task: None for task in task_ids})
         mocked_watch_tasks.assert_called_once_with(mock.ANY, mock.ANY, task_ids, mock.ANY)
+
+    def test_escape_for_rpm_specfile(self):
+        """Test that % characters are properly escaped for RPM specfiles."""
+        # Single % should be escaped to %%
+        self.assertEqual(RPMBuilder._escape_for_rpm_specfile("test%var"), "test%%var")
+
+        # Multiple % should all be escaped
+        self.assertEqual(RPMBuilder._escape_for_rpm_specfile("a%b%c"), "a%%b%%c")
+
+        # Percent at start and end
+        self.assertEqual(RPMBuilder._escape_for_rpm_specfile("%test%"), "%%test%%")
+
+        # No % should remain unchanged
+        self.assertEqual(RPMBuilder._escape_for_rpm_specfile("no percent here"), "no percent here")
+
+        # Already escaped %% should become %%%%
+        self.assertEqual(RPMBuilder._escape_for_rpm_specfile("%%already"), "%%%%already")
+
+        # Shell syntax with % should be escaped
+        self.assertEqual(
+            RPMBuilder._escape_for_rpm_specfile("if [[ %(var) == 1 ]]; then"), "if [[ %%(var) == 1 ]]; then"
+        )
+
+        # Backslashes are left unescaped; they are correctly interpreted by bash
+        self.assertEqual(RPMBuilder._escape_for_rpm_specfile("line1\\\nline2"), "line1\\\nline2")
+
+        # Combined: % should be escaped but \ should not
+        self.assertEqual(RPMBuilder._escape_for_rpm_specfile("var%name\\\nnext"), "var%%name\\\nnext")

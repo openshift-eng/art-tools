@@ -328,6 +328,17 @@ class RPMBuilder:
         return any(dep.strip().startswith("golang") for dep in out.splitlines())
 
     @staticmethod
+    def _escape_for_rpm_specfile(text: str) -> str:
+        """Escape special characters in text for embedding in RPM specfiles.
+
+        RPM performs macro expansion on % characters, so % must be escaped as %%
+        to prevent the RPM processor from interpreting them before bash executes
+        the script. Backslashes are left unescaped because they are correctly
+        interpreted by the shell within the here-document context.
+        """
+        return text.replace('%', '%%')
+
+    @staticmethod
     async def _populate_specfile_async(
         rpm: RPMMetadata, source_filename: str, source_commit_url: str, go_compliance_shim=False
     ) -> List[str]:
@@ -415,6 +426,7 @@ class RPMBuilder:
                     rpm_builder_go_wrapper_sh = pathlib.Path(
                         pathlib.Path(__file__).parent, 'rpm_builder_go_wrapper.sh'
                     ).read_text()
+                    rpm_builder_go_wrapper_sh = RPMBuilder._escape_for_rpm_specfile(rpm_builder_go_wrapper_sh)
                     lines[i] = f'''{line}
 export REAL_GO_PATH=$(which go || true)
 if [[ -n "$REAL_GO_PATH" ]]; then
