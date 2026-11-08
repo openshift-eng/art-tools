@@ -257,6 +257,112 @@ class HealthTests(unittest.TestCase):
             {item["uid"] for item in result["currentChain"]["stages"][3]["runs"]}, {child["uid"] for child in children}
         )
 
+    def fbc_scan_recovery(self, status="Succeeded"):
+        runs = complete_chain()
+        runs[-1].update(status="Failed", operatorNvrs=["operator-1-1"])
+        scan = run("recovery-scan", PIPELINES[0], created="2026-10-08T12:00:00Z")
+        recovery = run(
+            "recovered-fbc",
+            PIPELINES[3],
+            status=status,
+            recoveryScan=scan["name"],
+            operatorNvrs=["operator-1-1"],
+            target="4.20",
+            created="2026-10-08T12:01:00Z",
+            source="archive",
+        )
+        return runs + [scan, recovery]
+
+    def test_unresolved_fbc_scan_recovery_matches_exact_inputs_and_keeps_history(self):
+        for status in ("Succeeded", "Running", "Failed", "Cancelled"):
+            with self.subTest(status=status):
+                runs = self.fbc_scan_recovery(status)
+                original = deepcopy(runs)
+                result = build_health(runs)[0]
+                chain = result["currentChain"]
+                self.assertEqual(result["health"], "Failed" if status == "Running" else status)
+                self.assertEqual(chain["status"], status)
+                self.assertEqual(chain["root"]["name"], "scan")
+                self.assertEqual(result["latestScan"]["name"], "recovery-scan")
+                self.assertEqual(
+                    {item["uid"] for item in chain["stages"][3]["runs"]}, {"uid-fbc-419", "uid-recovered-fbc"}
+                )
+                self.assertTrue(chain["recovered"])
+                self.assertEqual(chain["stages"][3]["runs"][-1]["rebuiltFrom"], "uid-fbc-420")
+                self.assertIn("uid-fbc-420", [item["uid"] for item in chain["attempts"]])
+                self.assertEqual(runs, original)
+
+    def test_fbc_scan_recovery_requires_matching_identity_inputs_and_scan(self):
+        mismatches = (
+            {"namespace": "another-tenant"},
+            {"group": "acm-2.17"},
+            {"assembly": "test"},
+            {"target": "4.21"},
+            {"target": ""},
+            {"operatorNvrs": ["operator-2-1"]},
+            {"operatorNvrs": ["operator-1-1", "extra-operator-1-1"]},
+            {"operatorNvrs": []},
+            {"dryRun": True},
+            {"recoveryScan": "missing-scan"},
+            {"recoveryScan": "bundle"},
+            {"recoveryScan": None},
+            {"rebuiltFrom": "missing-uid"},
+            {"parent": "unrelated-bundle"},
+            {"created": "2026-10-08T11:00:00Z"},
+        )
+        for mismatch in mismatches:
+            with self.subTest(mismatch=mismatch):
+                runs = self.fbc_scan_recovery()
+                runs[-1].update(mismatch)
+                result = next(item for item in build_health(runs) if item["group"] == "acm-2.15")
+                self.assertEqual(result["health"], "Failed")
+                self.assertFalse(result["currentChain"]["recovered"])
+
+    def test_fbc_scan_recovery_rejects_ambiguous_sources_or_scan_names(self):
+        for index in (-3, -2):
+            with self.subTest(index=index):
+                runs = self.fbc_scan_recovery()
+                duplicate = {**runs[index], "uid": "duplicate-uid"}
+                runs.append(duplicate)
+                result = build_health(runs)[0]
+                self.assertNotEqual(result["health"], "Succeeded")
+                self.assertFalse(result["currentChain"]["recovered"])
+
+    def test_fbc_scan_recovery_cannot_use_dry_run_or_unspecified_original_inputs(self):
+        for changes in ({"dryRun": True}, {"operatorNvrs": []}):
+            with self.subTest(changes=changes):
+                runs = self.fbc_scan_recovery()
+                runs[-3].update(changes)
+                result = build_health(runs)[0]
+                self.assertEqual(result["health"], "Failed")
+                self.assertFalse(result["currentChain"]["recovered"])
+
+    def test_latest_matching_fbc_recovery_supplies_effective_result(self):
+        runs = self.fbc_scan_recovery()
+        runs.append(
+            {
+                **runs[-1],
+                "uid": "latest-recovery-uid",
+                "name": "latest-recovery",
+                "created": "2026-10-08T13:01:00Z",
+                "completed": "2026-10-08T13:05:00Z",
+                "status": "Failed",
+            }
+        )
+        result = build_health(runs)[0]
+        self.assertEqual(result["health"], "Failed")
+        self.assertEqual(result["currentChain"]["failures"][0]["uid"], "latest-recovery-uid")
+        self.assertEqual(result["lastSuccessfulChain"]["status"], "Succeeded")
+
+    def test_health_run_reads_recovery_scan_and_normalizes_operator_nvr_set(self):
+        raw = {
+            "metadata": {"annotations": {"art.openshift.io/recovery-scan": "scan"}},
+            "spec": {"params": [{"name": "operator-nvrs", "value": "operator-b-1-1, operator-a-1-1,operator-b-1-1"}]},
+        }
+        summary = health_run(raw, {})
+        self.assertEqual(summary["recoveryScan"], "scan")
+        self.assertEqual(summary["operatorNvrs"], ["operator-a-1-1", "operator-b-1-1"])
+
     def test_running_retry_preserves_the_last_completed_result(self):
         for original_status in ("Succeeded", "Failed"):
             with self.subTest(original_status=original_status):
