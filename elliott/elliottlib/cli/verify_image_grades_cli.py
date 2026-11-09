@@ -5,13 +5,14 @@ import logging
 import re
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
-from urllib.parse import urlparse
+from urllib.parse import unquote, urlparse
 
 import aiohttp
 import click
 import requests
 import yaml
 from artcommonlib.gitlab import GitLabClient
+from gitlab.exceptions import GitlabError
 from tenacity import before_sleep_log, retry, retry_if_exception_type, stop_after_attempt, wait_exponential
 
 from elliottlib.cli.common import cli, click_coroutine
@@ -112,6 +113,50 @@ def get_current_grade(grades: list[dict]) -> str:
     return valid[0].get("grade", "Unknown")
 
 
+def _fetch_advisory_images(advisory_url: str, gl: GitLabClient, mr_url: str) -> list[dict]:
+    """Read advisory images, using authenticated file access for GitLab raw URLs."""
+    parsed = urlparse(advisory_url)
+    if parsed.scheme != "https" or parsed.netloc not in ADVISORY_ALLOWED_NETLOCS:
+        raise RuntimeError(f"Advisory URL not allowed: {advisory_url}")
+
+    if parsed.netloc == "gitlab.cee.redhat.com":
+        if parsed.netloc != urlparse(mr_url).netloc:
+            raise RuntimeError("Advisory and shipment must use the same GitLab server")
+        project_path, separator, raw_path = parsed.path.strip("/").partition("/-/raw/")
+        ref, _, file_path = raw_path.partition("/")
+        if not separator or not project_path or not ref or not file_path:
+            raise RuntimeError(f"Invalid GitLab advisory raw URL: {advisory_url}")
+        try:
+            project = gl.get_project(unquote(project_path))
+            advisory_file = project.files.get(file_path=unquote(file_path), ref=unquote(ref))
+            text = advisory_file.decode().decode("utf-8")
+        except GitlabError as exc:
+            raise RuntimeError(
+                f"Cannot read advisory {advisory_url} via GitLab API (HTTP {exc.response_code}); "
+                f"verify GITLAB_TOKEN has repository read access to {project_path}"
+            ) from exc
+    else:
+        response = requests.get(advisory_url, timeout=30, allow_redirects=False)
+        response.raise_for_status()
+        if response.status_code != 200:
+            raise RuntimeError(f"Unexpected HTTP {response.status_code} reading advisory {advisory_url}")
+        text = response.text
+
+    data = yaml.safe_load(text)
+    if not isinstance(data, dict) or not isinstance(data.get("spec"), dict):
+        raise RuntimeError(f"Advisory {advisory_url} must be a YAML mapping with spec")
+    content = data["spec"].get("content")
+    if not isinstance(content, dict):
+        raise RuntimeError(f"Advisory {advisory_url} must contain a content mapping")
+    images = content.get("images", [])
+    if not isinstance(images, list) or any(
+        not isinstance(image, dict) or not isinstance(image.get("containerImage"), str) or not image["containerImage"]
+        for image in images
+    ):
+        raise RuntimeError(f"Advisory {advisory_url} must contain an images list with containerImage values")
+    return images
+
+
 def fetch_shipment_components(mr_url: str) -> tuple[list[tuple[str, str]], str]:
     gl = GitLabClient.from_url(mr_url)
     mr = gl.get_mr_from_url(mr_url)
@@ -158,27 +203,15 @@ def fetch_shipment_components(mr_url: str) -> tuple[list[tuple[str, str]], str]:
                 LOGGER.debug("No advisory internal_url in %s, skipping", file_path)
                 continue
 
-            parsed = urlparse(advisory_url)
-            if parsed.netloc not in ADVISORY_ALLOWED_NETLOCS:
-                raise RuntimeError(f"Advisory URL not allowed: {parsed.netloc}")
-
-            advisory_resp = requests.get(advisory_url, timeout=30, allow_redirects=False)
-            advisory_resp.raise_for_status()
-            advisory_data = yaml.safe_load(advisory_resp.text)
-
-            spec = (advisory_data or {}).get("spec") or {}
-            for image in spec.get("content", {}).get("images", []):
-                name = image.get("component", "")
-                pullspec = image.get("containerImage", "")
-                if pullspec:
-                    components.append((name, pullspec))
-        except Exception:
+            for image in _fetch_advisory_images(advisory_url, gl, mr_url):
+                components.append((image.get("component", ""), image["containerImage"]))
+        except Exception as exc:
             LOGGER.warning("Failed to process shipment file %s in MR %s", file_path, mr_url, exc_info=True)
-            failures.append(file_path)
+            failures.append(f"{file_path}: {exc}")
             continue
 
-    if failures and not components:
-        raise RuntimeError(f"Failed to read any shipment file from MR {mr_url}: {failures}")
+    if failures:
+        raise RuntimeError(f"Failed to read shipment advisories from MR {mr_url}: {'; '.join(failures)}")
 
     return components, version
 
@@ -343,6 +376,9 @@ async def verify_image_grades_cli(runtime, output):
 
     Requires --group and --assembly global options. Resolves the shipment
     MR URL from the assembly config in releases.yml.
+
+    GITLAB_TOKEN must have repository read access to both the shipment
+    project and the advisory project referenced by its stage internal_url.
 
     Queries the Red Hat Catalog (Pyxis) API for each image's freshness
     grade. Images with grade worse than B or Unknown are flagged as
