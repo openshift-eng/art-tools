@@ -241,6 +241,7 @@ PRODUCT_CATALOG: tuple[ProductConfig, ...] = (
             image_policy="rhtap-releng-tenant/registry-art-quay-stage",
             fbc_policy="rhtap-releng-tenant/fbc-stage",
         ),
+        cpe_product_name="mirror_registry",
     ),
     ProductConfig(
         product_id=ProductId.OSUS,
