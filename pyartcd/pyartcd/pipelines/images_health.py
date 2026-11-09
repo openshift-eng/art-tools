@@ -672,7 +672,7 @@ class ImagesHealthPipeline:
         all_groups.update(f'openshift-{v}' for v, f in self.rebase_failures.items() if f)
 
         # Send the main alert message with just the dashboard link
-        dashboard_url = ART_BUILD_FAILURES_URL
+        dashboard_url = f'{ART_BUILD_FAILURES_URL.rstrip("/")}/?variant=ocp'
         summary_message = (
             f':alert: There are some issues to look into for OpenShift builds.\n\n'
             f'For detailed information, please check the {self.url_text(dashboard_url, "ART Build Failures Dashboard")}'
