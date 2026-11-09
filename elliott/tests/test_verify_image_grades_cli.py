@@ -10,6 +10,7 @@ from elliottlib.cli.verify_image_grades_cli import (
     ImageGradeResult,
     PyxisServerError,
     VerifyImageGradesResult,
+    _fetch_advisory_images,
     _parse_timestamp,
     extract_digest,
     fetch_shipment_components,
@@ -19,6 +20,7 @@ from elliottlib.cli.verify_image_grades_cli import (
     verify_image_grades,
 )
 from elliottlib.verify_common import get_assembly_shipment_url
+from gitlab.exceptions import GitlabGetError
 from tenacity import stop_after_attempt, wait_none
 
 
@@ -98,6 +100,97 @@ class TestImageGradeResult(unittest.TestCase):
         for grade in ("C", "D", "E", "F", "Unknown"):
             r = ImageGradeResult(name="test", pullspec="ps", digest="d", grade=grade)
             self.assertFalse(r.healthy, f"Grade {grade} should be unhealthy")
+
+
+class TestAdvisoryAccess(unittest.TestCase):
+    url = "https://gitlab.cee.redhat.com/rhtap-release/advisories/-/raw/main/data/advisories/123/advisory.yaml"
+    mr_url = "https://gitlab.cee.redhat.com/group/shipments/-/merge_requests/1"
+    images = [{"component": "ose-cli", "containerImage": "quay.io/example@sha256:abc"}]
+
+    def setUp(self):
+        self.gl = MagicMock()
+        self.http = self.enterContext(patch("elliottlib.cli.verify_image_grades_cli.requests.get"))
+        self.file = self.gl.get_project.return_value.files.get.return_value
+        self.file.decode.return_value = yaml.safe_dump({"spec": {"content": {"images": self.images}}}).encode()
+
+    def test_authenticated_gitlab_file_read(self):
+        self.assertEqual(_fetch_advisory_images(self.url, self.gl, self.mr_url), self.images)
+        self.gl.get_project.assert_called_once_with("rhtap-release/advisories")
+        self.gl.get_project.return_value.files.get.assert_called_once_with(
+            file_path="data/advisories/123/advisory.yaml", ref="main"
+        )
+        self.http.assert_not_called()
+
+    def test_permission_error_is_actionable_without_anonymous_fallback(self):
+        self.gl.get_project.side_effect = GitlabGetError("Forbidden", response_code=403)
+        with self.assertRaisesRegex(RuntimeError, "HTTP 403.*GITLAB_TOKEN.*rhtap-release/advisories"):
+            _fetch_advisory_images(self.url, self.gl, self.mr_url)
+        self.http.assert_not_called()
+
+    def test_rejects_unexpected_advisory_shapes(self):
+        for data in (
+            "<html>sign in</html>",
+            [],
+            None,
+            {},
+            {"spec": "text"},
+            {"spec": {"content": "text"}},
+            {"spec": {"content": {"images": "text"}}},
+            {"spec": {"content": {"images": [None]}}},
+        ):
+            with self.subTest(data=data):
+                self.file.decode.return_value = yaml.safe_dump(data).encode()
+                with self.assertRaisesRegex(RuntimeError, "Advisory .* must"):
+                    _fetch_advisory_images(self.url, self.gl, self.mr_url)
+
+    def test_rejects_redirect_before_parsing(self):
+        self.http.return_value = MagicMock(status_code=302, text="<html>sign in</html>")
+        with self.assertRaisesRegex(RuntimeError, "Unexpected HTTP 302"):
+            _fetch_advisory_images("https://errata.devel.redhat.com/advisory/123", self.gl, self.mr_url)
+        self.http.assert_called_once_with(
+            "https://errata.devel.redhat.com/advisory/123", timeout=30, allow_redirects=False
+        )
+        self.gl.get_project.assert_not_called()
+
+    def test_rejects_unsafe_or_malformed_urls(self):
+        for url in (
+            self.url.replace("https:", "http:"),
+            self.url.replace("gitlab.cee.redhat.com", "evil.example"),
+            self.url.replace("/-/raw/", "/-/blob/"),
+            self.url.rsplit("/", 1)[0].replace("main/data/advisories/123", "main"),
+        ):
+            with self.subTest(url=url):
+                with self.assertRaises(RuntimeError):
+                    _fetch_advisory_images(url, self.gl, self.mr_url)
+        self.http.assert_not_called()
+        self.gl.get_project.assert_not_called()
+
+    def test_rejects_different_gitlab_server(self):
+        with self.assertRaisesRegex(RuntimeError, "same GitLab server"):
+            _fetch_advisory_images(self.url, self.gl, "https://another.example/mr/1")
+        self.gl.get_project.assert_not_called()
+
+    @patch("elliottlib.cli.verify_image_grades_cli.GitLabClient")
+    def test_partial_advisory_failure_rejects_incomplete_scan(self, client_cls):
+        client_cls.from_url.return_value = self.gl
+        mr = self.gl.get_mr_from_url.return_value
+        mr.title = "Shipment for 4.12.103"
+        mr.state = "opened"
+        mr.diffs.list.return_value = [MagicMock(id=1)]
+        mr.diffs.get.return_value.diffs = [{"new_path": "image.yaml"}, {"new_path": "extras.yaml"}]
+        shipment = MagicMock()
+        shipment.decode.return_value = yaml.safe_dump(
+            {"shipment": {"environments": {"stage": {"advisory": {"internal_url": self.url}}}}}
+        ).encode()
+        self.gl.get_project.return_value.files.get.side_effect = [
+            shipment,
+            self.file,
+            shipment,
+            GitlabGetError("Forbidden", response_code=403),
+        ]
+        with self.assertRaisesRegex(RuntimeError, "extras.yaml:.*HTTP 403"):
+            fetch_shipment_components(self.mr_url)
+        self.http.assert_not_called()
 
 
 class TestVerifyImageGradesResult(unittest.TestCase):
@@ -348,7 +441,7 @@ shipment:
                 }
             }
         }
-        mock_resp = MagicMock()
+        mock_resp = MagicMock(status_code=200)
         mock_resp.text = yaml.dump(advisory_content)
         mock_resp.raise_for_status = MagicMock()
         mock_requests.get.return_value = mock_resp
@@ -398,7 +491,7 @@ shipment:
         mock_gl.get_project.return_value = mock_project
         mock_gl_cls.from_url.return_value = mock_gl
 
-        mock_resp = MagicMock()
+        mock_resp = MagicMock(status_code=200)
         mock_resp.text = yaml.dump({"spec": {"content": {"images": []}}})
         mock_requests.get.return_value = mock_resp
 
@@ -493,7 +586,7 @@ shipment:
 
         with self.assertRaises(RuntimeError) as ctx:
             fetch_shipment_components("https://gitlab.example.com/mr/1")
-        self.assertIn("Failed to read any shipment file", str(ctx.exception))
+        self.assertIn("Failed to read shipment advisories", str(ctx.exception))
 
     @patch("elliottlib.cli.verify_image_grades_cli.requests")
     @patch("elliottlib.cli.verify_image_grades_cli.GitLabClient")
@@ -535,14 +628,20 @@ shipment:
                 }
             }
         }
-        mock_resp = MagicMock()
+        mock_resp = MagicMock(status_code=200)
         mock_resp.text = yaml.dump(advisory_content)
         mock_resp.raise_for_status = MagicMock()
         mock_requests.get.return_value = mock_resp
 
-        components, _ = fetch_shipment_components("https://gitlab.example.com/mr/1")
+        advisory_file = MagicMock()
+        advisory_file.decode.return_value = yaml.dump(advisory_content).encode("utf-8")
+        mock_project.files.get.side_effect = [mock_file, advisory_file]
+        components, _ = fetch_shipment_components("https://gitlab.cee.redhat.com/group/project/-/merge_requests/1")
         self.assertEqual(len(components), 1)
         self.assertEqual(components[0][0], "ose-cli")
+        mock_gl.get_project.assert_any_call("rhtap-release/advisories")
+        mock_project.files.get.assert_any_call(file_path="data/advisories/ocp/2026/12345/advisory.yaml", ref="main")
+        mock_requests.get.assert_not_called()
 
     @patch("elliottlib.cli.verify_image_grades_cli.requests")
     @patch("elliottlib.cli.verify_image_grades_cli.GitLabClient")
@@ -577,7 +676,7 @@ shipment:
 
         with self.assertRaises(RuntimeError) as ctx:
             fetch_shipment_components("https://gitlab.example.com/mr/1")
-        self.assertIn("Failed to read any shipment file", str(ctx.exception))
+        self.assertIn("Failed to read shipment advisories", str(ctx.exception))
         mock_requests.get.assert_not_called()
 
 
