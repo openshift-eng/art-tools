@@ -63,6 +63,7 @@ from pyartcd.lp_shipment import (
     resolve_shipment_release_plans,
     set_shipment_mr_draft,
     update_shipment_mr_url,
+    validate_fbc_refresh_provenance,
     validate_shipment_mr_for_operation,
     verify_shipment_mr_url,
 )
@@ -1318,12 +1319,14 @@ class ReleaseFromFbcPipeline:
         self._group_components = components
         return mappings
 
-    async def _refresh_fbc_pullspecs(self, source_fbc_nvrs: List[str]) -> List[str]:
+    async def _refresh_fbc_pullspecs(self, source_fbc_nvrs: List[str], existing_mr=None) -> List[str]:
         """Rebuild supplied FBCs from their exact operator provenance.
 
         Args:
             source_fbc_nvrs: NVRs corresponding positionally to
                 ``self.fbc_pullspecs``.
+            existing_mr: Reusable shipment MR whose operator builds must not
+                be downgraded by this refresh.
 
         Returns:
             Replacement FBC pullspecs after every target build succeeds,
@@ -1375,6 +1378,16 @@ class ReleaseFromFbcPipeline:
             if not separator:
                 raise RuntimeError(f"Cannot refresh FBC '{fbc_nvr}': operator identity is missing from the NVR")
             source_fbcs_by_target.setdefault(target_version, []).append((source_operator, pullspec))
+
+        if existing_mr:
+            await validate_fbc_refresh_provenance(
+                self.shipment_data_repo,
+                existing_mr,
+                self.product,
+                self.group,
+                self.assembly,
+                [nvr for nvrs in operator_nvrs_by_target.values() for nvr in nvrs],
+            )
 
         results = await build_fbc_catalogs(
             runtime=self.runtime,
@@ -1554,7 +1567,7 @@ class ReleaseFromFbcPipeline:
 
             if self.refresh_fbcs:
                 source_fbc_nvrs = list(fbc_nvrs)
-                self.fbc_pullspecs = await self._refresh_fbc_pullspecs(source_fbc_nvrs)
+                self.fbc_pullspecs = await self._refresh_fbc_pullspecs(source_fbc_nvrs, existing_mr)
                 if not self.dry_run:
                     self.logger.info("Using %d refreshed FBC pullspecs for shipment creation", len(self.fbc_pullspecs))
                     self._fbc_operator_keys = []

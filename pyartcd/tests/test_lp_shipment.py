@@ -28,6 +28,7 @@ from pyartcd.lp_shipment import (
     resolve_shipment_release_plans,
     set_shipment_mr_draft,
     update_shipment_mr_url,
+    validate_fbc_refresh_provenance,
     validate_shipment_mr,
     validate_shipment_mr_ci_state,
     validate_shipment_mr_for_operation,
@@ -35,6 +36,43 @@ from pyartcd.lp_shipment import (
 )
 
 YAML = new_roundtrip_yaml_handler()
+
+
+@pytest.mark.parametrize(
+    ("incoming", "blocked"),
+    [
+        ("mce-backplane-operator-container-5.0.0-202611040018.p2.g113ec7d.assembly.stream.el9", True),
+        ("mce-backplane-operator-container-5.0.0-202611060443.p2.g113ec7d.assembly.stream.el9", False),
+        ("mce-backplane-operator-container-5.0.0-202611070018.p2.g113ec7d.assembly.stream.el9", False),
+    ],
+)
+def test_refresh_reuse_rejects_older_operator_build(incoming, blocked):
+    """A replayed refresh cannot replace a newer operator in the existing image shipment."""
+    with TemporaryDirectory() as directory:
+        path = Path(directory, "shipment/multicluster-engine/mce-5.0/mce-5-0/prod/5.0.0.image.yaml")
+        path.parent.mkdir(parents=True)
+        path.write_text(
+            "shipment:\n"
+            "  metadata:\n"
+            "    fbc: false\n"
+            "  snapshot:\n"
+            "    nvrs:\n"
+            "      - mce-backplane-operator-container-5.0.0-202611060443.p2.g113ec7d.assembly.stream.el9\n"
+        )
+        repo = MagicMock(spec=GitRepository)
+        repo._directory = Path(directory)
+        repo.fetch_switch_branch = AsyncMock()
+        mr = MagicMock(source_branch="prepare-shipment-5.0.0-20261105035138")
+        mr.web_url = "https://gitlab.example/mr/1141"
+        mr.changes.return_value = {"changes": [{"new_path": str(path.relative_to(directory))}]}
+
+        operation = validate_fbc_refresh_provenance(repo, mr, "multicluster-engine", "mce-5.0", "5.0.0", [incoming])
+        if blocked:
+            with pytest.raises(ValueError, match="older than the one in shipment MR"):
+                asyncio.run(operation)
+        else:
+            asyncio.run(operation)
+        assert repo.fetch_switch_branch.await_args_list[-1] == call("main")
 
 
 def test_resolve_shipment_release_plans_from_main_config():
