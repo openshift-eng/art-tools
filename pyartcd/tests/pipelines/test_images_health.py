@@ -56,6 +56,23 @@ class TestNotifyPublicChannel(IsolatedAsyncioTestCase):
     def setUp(self):
         self.mock_runtime = _make_runtime()
 
+    async def test_failure_summary_links_to_ocp_dashboard(self):
+        for base_url in ('https://dashboard.example.test', 'https://dashboard.example.test/'):
+            with self.subTest(base_url=base_url):
+                mock_slack_client = self.mock_runtime.new_slack_client.return_value
+                mock_slack_client.reset_mock()
+                pipeline = _make_pipeline(self.mock_runtime, public_channel="#forum-ocp-art")
+                pipeline.report = [
+                    _make_concern("failing-image", "openshift-4.22", ConcernCode.LATEST_ATTEMPT_FAILED.value)
+                ]
+                mock_slack_client.say.return_value = {"ts": "thread-123"}
+
+                with patch('pyartcd.pipelines.images_health.ART_BUILD_FAILURES_URL', base_url):
+                    await pipeline.notify_public_channel()
+
+                summary = mock_slack_client.say.call_args_list[0].args[0]
+                self.assertIn('<https://dashboard.example.test/?variant=ocp|ART Build Failures Dashboard>', summary)
+
     async def test_no_concerns_after_filtering(self):
         mock_slack_client = self.mock_runtime.new_slack_client.return_value
         pipeline = _make_pipeline(self.mock_runtime, public_channel="#forum-ocp-art")
