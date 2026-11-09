@@ -230,6 +230,19 @@ PRODUCT_CATALOG: tuple[ProductConfig, ...] = (
         },
     ),
     ProductConfig(
+        product_id=ProductId.MIRROR_REGISTRY,
+        namespace="art-quay-tenant",
+        kubeconfig_env="QUAY_KONFLUX_SA_KUBECONFIG",
+        base_image_release=ReleaseTarget(
+            release_plan="quay-images-base-silent",
+            application="quay-images-base",
+        ),
+        conforma_stage_policies=ConformaPolicies(
+            image_policy="rhtap-releng-tenant/registry-art-quay-stage",
+            fbc_policy="rhtap-releng-tenant/fbc-stage",
+        ),
+    ),
+    ProductConfig(
         product_id=ProductId.OSUS,
         namespace="art-osus-tenant",
         kubeconfig_env="OSUS_KONFLUX_SA_KUBECONFIG",
