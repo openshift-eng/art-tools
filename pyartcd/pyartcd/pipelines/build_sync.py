@@ -407,11 +407,12 @@ class BuildSyncPipeline:
 
     @start_as_current_span_async(TRACER, "build-sync.populate-ci-imagestreams")
     async def _populate_ci_imagestreams(self):
-        """ "
-        Starting with 4.12, ART is responsible for populating the CI imagestream (-n ocp is/4.12) with
-        references to the latest machine-os-content, rhel-coreos-8, rhel-coreos-8-extensions (and
-        potentially more with rhel9). If this is failing, it must be treated as a priority since
-        CI will begin falling behind nightly CoreOS content.
+        """
+        Starting with 4.12, ART is responsible for populating the CI imagestream (-n ocp) with
+        references to the latest RHCOS container(s). The specific tags mirrored are those configured
+        under rhcos.payload_tags in the group's group.yml, falling back to the default primary container
+        `machine-os-content` when no payload_tags are configured. If this is failing, it must be treated as a priority
+        since CI will begin falling behind nightly CoreOS content.
         """
         current_span = trace.get_current_span()
         current_span.set_attribute("build-sync.version", self.version)
