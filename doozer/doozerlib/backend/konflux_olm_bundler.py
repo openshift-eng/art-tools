@@ -256,7 +256,13 @@ class KonfluxOlmBundleRebaser:
         # Different operators place the file in different directories, so
         # search multiple candidates (same order as rebaser.py).
         refs_path = None
-        for candidate in [operator_bundle_dir, operator_manifests_dir, operator_manifests_dir.parent]:
+        ref_candidates = [
+            operator_bundle_dir,
+            operator_manifests_dir,
+            operator_dir.joinpath(csv_config["bundle-dir"]),
+            operator_manifests_dir.parent,
+        ]
+        for candidate in ref_candidates:
             if (candidate / "image-references").exists():
                 refs_path = candidate / "image-references"
                 break
@@ -269,7 +275,7 @@ class KonfluxOlmBundleRebaser:
         else:
             logger.warning(
                 f"No image-references file found for {metadata.distgit_key}; "
-                f"searched: {[str(c / 'image-references') for c in [operator_bundle_dir, operator_manifests_dir, operator_manifests_dir.parent]]}. "
+                f"searched: {[str(c / 'image-references') for c in ref_candidates]}. "
                 f"Falling back to legacy tag-based resolution. "
                 f"This fallback will be removed in a future release."
             )
