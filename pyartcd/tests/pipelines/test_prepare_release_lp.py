@@ -639,6 +639,56 @@ class TestPrepareReleaseLPRun(unittest.TestCase):
         kwargs.update(overrides)
         return PrepareReleaseLPPipeline(**kwargs)
 
+    def test_run_selects_advisory_type_before_loading_template(self):
+        """Generate GA RHEAs with or without bugs/templates, preserving RHSA precedence."""
+        import tempfile
+
+        cases = [
+            ('2.17.0', None, 'RHEA'),
+            ('v2.17.0', 'RHBA', 'RHEA'),
+            ('2.17.0', 'RHSA', 'RHSA'),
+            ('2.17.3', 'RHBA', 'RHBA'),
+            ('2.17.3', None, None),
+            ('2.17', 'RHBA', 'RHBA'),
+            ('2.17', None, None),
+        ]
+        template = {field: f'Release {field}' for field in ('synopsis', 'topic', 'description', 'solution')}
+        for assembly, generated_type, expected_type in cases:
+            for release_template in (None, template):
+                with self.subTest(assembly=assembly, generated_type=generated_type, template=release_template):
+                    with tempfile.TemporaryDirectory() as tmp_dir:
+                        pipeline = self._make_pipeline(tmp_dir, assembly=assembly)
+                        pipeline._check_env_vars = MagicMock()
+                        pipeline._setup_working_dir = MagicMock()
+                        pipeline._load_product_from_group_config = AsyncMock(return_value='rhacm2')
+                        pipeline._load_assembly = AsyncMock(return_value={'assembly': {'type': 'standard'}})
+                        pipeline._extract_operand_nvrs = MagicMock(return_value=['acm-container-2.17.0-1'])
+                        pipeline._trigger_bundle_build = AsyncMock(return_value=([], []))
+                        pipeline._trigger_fbc_build = AsyncMock(return_value=([], []))
+                        pipeline._create_snapshot = AsyncMock(
+                            return_value=[Snapshot(spec=SnapshotSpec(application='acm-2-17', components=[]), nvrs=[])]
+                        )
+                        pipeline._generate_release_notes = MagicMock(
+                            return_value=ReleaseNotes(type=generated_type) if generated_type else None
+                        )
+                        pipeline._load_release_notes_template = MagicMock(return_value=release_template)
+                        pipeline._write_shipment_file = AsyncMock()
+
+                        asyncio.run(pipeline.run())
+
+                        pipeline._load_release_notes_template.assert_called_once_with(
+                            errata_type=expected_type or 'RHBA'
+                        )
+                        shipment = pipeline._write_shipment_file.await_args.args[1].shipment
+                        notes = shipment.data.releaseNotes if shipment.data else None
+                        if expected_type or release_template:
+                            self.assertEqual(notes.type, expected_type or 'RHBA')
+                            if release_template:
+                                for field, value in release_template.items():
+                                    self.assertEqual(getattr(notes, field), value)
+                        else:
+                            self.assertIsNone(notes)
+
     def test_mismatched_group_and_assembly_fail_before_setup(self):
         """Reject a layered-product assembly from another release train immediately."""
         import tempfile

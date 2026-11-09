@@ -22,7 +22,7 @@ import yaml as stdlib_yaml
 from artcommonlib import exectools
 from artcommonlib.rpm_utils import compare_nvr, parse_nvr
 from artcommonlib.util import new_roundtrip_yaml_handler
-from elliottlib.shipment_model import ShipmentConfig
+from elliottlib.shipment_model import ReleaseNotes, ShipmentConfig
 from elliottlib.shipment_utils import ShipmentMRCIState, inspect_shipment_mr_ci_state
 from gitlab.exceptions import GitlabCreateError
 
@@ -35,6 +35,21 @@ _TIMESTAMP_RE = re.compile(r"(\d{14})$")
 _PROD_RELEASE_LABEL_PREFIX = "prod-release"
 _STAGE_RELEASE_SUCCESS_LABEL = "stage-release-success"
 _MR_CREATION_RETRY_DELAYS_SECONDS = (5, 10, 20, 30, 30, 30)
+
+
+def resolve_layered_product_release_notes(assembly: str, release_notes: ReleaseNotes | None) -> ReleaseNotes | None:
+    """Use enhancement advisories for explicit LP GA versions, preserving security advisories.
+
+    Only a three-component version with patch zero identifies a GA release.
+    Two-component versions keep their existing advisory policy.
+    """
+    if not re.fullmatch(r'v?\d+\.\d+\.0', assembly):
+        return release_notes
+    if release_notes is None:
+        return ReleaseNotes(type='RHEA')
+    if release_notes.type == 'RHBA':
+        release_notes.type = 'RHEA'
+    return release_notes
 
 
 class ShipmentMRValidationError(ValueError):

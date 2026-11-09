@@ -65,6 +65,58 @@ class TestReleaseFromFbcPipeline(unittest.TestCase):
         pipeline.product = "oadp"
         return pipeline
 
+    @patch('pyartcd.pipelines.release_from_fbc.is_nvr_embargoed', return_value=False)
+    def test_run_selects_advisory_type_before_loading_template(self, _mock_embargoed):
+        """Apply the LP GA policy without changing OCP optional advisories."""
+        cases = [
+            ('oadp-1.4', '1.4.0', False, None, 'RHEA'),
+            ('oadp-1.4', 'v1.4.0', False, 'RHBA', 'RHEA'),
+            ('oadp-1.4', '1.4.0', False, 'RHSA', 'RHSA'),
+            ('oadp-1.4', '1.4.5', False, 'RHBA', 'RHBA'),
+            ('oadp-1.4', '1.4.5', False, None, None),
+            ('oadp-1.4', '1.4', False, 'RHBA', 'RHBA'),
+            ('oadp-1.4', '1.4', False, None, None),
+            ('openshift-4.22', '4.22.0', True, None, 'RHBA'),
+            ('openshift-4.22', '4.22.0', True, 'RHSA', 'RHSA'),
+        ]
+        template = {field: f'Release {field}' for field in ('synopsis', 'topic', 'description', 'solution')}
+        for group, assembly, ocp_optional, generated_type, expected_type in cases:
+            for release_template in (None, template):
+                with self.subTest(assembly=assembly, generated_type=generated_type, template=release_template):
+                    pipeline = self._make_pipeline(
+                        group=group,
+                        assembly=assembly,
+                        ocp_optional=ocp_optional,
+                        fbc_pullspecs=[],
+                        extra_image_nvrs=['oadp-container-1.4.0-1'],
+                        jira_bugs=['OADP-1234'] if generated_type else None,
+                    )
+                    pipeline.check_env_vars = MagicMock()
+                    pipeline.setup_working_dir = MagicMock()
+                    pipeline._load_product_from_group_config = AsyncMock(return_value='oadp')
+                    pipeline.create_snapshot = AsyncMock(return_value=_make_snapshot())
+                    pipeline.generate_release_notes = MagicMock(
+                        return_value=ReleaseNotes(type=generated_type) if generated_type else None
+                    )
+                    pipeline._load_release_notes_template = MagicMock(return_value=release_template)
+                    pipeline.write_shipment_files_locally = AsyncMock()
+
+                    asyncio.run(pipeline.run())
+
+                    pipeline._load_release_notes_template.assert_called_once_with(
+                        kind='extras' if ocp_optional else None, errata_type=expected_type or 'RHBA'
+                    )
+                    shipments = pipeline.write_shipment_files_locally.await_args.args[0]
+                    shipment = shipments['extras' if ocp_optional else 'image'].shipment
+                    notes = shipment.data.releaseNotes if shipment.data else None
+                    if expected_type or release_template:
+                        self.assertEqual(notes.type, expected_type or 'RHBA')
+                        if release_template:
+                            for field, value in release_template.items():
+                                self.assertEqual(getattr(notes, field), value)
+                    else:
+                        self.assertIsNone(notes)
+
     def test_jira_bugs_stored(self):
         """jira_bugs parameter is stored on the pipeline."""
         pipeline = self._make_pipeline(jira_bugs=["OADP-1111", "OADP-2222"])

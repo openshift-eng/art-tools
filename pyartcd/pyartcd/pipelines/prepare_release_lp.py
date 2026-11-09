@@ -63,6 +63,7 @@ from pyartcd.lp_shipment import (
     create_shipment_mr_with_retry,
     get_shipment_mr_url,
     reconcile_shipment_mr,
+    resolve_layered_product_release_notes,
     resolve_shipment_release_plans,
     update_shipment_mr_url,
     validate_fbc_refresh_provenance,
@@ -1009,13 +1010,13 @@ class PrepareReleaseLPPipeline:
         elif len(fbc_nvrs) > 1 and not fbc_pullspecs:
             self._logger.warning("FBC pullspecs not available; skipping FBC consistency validation")
 
-        release_notes = self._generate_release_notes()
+        release_notes = resolve_layered_product_release_notes(self.assembly, self._generate_release_notes())
 
         errata_type = release_notes.type if release_notes is not None else "RHBA"
         template = self._load_release_notes_template(errata_type=errata_type)
         if template:
             if release_notes is None:
-                release_notes = ReleaseNotes(type="RHBA")
+                release_notes = ReleaseNotes(type=errata_type)
             release_notes.synopsis = template["synopsis"]
             release_notes.topic = template["topic"]
             release_notes.description = template["description"]
