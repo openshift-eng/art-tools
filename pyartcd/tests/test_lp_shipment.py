@@ -8,7 +8,7 @@ from unittest.mock import AsyncMock, MagicMock, call, patch
 
 import pytest
 from artcommonlib.util import new_roundtrip_yaml_handler
-from elliottlib.shipment_model import ShipmentConfig
+from elliottlib.shipment_model import ReleaseNotes, ShipmentConfig
 from gitlab.exceptions import GitlabCreateError
 from pyartcd.git import GitRepository
 from pyartcd.lp_shipment import (
@@ -25,6 +25,7 @@ from pyartcd.lp_shipment import (
     get_shipment_mr_url,
     inspect_shipment_mr_ci_state,
     reconcile_shipment_mr,
+    resolve_layered_product_release_notes,
     resolve_shipment_release_plans,
     set_shipment_mr_draft,
     update_shipment_mr_url,
@@ -73,6 +74,27 @@ def test_refresh_reuse_rejects_older_operator_build(incoming, blocked):
         else:
             asyncio.run(operation)
         assert repo.fetch_switch_branch.await_args_list[-1] == call("main")
+
+
+@pytest.mark.parametrize('assembly', ['6.5.0', 'v6.5.0', '6.5.2', '5.0', 'v5.0', '6.5.0-rc.1', '6.5.0.0', 'stream'])
+@pytest.mark.parametrize('advisory_type', ['RHBA', 'RHSA', 'RHEA'])
+def test_resolve_layered_product_release_notes_preserves_metadata(assembly, advisory_type):
+    """Only promote bug-fix advisories for explicit GA versions; retain all metadata."""
+    notes = ReleaseNotes(
+        type=advisory_type,
+        live_id=12345,
+        synopsis='Release synopsis',
+        issues={'fixed': [{'id': 'LOG-1234', 'source': 'redhat.atlassian.net'}]},
+        cves=[{'key': 'CVE-2026-12345', 'component': 'logging'}] if advisory_type == 'RHSA' else None,
+        references=['https://example.com/release-notes'],
+    )
+    expected = notes.model_dump()
+    if assembly in ('6.5.0', 'v6.5.0') and advisory_type == 'RHBA':
+        expected['type'] = 'RHEA'
+
+    resolved = resolve_layered_product_release_notes(assembly, notes)
+
+    assert resolved.model_dump() == expected
 
 
 def test_resolve_shipment_release_plans_from_main_config():
@@ -1118,7 +1140,17 @@ def test_reconcile_preserves_unchanged_stage_outputs(reconciliation_repo, fbc, d
 
 @pytest.mark.parametrize('dry_run', [False, True])
 @pytest.mark.parametrize(
-    'change', ['fbc-build', 'fbc-plan', 'image-build', 'image-notes', 'image-plan', 'manual-field', 'invalid-stage']
+    'change',
+    [
+        'fbc-build',
+        'fbc-plan',
+        'image-build',
+        'image-notes',
+        'image-type',
+        'image-plan',
+        'manual-field',
+        'invalid-stage',
+    ],
 )
 def test_reconcile_invalidates_only_changed_shipment(reconciliation_repo, change, dry_run):
     """Any changed input invalidates stage outputs while retaining the matching filename."""
@@ -1142,12 +1174,20 @@ def test_reconcile_invalidates_only_changed_shipment(reconciliation_repo, change
         desired['shipment']['environments']['stage']['releasePlan'] = 'updated-stage-plan'
     elif change == 'image-notes':
         desired['shipment']['data']['releaseNotes']['description'] = 'Updated release notes'
+    elif change == 'image-type':
+        existing['shipment']['metadata']['assembly'] = '6.5.0'
+        desired['shipment']['metadata']['assembly'] = '6.5.0'
+        existing['shipment']['snapshot']['nvrs'] = desired['shipment']['snapshot']['nvrs'] = [
+            'logging-container-6.5.0-1.el9'
+        ]
+        desired['shipment']['data']['releaseNotes']['type'] = 'RHEA'
     elif change == 'invalid-stage':
         existing['shipment']['environments']['stage'] = None
     else:
         existing['shipment']['manual'] = {'field': 'discarded'}
     kind = 'fbc' if fbc else 'image'
-    path = add_file(existing, f'6.5.2.{kind}.2026081716164507.yaml')
+    assembly = existing['shipment']['metadata']['assembly']
+    path = add_file(existing, f'{assembly}.{kind}.2026081716164507.yaml')
 
     async def commit_push(*_args, **_kwargs):
         assert mr.labels == ['reviewed']

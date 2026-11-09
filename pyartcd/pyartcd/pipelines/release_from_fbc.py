@@ -60,6 +60,7 @@ from pyartcd.lp_shipment import (
     create_shipment_mr_with_retry,
     get_shipment_mr_url,
     reconcile_shipment_mr,
+    resolve_layered_product_release_notes,
     resolve_shipment_release_plans,
     set_shipment_mr_draft,
     update_shipment_mr_url,
@@ -1659,6 +1660,8 @@ class ReleaseFromFbcPipeline:
         release_notes = None
         if self.jira_bugs:
             release_notes = self.generate_release_notes()
+        if not self.ocp_optional:
+            release_notes = resolve_layered_product_release_notes(self.assembly, release_notes)
 
         # Load the matching release notes template from ocp-build-data.
         errata_type = release_notes.type if release_notes is not None else "RHBA"
@@ -1669,7 +1672,7 @@ class ReleaseFromFbcPipeline:
 
         if template:
             if release_notes is None:
-                release_notes = ReleaseNotes(type="RHBA")
+                release_notes = ReleaseNotes(type=errata_type)
             release_notes.synopsis = template["synopsis"]
             release_notes.topic = template["topic"]
             release_notes.description = template["description"]
