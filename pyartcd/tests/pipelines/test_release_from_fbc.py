@@ -179,6 +179,28 @@ class TestReleaseFromFbcPipeline(unittest.TestCase):
         self.assertTrue(kwargs["force"])
         self.assertTrue(kwargs["reset_to_prod"])
 
+    @patch("pyartcd.pipelines.release_from_fbc.validate_fbc_refresh_provenance", new_callable=AsyncMock)
+    @patch("pyartcd.pipelines.release_from_fbc.build_fbc_catalogs", new_callable=AsyncMock)
+    @patch.object(ReleaseFromFbcPipeline, "_load_component_doozer_keys", new_callable=AsyncMock)
+    def test_refresh_reused_mr_checks_operator_before_build(self, mock_keys, mock_build, mock_guard):
+        """Reject a stale supplied catalog before starting any replacement FBC build."""
+        operator_nvr = "oadp-operator-container-1.4.5-202610110001.p2.el9"
+        pipeline = self._make_pipeline(fbc_pullspecs=["quay.io/test/fbc:old"], refresh_fbcs=True)
+        pipeline.product = "oadp"
+        pipeline._fbc_operator_by_pullspec = {"quay.io/test/fbc:old": "oadp-operator"}
+        pipeline._fbc_related_nvrs_by_pullspec = {"quay.io/test/fbc:old": [operator_nvr]}
+        mock_keys.return_value = {"oadp-operator-container": "oadp-operator"}
+        mock_guard.side_effect = ValueError("older operator build")
+        mr = MagicMock()
+
+        with self.assertRaisesRegex(ValueError, "older operator build"):
+            asyncio.run(pipeline._refresh_fbc_pullspecs(["oadp-operator-fbc-1.4.5-1.ocp4.20"], mr))
+
+        mock_guard.assert_awaited_once_with(
+            pipeline.shipment_data_repo, mr, "oadp", "oadp-1.4", "1.4.5", [operator_nvr]
+        )
+        mock_build.assert_not_awaited()
+
     @patch("pyartcd.pipelines.release_from_fbc.build_fbc_catalogs", new_callable=AsyncMock)
     @patch.object(ReleaseFromFbcPipeline, "_load_component_doozer_keys", new_callable=AsyncMock)
     def test_refresh_fbc_pullspecs_maps_multiple_operators_by_identity(

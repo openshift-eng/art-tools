@@ -735,6 +735,38 @@ class TestPrepareReleaseLPRun(unittest.TestCase):
                     with self.subTest(title=title, dry_run=dry_run, changed=changed):
                         self._assert_reuses_existing_shipment_mr(title, dry_run, changed)
 
+    @patch('pyartcd.pipelines.prepare_release_lp.validate_fbc_refresh_provenance', new_callable=AsyncMock)
+    @patch('pyartcd.pipelines.prepare_release_lp.validate_shipment_mr_for_operation', new_callable=AsyncMock)
+    def test_refresh_reused_mr_checks_assembly_operator_before_fbc_build(self, mock_validate, mock_guard):
+        """A stale assembly operator cannot start FBC builds against an advanced MR."""
+        import tempfile
+
+        mr = MagicMock()
+        mock_validate.return_value = (mr, MagicMock(active_stage=(), prod_attempts=()))
+        mock_guard.side_effect = ValueError("older operator build")
+        operator_nvr = "acm-operator-container-2.17.3-202610110001.p2.el9"
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            pipeline = self._make_pipeline(tmp_dir, create_mr=True, refresh_fbcs=True)
+            pipeline._configured_shipment_mr_url = "https://gitlab.example/project/-/merge_requests/42"
+            pipeline._check_env_vars = MagicMock()
+            pipeline._setup_working_dir = MagicMock()
+            pipeline._setup_shipment_repo = AsyncMock()
+            pipeline._load_product_from_group_config = AsyncMock(return_value="rhacm2")
+            pipeline._load_assembly = AsyncMock(
+                return_value={'assembly': {'type': 'standard', 'members': {'images': []}}}
+            )
+            pipeline._trigger_bundle_build = AsyncMock(return_value=([], [operator_nvr]))
+            pipeline._trigger_fbc_build = AsyncMock()
+            pipeline.__dict__['_gitlab'] = MagicMock()
+
+            with self.assertRaisesRegex(ValueError, "older operator build"):
+                asyncio.run(pipeline.run())
+
+            mock_guard.assert_awaited_once_with(
+                pipeline.shipment_data_repo, mr, "rhacm2", "acm-2.17", "2.17.3", [operator_nvr]
+            )
+            pipeline._trigger_fbc_build.assert_not_awaited()
+
     @patch('pyartcd.pipelines.prepare_release_lp.reconcile_shipment_mr', new_callable=AsyncMock)
     @patch('pyartcd.pipelines.prepare_release_lp.validate_shipment_mr_for_operation', new_callable=AsyncMock)
     def _assert_reuses_existing_shipment_mr(self, title, dry_run, changed, mock_validate, mock_reconcile):

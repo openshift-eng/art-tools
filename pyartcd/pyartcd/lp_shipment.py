@@ -20,7 +20,7 @@ from urllib.parse import urlparse
 
 import yaml as stdlib_yaml
 from artcommonlib import exectools
-from artcommonlib.rpm_utils import parse_nvr
+from artcommonlib.rpm_utils import compare_nvr, parse_nvr
 from artcommonlib.util import new_roundtrip_yaml_handler
 from elliottlib.shipment_model import ShipmentConfig
 from elliottlib.shipment_utils import ShipmentMRCIState, inspect_shipment_mr_ci_state
@@ -745,6 +745,77 @@ async def validate_shipment_mr_for_operation(
         allow_active_stage=allow_active_stage,
     )
     return mr, state
+
+
+async def validate_fbc_refresh_provenance(
+    repo: GitRepository,
+    mr,
+    product: str,
+    group: str,
+    assembly: str,
+    operator_nvrs: Sequence[str],
+) -> None:
+    """Reject a refreshed catalog build that would downgrade an existing shipment operator.
+
+    Compare the exact operator builds selected by the refresh with the image
+    shipment already in the reusable MR. Different catalog digests and newer
+    operator builds remain valid updates.
+
+    Args:
+        repo: Initialized shipment-data repository.
+        mr: Validated reusable shipment MR.
+        product: Expected shipment product.
+        group: Expected layered-product group.
+        assembly: Expected assembly.
+        operator_nvrs: Operator builds selected for the requested refresh.
+
+    Raises:
+        ValueError: If an operator build would move backward or the existing
+            shipment has ambiguous operator provenance.
+        RuntimeError: If GitLab truncates the MR change list.
+    """
+    if not operator_nvrs:
+        return
+    selected = {parse_nvr(nvr)['name']: nvr for nvr in operator_nvrs}
+    await repo.fetch_switch_branch(mr.source_branch, remote="origin")
+    try:
+        changes = mr.changes()
+        if changes.get('overflow'):
+            raise RuntimeError("GitLab truncated the shipment MR change list; cannot check FBC refresh provenance")
+        current: dict[str, str] = {}
+        for change in changes.get('changes', []):
+            path = change['new_path']
+            if not _shipment_path_matches(path, group, assembly, product=product):
+                continue
+            shipment_file = repo._directory / path
+            if not shipment_file.exists():
+                continue
+            shipment = (YAML.load(shipment_file) or {}).get('shipment', {})
+            if shipment.get('metadata', {}).get('fbc'):
+                continue
+            for nvr in shipment.get('snapshot', {}).get('nvrs', []):
+                name = parse_nvr(nvr)['name']
+                if name not in selected:
+                    continue
+                if name in current and current[name] != nvr:
+                    raise ValueError(f"Shipment MR has conflicting operator builds for {name}: {current[name]}, {nvr}")
+                current[name] = nvr
+
+        downgrades = [
+            (name, existing, selected[name])
+            for name, existing in current.items()
+            if compare_nvr(parse_nvr(selected[name]), parse_nvr(existing)) < 0
+        ]
+        if downgrades:
+            details = "; ".join(
+                f"{name}: MR has {existing}, refresh selected {incoming}" for name, existing, incoming in downgrades
+            )
+            raise ValueError(
+                f"Refusing --refresh-fbcs because the selected operator build is older than the one in "
+                f"shipment MR {mr.web_url}: {details}. Update the job inputs before rerunning."
+            )
+    finally:
+        await repo.fetch_switch_branch("main")
 
 
 async def _restore_from_main(repo: GitRepository, path: str) -> None:

@@ -65,6 +65,7 @@ from pyartcd.lp_shipment import (
     reconcile_shipment_mr,
     resolve_shipment_release_plans,
     update_shipment_mr_url,
+    validate_fbc_refresh_provenance,
     validate_shipment_mr_for_operation,
     verify_shipment_mr_url,
 )
@@ -981,6 +982,16 @@ class PrepareReleaseLPPipeline:
 
         bundle_nvrs, assembly_operator_nvrs = await self._trigger_bundle_build(operand_nvrs)
         self._logger.info("Bundle builds: %d NVRs", len(bundle_nvrs))
+
+        if self.refresh_fbcs and existing_mr:
+            await validate_fbc_refresh_provenance(
+                self.shipment_data_repo,
+                existing_mr,
+                self.product,
+                self.group,
+                self.assembly,
+                assembly_operator_nvrs,
+            )
 
         fbc_nvrs, fbc_pullspecs = await self._trigger_fbc_build(assembly_operator_nvrs)
         self._logger.info("FBC builds: %d NVRs", len(fbc_nvrs))
