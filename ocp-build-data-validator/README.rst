@@ -97,32 +97,33 @@ From a trusted art-tools checkout, validate a build-data release branch::
       --application <application>
 
 This checks delivery repositories against stage and production
-ReleasePlanAdmissions. It ports the repository/component presence
-contract from the existing `OCP delivery-repos Prow step
-<https://github.com/openshift/release/blob/38a9915664e8c834b568f855e7e30072ad71b210/ci-operator/step-registry/ocp-art/validate/delivery-repos/ocp-art-validate-delivery-repos-commands.sh>`__.
+ReleasePlanAdmissions for the selected application. In both environments, the
+expected image component must contain every ``delivery.delivery_repo_names``
+entry in its own repository mapping. If ``bundle_delivery_repo_name`` is set,
+the expected bundle component must exist and contain that repository in its own
+mapping. A repository listed under another component does not satisfy the check.
+Registry hosts are removed before comparing repository paths. Image and bundle
+component names honor Doozer's explicit overrides.
 
-Both environments must contain every ``delivery.delivery_repo_names`` entry,
-any ``bundle_delivery_repo_name``, and the expected image component. Registry
-hosts are removed before comparing repository paths. Repository presence and
-component presence are independent: the original check neither requires a
-repository to belong to that particular component nor requires a separate bundle
-component. Disabled images and ``for_release: false`` images are excluded.
-Even without delivery repositories, a release image still needs its component.
+Disabled images, WIP images and ``for_release: false`` images are excluded from
+RPA checks. The shared entry point discovers LP RPAs by application and reports
+malformed mappings. The original OCP shell step is unchanged; migrating its
+callers is separate work.
 
-The shared entry point adds application-based RPA discovery for LPs, validates
-malformed RPA mappings, honors explicit Doozer component-name overrides, and
-excludes WIP images consistently with its non-blocking WIP policy. These are
-explicit extensions to the OCP step, not behavior copied from its shell script.
-The original OCP step is unchanged; migrating its callers is separate work.
+Source validation checks both ``content.source.git.url`` (the midstream) and
+``content.source.git.web`` (the public upstream). When ``web`` is absent, the
+most specific ``group.yml`` ``public_upstreams`` mapping supplies the public
+repository. A mapping never replaces the midstream check. Its ``public_branch``
+override applies only to the public upstream; otherwise each repository must
+have a usable target or fallback branch independently. Both sources must contain
+the configured Dockerfile (``Dockerfile`` by default) and any manifests directory.
+An explicit ``url_pull`` fork is also checked without exempting either declared
+source. Identical repository/branch checks are deduplicated.
 
-Public source checks use anonymous GitHub web URLs, following the existing OCP
-validator; the Prow job does not require a GitHub token. Optional
-``--github-token-file`` authentication remains available for local validation of
-truly private sources, using the GitHub API. Missing or inaccessible sources are
-reported as errors rather than silently skipped.
-
-Source validation uses the most specific ``group.yml`` ``public_upstreams``
-mapping in place of the private mirror, including any ``public_branch`` override.
-Without a mapping it checks the declared source. An explicit ``url_pull`` fork
-remains the actual source to validate. The token-free presubmit does not separately
-verify private mirrors.
+Public sources can be checked anonymously using GitHub web URLs. Private
+midstreams require ``--github-token-file /path/to/token`` with read access to
+those repositories; authenticated checks use the GitHub API. CI callers must
+mount an appropriate credential and pass this option before adopting these
+checks for private sources. Missing or inaccessible sources fail validation;
+a public upstream cannot hide an inaccessible midstream. ``--schema-only``
+continues to skip remote source checks.

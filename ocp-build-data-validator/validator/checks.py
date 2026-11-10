@@ -188,27 +188,33 @@ def repository_name(url: str) -> str:
 
 
 def source_repositories(data: dict, group: dict) -> list[tuple[str, str | None]]:
-    """Validate the mapped public upstream, or the declared source when no mapping applies."""
+    """Check the declared midstream and explicit or mapped public upstream independently."""
     source = data.get('content', {}).get('source', {}).get('git', {})
     if not source.get('url'):
         return []
     private = repository_url(source['url'])
-    repository = repository_name(private)
-    if source.get('url_pull') and repository_url(source['url_pull']) != private:
-        # Doozer pulls a fork override directly and skips the normal public upstream.
-        return [(repository_name(source['url_pull']), None)]
+    repositories = [(repository_name(private), None)]
+    public = source.get('web')
+    public_branch = None
     # Match complete path boundaries; repo-level overrides take priority over org mappings.
     mappings = sorted(group.get('public_upstreams', []), key=lambda m: len(m['private']), reverse=True)
     for mapping in mappings:
         prefix = repository_url(mapping['private'])
         if private == prefix or private.startswith(prefix + '/'):
-            public = repository_url(mapping['public'])
-            suffix = private[len(prefix) :]
-            org = public.rsplit('/', 1)[-1]
-            if org != 'openshift' and suffix.startswith(f'/{org}-'):
-                suffix = '/' + suffix.removeprefix(f'/{org}-')
-            return [(repository_name(public + suffix), mapping.get('public_branch'))]
-    return [(repository, None)]
+            public_branch = mapping.get('public_branch')
+            if not public:
+                public = repository_url(mapping['public'])
+                suffix = private[len(prefix) :]
+                org = public.rsplit('/', 1)[-1]
+                if org != 'openshift' and suffix.startswith(f'/{org}-'):
+                    suffix = '/' + suffix.removeprefix(f'/{org}-')
+                public += suffix
+            break
+    if public:
+        repositories.append((repository_name(public), public_branch))
+    if source.get('url_pull'):
+        repositories.append((repository_name(source['url_pull']), None))
+    return list(dict.fromkeys(repositories))
 
 
 class GitHubClient:
@@ -275,7 +281,7 @@ class GitHubClient:
 
 
 def validate_sources(data: dict, group: dict, client: GitHubClient, image: bool = True) -> list[str]:
-    """Check refs, Dockerfiles and manifests in the configured public upstream source."""
+    """Check refs, Dockerfiles and manifests in both midstream and public upstream sources."""
     if errors := validate_source_paths(data, image=image):
         return errors
     source = data.get('content', {}).get('source', {})
@@ -297,22 +303,25 @@ def validate_sources(data: dict, group: dict, client: GitHubClient, image: bool 
             return ['content.source.git.branch must specify target or fallback']
         errors = []
         for repository, public_branch in source_repositories(data, group):
-            candidates = [resolve(public_branch)] if public_branch else [target, fallback]
-            branch = next((ref for ref in candidates if ref and client.exists(repository, None, ref)), None)
-            if not branch:
-                errors.append(
-                    f'{repository}: no configured branch exists or is accessible ({", ".join(filter(None, candidates))})'
-                )
-                continue
-            paths = []
-            if image:
-                paths.append((source.get('dockerfile', 'Dockerfile'), 'file'))
-            if manifests := data.get('update-csv', {}).get('manifests-dir'):
-                paths.append((manifests, 'dir'))
-            for path, kind in paths:
-                path = posixpath.join(source.get('path', ''), path)
-                if not client.exists(repository, path, branch, kind=kind):
-                    errors.append(f'{repository}: {path} not found on branch {branch}')
+            try:
+                candidates = [resolve(public_branch)] if public_branch else [target, fallback]
+                branch = next((ref for ref in candidates if ref and client.exists(repository, None, ref)), None)
+                if not branch:
+                    errors.append(
+                        f'{repository}: no configured branch exists or is accessible ({", ".join(filter(None, candidates))})'
+                    )
+                    continue
+                paths = []
+                if image:
+                    paths.append((source.get('dockerfile', 'Dockerfile'), 'file'))
+                if manifests := data.get('update-csv', {}).get('manifests-dir'):
+                    paths.append((manifests, 'dir'))
+                for path, kind in paths:
+                    path = posixpath.join(source.get('path', ''), path)
+                    if not client.exists(repository, path, branch, kind=kind):
+                        errors.append(f'{repository}: {path} not found on branch {branch}')
+            except RemoteError as error:
+                errors.append(str(error))
         return errors
     except (KeyError, ValueError) as error:
         return [f'source validation: {error}']
@@ -331,12 +340,7 @@ def component_name(application: str, image: str, data: dict, *, bundle: bool = F
 
 
 def validate_admissions(images: dict[str, dict], root: Path, application: str) -> list[str]:
-    """Port ocp-art-validate-delivery-repos presence checks to any application.
-
-    Repositories (including bundle repos) and image components are independently
-    required in both stage and prod. Repository ownership and bundle component
-    presence are deliberately not required by the original check.
-    """
+    """Require image and bundle repositories under their own components in stage and prod."""
     images = {
         name: data
         for name, data in images.items()
@@ -387,21 +391,22 @@ def validate_admissions(images: dict[str, dict], root: Path, application: str) -
         if not components:
             errors.append(f'{environment}: no usable RPA mapping for application {application}')
             continue
-        repos = {
-            repo.get('url', '').partition('/')[2]
-            for component in components
-            for repo in component.get('repositories', [])
-        }
-        names = {component.get('name') for component in components}
+        component_repos = {}
+        for component in components:
+            component_repos.setdefault(component['name'], set()).update(
+                repo['url'].partition('/')[2] for repo in component['repositories']
+            )
         for name, data in images.items():
             delivery = data.get('delivery', {})
-            expected = list(delivery.get('delivery_repo_names', []))
+            expected = [(component_name(application, name, data), delivery.get('delivery_repo_names', []))]
             if bundle := delivery.get('bundle_delivery_repo_name'):
-                expected.append(bundle)
-            for repository in expected:
-                if repository not in repos:
-                    errors.append(f'{name}: {environment} RPA missing delivery repository {repository}')
-            component = component_name(application, name, data)
-            if component not in names:
-                errors.append(f'{name}: {environment} RPA missing component {component}')
+                expected.append((component_name(application, name, data, bundle=True), [bundle]))
+            for component, repositories in expected:
+                if component not in component_repos:
+                    errors.append(f'{name}: {environment} RPA missing component {component}')
+                for repository in repositories:
+                    if repository not in component_repos.get(component, set()):
+                        errors.append(
+                            f'{name}: {environment} RPA component {component} missing delivery repository {repository}'
+                        )
     return errors
