@@ -17,6 +17,7 @@ class TestProductId(unittest.TestCase):
             "rhacm2": ProductId.ACM,
             "cert-manager": ProductId.CERT_MANAGER,
             "cluster-observability-operator": ProductId.COO,
+            "deployment-validation-operator": ProductId.DVO,
             "external-secrets-operator": ProductId.EXTERNAL_SECRETS,
             "kueue": ProductId.KUEUE,
             "multicluster-engine": ProductId.MCE,

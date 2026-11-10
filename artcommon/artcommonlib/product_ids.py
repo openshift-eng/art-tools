@@ -20,6 +20,7 @@ class ProductId(Enum):
     ACM = "rhacm2"
     CERT_MANAGER = "cert-manager"
     COO = "cluster-observability-operator"
+    DVO = "deployment-validation-operator"
     EXTERNAL_SECRETS = "external-secrets-operator"
     KUEUE = "kueue"
     MCE = "multicluster-engine"
