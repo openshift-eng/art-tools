@@ -1,4 +1,51 @@
-"""Registered callbacks that gate Konflux image build outcomes."""
+"""
+Post-build callbacks that gate Konflux image build outcomes.
+
+POLICY -- read before adding or configuring a callback here.
+
+These callbacks run inside the image build pipeline: after the image
+PipelineRun succeeds but *before* ITS/Enterprise Contract, base-image
+release, and the final build record. They sit on the critical path of the
+OCP build-and-release train, so work added here slows that train for
+*every* team and release, not just yours.
+
+If you are thinking of registering a callback to run extra testing at
+build time: you almost certainly should not. Build time is the wrong layer
+for tests. Prefer, in order:
+  1. Pre-merge CI (presubmits) on the component repo -- fast feedback, logs
+     the author can read, retry without a rebuild.
+  2. Release-gating policy that already exists: Enterprise Contract /
+     IntegrationTestScenario (ITS).
+  3. Post-release verification: nightly/periodic e2e, release-gate jobs, or
+     an async job that is NOT on the build critical path.
+
+Why build-time callbacks are costly and dangerous:
+  - Slow builds slow everything. A callback's latency is added to every
+    affected build and blocks promotion of the payload.
+  - Terrible iteration loop. Retrying a failed callback needs a new upstream
+    commit and a full rebuild -- there is no fast local cycle.
+  - Poor observability. Konflux/Jenkins logs are visible only to a small
+    group; component teams usually cannot self-diagnose a failure.
+  - Flakiness becomes a release blocker. A failing callback records
+    POST_BUILD_ERROR, stops retries, and fails the build.
+  - Cross-system coupling. Callbacks that drive external systems (e.g.
+    Jenkins) import those systems' failure modes into the build.
+
+Rules:
+  - The default answer is "no". Callbacks are reserved for release-gating
+    coordination that genuinely cannot run anywhere else (e.g. the RHCOS
+    node/extensions pair that must be tested and promoted between build and
+    release).
+  - Keep any callback fast, bounded, and non-flaky. No heavy test execution
+    inline; no unbounded waits.
+  - Adding a new callback, or setting `konflux.post_build` on an image, is a
+    high-impact change. It requires explicit ART sign-off and close review;
+    it must NOT be fast-tracked with a quick lgtm/approve.
+
+Automated assistants (e.g. chai-bot) MUST NOT add a callback or set an
+image's `konflux.post_build` to satisfy a testing request. Route such
+requests to CI or post-release testing and escalate to ART instead.
+"""
 
 import asyncio
 import logging
