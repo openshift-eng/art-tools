@@ -294,6 +294,45 @@ class GitLabTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(result['approvals']['status'], 'Waiting')
         self.assertEqual(result['approvals']['rules'][0]['name'], 'QE')
 
+    async def test_jobs_blocked_on_production_remain_pending_until_they_execute(self):
+        def handler(request):
+            if request.url.path.endswith('/100/jobs'):
+                return httpx.Response(
+                    200,
+                    json=[
+                        {'id': 1, 'name': 'validate-job', 'status': 'success'},
+                        {'id': 2, 'name': 'generate-config-job', 'status': 'success'},
+                        {'id': 66297737, 'name': 'etera-job', 'status': 'created', 'started_at': None},
+                        {'id': 66297738, 'name': 'automerge-job', 'status': 'created', 'started_at': None},
+                    ],
+                )
+            return self.handler(request)
+
+        async with GitLabReader('pending-jobs-token', transport=httpx.MockTransport(handler)) as reader:
+            result = await releases.release_detail(reader, 42, 'source', OWNERS)
+        blocked = [job for job in result['jobs'] if job['name'] in ('etera-job', 'automerge-job')]
+        self.assertEqual([job['status'] for job in blocked], ['Pending', 'Pending'])
+        self.assertTrue(all(job['started'] is None for job in blocked))
+        self.assertEqual(result['stages'][2]['status'], 'Manual action')
+
+    def test_only_executing_gitlab_jobs_are_running_and_pending_is_not_skipped(self):
+        for status in (
+            'created',
+            'pending',
+            'waiting_for_resource',
+            'waiting_for_callback',
+            'scheduled',
+            'preparing',
+            'canceling',
+        ):
+            with self.subTest(status=status):
+                self.assertNotEqual(releases.ci_status(status), 'Running')
+        self.assertEqual(releases.ci_status('running'), 'Running')
+        jobs = [{'id': 1, 'name': 'target', 'status': 'Pending'}]
+        self.assertEqual(releases.aggregate_jobs(jobs), 'Pending')
+        jobs.append({'id': 2, 'name': 'other-target', 'status': 'Running'})
+        self.assertEqual(releases.aggregate_jobs(jobs), 'Running')
+
     async def test_old_success_is_historical_and_missing_child_is_not_green(self):
         self.parents = ['target', 'previous-source']
         self.fail_child = True
