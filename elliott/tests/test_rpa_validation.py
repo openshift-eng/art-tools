@@ -88,7 +88,13 @@ class TestRPAValidation(IsolatedAsyncioTestCase):
         original_resources = deepcopy(self.resources)
         for env in ('stage', 'prod'):
             for scope in ('defaults', 'component', 'repository'):
-                for tag in ('v{{ labels.version }}', '{{labels.version}}-{{ incrementer }}'):
+                for tag in (
+                    'v{{ labels.version }}',
+                    '{{labels.version}}-{{ incrementer }}',
+                    'v{{ labels.version }}-{{ incrementer }}',
+                    'v{{ labels.version }}-{{ release_timestamp }}',
+                    'v{{ labels.version }}-{{ incrementer }}-extra',
+                ):
                     with self.subTest(env=env, scope=scope, tag=tag):
                         self.resources = deepcopy(original_resources)
                         mapping = self.resources[
@@ -105,10 +111,18 @@ class TestRPAValidation(IsolatedAsyncioTestCase):
                         with self.assertRaisesRegex(ValueError, f'{env} RPA.*labels.version.*assembly-based'):
                             await self.validate()
 
+    async def test_assembly_incrementer_tags_pass_release_validation(self):
+        """Assembly/incrementer tags work without allowing image-version templates."""
+        for tag in ('v{{ assembly }}-{{ incrementer }}', 'v{{assembly}}-{{incrementer}}'):
+            with self.subTest(tag=tag):
+                self.shipment.data.mapping = Mapping.model_validate({'defaults': {'tags': ['v{{ assembly }}', tag]}})
+                await self.validate()
+
     async def test_assembly_tags_reject_shipment_image_version_templates(self):
         """Shipment defaults must not mix assembly and image-version tags, even with clean RPAs."""
         for tags in (
             ['v{{ assembly }}', 'v{{ labels.version }}'],
+            ['v{{ assembly }}', 'v{{ labels.version }}-{{ incrementer }}'],
             ['v{{assembly}}-{{labels.version}}'],
         ):
             with self.subTest(tags=tags):

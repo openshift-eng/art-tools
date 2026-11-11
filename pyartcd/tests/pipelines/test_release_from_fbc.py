@@ -378,7 +378,7 @@ class TestReleaseFromFbcPipeline(unittest.TestCase):
         self.assertIsNone(config.shipment.data.releaseNotes)
         self.assertEqual(
             config.shipment.data.mapping.defaults.tags,
-            ['v{{ assembly }}', 'v{{ assembly }}-{{ release_timestamp }}'],
+            ['v{{ assembly }}', 'v{{ assembly }}-{{ incrementer }}'],
         )
 
     @patch('pyartcd.pipelines.release_from_fbc.load_group_config', new_callable=AsyncMock)
@@ -400,7 +400,7 @@ class TestReleaseFromFbcPipeline(unittest.TestCase):
                     dumped = config.model_dump(exclude_unset=True, exclude_none=True)
                     self.assertEqual(
                         dumped['shipment']['data']['mapping']['defaults']['tags'],
-                        ['v{{ assembly }}', 'v{{ assembly }}-{{ release_timestamp }}'],
+                        ['v{{ assembly }}', 'v{{ assembly }}-{{ incrementer }}'],
                     )
                     shipment = ShipmentConfig.model_validate(dumped).shipment
                     self.assertEqual(shipment.data.releaseNotes, release_notes)
@@ -408,7 +408,7 @@ class TestReleaseFromFbcPipeline(unittest.TestCase):
                         release = CreateReleaseCli.get_release_config(shipment, env, 'release', 'snapshot')
                         self.assertEqual(
                             release.data['mapping']['defaults']['tags'],
-                            ['v3.18.3', 'v3.18.3-{{ release_timestamp }}'],
+                            ['v3.18.3', 'v3.18.3-{{ incrementer }}'],
                         )
                         if release_notes is None:
                             self.assertNotIn('releaseNotes', release.data)
@@ -488,7 +488,7 @@ class TestReleaseFromFbcPipeline(unittest.TestCase):
                         config = pipeline.create_shipment_config(kind, snapshot, release_notes)
                         self.assertEqual(
                             config.shipment.data.mapping.defaults.tags,
-                            ['v{{ assembly }}', 'v{{ assembly }}-{{ release_timestamp }}'],
+                            ['v{{ assembly }}', 'v{{ assembly }}-{{ incrementer }}'],
                         )
                         self.assertEqual(config.shipment.data.releaseNotes, release_notes)
 

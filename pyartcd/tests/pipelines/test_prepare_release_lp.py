@@ -58,7 +58,7 @@ class TestPrepareReleaseLPPipeline(unittest.TestCase):
                 dumped = config.model_dump(exclude_unset=True, exclude_none=True)
                 self.assertEqual(
                     dumped['shipment']['data']['mapping']['defaults']['tags'],
-                    ['v{{ assembly }}', 'v{{ assembly }}-{{ release_timestamp }}'],
+                    ['v{{ assembly }}', 'v{{ assembly }}-{{ incrementer }}'],
                 )
                 shipment = ShipmentConfig.model_validate(dumped).shipment
                 self.assertEqual(shipment.data.releaseNotes, release_notes)
@@ -66,7 +66,7 @@ class TestPrepareReleaseLPPipeline(unittest.TestCase):
                     release = CreateReleaseCli.get_release_config(shipment, env, 'release', 'snapshot')
                     self.assertEqual(
                         release.data['mapping']['defaults']['tags'],
-                        ['v3.18.3', 'v3.18.3-{{ release_timestamp }}'],
+                        ['v3.18.3', 'v3.18.3-{{ incrementer }}'],
                     )
                     if release_notes is None:
                         self.assertNotIn('releaseNotes', release.data)
@@ -83,7 +83,7 @@ class TestPrepareReleaseLPPipeline(unittest.TestCase):
                     config = pipeline._create_shipment_config('image', snapshot, release_notes)
                     self.assertEqual(
                         config.shipment.data.mapping.defaults.tags,
-                        ['v{{ assembly }}', 'v{{ assembly }}-{{ release_timestamp }}'],
+                        ['v{{ assembly }}', 'v{{ assembly }}-{{ incrementer }}'],
                     )
                     self.assertEqual(config.shipment.data.releaseNotes, release_notes)
 

@@ -653,9 +653,7 @@ class PrepareReleaseLPPipeline:
 
         data = None
         if kind == 'image':
-            mapping = Mapping(
-                defaults=MappingDefaults(tags=['v{{ assembly }}', 'v{{ assembly }}-{{ release_timestamp }}'])
-            )
+            mapping = Mapping(defaults=MappingDefaults(tags=['v{{ assembly }}', 'v{{ assembly }}-{{ incrementer }}']))
             data = Data(releaseNotes=release_notes, mapping=mapping)
 
         shipment = Shipment(metadata=metadata, environments=environments, snapshot=snapshot, data=data)
