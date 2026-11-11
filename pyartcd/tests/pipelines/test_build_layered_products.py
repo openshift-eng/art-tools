@@ -214,17 +214,28 @@ class TestBuildLayeredProductsPipeline(IsolatedAsyncioTestCase):
                     logger=self.runtime.logger,
                 )
 
-    async def test_run_sync_failure_does_not_skip_bundle_trigger(self):
+    async def test_run_sync_failure_does_not_change_build_result(self):
         self.pipeline.assembly = 'test'
-        with (
-            patch('pyartcd.pipelines.build_layered_products.load_group_config', return_value={'product': 'oadp'}),
-            patch.object(self.pipeline, '_rebase_and_build', new_callable=AsyncMock),
-            patch.object(self.pipeline, 'trigger_bundle_build') as trigger,
-            patch.object(self.pipeline, 'mirror_test_builds_to_quay', side_effect=RuntimeError('sync failed')),
-            self.assertRaisesRegex(RuntimeError, 'sync failed'),
-        ):
-            await self.pipeline.run()
-        trigger.assert_called_once()
+        for build_error in (None, ChildProcessError('build failed')):
+            with (
+                self.subTest(build_error=build_error),
+                patch('pyartcd.pipelines.build_layered_products.load_group_config', return_value={'product': 'oadp'}),
+                patch.object(self.pipeline, '_rebase_and_build', side_effect=build_error),
+                patch.object(self.pipeline, 'trigger_bundle_build') as trigger,
+                patch.object(self.pipeline, 'mirror_test_builds_to_quay', side_effect=RuntimeError('sync failed')),
+            ):
+                self.runtime.logger.warning.reset_mock()
+                if build_error:
+                    with self.assertRaises(ChildProcessError) as raised:
+                        await self.pipeline.run()
+                    self.assertIs(raised.exception, build_error)
+                    trigger.assert_not_called()
+                else:
+                    await self.pipeline.run()
+                    trigger.assert_called_once()
+                self.runtime.logger.warning.assert_called_once_with(
+                    'Failed to sync test builds to %s; continuing', KONFLUX_IMAGE_TEST_REPO, exc_info=True
+                )
 
     def test_test_assembly_sets_test_banner(self):
         """When assembly is 'test', the Jenkins title should include [TEST]."""

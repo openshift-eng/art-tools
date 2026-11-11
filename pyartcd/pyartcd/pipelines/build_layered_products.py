@@ -270,7 +270,12 @@ class BuildLayeredProductsPipeline:
             await self._rebase_and_build(product, image_repo)
             self.trigger_bundle_build()
         finally:
-            await self.mirror_test_builds_to_quay()
+            try:
+                await self.mirror_test_builds_to_quay()
+            except Exception:
+                self._logger.warning(
+                    'Failed to sync test builds to %s; continuing', KONFLUX_IMAGE_TEST_REPO, exc_info=True
+                )
 
         if self.embargoed_operators_skipped:
             self._logger.warning(
