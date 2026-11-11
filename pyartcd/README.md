@@ -1,5 +1,36 @@
 # Pyartcd
 
+## Direct layered-product release assemblies
+
+`release-from-fbc` generates `assembly.yml` in the ARTCD working directory from
+the validated product operator and operand NVRs selected for shipment. It uses
+canonical Doozer image keys, records source FBC pullspecs by OCP target, and
+creates a standard assembly. Generated bundles stay in the image shipment;
+external dependencies do not become invented assembly members.
+
+With `--create-mr`, normal creation, reuse, and forced replacement persist the
+complete assembly and `group.shipment.mr` together before making the shipment
+MR ready. Existing production-history checks still block these writes, including
+with `--force`. Concurrent assembly or inherited-pin changes fail preparation.
+Without `--create-mr`, shipment and assembly files are local outputs only.
+`--test --create-mr` still creates an isolated draft shipment MR and never writes
+assembly data or a shipment pointer to ocp-build-data. Dry runs do not publish.
+
+Existing `basis.assembly` inheritance follows `gen-assembly-lp`: changed builds
+receive child overrides and absent parent components remain inherited. Explicit
+exclusions are honored, and the parent is unchanged. Effective inherited pins
+are included in the image shipment. Standalone reruns replace the generated pin
+list so removed inputs do not remain pinned.
+
+Use `--unified-fbc` to record validated immutable FBC builds in
+`group.fbc_builds` and omit individual FBC shipment files. Operators, operands,
+and bundles remain in the image shipment. The separate `lp-unified-fbc` job
+consumes these records; this option does not itself build a unified catalog.
+Omitting the option preserves individual FBC shipments and clears outdated
+unified records. The option is LP-only and cannot be used with `--ocp-optional`.
+Tekton exposes `unified-fbc`, defaulting to `false`; deploy matching art-tools
+support before selecting it. OCP optional shipments retain their existing path.
+
 Layered product builds support `version: auto` in `group.yml`. This derives the
 image build version from the group's `MAJOR.MINOR` suffix and fixes the patch
 component at zero. For example, both `acm-5.1` and `mce-5.1` resolve to `5.1.0`,
