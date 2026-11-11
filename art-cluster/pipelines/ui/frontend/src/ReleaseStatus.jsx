@@ -27,7 +27,7 @@ function ShipmentFiles({ files }) {
 
 function ApprovalGroups({ approvals }) {
   return <section className="live-release-section"><div className="release-section-title"><h3>GitLab approval rules</h3><ReleaseBadge status={approvals.status} /></div>
-    {approvals.rules.length > 0 ? <div className="live-approval-grid">{approvals.rules.map((rule, index) => <article key={`${rule.name}-${index}`}><div><strong>{rule.name}</strong><ReleaseBadge status={!rule.required ? 'Not required' : rule.approved ? 'Succeeded' : 'Waiting'} /></div><p>{rule.required} required · {rule.approvedBy.length} recorded</p><small>{rule.approvedBy.length ? rule.approvedBy.join(', ') : 'No recorded reviewers'}</small></article>)}</div> : <p>{approvals.status === 'Unknown' ? 'Approval rules could not be loaded.' : 'No approval groups are required by GitLab.'}</p>}
+    {approvals.rules.length > 0 ? <div className="live-approval-grid">{approvals.rules.map((rule, index) => <article key={`${rule.name}-${index}`}><div><strong>{rule.name}</strong><ReleaseBadge status={approvals.status === 'Historical' ? 'Historical' : !rule.required ? 'Not required' : rule.approved ? 'Succeeded' : 'Waiting'} /></div><p>{rule.required} required · {rule.approvedBy.length} recorded</p><small>{rule.approvedBy.length ? rule.approvedBy.join(', ') : 'No recorded reviewers'}</small></article>)}</div> : <p>{approvals.status === 'Unknown' ? 'Approval rules could not be loaded.' : 'No approval groups are required by GitLab.'}</p>}
   </section>;
 }
 

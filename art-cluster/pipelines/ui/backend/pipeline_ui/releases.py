@@ -564,6 +564,8 @@ async def release_detail(reader, iid, expected_sha, owners):
     if latest.get("sha") != mr.get("sha"):
         current = False
         issues.append("The MR changed while status was loading; refresh to read the new revision")
+    if (mr.get("sha") != expected_sha or latest.get("sha") != mr.get("sha")) and approvals["status"] != "Unknown":
+        approvals = {**approvals, "observedStatus": approvals["status"], "status": "Historical"}
     stages = [
         {"name": name, "status": "Unknown", **next((s for s in stages if s["name"] == name), {})}
         for name in ("Validation", "Stage release", "Production")

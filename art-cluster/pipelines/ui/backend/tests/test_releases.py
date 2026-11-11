@@ -331,6 +331,8 @@ class GitLabTests(unittest.IsolatedAsyncioTestCase):
         async with GitLabReader('race-token', transport=httpx.MockTransport(handler)) as reader:
             result = await releases.release_detail(reader, 42, 'source', OWNERS)
         self.assertEqual(reads, 2)
+        self.assertEqual(result['approvals']['status'], 'Historical')
+        self.assertEqual(result['approvals']['observedStatus'], 'Waiting')
         self.assertFalse(result['current'])
         self.assertTrue(all(stage['status'] == 'Historical' for stage in result['stages']))
 
