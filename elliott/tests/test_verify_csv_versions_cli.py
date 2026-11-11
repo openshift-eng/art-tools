@@ -401,12 +401,42 @@ class TestRenderAndCheckCsvVersions(IsolatedAsyncioTestCase):
 
     @patch("elliottlib.cli.verify_csv_versions_cli.cmd_gather_async")
     async def test_with_mismatch(self, mock_cmd):
-        mock_cmd.return_value = (0, FBC_YAML_WITH_MISMATCH, "")
+        mock_cmd.return_value = (0, FBC_YAML_WITH_MISMATCH.replace("dpu-operator", "ptp-operator"), "")
         result = await render_and_check_csv_versions("test:v4.22", "4.22")
         self.assertFalse(result.passed)
         self.assertEqual(len(result.mismatches), 1)
-        self.assertEqual(result.mismatches[0].package, "dpu-operator")
+        self.assertEqual(result.mismatches[0].package, "ptp-operator")
         self.assertEqual(result.mismatches[0].csv_version, "4.21.0-202407221")
+
+    @patch("elliottlib.cli.verify_csv_versions_cli.cmd_gather_async")
+    async def test_dpu_override(self, mock_cmd):
+        for ocp_version in ("4.22", "5.0"):
+            with self.subTest(ocp_version=ocp_version):
+                catalog = FBC_YAML_WITH_MISMATCH.replace("4.22", ocp_version)
+                mock_cmd.return_value = (0, catalog, "")
+                result = await render_and_check_csv_versions(f"test:v{ocp_version}", ocp_version)
+                self.assertTrue(result.passed)
+                dpu = next(o for o in result.operators if o.package == "dpu-operator")
+                self.assertEqual(dpu.csv_version, "4.21.0-202407221")
+                self.assertEqual(dpu.override, "4.21")
+                self.assertIn("MATCH (override: 4.21)", result.render_text())
+
+    @patch("elliottlib.cli.verify_csv_versions_cli.cmd_gather_async")
+    async def test_dpu_override_does_not_hide_other_mismatches(self, mock_cmd):
+        for ocp_version, csv_prefix in (
+            ("4.22", "4.20"),
+            ("5.0", "4.20"),
+            ("4.20", "4.21"),
+            ("4.23", "4.21"),
+            ("5.1", "4.21"),
+        ):
+            with self.subTest(ocp_version=ocp_version, csv_prefix=csv_prefix):
+                catalog = FBC_YAML_WITH_MISMATCH.replace("4.21", csv_prefix).replace("4.22", ocp_version)
+                mock_cmd.return_value = (0, catalog, "")
+                result = await render_and_check_csv_versions(f"test:v{ocp_version}", ocp_version)
+                self.assertFalse(result.passed)
+                self.assertEqual(len(result.mismatches), 1)
+                self.assertEqual(result.mismatches[0].package, "dpu-operator")
 
     @patch("elliottlib.cli.verify_csv_versions_cli.cmd_gather_async")
     async def test_with_override(self, mock_cmd):
