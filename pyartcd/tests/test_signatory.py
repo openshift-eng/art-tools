@@ -410,7 +410,7 @@ class TestDirectSignatory(IsolatedAsyncioTestCase):
             with self.assertRaisesRegex(ValueError, "DIRECT_SIGNING_KEYTAB"):
                 DirectSignatory.from_environment("redhatrelease2")
 
-    async def test_from_environment_reads_direct_signing_configuration(self):
+    async def test_from_environment_uses_default_client_configuration(self):
         with patch.dict(
             os.environ,
             {
@@ -423,12 +423,12 @@ class TestDirectSignatory(IsolatedAsyncioTestCase):
         ):
             signatory = DirectSignatory.from_environment("beta2")
 
-        self.assertEqual(signatory.client_command, ("rh-signing-client", "--config", "/path/to/config"))
+        self.assertEqual(signatory.client_command, DirectSignatory.DEFAULT_CLIENT_COMMAND)
         self.assertEqual(signatory.keytab_file, "/path/to/signing-keytab")
         self.assertEqual(signatory.principal, "ocp-art-signing-prod@IPA.REDHAT.COM")
         self.assertEqual(signatory.sig_keyname, "beta2")
         self.assertEqual(signatory.ON_BEHALF_OF, "jupierce@redhat.com")
-        self.assertEqual(signatory.timeout, 42)
+        self.assertEqual(signatory.timeout, DirectSignatory.DEFAULT_TIMEOUT)
 
 
 class TestCreateSignatory(IsolatedAsyncioTestCase):

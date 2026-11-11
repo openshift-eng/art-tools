@@ -5,7 +5,6 @@ import itertools
 import json
 import logging
 import os
-import shlex
 import shutil
 import tempfile
 import uuid
@@ -336,15 +335,12 @@ class DirectSignatory:
         credentials = get_direct_signing_credentials()
         keytab_file, principal = credentials
 
-        command = os.environ.get("DIRECT_SIGNING_CLIENT_COMMAND")
-        client_command = shlex.split(command) if command else list(cls.DEFAULT_CLIENT_COMMAND)
-        timeout = int(os.environ.get("DIRECT_SIGNING_TIMEOUT", str(cls.DEFAULT_TIMEOUT)))
         return cls(
-            client_command=client_command,
+            client_command=cls.DEFAULT_CLIENT_COMMAND,
             sig_keyname=sig_keyname,
             keytab_file=keytab_file,
             principal=principal,
-            timeout=timeout,
+            timeout=cls.DEFAULT_TIMEOUT,
         )
 
     async def __aenter__(self) -> "DirectSignatory":
