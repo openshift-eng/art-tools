@@ -1,7 +1,10 @@
+import asyncio
 import os
 import unittest
 from unittest.mock import AsyncMock, MagicMock, patch
 
+from click.testing import CliRunner
+from elliottlib.cli.verify_qe_qualifier_cli import QualifierCheckResult, verify_qe_qualifier_cli
 from pyartcd.pipelines.verify_release import (
     StepResult,
     StepStatus,
@@ -115,6 +118,61 @@ class TestVerifyReleasePipeline(unittest.IsolatedAsyncioTestCase):
         self.assertEqual({s.name for s in result.steps}, expected_steps)
         for step in result.steps:
             self.assertEqual(step.status, StepStatus.PASS)
+
+    @patch("pyartcd.pipelines.verify_release.exectools.cmd_assert_async", new_callable=AsyncMock)
+    async def test_qe_gate_depends_only_on_stable_qualifier(self, mock_assert):
+        elliott_runtime = MagicMock()
+        elliott_runtime.assembly = "4.19.42"
+        nightly_tag = "4.19.0-0.nightly-2026-11-10-000000"
+
+        def invoke_qe_check(command):
+            # Elliott's Click wrapper requires an event loop in the invoking thread.
+            with asyncio.Runner() as runner:
+                asyncio.set_event_loop(runner.get_loop())
+                return CliRunner().invoke(
+                    verify_qe_qualifier_cli,
+                    command[command.index("verify-qe-qualifier") + 1 :],
+                    obj=elliott_runtime,
+                )
+
+        async def run_command(command, **kwargs):
+            if "verify-qe-qualifier" in command:
+                cli_result = await asyncio.to_thread(invoke_qe_check, command)
+                if cli_result.exit_code:
+                    raise ChildProcessError(cli_result.output)
+            return 0
+
+        mock_assert.side_effect = run_command
+        for stable_badge, nightly_badge in [(True, False), (True, True), (False, True), (False, False)]:
+            with self.subTest(stable_badge=stable_badge, nightly_badge=nightly_badge):
+                mock_assert.reset_mock()
+
+                async def check_qualifier(tag, arch, session):
+                    return QualifierCheckResult(
+                        release_tag=tag,
+                        arch=arch,
+                        badge_earned=stable_badge if tag == elliott_runtime.assembly else nightly_badge,
+                    )
+
+                with (
+                    patch(
+                        "elliottlib.cli.verify_qe_qualifier_cli.assembly_basis",
+                        return_value={"reference_releases": {"x86_64": nightly_tag}},
+                    ),
+                    patch(
+                        "elliottlib.cli.verify_qe_qualifier_cli.check_qe_qualifier", side_effect=check_qualifier
+                    ) as mock_check,
+                ):
+                    pipeline = VerifyReleasePipeline(runtime=self.runtime, version="4.19", assembly="4.19.42")
+                    result = await pipeline.run()
+
+                self.assertEqual(result.passed, stable_badge, result.summary())
+                qe_step = next(step for step in result.steps if step.name == "qe-qualifier")
+                self.assertEqual(qe_step.status, StepStatus.PASS if stable_badge else StepStatus.FAIL)
+                self.assertEqual(mock_check.await_count, 1)
+                self.assertEqual(mock_check.await_args.args[:2], ("4.19.42", "amd64"))
+                label_commands = [call for call in mock_assert.call_args_list if "verify-release" in call.args[0]]
+                self.assertEqual(len(label_commands), 1 if stable_badge else 0)
 
     @patch("pyartcd.pipelines.verify_release.exectools.cmd_assert_async", new_callable=AsyncMock)
     async def test_run_passes_registry_auth_to_elliott_commands(self, mock_assert):
