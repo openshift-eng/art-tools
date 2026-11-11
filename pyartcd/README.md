@@ -15,6 +15,8 @@ with `--force`. Concurrent assembly or inherited-pin changes fail preparation.
 Without `--create-mr`, shipment and assembly files are local outputs only.
 `--test --create-mr` still creates an isolated draft shipment MR and never writes
 assembly data or a shipment pointer to ocp-build-data. Dry runs do not publish.
+Test mode and dry runs also print the generated assembly YAML in the job logs
+so it remains inspectable after the task pod is removed.
 
 Existing `basis.assembly` inheritance follows `gen-assembly-lp`: changed builds
 receive child overrides and absent parent components remain inherited. Explicit
