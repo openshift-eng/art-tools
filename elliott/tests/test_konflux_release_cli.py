@@ -204,7 +204,7 @@ class TestCreateReleaseCli(IsolatedAsyncioTestCase):
                 },
                 'data': {
                     'releaseNotes': {'type': 'RHBA', 'live_id': 123456},
-                    'mapping': {'defaults': {'tags': ['v{{ assembly }}', 'v{{labels.version}}-{{incrementer}}']}},
+                    'mapping': {'defaults': {'tags': ['v{{ assembly }}', 'v{{assembly}}-{{incrementer}}']}},
                 },
             }
         )
@@ -226,7 +226,7 @@ class TestCreateReleaseCli(IsolatedAsyncioTestCase):
                 self.assertEqual(release['spec']['releasePlan'], f'quay-{env}')
                 self.assertEqual(
                     release['spec']['data']['mapping']['defaults']['tags'],
-                    ['v3.18.3', 'v{{labels.version}}-{{incrementer}}'],
+                    ['v3.18.3', 'v3.18.3-{{incrementer}}'],
                 )
                 self.assertEqual(release['metadata']['annotations']['art.redhat.com/assembly'], '3.18.3')
                 if env == 'prod':

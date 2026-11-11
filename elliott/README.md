@@ -390,13 +390,13 @@ shipment:
       defaults:
         tags:
           - "v{{ assembly }}"
-          - "v{{ labels.version }}-{{ incrementer }}"
+          - "v{{ assembly }}-{{ incrementer }}"
 ```
 
 Elliott replaces `{{ assembly }}` with `shipment.metadata.assembly` when creating
-the Konflux Release. Konflux expands `{{ labels.version }}` and `{{ incrementer }}`
-during release. This example publishes `v3.18.3` and `v3.18.0-<incrementer>` in both
-stage and production when the selected image's version label is `3.18.0`.
+the Konflux Release. Konflux expands `{{ incrementer }}` during release. This
+example publishes `v3.18.3` and `v3.18.3-<incrementer>` in both stage and production,
+even when the selected image's version label is `3.18.0`.
 Image labels and digests are unchanged.
 
 Konflux combines and deduplicates these tags with tags defined in the ReleasePlan
@@ -413,13 +413,12 @@ optional shipments do not receive these tags. Non-OpenShift shipments can carry
 these tags without release notes. `prepare-release-konflux` and
 `elliott shipment init` do not populate this mapping automatically.
 
-When a shipment uses `{{ assembly }}`, release validation allows the fixed
-`v{{ labels.version }}-{{ incrementer }}` tag alongside it. Other tag templates
-using `{{ labels.version }}` are rejected. Validation checks shipment defaults
-and both stage and production ReleasePlans and RPAs, including mapping defaults
-and tags on the shipment's mapped components and repositories. Remove conflicting
-image-version templates from the indicated shipment, ReleasePlan, or RPA mapping
-before using assembly-based shipment tags.
+When a shipment uses `{{ assembly }}`, release validation rejects tag templates
+using `{{ labels.version }}`. Validation checks shipment defaults and both stage
+and production ReleasePlans and RPAs, including mapping defaults and tags on the
+shipment's mapped components and repositories. Remove conflicting image-version
+templates from the indicated shipment, ReleasePlan, or RPA mapping before using
+assembly-based shipment tags.
 
 Assembly-based tags require a named assembly; `stream` is rejected. Tags must
 follow container tag syntax (letters, digits, underscores, periods, and hyphens,

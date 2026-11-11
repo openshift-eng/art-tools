@@ -80,7 +80,7 @@ async def _render_fbc_packages(
 def _validate_assembly_tag_mapping(
     shipment: Shipment, rpa_mapping: dict, release_plan_mapping: dict, rpa_description: str
 ) -> None:
-    """Reject conflicting image-version tags, allowing fixed version-incrementer tags."""
+    """Reject effective image-version tags when a shipment publishes assembly-based tags."""
     if not shipment.data or not shipment.data.mapping:
         return
     if not any(re.search(r'\{\{\s*assembly\s*\}\}', tag) for tag in shipment.data.mapping.defaults.tags):
@@ -105,13 +105,12 @@ def _validate_assembly_tag_mapping(
         for path, source in tag_sources
         for tag in source.get('tags', [])
         if re.search(r'\{\{\s*labels\.version\s*\}\}', tag)
-        and not re.fullmatch(r'v\{\{\s*labels\.version\s*\}\}-\{\{\s*incrementer\s*\}\}', tag)
     ]
     if conflicts:
         raise ValueError(
             f"Release tags for {rpa_description} contain labels.version tags that conflict with assembly-based shipment tags "
             f"for assembly {shipment.metadata.assembly}: {'; '.join(conflicts)}. "
-            "Remove the conflicting labels.version tag templates from the indicated shipment, ReleasePlan, or RPA mapping "
+            "Remove the labels.version tag templates from the indicated shipment, ReleasePlan, or RPA mapping "
             "before releasing; Konflux combines tags from all three sources."
         )
 

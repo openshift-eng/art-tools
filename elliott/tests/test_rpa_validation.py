@@ -91,6 +91,7 @@ class TestRPAValidation(IsolatedAsyncioTestCase):
                 for tag in (
                     'v{{ labels.version }}',
                     '{{labels.version}}-{{ incrementer }}',
+                    'v{{ labels.version }}-{{ incrementer }}',
                     'v{{ labels.version }}-{{ release_timestamp }}',
                     'v{{ labels.version }}-{{ incrementer }}-extra',
                 ):
@@ -110,34 +111,18 @@ class TestRPAValidation(IsolatedAsyncioTestCase):
                         with self.assertRaisesRegex(ValueError, f'{env} RPA.*labels.version.*assembly-based'):
                             await self.validate()
 
-    async def test_assembly_tags_allow_fixed_version_incrementer_tags_in_all_sources(self):
-        """The fixed image-version tag can accompany the assembly alias at every mapping level."""
-        original_resources = deepcopy(self.resources)
-        for tag in ('v{{ labels.version }}-{{ incrementer }}', 'v{{labels.version}}-{{incrementer}}'):
+    async def test_assembly_incrementer_tags_pass_release_validation(self):
+        """Assembly/incrementer tags work without allowing image-version templates."""
+        for tag in ('v{{ assembly }}-{{ incrementer }}', 'v{{assembly}}-{{incrementer}}'):
             with self.subTest(tag=tag):
-                self.resources = deepcopy(original_resources)
                 self.shipment.data.mapping = Mapping.model_validate({'defaults': {'tags': ['v{{ assembly }}', tag]}})
-                for env in ('stage', 'prod'):
-                    for key in (
-                        (KIND_RELEASE_PLAN, f'custom-{env}-plan', None),
-                        ('ReleasePlanAdmission', f'unusual-{env}-admission', f'managed-{env}'),
-                    ):
-                        self.resources[key]['spec'].setdefault('data', {})['mapping'] = {
-                            'defaults': {'tags': [tag]},
-                            'components': [
-                                {
-                                    'name': 'test-component',
-                                    'tags': [tag],
-                                    'repositories': [{'url': 'registry.example.com/test', 'tags': [tag]}],
-                                }
-                            ],
-                        }
                 await self.validate()
 
     async def test_assembly_tags_reject_shipment_image_version_templates(self):
         """Shipment defaults must not mix assembly and image-version tags, even with clean RPAs."""
         for tags in (
             ['v{{ assembly }}', 'v{{ labels.version }}'],
+            ['v{{ assembly }}', 'v{{ labels.version }}-{{ incrementer }}'],
             ['v{{assembly}}-{{labels.version}}'],
         ):
             with self.subTest(tags=tags):
