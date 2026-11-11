@@ -5,7 +5,7 @@ import json
 import logging
 import os
 import secrets
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Literal
 from uuid import uuid4
@@ -18,6 +18,7 @@ from pydantic import AnyHttpUrl, BaseModel, Field, ValidationError, field_valida
 
 from .cluster import Gateway, UpstreamError
 from .components import component_details
+from .gitlab_read import GitLabReader, GitLabReadError, service_token
 from .health import build_health, health_run
 from .messages import lp_rebase_warning, status_message
 from .rebuild import (
@@ -27,6 +28,13 @@ from .rebuild import (
     build_run,
     parameter_form,
     pipeline_name,
+)
+from .releases import (
+    attach_preparation,
+    discover_releases,
+    group_owners,
+    release_catalog,
+    release_detail,
 )
 
 NAMESPACES = tuple(
@@ -282,6 +290,69 @@ async def pipeline_health(request: Request, response: Response, namespace: str |
         "items": build_health([run for group in groups for run in group], {error["namespace"] for error in errors}),
         "errors": errors,
     }
+
+
+@app.get("/api/releases")
+async def releases(
+    request: Request, response: Response, namespace: str | None = None, days: int = Query(7, ge=1, le=90)
+):
+    response.headers["Cache-Control"] = "no-store"
+    errors = []
+    async with Gateway(user_token(request)) as gateway:
+        catalog = await release_catalog(gateway, selected_namespaces(namespace), errors, selected=bool(namespace))
+    runs = [run for tenant in catalog for run in tenant["runs"]]
+    token = service_token()
+    items = []
+    if catalog:
+        if token:
+            try:
+                async with GitLabReader(token) as reader:
+                    items = await discover_releases(reader, days, errors, group_owners(catalog))
+            except GitLabReadError as error:
+                errors.append(str(error))
+        else:
+            errors.append("GitLab access is not configured; preparation runs are available")
+    cutoff = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
+    items = attach_preparation(items, runs)
+    items = [
+        item
+        for item in items
+        if item.get("mr") or (item.get("updated") or "") >= cutoff or item["preparation"]["status"] == "Running"
+    ]
+    return {
+        "items": items,
+        "errors": errors,
+        "gitlabConfigured": bool(token),
+        "supportedNamespaces": [tenant["namespace"] for tenant in catalog],
+        "observedAt": datetime.now(timezone.utc).isoformat(),
+        "days": days,
+    }
+
+
+@app.get("/api/releases/mrs/{iid}")
+async def shipment_release_detail(
+    request: Request,
+    response: Response,
+    iid: int,
+    sha: str = Query(min_length=1, max_length=64),
+    namespace: str | None = None,
+):
+    response.headers["Cache-Control"] = "no-store"
+    errors = []
+    async with Gateway(user_token(request)) as gateway:
+        catalog = await release_catalog(gateway, selected_namespaces(namespace), errors, selected=bool(namespace))
+    if not catalog:
+        raise HTTPException(status_code=404, detail="No accessible release-from-fbc pipeline was found")
+    token = service_token()
+    if not token:
+        raise HTTPException(status_code=503, detail="GitLab access is not configured")
+    try:
+        async with GitLabReader(token) as reader:
+            detail = await release_detail(reader, iid, sha, group_owners(catalog))
+            detail["issues"].extend(errors)
+            return detail
+    except GitLabReadError as error:
+        raise HTTPException(status_code=502, detail=str(error)) from error
 
 
 async def find_run(gateway: Gateway, namespace: str, name: str, uid: str | None = None):

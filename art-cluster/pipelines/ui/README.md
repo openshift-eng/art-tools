@@ -58,6 +58,20 @@ The Argo CD Application ignores the Deployment's `/spec/replicas` field and uses
 
 Testing plan: run the backend suite, including multi-page Results fetching, health, authentication, and live-over-archive deduplication. Validate the Deployment, HPA, and Application with server dry runs. After rollout, measure Quay and all-tenant loads, peak memory, and sustained traffic from multiple browser sessions. Confirm fresh run states arrive through periodic polling, HPA metrics are available, replicas scale within one to four, and scale-down occurs when both metrics fall below their targets. Verify OAuth sessions across replicas and confirm an Argo sync preserves the HPA's replica count. Monitor memory, restarts, and Results latency.
 
+## ReleaseStatus (read only)
+
+`#/release-status` observes shipment preparation and GitLab CI across accessible tenants. The tab is shown only when the selected tenant has a `release-from-fbc` pipeline; the all-tenants view is available when any accessible tenant supports it. Capability is checked on tenant selection and every minute while visible. New products require no product allowlist or UI change: their configured pipeline group values establish group ownership, and preparation history supplies attempt status.
+
+The backend checks the viewer's access to each tenant's pipeline before using its shared GitLab service credential. Shipment paths and YAML metadata must agree. MRs containing inaccessible or unowned groups, or ambiguous ownership, are withheld; detail requests are scoped to the selected release tenant. Explicit creator URLs and rebuilt-from UIDs associate preparation attempts. Sharing a group and version only groups the selector history; it does not invent a preparation link.
+
+Set `RELEASES_GITLAB_TOKEN_FILE` to a mounted service-token file (`read_api` is sufficient). `RELEASES_GITLAB_TOKEN` is available for local development. The client issues GET requests only and never returns the token to the browser. `RELEASES_GITLAB_URL` defaults to `https://gitlab.cee.redhat.com`, and `RELEASES_SHIPMENT_PROJECT` defaults to `hybrid-platforms/art/ocp-shipment-data`. Use `RELEASES_GITLAB_CA_FILE` for an additional trusted CA bundle. HTTPS verification remains enabled. `RELEASES_PIPELINE_UI_HOSTS` optionally supplies a comma-separated set of trusted creator-link hosts; the production Pipelines UI hostname is trusted by default.
+
+The selector groups records by tenant, group, and assembly, newest first, with previous attempts nested beneath the latest record. The workspace shows observed preparation, shipment, validation, stage, approval, production, and merge states, with Overview, Shipments, Validations, Approvals, and Activity sections. Pipeline evidence must match the MR source SHA, including a verified source parent for synthetic merge commits. Missing evidence remains unknown. Earlier job attempts stay visible; the latest attempt determines each target's result.
+
+The default history is the last 7 days plus all open MRs. The page polls every 30 seconds while visible; GitLab responses may be cached for 20 seconds and shipment metadata for five minutes. Discovery is bounded to 300 MRs per query, with truncation and source errors reported. One Refresh button remains busy through list and detail loading, briefly shows Updated on success, and offers Retry on partial failure while preserving the last snapshot.
+
+Acceptance: compare ACM and other product tenants against existing shipment MRs, preparation runs, GitLab parent/child jobs, approvals, and per-target results. Check a future tenant with a release pipeline, a tenant without one, a viewer denied tenant access, mixed-tenant MRs, unlinked failures, retries, stale source revisions, and GitLab outages. No release operations are performed by this page.
+
 ## Development
 
 The backend is in `backend/pipeline_ui`; install `backend/requirements.txt` and run `uvicorn pipeline_ui.app:app` from `backend`. The frontend is in `frontend`; run `npm ci` and `npm run build`. Browser requests need an OpenShift OAuth proxy in front of the backend.

@@ -3,7 +3,8 @@ export const runTabs = ['details', 'components', 'logs', 'events', 'parameters',
 
 export function parseHash(hash = window.location.hash) {
   const [path, search] = hash.replace(/^#\/?/, '').split('?');
-  const [kind, namespace, name] = path.split('/');
+  const [route, namespace, name] = path.split('/');
+  const kind = route === 'releases' ? 'release-status' : route;
   const params = new URLSearchParams(search);
   const filterNamespace = params.get('namespace') || '';
   if ((kind === 'pipeline' || kind === 'run') && namespace && name) {
@@ -14,12 +15,12 @@ export function parseHash(hash = window.location.hash) {
       tab: tabs.includes(params.get('tab')) ? params.get('tab') : 'details',
     };
   }
-  return { kind: ['runs', 'health', 'incidents'].includes(kind) ? kind : 'pipelines', filterNamespace };
+  return { kind: ['runs', 'health', 'release-status', 'incidents'].includes(kind) ? kind : 'pipelines', filterNamespace };
 }
 
 export function viewHref(view) {
   const params = new URLSearchParams();
-  let path = ['runs', 'health', 'incidents'].includes(view.kind) ? view.kind : 'pipelines';
+  let path = ['runs', 'health', 'release-status', 'incidents'].includes(view.kind) ? view.kind : 'pipelines';
   if (view.kind === 'pipeline' || view.kind === 'run') {
     path = `${view.kind}/${encodeURIComponent(view.namespace)}/${encodeURIComponent(view.name)}`;
     if (view.kind === 'run' && view.uid) params.set('uid', view.uid);
@@ -40,4 +41,8 @@ export function navigateRow(event, href, browser = window) {
   event.preventDefault();
   if (event.ctrlKey || event.metaKey || event.shiftKey || event.button === 1) browser.open(href, '_blank', 'noopener,noreferrer');
   else browser.location.hash = href;
+}
+
+export function hasReleaseStatus(pipelines, namespace = '') {
+  return pipelines.some((pipeline) => pipeline.name === 'release-from-fbc' && (!namespace || pipeline.namespace === namespace));
 }

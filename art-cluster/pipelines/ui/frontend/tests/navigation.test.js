@@ -1,9 +1,9 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { isPlainClick, navigateRow, parseHash, pipelineTabs, runTabs, viewHref } from '../src/navigation.js';
+import { hasReleaseStatus, isPlainClick, navigateRow, parseHash, pipelineTabs, runTabs, viewHref } from '../src/navigation.js';
 
 test('list routes preserve the tenant and accept existing URLs', () => {
-  for (const kind of ['pipelines', 'runs', 'health']) {
+  for (const kind of ['pipelines', 'runs', 'health', 'release-status']) {
     for (const filterNamespace of ['', 'art-acm-tenant']) {
       assert.deepEqual(parseHash(viewHref({ kind, filterNamespace })), { kind, filterNamespace });
     }
@@ -94,4 +94,13 @@ test('tab handlers intercept only ordinary primary clicks', () => {
   for (const overrides of [{ ctrlKey: true }, { metaKey: true }, { shiftKey: true }, { altKey: true }, { button: 1 }, { button: 2 }, { defaultPrevented: true }]) {
     assert.equal(isPlainClick(setupEvent(overrides).event), false);
   }
+});
+
+test('ReleaseStatus follows pipeline capability for existing and future tenants', () => {
+  const items = [{ name: 'release-from-fbc', namespace: 'new-product-tenant' }, { name: 'build-fbc', namespace: 'other-tenant' }];
+  assert.equal(hasReleaseStatus(items), true);
+  assert.equal(hasReleaseStatus(items, 'new-product-tenant'), true);
+  assert.equal(hasReleaseStatus(items, 'other-tenant'), false);
+  assert.equal(hasReleaseStatus([{ name: 'custom-release-from-fbc', namespace: 'other-tenant' }]), false);
+  assert.deepEqual(parseHash('#/releases?namespace=new-product-tenant'), { kind: 'release-status', filterNamespace: 'new-product-tenant' });
 });
