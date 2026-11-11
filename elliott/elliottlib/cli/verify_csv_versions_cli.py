@@ -23,6 +23,9 @@ STAGE_FBC_REPO = "quay.io/openshift-art/stage-fbc-fragments"
 # differs from the OCP version for certain releases.
 # Format: {package_name: {ocp_version: csv_version_prefix}}
 CSV_VERSION_OVERRIDES: dict[str, dict[str, str]] = {
+    # DPU builds are disabled, but CSV 4.21 remains in these catalogs pending removal.
+    # https://redhat.atlassian.net/browse/ART-25576
+    "dpu-operator": {"4.22": "4.21", "5.0": "4.21"},
     # Branches 4.12-4.17 transitioned to OLM catalog version 4.18
     # https://github.com/openshift/local-storage-operator
     "local-storage-operator": {f"4.{minor}": "4.18" for minor in range(12, 18)},
