@@ -15,11 +15,13 @@ from urllib.parse import urlparse
 import click
 import yaml as stdlib_yaml
 from artcommonlib import exectools
+from artcommonlib.assembly import assembly_image_pins
 from artcommonlib.build_visibility import is_nvr_embargoed
 from artcommonlib.constants import SHIPMENT_DATA_URL_TEMPLATE
 from artcommonlib.gitdata import SafeFormatter
 from artcommonlib.github_auth import build_git_auth_env, get_github_client_for_org
 from artcommonlib.gitlab import GitLabClient
+from artcommonlib.model import Model
 from artcommonlib.rpm_utils import parse_nvr
 from artcommonlib.util import new_roundtrip_yaml_handler
 from elliottlib.cli.konflux_release_cli import validate_snapshot_against_rpa
@@ -51,6 +53,8 @@ from pyartcd.fbc_util import (
 )
 from pyartcd.fbc_util import validate_fbc_related_images as _validate_fbc_related_images
 from pyartcd.git import GitRepository
+from pyartcd.lp_assembly import direct_release_assembly, persist_direct_assembly
+from pyartcd.lp_fbc import assembly_fbc_records
 from pyartcd.lp_shipment import (
     FbcRefreshRecord,
     ShipmentMRValidationError,
@@ -63,7 +67,6 @@ from pyartcd.lp_shipment import (
     resolve_layered_product_release_notes,
     resolve_shipment_release_plans,
     set_shipment_mr_draft,
-    update_shipment_mr_url,
     validate_fbc_refresh_provenance,
     validate_shipment_mr_for_operation,
     verify_shipment_mr_url,
@@ -148,6 +151,7 @@ class ReleaseFromFbcPipeline:
         force: bool = False,
         test_mode: bool = False,
         refresh_fbcs: bool = False,
+        unified_fbc: bool = False,
     ) -> None:
         """Initialize an FBC-based release pipeline.
 
@@ -168,6 +172,7 @@ class ReleaseFromFbcPipeline:
             force: Replace the configured layered-product shipment MR.
             test_mode: Keep the shipment MR draft and mark it as test-only.
             refresh_fbcs: Rebuild supplied FBCs from the latest production catalogs.
+            unified_fbc: Record FBCs in the assembly instead of shipping them individually.
         """
         self.logger = logging.getLogger(__name__)
         self.runtime = runtime
@@ -179,6 +184,11 @@ class ReleaseFromFbcPipeline:
         self.force = force
         self.test_mode = test_mode
         self.refresh_fbcs = refresh_fbcs
+        self.unified_fbc = unified_fbc
+        if unified_fbc and ocp_optional:
+            raise ValueError('--unified-fbc is only supported for layered-product releases')
+        self._releases_config: dict | None = None
+        self._assembly_definition: dict | None = None
         self.dry_run = self.runtime.dry_run
         self.ocp_optional = ocp_optional
         self._ignore_patch_version = False
@@ -280,35 +290,108 @@ class ReleaseFromFbcPipeline:
             The configured MR URL, or ``None`` when the assembly or pointer is
             absent.
         """
-        content = self.get_file_from_branch(self.group, "releases.yml")
+        data_path, data_gitref = self._build_data_source()
+        parsed = urlparse(data_path)
+        if parsed.scheme == 'file' or (not parsed.scheme and ':' not in parsed.path):
+            content = (Path(parsed.path) / 'releases.yml').read_bytes()
+        elif data_path == constants.OCP_BUILD_DATA_URL and not data_gitref:
+            content = self.get_file_from_branch(self.group, "releases.yml")
+        else:
+            content = self.get_file_from_branch(data_gitref or self.group, 'releases.yml', data_path=data_path)
         releases_config = yaml.load(content.decode()) or {}
+        self._releases_config = releases_config
         self._configured_shipment_mr_url = get_shipment_mr_url(releases_config, self.assembly)
         return self._configured_shipment_mr_url
 
     async def _update_layered_product_shipment_mr(self, mr_url: str) -> None:
-        """Persist a newly created or replacement shipment MR pointer.
+        """Persist the complete assembly and its new or reused shipment MR pointer.
 
         Args:
             mr_url: Shipment MR URL to store in ``releases.yml``.
 
         Raises:
-            RuntimeError: If the pointer changed concurrently.
+            RuntimeError: If release inputs or the pointer changed concurrently.
         """
         if self.dry_run:
-            self.logger.info("[DRY-RUN] Would store shipment MR in releases.yml: %s", mr_url)
+            self.logger.info("[DRY-RUN] Would store the complete assembly and shipment MR in releases.yml: %s", mr_url)
             return
         push_url = self.runtime.config.get("build_config", {}).get(
             "ocp_build_data_repo_push_url", constants.OCP_BUILD_DATA_URL
         )
         build_data_repo = GitRepository(self.working_dir / "ocp-build-data-push", dry_run=self.dry_run)
         await build_data_repo.setup(push_url)
-        await update_shipment_mr_url(
+        await persist_direct_assembly(
             build_data_repo,
             self.group,
             self.assembly,
+            self._assembly_definition,
+            self._releases_config,
             mr_url,
-            self._configured_shipment_mr_url,
-            create_as_stream=True,
+        )
+
+    async def _prepare_assembly(self, image_nvrs: List[str], fbc_snapshots: dict) -> List[str]:
+        """Generate local assembly YAML from the same validated inputs as the shipment.
+
+        Args:
+            image_nvrs: Product images and bundles selected for the image shipment.
+            fbc_snapshots: Final FBC NVRs mapped to their immutable snapshots.
+
+        Returns:
+            Effective pinned images plus selected bundles and external extras.
+
+        Raises:
+            ValueError: If inputs contain conflicting pins or incomplete FBC identities.
+        """
+        if self._releases_config is None:
+            self._load_layered_product_shipment_mr()
+        await self._load_component_doozer_keys()
+        pins = {}
+        for nvr in image_nvrs:
+            key = self._component_doozer_keys.get(parse_nvr(nvr)['name'])
+            # Generated bundles and genuine external dependencies have no image key.
+            if key is None:
+                continue
+            if key in pins and pins[key] != nvr:
+                raise ValueError(f'Conflicting assembly builds for {key}: {pins[key]} and {nvr}')
+            pins[key] = nvr
+        fbcs = {}
+        nvrs, pullspecs = [], []
+        for nvr, snapshot in fbc_snapshots.items():
+            target = extract_ocp_version_from_nvr(nvr)
+            if not target or snapshot is None or len(snapshot.spec.components) != 1:
+                raise ValueError(f'Cannot record complete FBC provenance for {nvr}')
+            pullspec = snapshot.spec.components[0].containerImage
+            fbcs.setdefault(target, []).append(pullspec)
+            nvrs.append(nvr)
+            pullspecs.append(pullspec)
+        source_fbcs = {
+            target: sorted(set(specs)) if len(set(specs)) > 1 else specs[0] for target, specs in sorted(fbcs.items())
+        }
+        self._assembly_definition = direct_release_assembly(self._releases_config, self.assembly, pins, source_fbcs)
+        releases = {
+            'releases': {
+                **self._releases_config.get('releases', {}),
+                self.assembly: {'assembly': self._assembly_definition},
+            }
+        }
+        effective_pins = list(assembly_image_pins(Model(releases), self.assembly).values())
+        if self.unified_fbc:
+            self._assembly_definition['group']['fbc_builds'] = assembly_fbc_records(
+                self.assembly, nvrs, pullspecs, effective_pins
+            )
+        else:
+            # Records from a previous unified run no longer describe this preparation.
+            self._assembly_definition['group'].pop('fbc_builds', None)
+        output = self.working_dir / 'assembly.yml'
+        yaml.dump({'releases': {self.assembly: {'assembly': self._assembly_definition}}}, output)
+        self.logger.info('Generated assembly YAML: %s', output)
+        return list(
+            dict.fromkeys(
+                [
+                    *effective_pins,
+                    *(nvr for nvr in image_nvrs if parse_nvr(nvr)['name'] not in self._component_doozer_keys),
+                ]
+            )
         )
 
     async def _verify_layered_product_shipment_mr(self) -> None:
@@ -1644,7 +1727,6 @@ class ReleaseFromFbcPipeline:
             self.logger.info(f"Adding {len(self.extra_image_nvrs)} extra image NVRs to {image_key} shipment")
             categorized_nvrs[image_key] = list(dict.fromkeys([*categorized_nvrs[image_key], *self.extra_image_nvrs]))
 
-        # Create snapshots for the primary image/extras builds
         image_snapshot = None
         if categorized_nvrs.get(image_key):
             image_snapshot = await self.create_snapshot(categorized_nvrs[image_key])
@@ -1653,6 +1735,15 @@ class ReleaseFromFbcPipeline:
         fbc_snapshots = {}
         for fbc_nvr in fbc_nvrs:
             fbc_snapshots[fbc_nvr] = await self.create_snapshot([fbc_nvr])
+
+        if not self.ocp_optional:
+            effective_images = await self._prepare_assembly(categorized_nvrs.get(image_key, []), fbc_snapshots)
+            original_images = categorized_nvrs.get(image_key, [])
+            categorized_nvrs[image_key] = effective_images
+            if any(is_nvr_embargoed(nvr) for nvr in set(effective_images) - set(original_images)):
+                raise RuntimeError('Refusing to create a release referencing embargoed inherited assembly images')
+            if set(effective_images) != set(original_images):
+                image_snapshot = await self.create_snapshot(effective_images) if effective_images else None
 
         # Generate release notes from JIRA bugs if provided
         release_notes = None
@@ -1687,7 +1778,7 @@ class ReleaseFromFbcPipeline:
 
         # Create separate FBC shipment for each FBC build
         fbc_counter = 1
-        for fbc_nvr, fbc_snapshot in fbc_snapshots.items():
+        for fbc_nvr, fbc_snapshot in [] if self.unified_fbc else fbc_snapshots.items():
             if fbc_snapshot:
                 shipment_config = self.create_shipment_config('fbc', fbc_snapshot)
                 shipment_kind = f"fbc{fbc_counter:02d}"
@@ -1761,6 +1852,7 @@ class ReleaseFromFbcPipeline:
                     )
                     mr_url = self._configured_shipment_mr_url
                     self.shipment_mr_url = mr_url
+                    await self._update_layered_product_shipment_mr(mr_url)
                 else:
                     if force_previous_mr:
                         await self._verify_layered_product_shipment_mr()
@@ -1933,6 +2025,12 @@ class ReleaseFromFbcPipeline:
     'When provided, the ticket is referenced in the shipment MR description, and a web link '
     'to the MR is added back to the JIRA ticket.',
 )
+@click.option(
+    '--unified-fbc',
+    is_flag=True,
+    default=False,
+    help='Record validated LP FBCs in the assembly for unified catalogs; omit individual FBC shipments.',
+)
 @pass_runtime
 @click_coroutine
 async def release_from_fbc(
@@ -1945,6 +2043,7 @@ async def release_from_fbc(
     force: bool,
     test_mode: bool,
     refresh_fbcs: bool,
+    unified_fbc: bool,
     shipment_data_repo_url: Optional[str],
     shipment_path: Optional[str],
     jira_bugs: Optional[str],
@@ -2001,6 +2100,8 @@ async def release_from_fbc(
     """
     if force and not create_mr:
         raise click.ClickException("--force requires --create-mr")
+    if unified_fbc and ocp_optional:
+        raise click.ClickException('--unified-fbc is only supported for layered-product releases')
     if test_mode and not create_mr:
         raise click.ClickException("--test requires --create-mr")
     if test_mode and force:
@@ -2054,6 +2155,7 @@ async def release_from_fbc(
         force=force,
         test_mode=test_mode,
         refresh_fbcs=refresh_fbcs,
+        unified_fbc=unified_fbc,
     )
 
     if create_mr and not ocp_optional and not runtime.dry_run:

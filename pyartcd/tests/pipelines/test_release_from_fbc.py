@@ -45,6 +45,16 @@ def _make_snapshot(app="oadp-1-4"):
 
 
 class TestReleaseFromFbcPipeline(unittest.TestCase):
+    def setUp(self):
+        self.enterContext(
+            patch.object(
+                ReleaseFromFbcPipeline,
+                '_prepare_assembly',
+                new_callable=AsyncMock,
+                side_effect=lambda images, fbcs: images,
+            )
+        )
+
     def _make_pipeline(self, jira_bugs=None, **overrides):
         runtime = MagicMock()
         runtime.dry_run = False
@@ -1264,6 +1274,16 @@ class TestCategorizeNvrs(unittest.TestCase):
 
 
 class TestExtraImageNvrsValidation(unittest.TestCase):
+    def setUp(self):
+        self.enterContext(
+            patch.object(
+                ReleaseFromFbcPipeline,
+                '_prepare_assembly',
+                new_callable=AsyncMock,
+                side_effect=lambda images, fbcs: images,
+            )
+        )
+
     def _make_pipeline(self, extra_image_nvrs, fbc_pullspecs=None):
         runtime = MagicMock()
         runtime.config = {}
@@ -2178,6 +2198,14 @@ class TestOcpOptionalMode(unittest.TestCase):
     """Tests for OCP optional-operator mode (--ocp-optional)."""
 
     def setUp(self):
+        self.enterContext(
+            patch.object(
+                ReleaseFromFbcPipeline,
+                '_prepare_assembly',
+                new_callable=AsyncMock,
+                side_effect=lambda images, fbcs: images,
+            )
+        )
         # These tests isolate MR/build orchestration; validator integration is covered separately.
         self.enterContext(
             patch("pyartcd.pipelines.release_from_fbc.validate_snapshot_against_rpa", new_callable=AsyncMock)
