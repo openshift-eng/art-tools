@@ -18,16 +18,8 @@ from pydantic import AnyHttpUrl, BaseModel, Field, ValidationError, field_valida
 
 from .cluster import Gateway, UpstreamError
 from .components import component_details
+from .gitlab_read import GitLabReader, GitLabReadError, service_token
 from .health import build_health, health_run
-from .gitlab_read import GitLabReadError, GitLabReader, service_token
-from .releases import (
-    group_owners,
-    release_catalog,
-    attach_preparation,
-    discover_releases,
-    preparation_runs,
-    release_detail,
-)
 from .messages import lp_rebase_warning, status_message
 from .rebuild import (
     REBUILT_FROM_ANNOTATION,
@@ -36,6 +28,13 @@ from .rebuild import (
     build_run,
     parameter_form,
     pipeline_name,
+)
+from .releases import (
+    attach_preparation,
+    discover_releases,
+    group_owners,
+    release_catalog,
+    release_detail,
 )
 
 NAMESPACES = tuple(
@@ -294,7 +293,9 @@ async def pipeline_health(request: Request, response: Response, namespace: str |
 
 
 @app.get("/api/releases")
-async def releases(request: Request, response: Response, namespace: str | None = None, days: int = Query(7, ge=1, le=90)):
+async def releases(
+    request: Request, response: Response, namespace: str | None = None, days: int = Query(7, ge=1, le=90)
+):
     response.headers["Cache-Control"] = "no-store"
     errors = []
     async with Gateway(user_token(request)) as gateway:
@@ -313,13 +314,29 @@ async def releases(request: Request, response: Response, namespace: str | None =
             errors.append("GitLab access is not configured; preparation runs are available")
     cutoff = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
     items = attach_preparation(items, runs)
-    items = [item for item in items if item.get("mr") or (item.get("updated") or "") >= cutoff or item["preparation"]["status"] == "Running"]
-    return {"items": items, "errors": errors, "gitlabConfigured": bool(token), "supportedNamespaces": [tenant["namespace"] for tenant in catalog],
-            "observedAt": datetime.now(timezone.utc).isoformat(), "days": days}
+    items = [
+        item
+        for item in items
+        if item.get("mr") or (item.get("updated") or "") >= cutoff or item["preparation"]["status"] == "Running"
+    ]
+    return {
+        "items": items,
+        "errors": errors,
+        "gitlabConfigured": bool(token),
+        "supportedNamespaces": [tenant["namespace"] for tenant in catalog],
+        "observedAt": datetime.now(timezone.utc).isoformat(),
+        "days": days,
+    }
 
 
 @app.get("/api/releases/mrs/{iid}")
-async def shipment_release_detail(request: Request, response: Response, iid: int, sha: str = Query(min_length=1, max_length=64), namespace: str | None = None):
+async def shipment_release_detail(
+    request: Request,
+    response: Response,
+    iid: int,
+    sha: str = Query(min_length=1, max_length=64),
+    namespace: str | None = None,
+):
     response.headers["Cache-Control"] = "no-store"
     errors = []
     async with Gateway(user_token(request)) as gateway:

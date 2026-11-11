@@ -40,8 +40,12 @@ class GitLabReader:
         if os.getenv("RELEASES_GITLAB_CA_FILE"):
             context.load_verify_locations(os.environ["RELEASES_GITLAB_CA_FILE"])
         self.client = httpx.AsyncClient(
-            base_url=f"{self.base}/api/v4/", headers={"PRIVATE-TOKEN": token},
-            verify=context, timeout=25, follow_redirects=False, transport=transport,
+            base_url=f"{self.base}/api/v4/",
+            headers={"PRIVATE-TOKEN": token},
+            verify=context,
+            timeout=25,
+            follow_redirects=False,
+            transport=transport,
         )
         self.cache_key = (self.base, self.project, hashlib.sha256(token.encode()).hexdigest())
 
