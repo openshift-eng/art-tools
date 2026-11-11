@@ -265,3 +265,86 @@ def test_full_cli_resolves_templated_members_before_schema_lookup(tmp_path, pare
     else:
         assert result.returncode == 1, result.stdout + result.stderr
         assert any(expected_error in error for error in errors)
+
+
+def test_ci_reports_private_source_and_component_mapping_failures(tmp_path, mocker):
+    """The CI entry point passes credentials and reports both kinds of regression."""
+    repository(tmp_path)
+    image = {
+        'name': 'product/operator',
+        'from': {},
+        'owners': ['owner@redhat.com'],
+        'delivery': {'delivery_repo_names': ['product/operator'], 'bundle_delivery_repo_name': 'product/bundle'},
+        'content': {
+            'source': {
+                'git': {
+                    'url': 'git@github.com:openshift-priv/operator.git',
+                    'web': 'https://github.com/team/operator',
+                    'branch': {'target': 'main'},
+                }
+            }
+        },
+    }
+    (tmp_path / 'images/operator.yml').write_text(json.dumps(image))
+    rpa_root = tmp_path / 'rpas'
+    rpa_root.mkdir()
+    for environment in ('stage', 'prod'):
+        rpa = {
+            'kind': 'ReleasePlanAdmission',
+            'spec': {
+                'applications': ['product-1-0'],
+                'data': {
+                    'intention': environment,
+                    'mapping': {
+                        'components': [
+                            {
+                                'name': 'product-1-0-operator',
+                                'repositories': [{'url': 'registry.redhat.io/product/bundle'}],
+                            },
+                            {
+                                'name': 'product-1-0-operator-bundle',
+                                'repositories': [{'url': 'registry.redhat.io/product/operator'}],
+                            },
+                        ]
+                    },
+                },
+            },
+        }
+        (rpa_root / f'{environment}.yaml').write_text(json.dumps(rpa))
+    client_class = mocker.patch('validator.checks.GitHubClient')
+    client = client_class.return_value
+    client.exists.side_effect = lambda repo, path, ref, **kwargs: repo != 'openshift-priv/operator'
+    token_file = tmp_path / 'token'
+    token_file.write_text('test-read-only-token\n')
+    report = tmp_path / 'report.json'
+    assert (
+        ci.main(
+            [
+                '--repo',
+                str(tmp_path),
+                '--rpa-root',
+                str(rpa_root),
+                '--application',
+                'product-1-0',
+                '--github-token-file',
+                str(token_file),
+                '--report',
+                str(report),
+            ]
+        )
+        == 1
+    )
+    client_class.assert_called_once_with(token='test-read-only-token')
+    client.exists.assert_any_call('team/operator', 'Dockerfile', 'main', kind='file')
+    errors = json.loads(report.read_text())['errors']
+    assert any('openshift-priv/operator: no configured branch' in error for error in errors)
+    for environment in ('stage', 'prod'):
+        assert any(
+            f'{environment} RPA component product-1-0-operator missing delivery repository product/operator' in e
+            for e in errors
+        )
+        assert any(
+            f'{environment} RPA component product-1-0-operator-bundle missing delivery repository product/bundle' in e
+            for e in errors
+        )
+    assert all('test-read-only-token' not in error for error in errors)

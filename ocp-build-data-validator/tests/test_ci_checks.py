@@ -107,8 +107,8 @@ def test_reference_validation_reports_unknown_streams_and_missing_members():
     assert any('absent' in error for error in checks.validate_references({'a': {'from': {'member': 'absent'}}}, {}))
 
 
-def test_sources_check_public_upstream_with_fallback_and_default_dockerfile():
-    """Mapped sources must not query a private mirror; default Dockerfile and fallback still apply."""
+def test_sources_check_both_repositories_with_independent_fallback_and_default_dockerfile():
+    """A public fallback must not replace the private target branch or its Dockerfile check."""
     client = Mock()
     client.exists.side_effect = lambda repo, path, ref, **kwargs: (
         not (repo == 'openshift/operator' and ref == 'release-4.22')
@@ -123,7 +123,8 @@ def test_sources_check_public_upstream_with_fallback_and_default_dockerfile():
     }
     assert checks.validate_sources(data, group, client) == []
     calls = [call.args for call in client.exists.call_args_list]
-    assert all(repo == 'openshift/operator' for repo, _, _ in calls)
+    assert ('openshift-priv/operator', None, 'release-4.22') in calls
+    assert ('openshift-priv/operator', 'build/Dockerfile', 'release-4.22') in calls
     assert ('openshift/operator', 'build/Dockerfile', 'main') in calls
 
 
@@ -139,7 +140,10 @@ def test_public_mapping_honors_longest_prefix_and_public_branch():
             },
         ]
     }
-    assert checks.source_repositories(image(), group) == [('team/upstream', 'stable')]
+    assert checks.source_repositories(image(), group) == [
+        ('openshift-priv/operator', None),
+        ('team/upstream', 'stable'),
+    ]
 
 
 def test_missing_dockerfile_is_reported_for_public_source():
@@ -249,8 +253,8 @@ def test_stream_aliases_are_valid_build_references():
     assert checks.validate_references(images, {'golang': {'aliases': ['golang-1.26']}}) == []
 
 
-def test_rpa_checks_repository_and_component_presence_independently(tmp_path):
-    """The original OCP check accepts repos listed under another component."""
+def test_rpa_rejects_delivery_repository_under_another_component(tmp_path):
+    """Presence elsewhere in an RPA must not satisfy the expected component mapping."""
     from ruamel.yaml import YAML
 
     components = [
@@ -259,7 +263,9 @@ def test_rpa_checks_repository_and_component_presence_independently(tmp_path):
     ]
     for environment in ('staging', 'production'):
         YAML().dump(admission(environment, components), tmp_path / f'{environment}.yaml')
-    assert checks.validate_admissions({'operator': image()}, tmp_path, 'product-1-0') == []
+    errors = checks.validate_admissions({'operator': image()}, tmp_path, 'product-1-0')
+    assert len(errors) == 2
+    assert all('component product-1-0-operator missing delivery repository product/operator' in e for e in errors)
 
 
 def test_malformed_admission_components_are_reported(tmp_path):
@@ -312,8 +318,8 @@ def test_stream_aliases_expand_group_variables():
     )
 
 
-def test_bundle_repository_does_not_require_a_separate_bundle_component(tmp_path):
-    """The original OCP check requires bundle repo presence, not a bundle component."""
+def test_bundle_repository_requires_its_own_bundle_component(tmp_path):
+    """A bundle repository under the operator component must not satisfy the bundle mapping."""
     from ruamel.yaml import YAML
 
     data = image()
@@ -329,7 +335,9 @@ def test_bundle_repository_does_not_require_a_separate_bundle_component(tmp_path
     ]
     for environment in ('staging', 'production'):
         YAML().dump(admission(environment, components), tmp_path / f'{environment}.yaml')
-    assert checks.validate_admissions({'operator': data}, tmp_path, 'product-1-0') == []
+    errors = checks.validate_admissions({'operator': data}, tmp_path, 'product-1-0')
+    assert any('stage RPA missing component product-1-0-operator-bundle' in e for e in errors)
+    assert any('prod RPA missing component product-1-0-operator-bundle' in e for e in errors)
 
 
 @pytest.mark.parametrize('exception', [{'mode': 'disabled'}, {'for_release': False}])
@@ -348,12 +356,16 @@ def test_ocp_rpa_presence_contract(tmp_path, missing):
     data = image()
     data['delivery']['bundle_delivery_repo_name'] = 'product/operator-bundle'
     for environment in ('stage', 'prod'):
-        repos = [{'url': 'registry.redhat.io/product/operator'}, {'url': 'quay.io/product/operator-bundle'}]
+        repos = [{'url': 'registry.redhat.io/product/operator'}]
+        bundle_repos = [{'url': 'quay.io/product/operator-bundle'}]
         if missing == f'{environment}-repo':
             repos.pop(0)
         if missing == 'bundle':
-            repos.pop()
-        components = [{'name': 'wrong' if missing == 'component' else 'ose-4-22-my-operator', 'repositories': repos}]
+            bundle_repos.clear()
+        components = [
+            {'name': 'wrong' if missing == 'component' else 'ose-4-22-my-operator', 'repositories': repos},
+            {'name': 'ose-4-22-my-operator-bundle', 'repositories': bundle_repos},
+        ]
         rpa = admission(environment, components)
         rpa['spec']['applications'] = ['openshift-4-22']
         rpa['spec']['data'].pop('intention')
@@ -426,14 +438,18 @@ def test_relative_manifests_directory_is_valid():
     client.exists.assert_any_call('openshift-priv/operator', 'src/bundle/manifests', 'main', kind='dir')
 
 
-def test_pull_url_override_checks_the_actual_fork_source():
-    """Fork builds validate the pull repository, matching Doozer's source resolver."""
+def test_pull_url_override_also_checks_the_actual_fork_source():
+    """A fork does not exempt either declared source repository from validation."""
     data = image()
     data['content']['source']['git']['url_pull'] = 'https://github.com/team/operator-fork.git'
     group = {
         'public_upstreams': [{'private': 'https://github.com/openshift-priv', 'public': 'https://github.com/openshift'}]
     }
-    assert checks.source_repositories(data, group) == [('team/operator-fork', None)]
+    assert checks.source_repositories(data, group) == [
+        ('openshift-priv/operator', None),
+        ('openshift/operator', None),
+        ('team/operator-fork', None),
+    ]
 
 
 def test_unsafe_pull_url_is_rejected_before_network_access():
@@ -514,12 +530,12 @@ def test_anonymous_missing_or_inaccessible_source_is_not_silently_skipped():
         ('https://github.com/openshift-priv/operator.git', 'https://github.com/openshift', 'openshift/operator'),
     ],
 )
-def test_public_upstream_replaces_private_source(original, public, expected):
-    """The public mapping is the source to validate, not an additional private-mirror check."""
+def test_public_upstream_is_checked_alongside_private_source(original, public, expected):
+    """Public mappings add a source check without replacing the private midstream."""
     data = image()
     data['content']['source']['git']['url'] = original
     group = {'public_upstreams': [{'private': 'https://github.com/openshift-priv', 'public': public}]}
-    assert checks.source_repositories(data, group) == [(expected, None)]
+    assert checks.source_repositories(data, group) == [(checks.repository_name(original), None), (expected, None)]
 
 
 def test_unmapped_source_is_still_checked():
@@ -538,7 +554,10 @@ def test_mapping_branch_override_applies_even_when_repository_name_is_unchanged(
             }
         ]
     }
-    assert checks.source_repositories(image(), group) == [('openshift-priv/operator', 'public-release')]
+    assert checks.source_repositories(image(), group) == [
+        ('openshift-priv/operator', None),
+        ('openshift-priv/operator', 'public-release'),
+    ]
 
 
 @pytest.mark.parametrize(
@@ -561,3 +580,96 @@ def test_image_reference_undefined_variable_is_a_validation_error(field):
     """Undefined image-reference variables must be reported locally without crashing."""
     errors = checks.validate_references({'operator': {'from': {field: 'base-{MISSING}'}}}, {}, {})
     assert any('operator' in error and 'undefined group variable MISSING' in error for error in errors)
+
+
+@pytest.mark.parametrize('mapping', [False, True])
+def test_explicit_web_selects_public_source_instead_of_inferred_repository(mapping):
+    data = image()
+    data['content']['source']['git']['web'] = 'https://github.com/team/actual-upstream'
+    group = (
+        {
+            'public_upstreams': [
+                {
+                    'private': 'https://github.com/openshift-priv',
+                    'public': 'https://github.com/openshift',
+                    'public_branch': 'stable',
+                }
+            ]
+        }
+        if mapping
+        else {}
+    )
+    assert checks.source_repositories(data, group) == [
+        ('openshift-priv/operator', None),
+        ('team/actual-upstream', 'stable' if mapping else None),
+    ]
+
+
+@pytest.mark.parametrize('missing_repository', ['openshift-priv/operator', 'team/upstream'])
+@pytest.mark.parametrize('missing_path', [None, 'src/Containerfile', 'src/manifests'])
+def test_either_declared_source_can_fail_branch_or_file_validation(missing_repository, missing_path):
+    data = image()
+    data['content']['source'].update(path='src', dockerfile='Containerfile')
+    data['update-csv'] = {'manifests-dir': 'manifests'}
+    data['content']['source']['git'].update(web='https://github.com/team/upstream', branch={'target': 'main'})
+    client = Mock()
+    client.exists.side_effect = lambda repo, path, ref, **kwargs: (repo, path) != (missing_repository, missing_path)
+    errors = checks.validate_sources(data, {}, client)
+    assert len(errors) == 1
+    assert missing_repository in errors[0]
+    if missing_path:
+        assert missing_path in errors[0]
+    assert {call.args[0] for call in client.exists.call_args_list} == {'openshift-priv/operator', 'team/upstream'}
+
+
+@pytest.mark.parametrize('web', ['https://other-host/team/repo', 'https://github.com/team/..'])
+def test_unsafe_web_url_is_rejected_before_network_access(web):
+    data = image()
+    data['content']['source']['git']['web'] = web
+    client = Mock()
+    errors = checks.validate_sources(data, {'vars': {'MAJOR': 4, 'MINOR': 22}}, client)
+    assert any('GitHub URL' in error for error in errors)
+    client.exists.assert_not_called()
+
+
+def test_identical_url_and_web_do_not_duplicate_source_checks():
+    data = image()
+    data['content']['source']['git']['web'] = 'https://github.com/openshift-priv/operator'
+    assert checks.source_repositories(data, {}) == [('openshift-priv/operator', None)]
+
+
+def test_private_access_failure_does_not_skip_public_source_checks():
+    data = image()
+    data['content']['source']['git'].update(web='https://github.com/team/upstream', branch={'target': 'main'})
+    client = Mock()
+    client.exists.side_effect = [checks.RemoteError('private source access denied'), True, True]
+    assert checks.validate_sources(data, {}, client) == ['private source access denied']
+    client.exists.assert_any_call('team/upstream', 'Dockerfile', 'main', kind='file')
+
+
+@pytest.mark.parametrize('overrides', [False, True])
+@pytest.mark.parametrize('swapped', [False, True])
+def test_rpa_binds_image_and_bundle_repositories_to_their_components(tmp_path, overrides, swapped):
+    from ruamel.yaml import YAML
+
+    data = image()
+    data['delivery']['bundle_delivery_repo_name'] = 'product/operator-bundle'
+    image_component, bundle_component = 'product-1-0-operator', 'product-1-0-operator-bundle'
+    if overrides:
+        image_component, bundle_component = 'custom-image', 'custom-bundle'
+        data['konflux'] = {'component': {'name_override': image_component, 'bundle_name_override': bundle_component}}
+    repositories = ['product/operator', 'product/operator-bundle']
+    if swapped:
+        repositories.reverse()
+    components = [
+        {'name': name, 'repositories': [{'url': f'registry.redhat.io/{repo}'}]}
+        for name, repo in zip((image_component, bundle_component), repositories)
+    ]
+    for environment in ('staging', 'production'):
+        YAML().dump(admission(environment, components), tmp_path / f'{environment}.yaml')
+    errors = checks.validate_admissions({'operator': data}, tmp_path, 'product-1-0')
+    if swapped:
+        assert len(errors) == 4
+        assert all('missing delivery repository' in error for error in errors)
+    else:
+        assert errors == []
