@@ -297,8 +297,8 @@ class PromotePipeline:
         ]:
             client_type = "ocp-dev-preview"
 
-        if not self.skip_signing and self.signing_transport == "direct":
-            get_direct_signing_credentials(dry_run=self.runtime.dry_run)
+        if not self.skip_signing and self.signing_transport == "direct" and not self.runtime.dry_run:
+            get_direct_signing_credentials()
 
         release_name = util.get_release_name_for_assembly(self.group, releases_config, self.assembly)
         # Ensure release name is valid
@@ -939,6 +939,9 @@ class PromotePipeline:
         self, release_name: str, client_type: str, release_infos: Dict, message_digests: List[str]
     ):
         """Signs artifacts and publishes signature files to mirror"""
+        if self.signing_transport == "direct" and self.runtime.dry_run:
+            self._logger.info("[DRY RUN] Skipping direct signing")
+            return
         if not self.signing_env:
             raise ValueError("--signing-env is missing")
         cert_file = os.environ.get("SIGNING_CERT")

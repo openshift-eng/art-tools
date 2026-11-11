@@ -86,7 +86,7 @@ class SyncRhcosPipeline:
         self.staging_dir = Path(runtime.working_dir) / f"staging-{version}-{arch}-{build_id}{stream_suffix}"
 
     async def run(self):
-        if self.signing_transport == "direct":
+        if self.signing_transport == "direct" and not self.runtime.dry_run:
             get_direct_signing_credentials()
 
         self.logger.info(
@@ -249,6 +249,9 @@ class SyncRhcosPipeline:
 
     async def _sign_sha256sum(self):
         """Sign sha256sum.txt via the configured transport and write sha256sum.txt.gpg."""
+        if self.signing_transport == "direct" and self.runtime.dry_run:
+            self.logger.info("[DRY RUN] Skipping direct sha256sum.txt signing")
+            return
         cert_file = os.environ.get("SIGNING_CERT")
         key_file = os.environ.get("SIGNING_KEY")
         if self.signing_transport == "umb" and (not cert_file or not key_file):

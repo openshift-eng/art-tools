@@ -242,15 +242,12 @@ class Signatory(Protocol):
     ) -> dict[str, str]: ...
 
 
-def get_direct_signing_credentials(dry_run: bool = False) -> tuple[str, str] | None:
+def get_direct_signing_credentials() -> tuple[str, str]:
     """
-    Loads direct signing credentials and applies the missing-credential policy.
+    Loads direct signing credentials or raises when either credential is missing.
 
-    Args:
-        dry_run: If True, log and return None when credentials are missing.
     Return Value(s):
-        A tuple containing the keytab file and Kerberos principal, or None when
-        credentials are missing during a dry run.
+        A tuple containing the keytab file and Kerberos principal.
     """
     keytab_file = os.environ.get("DIRECT_SIGNING_KEYTAB")
     principal = os.environ.get("DIRECT_SIGNING_PRINCIPAL")
@@ -264,9 +261,6 @@ def get_direct_signing_credentials(dry_run: bool = False) -> tuple[str, str] | N
             if not value
         ]
         message = f"Direct signing requires: {', '.join(missing)}"
-        if dry_run:
-            _LOGGER.warning(message)
-            return None
         raise ValueError(message)
 
     return keytab_file, principal
@@ -340,8 +334,6 @@ class DirectSignatory:
             sig_keyname: Signing key name passed to the direct client.
         """
         credentials = get_direct_signing_credentials()
-        if credentials is None:
-            raise ValueError("Direct signing credentials are unavailable")
         keytab_file, principal = credentials
 
         command = os.environ.get("DIRECT_SIGNING_CLIENT_COMMAND")
