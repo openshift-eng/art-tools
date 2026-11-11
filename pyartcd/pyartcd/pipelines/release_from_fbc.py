@@ -385,6 +385,8 @@ class ReleaseFromFbcPipeline:
         output = self.working_dir / 'assembly.yml'
         yaml.dump({'releases': {self.assembly: {'assembly': self._assembly_definition}}}, output)
         self.logger.info('Generated assembly YAML: %s', output)
+        if self.test_mode or self.dry_run:
+            self.logger.info('Generated assembly YAML (not published to ocp-build-data):\n%s', output.read_text())
         return list(
             dict.fromkeys(
                 [
