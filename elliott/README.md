@@ -390,14 +390,13 @@ shipment:
       defaults:
         tags:
           - "v{{ assembly }}"
-          - "v{{ assembly }}-{{ release_timestamp }}"
+          - "v{{ labels.version }}-{{ incrementer }}"
 ```
 
 Elliott replaces `{{ assembly }}` with `shipment.metadata.assembly` when creating
-the Konflux Release. Konflux expands its own variables, such as
-`{{ release_timestamp }}`, `{{ incrementer }}`, and `{{ labels.version }}`, during
-release. This example publishes `v3.18.3` and `v3.18.3-<release_timestamp>` in both
-stage and production, even if the selected image's version label is `3.18.0`.
+the Konflux Release. Konflux expands `{{ labels.version }}` and `{{ incrementer }}`
+during release. This example publishes `v3.18.3` and `v3.18.0-<incrementer>` in both
+stage and production when the selected image's version label is `3.18.0`.
 Image labels and digests are unchanged.
 
 Konflux combines and deduplicates these tags with tags defined in the ReleasePlan
@@ -407,21 +406,20 @@ Destination repositories remain configured in the RPA. See Konflux's
 [data merging implementation](https://github.com/konflux-ci/release-service-utils/blob/main/src/tasks/managed/collect_data/collect_data.py).
 
 The mapping is optional: shipments without it retain their existing behavior.
-`prepare-release-lp` and `release-from-fbc` automatically include the two assembly
-tag templates shown above in generated image/advisory shipments only when the
-effective group configuration has `version: auto`. This includes
-`release-from-fbc` extras shipments. Groups with explicit versions retain their
-existing tags. Non-OpenShift shipments can carry these tags without release
-notes. `prepare-release-konflux` and `elliott shipment init` do not populate this
-mapping automatically.
+`prepare-release-lp` and `release-from-fbc` automatically include the two tag
+templates shown above in layered-product image/advisory shipments regardless of
+the group version. This includes `release-from-fbc` extras shipments. FBC and OCP
+optional shipments do not receive these tags. Non-OpenShift shipments can carry
+these tags without release notes. `prepare-release-konflux` and
+`elliott shipment init` do not populate this mapping automatically.
 
-When a shipment uses `{{ assembly }}`, release validation rejects tag templates
-that also use `{{ labels.version }}`. Validation checks shipment defaults and
-both stage and production ReleasePlans and RPAs, including mapping defaults and
-tags on the shipment's mapped components and repositories. Remove those
+When a shipment uses `{{ assembly }}`, release validation allows the fixed
+`v{{ labels.version }}-{{ incrementer }}` tag alongside it. Other tag templates
+using `{{ labels.version }}` are rejected. Validation checks shipment defaults
+and both stage and production ReleasePlans and RPAs, including mapping defaults
+and tags on the shipment's mapped components and repositories. Remove conflicting
 image-version templates from the indicated shipment, ReleasePlan, or RPA mapping
-before using assembly-based shipment tags; otherwise Konflux would publish both
-versions.
+before using assembly-based shipment tags.
 
 Assembly-based tags require a named assembly; `stream` is rejected. Tags must
 follow container tag syntax (letters, digits, underscores, periods, and hyphens,

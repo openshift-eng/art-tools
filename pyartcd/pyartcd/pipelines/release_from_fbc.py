@@ -977,7 +977,7 @@ class ReleaseFromFbcPipeline:
             mapping = None
             if not self.ocp_optional:
                 mapping = Mapping(
-                    defaults=MappingDefaults(tags=['v{{ assembly }}', 'v{{ assembly }}-{{ release_timestamp }}'])
+                    defaults=MappingDefaults(tags=['v{{ assembly }}', 'v{{ labels.version }}-{{ incrementer }}'])
                 )
             if release_notes or mapping:
                 data = Data(releaseNotes=release_notes, mapping=mapping)
