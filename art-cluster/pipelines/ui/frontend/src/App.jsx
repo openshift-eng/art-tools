@@ -2,10 +2,11 @@ import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useSta
 import { Alert, Button, Label, Spinner, Title } from '@patternfly/react-core';
 import { AuthenticationError, createApi } from './api';
 import PipelineHealth from './PipelineHealth';
+import ReleaseStatus from './ReleaseStatus';
 import Components from './Components';
 import Incidents from './Incidents';
 import IncidentBanner from './IncidentBanner';
-import { isPlainClick, navigateRow, parseHash, pipelineTabs, runTabs, viewHref } from './navigation';
+import { isPlainClick, navigateRow, hasReleaseStatus, parseHash, pipelineTabs, runTabs, viewHref } from './navigation';
 
 const api = createApi();
 const { request } = api;
@@ -136,6 +137,7 @@ function ThemeIcon({ theme }) {
 function App() {
   const [view, setView] = useState(parseHash);
   const [namespaces, setNamespaces] = useState([]);
+  const [releaseCapability, setReleaseCapability] = useState(null);
   const namespace = view.filterNamespace;
   const [session, setSession] = useState(null);
   const [error, setError] = useState('');
@@ -143,6 +145,24 @@ function App() {
   const [theme, setTheme] = useState(() => document.documentElement.dataset.theme || 'light');
   const [incidentFeed, setIncidentFeed] = useState({ incidents: [], canManage: false, error: '' });
   const activeIncidents = incidentFeed.incidents.filter((incident) => !['resolved', 'deleted'].includes(incident.status));
+  const showReleaseStatus = releaseCapability?.namespace === namespace && releaseCapability.enabled;
+  useEffect(() => {
+    let active = true;
+    const controller = new AbortController();
+    const check = async () => {
+      if (document.hidden) return;
+      try {
+        const data = await request(`/api/pipelines?q=release-from-fbc${namespace ? `&namespace=${encodeURIComponent(namespace)}` : ''}`, { signal: controller.signal });
+        if (active) setReleaseCapability({ namespace, enabled: hasReleaseStatus(data.items, namespace) });
+      } catch (cause) {
+        if (active) setReleaseCapability({ namespace, enabled: false, error: cause.message });
+      }
+    };
+    check();
+    const timer = window.setInterval(check, 60000);
+    return () => { active = false; controller.abort(); window.clearInterval(timer); };
+  }, [namespace]);
+
 
   useEffect(() => {
     let active = true;
@@ -180,6 +200,7 @@ function App() {
         <a className={view.kind === 'pipelines' || view.kind === 'pipeline' ? 'nav active' : 'nav'} href={viewHref({ kind: 'pipelines', filterNamespace: namespace })}>Pipelines</a>
         <a className={view.kind === 'runs' || view.kind === 'run' ? 'nav active' : 'nav'} href={viewHref({ kind: 'runs', filterNamespace: namespace })}>PipelineRuns</a>
         <a className={view.kind === 'health' ? 'nav active' : 'nav'} href={viewHref({ kind: 'health', filterNamespace: namespace })}>PipelineHealth</a>
+        {showReleaseStatus && <a className={view.kind === 'release-status' ? 'nav active' : 'nav'} href={viewHref({ kind: 'release-status', filterNamespace: namespace })}>ReleaseStatus</a>}
         <a className={view.kind === 'incidents' ? 'nav active' : 'nav'} href={viewHref({ kind: 'incidents', filterNamespace: namespace })}>Incidents{activeIncidents.length > 0 && <Label color="orange" className="incident-count">{activeIncidents.length}</Label>}</a>
       </nav>
       <div className="topbar-right">
@@ -204,6 +225,7 @@ function App() {
         {view.kind === 'pipelines' && <Pipelines namespace={namespace} />}
         {view.kind === 'runs' && <Runs namespace={namespace} />}
         {view.kind === 'health' && <PipelineHealth namespace={namespace} request={request} />}
+        {view.kind === 'release-status' && (showReleaseStatus ? <ReleaseStatus namespace={namespace} request={request} /> : <div className="empty">{releaseCapability?.namespace !== namespace ? 'Checking release pipeline availability…' : releaseCapability.error || 'ReleaseStatus is available for tenants with a release-from-fbc pipeline.'}</div>)}
         {view.kind === 'incidents' && <Incidents
           incidents={incidentFeed.incidents}
           canManage={incidentFeed.canManage}
