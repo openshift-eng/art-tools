@@ -382,15 +382,21 @@ class DirectSignatory:
             self._ccache_name,
             self.principal,
         ]
-        rc, _, stderr = await self._command_runner(
-            command,
-            check=False,
-            env=self._environment,
-            timeout=self.timeout,
-        )
-        if rc != 0:
-            await self.close()
-            raise SignatoryServerError(f"Direct signing Kerberos initialization failed: {stderr.strip()}")
+        try:
+            rc, _, stderr = await self._command_runner(
+                command,
+                check=False,
+                env=self._environment,
+                timeout=self.timeout,
+            )
+            if rc != 0:
+                raise SignatoryServerError(f"Direct signing Kerberos initialization failed: {stderr.strip()}")
+        except BaseException:
+            try:
+                await asyncio.shield(self.close())
+            except BaseException:
+                _LOGGER.exception("Direct signing Kerberos cleanup failed after initialization error")
+            raise
 
     async def close(self) -> None:
         """
