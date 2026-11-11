@@ -162,7 +162,6 @@ class PrepareReleaseLPPipeline:
         self.job_url: Optional[str] = None
 
         self.product: Optional[str] = None
-        self._auto_version = False
         self._releases_config: Optional[Dict] = None
         self._fbc_refresh_records: list[FbcRefreshRecord] = []
 
@@ -222,11 +221,10 @@ class PrepareReleaseLPPipeline:
         return self._gitlab.get_project(project_path)
 
     async def _load_product_from_group_config(self) -> str:
-        """Load the product and version policy from the effective assembly group config."""
+        """Load the product from the effective assembly group config."""
         group_config = await load_group_config(
             group=self.group, assembly=self.assembly, doozer_data_path=self.build_data_repo_url
         )
-        self._auto_version = group_config.get('version') == 'auto'
         if group_config.get('product'):
             return group_config['product']
         product = self.group.split('-')[0]
@@ -655,13 +653,10 @@ class PrepareReleaseLPPipeline:
 
         data = None
         if kind == 'image':
-            mapping = None
-            if self._auto_version:
-                mapping = Mapping(
-                    defaults=MappingDefaults(tags=['v{{ assembly }}', 'v{{ assembly }}-{{ release_timestamp }}'])
-                )
-            if release_notes or mapping:
-                data = Data(releaseNotes=release_notes, mapping=mapping)
+            mapping = Mapping(
+                defaults=MappingDefaults(tags=['v{{ assembly }}', 'v{{ assembly }}-{{ release_timestamp }}'])
+            )
+            data = Data(releaseNotes=release_notes, mapping=mapping)
 
         shipment = Shipment(metadata=metadata, environments=environments, snapshot=snapshot, data=data)
         return ShipmentConfig(shipment=shipment)

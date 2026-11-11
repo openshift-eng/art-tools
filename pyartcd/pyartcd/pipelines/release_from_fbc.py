@@ -201,7 +201,6 @@ class ReleaseFromFbcPipeline:
 
         # Product configuration - initialized to None, will be loaded from group config in run()
         self.product = None
-        self._auto_version = False
 
         # FBC operator doozer keys - populated during validate_fbc_related_images()
         self._fbc_operator_keys: list[str] = []
@@ -529,7 +528,7 @@ class ReleaseFromFbcPipeline:
         return data_path, data_gitref
 
     async def _load_product_from_group_config(self) -> str:
-        """Load the product and version policy from the effective assembly group config."""
+        """Load the product from the effective assembly group config."""
         data_path, data_gitref = self._build_data_source()
         group_config = await load_group_config(
             group=self.group,
@@ -537,7 +536,6 @@ class ReleaseFromFbcPipeline:
             doozer_data_path=data_path,
             doozer_data_gitref=data_gitref,
         )
-        self._auto_version = group_config.get('version') == 'auto'
         if group_config.get('product'):
             return group_config['product']
         # Fallback: extract product from group name (e.g., "oadp-1.3" -> "oadp")
@@ -977,7 +975,7 @@ class ReleaseFromFbcPipeline:
         data = None
         if kind != 'fbc':
             mapping = None
-            if self._auto_version:
+            if not self.ocp_optional:
                 mapping = Mapping(
                     defaults=MappingDefaults(tags=['v{{ assembly }}', 'v{{ assembly }}-{{ release_timestamp }}'])
                 )

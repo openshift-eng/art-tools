@@ -369,13 +369,17 @@ class TestReleaseFromFbcPipeline(unittest.TestCase):
         self.assertEqual(config.shipment.data.releaseNotes.type, "RHBA")
 
     def test_create_shipment_config_image_without_release_notes(self):
-        """Non-auto groups do not add image shipment tags or release notes."""
+        """LP image shipments include assembly tags without release notes."""
         pipeline = self._make_pipeline()
         snapshot = _make_snapshot()
 
         config = pipeline.create_shipment_config("image", snapshot)
 
-        self.assertIsNone(config.shipment.data)
+        self.assertIsNone(config.shipment.data.releaseNotes)
+        self.assertEqual(
+            config.shipment.data.mapping.defaults.tags,
+            ['v{{ assembly }}', 'v{{ assembly }}-{{ release_timestamp }}'],
+        )
 
     @patch('pyartcd.pipelines.release_from_fbc.load_group_config', new_callable=AsyncMock)
     def test_generated_image_and_extras_tags_reach_stage_and_prod_release_data(self, load_config):
@@ -410,8 +414,8 @@ class TestReleaseFromFbcPipeline(unittest.TestCase):
                             self.assertNotIn('releaseNotes', release.data)
 
     @patch('pyartcd.pipelines.release_from_fbc.load_group_config', new_callable=AsyncMock)
-    def test_version_policy_uses_selected_build_data_source(self, load_config):
-        """Tag generation reads the same build-data overrides as FBC refresh."""
+    def test_product_resolution_uses_selected_build_data_source(self, load_config):
+        """Product resolution reads the same build-data overrides as FBC refresh."""
         for overrides, expected_path, expected_ref in (
             ({}, constants.OCP_BUILD_DATA_URL, ''),
             (
@@ -444,7 +448,7 @@ class TestReleaseFromFbcPipeline(unittest.TestCase):
                     doozer_data_path=expected_path,
                     doozer_data_gitref=expected_ref,
                 )
-                self.assertIsNotNone(pipeline.create_shipment_config('image', _make_snapshot()).shipment.data.mapping)
+                self.assertEqual(pipeline.product, 'quay')
 
     @patch('pyartcd.pipelines.release_from_fbc.load_group_config', new_callable=AsyncMock)
     @patch('pyartcd.pipelines.release_from_fbc.build_fbc_catalogs', new_callable=AsyncMock)
@@ -472,7 +476,7 @@ class TestReleaseFromFbcPipeline(unittest.TestCase):
         build.assert_not_awaited()
 
     @patch('pyartcd.pipelines.release_from_fbc.load_group_config', new_callable=AsyncMock)
-    def test_explicit_or_missing_build_version_does_not_generate_tags(self, load_config):
+    def test_explicit_or_missing_build_version_generates_assembly_tags(self, load_config):
         pipeline = self._make_pipeline(group='quay-3.18', assembly='3.18.3')
         snapshot = _make_snapshot(app='quay-3-18')
         for version in ('3.18.3', None):
@@ -480,12 +484,16 @@ class TestReleaseFromFbcPipeline(unittest.TestCase):
                 with self.subTest(version=version, kind=kind):
                     load_config.return_value = {'product': 'quay', 'version': version}
                     pipeline.product = asyncio.run(pipeline._load_product_from_group_config())
-                    self.assertIsNone(pipeline.create_shipment_config(kind, snapshot).shipment.data)
-                    config = pipeline.create_shipment_config(kind, snapshot, ReleaseNotes(type='RHBA'))
-                    self.assertIsNone(config.shipment.data.mapping)
+                    for release_notes in (None, ReleaseNotes(type='RHBA')):
+                        config = pipeline.create_shipment_config(kind, snapshot, release_notes)
+                        self.assertEqual(
+                            config.shipment.data.mapping.defaults.tags,
+                            ['v{{ assembly }}', 'v{{ assembly }}-{{ release_timestamp }}'],
+                        )
+                        self.assertEqual(config.shipment.data.releaseNotes, release_notes)
 
     @patch('pyartcd.pipelines.release_from_fbc.load_group_config', new_callable=AsyncMock)
-    def test_group_config_read_failure_stops_tag_policy_resolution(self, load_config):
+    def test_group_config_read_failure_stops_product_resolution(self, load_config):
         pipeline = self._make_pipeline()
         load_config.side_effect = RuntimeError('Cannot read group config')
         with self.assertRaisesRegex(RuntimeError, 'Cannot read group config'):
@@ -494,7 +502,6 @@ class TestReleaseFromFbcPipeline(unittest.TestCase):
     def test_create_shipment_config_fbc_ignores_release_notes(self):
         """FBC shipments should never have data.releaseNotes, even if release_notes is provided."""
         pipeline = self._make_pipeline()
-        pipeline._auto_version = True
         snapshot = _make_snapshot()
 
         release_notes = ReleaseNotes(type="RHSA")
@@ -2669,7 +2676,7 @@ class TestOcpOptionalMode(unittest.TestCase):
         self.assertIn("extras", config.shipment.data.releaseNotes.synopsis)
 
     def test_create_shipment_config_extras_no_notes_for_non_openshift(self):
-        """Non-auto groups do not add extras shipment tags or release notes."""
+        """OCP optional mode does not add LP assembly tags or release notes."""
         pipeline = self._make_pipeline(ocp_optional=True, group="oadp-1.4", assembly="1.4.5")
         pipeline.product = "oadp"
         snapshot = _make_snapshot(app="oadp-1-4")
