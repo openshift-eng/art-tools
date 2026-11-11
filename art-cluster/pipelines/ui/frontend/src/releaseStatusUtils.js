@@ -16,8 +16,8 @@ export function releaseAttention(release) {
 export function releaseColor(status) {
   if (['Succeeded', 'Merged'].includes(status)) return 'green';
   if (['Failed', 'Pipeline failed', 'Preparation failed'].includes(status)) return 'red';
-  if (['Running', 'Preparing'].includes(status)) return 'blue';
-  if (['Waiting', 'Manual action', 'Manual action required', 'Current revision unverified', 'Historical', 'Awaiting merge'].includes(status)) return 'orange';
+  if (['Running', 'Preparing', 'Cancelling'].includes(status)) return 'blue';
+  if (['Waiting', 'Scheduled', 'Manual action', 'Manual action required', 'Current revision unverified', 'Historical', 'Awaiting merge'].includes(status)) return 'orange';
   return 'grey';
 }
 
@@ -41,7 +41,7 @@ export function releaseStages(release, detail, unavailable = false) {
     ['Merge', release.mr?.state === 'merged' ? 'Merged' : release.mr?.state === 'closed' ? 'Closed' : 'Not merged', 'Overview'],
   ];
   let current = values.findIndex(([, status]) => status === 'Running');
-  if (current < 0) current = values.findIndex(([, status]) => ['Waiting', 'Manual action', 'Draft'].includes(status));
+  if (current < 0) current = values.findIndex(([, status]) => ['Pending', 'Preparing', 'Cancelling', 'Waiting', 'Scheduled', 'Manual action', 'Draft'].includes(status));
   if (['merged', 'closed'].includes(release.mr?.state)) current = -1;
   return values.map(([name, status, section], index) => ({
     name, status, section,

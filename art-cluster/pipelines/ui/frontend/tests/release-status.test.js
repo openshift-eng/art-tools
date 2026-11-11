@@ -58,6 +58,19 @@ test('observed approval and release stages select the current step without inven
   assert.equal(releaseStages(item, { ...detail, mr: { sha: 'old' } })[3].status, 'Unknown');
 });
 
+test('pending validation stays pending and does not skip ahead to approvals', () => {
+  const item = { ...release, mr: { ...release.mr, sha: 'source' } };
+  const detail = { mr: { sha: 'source' }, approvals: { status: 'Waiting' }, stages: [
+    { name: 'Validation', status: 'Pending' }, { name: 'Stage release', status: 'Pending' }, { name: 'Production', status: 'Manual action' },
+  ] };
+  const stages = releaseStages(item, detail);
+  assert.equal(stages[2].status, 'Pending');
+  assert.equal(stages[2].state, 'current');
+  assert.equal(stages[4].state, 'pending');
+  assert.equal(stages.some((stage) => stage.status === 'Running'), false);
+  assert.equal(releaseColor('Pending'), 'grey');
+});
+
 test('versions group newest to oldest without changing independent attempt outcomes', () => {
   const failed = { ...release, id: 'failed', mr: null, preparation: { status: 'Failed' }, updated: '2026-11-04T12:00:00Z' };
   const merged = { ...release, id: 'merged', mr: { ...release.mr, state: 'merged' }, updated: '2026-11-06T12:00:00Z' };

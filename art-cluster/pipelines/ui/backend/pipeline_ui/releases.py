@@ -16,7 +16,6 @@ from .cluster import UpstreamError
 from .gitlab_read import GitLabReadError
 
 SHIPMENT_PATH = re.compile(r"^shipment/([^/]+)/([^/]+)/([^/]+)/(stage|prod)/([^/]+\.ya?ml)$")
-ACTIVE = {"created", "waiting_for_resource", "preparing", "pending", "running", "scheduled", "canceling"}
 RUN_HOSTS = {
     host.strip()
     for host in os.getenv(
@@ -29,9 +28,15 @@ _shipment_cache = OrderedDict()
 
 
 def ci_status(value):
-    if value in ACTIVE:
-        return "Running"
     return {
+        "created": "Pending",
+        "pending": "Pending",
+        "waiting_for_resource": "Waiting",
+        "waiting_for_callback": "Waiting",
+        "preparing": "Preparing",
+        "running": "Running",
+        "scheduled": "Scheduled",
+        "canceling": "Cancelling",
         "success": "Succeeded",
         "failed": "Failed",
         "canceled": "Cancelled",
@@ -462,7 +467,18 @@ def aggregate_jobs(jobs):
     required = [j for j in effective_jobs(jobs) if not j.get("allowFailure")]
     if not required:
         return "Optional"
-    for status in ("Failed", "Cancelled", "Running", "Manual action", "Unknown"):
+    for status in (
+        "Failed",
+        "Cancelled",
+        "Running",
+        "Preparing",
+        "Cancelling",
+        "Manual action",
+        "Waiting",
+        "Pending",
+        "Scheduled",
+        "Unknown",
+    ):
         if any(j["status"] == status for j in required):
             return status
     return "Succeeded" if all(j["status"] == "Succeeded" for j in required) else "Skipped"
