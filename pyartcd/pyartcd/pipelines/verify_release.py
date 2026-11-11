@@ -269,7 +269,8 @@ class VerifyReleasePipeline:
         return await self._run_elliott_cmd("payload", cmd)
 
     async def _verify_qe_qualifier(self) -> StepResult:
-        cmd = self._elliott_base + ["verify-qe-qualifier"]
+        # Nightlies receive ongoing QE review; gate the release on the stable build only.
+        cmd = self._elliott_base + ["verify-qe-qualifier", "--no-nightly"]
         return await self._run_elliott_cmd("qe-qualifier", cmd)
 
     async def _verify_security_alerts(self) -> StepResult:
