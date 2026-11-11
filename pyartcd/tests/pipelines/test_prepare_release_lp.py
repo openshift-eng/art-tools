@@ -72,19 +72,23 @@ class TestPrepareReleaseLPPipeline(unittest.TestCase):
                         self.assertNotIn('releaseNotes', release.data)
 
     @patch('pyartcd.pipelines.prepare_release_lp.load_group_config', new_callable=AsyncMock)
-    def test_explicit_or_missing_build_version_does_not_generate_tags(self, load_config):
+    def test_explicit_or_missing_build_version_generates_assembly_tags(self, load_config):
         pipeline = self._make_pipeline(group='quay-3.18', assembly='3.18.3')
         snapshot = Snapshot(spec=SnapshotSpec(application='quay-3-18', components=[]), nvrs=[])
         for version in ('3.18.3', None):
             with self.subTest(version=version):
                 load_config.return_value = {'product': 'quay', 'version': version}
                 pipeline.product = asyncio.run(pipeline._load_product_from_group_config())
-                self.assertIsNone(pipeline._create_shipment_config('image', snapshot).shipment.data)
-                config = pipeline._create_shipment_config('image', snapshot, ReleaseNotes(type='RHBA'))
-                self.assertIsNone(config.shipment.data.mapping)
+                for release_notes in (None, ReleaseNotes(type='RHBA')):
+                    config = pipeline._create_shipment_config('image', snapshot, release_notes)
+                    self.assertEqual(
+                        config.shipment.data.mapping.defaults.tags,
+                        ['v{{ assembly }}', 'v{{ assembly }}-{{ release_timestamp }}'],
+                    )
+                    self.assertEqual(config.shipment.data.releaseNotes, release_notes)
 
     @patch('pyartcd.pipelines.prepare_release_lp.load_group_config', new_callable=AsyncMock)
-    def test_group_config_read_failure_stops_tag_policy_resolution(self, load_config):
+    def test_group_config_read_failure_stops_product_resolution(self, load_config):
         pipeline = self._make_pipeline()
         load_config.side_effect = RuntimeError('Cannot read group config')
         with self.assertRaisesRegex(RuntimeError, 'Cannot read group config'):
@@ -93,7 +97,6 @@ class TestPrepareReleaseLPPipeline(unittest.TestCase):
     def test_fbc_shipment_does_not_generate_assembly_tags(self):
         pipeline = self._make_pipeline()
         pipeline.product = 'rhacm2'
-        pipeline._auto_version = True
         snapshot = Snapshot(spec=SnapshotSpec(application='fbc-acm-2-17', components=[]), nvrs=[])
         config = pipeline._create_shipment_config('fbc', snapshot, ReleaseNotes(type='RHBA'))
         self.assertTrue(config.shipment.metadata.fbc)
