@@ -1,13 +1,10 @@
 #!/usr/bin/env python3
 
 import os
-import threading
 import unittest
 from unittest.mock import AsyncMock, MagicMock, patch
 
 from artcommonlib.constants import RHCOS_IMAGE_REPO
-from artcommonlib.util import run_safe
-from pyartcd.jenkins import Jobs
 from pyartcd.pipelines.ocp4_konflux import KonfluxOcpPipeline, ocp4
 
 
@@ -39,17 +36,28 @@ class TestRhcosIntegrationCli(unittest.TestCase):
             '--version=4.21',
         ]
 
-    def test_node_image_post_build_ops_run_by_default(self):
+    def test_post_build_run_by_default(self):
         with ocp4.make_context('beta:ocp4-konflux', self.required_args) as context:
-            self.assertFalse(context.params['skip_node_image_post_build_ops'])
+            self.assertFalse(context.params['skip_post_build'])
 
-        self.assertFalse(_make_pipeline().skip_node_image_post_build_ops)
+        self.assertFalse(_make_pipeline().skip_post_build)
 
-    def test_node_image_post_build_ops_can_be_skipped(self):
-        args = [*self.required_args, '--skip-node-image-post-build-ops']
+    def test_post_build_can_be_skipped(self):
+        args = [*self.required_args, '--skip-post-build']
 
         with ocp4.make_context('beta:ocp4-konflux', args) as context:
-            self.assertTrue(context.params['skip_node_image_post_build_ops'])
+            self.assertTrue(context.params['skip_post_build'])
+
+
+class TestRhcosPostBuildBuildCommand(unittest.IsolatedAsyncioTestCase):
+    @patch('pyartcd.pipelines.ocp4_konflux.exectools.cmd_assert_async', new_callable=AsyncMock)
+    async def test_skip_option_is_forwarded_to_doozer(self, cmd_assert):
+        pipeline = _make_pipeline()
+        pipeline.skip_post_build = True
+
+        await pipeline.build_images()
+
+        self.assertIn('--skip-post-build', cmd_assert.await_args.args[0])
 
 
 class TestRegistryAuthConfiguration(unittest.IsolatedAsyncioTestCase):
@@ -88,145 +96,6 @@ class TestRegistryAuthConfiguration(unittest.IsolatedAsyncioTestCase):
         pipeline._run_pipeline.assert_awaited_once_with()
         self.assertEqual(os.environ['QUAY_AUTH_FILE'], '/tmp/quay-auth.json')
         self.assertNotIn('DOCKER_CONFIG', os.environ)
-
-
-class TestRhcosPostBuildDelegation(unittest.IsolatedAsyncioTestCase):
-    def setUp(self):
-        self.pipeline = _make_pipeline()
-        self.records = [
-            {
-                'name': 'rhcos-node-image',
-                'status': '0',
-                'image_pullspec': f'{RHCOS_IMAGE_REPO}@sha256:{"a" * 64}',
-            },
-            {
-                'name': 'rhcos-node-extensions',
-                'status': '0',
-                'image_pullspec': f'{RHCOS_IMAGE_REPO}@sha256:{"b" * 64}',
-            },
-            {
-                'name': 'rhcos-node-image-rhel10',
-                'status': '0',
-                'image_pullspec': f'{RHCOS_IMAGE_REPO}@sha256:{"c" * 64}',
-            },
-            {
-                'name': 'rhcos-node-extensions-rhel10',
-                'status': '0',
-                'image_pullspec': f'{RHCOS_IMAGE_REPO}@sha256:{"d" * 64}',
-            },
-        ]
-        self.group_config = {
-            'rhcos': {
-                'payload_tags': [
-                    {'rhel_version': '9.8'},
-                    {'rhel_version': '10.0'},
-                ]
-            },
-            'vars': {'RHCOS_EL_MAJOR': '9', 'RHCOS_EL_MINOR': '8'},
-        }
-
-    @patch.dict(os.environ, {'ART_TOOLS_COMMIT': 'locriandev@feature/art-23426'}, clear=False)
-    @patch('pyartcd.pipelines.ocp4_konflux.jenkins.update_description')
-    @patch('pyartcd.pipelines.ocp4_konflux.jenkins.start_build')
-    async def test_child_job_receives_exact_pullspecs_and_parameters(
-        self,
-        mock_start_build,
-        mock_update_description,
-    ):
-        child_build_url = (
-            'https://art-jenkins.apps.prod-stable-spoke1-dc-iad2.itup.redhat.com/'
-            'job/aos-cd-builds/job/build%252Frhcos-node-image-post-build/106'
-        )
-        mock_start_build.return_value = ('SUCCESS', child_build_url)
-
-        result = await self.pipeline._trigger_rhcos_pair_test(
-            'rhel9',
-            ('rhcos-node-image', 'rhcos-node-extensions'),
-            {'rhcos-node-image': self.records[0]['image_pullspec']},
-            {record['name']: record['image_pullspec'] for record in self.records},
-            {'rhel9': '4.21-9.8'},
-        )
-
-        params = mock_start_build.call_args.args[1]
-        self.assertEqual(params['ART_TOOLS_COMMIT'], 'locriandev@feature/art-23426')
-        self.assertEqual(params['RELEASE'], '4.21-9.8')
-        self.assertEqual(params['NODE_IMAGE'], self.records[0]['image_pullspec'])
-        self.assertEqual(params['EXTENSIONS_IMAGE'], self.records[1]['image_pullspec'])
-        self.assertFalse(params['DRY_RUN'])
-        mock_start_build.assert_called_once_with(
-            Jobs.RHCOS_NODE_IMAGE_POST_BUILD,
-            params,
-            block_until_complete=True,
-            return_build_url=True,
-        )
-        self.assertEqual(result['NODE_IMAGE'], params['NODE_IMAGE'])
-        mock_update_description.assert_called_once()
-        description = mock_update_description.call_args.args[0]
-        self.assertIn('rhcos-node-image-post-build', description)
-        self.assertIn(f'href="{child_build_url}/"', description)
-        self.assertNotIn('EXTENSIONS_IMAGE', description)
-
-    @patch('pyartcd.pipelines.ocp4_konflux.load_group_config', new_callable=AsyncMock)
-    @patch('pyartcd.pipelines.ocp4_konflux.jenkins.update_description')
-    @patch('pyartcd.pipelines.ocp4_konflux.jenkins.start_build')
-    async def test_pairs_run_in_parallel_and_failures_mark_parent_unstable(
-        self,
-        mock_start_build,
-        _mock_update_description,
-        mock_load_group_config,
-    ):
-        mock_load_group_config.return_value = self.group_config
-        builds_started = threading.Barrier(2)
-
-        def start_build(job, params, **kwargs):
-            builds_started.wait(timeout=5)
-            result = 'SUCCESS' if params['RELEASE'] == '4.21-9.8' else 'FAILURE'
-            build_url = f"https://jenkins.example/job/post-build/{1 if result == 'SUCCESS' else 2}"
-            return result, build_url
-
-        mock_start_build.side_effect = start_build
-        self.pipeline.parse_record_log = MagicMock(return_value={'image_build_konflux': self.records})
-
-        critical_failures = []
-        with self.assertLogs('pyartcd.pipelines.ocp4_konflux', level='WARNING') as logs:
-            await run_safe(self.pipeline.trigger_rhcos_node_image_post_build, critical_failures)
-
-        self.assertEqual(mock_start_build.call_count, 2)
-        self.assertEqual([name for name, _ in critical_failures], ['trigger_rhcos_node_image_post_build'])
-        self.assertTrue(any('RHCOS rhel10 integration test failed' in message for message in logs.output))
-        params_by_release = {call.args[1]['RELEASE']: call.args[1] for call in mock_start_build.call_args_list}
-        self.assertEqual(
-            params_by_release['4.21-9.8']['NODE_IMAGE'],
-            self.records[0]['image_pullspec'],
-        )
-        self.assertEqual(
-            params_by_release['4.21-10.0']['EXTENSIONS_IMAGE'],
-            self.records[3]['image_pullspec'],
-        )
-
-    @patch('pyartcd.pipelines.ocp4_konflux.jenkins.start_build')
-    async def test_dry_run_records_no_child_build(self, mock_start_build):
-        self.pipeline.runtime.dry_run = True
-
-        await self.pipeline._trigger_rhcos_pair_test(
-            'rhel9',
-            ('rhcos-node-image', 'rhcos-node-extensions'),
-            {'rhcos-node-image': self.records[0]['image_pullspec']},
-            {record['name']: record['image_pullspec'] for record in self.records},
-            {'rhel9': '4.21-9.8'},
-        )
-
-        mock_start_build.assert_not_called()
-
-    @patch('pyartcd.pipelines.ocp4_konflux.jenkins.start_build')
-    async def test_non_stream_assembly_skips_rhcos_node_image_post_build(self, mock_start_build):
-        self.pipeline.assembly = 'test'
-        self.pipeline.parse_record_log = MagicMock(return_value={'image_build_konflux': self.records})
-
-        await self.pipeline.trigger_rhcos_node_image_post_build()
-
-        mock_start_build.assert_not_called()
-        self.pipeline.parse_record_log.assert_not_called()
 
 
 if __name__ == '__main__':

@@ -34,6 +34,7 @@ from doozerlib.backend.base_image_handler import BaseImageHandler, BaseImageRele
 from doozerlib.backend.build_repo import BuildRepo
 from doozerlib.backend.golang_builder_shipment import GolangBuilderShipmentHandler
 from doozerlib.backend.konflux_client import ImageBuildParams, KonfluxClient
+from doozerlib.backend.konflux_post_build import KonfluxPostBuildCallback
 from doozerlib.backend.pipelinerun_utils import PipelineRunInfo
 from doozerlib.backend.rebaser import KonfluxRebaser
 from doozerlib.image import ImageMetadata
@@ -107,6 +108,7 @@ class KonfluxImageBuilderConfig:
     integration_test_snapshot_annotations: Dict[str, str] = field(default_factory=dict)
     skip_custom_its: bool = False
     build_args: Dict[str, str] = field(default_factory=dict)
+    post_build_callbacks: Dict[str, KonfluxPostBuildCallback] = field(default_factory=dict)
 
 
 class KonfluxImageBuilder:
@@ -159,6 +161,8 @@ class KonfluxImageBuilder:
         )
         await report.set_status('Pending')
         metadata.build_status = False
+        callback_name = metadata.config.konflux.get('post_build')
+        callback = self._config.post_build_callbacks.get(callback_name) if isinstance(callback_name, str) else None
         dest_dir = self._config.base_dir.joinpath(metadata.qualified_key)
         df_path = dest_dir.joinpath("Dockerfile")
         record = {
@@ -175,8 +179,11 @@ class KonfluxImageBuilder:
             "build_pipeline_url": "",
             "release_pipeline": "",
             "base_image_release_failed": "false",
+            "post_build_pipeline": "",
         }
         try:
+            if callback_name and callback is None:
+                raise ValueError(f"Unknown Konflux post-build callback {callback_name!r} for {metadata.distgit_key}")
             ec_policy = self._config.ec_policy_configuration
 
             its_eligible = metadata.config.get("konflux", {}).get("its", {}).get("enabled", metadata.for_release)
@@ -318,6 +325,7 @@ class KonfluxImageBuilder:
             for attempt in range(build_attempts):
                 logger.info("Build attempt %s/%s", attempt + 1, build_attempts)
                 custom_its_blocking_failed = False
+                post_build_failed = False
                 shipment_refused = False
                 image_pullspec = None
                 image_digest = None
@@ -399,6 +407,20 @@ class KonfluxImageBuilder:
                     elif not self._config.dry_run:
                         # This should never happen in real builds - only expected in dry-run mode
                         raise IOError("PipelineRun succeeded but IMAGE_URL or IMAGE_DIGEST missing from results")
+
+                # Required callbacks gate the image outcome before ITS and base-image release.
+                if outcome is KonfluxBuildOutcome.SUCCESS and callback and definitive_image_pullspec is not None:
+                    try:
+                        if callback.allows_dependents_before_completion(metadata):
+                            metadata.build_status = True
+                            metadata.build_event.set()
+                        record['post_build_pipeline'] = await callback.run(metadata, definitive_image_pullspec)
+                    except Exception as e:
+                        logger.exception('Post-build callback failed for %s', metadata.distgit_key)
+                        record['post_build_error'] = str(e)
+                        outcome = KonfluxBuildOutcome.POST_BUILD_ERROR
+                        metadata.build_status = False
+                        post_build_failed = True
 
                 # Run enterprise-contract (EC) verification after a successful build
                 should_run_ec = (
@@ -575,18 +597,21 @@ class KonfluxImageBuilder:
 
                 await report.finish_checks()
                 if not outcome.is_success():
+                    metadata.build_status = False
                     record["outcome"] = str(outcome)
                     error_message = f"Konflux image build for {metadata.distgit_key} failed with output={outcome}"
                     if shipment_refused:
                         error_message += f": {record['shipment_error']}"
+                    if post_build_failed:
+                        error_message += f": {record['post_build_error']}"
                     error = KonfluxImageBuildError(
                         error_message,
                         pipelinerun_name,
                         pipelinerun_info.to_dict(),
                     )
-                    if ec_pipeline_url or custom_its_blocking_failed or shipment_refused:
-                        # EC and blocking custom ITS failures are not recoverable by rebuilding.
-                        # Retrying would rebuild the same image and repeat verification.
+                    if ec_pipeline_url or custom_its_blocking_failed or shipment_refused or post_build_failed:
+                        # Post-build, EC, and blocking ITS failures are not recoverable by
+                        # rebuilding the same image and repeating the external operation.
                         break
                 else:
                     metadata.build_status = True
@@ -599,6 +624,7 @@ class KonfluxImageBuilder:
                 raise error
 
         except Exception as exc:
+            metadata.build_status = False
             await report.failed(str(exc))
             # Capture the actual error message for any exception that bypasses
             # the build loop's error handling (e.g., parent build failures,
@@ -619,7 +645,11 @@ class KonfluxImageBuilder:
                         key = 'image_build_konflux'
                     self._record_logger.add_record(key, **record)
             finally:
-                metadata.build_event.set()
+                try:
+                    if callback and not metadata.build_status:
+                        callback.build_failed(metadata)
+                finally:
+                    metadata.build_event.set()
         return nvr, pipelinerun_name, pipelinerun_info.to_dict()
 
     @staticmethod

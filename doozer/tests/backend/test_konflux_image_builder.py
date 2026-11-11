@@ -6,6 +6,7 @@ from threading import Event
 from unittest.mock import AsyncMock, MagicMock, create_autospec, patch
 
 from artcommonlib.conforma import resolve_stage_policy
+from artcommonlib.constants import RHCOS_IMAGE_REPO
 from artcommonlib.konflux.konflux_build_record import (
     ArtifactType,
     Engine,
@@ -20,6 +21,7 @@ from doozerlib.backend.konflux_image_builder import (
     KonfluxImageBuildError,
     _normalize_version,
 )
+from doozerlib.backend.konflux_post_build import RhcosNodeImagePostBuild
 from doozerlib.backend.pipelinerun_utils import PipelineRunInfo
 from doozerlib.util import GolangBuilderComponentNameError, konflux_golang_builder_component_name
 
@@ -1593,6 +1595,176 @@ class TestKonfluxImageBuilder(unittest.IsolatedAsyncioTestCase):
 
         # Only 2 database updates: PENDING + final SUCCESS (no registry update)
         self.assertEqual(mock_update_db.await_count, 2)
+
+    async def test_failed_post_build_callback_fails_record_before_its_and_release(self):
+        metadata = self._metadata()
+        metadata.config.konflux.get.side_effect = lambda key, default=None: (
+            'rhcos_node_image' if key == 'post_build' else default
+        )
+        metadata.get_konflux_build_attempts.return_value = 2
+        metadata.should_trigger_base_image_release.return_value = True
+        callback = MagicMock()
+        callback.run = AsyncMock(side_effect=RuntimeError('RHCOS pair test failed'))
+        callback.allows_dependents_before_completion.return_value = True
+        self.builder._config.post_build_callbacks = {'rhcos_node_image': callback}
+
+        dest_dir = self.builder._config.base_dir.joinpath(metadata.qualified_key)
+        dest_dir.mkdir(parents=True)
+        build_repo = MagicMock()
+        build_repo.local_dir = dest_dir
+        build_repo.url = 'https://github.com/test/repo.git'
+        build_repo.commit_hash = 'test-commit'
+        initial_pipelinerun = MagicMock()
+        initial_pipelinerun.name = 'test-pipelinerun'
+        initial_pipelinerun.to_dict.return_value = {'metadata': {'name': 'test-pipelinerun'}}
+        completed_pipelinerun = MagicMock()
+        completed_pipelinerun.name = 'test-pipelinerun'
+        completed_pipelinerun.to_dict.return_value = {
+            'metadata': {'name': 'test-pipelinerun'},
+            'status': {
+                'results': [
+                    {'name': 'IMAGE_URL', 'value': 'quay.io/test/image:test-tag'},
+                    {'name': 'IMAGE_DIGEST', 'value': 'sha256:testdigest'},
+                ]
+            },
+        }
+        self.mock_konflux_client.wait_for_pipelinerun = AsyncMock(return_value=completed_pipelinerun)
+
+        with (
+            patch(
+                'doozerlib.backend.konflux_image_builder.BuildRepo.from_local_dir',
+                new=AsyncMock(return_value=build_repo),
+            ),
+            patch.object(self.builder, '_parse_dockerfile', return_value=('test-uuid', 'test-component', '1.0', '1')),
+            patch.object(self.builder, '_wait_for_parent_members', new=AsyncMock(return_value=[])),
+            patch.object(self.builder, '_start_build', new=AsyncMock(return_value=initial_pipelinerun)) as start_build,
+            patch.object(
+                self.builder, 'update_konflux_db', new=AsyncMock(return_value=MagicMock(record_id='1'))
+            ) as update_db,
+            patch.object(self.builder, '_trigger_base_image_release', new=AsyncMock()) as release,
+            patch.object(self.builder, '_validate_build_attestation_and_signature', new=AsyncMock()),
+            patch.object(self.builder._konflux_client, 'verify_enterprise_contract', new=AsyncMock()) as verify_ec,
+            patch(
+                'doozerlib.backend.konflux_image_builder.KonfluxBuildOutcome.extract_from_pipelinerun_succeeded_condition',
+                return_value=KonfluxBuildOutcome.SUCCESS,
+            ),
+        ):
+            with self.assertRaisesRegex(KonfluxImageBuildError, 'RHCOS pair test failed'):
+                await self.builder.build(metadata)
+
+        self.assertEqual(start_build.await_count, 1)
+        self.assertEqual(
+            [call.args[3] for call in update_db.await_args_list],
+            [
+                KonfluxBuildOutcome.PENDING,
+                KonfluxBuildOutcome.POST_BUILD_ERROR,
+            ],
+        )
+        self.assertFalse(metadata.build_status)
+        metadata.build_event.set.assert_called()
+        callback.build_failed.assert_called_once_with(metadata)
+        verify_ec.assert_not_awaited()
+        release.assert_not_awaited()
+
+    @patch('doozerlib.backend.konflux_post_build.jenkins.start_build')
+    async def test_failed_rhcos_pair_job_fails_only_owning_extensions(self, start_job):
+        start_job.return_value = ('FAILURE', 'https://jenkins.example/post-build/5')
+        node = self._metadata()
+        extensions = self._metadata()
+        node.distgit_key = 'rhcos-node-image'
+        extensions.distgit_key = 'rhcos-node-extensions'
+        node.qualified_key = f'containers/{node.distgit_key}'
+        extensions.qualified_key = f'containers/{extensions.distgit_key}'
+        for metadata in (node, extensions):
+            metadata.config.konflux.get.side_effect = lambda key, default=None: (
+                'rhcos_node_image' if key == 'post_build' else default
+            )
+            metadata.for_release = False
+            metadata.build_event = asyncio.Event()
+            self.builder._config.base_dir.joinpath(metadata.qualified_key).mkdir(parents=True)
+
+        runtime = MagicMock()
+        runtime.group = 'openshift-4.23'
+        runtime.assembly = 'stream'
+        runtime.group_config = {
+            'rhcos': {'payload_tags': [{'rhel_version': '9.8'}]},
+            'vars': {'RHCOS_EL_MAJOR': '9', 'RHCOS_EL_MINOR': '8'},
+        }
+        callback = RhcosNodeImagePostBuild(runtime, {node.distgit_key, extensions.distgit_key})
+        self.builder._config.post_build_callbacks = {'rhcos_node_image': callback}
+        # The node image succeeds and is not gated on the pair job; skip EC so its success
+        # path does not reach verification steps unrelated to this test.
+        self.builder._config.skip_ec_verify = True
+
+        async def wait_for_parents(metadata):
+            if metadata is extensions:
+                await asyncio.wait_for(node.build_event.wait(), timeout=2)
+                return [node]
+            return []
+
+        async def start_build(metadata, **_kwargs):
+            plr = MagicMock()
+            plr.name = metadata.distgit_key
+            plr.to_dict.return_value = {'metadata': {'name': plr.name}}
+            return plr
+
+        async def wait_for_pipelinerun(name, **_kwargs):
+            plr = MagicMock()
+            plr.name = name
+            plr.to_dict.return_value = {
+                'metadata': {'name': name},
+                'status': {
+                    'results': [
+                        {'name': 'IMAGE_URL', 'value': f'{RHCOS_IMAGE_REPO}:tag'},
+                        {'name': 'IMAGE_DIGEST', 'value': 'sha256:' + ('a' if name == node.distgit_key else 'b') * 64},
+                    ]
+                },
+            }
+            return plr
+
+        async def update_db(metadata, _build_repo, _plr, outcome, *_args, **_kwargs):
+            outcomes[metadata.distgit_key].append(outcome)
+            return MagicMock(record_id='1')
+
+        outcomes = {node.distgit_key: [], extensions.distgit_key: []}
+        build_repo = MagicMock()
+        build_repo.url = 'https://github.com/test/repo.git'
+        build_repo.commit_hash = 'test-commit'
+        self.mock_konflux_client.wait_for_pipelinerun = AsyncMock(side_effect=wait_for_pipelinerun)
+        with (
+            patch(
+                'doozerlib.backend.konflux_image_builder.BuildRepo.from_local_dir',
+                new=AsyncMock(return_value=build_repo),
+            ),
+            patch.object(self.builder, '_parse_dockerfile', return_value=('uuid', 'component', '1.0', '1')),
+            patch.object(self.builder, '_wait_for_parent_members', new=wait_for_parents),
+            patch.object(self.builder, '_start_build', new=start_build),
+            patch.object(self.builder, 'update_konflux_db', new=update_db),
+            patch.object(self.builder, '_validate_build_attestation_and_signature', new=AsyncMock()),
+            patch(
+                'doozerlib.backend.konflux_image_builder.KonfluxBuildOutcome.extract_from_pipelinerun_succeeded_condition',
+                return_value=KonfluxBuildOutcome.SUCCESS,
+            ),
+        ):
+            results = await asyncio.wait_for(
+                asyncio.gather(self.builder.build(node), self.builder.build(extensions), return_exceptions=True),
+                timeout=3,
+            )
+
+        node_result, extensions_result = results
+        # The node publishes its pullspec and defers; it is not gated on the pair job,
+        # so its own build succeeds even though the pair post-build job fails.
+        self.assertNotIsInstance(node_result, Exception)
+        self.assertEqual(outcomes[node.distgit_key], [KonfluxBuildOutcome.PENDING, KonfluxBuildOutcome.SUCCESS])
+        self.assertTrue(node.build_status)
+        # The extensions owns the pair trigger, so the job failure fails its build.
+        self.assertIsInstance(extensions_result, KonfluxImageBuildError)
+        self.assertEqual(
+            outcomes[extensions.distgit_key], [KonfluxBuildOutcome.PENDING, KonfluxBuildOutcome.POST_BUILD_ERROR]
+        )
+        self.assertFalse(extensions.build_status)
+        self.assertEqual(start_job.call_count, 1)
+        self.assertFalse(extensions.build_status)
 
     async def test_trigger_base_image_release_uses_base_image_handler(self):
         """Per-build release uses BaseImageHandler with snapshot_input; no Jenkins."""

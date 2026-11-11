@@ -22,8 +22,6 @@ from artcommonlib.constants import (
     REGISTRY_REDHAT_IO,
     RHCOS_IMAGE_REPO,
 )
-from artcommonlib.konflux.konflux_build_record import KonfluxBuildOutcome, KonfluxBuildRecord
-from artcommonlib.konflux.konflux_db import KonfluxDb
 from artcommonlib.registry_config import RegistryConfig, RegistryCredential
 from artcommonlib.util import (
     new_roundtrip_yaml_handler,
@@ -46,7 +44,6 @@ from pyartcd.util import (
     get_group_images,
     get_group_rpms,
     increment_fail_counter,
-    load_group_config,
     mass_rebuild_score,
     reset_fail_counter,
     update_build_fail_counters,
@@ -107,7 +104,7 @@ class KonfluxOcpPipeline:
         skip_bundle_build: bool = None,
         skip_build_sync_konflux: bool = False,
         skip_ec_verify: bool = False,
-        skip_node_image_post_build_ops: bool = False,
+        skip_post_build: bool = False,
         arches: Tuple[str, ...] = None,
         plr_template: str = None,
         lock_identifier: str = None,
@@ -128,7 +125,7 @@ class KonfluxOcpPipeline:
         self.skip_bundle_build = skip_bundle_build
         self.skip_build_sync_konflux = skip_build_sync_konflux
         self.skip_ec_verify = skip_ec_verify
-        self.skip_node_image_post_build_ops = skip_node_image_post_build_ops
+        self.skip_post_build = skip_post_build
         self.plr_template = plr_template
         self.lock_identifier = lock_identifier
         self.skip_plashets = skip_plashets
@@ -351,6 +348,9 @@ class KonfluxOcpPipeline:
         if self.skip_ec_verify:
             LOGGER.info('Skipping EC verification as requested')
             cmd.append('--skip-ec-verify')
+
+        if self.skip_post_build:
+            cmd.append('--skip-post-build')
 
         await exectools.cmd_assert_async(cmd)
 
@@ -741,258 +741,6 @@ class KonfluxOcpPipeline:
         except Exception as e:
             LOGGER.exception(f"Failed to trigger bundle build: {e}")
 
-    async def trigger_rhcos_node_image_post_build(self):
-        """Delegate RHCOS integration testing and promotion to a replayable ART job.
-
-        When any RHCOS images listed in RHCOS_ART_IMAGE_KEYS are rebuilt
-        successfully, this method triggers the ART Jenkins
-        rhcos-node-image-post-build job with their immutable pullspecs. The
-        child job independently runs build-node-image and mirrors a passing
-        pair to art-images.
-
-        Each RHEL version is delegated concurrently so a failed pair does not
-        prevent the other pair from being tested.
-        """
-        if self.assembly != 'stream':
-            LOGGER.info('Skipping RHCOS node-image post-build for %s assembly', self.assembly)
-            return
-
-        if self.skip_node_image_post_build_ops:
-            LOGGER.warning('Skipping RHCOS post-build jobs because --skip-node-image-post-build-ops is set')
-            return
-
-        record_log = self.parse_record_log()
-        if not record_log:
-            LOGGER.warning('record.log not found, skipping RHCOS integration tests')
-            return
-
-        try:
-            records = record_log.get('image_build_konflux', [])
-
-            # Build a lookup of rebuilt RHCOS images: {name: pullspec}
-            rebuilt_images = {}
-            for record in records:
-                name = record.get('name')
-                if name in RHCOS_ART_IMAGE_KEYS and record['status'] == '0':
-                    pullspec = record.get('image_pullspec', '')
-                    rebuilt_images[name] = pullspec
-
-            if not rebuilt_images:
-                LOGGER.info("No RHCOS images were rebuilt, skipping integration tests")
-                return
-
-            LOGGER.info("RHCOS images rebuilt successfully: %s", ', '.join(rebuilt_images.keys()))
-
-            # Build a full lookup of ALL RHCOS image records (including those not rebuilt)
-            # so we can find pullspecs for the pair partner if only one was rebuilt
-            all_rhcos_records = {}
-            for record in records:
-                name = record.get('name')
-                if name in RHCOS_ART_IMAGE_KEYS and record['status'] == '0':
-                    all_rhcos_records[name] = record.get('image_pullspec', '')
-
-            # Load group config to derive RELEASE streams from group.yml instead of hardcoding
-            group_config = await load_group_config(group=f"openshift-{self.version}", assembly="stream")
-
-            # Build release stream mapping: {rhel_label: release_stream}
-            # e.g. {'rhel9': '4.19-9.8', 'rhel10': '4.19-10.0'}
-            release_streams = {}
-            for tag in group_config.get('rhcos', {}).get('payload_tags', []):
-                rhel_ver = str(tag.get('rhel_version', ''))
-                if rhel_ver:
-                    major = rhel_ver.split('.')[0]
-                    release_streams[f"rhel{major}"] = f"{self.version}-{rhel_ver}"
-
-            # Ensure default RHEL version from group vars is present
-            default_major = group_config['vars']['RHCOS_EL_MAJOR']
-            default_minor = group_config['vars']['RHCOS_EL_MINOR']
-            release_streams.setdefault(f"rhel{default_major}", f"{self.version}-{default_major}.{default_minor}")
-
-            LOGGER.info("RHCOS release streams from group.yml: %s", release_streams)
-
-            # Trigger tests for each RHEL version pair that has at least one rebuilt image
-            rhel_pairs = [
-                ('rhel9', ('rhcos-node-image', 'rhcos-node-extensions')),
-                ('rhel10', ('rhcos-node-image-rhel10', 'rhcos-node-extensions-rhel10')),
-            ]
-
-            pair_results = await asyncio.gather(
-                *(
-                    self._trigger_rhcos_pair_test(
-                        rhel_label,
-                        pair,
-                        rebuilt_images,
-                        all_rhcos_records,
-                        release_streams,
-                    )
-                    for rhel_label, pair in rhel_pairs
-                ),
-                return_exceptions=True,
-            )
-
-            pair_failures = []
-            for (rhel_label, _), result in zip(rhel_pairs, pair_results):
-                if isinstance(result, BaseException):
-                    LOGGER.warning(
-                        "RHCOS %s integration test failed; skipping promotion for this pair: %s",
-                        rhel_label,
-                        result,
-                        exc_info=(type(result), result, result.__traceback__),
-                    )
-                    pair_failures.append((rhel_label, result))
-                elif result:
-                    LOGGER.info('RHCOS %s post-build job completed successfully', rhel_label)
-
-            if pair_failures:
-                failures = '; '.join(f'{rhel_label}: {error}' for rhel_label, error in pair_failures)
-                raise RuntimeError(f'RHCOS integration tests failed: {failures}')
-
-        except Exception as e:
-            if not isinstance(e, RuntimeError) or not str(e).startswith('RHCOS integration tests failed:'):
-                LOGGER.exception("Failed to trigger RHCOS integration tests: %s", e)
-            raise
-
-    async def _trigger_rhcos_pair_test(
-        self,
-        rhel_label: str,
-        pair: tuple[str, str],
-        rebuilt_images: dict,
-        all_rhcos_records: dict,
-        release_streams: dict,
-    ):
-        """Trigger integration test for a single RHEL version's RHCOS image pair.
-
-        Args:
-            rhel_label: Human-readable label like 'rhel9' or 'rhel10'.
-            pair: The node and extensions build names for one RHEL version.
-            rebuilt_images: Dict of {image_name: pullspec} for images that were rebuilt.
-            all_rhcos_records: Dict of {image_name: pullspec} for all successful RHCOS builds.
-            release_streams: Dict mapping rhel_label to release stream (e.g. {'rhel9': '4.19-9.8'}).
-        Returns:
-            The exact pullspecs delegated to the child job, or None when the
-            pair was not run.
-        """
-        node_name, ext_name = pair
-
-        # Check if at least one image in this pair was rebuilt
-        if node_name not in rebuilt_images and ext_name not in rebuilt_images:
-            return
-
-        LOGGER.info("Triggering %s RHCOS integration tests", rhel_label)
-
-        # Resolve pullspecs: prefer from rebuilt, fall back to all records from same run
-        node_pullspec = rebuilt_images.get(node_name) or all_rhcos_records.get(node_name)
-        ext_pullspec = rebuilt_images.get(ext_name) or all_rhcos_records.get(ext_name)
-
-        # Fallback: look up the latest successful build from KonfluxDb for the missing partner
-        if not node_pullspec or not ext_pullspec:
-            db = KonfluxDb()
-            db.bind(KonfluxBuildRecord)
-            group = f"openshift-{self.version}"
-            if not node_pullspec:
-                LOGGER.info("Looking up latest %s build from KonfluxDb...", node_name)
-                record = await db.get_latest_build(
-                    name=node_name,
-                    group=group,
-                    outcome=KonfluxBuildOutcome.SUCCESS,
-                    assembly=self.assembly,
-                    exclude_large_columns=True,
-                )
-                if record:
-                    node_pullspec = record.image_pullspec
-                    LOGGER.info("Found latest %s pullspec from KonfluxDb: %s", node_name, node_pullspec)
-                else:
-                    LOGGER.warning("No successful %s build found in KonfluxDb for group %s", node_name, group)
-            if not ext_pullspec:
-                LOGGER.info("Looking up latest %s build from KonfluxDb...", ext_name)
-                record = await db.get_latest_build(
-                    name=ext_name,
-                    group=group,
-                    outcome=KonfluxBuildOutcome.SUCCESS,
-                    assembly=self.assembly,
-                    exclude_large_columns=True,
-                )
-                if record:
-                    ext_pullspec = record.image_pullspec
-                    LOGGER.info("Found latest %s pullspec from KonfluxDb: %s", ext_name, ext_pullspec)
-                else:
-                    LOGGER.warning("No successful %s build found in KonfluxDb for group %s", ext_name, group)
-
-        if not node_pullspec:
-            LOGGER.warning("Cannot trigger %s integration test: no pullspec found for %s", rhel_label, node_name)
-            return
-        if not ext_pullspec:
-            LOGGER.warning("Cannot trigger %s integration test: no pullspec found for %s", rhel_label, ext_name)
-            return
-        # Validate that pullspecs are digest-based
-        if '@sha256:' not in node_pullspec:
-            LOGGER.warning(
-                "Node image pullspec is not digest-based, skipping %s integration test: %s",
-                rhel_label,
-                node_pullspec,
-            )
-            return
-        if '@sha256:' not in ext_pullspec:
-            LOGGER.warning(
-                "Extensions image pullspec is not digest-based, skipping %s integration test: %s",
-                rhel_label,
-                ext_pullspec,
-            )
-            return
-
-        if not all(pullspec.startswith(f'{RHCOS_IMAGE_REPO}@sha256:') for pullspec in (node_pullspec, ext_pullspec)):
-            LOGGER.warning(
-                "RHCOS %s integration test skipped because image pullspecs are not from %s: node=%s extensions=%s",
-                rhel_label,
-                RHCOS_IMAGE_REPO,
-                node_pullspec,
-                ext_pullspec,
-            )
-            return
-
-        # Derive RELEASE param from group.yml (loaded by trigger_rhcos_node_image_post_build)
-        release_stream = release_streams.get(rhel_label)
-        if not release_stream:
-            LOGGER.warning("No release stream found in group.yml for %s, skipping integration test", rhel_label)
-            return
-
-        child_params = {
-            'ART_TOOLS_COMMIT': os.environ.get('ART_TOOLS_COMMIT', ''),
-            'RELEASE': release_stream,
-            'NODE_IMAGE': node_pullspec,
-            'EXTENSIONS_IMAGE': ext_pullspec,
-            'DRY_RUN': self.runtime.dry_run,
-        }
-        LOGGER.info(
-            'Delegating %s RHCOS post-build to %s with parameters: %s',
-            rhel_label,
-            jenkins.Jobs.RHCOS_NODE_IMAGE_POST_BUILD.value,
-            json.dumps(child_params, sort_keys=True),
-        )
-        if self.runtime.dry_run:
-            return child_params
-
-        child_result, child_build_url = await asyncio.to_thread(
-            jenkins.start_build,
-            jenkins.Jobs.RHCOS_NODE_IMAGE_POST_BUILD,
-            child_params,
-            block_until_complete=True,
-            return_build_url=True,
-        )
-        child_build_url = f'{child_build_url.rstrip("/")}/'
-        jenkins.update_description(
-            '<br/>RHCOS %s post-build: <a href="%s">rhcos-node-image-post-build</a><br/>'
-            % (rhel_label, child_build_url)
-        )
-        if child_result != 'SUCCESS':
-            raise RuntimeError(f"RHCOS {rhel_label} post-build job did not pass (result={child_result})")
-
-        LOGGER.info('RHCOS %s post-build job passed', rhel_label)
-        return {
-            'NODE_IMAGE': node_pullspec,
-            'EXTENSIONS_IMAGE': ext_pullspec,
-        }
-
     def parse_record_log(self) -> Optional[dict]:
         record_log_path = Path(self.runtime.doozer_working, 'record.log')
         if not record_log_path.exists():
@@ -1262,8 +1010,6 @@ class KonfluxOcpPipeline:
 
             self.trigger_bundle_build()
 
-            # RHCOS images are promoted to art-images only after their integration tests pass.
-            await run_safe(self.trigger_rhcos_node_image_post_build, critical_failures)
             await run_safe(self.mirror_streams_to_ci, critical_failures)
 
             # For test assemblies, auto-sync non-embargoed built images to the art-images-test repo.
@@ -1369,11 +1115,12 @@ class KonfluxOcpPipeline:
     "--skip-ec-verify", is_flag=True, default=False, help="Skip Enterprise Contract verification for built images"
 )
 @click.option(
+    "--skip-post-build",
     "--skip-node-image-post-build-ops",
-    "skip_node_image_post_build_ops",
+    "skip_post_build",
     is_flag=True,
     default=False,
-    help="Skip node image post-build operations",
+    help="Skip post-build callbacks for all images (--skip-node-image-post-build-ops is a deprecated alias)",
 )
 @click.option(
     "--arch", "arches", metavar="TAG", multiple=True, help="(Optional) [MULTIPLE] Limit included arches to this list"
@@ -1427,7 +1174,7 @@ async def ocp4(
     skip_bundle_build: bool,
     skip_build_sync_konflux: bool,
     skip_ec_verify: bool,
-    skip_node_image_post_build_ops: bool,
+    skip_post_build: bool,
     arches: Tuple[str, ...],
     plr_template: str,
     skip_plashets,
@@ -1455,7 +1202,7 @@ async def ocp4(
         skip_bundle_build=skip_bundle_build,
         skip_build_sync_konflux=skip_build_sync_konflux,
         skip_ec_verify=skip_ec_verify,
-        skip_node_image_post_build_ops=skip_node_image_post_build_ops,
+        skip_post_build=skip_post_build,
         arches=arches,
         plr_template=plr_template,
         lock_identifier=lock_identifier,
