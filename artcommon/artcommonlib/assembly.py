@@ -332,6 +332,7 @@ def assembly_basis_event(
                 releases_config,
                 target_assembly.basis.assembly,
                 strict=strict,
+                build_system=build_system,
             )
         if strict:
             raise ValueError(f"Assembly {assembly} has no basis.brew_event or basis.time or basis.assembly defined")
