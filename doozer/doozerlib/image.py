@@ -106,6 +106,8 @@ def extract_builder_info_from_pullspec(
 
 
 class ImageMetadata(Metadata):
+    kind = "image"
+
     def __init__(
         self,
         runtime: "doozerlib.Runtime",

@@ -41,6 +41,9 @@ def get_artifact_type(file):
     if 'streams.yml' in file:
         return 'streams'
 
+    if 'binaries/' in file:
+        return 'binary'
+
     if 'images/' in file:
         return 'image'
 
@@ -91,7 +94,7 @@ def get_namespace(data, file):
     if 'distgit' in data and 'namespace' in data['distgit']:
         return data['distgit']['namespace']
     artifact_type = get_artifact_type(file)
-    return {'image': 'containers', 'rpm': 'rpms'}.get(artifact_type, '???')
+    return {'image': 'containers', 'binary': 'containers', 'rpm': 'rpms'}.get(artifact_type, '???')
 
 
 def get_repository_name(file):
