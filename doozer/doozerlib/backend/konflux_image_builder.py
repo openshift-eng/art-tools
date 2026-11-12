@@ -165,11 +165,15 @@ class KonfluxImageBuilder:
         callback = self._config.post_build_callbacks.get(callback_name) if isinstance(callback_name, str) else None
         dest_dir = self._config.base_dir.joinpath(metadata.qualified_key)
         df_path = dest_dir.joinpath("Dockerfile")
+        owners = (
+            list(metadata.config.owners) if metadata.config.owners and metadata.config.owners is not Missing else []
+        )
         record = {
             "dir": str(dest_dir.absolute()),
             "dockerfile": str(df_path.absolute()),
             "name": metadata.distgit_key,
             "nvrs": "n/a",
+            "owners": ",".join(owners),
             "message": "Unknown failure",
             "task_id": "n/a",
             "task_url": "n/a",
