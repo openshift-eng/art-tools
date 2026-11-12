@@ -1,3 +1,4 @@
+import asyncio
 from io import StringIO
 from typing import Optional
 from unittest import IsolatedAsyncioTestCase, TestCase
@@ -6,7 +7,14 @@ from unittest.mock import ANY, AsyncMock, MagicMock, Mock, patch
 import defusedxml.ElementTree as ET
 from aiohttp import ClientResponseError, RequestInfo
 from doozerlib.assembly_inspector import AssemblyInspector
-from doozerlib.repodata import OutdatedRPMFinder, Repodata, RepodataLoader, Rpm, RpmModule
+from doozerlib.repodata import (
+    OutdatedRPMFinder,
+    Repodata,
+    RepodataLoader,
+    Rpm,
+    RpmModule,
+    _is_retryable_repodata_error,
+)
 from doozerlib.repos import Repo
 from multidict import CIMultiDict, CIMultiDictProxy
 from ruamel.yaml import YAML
@@ -904,6 +912,9 @@ data:
 
 
 class TestRepodataLoader(IsolatedAsyncioTestCase):
+    def test_cancelled_error_is_not_retryable(self):
+        self.assertFalse(_is_retryable_repodata_error(asyncio.CancelledError()))
+
     async def check_optional_repo_http_failure(self, metadata_path):
         repo_url = "https://example.invalid/repo/"
         url = URL(f"{repo_url}{metadata_path}")
@@ -948,18 +959,16 @@ class TestRepodataLoader(IsolatedAsyncioTestCase):
                 runtime.logger.info.assert_called_once_with(
                     "Skipping absent optional repository %s for %s (HTTP 404)", "optional", "x86_64"
                 )
-                diagnostic.assert_awaited()
+                diagnostic.assert_not_awaited()
             else:
                 with self.assertRaises(ClientResponseError) as raised:
                     await inspector._external_rpm_is_unavailable(build, {}, "kernel-2-1", None)
                 self.assertIs(raised.exception, error)
-                self.assertEqual(index_response.raise_for_status.call_count, 3)
-                self.assertEqual(index_response.text.await_count, 3)
+                self.assertEqual(index_response.raise_for_status.call_count, 1)
+                self.assertEqual(index_response.text.await_count, 1)
                 runtime.logger.info.assert_not_called()
                 diagnostic.assert_not_awaited()
-            self.assertEqual(
-                missing_response.raise_for_status.call_count, 3 if metadata_path.endswith("repomd.xml") else 15
-            )
+            self.assertEqual(missing_response.raise_for_status.call_count, 1)
             session.get.assert_any_call(str(url))
 
     async def test_optional_repo_repomd_404_is_skipped(self):
@@ -970,8 +979,8 @@ class TestRepodataLoader(IsolatedAsyncioTestCase):
 
     @patch("doozerlib.repodata.cmd_gather_async", new_callable=AsyncMock)
     @patch("aiohttp.ClientSession", autospec=True)
-    async def test_load_reraises_http_error_after_retries(self, ClientSession: Mock, cmd_gather_async: AsyncMock):
-        """Exhausted real loader retries preserve the HTTP status for repository policy."""
+    async def test_load_does_not_retry_http_404(self, ClientSession: Mock, cmd_gather_async: AsyncMock):
+        """HTTP 404 responses propagate immediately without curl diagnostics."""
         repo_url = "https://example.invalid/repo/"
         url = URL(f"{repo_url}repodata/repomd.xml")
         request = RequestInfo(url, "GET", CIMultiDictProxy(CIMultiDict()), url)
@@ -987,9 +996,10 @@ class TestRepodataLoader(IsolatedAsyncioTestCase):
                 await RepodataLoader().load("test-x86_64", repo_url)
         self.assertIs(raised.exception, error)
         self.assertEqual(raised.exception.status, 404)
-        self.assertEqual(session.get.call_count, 3)
+        self.assertEqual(session.get.call_count, 1)
         session.get.assert_called_with(str(url))
-        self.assertEqual(response.raise_for_status.call_count, 3)
+        self.assertEqual(response.raise_for_status.call_count, 1)
+        cmd_gather_async.assert_not_awaited()
 
     @patch("doozerlib.repodata.RepodataLoader._fetch_remote_compressed", autospec=True)
     @patch("aiohttp.ClientSession", autospec=True)
