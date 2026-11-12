@@ -1292,3 +1292,46 @@ class TestKonfluxBuildPostBuildWiring(unittest.IsolatedAsyncioTestCase):
         # And its result is forwarded verbatim to the image builder config.
         config = mock_builder_cls.call_args.kwargs["config"]
         self.assertIs(config.post_build_callbacks, sentinel_callbacks)
+
+
+class TestKonfluxBuildCliBuildArgs(unittest.TestCase):
+    """Tests for the --build-arg override of beta:images:konflux:build."""
+
+    def _make_cli(self, build_args):
+        return KonfluxBuildCli(
+            runtime=mock.Mock(spec=Runtime),
+            konflux_kubeconfig=None,
+            konflux_context=None,
+            konflux_namespace="test-namespace",
+            image_repo="test-repo",
+            registry_auth_file=None,
+            skip_checks=False,
+            dry_run=True,
+            plr_template="test-template",
+            build_priority="auto",
+            build_args=build_args,
+        )
+
+    def test_valid_build_args_are_parsed_into_a_dict(self):
+        cli = self._make_cli(("RELEASE_VERSION=4.22.18", "DIGEST_MULTI=sha256:abc", "EMPTY="))
+        self.assertEqual(cli.build_args, {"RELEASE_VERSION": "4.22.18", "DIGEST_MULTI": "sha256:abc", "EMPTY": ""})
+
+    def test_no_build_args_by_default(self):
+        cli = self._make_cli(())
+        self.assertEqual(cli.build_args, {})
+
+    def test_repeated_key_overrides_by_key(self):
+        cli = self._make_cli(("RELEASE_VERSION=4.22.18", "RELEASE_VERSION=4.22.19"))
+        self.assertEqual(cli.build_args, {"RELEASE_VERSION": "4.22.19"})
+
+    def test_build_arg_without_equals_is_rejected(self):
+        with self.assertRaises(click.BadParameter) as ctx:
+            self._make_cli(("RELEASE_VERSION",))
+        self.assertIn("KEY=VALUE", str(ctx.exception))
+
+    def test_build_arg_flag_is_repeatable_on_the_command(self):
+        from doozerlib.cli.images_konflux import images_konflux_build
+
+        option = next(p for p in images_konflux_build.params if p.name == "build_args")
+        self.assertEqual(option.opts, ["--build-arg"])
+        self.assertTrue(option.multiple)

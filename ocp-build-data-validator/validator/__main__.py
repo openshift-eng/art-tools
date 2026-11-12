@@ -25,7 +25,7 @@ def validate(file, schema_only, images_dir):
         msg = 'Schema mismatch: {}\nReturned error: {}'.format(file, err)
         support.fail_validation(msg, parsed)
 
-    if support.get_artifact_type(file) not in ['image', 'rpm', 'releases', 'group']:
+    if support.get_artifact_type(file) not in ['image', 'binary', 'rpm', 'releases', 'group']:
         print(f'✅ Validated {file}')
         return
 
@@ -57,7 +57,7 @@ def validate(file, schema_only, images_dir):
 
 
 def main():
-    parser = argparse.ArgumentParser(description='Validation of ocp-build-data Image & RPM declarations')
+    parser = argparse.ArgumentParser(description='Validation of ocp-build-data Image, RPM & Binary declarations')
     parser.add_argument('files', metavar='FILE', type=str, nargs='+', help='Files to be validated')
     parser.add_argument(
         '-s',
@@ -84,6 +84,8 @@ def main():
         first_file = os.path.abspath(args.files[0])
         if '/images/' in first_file:
             args.images_dir = os.path.join(first_file.split('/images/')[0], 'images')
+        elif '/binaries/' in first_file:
+            args.images_dir = os.path.join(first_file.split('/binaries/')[0], 'images')
 
     print(f"Validating {len(args.files)} file(s)...")
     if args.single_thread:

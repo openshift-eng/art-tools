@@ -36,6 +36,7 @@ from jira import JIRA
 from semver import Version
 
 from doozerlib import brew, dblib, state, util
+from doozerlib.binary import BinaryMetadata
 from doozerlib.brew import brew_event_from_datetime
 from doozerlib.build_status_detector import BuildStatusDetector
 from doozerlib.exceptions import DoozerFatalError
@@ -132,6 +133,7 @@ class Runtime(GroupRuntime):
         self.exclude = None
         self.images = None
         self.rpms = None
+        self.binaries = None
         self.user = None
         self.global_opts = None
         self.cfg_obj = None
@@ -189,6 +191,9 @@ class Runtime(GroupRuntime):
 
         # Map of dist-git repo name -> RPMMetadata object. Populated when group is set.
         self.rpm_map: Dict[str, RPMMetadata] = {}
+
+        # Map of binary key -> BinaryMetadata object. Populated only in mode='binaries'.
+        self.binary_map: Dict[str, BinaryMetadata] = {}
 
         # Maps component name to the Image or RPM Metadata responsible for the component
         self.component_map: Dict[str, Union[ImageMetadata, RPMMetadata]] = dict()
@@ -777,6 +782,8 @@ class Runtime(GroupRuntime):
 
             rpm_keys = flatten_list(self.rpms)
 
+            binary_keys = flatten_list(self.binaries)
+
             filter_func = None
             if self.load_wip and self.load_disabled:
                 pass  # use no filter, load all
@@ -819,6 +826,26 @@ class Runtime(GroupRuntime):
                 raise DoozerFatalError(
                     'The following images or rpms were either missing or filtered out: {}'.format(
                         ', '.join(missed_include)
+                    )
+                )
+
+            binary_data = {}
+            if mode == 'binaries':
+                try:
+                    binary_data = self.gitdata.load_data(
+                        path='binaries',
+                        keys=binary_keys,
+                        exclude=list(exclude_keys),
+                        replace_vars=replace_vars,
+                        filter_funcs=None if len(binary_keys) else filter_func,
+                    )
+                except gitdata.GitDataPathException:
+                    binary_data = {}
+            missed_binaries = set(binary_keys) - set(binary_data.keys())
+            if missed_binaries:
+                raise DoozerFatalError(
+                    'The following binaries were either missing or filtered out: {}'.format(
+                        ', '.join(sorted(missed_binaries))
                     )
                 )
 
@@ -873,10 +900,24 @@ class Runtime(GroupRuntime):
                         "No rpm metadata directories found for given options within: {}".format(self.data_dir)
                     )
 
+            if mode == 'binaries':
+                for b in binary_data.values():
+                    if b.key in image_name_data:
+                        raise DoozerFatalError(f'binaries/{b.key} has the same name as images/{b.key}; rename one')
+                    self.binary_map[b.key] = BinaryMetadata(
+                        self,
+                        b,
+                        self.upstream_commitish_overrides.get(b.key),
+                        clone_source=clone_source,
+                        prevent_cloning=prevent_cloning,
+                    )
+                if not self.binary_map:
+                    self._logger.warning("No binary metadata found for given options within: %s", self.data_dir)
+
         # Make sure that the metadata is not asking us to check out the same exact distgit & branch.
         # This would almost always indicate someone has checked in duplicate metadata into a group.
         no_collide_check = {}
-        for meta in list(self.rpm_map.values()) + list(self.image_map.values()):
+        for meta in list(self.rpm_map.values()) + list(self.image_map.values()) + list(self.binary_map.values()):
             key = '{}/{}/#{}'.format(meta.namespace, meta.name, meta.branch())
             if key in no_collide_check:
                 raise IOError(
@@ -1121,6 +1162,9 @@ class Runtime(GroupRuntime):
 
     def rpm_metas(self) -> List[RPMMetadata]:
         return list(self.rpm_map.values())
+
+    def binary_metas(self) -> List[BinaryMetadata]:
+        return list(self.binary_map.values())
 
     def all_metas(self) -> List[Union[ImageMetadata, RPMMetadata]]:
         return self.image_metas() + self.rpm_metas()
