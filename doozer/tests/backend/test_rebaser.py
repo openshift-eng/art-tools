@@ -26,6 +26,10 @@ class TestRebaser(TestCase):
         """Resolve known CPE product names through the shared registry."""
         self.assertEqual(_get_cpe_product_name("rhacm2"), "acm")
 
+    def test_acm_delivery_alias_preserves_cpe_product_name(self):
+        self.assertEqual(_get_cpe_product_name("rhacm5"), "acm")
+        self.assertEqual(_get_cpe_product_name("multicluster-engine"), "multicluster_engine")
+
     def test_cpe_product_name_rhosdt(self):
         """RHOSDT uses explicit cpe_product_name for distributed tracing."""
         self.assertEqual(_get_cpe_product_name("openshift-opentelemetry-operator"), "openshift_distributed_tracing")

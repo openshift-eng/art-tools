@@ -9,6 +9,15 @@ from artcommonlib.variants import BuildVariant, ProductId, get_build_variant_for
 
 
 class TestProductId(unittest.TestCase):
+    def test_acm_delivery_alias_preserves_build_variant(self):
+        for product_name in ("rhacm2", "rhacm5"):
+            with self.subTest(product_name=product_name):
+                self.assertIs(get_product_id_for_product(product_name), ProductId.ACM)
+                self.assertIs(get_build_variant_for_product(product_name), ProductId.ACM)
+                self.assertEqual(get_build_variant_for_product(product_name).value, "rhacm2")
+        self.assertIs(get_build_variant_for_product("multicluster-engine"), ProductId.MCE)
+        self.assertEqual(ProductId.MCE.value, "multicluster-engine")
+
     def test_defines_all_product_ids(self):
         """Ensure all product identities are represented by one enum."""
         expected_product_ids = {
