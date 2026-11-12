@@ -392,6 +392,8 @@ class TestSoftwareLifecyclePhase(unittest.TestCase):
         self.assertEqual(SoftwareLifecyclePhase.from_name('pre-release'), SoftwareLifecyclePhase.PRE_RELEASE)
         self.assertEqual(SoftwareLifecyclePhase.from_name('signing'), SoftwareLifecyclePhase.SIGNING)
         self.assertEqual(SoftwareLifecyclePhase.from_name('release'), SoftwareLifecyclePhase.RELEASE)
+        self.assertEqual(SoftwareLifecyclePhase.from_name('extended_support'), SoftwareLifecyclePhase.EXTENDED_SUPPORT)
+        self.assertEqual(SoftwareLifecyclePhase.from_name('extended-support'), SoftwareLifecyclePhase.EXTENDED_SUPPORT)
 
     def test_from_name_invalid(self):
         with self.assertRaises(ValueError):
@@ -400,6 +402,8 @@ class TestSoftwareLifecyclePhase(unittest.TestCase):
     def test_lt(self):
         self.assertTrue(SoftwareLifecyclePhase.PRE_RELEASE < SoftwareLifecyclePhase.SIGNING)
         self.assertTrue(SoftwareLifecyclePhase.SIGNING < SoftwareLifecyclePhase.RELEASE)
+        self.assertTrue(SoftwareLifecyclePhase.RELEASE < SoftwareLifecyclePhase.EXTENDED_SUPPORT)
+        self.assertTrue(SoftwareLifecyclePhase.EXTENDED_SUPPORT < SoftwareLifecyclePhase.EOL)
         self.assertTrue(SoftwareLifecyclePhase.RELEASE < SoftwareLifecyclePhase.EOL)
         self.assertTrue(SoftwareLifecyclePhase.EOL < 101)
         self.assertTrue(SoftwareLifecyclePhase.PRE_RELEASE < 1)
@@ -407,6 +411,8 @@ class TestSoftwareLifecyclePhase(unittest.TestCase):
     def test_gt(self):
         self.assertTrue(SoftwareLifecyclePhase.RELEASE > SoftwareLifecyclePhase.SIGNING)
         self.assertTrue(SoftwareLifecyclePhase.SIGNING > SoftwareLifecyclePhase.PRE_RELEASE)
+        self.assertTrue(SoftwareLifecyclePhase.EXTENDED_SUPPORT > SoftwareLifecyclePhase.RELEASE)
+        self.assertTrue(SoftwareLifecyclePhase.EOL > SoftwareLifecyclePhase.EXTENDED_SUPPORT)
         self.assertTrue(SoftwareLifecyclePhase.EOL > SoftwareLifecyclePhase.RELEASE)
         self.assertTrue(SoftwareLifecyclePhase.RELEASE > 1)
         self.assertTrue(SoftwareLifecyclePhase.SIGNING > 0)
@@ -415,6 +421,8 @@ class TestSoftwareLifecyclePhase(unittest.TestCase):
         self.assertTrue(SoftwareLifecyclePhase.EOL <= SoftwareLifecyclePhase.EOL)
         self.assertTrue(SoftwareLifecyclePhase.PRE_RELEASE <= SoftwareLifecyclePhase.SIGNING)
         self.assertTrue(SoftwareLifecyclePhase.SIGNING <= SoftwareLifecyclePhase.RELEASE)
+        self.assertTrue(SoftwareLifecyclePhase.RELEASE <= SoftwareLifecyclePhase.EXTENDED_SUPPORT)
+        self.assertTrue(SoftwareLifecyclePhase.EXTENDED_SUPPORT <= SoftwareLifecyclePhase.EOL)
         self.assertTrue(SoftwareLifecyclePhase.EOL <= 100)
         self.assertTrue(SoftwareLifecyclePhase.PRE_RELEASE <= 0)
 
@@ -422,6 +430,8 @@ class TestSoftwareLifecyclePhase(unittest.TestCase):
         self.assertTrue(SoftwareLifecyclePhase.RELEASE >= SoftwareLifecyclePhase.RELEASE)
         self.assertTrue(SoftwareLifecyclePhase.SIGNING >= SoftwareLifecyclePhase.PRE_RELEASE)
         self.assertTrue(SoftwareLifecyclePhase.EOL >= SoftwareLifecyclePhase.PRE_RELEASE)
+        self.assertTrue(SoftwareLifecyclePhase.EXTENDED_SUPPORT >= SoftwareLifecyclePhase.RELEASE)
+        self.assertTrue(SoftwareLifecyclePhase.EOL >= SoftwareLifecyclePhase.EXTENDED_SUPPORT)
         self.assertTrue(SoftwareLifecyclePhase.RELEASE >= 2)
         self.assertTrue(SoftwareLifecyclePhase.SIGNING >= 1)
 
@@ -431,6 +441,9 @@ class TestSoftwareLifecyclePhase(unittest.TestCase):
         self.assertNotEqual(SoftwareLifecyclePhase.RELEASE, SoftwareLifecyclePhase.PRE_RELEASE)
         self.assertEqual(SoftwareLifecyclePhase.SIGNING, 1)
         self.assertEqual(SoftwareLifecyclePhase.PRE_RELEASE, 0)
+        self.assertEqual(SoftwareLifecyclePhase.EXTENDED_SUPPORT, 3)
+        self.assertEqual(SoftwareLifecyclePhase.EXTENDED_SUPPORT.value, 3)
+        self.assertNotEqual(SoftwareLifecyclePhase.EXTENDED_SUPPORT, SoftwareLifecyclePhase.RELEASE)
         self.assertEqual(SoftwareLifecyclePhase.EOL.value, 100)
         self.assertNotEqual(SoftwareLifecyclePhase.EOL.value, 101)
 

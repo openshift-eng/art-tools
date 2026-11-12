@@ -107,6 +107,7 @@ class SoftwareLifecyclePhase(Enum):
     PRE_RELEASE = 0
     SIGNING = 1
     RELEASE = 2
+    EXTENDED_SUPPORT = 3
     EOL = 100
 
     @classmethod
