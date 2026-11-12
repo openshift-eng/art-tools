@@ -862,7 +862,7 @@ class GenPayloadCli:
             await self.detect_non_latest_rpms(assembly_inspector)
 
         # check that images for this assembly/group are consistent with the assembly definition.
-        self.detect_inconsistent_images(assembly_inspector)
+        await self.detect_inconsistent_images(assembly_inspector)
 
         # check that images for this assembly/group have installed rpms that are not allowed to assemble.
         self.detect_installed_rpms_issues(assembly_inspector)
@@ -1115,8 +1115,8 @@ class GenPayloadCli:
                             )
                         )
 
-    @TRACER.start_as_current_span("GenPayloadCli.detect_inconsistent_images")
-    def detect_inconsistent_images(self, assembly_inspector: AssemblyInspector):
+    @start_as_current_span_async(TRACER, "GenPayloadCli.detect_inconsistent_images")
+    async def detect_inconsistent_images(self, assembly_inspector: AssemblyInspector):
         """
         Create issues for image builds selected by this assembly/group
         that are inconsistent with the assembly definition.
@@ -1126,7 +1126,7 @@ class GenPayloadCli:
         for _, bbii in assembly_inspector.get_group_release_images().items():
             if bbii:
                 self.assembly_issues.extend(
-                    assembly_inspector.check_group_image_consistency(bbii, self.package_rpm_finder)
+                    await assembly_inspector.check_group_image_consistency(bbii, self.package_rpm_finder)
                 )
 
     @TRACER.start_as_current_span("GenPayloadCli.detect_installed_rpms_issues")

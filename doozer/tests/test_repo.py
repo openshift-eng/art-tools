@@ -251,6 +251,8 @@ class TestRepo(unittest.IsolatedAsyncioTestCase):
 
         # Test that Repo can be instantiated with new-style config via from_repo_config
         repo = Repo.from_repo_config(new_style_config, self.arches)
+        self.assertIs(repo.is_plashet, False)
+        self.assertEqual(repo.plashet_source_tags, [])
 
         # Verify the repo was initialized correctly
         self.assertEqual(repo.name, 'test-new-style-repo')
@@ -316,6 +318,8 @@ class TestRepo(unittest.IsolatedAsyncioTestCase):
         # Create repos with both configs
         repo_old = Repo('test-repo', old_style_config, ['x86_64', 'ppc64le'])
         repo_new = Repo.from_repo_config(new_style_config, ['x86_64', 'ppc64le'])
+        self.assertIsNone(repo_old.is_plashet)
+        self.assertIsNone(repo_old.plashet_source_tags)
 
         # Verify they produce equivalent results
         self.assertEqual(repo_old.enabled, repo_new.enabled)
@@ -351,7 +355,13 @@ class TestRepo(unittest.IsolatedAsyncioTestCase):
                 assembly_aware=False,
                 embargo_aware=False,
                 include_embargoed=False,
-                source={'type': 'brew', 'from_tags': []},
+                source={
+                    'type': 'brew',
+                    'from_tags': [
+                        {'name': 'rhaos-4.20-rhel-9-candidate', 'product_version': 'RHEL-9-OSE-4.20'},
+                        {'name': 'another-tag', 'product_version': 'another-product'},
+                    ],
+                },
             ),
             content_set=ContentSet(
                 default='test-plashet-content-set',
@@ -371,6 +381,8 @@ class TestRepo(unittest.IsolatedAsyncioTestCase):
 
         # Verify the repo was created correctly
         self.assertEqual(repo.name, 'test-plashet-repo')
+        self.assertIs(repo.is_plashet, True)
+        self.assertEqual(repo.plashet_source_tags, ['rhaos-4.20-rhel-9-candidate', 'another-tag'])
         self.assertTrue(repo.enabled)
 
         # Verify baseurl was constructed for each architecture

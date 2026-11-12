@@ -953,7 +953,7 @@ class TestGenPayloadCli(IsolatedAsyncioTestCase):
             detect_mismatched_siblings=None,
             detect_rpm_image_sibling_mismatch=None,
             detect_non_latest_rpms=None,
-            detect_inconsistent_images=Mock(),
+            detect_inconsistent_images=AsyncMock(),
             detect_installed_rpms_issues=None,
             detect_hermetic_mismatches=None,
             detect_extend_payload_entry_issues=AsyncMock(),
@@ -1100,15 +1100,28 @@ class TestGenPayloadCli(IsolatedAsyncioTestCase):
         await gpcli.detect_non_latest_rpms(ai)
         self.assertEqual(gpcli.assembly_issues, [])
 
-    def test_detect_inconsistent_images(self):
+    async def test_detect_inconsistent_images(self):
+        """Payload detection awaits consistency inspection before recording issues."""
         gpcli = rgp_cli.GenPayloadCli()
         bbii = flexmock(Mock(BrewBuildRecordInspector))
         ai = MagicMock(AssemblyInspector)
         ai.get_group_release_images = MagicMock(return_value={"spam": bbii})
-        ai.check_group_image_consistency = MagicMock(return_value=["stuff"])
+        ai.check_group_image_consistency = AsyncMock(return_value=["stuff"])
 
-        gpcli.detect_inconsistent_images(ai)
+        await gpcli.detect_inconsistent_images(ai)
+        ai.check_group_image_consistency.assert_awaited_once_with(bbii, gpcli.package_rpm_finder)
         self.assertEqual(gpcli.assembly_issues, ["stuff"])
+
+    async def test_detect_inconsistent_images_propagates_metadata_failure(self):
+        """Metadata failures from the async inspector reach the payload consumer."""
+        gpcli = rgp_cli.GenPayloadCli()
+        ai = MagicMock(AssemblyInspector)
+        ai.get_group_release_images.return_value = {"missing": None, "image": Mock(BrewBuildRecordInspector)}
+        ai.check_group_image_consistency = AsyncMock(side_effect=RuntimeError("metadata unavailable"))
+        with self.assertRaisesRegex(RuntimeError, "metadata unavailable"):
+            await gpcli.detect_inconsistent_images(ai)
+        ai.check_group_image_consistency.assert_awaited_once()
+        self.assertEqual(gpcli.assembly_issues, [])
 
     @patch("doozerlib.cli.release_gen_payload.PayloadGenerator.find_payload_entries")
     @patch("doozerlib.cli.release_gen_payload.PayloadGenerator.embargo_issues_for_payload")
