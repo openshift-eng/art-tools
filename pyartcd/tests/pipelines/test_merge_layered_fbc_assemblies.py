@@ -152,7 +152,7 @@ def test_workers_have_isolated_files_pinned_configuration_and_per_target_locks(t
     async def resolve(worker):
         return sorted({s['group'] for s in worker.assembly_inputs.values()})
 
-    async def command(args):
+    async def command(args, **kwargs):
         output = next(a.split('=', 1)[1] for a in args if a.startswith('--output-file='))
         target = next(a.split('=', 1)[1] for a in args if a.startswith('--major-minor='))
         from pathlib import Path
@@ -160,7 +160,7 @@ def test_workers_have_isolated_files_pinned_configuration_and_per_target_locks(t
         Path(output).write_text(
             json.dumps({'nvr': 'unified-' + target, 'pullspec': 'image@sha256:abc', 'build_url': 'url'})
         )
-        observed.append(args)
+        observed.append((args, kwargs['env']))
 
     async def locked(**kwargs):
         return await kwargs['coro']
@@ -179,10 +179,11 @@ def test_workers_have_isolated_files_pinned_configuration_and_per_target_locks(t
         f'lock:fbc-merge:quay:ocp-{target}' for target in result['results']
     }
     for prefix in ('--working-dir=', '--output-file='):
-        assert len({next(a for a in args if a.startswith(prefix)) for args in observed}) == 3
-    input_files = [args[args.index('--assembly-inputs-file') + 1] for args in observed]
+        assert len({next(a for a in args if a.startswith(prefix)) for args, _ in observed}) == 3
+    assert len({env['DOOZER_CACHE_DIR'] for _, env in observed}) == 3
+    input_files = [args[args.index('--assembly-inputs-file') + 1] for args, _ in observed]
     assert len(set(input_files)) == 3
-    for args, filename in zip(observed, input_files):
+    for (args, _), filename in zip(observed, input_files):
         from pathlib import Path
 
         selections = json.loads(Path(filename).read_text())

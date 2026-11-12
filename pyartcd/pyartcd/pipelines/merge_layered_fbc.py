@@ -3,6 +3,7 @@
 import asyncio
 import copy
 import json
+import os
 import re
 from dataclasses import dataclass
 from pathlib import Path
@@ -345,7 +346,9 @@ class MergeLayeredFbcPipeline:
         for task in self.skip_tasks:
             cmd.extend(['--skip-task', task])
         self.runtime.logger.info('Building unified FBC for %s OCP %s', self.group, self.target)
-        await exectools.cmd_assert_async(cmd)
+        doozer_env = os.environ.copy()
+        doozer_env['DOOZER_CACHE_DIR'] = str(Path(self.runtime.working_dir) / 'doozer-cache')
+        await exectools.cmd_assert_async(cmd, env=doozer_env)
         result = json.loads(self.output_file.read_text())
         if not self.runtime.dry_run and (not result.get('pullspec') or not result.get('build_url')):
             raise ValueError('Unified FBC build returned no immutable pullspec or build URL')

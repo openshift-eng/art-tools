@@ -1,4 +1,5 @@
 import json
+import os
 import tempfile
 import unittest
 from pathlib import Path
@@ -55,6 +56,11 @@ class TestMergeLayeredFbcPipeline(unittest.IsolatedAsyncioTestCase):
         self.assertIn('clair-scan', cmd)
         self.assertNotIn('--dry-run', cmd)
         self.assertNotIn('--skip-rebase', cmd)
+        self.assertEqual(
+            command.await_args.kwargs['env']['DOOZER_CACHE_DIR'],
+            str(Path(self.runtime.working_dir) / 'doozer-cache'),
+        )
+        self.assertIsNot(command.await_args.kwargs['env'], os.environ)
 
     async def test_passes_skip_rebase_to_doozer(self):
         self.pipeline.skip_rebase = True

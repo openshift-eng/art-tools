@@ -204,8 +204,11 @@ in a separate pytest invocation (the projects share the `tests` package name):
 
 ```sh
 pytest -q doozer/tests/backend/test_konflux_fbc_merge.py \
-  doozer/tests/backend/test_konflux_fbc.py doozer/tests/cli/test_fbc.py
-pytest -q pyartcd/tests/pipelines/test_merge_layered_fbc.py
+  doozer/tests/backend/test_konflux_fbc.py doozer/tests/cli/test_fbc.py \
+  doozer/tests/cli/test_fbc_merge.py doozer/tests/test_opm.py
+pytest -q pyartcd/tests/pipelines/test_merge_layered_fbc.py \
+  pyartcd/tests/pipelines/test_merge_layered_fbc_assemblies.py
+pytest -q artcommon/tests/test_git_input_validation.py
 ```
 
 For group inference, cover NVR and pullspec inputs from multiple groups, input
