@@ -503,7 +503,7 @@ def get_konflux_build_priority(metadata, group):
     # 3. Golang builder images are high priority since they block other builds.
     if 'golang' in group:
         # Prioritize since golang builds may be part of addressing security issues.
-        return higher_by(3)
+        return str(constants.KONFLUX_GOLANG_BUILD_PRIORITY)
 
     # 4. Higher than default priority for main & pre-GA N-1 streams.
     if group.startswith("openshift-") and phase in ("pre-release", "signing"):

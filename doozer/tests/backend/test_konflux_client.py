@@ -326,7 +326,7 @@ class TestNewEcPipelinerun(TestCase):
         self.assertEqual(labels["appstudio.openshift.io/application"], "openshift-4-21")
         self.assertEqual(labels["appstudio.openshift.io/component"], "ose-4-21-openshift-apiserver")
         self.assertEqual(labels["test.appstudio.openshift.io/scenario"], "openshift-4-21-ec-registry-ocp-art-stage")
-        self.assertEqual(labels["kueue.x-k8s.io/priority-class"], "build-priority-2")
+        self.assertEqual(labels["kueue.x-k8s.io/priority-class"], "build-priority-3")
         self.assertEqual(labels["doozer-watch-id"], "12345")
 
         # annotations
@@ -2241,3 +2241,18 @@ spec:
         task_run_specs = result["spec"]["taskRunSpecs"]
         rpm_scan_specs = [s for s in task_run_specs if s["pipelineTaskName"] == "rpms-signature-scan"]
         self.assertEqual(len(rpm_scan_specs), 0, "Expected no rpms-signature-scan override when task is absent")
+
+
+class TestBuildPriorityLabel(IsolatedAsyncioTestCase):
+    @patch.object(KonfluxClient, "_get_pipelinerun_template", new_callable=AsyncMock)
+    async def test_sets_resolved_priority_class(self, mock_get_template):
+        client = _make_mock_client(mock_get_template)
+        for priority in ("2", "3", "4", "6"):
+            with self.subTest(priority=priority):
+                manifest = await client._new_pipelinerun_for_image_build(
+                    **_COMMON_KWARGS, build_params=ImageBuildParams(build_priority=priority)
+                )
+                self.assertEqual(
+                    manifest["metadata"]["labels"]["kueue.x-k8s.io/priority-class"],
+                    f"build-priority-{priority}",
+                )

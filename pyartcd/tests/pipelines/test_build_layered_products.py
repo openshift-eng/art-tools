@@ -649,6 +649,7 @@ class TestBuildLayeredProductsPipeline(IsolatedAsyncioTestCase):
         cmd = mock_cmd.call_args[0][0]
         self.assertFalse(any(arg.startswith('--images=') for arg in cmd))
         self.assertFalse(any(arg.startswith('--exclude=') for arg in cmd))
+        self.assertIn('--build-priority=3', cmd)
 
     def _write_image_build_record_log(self, entries):
         """Write an image_build_konflux record.log with the given (name, nvr) entries, all successful with a bundle."""

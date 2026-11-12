@@ -394,6 +394,7 @@ class TestPrepareReleaseLPMultiFBC(unittest.TestCase):
             kwargs["operator_nvrs_by_target"],
             {"4.18": operator_nvrs, "4.19": operator_nvrs, "4.20": operator_nvrs},
         )
+        self.assertEqual(kwargs["build_priority"], "2")
         self.assertFalse(kwargs["force"])
         self.assertTrue(kwargs["reset_to_prod"])
         self.assertFalse(kwargs["allow_partial"])
@@ -414,6 +415,7 @@ class TestPrepareReleaseLPMultiFBC(unittest.TestCase):
         self.assertEqual(len(nvrs), 1)
         self.assertEqual(len(pullspecs), 1)
         self.assertEqual(mock_build_fbc_catalogs.await_args.kwargs["operator_nvrs_by_target"], {None: operator_nvrs})
+        self.assertEqual(mock_build_fbc_catalogs.await_args.kwargs["build_priority"], "2")
 
     @patch.object(PrepareReleaseLPPipeline, '_load_ocp_target_versions', new_callable=AsyncMock)
     @patch('pyartcd.pipelines.prepare_release_lp.build_fbc_catalogs', new_callable=AsyncMock)

@@ -15,7 +15,7 @@ import click
 import yaml as stdlib_yaml
 from artcommonlib import exectools
 from artcommonlib.assembly import assembly_image_pins
-from artcommonlib.constants import SHIPMENT_DATA_URL_TEMPLATE
+from artcommonlib.constants import KONFLUX_RELEASE_BUILD_PRIORITY, SHIPMENT_DATA_URL_TEMPLATE
 from artcommonlib.gitdata import SafeFormatter
 from artcommonlib.github_auth import build_git_auth_env, get_github_client_for_org
 from artcommonlib.gitlab import GitLabClient
@@ -540,6 +540,7 @@ class PrepareReleaseLPPipeline:
             version=self.assembly,
             product=self.product or "ocp",
             operator_nvrs_by_target=requests,
+            build_priority=str(KONFLUX_RELEASE_BUILD_PRIORITY),
             data_path=self.build_data_repo_url,
             force=self.refresh_fbcs,
             # This preserves prepare-release-lp's existing behavior. Doozer's

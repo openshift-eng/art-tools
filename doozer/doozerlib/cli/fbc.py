@@ -28,6 +28,7 @@ from tenacity import retry, stop_after_attempt, wait_exponential
 
 from doozerlib import constants, opm
 from doozerlib.backend.konflux_fbc import (
+    FBC_BUILD_PRIORITY,
     KonfluxFbcBuilder,
     KonfluxFbcFragmentMerger,
     KonfluxFbcImporter,
@@ -214,6 +215,7 @@ class FbcMergeCli:
         plr_template: Optional[str] = None,
         target_index: Optional[str] = None,
         major_minor: Optional[str] = None,
+        build_priority: str = FBC_BUILD_PRIORITY,
     ):
         """
         Initialize the FBCFragmentMergerCli.
@@ -235,6 +237,7 @@ class FbcMergeCli:
         self.plr_template = plr_template
         self.target_index = target_index
         self.major_minor = major_minor
+        self.build_priority = build_priority
 
     @retry(reraise=True, stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=2, max=10))
     async def _list_tags(self):
@@ -331,6 +334,7 @@ class FbcMergeCli:
             skip_checks=self.skip_checks,
             skip_fips_check=self.skip_fips_check,
             skip_tasks=self.skip_tasks,
+            build_priority=self.build_priority,
             plr_template=self.plr_template,
             major_minor_override=(major, minor) if self.major_minor else None,
         )
@@ -419,6 +423,13 @@ class FbcMergeCli:
     metavar='MAJOR.MINOR',
     help="Override the MAJOR.MINOR version from group config (e.g. 4.17).",
 )
+@click.option(
+    '--build-priority',
+    type=click.Choice([str(priority) for priority in range(1, 11)]),
+    default=FBC_BUILD_PRIORITY,
+    show_default=True,
+    help='Kueue build priority, from 1 (highest) to 10 (lowest).',
+)
 @click.argument("fragments", nargs=-1, required=False)
 @click_coroutine
 async def fbc_merge(
@@ -439,6 +450,7 @@ async def fbc_merge(
     plr_template: Optional[str],
     target_index: Optional[str],
     major_minor: Optional[str],
+    build_priority: str,
 ):
     """
     Merge FBC fragments from multiple index images into a single FBC repository.
@@ -467,6 +479,7 @@ async def fbc_merge(
         skip_checks=skip_checks,
         skip_fips_check=skip_fips_check,
         skip_tasks=skip_tasks,
+        build_priority=build_priority,
         plr_template=plr_template,
         target_index=target_index,
         major_minor=major_minor,
@@ -497,6 +510,7 @@ class FbcRebaseAndBuildCli:
         major_minor: Optional[str] = None,
         insert_missing_entry: bool = False,
         skip_tasks: tuple[str, ...] = (),
+        build_priority: str = FBC_BUILD_PRIORITY,
     ):
         self.runtime = runtime
         self.version = version
@@ -517,6 +531,7 @@ class FbcRebaseAndBuildCli:
         self.reset_to_prod = reset_to_prod
         self.prod_registry_auth = prod_registry_auth
         self.major_minor = major_minor
+        self.build_priority = build_priority
         self.insert_missing_entry = insert_missing_entry
         self._logger = LOGGER.getChild("FbcRebaseAndBuildCli")
         self._db_for_bundles = KonfluxDb()
@@ -786,6 +801,7 @@ class FbcRebaseAndBuildCli:
             image_repo=self.image_repo,
             skip_checks=self.skip_checks,
             skip_tasks=self.skip_tasks,
+            build_priority=self.build_priority,
             pipelinerun_template_url=self.plr_template,
             dry_run=self.dry_run,
             major_minor_override=ocp_version if self.major_minor else None,
@@ -948,6 +964,13 @@ class FbcRebaseAndBuildCli:
     default=False,
     help="Insert the new bundle entry in version order instead of appending. Use this to fix missing entries that were removed from the catalog.",
 )
+@click.option(
+    '--build-priority',
+    type=click.Choice([str(priority) for priority in range(1, 11)]),
+    default=FBC_BUILD_PRIORITY,
+    show_default=True,
+    help='Kueue build priority, from 1 (highest) to 10 (lowest).',
+)
 @click.argument('operator_nvrs', nargs=-1, required=False)
 @pass_runtime
 @click_coroutine
@@ -972,6 +995,7 @@ async def fbc_rebase_and_build(
     major_minor: Optional[str],
     insert_missing_entry: bool,
     operator_nvrs: Tuple[str, ...],
+    build_priority: str,
 ):
     """
     Rebase FBC source content and then build it
@@ -1004,6 +1028,7 @@ async def fbc_rebase_and_build(
         image_repo=image_repo,
         skip_checks=skip_checks,
         skip_tasks=skip_tasks,
+        build_priority=build_priority,
         plr_template=plr_template,
         dry_run=dry_run,
         force=force,

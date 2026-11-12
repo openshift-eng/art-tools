@@ -28,6 +28,7 @@ from artcommonlib.assembly import (
     assembly_targeted_fixes_only,
 )
 from artcommonlib.constants import (
+    KONFLUX_RELEASE_BUILD_PRIORITY,
     OCP_RPA_BASE_URL,
     REGISTRY_QUAY_OCP_RELEASE_DEV,
     REGISTRY_REDHAT_IO,
@@ -970,6 +971,7 @@ class PrepareReleaseKonfluxPipeline:
         cmd = self._doozer_base_command + [
             f'--assembly={self.assembly}',
             "beta:fbc:rebase-and-build",
+            f"--build-priority={KONFLUX_RELEASE_BUILD_PRIORITY}",
             f"--version={version}",
             f"--release={release_str}",
             f"--message={message}",

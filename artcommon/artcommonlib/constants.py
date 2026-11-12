@@ -83,7 +83,9 @@ KONFLUX_IMAGE_TEST_REPO = "quay.io/redhat-user-workloads/ocp-art-tenant/art-imag
 RHCOS_IMAGE_REPO = "quay.io/redhat-user-workloads/ocp-art-tenant/art-rhcos-images"
 KONFLUX_DEFAULT_FBC_REPO = "quay.io/redhat-user-workloads/ocp-art-tenant/art-fbc"
 
-KONFLUX_DEFAULT_BUILD_PRIORITY = 5
+KONFLUX_DEFAULT_BUILD_PRIORITY = 6
+KONFLUX_GOLANG_BUILD_PRIORITY = 2
+KONFLUX_RELEASE_BUILD_PRIORITY = 2
 
 # Golang builder image metadata key
 GOLANG_BUILDER_IMAGE_NAME = 'openshift-golang-builder'

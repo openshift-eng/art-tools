@@ -39,7 +39,7 @@ from doozerlib.source_resolver import SourceResolution, SourceResolver
 _LOGGER = logging.getLogger(__name__)
 
 
-BUNDLE_BUILD_PRIORITY = "3"
+BUNDLE_BUILD_PRIORITY = "4"
 
 # Characters that can appear inside a pullspec (registry/repo:tag or registry/repo@sha256:...)
 _PULLSPEC_CHARS = frozenset(string.ascii_letters + string.digits + "/:@._-")
@@ -1504,6 +1504,7 @@ class KonfluxOlmBundleBuilder:
                 'build_id': pipelinerun_name,
                 'build_pipeline_url': build_pipeline_url,
                 'pipeline_commit': 'n/a',  # TODO: populate this
+                'build_priority': int(BUNDLE_BUILD_PRIORITY),
                 'bundle_package_name': bundle_package_name,
                 'bundle_csv_name': bundle_csv_name,
                 'operator_nvr': operator_nvr,

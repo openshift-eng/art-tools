@@ -973,6 +973,25 @@ class TestPrepareReleaseKonfluxPipeline(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(errors[0]["error"], "build failed")
         mock_cmd_gather_async.assert_awaited_once()
 
+    @patch('pyartcd.pipelines.prepare_release_konflux.exectools.cmd_gather_async', new_callable=AsyncMock)
+    @patch.object(PrepareReleaseKonfluxPipeline, 'filter_olm_operators', new_callable=AsyncMock)
+    async def test_find_or_build_fbc_builds_uses_release_priority(self, mock_filter, mock_cmd):
+        pipeline = PrepareReleaseKonfluxPipeline(
+            slack_client=self.mock_slack_client,
+            runtime=self.runtime,
+            group=self.group,
+            assembly=self.assembly,
+        )
+        pipeline.release_name = "4.18.1"
+        mock_filter.return_value = ["test-operator-1.0.0-1"]
+        mock_cmd.return_value = (0, json.dumps({"nvrs": ["test-fbc-1.0.0-1"], "errors": []}), "")
+
+        nvrs, errors = await pipeline.find_or_build_fbc_builds(["test-operator-1.0.0-1"])
+
+        self.assertEqual(nvrs, ["test-fbc-1.0.0-1"])
+        self.assertEqual(errors, [])
+        self.assertIn("--build-priority=2", mock_cmd.await_args.args[0])
+
     @patch.object(PrepareReleaseKonfluxPipeline, 'trigger_verify_cdn_push')
     @patch.object(PrepareReleaseKonfluxPipeline, 'report_deferred_build_failures', new_callable=AsyncMock)
     @patch.object(PrepareReleaseKonfluxPipeline, 'verify_payload', new_callable=AsyncMock)
