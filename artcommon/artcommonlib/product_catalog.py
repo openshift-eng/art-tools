@@ -67,6 +67,7 @@ PRODUCT_CATALOG: tuple[ProductConfig, ...] = (
             (2, 16): "acm-advisory-stage-auto-2-16",
             (2, 17): "acm-advisory-stage-auto-2-17",
             (5, 0): "acm-advisory-stage-auto-5-0",
+            (5, 1): "acm-advisory-stage-auto-5-1",
         },
         cpe_product_name="acm",
     ),
