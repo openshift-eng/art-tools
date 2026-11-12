@@ -24,6 +24,7 @@ from artcommonlib.util import (
     resolve_konflux_kubeconfig_by_product,
     resolve_konflux_namespace_by_product,
 )
+from dockerfile_parse import DockerfileParser
 from tenacity import retry, stop_after_attempt, wait_exponential
 
 from doozerlib import constants, opm
@@ -511,6 +512,7 @@ class FbcRebaseAndBuildCli:
         insert_missing_entry: bool = False,
         skip_tasks: tuple[str, ...] = (),
         build_priority: str = FBC_BUILD_PRIORITY,
+        skip_rebase: bool = False,
     ):
         self.runtime = runtime
         self.version = version
@@ -533,6 +535,7 @@ class FbcRebaseAndBuildCli:
         self.major_minor = major_minor
         self.build_priority = build_priority
         self.insert_missing_entry = insert_missing_entry
+        self.skip_rebase = skip_rebase
         self._logger = LOGGER.getChild("FbcRebaseAndBuildCli")
         self._db_for_bundles = KonfluxDb()
         self._db_for_bundles.bind(KonfluxBundleBuildRecord)
@@ -667,13 +670,25 @@ class FbcRebaseAndBuildCli:
             return existing_fbc_build
         return None
 
+    async def _get_successful_fbc_build_by_nvr(self, nvr: str) -> Optional[KonfluxFbcBuildRecord]:
+        """Find a successful FBC build by exact NVR, regardless of assembly or group."""
+        where = {
+            "nvr": nvr,
+            "outcome": str(KonfluxBuildOutcome.SUCCESS),
+        }
+        build = await anext(self._fbc_db.search_builds_by_fields(where=where, limit=1), None)
+        if build is None:
+            return None
+        assert isinstance(build, KonfluxFbcBuildRecord)
+        return build
+
     async def _rebase_and_build(
         self,
         importer: KonfluxFbcImporter,
         rebaser: KonfluxFbcRebaser,
         builder: KonfluxFbcBuilder,
         operator_meta: ImageMetadata,
-        bundle_build: KonfluxBundleBuildRecord,
+        bundle_build: Optional[KonfluxBundleBuildRecord],
         git_auth_secret: Optional[str] = None,
     ) -> Tuple[str, str]:
         """Rebase and build FBC for the given operator and bundle build.
@@ -681,29 +696,59 @@ class FbcRebaseAndBuildCli:
         :param rebaser: FBC rebaser instance
         :param builder: FBC builder instance
         :param operator_meta: Operator metadata
-        :param bundle_build: Bundle build record
+        :param bundle_build: Bundle build record; not required when skipping rebase
         :param git_auth_secret: Name of the transient git-auth Secret for PipelineRuns
         :return: Tuple of (NVR, pullspec) of the FBC build
         """
         report = get_reporter().component('fbc', operator_meta.distgit_key, dry_run=self.dry_run)
         async with report.preparing():
-            existing_fbc_build = await self._check_existing_fbc_build(operator_meta, bundle_build)
-            if existing_fbc_build:
-                self._logger.info(f"Found existing FBC build: {existing_fbc_build.nvr}")
-                if not self.force:
-                    await report.set_status('Reused', reason='Existing successful FBC reused')
-                    return existing_fbc_build.nvr, existing_fbc_build.image_pullspec or ""
-                self._logger.info("Force flag is set, rebuilding FBC")
+            operator_nvr = None
+            if self.skip_rebase:
+                self._logger.info("Skipping production reset and rebase; building existing FBC source")
+                await builder.ensure_source(operator_meta, upcycle=True)
+                dockerfile = Path(
+                    self.runtime.working_dir,
+                    constants.WORKING_SUBDIR_KONFLUX_FBC_SOURCES,
+                    operator_meta.distgit_key,
+                    'catalog.Dockerfile',
+                )
+                nvr = DockerfileParser(str(dockerfile)).labels.get('com.redhat.art.nvr')
+                if not nvr:
+                    raise ValueError("FBC NVR not found in the catalog.Dockerfile. Did you rebase?")
+                existing_fbc_build = await self._get_successful_fbc_build_by_nvr(nvr)
+                if existing_fbc_build is not None:
+                    raise ValueError(
+                        f"Successful FBC NVR {nvr} already exists in DB! "
+                        f"Existing build assembly: {existing_fbc_build.assembly}; "
+                        f"pullspec: {existing_fbc_build.image_pullspec}. "
+                        "Update catalog.Dockerfile to use a distinct NVR before rebuilding."
+                    )
+            else:
+                if bundle_build is None:
+                    raise ValueError("Bundle build is required when rebasing FBC source")
+                operator_nvr = bundle_build.operator_nvr
+                # Bundle NVRs cannot identify manual edits to existing FBC source.
+                existing_fbc_build = await self._check_existing_fbc_build(operator_meta, bundle_build)
+                if existing_fbc_build:
+                    self._logger.info(f"Found existing FBC build: {existing_fbc_build.nvr}")
+                    if not self.force:
+                        await report.set_status('Reused', reason='Existing successful FBC reused')
+                        return existing_fbc_build.nvr, existing_fbc_build.image_pullspec or ""
+                    self._logger.info("Force flag is set, rebuilding FBC")
 
-            if self.reset_to_prod:
-                self._logger.info(f"Resetting FBC source content to production index image for {operator_meta.name}...")
-                await importer.import_from_index_image(operator_meta, index_image=None, strict=False)
+                if self.reset_to_prod:
+                    self._logger.info(
+                        f"Resetting FBC source content to production index image for {operator_meta.name}..."
+                    )
+                    await importer.import_from_index_image(operator_meta, index_image=None, strict=False)
 
-            self._logger.info(f"Rebasing fbc for {operator_meta.name}...")
-            nvr = await rebaser.rebase(operator_meta, bundle_build, self.version, self.release)
+                self._logger.info(f"Rebasing fbc for {operator_meta.name}...")
+                nvr = await rebaser.rebase(operator_meta, bundle_build, self.version, self.release)
             self._logger.info(f"Building fbc for {operator_meta.name}...")
             _, pipelinerun_dict = await builder.build(
-                operator_meta, operator_nvr=bundle_build.operator_nvr, git_auth_secret=git_auth_secret
+                operator_meta,
+                operator_nvr=operator_nvr,
+                git_auth_secret=git_auth_secret,
             )
             results = pipelinerun_dict.get('status', {}).get('results', [])
             image_url = next((r['value'] for r in results if r['name'] == 'IMAGE_URL'), None)
@@ -726,23 +771,27 @@ class FbcRebaseAndBuildCli:
         konflux_db = runtime.konflux_db
         konflux_db.bind(KonfluxBuildRecord)
 
-        # Get operator builds and corresponding bundle builds
+        # Get operator builds. Existing FBC source already records its bundle provenance,
+        # so skip-rebase builds do not need a bundle for the selected operator.
         dgk_operator_builds = await self.get_operator_builds(self.operator_nvrs)
-        dgk_bundle_builds = await self.get_bundle_builds(list(dgk_operator_builds.values()), strict=False)
-        dgk_not_found = [dgk for dgk, bundle_build in dgk_bundle_builds.items() if bundle_build is None]
-        if dgk_not_found:
-            for dgk in dgk_not_found:
-                await (
-                    get_reporter()
-                    .component('fbc', dgk)
-                    .set_status('Skipped', reason='No successful bundle build found')
-                )
-                self._logger.warning(f"Bundle build not found for {dgk_operator_builds[dgk].nvr}. Will skip it.")
-        dgk_bundle_builds = {
-            dgk: bundle_build for dgk, bundle_build in dgk_bundle_builds.items() if bundle_build is not None
-        }
-        if not dgk_bundle_builds:
-            raise DoozerFatalError("No bundle builds found. Exiting.")
+        if self.skip_rebase:
+            dgk_bundle_builds = dict.fromkeys(dgk_operator_builds)
+        else:
+            dgk_bundle_builds = await self.get_bundle_builds(list(dgk_operator_builds.values()), strict=False)
+            dgk_not_found = [dgk for dgk, bundle_build in dgk_bundle_builds.items() if bundle_build is None]
+            if dgk_not_found:
+                for dgk in dgk_not_found:
+                    await (
+                        get_reporter()
+                        .component('fbc', dgk)
+                        .set_status('Skipped', reason='No successful bundle build found')
+                    )
+                    self._logger.warning(f"Bundle build not found for {dgk_operator_builds[dgk].nvr}. Will skip it.")
+            dgk_bundle_builds = {
+                dgk: bundle_build for dgk, bundle_build in dgk_bundle_builds.items() if bundle_build is not None
+            }
+            if not dgk_bundle_builds:
+                raise DoozerFatalError("No bundle builds found. Exiting.")
 
         assert runtime.source_resolver is not None, "source_resolver is not initialized. Doozer bug?"
         assert runtime.group_config is not None, "group_config is not initialized. Doozer bug?"
@@ -841,7 +890,7 @@ class FbcRebaseAndBuildCli:
                     error_details = {
                         "operator": dgk,
                         "operator_nvr": dgk_operator_builds[dgk].nvr,
-                        "bundle_nvr": dgk_bundle_builds[dgk].nvr,
+                        "bundle_nvr": dgk_bundle_builds[dgk].nvr if dgk_bundle_builds[dgk] else None,
                         "error": str(result),
                         "traceback": stack_trace,
                     }
@@ -913,6 +962,9 @@ class FbcRebaseAndBuildCli:
     help='The namespace to use for Konflux cluster connections.',
 )
 @click.option('--image-repo', default=constants.KONFLUX_DEFAULT_FBC_REPO, help='Push images to the specified repo.')
+@click.option(
+    '--skip-rebase', is_flag=True, help='Build existing FBC source without resetting to production or rebasing'
+)
 @click.option('--skip-checks', default=False, is_flag=True, help='Skip all post build checks')
 @click.option(
     '--skip-task',
@@ -996,6 +1048,7 @@ async def fbc_rebase_and_build(
     insert_missing_entry: bool,
     operator_nvrs: Tuple[str, ...],
     build_priority: str,
+    skip_rebase: bool,
 ):
     """
     Rebase FBC source content and then build it
@@ -1037,5 +1090,6 @@ async def fbc_rebase_and_build(
         prod_registry_auth=prod_registry_auth,
         major_minor=major_minor,
         insert_missing_entry=insert_missing_entry,
+        skip_rebase=skip_rebase,
     )
     await cli.run()

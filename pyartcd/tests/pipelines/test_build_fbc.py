@@ -56,6 +56,30 @@ class TestBuildFbcPipeline(unittest.IsolatedAsyncioTestCase):
         mock_rebase_and_build.assert_awaited_once()
         self.assertEqual(mock_rebase_and_build.await_args.kwargs["build_variant"], BuildVariant.LOGGING)
 
+    async def test_skip_rebase_does_not_require_production_index(self):
+        self.pipeline.skip_rebase = True
+        with (
+            patch("pyartcd.pipelines.build_fbc.load_group_config", new=AsyncMock(return_value={})),
+            patch.object(self.pipeline, "_check_production_index_exists", new=AsyncMock(return_value=False)) as check,
+            patch.object(self.pipeline, "_rebase_and_build", new=AsyncMock(return_value=[])) as build,
+        ):
+            await self.pipeline.run()
+        check.assert_not_called()
+        build.assert_awaited_once()
+
+    async def test_skip_rebase_is_forwarded_only_when_enabled(self):
+        self.pipeline.kubeconfig = "/tmp/kubeconfig"
+        self.assertFalse(self.pipeline.skip_rebase)
+        for skip_rebase in (False, True):
+            with self.subTest(skip_rebase=skip_rebase):
+                self.pipeline.skip_rebase = skip_rebase
+                with (
+                    patch.object(self.pipeline, "_run_doozer", new=AsyncMock()) as run_doozer,
+                    patch.object(self.pipeline, "_parse_record_log", new=AsyncMock(return_value=([], []))),
+                ):
+                    await self.pipeline._rebase_and_build("release", "message", {})
+                self.assertEqual("--skip-rebase" in run_doozer.await_args.args[0], skip_rebase)
+
 
 if __name__ == "__main__":
     unittest.main()

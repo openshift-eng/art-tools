@@ -1841,6 +1841,38 @@ class KonfluxFbcBuilder:
         logger.info("Retrieved arches from group %s: %s", override_group, arches)
         return arches
 
+    async def ensure_source(self, metadata: ImageMetadata, upcycle: bool = False) -> BuildRepo:
+        """Ensure the expected FBC source branch is checked out.
+
+        Args:
+            metadata: Operator image metadata used to derive the FBC branch.
+            upcycle: Delete an existing checkout and clone the remote branch again.
+
+        Returns:
+            The prepared FBC build repository.
+        """
+        if self.major_minor_override:
+            ocp_version = self.major_minor_override
+        else:
+            group_config = metadata.runtime.group_config
+            ocp_version = int(group_config.vars.MAJOR), int(group_config.vars.MINOR)
+
+        build_branch = _generate_fbc_branch_name(
+            group=self.group, assembly=self.assembly, distgit_key=metadata.distgit_key, ocp_version=ocp_version
+        )
+        repo_dir = self.base_dir.joinpath(metadata.distgit_key)
+        build_repo = BuildRepo(
+            url=self.fbc_repo,
+            branch=build_branch,
+            local_dir=repo_dir,
+            logger=self._logger.getChild(f"[{metadata.get_olm_bundle_short_name()}]"),
+        )
+        if upcycle:
+            await build_repo.ensure_source(upcycle=True, strict=True)
+        else:
+            await build_repo.ensure_source(strict=True)
+        return build_repo
+
     async def build(
         self, metadata: ImageMetadata, operator_nvr: Optional[str] = None, git_auth_secret: Optional[str] = None
     ):
@@ -1872,24 +1904,7 @@ class KonfluxFbcBuilder:
                 build_repo = await BuildRepo.from_local_dir(repo_dir, logger)
                 logger.info("FBC repository loaded from %s", repo_dir)
             else:
-                # Get OCP version for branch naming
-                if self.major_minor_override:
-                    ocp_version = self.major_minor_override
-                else:
-                    group_config = metadata.runtime.group_config
-                    ocp_version = int(group_config.vars.MAJOR), int(group_config.vars.MINOR)
-
-                build_branch = _generate_fbc_branch_name(
-                    group=self.group, assembly=self.assembly, distgit_key=metadata.distgit_key, ocp_version=ocp_version
-                )
-                logger.info("Cloning bundle repository %s branch %s into %s", self.fbc_repo, build_branch, repo_dir)
-                build_repo = BuildRepo(
-                    url=self.fbc_repo,
-                    branch=build_branch,
-                    local_dir=repo_dir,
-                    logger=logger,
-                )
-                await build_repo.ensure_source(strict=True)
+                build_repo = await self.ensure_source(metadata)
                 logger.info("FBC repository cloned to %s", repo_dir)
 
             # Parse catalog.Dockerfile
