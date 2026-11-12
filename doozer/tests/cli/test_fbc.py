@@ -575,6 +575,13 @@ class TestFbcMergePriority(unittest.IsolatedAsyncioTestCase):
 
 class TestFbcSkipRebase(unittest.IsolatedAsyncioTestCase):
     def setUp(self):
+        konflux_db_patcher = mock.patch("doozerlib.cli.fbc.KonfluxDb")
+        self.addCleanup(konflux_db_patcher.stop)
+        mock_konflux_db_class = konflux_db_patcher.start()
+        mock_konflux_db = mock.AsyncMock()
+        mock_konflux_db.bind = mock.Mock()
+        mock_konflux_db_class.return_value = mock_konflux_db
+
         self.runtime = mock.Mock()
         self.fbc_cli = FbcRebaseAndBuildCli(
             runtime=self.runtime,
