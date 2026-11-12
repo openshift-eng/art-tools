@@ -253,6 +253,9 @@ class TestLayeredFbcMerger(unittest.IsolatedAsyncioTestCase):
         self.baseline_render = baseline_patch.start()
         self.baseline_render.return_value = []
         self.addCleanup(baseline_patch.stop)
+        validate_patch = patch('doozerlib.backend.konflux_fbc_merge.opm.validate', new_callable=AsyncMock)
+        self.catalog_validate = validate_patch.start()
+        self.addCleanup(validate_patch.stop)
 
     async def test_prepares_release_labels_and_provenance(self):
         directory = Path(self.temp.name)
@@ -317,6 +320,7 @@ class TestLayeredFbcMerger(unittest.IsolatedAsyncioTestCase):
             result = await self.merger.merge('quay.io/test/fbc', skip_rebase=True)
         self.assertEqual(build_repo.call_args.kwargs['branch'], 'art-quay-fbc-unified-4-20')
         repo.ensure_source.assert_awaited_once_with(upcycle=True, strict=True)
+        self.catalog_validate.assert_awaited_once_with(repo.local_dir / 'catalog')
         rebase.assert_not_awaited()
         render.assert_not_awaited()
         repo.commit.assert_not_awaited()
@@ -328,6 +332,17 @@ class TestLayeredFbcMerger(unittest.IsolatedAsyncioTestCase):
         self.merger._konflux_client.ensure_git_auth_secret.assert_not_called()
         self.merger._konflux_client.start_pipeline_run_for_image_build.assert_not_called()
         self.merger.db.add_build.assert_not_called()
+
+    async def test_skip_rebase_rejects_invalid_catalog_in_dry_run(self):
+        repo = self._existing_source()
+        self.catalog_validate.side_effect = ChildProcessError('invalid catalog')
+        with (
+            patch('doozerlib.backend.konflux_fbc_merge.BuildRepo', return_value=repo),
+            patch.object(self.merger, '_build', new_callable=AsyncMock) as build,
+        ):
+            with self.assertRaisesRegex(ChildProcessError, 'invalid catalog'):
+                await self.merger.merge('quay.io/test/fbc', skip_rebase=True)
+        build.assert_not_awaited()
 
     async def test_skip_rebase_builds_and_records_existing_revision_and_metadata(self):
         repo = self._existing_source()

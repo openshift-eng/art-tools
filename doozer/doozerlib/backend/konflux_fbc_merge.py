@@ -438,6 +438,7 @@ class LayeredFbcMerger(KonfluxFbcFragmentMerger):
             != sorted(nvr for nvr in dfp.envs.get('__doozer_bundle_nvrs', '').split(',') if nvr)
         ):
             raise ValueError(f'{self.fbc_git_branch} has inconsistent source bundle metadata')
+        await opm.validate(build_repo.local_dir / 'catalog')
         self.release = release
         self.nvr = nvr
         self._build_arches = await get_target_fbc_arches(
