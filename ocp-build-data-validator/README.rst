@@ -77,6 +77,30 @@ catalog is missing. Groups without target versions make no registry requests.
 ``--schema-only`` remains offline and skips this check. Catalog availability does
 not establish that an operator's package or bundle is already in the catalog.
 
+Version rollback protection
+---------------------------
+
+The shared ``validator.ci`` entry point rejects decreases in ``group.yml.version``
+against the target branch of an ocp-build-data pull request. It reads that
+branch's ``base_sha`` from Prow's ``JOB_SPEC``; release-repository rehearsals
+without a metadata PR have no version change to compare. Missing target history
+fails validation rather than skipping the check.
+
+For a local comparison, fetch the target branch and pass its revision explicitly::
+
+    uv run python -I -m validator.ci \
+      --repo /path/to/build-data-release-branch \
+      --base-ref origin/quay-3.18 --schema-only
+
+Versions are compared semantically, so ``3.18.10`` is greater than ``3.18.9``.
+Two-part versions such as ``4.22`` mean ``4.22.0``; ``auto`` resolves to
+``MAJOR.MINOR.0`` using the group name. Unchanged versions and increases pass.
+Removing an existing version or changing it to an incomparable value fails.
+Initial versions are allowed when the target has no version yet. Local runs
+without ``--base-ref`` or a Prow metadata PR do not perform this comparison.
+This check runs with ``--schema-only`` too. It requires no additional credentials
+and does not determine whether a version has shipped or choose the next version.
+
 Artifact lockfile resources
 ---------------------------
 
