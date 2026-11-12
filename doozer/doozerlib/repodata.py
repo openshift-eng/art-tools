@@ -16,7 +16,15 @@ from artcommonlib import logutil
 from artcommonlib.exectools import cmd_gather_async
 from artcommonlib.rpm_utils import label_compare, parse_nvr
 from ruamel.yaml import YAML
-from tenacity import before_sleep_log, retry, retry_if_exception_type, stop_after_attempt, wait_exponential, wait_fixed
+from tenacity import (
+    before_sleep_log,
+    retry,
+    retry_if_exception,
+    retry_if_exception_type,
+    stop_after_attempt,
+    wait_exponential,
+    wait_fixed,
+)
 
 LOGGER = logutil.get_logger(__name__)
 NAMESPACES = {
@@ -24,6 +32,13 @@ NAMESPACES = {
     "rpm": "http://linux.duke.edu/metadata/rpm",
     'common': 'http://linux.duke.edu/metadata/common',
 }
+
+
+def _is_retryable_repodata_error(exception: Exception) -> bool:
+    """
+    Treat HTTP 404 responses as final because retrying the same request will not make the metadata available.
+    """
+    return not (isinstance(exception, aiohttp.ClientResponseError) and exception.status == 404)
 
 
 @dataclass
@@ -423,8 +438,16 @@ class RepodataLoader:
         else:
             raise IOError(f'Unknown compression for: {url}')
 
-    @retry(stop=stop_after_attempt(3), wait=wait_fixed(5), reraise=True)
-    async def load(self, repo_name: str, repo_url: str):
+    @retry(
+        retry=retry_if_exception(_is_retryable_repodata_error),
+        stop=stop_after_attempt(3),
+        wait=wait_fixed(5),
+        reraise=True,
+    )
+    async def load(self, repo_name: str, repo_url: str, optional: bool = False):
+        """
+        Load repository metadata, retrying transient failures but not HTTP 404 responses.
+        """
         if not repo_url.endswith("/"):
             repo_url += "/"
         repomd_url = parse.urljoin(repo_url, "repodata/repomd.xml")
@@ -438,6 +461,14 @@ class RepodataLoader:
                     resp.raise_for_status()
                     repomd_xml = ET.fromstring(await resp.text())
             except Exception as e:
+                if isinstance(e, aiohttp.ClientResponseError) and e.status == 404:
+                    # Higher-level checks decide how an optional repository 404 affects their result.
+                    if optional:
+                        LOGGER.debug("Optional repository %s is absent (HTTP 404): %s", repo_name, repomd_url)
+                    else:
+                        LOGGER.warning("Failed fetching %s: %s", repomd_url, e)
+                    raise
+
                 LOGGER.warning('Failed fetching %s: %s', repomd_url, e)
                 curl_cmd = ['curl', '-v', repomd_url]
                 _, _, err = await cmd_gather_async(curl_cmd)

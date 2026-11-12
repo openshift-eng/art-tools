@@ -348,7 +348,7 @@ class Repo(object):
             return repodata
         name = f"{self.name}-{arch}"
         repourl = cast(str, self.baseurl("unsigned", arch))
-        repodata = self._repodatas[arch] = await RepodataLoader().load(name, repourl)
+        repodata = self._repodatas[arch] = await RepodataLoader().load(name, repourl, optional=self.cs_optional)
 
         if self.excludepkgs:
             LOGGER.info(f"Excluding packages from {name} based on following patterns: {self.excludepkgs}")
