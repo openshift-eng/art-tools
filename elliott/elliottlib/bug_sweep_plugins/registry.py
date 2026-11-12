@@ -3,12 +3,15 @@
 from collections.abc import Callable, Iterable, Mapping
 
 from elliottlib.bug_sweep_plugins.contracts import BugSweepPlugin
+from elliottlib.bug_sweep_plugins.jql_sweep import JQL_SWEEP_PLUGIN_NAME, JqlSweepPlugin
 
 PluginConfiguration = Mapping[str, object]
 
 
-# Concrete factories are added alongside their plugin implementations.
-_PLUGIN_FACTORIES: dict[str, Callable[[PluginConfiguration], BugSweepPlugin]] = {}
+# Add a factory here when implementing a new plugin.
+_PLUGIN_FACTORIES: dict[str, Callable[[PluginConfiguration], BugSweepPlugin]] = {
+    JQL_SWEEP_PLUGIN_NAME: JqlSweepPlugin,
+}
 
 
 def available_plugin_names() -> tuple[str, ...]:

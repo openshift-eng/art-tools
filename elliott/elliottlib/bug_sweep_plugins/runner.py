@@ -8,6 +8,7 @@ from elliottlib.bug_sweep_plugins.contracts import (
     PluginDisposition,
     PluginResult,
 )
+from elliottlib.bzutil import Bug
 from elliottlib.exceptions import ElliottFatalError
 
 
@@ -40,6 +41,8 @@ def evaluate_plugins(plugins: Iterable[BugSweepPlugin], context: PluginContext) 
                 f"Bug-sweep plugin {plugin_name!r} could not completely discover its issue domain; "
                 "refusing to run the ordinary bug sweep with partial ownership"
             )
+        if any(not isinstance(decision.issue, Bug) for decision in result.decisions):
+            raise ValueError(f"Bug-sweep plugin {plugin_name!r} returned a decision without a bug object")
         decision_keys = [decision.issue_key for decision in result.decisions]
         if any(not issue_key for issue_key in decision_keys):
             raise ValueError(f"Bug-sweep plugin {plugin_name!r} returned an empty issue key")
