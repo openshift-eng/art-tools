@@ -1,3 +1,4 @@
+import asyncio
 import re
 import tempfile
 import unittest
@@ -398,6 +399,46 @@ class TestFbcRebaseAndBuildCli(unittest.IsolatedAsyncioTestCase):
 
         with self.assertRaises(DoozerFatalError):
             await self.fbc_cli.run()
+
+    @mock.patch("doozerlib.cli.fbc.KonfluxFbcImporter")
+    @mock.patch("doozerlib.cli.fbc.KonfluxFbcBuilder")
+    @mock.patch("doozerlib.cli.fbc.KonfluxFbcRebaser")
+    async def test_run_skip_rebase_does_not_require_bundle(
+        self, mock_rebaser_class, mock_builder_class, mock_importer_class
+    ):
+        operator_build = self._create_mock_operator_build("test-operator", "test-operator-1.0.0-1")
+        self.runtime.konflux_db.get_build_records_by_nvrs.return_value = [operator_build]
+        self.runtime.image_map = {"test-operator": mock.Mock(is_olm_operator=True, distgit_key="test-operator")}
+        self.fbc_cli.operator_nvrs = (operator_build.nvr,)
+        self.fbc_cli.skip_rebase = True
+
+        mock_builder = mock_builder_class.return_value = mock.AsyncMock()
+        mock_builder._konflux_client.ensure_git_auth_secret.return_value = "git-auth"
+
+        async def token_refresh_loop(**_):
+            await asyncio.Event().wait()
+
+        mock_builder._konflux_client.token_refresh_loop.side_effect = token_refresh_loop
+
+        with (
+            mock.patch.object(self.fbc_cli, "get_bundle_builds", new=mock.AsyncMock()) as get_bundle_builds,
+            mock.patch.object(
+                self.fbc_cli,
+                "_rebase_and_build",
+                new=mock.AsyncMock(return_value=("test-fbc-1.0.0-2", "quay.io/test/fbc@sha256:abc")),
+            ) as build,
+        ):
+            await self.fbc_cli.run()
+
+        get_bundle_builds.assert_not_called()
+        build.assert_awaited_once_with(
+            mock_importer_class.return_value,
+            mock_rebaser_class.return_value,
+            mock_builder,
+            self.runtime.image_map["test-operator"],
+            None,
+            git_auth_secret="git-auth",
+        )
 
     async def test_get_operator_builds_by_nvrs(self):
         operator_build = self._create_mock_operator_build("test-operator", "test-operator-1.0.0-1")
