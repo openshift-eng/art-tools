@@ -2,12 +2,15 @@
 
 import argparse
 import json
+import os
 import re
 import subprocess
 from pathlib import Path
 
+from artcommonlib.util import product_version_from_group_name
 from ruamel.yaml import YAML
 from ruamel.yaml.error import YAMLError
+from semver import Version
 
 from . import checks, releases, schema
 
@@ -31,13 +34,11 @@ def all_files(root: Path) -> list[Path]:
     )
 
 
-def select_files(root: Path, base: str | None = None) -> list[Path]:
-    """Select changed metadata against a single commit, expanding shared edits to a full pass."""
-    if not base:
-        return all_files(root)
+def resolve_commit(root: Path, base: str) -> str:
+    """Resolve a single revision before passing it to other Git commands."""
     if not re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9._/~^@{}-]*', base):
         raise ValueError('--base-ref must be a single git commit revision')
-    revision = (
+    return (
         subprocess.run(
             ['git', '-C', str(root), 'rev-parse', '--verify', '--end-of-options', f'{base}^{{commit}}'],
             capture_output=True,
@@ -46,6 +47,13 @@ def select_files(root: Path, base: str | None = None) -> list[Path]:
         .stdout.decode()
         .strip()
     )
+
+
+def select_files(root: Path, base: str | None = None) -> list[Path]:
+    """Select changed metadata against a single commit, expanding shared edits to a full pass."""
+    if not base:
+        return all_files(root)
+    revision = resolve_commit(root, base)
     result = subprocess.run(
         ['git', '-C', str(root), 'diff', '--name-only', '-z', revision, 'HEAD', '--'], capture_output=True, check=True
     )
@@ -69,6 +77,82 @@ def read_metadata(root: Path, relative: Path) -> dict:
             if YAML(typ='safe').load(source) is None:
                 return {'releases': {}}
     return checks.load_mapping(path)
+
+
+def prow_base_ref() -> str | None:
+    """Find the metadata PR target, ignoring the release PR used for rehearsals."""
+    job = json.loads(os.environ.get('JOB_SPEC') or '{}')
+    for refs in [job.get('refs'), *job.get('extra_refs', [])]:
+        if refs and refs.get('org') == 'openshift-eng' and refs.get('repo') == 'ocp-build-data' and refs.get('pulls'):
+            base = refs.get('base_sha')
+            if not isinstance(base, str) or not re.fullmatch(r'[0-9a-fA-F]{40,64}', base):
+                raise ValueError('Metadata PR JOB_SPEC must contain a valid base_sha for version comparison')
+            return base
+    return None
+
+
+def version_fields(group: dict) -> tuple[object, object]:
+    """Resolve the version and auto group name using this revision's variables."""
+    variables = group.get('vars') or {}
+    if not isinstance(variables, dict):
+        raise ValueError('group.yml.vars must be a mapping for version comparison')
+
+    def resolve(value):
+        if not variables or not isinstance(value, str):
+            return value
+        try:
+            return value.format(**variables)
+        except (KeyError, IndexError, AttributeError, ValueError) as error:
+            raise ValueError(f'Could not resolve group.yml version variables: {error}') from error
+
+    version = resolve(group.get('version'))
+    return version, resolve(group.get('name')) if version == 'auto' else None
+
+
+def effective_version(version: object, group_name: object) -> Version:
+    """Interpret auto as MAJOR.MINOR.0, as the product build pipeline does."""
+    value = version
+    if version == 'auto':
+        if not isinstance(group_name, str):
+            raise ValueError("Cannot resolve version 'auto': group name must be a string")
+        product_version = product_version_from_group_name(group_name)
+        if product_version is None:
+            raise ValueError("Cannot resolve version 'auto': group name must end in MAJOR.MINOR")
+        value = f'{product_version[0]}.{product_version[1]}.0'
+    if not isinstance(value, str):
+        raise ValueError('group.yml.version must be a version string when comparing against an existing version')
+    if re.fullmatch(r'[0-9]+\.[0-9]+', value):
+        value += '.0'
+    return Version.parse(value)
+
+
+def validate_version_change(root: Path, base: str) -> list[str]:
+    """Reject decreases against the target branch without consulting release trackers."""
+    revision = resolve_commit(root, base)
+    exists = subprocess.run(
+        ['git', '-C', str(root), 'ls-tree', '--name-only', revision, '--', 'group.yml'],
+        capture_output=True,
+        check=True,
+    )
+    if not exists.stdout:
+        return []  # Initial metadata on a previously empty branch.
+    previous = YAML(typ='safe').load(
+        subprocess.run(
+            ['git', '-C', str(root), 'show', f'{revision}:group.yml'], capture_output=True, check=True
+        ).stdout.decode()
+    )
+    if not isinstance(previous, dict):
+        raise ValueError('Target branch group.yml must contain a mapping for version comparison')
+    current = read_metadata(root, Path('group.yml'))
+    if 'version' not in previous:
+        return []
+    previous_fields = version_fields(previous)
+    current_fields = version_fields(current)
+    if previous_fields == current_fields:
+        return []
+    if effective_version(*current_fields) < effective_version(*previous_fields):
+        return [f'group.yml: version must not decrease ({previous_fields[0]} -> {current_fields[0]})']
+    return []
 
 
 def validate(
@@ -193,6 +277,9 @@ def main(argv=None) -> int:
         errors = validate(
             root, selected, args.schema_only, token, args.rpa_root, args.application, args.registry_auth_file
         )
+        base = args.base_ref or prow_base_ref()
+        if base:
+            errors.extend(validate_version_change(root, base))
     except subprocess.CalledProcessError:
         errors = ['Could not compare the requested base revision; ensure the Prow checkout contains its history']
     except (ValueError, OSError, YAMLError) as error:

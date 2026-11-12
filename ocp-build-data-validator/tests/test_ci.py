@@ -28,6 +28,148 @@ def repository(tmp_path):
     return git(tmp_path, 'rev-parse', 'HEAD').decode().strip()
 
 
+@pytest.mark.parametrize(
+    'before,after,decrease',
+    [
+        ('3.18.2', '3.18.1', True),
+        ('3.18.9', '3.18.10', False),
+        ('3.18.2', '3.18.2', False),
+        ('3.18.2', '3.19.0', False),
+        ('3.18.2', '3.17.99', True),
+        ('4.22', '4.21', True),
+        ('4.22', '4.22.0', False),
+        ('3.18.2', '3.18.2-rc.1', True),
+        ('3.18.2-rc.1', '3.18.2', False),
+        ('3.18.2+build.2', '3.18.2+build.1', False),
+        ('3.18.2', 'auto', True),
+        ('auto', '3.18.1', False),
+        ('auto', 'auto', False),
+    ],
+)
+@pytest.mark.parametrize('committed', [False, True])
+def test_cli_rejects_version_decreases(tmp_path, before, after, decrease, committed):
+    """Compare semantic versions against committed metadata, including auto's effective version."""
+    repository(tmp_path)
+    group = tmp_path / 'group.yml'
+    group.write_text(f'name: quay-3.18\nversion: "{before}"\n')
+    git(tmp_path, 'add', '.')
+    git(tmp_path, 'commit', '-m', 'target version')
+    base = git(tmp_path, 'rev-parse', 'HEAD').decode().strip()
+    group.write_text(f'name: quay-3.18\nversion: "{after}"\n')
+    if committed:
+        git(tmp_path, 'add', '.')
+        git(tmp_path, 'commit', '--allow-empty', '-m', 'proposed version')
+    report = tmp_path / 'report.json'
+    result = ci.main(['--repo', str(tmp_path), '--base-ref', base, '--schema-only', '--report', str(report)])
+    errors = json.loads(report.read_text())['errors']
+    assert result == int(decrease), errors
+    assert any('version must not decrease' in error for error in errors) == decrease
+
+
+@pytest.mark.parametrize('extra_ref', [False, True])
+def test_prow_compares_metadata_pr_target_not_release_pr(tmp_path, monkeypatch, extra_ref):
+    """Use the metadata PR's base SHA regardless of where Prow puts its refs."""
+    repository(tmp_path)
+    group = tmp_path / 'group.yml'
+    group.write_text('name: quay-3.18\nversion: "3.18.2"\n')
+    git(tmp_path, 'add', '.')
+    git(tmp_path, 'commit', '-m', 'target')
+    base = git(tmp_path, 'rev-parse', 'HEAD').decode().strip()
+    group.write_text('name: quay-3.18\nversion: "3.18.1"\n')
+    refs = {'org': 'openshift-eng', 'repo': 'ocp-build-data', 'base_sha': base, 'pulls': [{'number': 1}]}
+    job = {'refs': refs}
+    if extra_ref:
+        job = {'refs': {'org': 'openshift', 'repo': 'release', 'base_sha': 'bad'}, 'extra_refs': [refs]}
+    monkeypatch.setenv('JOB_SPEC', json.dumps(job))
+    report = tmp_path / 'report.json'
+    assert ci.main(['--repo', str(tmp_path), '--schema-only', '--report', str(report)]) == 1
+    assert 'version must not decrease' in json.loads(report.read_text())['errors'][0]
+
+
+def test_rehearsal_without_metadata_pr_does_not_use_release_base(tmp_path, monkeypatch):
+    """A release PR rehearsal has no metadata version change to compare."""
+    repository(tmp_path)
+    monkeypatch.setenv(
+        'JOB_SPEC',
+        json.dumps({'refs': {'org': 'openshift', 'repo': 'release', 'base_sha': 'bad', 'pulls': [{}]}}),
+    )
+    assert ci.main(['--repo', str(tmp_path), '--schema-only']) == 0
+
+
+@pytest.mark.parametrize('after', ['', 'version: nonsense\n', 'version: auto\n'])
+def test_cannot_bypass_guard_with_missing_or_unresolvable_version(tmp_path, after):
+    """Removing or making an existing version incomparable must fail closed."""
+    repository(tmp_path)
+    group = tmp_path / 'group.yml'
+    group.write_text('name: test\nversion: "3.18.2"\n')
+    git(tmp_path, 'add', '.')
+    git(tmp_path, 'commit', '-m', 'target')
+    group.write_text('name: test\n' + after)
+    assert ci.main(['--repo', str(tmp_path), '--base-ref', 'HEAD', '--schema-only']) == 1
+
+
+@pytest.mark.parametrize(
+    'before,after,rollback',
+    [
+        ('auto', '4.22.1', False),
+        ('auto', '4.21.9', True),
+        ('{MAJOR}.{MINOR}.0', '{MAJOR}.{MINOR}.0', True),
+    ],
+)
+def test_version_comparison_expands_each_revision_variables(tmp_path, before, after, rollback):
+    """Compare values after expanding the variables belonging to each revision."""
+    repository(tmp_path)
+    group = tmp_path / 'group.yml'
+    group.write_text(f'name: "quay-{{MAJOR}}.{{MINOR}}"\nvars: {{MAJOR: 4, MINOR: 22}}\nversion: "{before}"\n')
+    git(tmp_path, 'add', '.')
+    git(tmp_path, 'commit', '-m', 'target')
+    minor = 21 if before == after else 22
+    group.write_text(f'name: "quay-{{MAJOR}}.{{MINOR}}"\nvars: {{MAJOR: 4, MINOR: {minor}}}\nversion: "{after}"\n')
+    report = tmp_path / 'report.json'
+    result = ci.main(['--repo', str(tmp_path), '--base-ref', 'HEAD', '--schema-only', '--report', str(report)])
+    errors = json.loads(report.read_text())['errors']
+    assert result == int(rollback), errors
+    assert any('version must not decrease' in error for error in errors) == rollback
+
+
+def test_null_group_name_reports_auto_version_error(tmp_path):
+    """Malformed names produce a report instead of terminating the validator."""
+    repository(tmp_path)
+    group = tmp_path / 'group.yml'
+    group.write_text('name: quay-3.18\nversion: "3.18.2"\n')
+    git(tmp_path, 'add', '.')
+    git(tmp_path, 'commit', '-m', 'target')
+    group.write_text('name: null\nversion: auto\n')
+    report = tmp_path / 'report.json'
+    assert ci.main(['--repo', str(tmp_path), '--base-ref', 'HEAD', '--schema-only', '--report', str(report)]) == 1
+    assert any('group name' in error for error in json.loads(report.read_text())['errors'])
+
+
+@pytest.mark.parametrize('base_sha', [None, 'missing', 'a' * 40])
+def test_metadata_pr_without_usable_target_history_fails(tmp_path, monkeypatch, base_sha):
+    """Missing or unavailable target SHAs cannot silently disable rollback checks."""
+    repository(tmp_path)
+    monkeypatch.setenv(
+        'JOB_SPEC',
+        json.dumps({'refs': {'org': 'openshift-eng', 'repo': 'ocp-build-data', 'base_sha': base_sha, 'pulls': [{}]}}),
+    )
+    report = tmp_path / 'report.json'
+    assert ci.main(['--repo', str(tmp_path), '--schema-only', '--report', str(report)]) == 1
+    assert json.loads(report.read_text())['errors']
+
+
+@pytest.mark.parametrize('empty_branch', [False, True])
+def test_initial_group_version_has_no_rollback_baseline(tmp_path, empty_branch):
+    """A first version or first group file is allowed on an existing branch."""
+    repository(tmp_path)
+    if empty_branch:
+        (tmp_path / 'group.yml').unlink()
+        git(tmp_path, 'add', '.')
+        git(tmp_path, 'commit', '-m', 'empty branch')
+    (tmp_path / 'group.yml').write_text('name: quay-3.18\nversion: "3.18.1"\n')
+    assert ci.main(['--repo', str(tmp_path), '--base-ref', 'HEAD', '--schema-only']) == 0
+
+
 def test_regular_change_selects_changed_metadata_only(tmp_path):
     """Regular change selects changed metadata only."""
     base = repository(tmp_path)
