@@ -8,7 +8,7 @@ import string
 from datetime import datetime, timezone
 from functools import cached_property, lru_cache
 from pathlib import Path
-from typing import Dict, Optional, Sequence, Tuple, cast
+from typing import Any, Dict, Optional, Sequence, Tuple, cast
 
 import aiofiles
 import yaml
@@ -256,7 +256,13 @@ class KonfluxOlmBundleRebaser:
         # Different operators place the file in different directories, so
         # search multiple candidates (same order as rebaser.py).
         refs_path = None
-        for candidate in [operator_bundle_dir, operator_manifests_dir, operator_manifests_dir.parent]:
+        ref_candidates = [
+            operator_bundle_dir,
+            operator_manifests_dir,
+            operator_dir.joinpath(csv_config["bundle-dir"]),
+            operator_manifests_dir.parent,
+        ]
+        for candidate in ref_candidates:
             if (candidate / "image-references").exists():
                 refs_path = candidate / "image-references"
                 break
@@ -269,7 +275,7 @@ class KonfluxOlmBundleRebaser:
         else:
             logger.warning(
                 f"No image-references file found for {metadata.distgit_key}; "
-                f"searched: {[str(c / 'image-references') for c in [operator_bundle_dir, operator_manifests_dir, operator_manifests_dir.parent]]}. "
+                f"searched: {[str(c / 'image-references') for c in ref_candidates]}. "
                 f"Falling back to legacy tag-based resolution. "
                 f"This fallback will be removed in a future release."
             )
@@ -293,13 +299,13 @@ class KonfluxOlmBundleRebaser:
                         f"Please update the upstream CSV to use the correct tag from image-references."
                     )
 
-        # For Konflux engine on layered products (non-OCP), resolve operand NVRs
-        # from DB instead of relying on predicted tags from operator rebase.
-        # OCP operators still use the legacy tag-based resolution until this
-        # is validated with layered products first.
-        is_layered = not metadata.runtime.group.startswith("openshift-")
+        # Resolve operand NVRs from the DB for Konflux builds instead of relying
+        # on predicted tags from operator rebase. Operator rebase now retains the
+        # upstream specs for both OCP and layered products (ART-21795).
         resolved_operands: dict[str, tuple[str, str, str]] = {}
-        if operator_build.engine is Engine.KONFLUX and image_references and is_layered:
+        resolve_from_db = operator_build.engine is Engine.KONFLUX and bool(image_references)
+        found_resolved_operands: set[str] = set()
+        if resolve_from_db:
             delivery_override_map, delivery_namespace_map = self._build_delivery_maps(metadata)
             external_image_names = self._get_external_image_names(operator_manifests_dir)
             resolved_operands = await self._resolve_operands_from_db(
@@ -323,12 +329,12 @@ class KonfluxOlmBundleRebaser:
             async with aiofiles.open(src, "r") as f:
                 content = await f.read()
 
-            if operator_build.engine is Engine.KONFLUX and resolved_operands:
+            if resolve_from_db:
                 # Replace operand references using upstream specs from image-references.
-                # For layered products, operator rebase no longer writes predicted tags
-                # (ART-18061), so the CSV retains original upstream specs. We replace
-                # them directly with DB-resolved SHA pullspecs.
+                # The CSV retains the upstream specs, so replace them directly with
+                # DB-resolved SHA pullspecs.
                 found_images: dict[str, tuple[str, str, str]] = {}
+                found_resolved_in_manifest: set[str] = set()
                 for delivery_name, (upstream_spec, new_pullspec, operand_nvr) in resolved_operands.items():
                     replaced_content = _replace_pullspec(content, upstream_spec, new_pullspec)
                     if replaced_content == content and ":" in upstream_spec and "@" not in upstream_spec:
@@ -348,6 +354,33 @@ class KonfluxOlmBundleRebaser:
                     if replaced_content != content:
                         content = replaced_content
                         found_images[delivery_name] = (upstream_spec, new_pullspec, operand_nvr)
+                        found_resolved_in_manifest.add(delivery_name)
+                        found_resolved_operands.add(delivery_name)
+
+                # Fail closed if an older operator build still contains a predicted
+                # registry tag for an operand that this manifest did not resolve.
+                unresolved_operands = set(resolved_operands) - found_resolved_in_manifest
+                registry = csv_config.get("registry")
+                if unresolved_operands and registry:
+                    legacy_tag_pattern = self._get_image_reference_pattern(str(registry))
+                    unresolved_legacy_tags = set()
+                    for match in legacy_tag_pattern.finditer(content):
+                        image_short_name = match.group(1).rsplit("/", maxsplit=1)[-1]
+                        delivery_name = delivery_override_map.get(image_short_name, image_short_name)
+                        for unresolved_name in unresolved_operands:
+                            is_duplicate_name = (
+                                unresolved_name.startswith(f"{delivery_name}-")
+                                and unresolved_name[len(delivery_name) + 1 :].isdigit()
+                            )
+                            if unresolved_name == delivery_name or is_duplicate_name:
+                                unresolved_legacy_tags.add(unresolved_name)
+
+                    if unresolved_legacy_tags:
+                        raise KonfluxOlmBundleRebaseError(
+                            f"Manifest {src} contains unresolved predicted registry tags for operands "
+                            f"{sorted(unresolved_legacy_tags)}; refusing to publish an incomplete bundle."
+                        )
+
                 found_images.update(self._find_external_digest_images(content, found_images))
             else:
                 # Brew engine: use tag-based regex resolution (legacy path)
@@ -372,6 +405,13 @@ class KonfluxOlmBundleRebaser:
                         ]
                     content = yaml.safe_dump(csv)
                 await f.write(content)
+
+        unresolved_operands = set(resolved_operands) - found_resolved_operands
+        if unresolved_operands:
+            raise KonfluxOlmBundleRebaseError(
+                f"Could not resolve operands {sorted(unresolved_operands)} from image-references for "
+                f"{metadata.distgit_key}; refusing to publish an incomplete bundle."
+            )
 
         # Warn if the number of images found in the bundle doesn't match the image-references file
         if len(all_found_operands) != len(image_references):
@@ -634,6 +674,9 @@ class KonfluxOlmBundleRebaser:
         logger = self._logger.getChild(f"[{metadata.distgit_key}]")
         csv_namespace = self._group_config.get("csv_namespace", "openshift")
         pins = self._release_image_pins(metadata)
+        basis_cutoff = getattr(metadata.runtime, "assembly_basis_event", None)
+        if not isinstance(basis_cutoff, datetime):
+            basis_cutoff = None
 
         # Phase 1a: Validate metadata and collect DB query coroutines
         entries_meta: list[tuple[str, str, ImageMetadata]] = []  # (name, spec, meta)
@@ -671,13 +714,14 @@ class KonfluxOlmBundleRebaser:
                     self._konflux_db.get_build_record_by_nvr(pin, strict=True, exclude_large_columns=True)
                 )
             else:
-                build_coros.append(
-                    meta.get_latest_konflux_build(
-                        assembly=self.assembly,
-                        el_target=el_target,
-                        exclude_large_columns=True,
-                    )
-                )
+                build_query: dict[str, Any] = {
+                    "assembly": self.assembly,
+                    "el_target": el_target,
+                    "exclude_large_columns": True,
+                }
+                if basis_cutoff is not None:
+                    build_query["completed_before"] = basis_cutoff
+                build_coros.append(meta.get_latest_konflux_build(**build_query))
 
         # Phase 1b: Fetch all builds concurrently, then check embargo status
         builds = await asyncio.gather(*build_coros)
@@ -691,7 +735,7 @@ class KonfluxOlmBundleRebaser:
             pin = pins.get(meta.get_component_name())
             if pin and build.nvr != pin:
                 raise KonfluxOlmBundleRebaseError(f"Expected assembly pin {pin}, resolved {build.nvr}")
-            if not pin and build.assembly != self.assembly:
+            if not pin and build.assembly not in {self.assembly, "stream"}:
                 raise KonfluxOlmBundleRebaseError(
                     f"Assembly mismatch: resolved operand {build.nvr} for operator "
                     f"{metadata.distgit_key} has assembly '{build.assembly}', "
@@ -707,20 +751,23 @@ class KonfluxOlmBundleRebaser:
                     f"by operator {metadata.distgit_key}: {e}"
                 ) from e
             if embargoed:
-                public_build = await meta.get_latest_konflux_build(
-                    assembly=self.assembly,
-                    default=None,
-                    el_target=f"el{meta.branch_el_target()}",
-                    embargoed=False,
-                    exclude_large_columns=True,
-                )
+                public_build_query: dict[str, Any] = {
+                    "assembly": self.assembly,
+                    "default": None,
+                    "el_target": f"el{meta.branch_el_target()}",
+                    "embargoed": False,
+                    "exclude_large_columns": True,
+                }
+                if basis_cutoff is not None:
+                    public_build_query["completed_before"] = basis_cutoff
+                public_build = await meta.get_latest_konflux_build(**public_build_query)
                 if not public_build:
                     raise KonfluxOlmBundleRebaseError(
                         f"Operand {build.nvr} referenced by operator {metadata.distgit_key} is "
                         f"embargoed, and no public (non-embargoed) build of '{meta.distgit_key}' "
                         f"is available to substitute. Cannot safely rebase this operator bundle."
                     )
-                if public_build.assembly != self.assembly:
+                if public_build.assembly not in {self.assembly, "stream"}:
                     raise KonfluxOlmBundleRebaseError(
                         f"Assembly mismatch: public substitute operand {public_build.nvr} for operator "
                         f"{metadata.distgit_key} has assembly '{public_build.assembly}', "
@@ -799,8 +846,8 @@ class KonfluxOlmBundleRebaser:
         """
         Replace image references in the content by their corresponding SHA.
 
-        Legacy path used by Brew engine. For Konflux, _resolve_operands_from_db
-        is used instead.
+        Legacy path used by Brew builds and by Konflux builds without an
+        image-references file. Other Konflux builds use _resolve_operands_from_db.
 
         Arg(s):
             old_registry: Registry prefix to match (e.g. "registry.redhat.io").
