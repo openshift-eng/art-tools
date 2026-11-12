@@ -4,7 +4,7 @@ from dataclasses import dataclass
 from enum import StrEnum
 from typing import Protocol
 
-from elliottlib.bzutil import BugTracker
+from elliottlib.bzutil import Bug, BugTracker
 from elliottlib.runtime import Runtime
 
 
@@ -24,15 +24,23 @@ class PluginDisposition(StrEnum):
 @dataclass(frozen=True)
 class PluginDecision:
     """
-    A plugin decision describes an issue in the plugin's declared domain.
+    A plugin decision describes an issue object in the plugin's declared domain.
 
-    Reasons are suitable for logs and reports. Plugins must not include raw
-    external data or exception messages in them.
+    Retaining the issue object lets downstream code reuse the tracker result without
+    fetching the issue again. Reasons are suitable for logs and reports. Plugins
+    must not include raw external data or exception messages in them.
     """
 
-    issue_key: str
+    issue: Bug
     disposition: PluginDisposition
     reason: str
+
+    @property
+    def issue_key(self) -> str:
+        """
+        Return the issue's stable identifier as a string.
+        """
+        return str(self.issue.id)
 
 
 @dataclass(frozen=True)
@@ -54,12 +62,14 @@ class PluginResult:
 @dataclass(frozen=True)
 class PluginContext:
     """
-    Read-only inputs available to a plugin for one assembly sweep.
+    Read-only inputs available to a plugin for one assembly sweep. The cutoff
+    timestamp is optional because not all sweeps have a time-based basis.
     """
 
     runtime: Runtime
     bug_tracker: BugTracker
     excluded_issue_keys: frozenset[str]
+    assembly_timestamp: float | None = None
 
 
 class BugSweepPlugin(Protocol):

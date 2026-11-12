@@ -11,7 +11,25 @@ from elliottlib.bug_sweep_plugins.contracts import (
 )
 from elliottlib.bug_sweep_plugins.registry import available_plugin_names, create_plugins
 from elliottlib.bug_sweep_plugins.runner import evaluate_plugins
+from elliottlib.bzutil import Bug
 from elliottlib.exceptions import ElliottFatalError
+
+
+class _TestBug(Bug):
+    """Minimal bug object for plugin contract tests."""
+
+    def __init__(self, issue_key: str):
+        self._issue_key = issue_key
+
+    @property
+    def id(self) -> str:
+        """Return the test issue key."""
+        return self._issue_key
+
+
+def _plugin_decision(issue_key: str, disposition: PluginDisposition, reason: str) -> PluginDecision:
+    """Create a plugin decision with a bug object."""
+    return PluginDecision(_TestBug(issue_key), disposition, reason)
 
 
 class _Plugin:
@@ -46,9 +64,9 @@ class TestPluginRunner(unittest.TestCase):
     def test_runner_returns_validated_plugin_results(self):
         result = _plugin_result(
             decisions=(
-                PluginDecision("OCPBUGS-1", PluginDisposition.INCLUDE, "eligible"),
-                PluginDecision("OCPBUGS-2", PluginDisposition.SUPPRESS, "no evidence"),
-                PluginDecision("OCPBUGS-3", PluginDisposition.REVIEW, "needs human"),
+                _plugin_decision("OCPBUGS-1", PluginDisposition.INCLUDE, "eligible"),
+                _plugin_decision("OCPBUGS-2", PluginDisposition.SUPPRESS, "no evidence"),
+                _plugin_decision("OCPBUGS-3", PluginDisposition.REVIEW, "needs human"),
             )
         )
         plugin = _Plugin("test", result)
@@ -62,12 +80,12 @@ class TestPluginRunner(unittest.TestCase):
         with self.assertRaises(ElliottFatalError):
             evaluate_plugins((incomplete,), Mock())
 
-        repeated = PluginDecision("OCPBUGS-1", PluginDisposition.REVIEW, "review")
+        repeated = _plugin_decision("OCPBUGS-1", PluginDisposition.REVIEW, "review")
         duplicate_key = _Plugin("duplicate", _plugin_result(name="duplicate", decisions=(repeated, repeated)))
         with self.assertRaisesRegex(ValueError, "duplicate issue decisions"):
             evaluate_plugins((duplicate_key,), Mock())
 
-        shared_issue = PluginDecision("OCPBUGS-1", PluginDisposition.SUPPRESS, "claimed")
+        shared_issue = _plugin_decision("OCPBUGS-1", PluginDisposition.SUPPRESS, "claimed")
         first = _Plugin("first", _plugin_result(name="first", decisions=(shared_issue,)))
         second = _Plugin("second", _plugin_result(name="second", decisions=(shared_issue,)))
         with self.assertRaisesRegex(ValueError, "claimed by multiple"):
@@ -79,13 +97,13 @@ class TestPluginRunner(unittest.TestCase):
             evaluate_plugins((wrong_name,), Mock())
 
         empty_key = _Plugin(
-            "empty", _plugin_result(name="empty", decisions=(PluginDecision("", PluginDisposition.REVIEW, "x"),))
+            "empty", _plugin_result(name="empty", decisions=(_plugin_decision("", PluginDisposition.REVIEW, "x"),))
         )
         with self.assertRaisesRegex(ValueError, "empty issue key"):
             evaluate_plugins((empty_key,), Mock())
 
         bad_disposition = _Plugin(
-            "bad", _plugin_result(name="bad", decisions=(PluginDecision("OCPBUGS-1", "include", "x"),))
+            "bad", _plugin_result(name="bad", decisions=(_plugin_decision("OCPBUGS-1", "include", "x"),))
         )
         with self.assertRaisesRegex(ValueError, "invalid decision disposition"):
             evaluate_plugins((bad_disposition,), Mock())
@@ -95,7 +113,7 @@ class TestPluginRunner(unittest.TestCase):
             evaluate_plugins((duplicate_plugin, duplicate_plugin), Mock())
 
     def test_registry_lists_and_validates_explicit_plugins(self):
-        self.assertEqual(available_plugin_names(), ())
+        self.assertEqual(available_plugin_names(), ("jql_sweep",))
         self.assertEqual(create_plugins(()), ())
         with self.assertRaisesRegex(ValueError, "Unknown bug-sweep plugin"):
             create_plugins(({"name": "missing"},))
