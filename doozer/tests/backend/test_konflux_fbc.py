@@ -3502,6 +3502,26 @@ class TestKonfluxFbcBuilder(unittest.IsolatedAsyncioTestCase):
                 logger=self.logger,
             )
 
+    @patch("doozerlib.backend.konflux_fbc.BuildRepo", spec=BuildRepo)
+    async def test_ensure_source_refreshes_expected_branch(self, mock_build_repo):
+        metadata = MagicMock(spec=ImageMetadata)
+        metadata.distgit_key = "test-operator"
+        metadata.get_olm_bundle_short_name.return_value = "test-operator-bundle"
+        metadata.runtime = MagicMock()
+        metadata.runtime.group_config.vars.MAJOR = 4
+        metadata.runtime.group_config.vars.MINOR = 18
+
+        build_repo = await self.builder.ensure_source(metadata, upcycle=True)
+
+        self.assertIs(build_repo, mock_build_repo.return_value)
+        mock_build_repo.assert_called_once_with(
+            url=self.fbc_repo,
+            branch="art-test-group-ocp-4.18-assembly-test-assembly-fbc-test-operator",
+            local_dir=self.base_dir / "test-operator",
+            logger=ANY,
+        )
+        build_repo.ensure_source.assert_awaited_once_with(upcycle=True, strict=True)
+
     @patch("doozerlib.backend.konflux_fbc.exectools.cmd_gather_async", new_callable=AsyncMock)
     async def test_get_build_arches_uses_target_group(self, mock_read_group):
         metadata = MagicMock(spec=ImageMetadata)

@@ -524,6 +524,7 @@ class TestFbcRebaseAndBuildCli(unittest.IsolatedAsyncioTestCase):
                 self.assertEqual(query["array_contains"], {"bundle_nvrs": bundle_build.nvr})
                 self.assertEqual(query["limit"], 1)
 
+
 class TestFbcPriorityOptions(unittest.TestCase):
     def test_priority_defaults_and_overrides(self):
         commands = (
@@ -623,15 +624,49 @@ class TestFbcSkipRebase(unittest.IsolatedAsyncioTestCase):
             )
             dockerfile.parent.mkdir(parents=True)
             dockerfile.write_text('FROM scratch\nLABEL com.redhat.art.nvr="test-fbc-1.0.0-previous"\n')
-            with mock.patch.object(self.fbc_cli, "_check_existing_fbc_build", new=mock.AsyncMock()) as check:
+            with (
+                mock.patch.object(self.fbc_cli, "_check_existing_fbc_build", new=mock.AsyncMock()) as check,
+                mock.patch.object(
+                    self.fbc_cli, "_get_successful_fbc_build_by_nvr", new=mock.AsyncMock(return_value=None)
+                ) as check_nvr,
+            ):
                 result = await self.fbc_cli._rebase_and_build(
                     importer, rebaser, builder, operator_meta, bundle_build, git_auth_secret="git-auth"
                 )
-            check.assert_not_awaited()
-        importer.import_from_index_image.assert_not_awaited()
-        rebaser.rebase.assert_not_awaited()
-        builder.build.assert_awaited_once_with(operator_meta, operator_nvr="operator-1-1", git_auth_secret="git-auth")
+            check.assert_not_called()
+            check_nvr.assert_awaited_once_with("test-fbc-1.0.0-previous")
+        importer.import_from_index_image.assert_not_called()
+        rebaser.rebase.assert_not_called()
+        builder.ensure_source.assert_awaited_once_with(operator_meta, upcycle=True)
+        builder.build.assert_awaited_once_with(operator_meta, operator_nvr=None, git_auth_secret="git-auth")
         self.assertEqual(result, ("test-fbc-1.0.0-previous", "quay.io/test/image@sha256:abc123"))
+
+    async def test_skip_rebase_rejects_published_nvr(self):
+        self.fbc_cli.skip_rebase = True
+        operator_meta = mock.Mock(distgit_key="test-operator")
+        bundle_build = self._create_mock_bundle_build("bundle", "bundle-1-1", "operator-1-1")
+        builder = mock.AsyncMock()
+        existing_build = mock.Mock(
+            spec=KonfluxFbcBuildRecord,
+            assembly="previous-assembly",
+            image_pullspec="quay.io/test/image@sha256:previous",
+        )
+        with tempfile.TemporaryDirectory() as working_dir:
+            self.runtime.working_dir = working_dir
+            dockerfile = Path(
+                working_dir, constants.WORKING_SUBDIR_KONFLUX_FBC_SOURCES, "test-operator", "catalog.Dockerfile"
+            )
+            dockerfile.parent.mkdir(parents=True)
+            dockerfile.write_text('FROM scratch\nLABEL com.redhat.art.nvr="test-fbc-1.0.0-previous"\n')
+            with mock.patch.object(
+                self.fbc_cli, "_get_successful_fbc_build_by_nvr", new=mock.AsyncMock(return_value=existing_build)
+            ):
+                with self.assertRaisesRegex(ValueError, "Successful FBC NVR test-fbc-1.0.0-previous already exists"):
+                    await self.fbc_cli._rebase_and_build(
+                        mock.AsyncMock(), mock.AsyncMock(), builder, operator_meta, bundle_build
+                    )
+        builder.ensure_source.assert_awaited_once_with(operator_meta, upcycle=True)
+        builder.build.assert_not_called()
 
     async def test_default_build_resets_and_rebases(self):
         self.assertFalse(self.fbc_cli.skip_rebase)

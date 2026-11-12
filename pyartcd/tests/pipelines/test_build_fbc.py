@@ -64,7 +64,7 @@ class TestBuildFbcPipeline(unittest.IsolatedAsyncioTestCase):
             patch.object(self.pipeline, "_rebase_and_build", new=AsyncMock(return_value=[])) as build,
         ):
             await self.pipeline.run()
-        check.assert_not_awaited()
+        check.assert_not_called()
         build.assert_awaited_once()
 
     async def test_skip_rebase_is_forwarded_only_when_enabled(self):

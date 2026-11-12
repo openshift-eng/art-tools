@@ -670,6 +670,18 @@ class FbcRebaseAndBuildCli:
             return existing_fbc_build
         return None
 
+    async def _get_successful_fbc_build_by_nvr(self, nvr: str) -> Optional[KonfluxFbcBuildRecord]:
+        """Find a successful FBC build by exact NVR, regardless of assembly or group."""
+        where = {
+            "nvr": nvr,
+            "outcome": str(KonfluxBuildOutcome.SUCCESS),
+        }
+        build = await anext(self._fbc_db.search_builds_by_fields(where=where, limit=1), None)
+        if build is None:
+            return None
+        assert isinstance(build, KonfluxFbcBuildRecord)
+        return build
+
     async def _rebase_and_build(
         self,
         importer: KonfluxFbcImporter,
@@ -692,6 +704,24 @@ class FbcRebaseAndBuildCli:
         async with report.preparing():
             if self.skip_rebase:
                 self._logger.info("Skipping production reset and rebase; building existing FBC source")
+                await builder.ensure_source(operator_meta, upcycle=True)
+                dockerfile = Path(
+                    self.runtime.working_dir,
+                    constants.WORKING_SUBDIR_KONFLUX_FBC_SOURCES,
+                    operator_meta.distgit_key,
+                    'catalog.Dockerfile',
+                )
+                nvr = DockerfileParser(str(dockerfile)).labels.get('com.redhat.art.nvr')
+                if not nvr:
+                    raise ValueError("FBC NVR not found in the catalog.Dockerfile. Did you rebase?")
+                existing_fbc_build = await self._get_successful_fbc_build_by_nvr(nvr)
+                if existing_fbc_build is not None:
+                    raise ValueError(
+                        f"Successful FBC NVR {nvr} already exists in DB! "
+                        f"Existing build assembly: {existing_fbc_build.assembly}; "
+                        f"pullspec: {existing_fbc_build.image_pullspec}. "
+                        "Update catalog.Dockerfile to use a distinct NVR before rebuilding."
+                    )
             else:
                 # Bundle NVRs cannot identify manual edits to existing FBC source.
                 existing_fbc_build = await self._check_existing_fbc_build(operator_meta, bundle_build)
@@ -712,16 +742,10 @@ class FbcRebaseAndBuildCli:
                 nvr = await rebaser.rebase(operator_meta, bundle_build, self.version, self.release)
             self._logger.info(f"Building fbc for {operator_meta.name}...")
             _, pipelinerun_dict = await builder.build(
-                operator_meta, operator_nvr=bundle_build.operator_nvr, git_auth_secret=git_auth_secret
+                operator_meta,
+                operator_nvr=None if self.skip_rebase else bundle_build.operator_nvr,
+                git_auth_secret=git_auth_secret,
             )
-            if self.skip_rebase:
-                dockerfile = Path(
-                    self.runtime.working_dir,
-                    constants.WORKING_SUBDIR_KONFLUX_FBC_SOURCES,
-                    operator_meta.distgit_key,
-                    'catalog.Dockerfile',
-                )
-                nvr = DockerfileParser(str(dockerfile)).labels['com.redhat.art.nvr']
             results = pipelinerun_dict.get('status', {}).get('results', [])
             image_url = next((r['value'] for r in results if r['name'] == 'IMAGE_URL'), None)
             image_digest = next((r['value'] for r in results if r['name'] == 'IMAGE_DIGEST'), None)
