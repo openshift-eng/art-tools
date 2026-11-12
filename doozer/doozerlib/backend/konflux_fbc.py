@@ -18,6 +18,7 @@ import truststore
 from artcommonlib import exectools, git_helper
 from artcommonlib import util as artlib_util
 from artcommonlib.assembly import AssemblyTypes, assembly_config_struct, assembly_type
+from artcommonlib.constants import KONFLUX_RELEASE_BUILD_PRIORITY
 from artcommonlib.konflux.konflux_build_record import (
     Engine,
     KonfluxBuildOutcome,
@@ -70,7 +71,7 @@ yaml = opm.yaml
 PRODUCTION_INDEX_PULLSPEC_FORMAT = "registry.redhat.io/redhat/redhat-operator-index:v{major}.{minor}"
 BASE_IMAGE_RHEL9_PULLSPEC_FORMAT = "registry.redhat.io/openshift{major}/ose-operator-registry-rhel9:v{major}.{minor}"
 BASE_IMAGE_RHEL8_PULLSPEC_FORMAT = "registry.redhat.io/openshift{major}/ose-operator-registry:v{major}.{minor}"
-FBC_BUILD_PRIORITY = "2"
+FBC_BUILD_PRIORITY = "3"
 LIFECYCLE_SCHEMA = "io.openshift.operators.lifecycles.v1alpha1"
 
 
@@ -416,6 +417,7 @@ class KonfluxFbcFragmentMerger:
         plr_template: Optional[str] = None,
         major_minor_override: Optional[Tuple[int, int]] = None,
         logger: logging.Logger | None = None,
+        build_priority: str = str(KONFLUX_RELEASE_BUILD_PRIORITY),
     ):
         """
         Initialize the KonfluxFbcFragmentMerger.
@@ -429,6 +431,8 @@ class KonfluxFbcFragmentMerger:
         self.konflux_context = konflux_context
         self.group = group
         self.group_config = group_config
+        # Release catalog mergers (including unified LP catalogs) retain priority 2.
+        self.build_priority = build_priority
         self.upcycle = upcycle
         self.commit_message = commit_message
         self.fbc_git_repo = fbc_git_repo
@@ -720,7 +724,7 @@ class KonfluxFbcFragmentMerger:
                 skip_checks=self.skip_checks,
                 skip_fips_check=self.skip_fips_check,
                 skip_tasks=merged_skip_tasks,
-                build_priority=FBC_BUILD_PRIORITY,
+                build_priority=self.build_priority,
             ),
         )
         if git_auth_secret:
@@ -1707,11 +1711,13 @@ class KonfluxFbcBuilder:
         major_minor_override: Optional[Tuple[int, int]] = None,
         record_logger: Optional[RecordLogger] = None,
         logger: logging.Logger = LOGGER,
+        build_priority: str = FBC_BUILD_PRIORITY,
     ):
         self.base_dir = base_dir
         self.group = group
         self.assembly = assembly
         self.product = product
+        self.build_priority = build_priority
         self._db = db
         self.fbc_repo = fbc_repo or constants.ART_FBC_GIT_REPO
         self.konflux_namespace = konflux_namespace
@@ -2119,7 +2125,7 @@ class KonfluxFbcBuilder:
                 hermetic=True,
                 fetch_tags=False,
                 dockerfile="catalog.Dockerfile",
-                build_priority=FBC_BUILD_PRIORITY,
+                build_priority=self.build_priority,
             ),
         )
         if git_auth_secret:
@@ -2186,6 +2192,7 @@ class KonfluxFbcBuilder:
                 'build_id': pipelinerun_name,
                 'build_pipeline_url': build_pipeline_url,
                 'pipeline_commit': 'n/a',  # TODO: populate this
+                'build_priority': int(self.build_priority),
                 'bundle_nvrs': bundle_nvrs,
                 'arches': arches,
                 'build_component': build_component,

@@ -3600,6 +3600,7 @@ class TestKonfluxFbcBuilder(unittest.IsolatedAsyncioTestCase):
 
         build_record = self.db.add_build.call_args[0][0]
         self.assertEqual(build_record.build_variant, BuildVariant.COO)
+        self.assertEqual(build_record.build_priority, 3)
 
     async def test_start_build(self):
         metadata = MagicMock(spec=ImageMetadata)
@@ -3651,12 +3652,13 @@ class TestKonfluxFbcBuilder(unittest.IsolatedAsyncioTestCase):
                 fetch_tags=False,
                 skip_checks=False,
                 skip_fips_check=False,
-                build_priority='2',
+                build_priority='3',
             ),
         )
         self.assertEqual(result, (pplr, "https://example.com/pipelinerun/test-pipeline-run-name"))
 
     async def test_start_build_2(self):
+        self.builder.build_priority = "2"
         metadata = MagicMock(spec=ImageMetadata)
         metadata.distgit_key = "foo"
         metadata.runtime = MagicMock()
@@ -4047,7 +4049,7 @@ class TestKonfluxFbcBuilder(unittest.IsolatedAsyncioTestCase):
                 hermetic=True,
                 fetch_tags=False,
                 dockerfile='catalog.Dockerfile',
-                build_priority='2',
+                build_priority='3',
             ),
         )
         self.assertEqual(result, (pplr, "https://example.com/pipelinerun/test-pipeline-run-name"))
@@ -4102,7 +4104,7 @@ class TestKonfluxFbcBuilder(unittest.IsolatedAsyncioTestCase):
                 hermetic=True,
                 fetch_tags=False,
                 dockerfile='catalog.Dockerfile',
-                build_priority='2',
+                build_priority='3',
             ),
         )
         self.assertEqual(result, (pplr, "https://example.com/pipelinerun/test-pipeline-run-name"))
@@ -4140,6 +4142,18 @@ class TestKonfluxFbcFragmentMerger(unittest.IsolatedAsyncioTestCase):
                 dry_run=self.dry_run,
                 logger=self.logger,
             )
+
+    async def test_start_build_priority(self):
+        build_repo = MagicMock(https_url="https://example.com/fbc.git", branch="test-branch", commit_hash="deadbeef")
+        self.merger.group_config = {"arches": ["x86_64"]}
+        self.kube_client.get_component.return_value = None
+        self.assertEqual(self.merger.build_priority, "2")
+        for priority in ("2", "3"):
+            with self.subTest(priority=priority):
+                self.merger.build_priority = priority
+                await self.merger._start_build(build_repo, "quay.io/example/fbc:test")
+                params = self.kube_client.start_pipeline_run_for_image_build.await_args.kwargs["build_params"]
+                self.assertEqual(params.build_priority, priority)
 
     @patch("doozerlib.util.oc_image_info_for_arch_async", new_callable=AsyncMock)
     @patch("httpx.AsyncClient", autospec=True)

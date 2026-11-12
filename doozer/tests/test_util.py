@@ -546,14 +546,14 @@ class TestGetKonfluxBuildPriority(unittest.TestCase):
     def test_parent_images_get_higher_priority_than_leaf_images(self):
         cases = [
             # (group, phase, children, expected, description)
-            ("openshift-4.19", "release", self.is_leaf, "5", "leaf default"),
-            ("openshift-4.19", "release", self.is_parent, "4", "parent default"),
-            ("openshift-4.19", "pre-release", self.is_leaf, "3", "leaf pre-release"),
-            ("openshift-4.19", "pre-release", self.is_parent, "2", "parent pre-release"),
-            ("openshift-4.19", "signing", self.is_leaf, "3", "leaf signing"),
-            ("openshift-4.19", "signing", self.is_parent, "2", "parent signing"),
-            ("oadp-1.5", "release", self.is_leaf, "5", "leaf non-openshift"),
-            ("oadp-1.5", "release", self.is_parent, "4", "parent non-openshift"),
+            ("openshift-4.19", "release", self.is_leaf, "6", "leaf default"),
+            ("openshift-4.19", "release", self.is_parent, "5", "parent default"),
+            ("openshift-4.19", "pre-release", self.is_leaf, "4", "leaf pre-release"),
+            ("openshift-4.19", "pre-release", self.is_parent, "3", "parent pre-release"),
+            ("openshift-4.19", "signing", self.is_leaf, "4", "leaf signing"),
+            ("openshift-4.19", "signing", self.is_parent, "3", "parent signing"),
+            ("oadp-1.5", "release", self.is_leaf, "6", "leaf non-openshift"),
+            ("oadp-1.5", "release", self.is_parent, "5", "parent non-openshift"),
         ]
         for group, phase, children, expected, desc in cases:
             with self.subTest(desc):
@@ -573,8 +573,9 @@ class TestGetKonfluxBuildPriority(unittest.TestCase):
                 self.assertEqual(util.get_konflux_build_priority(metadata, "openshift-4.19"), expected)
 
     def test_golang_group_overrides_parent_status(self):
-        metadata = self._make_metadata(children=self.is_parent)
-        self.assertEqual(util.get_konflux_build_priority(metadata, "golang-1.22"), "2")
+        for children in (self.is_leaf, self.is_parent):
+            metadata = self._make_metadata(children=children)
+            self.assertEqual(util.get_konflux_build_priority(metadata, "golang-1.22"), "2")
 
     def test_priority_never_goes_below_1(self):
         metadata = self._make_metadata(children=self.is_parent, phase="pre-release")

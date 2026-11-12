@@ -511,7 +511,7 @@ class BuildConformaVerifyPipeline:
             labels = {
                 "appstudio.openshift.io/application": application_name,
                 "test.appstudio.openshift.io/scenario": its_name,
-                "kueue.x-k8s.io/priority-class": "build-priority-2",
+                "kueue.x-k8s.io/priority-class": "build-priority-3",
             }
             labels.update(watch_labels)
 

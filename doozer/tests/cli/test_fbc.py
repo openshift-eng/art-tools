@@ -2,13 +2,14 @@ import re
 import unittest
 from unittest import mock
 
+import click
 from artcommonlib.konflux.konflux_build_record import (
     KonfluxBuildRecord,
     KonfluxBundleBuildRecord,
     KonfluxFbcBuildRecord,
 )
 from artcommonlib.model import Model
-from doozerlib.cli.fbc import FbcImportCli, FbcRebaseAndBuildCli
+from doozerlib.cli.fbc import FbcImportCli, FbcMergeCli, FbcRebaseAndBuildCli, fbc_merge, fbc_rebase_and_build
 from doozerlib.exceptions import DoozerFatalError
 from doozerlib.runtime import Runtime
 from doozerlib.source_resolver import SourceResolver
@@ -174,6 +175,7 @@ class TestFbcRebaseAndBuildCli(unittest.IsolatedAsyncioTestCase):
 
         mock_rebaser.rebase.assert_called_once()
         mock_builder.build.assert_called_once()
+        self.assertEqual(mock_builder_class.call_args.kwargs["build_priority"], "3")
 
     @mock.patch("doozerlib.cli.fbc.KonfluxFbcImporter")
     @mock.patch("doozerlib.cli.fbc.KonfluxFbcBuilder")
@@ -213,10 +215,12 @@ class TestFbcRebaseAndBuildCli(unittest.IsolatedAsyncioTestCase):
         mock_importer = mock.AsyncMock()
         mock_importer_class.return_value = mock_importer
 
+        self.fbc_cli.build_priority = "2"
         await self.fbc_cli.run()
 
         mock_rebaser.rebase.assert_called_once()
         mock_builder.build.assert_called_once()
+        self.assertEqual(mock_builder_class.call_args.kwargs["build_priority"], "2")
 
     @mock.patch("doozerlib.cli.fbc.KonfluxFbcBuilder")
     @mock.patch("doozerlib.cli.fbc.KonfluxFbcRebaser")
@@ -516,3 +520,51 @@ class TestFbcRebaseAndBuildCli(unittest.IsolatedAsyncioTestCase):
                 self.assertEqual(query["where"]["assembly"], self.runtime.assembly)
                 self.assertEqual(query["array_contains"], {"bundle_nvrs": bundle_build.nvr})
                 self.assertEqual(query["limit"], 1)
+
+
+class TestFbcPriorityOptions(unittest.TestCase):
+    def test_priority_defaults_and_overrides(self):
+        commands = (
+            (fbc_merge, []),
+            (fbc_rebase_and_build, ["--version=4.18.0", "--release=1", "--message=test"]),
+        )
+        for command, args in commands:
+            for extra_args, expected in (([], "3"), (["--build-priority=2"], "2")):
+                with self.subTest(command=command.name, expected=expected):
+                    with command.make_context(command.name, args + extra_args, obj=mock.Mock(local=False)) as context:
+                        self.assertEqual(context.params["build_priority"], expected)
+
+    def test_rejects_invalid_priorities(self):
+        for command in (fbc_merge, fbc_rebase_and_build):
+            for priority in ("0", "11", "auto"):
+                with self.subTest(command=command.name, priority=priority):
+                    with self.assertRaises(click.BadParameter):
+                        command.make_context(command.name, [f"--build-priority={priority}"])
+
+
+class TestFbcMergePriority(unittest.IsolatedAsyncioTestCase):
+    @mock.patch("doozerlib.cli.fbc.KonfluxFbcFragmentMerger")
+    async def test_forwards_default_and_release_priorities(self, mock_merger_class):
+        runtime = mock.Mock(group="openshift-4.18", working_dir="/tmp")
+        runtime.group_config = Model({"vars": {"MAJOR": 4, "MINOR": 18}})
+        mock_merger_class.return_value = mock.AsyncMock()
+        for options, expected in (({}, "3"), ({"build_priority": "2"}, "2")):
+            with self.subTest(priority=expected):
+                cli = FbcMergeCli(
+                    runtime=runtime,
+                    konflux_kubeconfig=None,
+                    konflux_context=None,
+                    konflux_namespace="ocp-art-tenant",
+                    dry_run=False,
+                    fragments=("quay.io/example/fbc:test",),
+                    dest_dir=None,
+                    fbc_repo="https://example.com/fbc.git",
+                    fbc_branch=None,
+                    registry_auth=None,
+                    message="Merge FBC",
+                    skip_checks=False,
+                    skip_fips_check=False,
+                    **options,
+                )
+                await cli.run()
+                self.assertEqual(mock_merger_class.call_args.kwargs["build_priority"], expected)

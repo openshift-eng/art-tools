@@ -1981,7 +1981,7 @@ class TestKonfluxOlmBundleBuilder(IsolatedAsyncioTestCase):
                 hermetic=True,
                 fetch_tags=False,
                 artifact_type="operatorbundle",
-                build_priority="3",
+                build_priority="4",
             ),
         )
         self.assertEqual(url, "https://example.com/pipelinerun")
@@ -2077,6 +2077,7 @@ class TestKonfluxOlmBundleBuilder(IsolatedAsyncioTestCase):
         self.assertEqual(build_record.engine, Engine.KONFLUX)
         self.assertEqual(build_record.outcome, KonfluxBuildOutcome.SUCCESS)
         self.assertEqual(build_record.build_variant, BuildVariant.OADP)
+        self.assertEqual(build_record.build_priority, 4)
         self.assertEqual(build_record.art_job_url, 'n/a')
         self.assertEqual(build_record.build_id, "test-pipelinerun")
         self.assertEqual(build_record.build_pipeline_url, "https://example.com/pipelinerun")

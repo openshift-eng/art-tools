@@ -58,6 +58,7 @@ class TestFbcBuild(unittest.TestCase):
                     },
                     force=True,
                     reset_to_prod=True,
+                    build_priority="2",
                 )
             )
 
@@ -69,6 +70,7 @@ class TestFbcBuild(unittest.TestCase):
         )
         commands = [call.args[0] for call in mock_cmd.await_args_list]
         self.assertTrue(all("--force" in command for command in commands))
+        self.assertTrue(all("--build-priority=2" in command for command in commands))
         self.assertTrue(all("--reset-to-prod" in command for command in commands))
         self.assertTrue(all("--variant=rhmtc" in command for command in commands))
         self.assertTrue(all("--prod-registry-auth=/tmp/registry-auth.json" in command for command in commands))

@@ -10,7 +10,11 @@ from pathlib import Path
 from typing import Mapping, Optional, Sequence
 
 from artcommonlib import exectools
-from artcommonlib.util import resolve_konflux_kubeconfig_by_product, resolve_konflux_namespace_by_product
+from artcommonlib.util import (
+    resolve_konflux_kubeconfig_by_product,
+    resolve_konflux_namespace_by_product,
+    validate_build_priority,
+)
 from artcommonlib.variants import get_build_variant_for_product
 
 from pyartcd import constants, jenkins, locks
@@ -158,6 +162,7 @@ async def build_fbc_catalogs(
     reset_to_prod: bool = False,
     allow_partial: bool = False,
     failures_out: Optional[list[str]] = None,
+    build_priority: Optional[str] = None,
 ) -> list[FbcBuildResult]:
     """Build FBC catalogs and wait for every target to finish.
 
@@ -181,6 +186,7 @@ async def build_fbc_catalogs(
             catalogs fail. Malformed or unsafe target results are skipped.
         failures_out: Optional list populated with reported and structural
             failures when partial results are allowed.
+        build_priority: Optional numeric Kueue priority override (1 is highest).
 
     Returns:
         Successful results in the same order as ``operator_nvrs_by_target``.
@@ -190,6 +196,11 @@ async def build_fbc_catalogs(
         RuntimeError: If strict validation is enabled and any target fails or
             returns an incomplete result.
     """
+    if build_priority is not None:
+        if build_priority == "auto":
+            raise ValueError("FBC build priority must be a number between 1-10")
+        validate_build_priority(build_priority)
+
     release = datetime.now(timezone.utc).strftime("%Y%m%d%H%M%S")
     message = f"Rebase FBC segment with release {release}"
     namespace = resolve_konflux_namespace_by_product(product or "ocp")
@@ -223,6 +234,8 @@ async def build_fbc_catalogs(
             f"--message={message}",
             "--output=json",
         ]
+        if build_priority is not None:
+            cmd.append(f"--build-priority={build_priority}")
         if kubeconfig:
             cmd.append(f"--konflux-kubeconfig={kubeconfig}")
         if reset_to_prod:

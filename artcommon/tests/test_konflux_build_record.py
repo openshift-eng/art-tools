@@ -110,8 +110,9 @@ class TestKonfluxBuild(TestCase):
             KonfluxBuildRecord(build_variant='totally-unknown-product')
 
     def test_build_id_omits_none_variant_but_includes_present_variant(self):
-        default_record = KonfluxBuildRecord()
-        variant_record = KonfluxBuildRecord(build_variant=BuildVariant.OADP)
+        # Keep this legacy hash fixture independent of scheduling defaults.
+        default_record = KonfluxBuildRecord(build_priority=5)
+        variant_record = KonfluxBuildRecord(build_priority=5, build_variant=BuildVariant.OADP)
 
         self.assertEqual(default_record.build_id, '944cef3a-8c5f-81aa-5716-c764919ffeb8')
         self.assertEqual(default_record.generate_build_id(), default_record.build_id)
