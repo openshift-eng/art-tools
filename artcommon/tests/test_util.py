@@ -1938,6 +1938,7 @@ class TestResolveKonfluxFbcStageReleasePlan(unittest.TestCase):
             ("rhacm2", 2, 16): "acm-advisory-stage-auto-2-16",
             ("rhacm2", 2, 17): "acm-advisory-stage-auto-2-17",
             ("rhacm2", 5, 0): "acm-advisory-stage-auto-5-0",
+            ("rhacm2", 5, 1): "acm-advisory-stage-auto-5-1",
             ("openshift-opentelemetry-operator", 0, 158): "rhosdt-advisory-stage-auto-0-158",
             ("zero-trust-workload-identity-manager", 1, 0): "zt-advisory-stage-auto-1-0",
             ("zero-trust-workload-identity-manager", 1, 1): "zt-advisory-stage-auto-1-1",
