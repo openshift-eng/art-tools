@@ -479,7 +479,8 @@ class Repos(object):
                     template_vars=template_vars,
                     respect_repo_arches=respect_repo_arches,
                 )
-                repotypes.extend(self._repos[repo_config.name].repotypes)
+                if not respect_repo_arches or self._repos[repo_config.name].arches:
+                    repotypes.extend(self._repos[repo_config.name].repotypes)
         else:
             # Old-style dict: pass directly to Repo constructor
             for name, repo in repos.items():
@@ -487,7 +488,8 @@ class Repos(object):
                 self._repos[name] = Repo(
                     name, repo, self._arches, gpgcheck=gpgcheck, allow_empty_arches=respect_repo_arches
                 )
-                repotypes.extend(self._repos[name].repotypes)
+                if not respect_repo_arches or self._repos[name].arches:
+                    repotypes.extend(self._repos[name].repotypes)
 
         self.names = tuple(names)
         self.repotypes = list(set(repotypes))  # leave only unique values

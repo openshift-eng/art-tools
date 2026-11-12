@@ -67,6 +67,26 @@ class TestRepoArchConsumers(IsolatedAsyncioTestCase):
         rpm = Rpm('test-rpm', 0, '1', 'checksum', 1, 'test.rpm', 'test-1-1.src.rpm', '1', arch)
         return Repodata(name, primary_rpms=[rpm])
 
+    async def test_empty_plashet_does_not_add_signed_external_repo_file(self):
+        configs = repo_configs()
+        configs[1]['type'] = 'external'
+        configs[1]['conf'] = {'baseurl': {'unsigned': 'https://example.com/external/$basearch'}}
+        del configs[1]['plashet']
+        self.repos = Repos(
+            RepoList.model_validate(configs),
+            ['ppc64le'],
+            plashet_config=PlashetConfig(base_url='https://example.com', base_dir='repos', plashet_dir='latest'),
+            respect_repo_arches=True,
+        )
+        self.assertEqual(self.repos['restricted'].arches, [])
+        self.assertEqual(set(self.repos.repotypes), {'unsigned'})
+        dest = Path(self.directory.name)
+        await KonfluxRebaser._generate_repo_conf(SimpleNamespace(_logger=self.logger), self.image(), dest, self.repos)
+        repo_file = (dest / '.oit' / 'art-unsigned.repo').read_text()
+        self.assertIn('[base-ppc64le]', repo_file)
+        self.assertNotIn('restricted', repo_file)
+        self.assertFalse((dest / '.oit' / 'art-signed.repo').exists())
+
     def image(self, backend='art-internal'):
         """Use real backend/repo selection and a minimal image RPM request."""
         runtime = SimpleNamespace(repos=self.repos, group_config=Model({}))

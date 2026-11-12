@@ -33,6 +33,37 @@ def plashet_config(arches=None):
 
 
 class TestRepoArchLimits(TestCase):
+    def test_applicable_repos_preserve_collection_repotypes(self):
+        data = {
+            'conf': {
+                'baseurl': {
+                    repotype: f'https://example.com/{repotype}/$basearch'
+                    for repotype in ['unsigned', 'signed', 'custom']
+                }
+            },
+            'content_set': {'default': 'base'},
+        }
+        for opt_in, new_style in product([False, True], repeat=2):
+            with self.subTest(opt_in=opt_in, new_style=new_style):
+                configs = (
+                    RepoList.model_validate([{'name': 'base', 'type': 'external', **data}])
+                    if new_style
+                    else {'base': data}
+                )
+                repos = Repos(configs, ['x86_64', 'aarch64'], respect_repo_arches=opt_in)
+                self.assertEqual(set(repos.repotypes), {'unsigned', 'signed', 'custom'})
+                repo_file = repos.repo_file('custom', enabled_repos=['base'], konflux=True)
+                self.assertIn('[base-x86_64]', repo_file)
+                self.assertIn('[base-aarch64]', repo_file)
+
+    def test_empty_legacy_repo_does_not_contribute_repotypes_on_opt_in(self):
+        configs = {'empty': {'conf': {'baseurl': 'https://example.com'}, 'content_set': {'default': 'empty'}}}
+        with self.assertRaises(IndexError):
+            Repos(configs, [])
+        repos = Repos(configs, [], respect_repo_arches=True)
+        self.assertEqual(repos['empty'].arches, [])
+        self.assertEqual(repos.repotypes, [])
+
     def test_global_and_repo_limits_intersect_only_on_opt_in(self):
         """Reproduce cross-cut limits while preserving the legacy replacement rule."""
         config = RepoList.model_validate([repo_config(['x86_64', 's390x'])]).root[0]
