@@ -172,6 +172,92 @@ def admission(environment, components):
     }
 
 
+def cdn_component(name='product-1-0-operator'):
+    """Represent the file delivery mapping used by OVE ISO and oc-mirror."""
+    return {
+        'name': name,
+        'files': [{'source': '/agent.iso', 'filename': 'agent-4.22.iso', 'arch': 'x86_64', 'os': 'linux'}],
+        'contentGateway': {
+            'productName': 'OVE',
+            'productCode': 'ove',
+            'productVersionName': '4.22',
+            'contentType': 'disk-image',
+        },
+    }
+
+
+def test_rpa_accepts_cdn_file_components_in_both_environments(tmp_path):
+    """A CDN-delivered ISO does not require a container delivery repository."""
+    from ruamel.yaml import YAML
+
+    for environment in ('staging', 'production'):
+        YAML().dump(admission(environment, [cdn_component()]), tmp_path / f'{environment}.yaml')
+    assert checks.validate_admissions({'operator': image()}, tmp_path, 'product-1-0') == []
+
+
+def test_rpa_accepts_ove_file_without_optional_filename(tmp_path):
+    """An OVE-style file mapping can omit the destination filename."""
+    from ruamel.yaml import YAML
+
+    component = cdn_component()
+    component['files'] = [{'source': '/agent-ove.x86_64.iso', 'arch': 'x86_64', 'os': 'linux'}]
+    for environment in ('staging', 'production'):
+        YAML().dump(admission(environment, [component]), tmp_path / f'{environment}.yaml')
+    assert checks.validate_admissions({'operator': image()}, tmp_path, 'product-1-0') == []
+
+
+@pytest.mark.parametrize(
+    'invalid',
+    [
+        {'files': []},
+        {'files': [{'filename': 'agent.iso'}]},
+        {'files': [{'source': '/agent.iso', 'filename': '../agent.iso'}]},
+        {'files': [{'source': '/agent.iso', 'filename': '/agent.iso'}]},
+        {'files': [{'source': '/agent.iso', 'filename': ''}]},
+        {'files': [{'source': '/agent.iso', 'filename': None}]},
+        {'contentGateway': {}},
+        {'contentGateway': None},
+        {'repositories': None},
+    ],
+)
+def test_rpa_rejects_incomplete_cdn_mappings(tmp_path, invalid):
+    """A malformed file or missing gateway cannot exempt a repository mapping."""
+    from ruamel.yaml import YAML
+
+    component = cdn_component()
+    component.update(invalid)
+    for environment in ('staging', 'production'):
+        YAML().dump(admission(environment, [component]), tmp_path / f'{environment}.yaml')
+    assert checks.validate_admissions({'operator': image()}, tmp_path, 'product-1-0')
+
+
+def test_cdn_component_does_not_exempt_other_image_or_bundle(tmp_path):
+    """CDN delivery for one component does not waive unrelated repository checks."""
+    from ruamel.yaml import YAML
+
+    operator = image()
+    operator['delivery']['bundle_delivery_repo_name'] = 'product/operator-bundle'
+    for environment in ('staging', 'production'):
+        YAML().dump(admission(environment, [cdn_component()]), tmp_path / f'{environment}.yaml')
+    errors = checks.validate_admissions({'operator': operator, 'other': image()}, tmp_path, 'product-1-0')
+    assert any('operator-bundle' in error for error in errors)
+    assert any('product-1-0-other' in error for error in errors)
+
+
+def test_component_with_container_and_cdn_mappings_still_requires_repository(tmp_path):
+    """CDN mappings do not hide a missing repository for a mixed-delivery component."""
+    from ruamel.yaml import YAML
+
+    component = cdn_component()
+    component['repositories'] = [{'url': 'registry.redhat.io/wrong/operator'}]
+    for environment in ('staging', 'production'):
+        YAML().dump(admission(environment, [component]), tmp_path / f'{environment}.yaml')
+    assert any(
+        'missing delivery repository product/operator' in e
+        for e in checks.validate_admissions({'operator': image()}, tmp_path, 'product-1-0')
+    )
+
+
 def test_rpa_requires_both_environments_and_scopes_by_application(tmp_path):
     """Rpa requires both environments and scopes by application."""
     from ruamel.yaml import YAML

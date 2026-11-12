@@ -129,6 +129,11 @@ mapping. A repository listed under another component does not satisfy the check.
 Registry hosts are removed before comparing repository paths. Image and bundle
 component names honor Doozer's explicit overrides.
 
+Components delivered to the CDN, such as OVE ISOs, can instead use a nonempty
+``files`` mapping and ``contentGateway`` configuration. The expected component
+must still be present in both stage and production; container and bundle
+repository checks continue to apply to other components and mixed mappings.
+
 Disabled images, WIP images and ``for_release: false`` images are excluded from
 RPA checks. The shared entry point discovers LP RPAs by application and reports
 malformed mappings. The original OCP shell step is unchanged; migrating its

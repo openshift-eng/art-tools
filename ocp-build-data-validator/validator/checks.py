@@ -339,8 +339,40 @@ def component_name(application: str, image: str, data: dict, *, bundle: bool = F
     return f'ose-{name[10:]}' if name.startswith('openshift-') else name
 
 
+def valid_admission_component(component: object) -> bool:
+    """Accept container repositories and CDN files with their content gateway."""
+    if not isinstance(component, dict) or not isinstance(component.get('name'), str):
+        return False
+    repositories = component.get('repositories')
+    if 'repositories' in component and (
+        not isinstance(repositories, list)
+        or any(not isinstance(repo, dict) or not isinstance(repo.get('url'), str) for repo in repositories)
+    ):
+        return False
+    if 'files' in component or 'contentGateway' in component:
+        files = component.get('files')
+        gateway = component.get('contentGateway')
+        return (
+            isinstance(files, list)
+            and bool(files)
+            and all(
+                isinstance(item, dict)
+                and isinstance(item.get('source'), str)
+                and bool(item['source'].strip())
+                and ('filename' not in item or relative_path(item['filename']))
+                for item in files
+            )
+            and isinstance(gateway, dict)
+            and all(
+                isinstance(gateway.get(key), str) and gateway[key].strip()
+                for key in ('productName', 'productCode', 'productVersionName', 'contentType')
+            )
+        )
+    return repositories is not None
+
+
 def validate_admissions(images: dict[str, dict], root: Path, application: str) -> list[str]:
-    """Require image and bundle repositories under their own components in stage and prod."""
+    """Require image and bundle delivery under their own components in stage and prod."""
     images = {
         name: data
         for name, data in images.items()
@@ -372,16 +404,7 @@ def validate_admissions(images: dict[str, dict], root: Path, application: str) -
                 components = data.get('mapping', {}).get('components')
                 if not isinstance(components, list) or not components:
                     errors.append(f'{path.name}: missing RPA mapping.components')
-                elif any(
-                    not isinstance(component, dict)
-                    or not isinstance(component.get('name'), str)
-                    or not isinstance(component.get('repositories'), list)
-                    or any(
-                        not isinstance(repo, dict) or not isinstance(repo.get('url'), str)
-                        for repo in component.get('repositories', [])
-                    )
-                    for component in components
-                ):
+                elif any(not valid_admission_component(component) for component in components):
                     errors.append(f'{path.name}: invalid RPA component/repository mapping')
                 else:
                     admissions[environment].extend(components)
@@ -392,16 +415,22 @@ def validate_admissions(images: dict[str, dict], root: Path, application: str) -
             errors.append(f'{environment}: no usable RPA mapping for application {application}')
             continue
         component_repos = {}
+        cdn_components = set()
         for component in components:
-            component_repos.setdefault(component['name'], set()).update(
-                repo['url'].partition('/')[2] for repo in component['repositories']
-            )
+            if 'repositories' in component:
+                component_repos.setdefault(component['name'], set()).update(
+                    repo['url'].partition('/')[2] for repo in component['repositories']
+                )
+            if 'files' in component:
+                cdn_components.add(component['name'])
         for name, data in images.items():
             delivery = data.get('delivery', {})
-            expected = [(component_name(application, name, data), delivery.get('delivery_repo_names', []))]
+            expected = [(component_name(application, name, data), delivery.get('delivery_repo_names', []), False)]
             if bundle := delivery.get('bundle_delivery_repo_name'):
-                expected.append((component_name(application, name, data, bundle=True), [bundle]))
-            for component, repositories in expected:
+                expected.append((component_name(application, name, data, bundle=True), [bundle], True))
+            for component, repositories, bundle in expected:
+                if not bundle and component in cdn_components and component not in component_repos:
+                    continue
                 if component not in component_repos:
                     errors.append(f'{name}: {environment} RPA missing component {component}')
                 for repository in repositories:
