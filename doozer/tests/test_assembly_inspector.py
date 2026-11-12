@@ -175,7 +175,7 @@ class TestRepoAwareImageConsistency(IsolatedAsyncioTestCase):
         self.build.get_image_inspectors.return_value = [self.archive]
         self.repodatas = {}
         self.loader = self.enterContext(patch("doozerlib.repos.RepodataLoader.load", new_callable=AsyncMock))
-        self.loader.side_effect = lambda name, url: self.repodatas[name]
+        self.loader.side_effect = lambda name, url, optional=False: self.repodatas[name]
 
     def add_repo(
         self,
