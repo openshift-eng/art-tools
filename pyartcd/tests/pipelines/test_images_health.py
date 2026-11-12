@@ -83,9 +83,7 @@ class TestNotifyPublicChannel(IsolatedAsyncioTestCase):
 
         await pipeline.notify_public_channel()
 
-        mock_slack_client.say.assert_called_once_with(
-            ":white_check_mark: All images are healthy for all monitored releases"
-        )
+        mock_slack_client.say.assert_called_once_with(":white_check_mark: No tracked failures for monitored releases")
 
     async def test_with_build_concerns(self):
         mock_slack_client = self.mock_runtime.new_slack_client.return_value
@@ -205,9 +203,7 @@ class TestNotifyPublicChannel(IsolatedAsyncioTestCase):
 
         await pipeline.notify_public_channel()
 
-        mock_slack_client.say.assert_called_once_with(
-            ":white_check_mark: All images are healthy for all monitored releases"
-        )
+        mock_slack_client.say.assert_called_once_with(":white_check_mark: No tracked failures for monitored releases")
 
     async def test_only_its_failures(self):
         mock_slack_client = self.mock_runtime.new_slack_client.return_value
@@ -252,7 +248,7 @@ class TestNotifyReleaseChannel(IsolatedAsyncioTestCase):
         await pipeline.notify_release_channel("4.18")
 
         mock_slack_client.say.assert_called_once()
-        self.assertIn("healthy", mock_slack_client.say.call_args[0][0])
+        self.assertIn("No tracked failures", mock_slack_client.say.call_args[0][0])
 
     async def test_grouped_failure_summary(self):
         mock_slack_client = self.mock_runtime.new_slack_client.return_value
@@ -681,6 +677,7 @@ class TestSyncJiraIntegration(IsolatedAsyncioTestCase):
     @patch.object(ImagesHealthPipeline, "get_release_failures", new_callable=AsyncMock)
     async def test_skips_jira_sync_for_non_stream_assembly(self, _mock_release, _mock_ec, _mock_rebase, _mock_report):
         pipeline = self._make_pipeline(assembly="4.18.5")
+        pipeline.get_fbc_health = AsyncMock()
         pipeline.report = [
             _make_concern("ironic", "openshift-5.0", ConcernCode.FAILING_AT_LEAST_FOR.value),
         ]
@@ -698,6 +695,7 @@ class TestSyncJiraIntegration(IsolatedAsyncioTestCase):
     @patch.object(ImagesHealthPipeline, "get_release_failures", new_callable=AsyncMock)
     async def test_jira_failure_does_not_block_notifications(self, _mock_release, _mock_ec, _mock_rebase, _mock_report):
         pipeline = self._make_pipeline()
+        pipeline.get_fbc_health = AsyncMock()
         pipeline.report = []
         pipeline.send_to_release_channel = True
         pipeline.scanned_versions = ["5.0"]
@@ -904,6 +902,7 @@ class TestNotifyChaiBot(IsolatedAsyncioTestCase):
         pipeline.get_rebase_failures = AsyncMock()
         pipeline.get_ec_failures = AsyncMock()
         pipeline.get_release_failures = AsyncMock()
+        pipeline.get_fbc_health = AsyncMock()
         pipeline.notify_chai_bot = AsyncMock()
         pipeline.report = [
             _make_concern('ironic', 'openshift-4.18', ConcernCode.LATEST_ATTEMPT_FAILED.value, latest_success_idx=3),
@@ -926,6 +925,7 @@ class TestNotifyChaiBot(IsolatedAsyncioTestCase):
         pipeline.get_rebase_failures = AsyncMock()
         pipeline.get_ec_failures = AsyncMock()
         pipeline.get_release_failures = AsyncMock()
+        pipeline.get_fbc_health = AsyncMock()
         pipeline.notify_chai_bot = AsyncMock()
         pipeline.report = [
             _make_concern('ironic', 'openshift-4.18', ConcernCode.LATEST_ATTEMPT_FAILED.value, latest_success_idx=3),
