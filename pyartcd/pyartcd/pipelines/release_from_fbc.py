@@ -20,6 +20,7 @@ from artcommonlib.constants import SHIPMENT_DATA_URL_TEMPLATE
 from artcommonlib.gitdata import SafeFormatter
 from artcommonlib.github_auth import build_git_auth_env, get_github_client_for_org
 from artcommonlib.gitlab import GitLabClient
+from artcommonlib.product_catalog import find_product_config
 from artcommonlib.rpm_utils import parse_nvr
 from artcommonlib.util import new_roundtrip_yaml_handler
 from elliottlib.cli.konflux_release_cli import validate_snapshot_against_rpa
@@ -975,7 +976,8 @@ class ReleaseFromFbcPipeline:
         data = None
         if kind != 'fbc':
             mapping = None
-            if not self.ocp_optional:
+            product_config = find_product_config(self.product)
+            if not self.ocp_optional and (product_config is None or product_config.use_assembly_image_tags):
                 mapping = Mapping(
                     defaults=MappingDefaults(tags=['v{{ assembly }}', 'v{{ assembly }}-{{ incrementer }}'])
                 )
