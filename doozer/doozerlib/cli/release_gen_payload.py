@@ -1376,17 +1376,23 @@ class GenPayloadCli:
                 )
 
     def detect_rhcos_kernel_inconsistencies(self, targeted_rhcos_builds: Dict[bool, List[RHCOSBuildInspector]]):
+        # A kernel/kernel-rt version mismatch within a single RHCOS build is IMPERMISSIBLE:
+        # it indicates the RHCOS build itself is broken (the realtime kernel was not built
+        # from the same kernel source as the standard kernel), which is never an acceptable,
+        # permittable state -- unlike generic cross-component RPM drift.
         for privacy_mode in self.privacy_modes:  # only for relevant modes
             rhcos_builds = targeted_rhcos_builds[privacy_mode]
             for rhcos_build in rhcos_builds:
                 inconsistencies = self.payload_generator.find_rhcos_build_kernel_inconsistencies(rhcos_build)
-                if inconsistencies:
+                for inconsistency in inconsistencies:
                     self.assembly_issues.append(
                         AssemblyIssue(
-                            f"Found kernel inconsistencies in RHCOS build {rhcos_build} "
-                            f"(private={privacy_mode}): {inconsistencies}",
+                            f"Kernel/kernel-rt mismatch in RHCOS build {rhcos_build} "
+                            f"(private={privacy_mode}): {inconsistency.get('kernel-core')} was not built "
+                            f"from the same kernel source as {inconsistency.get('kernel-rt-core')}. "
+                            f"This RHCOS build cannot ship until the realtime kernel is rebuilt to match.",
                             component="rhcos",
-                            code=AssemblyIssueCode.FAILED_CROSS_RPM_VERSIONS_REQUIREMENT,
+                            code=AssemblyIssueCode.IMPERMISSIBLE,
                         )
                     )
 
@@ -1427,11 +1433,16 @@ class GenPayloadCli:
         if not dtk_distgit_keys:
             return consistency_issues
 
-        # Separate DTK issues from non-DTK issues
+        # Separate DTK issues from non-DTK issues. Kernel mismatches against a driver-toolkit
+        # distgit key now report as IMPERMISSIBLE (see validate_pkg_consistency_req), so both
+        # that and the legacy FAILED_CONSISTENCY_REQUIREMENT code must be considered here --
+        # otherwise a resolvable kernel mismatch would never get the auto-swap attempt below
+        # and would surface as an unconditional hard failure instead.
+        dtk_issue_codes = {AssemblyIssueCode.FAILED_CONSISTENCY_REQUIREMENT, AssemblyIssueCode.IMPERMISSIBLE}
         dtk_issues = [
             issue
             for issue in consistency_issues
-            if issue.code == AssemblyIssueCode.FAILED_CONSISTENCY_REQUIREMENT and issue.component in dtk_distgit_keys
+            if issue.code in dtk_issue_codes and issue.component in dtk_distgit_keys
         ]
         if not dtk_issues:
             return consistency_issues
@@ -2909,9 +2920,16 @@ class PayloadGenerator:
 
         For Konflux builds, this also detects when multiple versions of the same package
         are installed (e.g., two different kernel versions), which should never happen.
+
+        A mismatch on the 'kernel' package is treated as IMPERMISSIBLE rather than the
+        generic FAILED_CONSISTENCY_REQUIREMENT: a payload member (e.g. driver-toolkit) built
+        against a different kernel than the one RHCOS boots will produce kernel modules that
+        do not load on the node, so unlike other consistency drift (e.g. libreswan), this can
+        never be an acceptable, permittable state.
         """
         logger = bri.runtime.logger
         payload_tag_nvr: str = bri.get_nvr()
+        is_kernel_pkg = pkg == 'kernel'
         logger.debug(f"Checking consistency of {pkg} for {payload_tag_nvr} against {rhcos_build_id}")
 
         # For Konflux, get ALL installed package NVRs to detect duplicates
@@ -2929,7 +2947,9 @@ class PayloadGenerator:
                     f"RHCOS consistency configuration specifies that payload tag '{payload_tag}' "
                     f"should install package '{pkg}', but it does not",
                     payload_tag,
-                    AssemblyIssueCode.FAILED_CONSISTENCY_REQUIREMENT,
+                    AssemblyIssueCode.IMPERMISSIBLE
+                    if is_kernel_pkg
+                    else AssemblyIssueCode.FAILED_CONSISTENCY_REQUIREMENT,
                 )
 
             # Check if there are multiple versions of the same package installed
@@ -2965,7 +2985,9 @@ class PayloadGenerator:
                     f"RHCOS consistency configuration specifies that payload tag '{payload_tag}' "
                     f"should install package '{pkg}', but it does not",
                     payload_tag,
-                    AssemblyIssueCode.FAILED_CONSISTENCY_REQUIREMENT,
+                    AssemblyIssueCode.IMPERMISSIBLE
+                    if is_kernel_pkg
+                    else AssemblyIssueCode.FAILED_CONSISTENCY_REQUIREMENT,
                 )
 
             if len(matching_package_nvrs) > 1:
@@ -2998,12 +3020,26 @@ class PayloadGenerator:
             if vr:
                 logger.debug(f"RHCOS RPM {name} version is {vr}")
             if vr and vr != required_vr:
+                if is_kernel_pkg:
+                    msg = (
+                        f"Kernel ABI mismatch: RHCOS build {rhcos_build_id} has {name}-{vr}, "
+                        f"but '{payload_tag}' ({payload_tag_nvr}) was built against {name}-{required_vr}. "
+                        f"Kernel modules built with this driver-toolkit will not load on nodes running "
+                        f"this RHCOS kernel. A new driver-toolkit build matching {name}-{vr} is required "
+                        f"before this payload can ship."
+                    )
+                else:
+                    msg = (
+                        f"RHCOS and '{payload_tag}' should use the same build of "
+                        f"package '{pkg}', but {rhcos_build_id} has {name}-{vr} and "
+                        f"{payload_tag_nvr} has {name}-{required_vr} in {build['nvr']}"
+                    )
                 return AssemblyIssue(
-                    f"RHCOS and '{payload_tag}' should use the same build of "
-                    f"package '{pkg}', but {rhcos_build_id} has {name}-{vr} and "
-                    f"{payload_tag_nvr} has {name}-{required_vr} in {build['nvr']}",
+                    msg,
                     payload_tag,
-                    AssemblyIssueCode.FAILED_CONSISTENCY_REQUIREMENT,
+                    AssemblyIssueCode.IMPERMISSIBLE
+                    if is_kernel_pkg
+                    else AssemblyIssueCode.FAILED_CONSISTENCY_REQUIREMENT,
                 )
                 # no need to check other RPMs from this package build, one is enough
 

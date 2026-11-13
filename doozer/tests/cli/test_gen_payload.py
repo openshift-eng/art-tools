@@ -158,6 +158,92 @@ class TestGenPayloadCli(IsolatedAsyncioTestCase):
         _, _, _, rhcos_rpm_vrs, _, _ = validate_mock.call_args[0]
         self.assertEqual({"kernel-core": "6.12.0-100.el10"}, rhcos_rpm_vrs)
 
+    def test_validate_pkg_consistency_req_kernel_mismatch_is_impermissible(self):
+        """A kernel version mismatch against RHCOS is IMPERMISSIBLE -- it can never be waived
+        via a release.yml permit, unlike a generic consistency drift."""
+        pg = rgp_cli.PayloadGenerator(runtime=MagicMock(build_system="brew"))
+        bri = MagicMock()
+        bri.runtime.logger = MagicMock()
+        bri.get_nvr.return_value = "driver-toolkit-v4.22.0-202611100550"
+        bri.get_all_installed_rpm_dicts.return_value = [
+            {"nvr": "kernel-5.14.0-687.66.1.el9_8.x86_64"},
+        ]
+        bri.get_all_installed_package_build_dicts.return_value = {
+            "kernel": {
+                "build_id": 1,
+                "version": "5.14.0",
+                "release": "687.66.1.el9_8",
+                "nvr": "kernel-5.14.0-687.66.1.el9_8",
+            }
+        }
+        bri.get_rpms_in_pkg_build.return_value = [{"name": "kernel-core"}]
+
+        issue = pg.validate_pkg_consistency_req(
+            "driver-toolkit",
+            "kernel",
+            bri,
+            {"kernel-core": "5.14.0-687.67.1.el9_8"},
+            "rhcos-build-id",
+        )
+
+        self.assertIsNotNone(issue)
+        self.assertEqual(AssemblyIssueCode.IMPERMISSIBLE, issue.code)
+        self.assertIn("5.14.0-687.67.1.el9_8", issue.msg)
+        self.assertIn("5.14.0-687.66.1.el9_8", issue.msg)
+
+    def test_validate_pkg_consistency_req_non_kernel_mismatch_stays_permittable(self):
+        """A non-kernel package mismatch (e.g. libreswan) remains FAILED_CONSISTENCY_REQUIREMENT,
+        which assembly definitions can still permit."""
+        pg = rgp_cli.PayloadGenerator(runtime=MagicMock(build_system="brew"))
+        bri = MagicMock()
+        bri.runtime.logger = MagicMock()
+        bri.get_nvr.return_value = "ose-ovn-kubernetes-v4.22.0"
+        bri.get_all_installed_rpm_dicts.return_value = [
+            {"nvr": "libreswan-4.9-3.el9_8.x86_64"},
+        ]
+        bri.get_all_installed_package_build_dicts.return_value = {
+            "libreswan": {"build_id": 1, "version": "4.9", "release": "3.el9_8", "nvr": "libreswan-4.9-3.el9_8"}
+        }
+        bri.get_rpms_in_pkg_build.return_value = [{"name": "libreswan"}]
+
+        issue = pg.validate_pkg_consistency_req(
+            "ose-ovn-kubernetes",
+            "libreswan",
+            bri,
+            {"libreswan": "4.9-2.el9_8"},
+            "rhcos-build-id",
+        )
+
+        self.assertIsNotNone(issue)
+        self.assertEqual(AssemblyIssueCode.FAILED_CONSISTENCY_REQUIREMENT, issue.code)
+
+    def test_detect_rhcos_kernel_inconsistencies_is_impermissible(self):
+        """A kernel/kernel-rt mismatch within a single RHCOS build is IMPERMISSIBLE -- it
+        means the RHCOS build itself is broken and can never be waived via a permit."""
+        runtime = MagicMock(group_config=Model())
+        gpcli = rgp_cli.GenPayloadCli(runtime=runtime)
+        gpcli.assembly_issues = []
+        gpcli.privacy_modes = [False]
+        rhcos_build = MagicMock()
+        inconsistency = {
+            "kernel-core": "kernel-core-5.14.0-427.116.1.el9_4",
+            "kernel-rt-core": "kernel-rt-core-5.14.0-427.115.1.el9_4",
+        }
+
+        with patch.object(
+            gpcli.payload_generator,
+            "find_rhcos_build_kernel_inconsistencies",
+            return_value=[inconsistency],
+        ):
+            gpcli.detect_rhcos_kernel_inconsistencies({False: [rhcos_build]})
+
+        self.assertEqual(1, len(gpcli.assembly_issues))
+        issue = gpcli.assembly_issues[0]
+        self.assertEqual(AssemblyIssueCode.IMPERMISSIBLE, issue.code)
+        self.assertEqual("rhcos", issue.component)
+        self.assertIn("kernel-core-5.14.0-427.116.1.el9_4", issue.msg)
+        self.assertIn("kernel-rt-core-5.14.0-427.115.1.el9_4", issue.msg)
+
     @patch.object(rgp_cli.PayloadGenerator, "validate_pkg_consistency_req")
     def test_find_rhcos_payload_rpm_inconsistencies_missing_stream_no_issue(self, validate_mock):
         """When the RHCOS build has no RHEL10 RPMs, rhel-coreos-10 checks are skipped silently."""
