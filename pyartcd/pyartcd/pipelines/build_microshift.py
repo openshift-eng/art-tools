@@ -85,6 +85,7 @@ class BuildMicroShiftPipeline:
         self._logger = logger or runtime.logger
         self._working_dir = self.runtime.working_dir.absolute()
         self.releases_config = None
+        self.group_config = None
         self.advisory_num = None
         self.slack_client = slack_client
         # determines OCP version
@@ -150,6 +151,7 @@ class BuildMicroShiftPipeline:
             doozer_data_path=self.data_path,
             doozer_data_gitref=self.data_gitref,
         )
+        self.group_config = group_config
         advisories = group_config.get("advisories", {})
         self.releases_config = await load_releases_config(
             group=self.doozer_group,
@@ -244,7 +246,10 @@ class BuildMicroShiftPipeline:
                 advisory_description=advisory_description,
                 advisory_solution=advisory_solution,
                 advisory_quality_responsibility_name=et_data['quality_responsibility_name'],
-                advisory_package_owner_email=self.runtime.config['advisory']['package_owner'],
+                advisory_package_owner_email=util.select_package_owner(
+                    self.runtime.config['advisory'],
+                    (self.group_config.get('software_lifecycle') or {}).get('phase'),
+                ),
                 advisory_manager_email=self.runtime.config['advisory']['manager'],
                 advisory_assigned_to_email=self.runtime.config['advisory']['assigned_to'],
                 advisory_publish_date_override=release_date,

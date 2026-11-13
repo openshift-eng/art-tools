@@ -73,6 +73,7 @@ from pyartcd.util import (
     get_assembly_type,
     get_release_name_for_assembly,
     nightlies_with_pullspecs,
+    select_package_owner,
 )
 
 yaml = new_roundtrip_yaml_handler()
@@ -577,13 +578,18 @@ class PrepareReleaseKonfluxPipeline:
         self, advisory_type: str, art_advisory_key: str, release_date: str, batch_id: int = 0
     ) -> int:
         self.logger.info("Creating advisory with type %s art_advisory_key %s ...", advisory_type, art_advisory_key)
+        # Select the ET package owner based on the stream's software lifecycle phase.
+        # EUS (extended_support) streams use `package_owner_eus`; everything else uses `package_owner`.
+        package_owner = select_package_owner(
+            self.runtime.config['advisory'], (self.group_config.get('software_lifecycle') or {}).get('phase')
+        )
         create_cmd = self._elliott_base_command + [
             "create",
             f"--type={advisory_type}",
             f"--art-advisory-key={art_advisory_key}",
             f"--assigned-to={self.runtime.config['advisory']['assigned_to']}",
             f"--manager={self.runtime.config['advisory']['manager']}",
-            f"--package-owner={self.runtime.config['advisory']['package_owner']}",
+            f"--package-owner={package_owner}",
         ]
         if batch_id:
             create_cmd.append(f"--batch-id={batch_id}")

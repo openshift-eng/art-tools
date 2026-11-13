@@ -1602,3 +1602,82 @@ class TestCheckBugConfigForGa(unittest.IsolatedAsyncioTestCase):
             await pipeline.check_bug_config_for_ga()
 
         self.assertIn("bug.yml could not be parsed", str(ctx.exception))
+
+
+class TestCreateAdvisoryPackageOwner(unittest.IsolatedAsyncioTestCase):
+    """Verify create_advisory selects the ET package owner based on the software lifecycle phase."""
+
+    def setUp(self):
+        self.runtime = Mock(spec=Runtime)
+        self.runtime.working_dir = Path("/tmp/working-dir")
+        self.runtime.dry_run = False
+        self.runtime.config = {
+            "gitlab_url": "https://gitlab.example.com",
+            "build_config": {
+                "ocp_build_data_url": "https://github.com/user1/repo1",
+                "ocp_build_data_push_url": "https://github.com/user2/repo2",
+            },
+            "shipment_config": {
+                "shipment_data_url": "https://gitlab.example.com/user3/repo3",
+                "shipment_data_push_url": "https://gitlab.example.com/user4/repo4",
+            },
+            "advisory": {
+                "assigned_to": "openshift-qe-errata@redhat.com",
+                "manager": "vlaad@redhat.com",
+                "package_owner": "asdas@redhat.com",
+                "package_owner_eus": "gparente@redhat.com",
+            },
+        }
+        self.mock_slack_client = Mock(spec=SlackClient)
+
+    def _make_pipeline(self, group="openshift-4.22", assembly="4.22.1"):
+        pipeline = PrepareReleaseKonfluxPipeline(
+            slack_client=self.mock_slack_client,
+            runtime=self.runtime,
+            group=group,
+            assembly=assembly,
+        )
+        pipeline.logger = Mock()
+        pipeline._elliott_base_command = ["elliott", f"--group={group}", f"--assembly={assembly}"]
+        pipeline.execute_command_with_logging = AsyncMock(
+            return_value="Created advisory: https://errata.devel.redhat.com/advisory/12345"
+        )
+        return pipeline
+
+    async def test_extended_support_phase_uses_eus_owner(self):
+        pipeline = self._make_pipeline()
+        pipeline.group_config = {'software_lifecycle': {'phase': 'extended_support'}}
+
+        advisory_num = await pipeline.create_advisory("rpm", "rpm", "2026-Jun-18")
+
+        self.assertEqual(advisory_num, 12345)
+        create_cmd = pipeline.execute_command_with_logging.await_args.args[0]
+        self.assertIn("--package-owner=gparente@redhat.com", create_cmd)
+
+    async def test_release_phase_uses_normal_owner(self):
+        pipeline = self._make_pipeline()
+        pipeline.group_config = {'software_lifecycle': {'phase': 'release'}}
+
+        await pipeline.create_advisory("rpm", "rpm", "2026-Jun-18")
+
+        create_cmd = pipeline.execute_command_with_logging.await_args.args[0]
+        self.assertIn("--package-owner=asdas@redhat.com", create_cmd)
+
+    async def test_missing_phase_uses_normal_owner(self):
+        """None-safe: a missing software_lifecycle/phase falls back to the normal package owner."""
+        pipeline = self._make_pipeline()
+        pipeline.group_config = {}
+
+        await pipeline.create_advisory("rpm", "rpm", "2026-Jun-18")
+
+        create_cmd = pipeline.execute_command_with_logging.await_args.args[0]
+        self.assertIn("--package-owner=asdas@redhat.com", create_cmd)
+
+    async def test_extended_support_raises_when_eus_owner_absent(self):
+        """When package_owner_eus is not configured, EUS streams raise ValueError rather than falling back."""
+        del self.runtime.config["advisory"]["package_owner_eus"]
+        pipeline = self._make_pipeline()
+        pipeline.group_config = {'software_lifecycle': {'phase': 'extended_support'}}
+
+        with self.assertRaises(ValueError):
+            await pipeline.create_advisory("rpm", "rpm", "2026-Jun-18")

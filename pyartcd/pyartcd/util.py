@@ -144,6 +144,27 @@ async def load_group_config(
     return group_config
 
 
+def select_package_owner(advisory_config: dict, lifecycle_phase_str: Optional[str]) -> str:
+    """Return the Errata Tool package owner for the given software_lifecycle phase.
+
+    EUS (extended_support) streams REQUIRE ``advisory_config['package_owner_eus']``; a missing
+    or empty value raises ``ValueError`` rather than falling back to ``package_owner``. Any
+    recognized non-EUS phase, as well as an empty or missing phase, uses
+    ``advisory_config['package_owner']``. The phase lookup is None-safe.
+
+    An unrecognized, non-empty ``lifecycle_phase_str`` is treated as a misconfiguration and
+    raises ``ValueError`` (via ``SoftwareLifecyclePhase.from_name``) rather than silently
+    falling back to the default owner.
+    """
+    phase = SoftwareLifecyclePhase.from_name(lifecycle_phase_str) if lifecycle_phase_str else None
+    if phase == SoftwareLifecyclePhase.EXTENDED_SUPPORT:
+        owner = advisory_config.get('package_owner_eus')
+        if not owner:
+            raise ValueError("package_owner_eus must be configured for extended_support advisories")
+        return owner
+    return advisory_config['package_owner']
+
+
 def okd_doozer_base_command(
     version: str,
     assembly: str,

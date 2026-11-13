@@ -334,3 +334,91 @@ class TestBuildMicroShiftPipeline(IsolatedAsyncioTestCase):
         # No RPMs should be pinned
         self.assertIsNone(result)
         self.assertNotIn("members", releases_config["releases"][self.assembly].get("assembly", {}))
+
+
+class TestCreateMicroshiftAdvisoryPackageOwner(IsolatedAsyncioTestCase):
+    """Verify create_microshift_advisory selects the ET package owner by software lifecycle phase."""
+
+    def setUp(self):
+        self.runtime = Mock(spec=Runtime)
+        self.runtime.working_dir = Path(tempfile.mkdtemp())
+        self.runtime.dry_run = False
+        self.runtime.config = {
+            "advisory": {
+                "assigned_to": "openshift-qe-errata@redhat.com",
+                "manager": "vlaad@redhat.com",
+                "package_owner": "normal@redhat.com",
+                "package_owner_eus": "eus@redhat.com",
+            },
+        }
+        self.runtime.logger = Mock()
+        self.mock_slack_client = Mock(spec=SlackClient)
+        self.group = "openshift-4.17"
+        self.assembly = "4.17.1"
+        os.environ["GITHUB_TOKEN"] = "fake-token"
+
+    def tearDown(self):
+        os.environ.pop("GITHUB_TOKEN", None)
+
+    def _make_pipeline(self):
+        pipeline = BuildMicroShiftPipeline(
+            runtime=self.runtime,
+            group=self.group,
+            assembly=self.assembly,
+            payloads=(),
+            no_rebase=False,
+            force=False,
+            skip_prepare_advisory=False,
+            data_path="https://github.com/openshift-eng/ocp-build-data",
+            slack_client=self.mock_slack_client,
+        )
+        pipeline.releases_config = {"releases": {self.assembly: {}}}
+        pipeline.load_errata_config = Mock(
+            return_value={
+                "product": "RHOSE",
+                "release": "RHEL-8-RHOSE-4.17",
+                "quality_responsibility_name": "openshift-qe",
+            }
+        )
+        return pipeline
+
+    async def _run(self, phase):
+        pipeline = self._make_pipeline()
+        pipeline.group_config = {"software_lifecycle": {"phase": phase}} if phase else {}
+
+        mock_api = AsyncMock()
+        mock_api.create_advisory.return_value = {"errata": {"rhba": {"id": 99}}}
+
+        with (
+            patch(
+                "pyartcd.pipelines.build_microshift.get_release_name_for_assembly",
+                return_value="4.17.1",
+            ),
+            patch(
+                "pyartcd.pipelines.build_microshift.assembly_config_struct",
+                return_value=Mock(get=Mock(return_value="2026-Jun-18")),
+            ),
+            patch(
+                "pyartcd.pipelines.build_microshift.get_advisory_boilerplate",
+                return_value={
+                    "synopsis": "s",
+                    "topic": "t",
+                    "description": "d",
+                    "solution": "sol",
+                },
+            ),
+            patch("pyartcd.pipelines.build_microshift.AsyncErrataAPI", return_value=mock_api),
+        ):
+            advisory_id = await pipeline.create_microshift_advisory()
+
+        self.assertEqual(advisory_id, 99)
+        return mock_api.create_advisory.await_args.kwargs["advisory_package_owner_email"]
+
+    async def test_extended_support_phase_uses_eus_owner(self):
+        self.assertEqual(await self._run("extended_support"), "eus@redhat.com")
+
+    async def test_release_phase_uses_normal_owner(self):
+        self.assertEqual(await self._run("release"), "normal@redhat.com")
+
+    async def test_missing_phase_uses_normal_owner(self):
+        self.assertEqual(await self._run(None), "normal@redhat.com")
