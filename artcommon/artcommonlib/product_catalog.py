@@ -236,6 +236,7 @@ PRODUCT_CATALOG: tuple[ProductConfig, ...] = (
         kubeconfig_env="OSUS_KONFLUX_SA_KUBECONFIG",
         conforma_stage_policies=ConformaPolicies(
             image_policy="rhtap-releng-tenant/registry-art-osus-stage",
+            fbc_policy="rhtap-releng-tenant/fbc-stage",
         ),
         cpe_product_name="openshift_update_service",
     ),
