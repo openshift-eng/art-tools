@@ -816,6 +816,58 @@ class KonfluxFbcRebaser:
                 # Each subsequent entry replaces the previous one
                 entries[i]['replaces'] = entries[i - 1]['name']
 
+    @classmethod
+    def _insert_mid_stream_entry(cls, entries: list, new_entry: dict) -> None:
+        """Insert into a linear replaces chain without changing unrelated edges.
+
+        Existing skips and skipRange edges are left intact. A channel with a
+        non-linear or non-monotonic replaces graph needs an explicit repair,
+        rather than an automatic mid-stream insertion.
+
+        :param entries: Existing entries in one channel
+        :param new_entry: Entry to insert; its name must not already be present
+        :raises IOError: If the insertion point or existing graph is ambiguous
+        """
+        names = [entry['name'] for entry in entries]
+        if len(names) != len(set(names)) or new_entry['name'] in names:
+            raise IOError("Cannot mid-stream insert into a channel with duplicate bundle names")
+
+        try:
+            versions = {name: cls._extract_version_from_bundle_name(name) for name in [*names, new_entry['name']]}
+        except ValueError as e:
+            raise IOError(f"Cannot mid-stream insert with an unparseable bundle version: {e}") from e
+        if len(set(versions.values())) != len(versions):
+            raise IOError("Cannot mid-stream insert into a channel with duplicate bundle versions")
+
+        ordered = sorted(entries, key=lambda entry: versions[entry['name']])
+        for index, entry in enumerate(ordered):
+            if index and entry.get('replaces') != ordered[index - 1]['name']:
+                raise IOError("Cannot mid-stream insert into a non-linear replaces graph")
+            if not index and entry.get('replaces') in names:
+                raise IOError("Cannot mid-stream insert into a cyclic replaces graph")
+            if new_entry['name'] in entry.get('skips', []):
+                raise IOError("Cannot mid-stream insert a bundle already skipped by this channel")
+
+        successor = next((entry for entry in ordered if versions[entry['name']] > versions[new_entry['name']]), None)
+        if successor is None:
+            raise IOError("Cannot mid-stream insert a bundle newer than the channel head")
+        predecessor_index = ordered.index(successor) - 1
+        predecessor = ordered[predecessor_index] if predecessor_index >= 0 else None
+
+        if predecessor:
+            new_entry['replaces'] = predecessor['name']
+        elif external_tail := successor.get('replaces'):
+            try:
+                tail_version = cls._extract_version_from_bundle_name(external_tail)
+            except ValueError as e:
+                raise IOError(f"Cannot safely preserve the channel's external tail edge: {e}") from e
+            if tail_version >= versions[new_entry['name']]:
+                raise IOError("Cannot mid-stream insert below a non-monotonic external tail edge")
+            new_entry['replaces'] = external_tail
+
+        successor['replaces'] = new_entry['name']
+        entries.insert(entries.index(successor), new_entry)
+
     _VERSIONED_CHANNEL_RE = re.compile(r'^(.+)-v?(\d+(?:\.\d+)*)$')
 
     @staticmethod
@@ -1352,6 +1404,7 @@ class KonfluxFbcRebaser:
                         channel['entries'].append(assembly_entry)
 
             # Add the current bundle to the specified channel in the catalog
+            mid_stream_rewire = False
             entry = next((entry for entry in channel['entries'] if entry['name'] == olm_bundle_name), None)
             if not entry:
                 logger.info("Adding bundle %s to channel %s", olm_bundle_name, channel['name'])
@@ -1370,10 +1423,12 @@ class KonfluxFbcRebaser:
                         logger.info("Rebuilding replaces chain after version sorting")
                         self._rebuild_replaces_chain(channel['entries'])
                 else:
-                    # For an operator bundle that uses replaces -- such as OADP
-                    # Calculate replaces based on current head before appending.
-                    # Skips-only LP channels (e.g. kueue) leave replaces unset.
+                    # A tip add replaces the current head. A mid-stream add
+                    # requires an explicit opt-in and changes only its adjacent
+                    # replaces edges; it must never replace a newer head.
+                    # --insert-missing-entry is a separate branch above and is unaffected.
                     replaces = None
+                    current_head_name = None
                     if use_replaces:
                         # Find the current head - the entry not superseded
                         # (not replaced or skipped) by any other entry
@@ -1383,12 +1438,59 @@ class KonfluxFbcRebaser:
                             superseded_names.update(it.get('skips', []))
                         current_head = next((it for it in all_entries if it['name'] not in superseded_names), None)
                         if current_head:
-                            # The new bundle should replace the current head
-                            replaces = current_head['name']
+                            current_head_name = current_head['name']
+                            enable_mid_stream_rewire = (
+                                getattr(group_config.vars, "FBC_ENABLE_MID_STREAM_REWIRE", False) is True
+                            )
+                            try:
+                                new_ver = self._extract_version_from_bundle_name(olm_bundle_name)
+                                head_ver = self._extract_version_from_bundle_name(current_head_name)
+                                if new_ver < head_ver:
+                                    if not enable_mid_stream_rewire:
+                                        raise IOError(
+                                            f"Refusing to add {olm_bundle_name} to channel "
+                                            f"{channel['name']} with replaces:{current_head_name}: "
+                                            f"new CSV version ({new_ver}) is older than the current "
+                                            f"channel head ({head_ver}), which would create an "
+                                            f"invalid downgrade edge. Set "
+                                            f"FBC_ENABLE_MID_STREAM_REWIRE: true in group.yml vars "
+                                            f"to insert by semver into a linear replaces chain "
+                                            f"for shared OLM channels, or use --insert-missing-entry "
+                                            f"to fill a hole in version order."
+                                        )
+                                    mid_stream_rewire = True
+                                else:
+                                    replaces = current_head_name
+                            except ValueError as e:
+                                if enable_mid_stream_rewire:
+                                    raise IOError(
+                                        f"FBC_ENABLE_MID_STREAM_REWIRE is set but cannot mid-stream "
+                                        f"insert {olm_bundle_name} into channel {channel['name']} "
+                                        f"(head {current_head_name}): {e}. Refusing replaces:HEAD "
+                                        f"to avoid an invalid upgrade graph."
+                                    ) from e
+                                # Tip path with unparseable names: keep historical HEAD-append
+                                replaces = current_head_name
 
-                    channel['entries'].append(entry)
-                    if replaces:
-                        entry["replaces"] = replaces
+                    if mid_stream_rewire:
+                        logger.info(
+                            "Mid-stream insert for %s in channel %s "
+                            "(new version older than head %s); "
+                            "updating adjacent replaces edges",
+                            olm_bundle_name,
+                            channel['name'],
+                            current_head_name,
+                        )
+                        try:
+                            self._insert_mid_stream_entry(channel['entries'], entry)
+                        except IOError as e:
+                            raise IOError(
+                                f"cannot mid-stream insert into channel {channel['name']}: {e}. Refusing replaces:HEAD."
+                            ) from e
+                    else:
+                        channel['entries'].append(entry)
+                        if replaces:
+                            entry["replaces"] = replaces
             else:
                 logger.warning("Bundle %s already exists in channel %s. Replacing...", olm_bundle_name, channel['name'])
                 existing_replaces = entry.get("replaces")
@@ -1398,7 +1500,7 @@ class KonfluxFbcRebaser:
                     entry["replaces"] = existing_replaces
             if olm_skip_range:
                 entry["skipRange"] = olm_skip_range
-            if skips:
+            if skips and not mid_stream_rewire:
                 if self.group.startswith("openshift-") or not disable_channel_skips:
                     entry["skips"] = sorted(skips)
 
