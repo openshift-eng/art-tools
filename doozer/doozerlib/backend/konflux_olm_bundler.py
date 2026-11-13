@@ -584,8 +584,8 @@ class KonfluxOlmBundleRebaser:
         new_pullspec = f"registry.redhat.io/{new_namespace}/{delivery_short_name}@{image_sha}"
         return delivery_short_name, new_pullspec
 
-    @lru_cache
     @staticmethod
+    @lru_cache
     def _get_image_reference_pattern(registry: str):
         """Get a compiled regex pattern to match image references in the format of `registry/namespace/image:tag`."""
         pattern = r'{}\/([^:]+):([^\'"\\\s]+)'.format(re.escape(registry))

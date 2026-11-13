@@ -74,6 +74,7 @@ class TestKonfluxOlmBundleRebaser(IsolatedAsyncioTestCase):
     def test_get_image_reference_pattern(self):
         registry = "registry.example.com"
         pattern = KonfluxOlmBundleRebaser._get_image_reference_pattern(registry)
+        self.assertIs(pattern, self.rebaser._get_image_reference_pattern(registry))
         self.assertIsInstance(pattern, re.Pattern)
         match = pattern.match("registry.example.com/namespace/image:tag")
         self.assertIsNotNone(match)
