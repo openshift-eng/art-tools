@@ -14,6 +14,7 @@ from pyartcd.pipelines import binary_release_konflux as release
 SOURCE_NVR = "oc-mirror-container-2.0-202611121200.p2.assembly.stream.el9"
 AGGREGATE_NVR = "oc-mirror-aggregate-binaries-container-2.0.0-202611121300.p2.assembly.stream.el9"
 IMAGE_REPO = "quay.io/example/oc-mirror-builds"
+RECIPE_SOURCE_URL = "git@github.com:openshift-priv/ocp-build-data.git"
 ARCHES = ("amd64", "arm64", "ppc64le", "s390x")
 PARENTS = {arch: f"{IMAGE_REPO}@sha256:{i:064x}" for i, arch in enumerate(ARCHES, 1)}
 
@@ -92,6 +93,7 @@ class TestBuildAggregate(IsolatedAsyncioTestCase):
         self.aggregate_nvr = AGGREGATE_NVR
         self.extra_stage = False
         self.record_count = 1
+        self.recipe_source_url = RECIPE_SOURCE_URL
         self.commands = self.enterContext(patch.object(release.exectools, "cmd_assert_async", new_callable=AsyncMock))
         self.commands.side_effect = self.command
         self.image_info = self.enterContext(patch.object(release, "oc_image_info_for_arch_async"))
@@ -116,6 +118,7 @@ class TestBuildAggregate(IsolatedAsyncioTestCase):
         self.data_dir = Path(directory)
         repo = MagicMock()
         repo.setup = AsyncMock()
+        self.recipe_repo = repo
 
         async def fetch(branch):
             config = self.data_dir / "binaries/oc-mirror-aggregate.yml"
@@ -126,7 +129,7 @@ class TestBuildAggregate(IsolatedAsyncioTestCase):
                         "from": {"builder": [{"member": "oc-mirror"}] * 4},
                         "content": {
                             "source": {
-                                "git": {"url": "git@github.com:openshift-priv/ocp-build-data.git"},
+                                "git": {"url": self.recipe_source_url},
                                 "path": "binaries/oc-mirror-aggregate",
                             }
                         },
@@ -172,10 +175,14 @@ class TestBuildAggregate(IsolatedAsyncioTestCase):
         self.assertEqual(self.pinned["from"]["builder"], [{"image": image} for image in PARENTS.values()])
         self.assertNotIn("git", self.pinned["content"]["source"])
         self.assertEqual(self.pinned["content"]["source"]["alias"], "oc-mirror-aggregate")
+        self.assertEqual(
+            self.recipe_repo.setup.await_args_list,
+            [call("https://github.com/openshift-eng/ocp-build-data"), call(RECIPE_SOURCE_URL)],
+        )
         for invocation in self.image_info.await_args_list:
             self.assertEqual(invocation.args[0], self.source.spec.components[0].containerImage)
 
-    async def test_recipe_alias_resolves_the_public_checkout_without_a_private_clone(self):
+    async def test_recipe_alias_keeps_the_fetched_checkout_and_private_rebase_destination(self):
         await self.pipeline.build_aggregate(self.source)
         checkout = Path(self.tmp.name, "checkout")
         (checkout / "binaries/oc-mirror-aggregate").mkdir(parents=True)
@@ -183,7 +190,7 @@ class TestBuildAggregate(IsolatedAsyncioTestCase):
 
         def git_metadata(command, **kwargs):
             if command[-1] == "remote.origin.url":
-                return 0, "https://github.com/openshift-eng/ocp-build-data", ""
+                return 0, RECIPE_SOURCE_URL, ""
             if command[1] == "rev-parse":
                 return 0, "oc-mirror-2.0", ""
             return 1, "", ""
@@ -200,7 +207,19 @@ class TestBuildAggregate(IsolatedAsyncioTestCase):
             meta.has_source.return_value = True
             source = resolver.resolve_source(meta)
         self.assertEqual(SourceResolver.get_source_dir(source, meta), checkout / "binaries/oc-mirror-aggregate")
-        self.assertEqual(source.url, "https://github.com/openshift-eng/ocp-build-data")
+        self.assertEqual(source.url, RECIPE_SOURCE_URL)
+        self.assertIsNone(source.pull_url)
+
+    async def test_rebase_destination_comes_from_the_recipe(self):
+        self.recipe_source_url = "git@github.com:example/ocp-build-data.git"
+        await self.pipeline.build_aggregate(self.source)
+        self.recipe_repo.setup.assert_awaited_with(self.recipe_source_url)
+
+    async def test_missing_recipe_destination_stops_before_rebase(self):
+        self.recipe_source_url = None
+        with self.assertRaisesRegex(ValueError, "must declare content.source.git.url"):
+            await self.pipeline.build_aggregate(self.source)
+        self.commands.assert_not_awaited()
 
     async def test_rebase_version_comes_from_the_group_profile(self):
         self.pipeline.aggregation_profile = replace(self.pipeline.aggregation_profile, version="v2.0.1")

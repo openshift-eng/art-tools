@@ -723,10 +723,16 @@ class BinaryReleaseKonfluxPipeline:
             await data_repo.fetch_switch_branch(self.group)
             config_path = data_dir / f"binaries/{profile.member}.yml"
             config = stdlib_yaml.safe_load(config_path.read_text())
+            source_config = config["content"]["source"]
+            source_git_url = (source_config.get("git") or {}).get("url")
+            if not source_git_url:
+                raise ValueError("The aggregate recipe must declare content.source.git.url for the rebase destination")
+            # Keep this fetched recipe checkout, but honor its declared Git destination.
+            # SourceResolver derives the rebase remote from the local alias's origin.
+            await data_repo.setup(source_git_url)
             config["from"]["builder"] = [{"image": image} for image in parents.values()]
-            # Use this exact checkout for both metadata and the public rebase destination.
-            config["content"]["source"].pop("git", None)
-            config["content"]["source"]["alias"] = profile.member
+            source_config.pop("git")
+            source_config["alias"] = profile.member
             config_path.write_text(stdlib_yaml.safe_dump(config, sort_keys=False))
 
             base = [
