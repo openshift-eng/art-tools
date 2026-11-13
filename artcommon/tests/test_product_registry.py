@@ -98,6 +98,9 @@ class TestProductCatalog(unittest.TestCase):
         self.assertEqual(config.namespace, "art-osus-tenant")
         self.assertEqual(config.kubeconfig_env, "OSUS_KONFLUX_SA_KUBECONFIG")
         self.assertIs(config.product_id, ProductId.OSUS)
+        self.assertEqual(config.conforma_stage_policies.image_policy, "rhtap-releng-tenant/registry-art-osus-stage")
+        self.assertIsNone(config.conforma_stage_policies.fbc_policy)
+        self.assertEqual(config.cpe_name, "openshift_update_service")
 
     def test_conforma_policy_can_omit_fbc_policy(self):
         """Represent a product with no Conforma FBC policy explicitly."""
