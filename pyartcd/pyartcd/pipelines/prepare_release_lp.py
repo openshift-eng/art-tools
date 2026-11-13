@@ -166,6 +166,7 @@ class PrepareReleaseLPPipeline:
         self.job_url: Optional[str] = None
 
         self.product: Optional[str] = None
+        self._fbc_enabled = True
         self._releases_config: Optional[Dict] = None
         self._fbc_refresh_records: list[FbcRefreshRecord] = []
 
@@ -229,6 +230,7 @@ class PrepareReleaseLPPipeline:
         group_config = await load_group_config(
             group=self.group, assembly=self.assembly, doozer_data_path=self.build_data_repo_url
         )
+        self._fbc_enabled = group_config.get('konflux', {}).get('fbc', {}).get('enabled', True)
         if group_config.get('product'):
             return group_config['product']
         product = self.group.split('-')[0]
@@ -522,6 +524,11 @@ class PrepareReleaseLPPipeline:
             A tuple containing the complete FBC NVR and pullspec lists.
         """
         self._logger.info("Triggering FBC builds for assembly '%s'...", self.assembly)
+        if not self._fbc_enabled:
+            if self.refresh_fbcs:
+                raise ValueError("Cannot refresh FBCs when konflux.fbc.enabled is false")
+            self._logger.info("FBC builds are disabled for group %s", self.group)
+            return [], []
         if not operator_nvrs:
             self._logger.info("No pinned OLM operators; skipping FBC builds")
             return [], []

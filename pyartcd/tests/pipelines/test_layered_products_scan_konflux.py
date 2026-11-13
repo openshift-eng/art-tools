@@ -257,6 +257,22 @@ class TestLayeredProductsScanPipeline(unittest.IsolatedAsyncioTestCase):
 class TestScanForMissingBundlesFbcs(unittest.IsolatedAsyncioTestCase):
     """Tests for the scan-operator logic integrated into the LP scan pipeline."""
 
+    @patch('pyartcd.pipelines.layered_products_scan_konflux.load_group_config', new_callable=AsyncMock)
+    async def test_disabled_catalogs_still_check_bundles(self, load_config):
+        load_config.return_value = {'version': '5.0.5', 'konflux': {'fbc': {'enabled': False}}}
+        pipeline = self._make_pipeline(group='osus-5.0')
+        await pipeline.load_ocp_target_versions()
+        operator = MagicMock(nvr='operator-5.0.5-1')
+        bundle = MagicMock(outcome=KonfluxBuildOutcome.SUCCESS)
+        with (
+            patch.object(pipeline, 'check_bundle_exists', new_callable=AsyncMock, return_value=bundle) as check_bundle,
+            patch.object(pipeline, 'check_fbc_exists', new_callable=AsyncMock) as check_catalog,
+        ):
+            await pipeline.check_operator(MagicMock(), MagicMock(), operator)
+            check_bundle.assert_awaited_once()
+            check_catalog.assert_not_awaited()
+        self.assertEqual(pipeline.bundles_by_operator[operator.nvr], bundle)
+
     def setUp(self):
         self.runtime = MagicMock(spec=Runtime)
         self.runtime.dry_run = True

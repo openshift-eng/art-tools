@@ -61,6 +61,7 @@ class LayeredProductsScanPipeline:
         # Resolved in _init_stage_release_check(): True when assembly is 'stream'
         # and the product has an FBC advisory-stage ReleasePlan for this version.
         self._check_stage_release = False
+        self._fbc_enabled = True
 
         # OCP target versions for FBC builds (loaded from group config)
         self.ocp_target_versions: List[str] = []
@@ -360,6 +361,7 @@ class LayeredProductsScanPipeline:
             )
 
             cfg_version = group_config.get('version')
+            self._fbc_enabled = group_config.get('konflux', {}).get('fbc', {}).get('enabled', True)
             if cfg_version:
                 self.version = resolve_build_version(self.group, str(cfg_version))
                 self.logger.info('Using version %s from group config', self.version)
@@ -444,6 +446,8 @@ class LayeredProductsScanPipeline:
                     # An unavailable registry is not proof that release happened.
                     return
 
+            if not self._fbc_enabled:
+                return
             fbc = await self.check_fbc_exists(fbc_db, operator, bundle)
             if fbc is None or fbc.outcome.is_failure():
                 self.operators_without_fbcs.append(operator)

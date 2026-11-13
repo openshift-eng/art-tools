@@ -80,6 +80,28 @@ class TestStageReleaseRelatedImages(unittest.IsolatedAsyncioTestCase):
 class TestOlmBundleKonfluxStageReleaseGating(unittest.IsolatedAsyncioTestCase):
     """Stage release should only run when bundles were actually built, unless --force-release is set."""
 
+    @mock.patch("pyartcd.pipelines.olm_bundle_konflux.jenkins")
+    @mock.patch("pyartcd.pipelines.olm_bundle_konflux.locks")
+    @mock.patch("pyartcd.pipelines.olm_bundle_konflux.exectools.cmd_assert_async", new_callable=mock.AsyncMock)
+    @mock.patch("pyartcd.pipelines.olm_bundle_konflux.load_group_config", new_callable=mock.AsyncMock)
+    @mock.patch("pyartcd.pipelines.olm_bundle_konflux._stage_release_related_images", new_callable=mock.AsyncMock)
+    async def test_bundle_build_does_not_trigger_disabled_catalogs(
+        self, stage_release, load_config, cmd_assert, locks, jenkins
+    ):
+        self._write_bundle_record()
+        await self._run_pipeline(
+            stage_release,
+            load_config,
+            locks,
+            jenkins,
+            product='openshift-update-service',
+            group='osus-5.0',
+            group_config_extra={'konflux': {'fbc': {'enabled': False}}},
+        )
+        cmd_assert.assert_awaited_once()
+        stage_release.assert_not_awaited()
+        jenkins.start_build_fbc.assert_not_called()
+
     def setUp(self):
         self._working_dir = TemporaryDirectory()
         self.addCleanup(self._working_dir.cleanup)
