@@ -1,5 +1,6 @@
 """Reconstruct scan-to-FBC build chains and identify matching scan recoveries."""
 
+import json
 from collections import defaultdict
 
 from .messages import lp_rebase_warning
@@ -22,6 +23,12 @@ def health_run(run: dict, summary: dict) -> dict:
         outcome = "Cancelled"
     if lp_rebase_warning(run):
         outcome = "Warning"
+    try:
+        retry_sources = json.loads(annotations.get(f"{LABEL_PREFIX}rebuilt-from-uids", "[]"))
+    except (ValueError, TypeError):
+        retry_sources = []
+    if not isinstance(retry_sources, list) or any(not isinstance(uid, str) or not uid for uid in retry_sources):
+        retry_sources = []
     return {
         **summary,
         "status": outcome,
@@ -30,6 +37,7 @@ def health_run(run: dict, summary: dict) -> dict:
         "target": labels.get(f"{LABEL_PREFIX}ocp-version") or params.get("ocp-target-version") or "",
         "parent": labels.get(f"{LABEL_PREFIX}parent-pipelinerun"),
         "rebuiltFrom": annotations.get(f"{LABEL_PREFIX}rebuilt-from"),
+        "rebuiltFromUids": list(dict.fromkeys(retry_sources)),
         "recoveryScan": annotations.get(f"{LABEL_PREFIX}recovery-scan"),
         "operatorNvrs": (
             sorted({nvr.strip() for nvr in operator_nvrs.split(",") if nvr.strip()})
@@ -71,12 +79,32 @@ def build_health(runs: list[dict], incomplete_namespaces: set[str] | None = None
     for run in runs:
         by_name[(run["namespace"], run["name"])].append(run)
     for run in runs:
+        sources = set(run.get("rebuiltFromUids") or [])
+        if sources and not run["rebuiltFrom"]:
+            run["rebuiltFrom"] = sorted(sources)[0]
         if run["rebuiltFrom"]:
-            source = by_uid.get(run["rebuiltFrom"])
-            if source and identity(source) == identity(run) and source["pipeline"] == run["pipeline"]:
+            sources.add(run["rebuiltFrom"])
+        for uid in sources:
+            source = by_uid.get(uid)
+            valid = source and identity(source) == identity(run) and source["pipeline"] == run["pipeline"]
+            if valid and run.get("rebuiltFromUids"):
+                valid = (
+                    run["pipeline"] in PIPELINES[2:]
+                    and not source["dryRun"]
+                    and not run["dryRun"]
+                    and source["target"] == run["target"]
+                    and bool(source.get("operatorNvrs"))
+                    and set(source["operatorNvrs"]).issubset(run.get("operatorNvrs") or [])
+                    and bool(source["created"])
+                    and bool(run["created"])
+                    and source["created"] < run["created"]
+                    and bool(source["completed"])
+                    and source["completed"] <= run["created"]
+                )
+            if valid:
                 retries[source["uid"]].append(run)
             else:
-                issues[run["uid"]].add("Retry source is missing or belongs to another group")
+                issues[run["uid"]].add("Retry source is missing or does not match the recovery workload")
         if run["parent"] and run["pipeline"] != PIPELINES[0]:
             parents = by_name[(run["namespace"], run["parent"])]
             if len(parents) == 1 and identity(parents[0]) == identity(run):
