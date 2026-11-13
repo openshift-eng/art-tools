@@ -46,3 +46,39 @@ class TestGetMajorMinorPatch(unittest.TestCase):
         self.runtime.assembly_type = AssemblyTypes.CUSTOM
         with self.assertRaises(ValueError):
             self.runtime.get_major_minor_patch()
+
+
+class TestIsVersionGa(unittest.TestCase):
+    def setUp(self):
+        self.runtime = Runtime()
+        self.runtime._logger = MagicMock()
+
+    def _set_phase(self, phase):
+        self.runtime.group_config = flexmock(
+            vars=flexmock(MAJOR="4", MINOR="10"),
+            software_lifecycle=flexmock(phase=phase),
+        )
+
+    def test_release_is_ga(self):
+        self._set_phase("release")
+        self.assertTrue(self.runtime.is_version_ga())
+
+    def test_extended_support_is_ga(self):
+        self._set_phase("extended-support")
+        self.assertTrue(self.runtime.is_version_ga())
+
+    def test_pre_release_is_not_ga(self):
+        self._set_phase("pre-release")
+        self.assertFalse(self.runtime.is_version_ga())
+
+    def test_signing_is_not_ga(self):
+        self._set_phase("signing")
+        self.assertFalse(self.runtime.is_version_ga())
+
+    def test_eol_is_not_ga(self):
+        self._set_phase("eol")
+        self.assertFalse(self.runtime.is_version_ga())
+
+    def test_missing_phase_is_not_ga(self):
+        self._set_phase(None)
+        self.assertFalse(self.runtime.is_version_ga())

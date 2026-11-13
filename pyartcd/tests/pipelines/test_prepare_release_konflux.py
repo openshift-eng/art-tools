@@ -1501,6 +1501,17 @@ class TestCheckBugConfigForGa(unittest.IsolatedAsyncioTestCase):
 
         pipeline.logger.info.assert_called_with("GA readiness check passed.")
 
+    async def test_passes_when_phase_extended_support_and_z_stream_present(self):
+        """Standard assembly in extended_support (a GA/shipped phase) with z-stream in bug.yml -> passes."""
+        pipeline = self._make_pipeline()
+        pipeline.assembly_type = AssemblyTypes.STANDARD
+        pipeline.group_config = {'software_lifecycle': {'phase': 'extended-support'}}
+        pipeline.build_data_repo.read_file.return_value = "target_release:\n  - '4.22.0'\n  - '4.22.z'\n  - '4.22'\n"
+
+        await pipeline.check_bug_config_for_ga()
+
+        pipeline.logger.info.assert_called_with("GA readiness check passed.")
+
     async def test_fails_when_phase_is_signing(self):
         """Standard assembly with phase 'signing' -> raises ValueError."""
         pipeline = self._make_pipeline()

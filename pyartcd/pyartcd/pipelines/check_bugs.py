@@ -2,6 +2,7 @@ import asyncio
 
 import click
 from artcommonlib import exectools
+from artcommonlib.release_util import SoftwareLifecyclePhase
 
 from pyartcd import util
 from pyartcd.cli import cli, click_coroutine, pass_runtime
@@ -28,8 +29,9 @@ class CheckBugsPipeline:
             group=f'openshift-{self.version}', assembly='stream', doozer_data_path=self.data_path
         )
 
-        # Check bugs only for GA releases
-        if self.group_config['software_lifecycle']['phase'] != 'release':
+        # Check bugs only for GA releases (release or extended_support)
+        phase = SoftwareLifecyclePhase.from_name(self.group_config['software_lifecycle']['phase'])
+        if phase not in (SoftwareLifecyclePhase.RELEASE, SoftwareLifecyclePhase.EXTENDED_SUPPORT):
             return None
 
         # Find issues

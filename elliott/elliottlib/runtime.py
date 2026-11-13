@@ -15,6 +15,7 @@ from artcommonlib.assembly import AssemblyTypes, assembly_basis_event, assembly_
 from artcommonlib.config import BuildDataLoader
 from artcommonlib.constants import SHIPMENT_DATA_URL_TEMPLATE
 from artcommonlib.model import Missing, Model
+from artcommonlib.release_util import SoftwareLifecyclePhase
 from artcommonlib.runtime import GroupRuntime
 from artcommonlib.variants import BuildVariant
 
@@ -476,6 +477,19 @@ class Runtime(GroupRuntime):
         replace_vars = self.get_replace_vars(self.group_config)
         return self._build_data_loader.load_config(key='streams', default={}, replace_vars=replace_vars)
 
+    def _resolve_lifecycle_phase(self, version: str = None):
+        """
+        Resolve the raw software lifecycle phase name for the given version.
+        :param version: The version to check. If ommitted the runtime's group version is used. e.g. "4.16"
+        :return: The phase name string, or None if not set.
+        """
+        major, minor = self.get_major_minor()
+        if version and version != f"{major}.{minor}":
+            out = self.get_file_from_branch(f"openshift-{version}", 'group.yml')
+            next_group_config = yaml.safe_load(out)
+            return next_group_config.get('software_lifecycle', {}).get('phase', None)
+        return self.group_config.software_lifecycle.phase
+
     def is_version_in_lifecycle_phase(self, phase: str, version: str = None) -> bool:
         """
         Determine if the version is in the specified lifecycle phase.
@@ -483,14 +497,22 @@ class Runtime(GroupRuntime):
         :param version: The version to check. If ommitted the runtime's group version is used. e.g. "4.16"
         :return: True if the version is in the specified phase, False otherwise.
         """
-        major, minor = self.get_major_minor()
-        if version and version != f"{major}.{minor}":
-            out = self.get_file_from_branch(f"openshift-{version}", 'group.yml')
-            next_group_config = yaml.safe_load(out)
-            actual_phase = next_group_config.get('software_lifecycle', {}).get('phase', None)
-        else:
-            actual_phase = self.group_config.software_lifecycle.phase
+        actual_phase = self._resolve_lifecycle_phase(version)
         return actual_phase == phase
+
+    def is_version_ga(self, version: str = None) -> bool:
+        """
+        Determine if the version has GA'd, i.e. is a shipped stream (RELEASE or EXTENDED_SUPPORT).
+        :param version: The version to check. If ommitted the runtime's group version is used. e.g. "4.16"
+        :return: True if the version is GA (release or extended_support), False otherwise.
+        """
+        actual_phase = self._resolve_lifecycle_phase(version)
+        if not actual_phase:
+            return False
+        return SoftwareLifecyclePhase.from_name(actual_phase) in (
+            SoftwareLifecyclePhase.RELEASE,
+            SoftwareLifecyclePhase.EXTENDED_SUPPORT,
+        )
 
     def get_file_from_branch(self, branch, filename):
         if branch == self.branch:
