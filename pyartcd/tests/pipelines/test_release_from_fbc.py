@@ -813,6 +813,7 @@ class TestLoadIgnorePatchVersionFromGroupConfig(unittest.TestCase):
     def test_rhosdt_release_accepts_patch_mismatch_with_doozer_yaml_output(self, mock_cmd):
         mock_cmd.return_value = (0, "true\n...\n\n", "")
         pipeline = self._make_pipeline()
+        pipeline.fbc_pullspecs = ["quay.io/test/fbc@sha256:" + "a" * 64]
         pipeline.assembly = "0.158.3"
         pipeline.check_env_vars = MagicMock()
         pipeline.setup_working_dir = MagicMock()
@@ -1080,7 +1081,7 @@ class TestReleaseFromFbcPipelineInit(unittest.TestCase):
             runtime=MagicMock(),
             group="oadp-1.5",
             assembly="1.5.3",
-            fbc_pullspecs=["quay.io/example/fbc:v1"],
+            fbc_pullspecs=["quay.io/example/fbc@sha256:" + "a" * 64],
         )
         defaults.update(kwargs)
         defaults["runtime"].config = {}
@@ -1114,7 +1115,7 @@ class TestCategorizeNvrs(unittest.TestCase):
             runtime=runtime,
             group="oadp-1.5",
             assembly="1.5.3",
-            fbc_pullspecs=["quay.io/example/fbc:v1"],
+            fbc_pullspecs=["quay.io/example/fbc@sha256:" + "a" * 64],
         )
         pipeline._group_components = {'oadp-operator-container', 'oadp-operator-metadata-container'}
         return pipeline
@@ -2224,7 +2225,7 @@ class TestOcpOptionalMode(unittest.TestCase):
             runtime=runtime,
             group=group,
             assembly=assembly,
-            fbc_pullspecs=["quay.io/test/fbc:latest"],
+            fbc_pullspecs=["quay.io/test/fbc:latest" if ocp_optional else "quay.io/test/fbc@sha256:" + "a" * 64],
             create_mr=False,
             ocp_optional=ocp_optional,
             exclude_nvr_components=exclude_nvr_components,
@@ -2582,7 +2583,7 @@ class TestOcpOptionalMode(unittest.TestCase):
                 RuntimeError("replacement related-image validation failed"),
             ]
         )
-        pipeline._refresh_fbc_pullspecs = AsyncMock(return_value=["quay.io/test/fbc:replacement"])
+        pipeline._refresh_fbc_pullspecs = AsyncMock(return_value=["quay.io/test/fbc@sha256:" + "b" * 64])
         pipeline.create_snapshot = AsyncMock()
         pipeline.create_shipment_mr = AsyncMock()
         pipeline.set_shipment_mr_ready = AsyncMock()

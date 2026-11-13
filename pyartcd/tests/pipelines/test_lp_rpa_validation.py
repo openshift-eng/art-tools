@@ -31,7 +31,7 @@ class TestLPPreparationRPAValidation(IsolatedAsyncioTestCase):
                             "components": [
                                 {
                                     "name": "oadp-operator",
-                                    "containerImage": "quay.io/test/image@sha256:abc",
+                                    "containerImage": "quay.io/test/image@sha256:" + "a" * 64,
                                     "source": {"git": {"url": "https://example.com/source", "revision": "abc"}},
                                 }
                             ],

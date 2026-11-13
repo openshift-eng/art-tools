@@ -2,6 +2,13 @@
 
 ## Direct layered-product release assemblies
 
+Layered-product `release-from-fbc` inputs must use
+`repository@sha256:<64 lowercase hex characters>`. Tag inputs, including
+`repository:tag@sha256:...`, are rejected before environment checks or repository
+setup, including in test mode and dry runs. This is a change for callers that
+previously supplied tags: use the catalog's immutable digest instead. Refreshed
+FBCs must also be digest-pinned. OCP optional input handling is unchanged.
+
 `release-from-fbc` generates `assembly.yml` in the ARTCD working directory from
 the validated product operator and operand NVRs selected for shipment. It uses
 canonical Doozer image keys, records source FBC pullspecs by OCP target, and

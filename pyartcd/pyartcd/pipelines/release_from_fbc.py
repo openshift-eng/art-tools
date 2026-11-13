@@ -85,6 +85,24 @@ _TEST_MR_DESCRIPTION_WARNING = (
 )
 
 
+def _validate_fbc_digest_pullspecs(pullspecs: List[str]) -> None:
+    """Require immutable, untagged SHA-256 references for direct LP catalog inputs.
+
+    Args:
+        pullspecs: Supplied or refreshed FBC image references.
+
+    Raises:
+        ValueError: If any reference is not ``repository@sha256:<64 lowercase hex characters>``.
+    """
+    invalid = [spec for spec in pullspecs if not re.fullmatch(r'(?:[^@\s]+/)?[^@:/\s]+@sha256:[0-9a-f]{64}', spec)]
+    if invalid:
+        raise ValueError(
+            'Layered-product FBC inputs must use repository@sha256:<64 lowercase hex characters>. '
+            'Tags and tag@digest references are not accepted. Supply the immutable FBC digest instead. '
+            f'Invalid inputs: {", ".join(invalid)}'
+        )
+
+
 def _is_test_shipment_mr(mr) -> bool:
     """Return whether a shipment MR carries the release-from-fbc test marker.
 
@@ -1563,6 +1581,7 @@ class ReleaseFromFbcPipeline:
                     "Without it, cross-group filtering may discard images and produce only FBC yaml."
                 )
             validate_layered_product_group_assembly(self.group, self.assembly)
+            _validate_fbc_digest_pullspecs(self.fbc_pullspecs)
         self.logger.info(f"Processing {len(self.fbc_pullspecs)} FBC pullspecs")
         if self.extra_image_nvrs:
             self.logger.info(f"Including {len(self.extra_image_nvrs)} extra image NVRs")
@@ -1654,6 +1673,8 @@ class ReleaseFromFbcPipeline:
             if self.refresh_fbcs:
                 source_fbc_nvrs = list(fbc_nvrs)
                 self.fbc_pullspecs = await self._refresh_fbc_pullspecs(source_fbc_nvrs, existing_mr)
+                if not self.ocp_optional:
+                    _validate_fbc_digest_pullspecs(self.fbc_pullspecs)
                 if not self.dry_run:
                     self.logger.info("Using %d refreshed FBC pullspecs for shipment creation", len(self.fbc_pullspecs))
                     self._fbc_operator_keys = []
@@ -1950,7 +1971,8 @@ class ReleaseFromFbcPipeline:
     metavar="FBC_PULLSPECS",
     required=False,
     default="",
-    help="Comma-separated list of FBC image pullspecs to extract NVRs from. At least one of --fbc-pullspecs or --extra-image-nvrs must be provided.",
+    help="Comma-separated FBC pullspecs. Layered products require repository@sha256:<64 hex characters>; tags are rejected. "
+    "OCP optional inputs are unchanged. At least one of --fbc-pullspecs or --extra-image-nvrs must be provided.",
 )
 @click.option(
     "--extra-image-nvrs",
@@ -2081,7 +2103,7 @@ async def release_from_fbc(
     $ artcd release-from-fbc \\
         --group oadp-1.5 \\
         --assembly 1.5.3 \\
-        --fbc-pullspecs quay.io/redhat-user-workloads/ocp-art-tenant/art-fbc:oadp-operator-fbc-1.5.3-20251028153444
+        --fbc-pullspecs quay.io/redhat-user-workloads/ocp-art-tenant/art-fbc@sha256:<64-character-digest>
 
     \b
     # OCP optional operator (all related images included):
