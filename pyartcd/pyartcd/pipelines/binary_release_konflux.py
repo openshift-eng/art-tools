@@ -1,8 +1,10 @@
 import asyncio
 import logging
 import os
+import re
 import shutil
 import tempfile
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from functools import cached_property
 from io import StringIO
@@ -18,7 +20,13 @@ from artcommonlib.constants import SHIPMENT_DATA_URL_TEMPLATE
 from artcommonlib.github_auth import build_git_auth_env
 from artcommonlib.gitlab import GitLabClient
 from artcommonlib.release_util import isolate_el_version_in_release
-from artcommonlib.util import new_roundtrip_yaml_handler
+from artcommonlib.rpm_utils import parse_nvr
+from artcommonlib.util import (
+    new_roundtrip_yaml_handler,
+    oc_image_info_for_arch_async,
+    resolve_konflux_kubeconfig_by_product,
+    resolve_konflux_namespace_by_product,
+)
 from elliottlib.shipment_model import (
     Environments,
     Metadata,
@@ -34,6 +42,8 @@ from elliottlib.shipment_utils import (
     is_release_plan_skipped,
 )
 
+from pyartcd import constants, util
+from pyartcd import record as record_util
 from pyartcd.cli import cli, click_coroutine, pass_runtime
 from pyartcd.click_validators import validate_release_date
 from pyartcd.git import GitRepository
@@ -46,19 +56,44 @@ BINARIES_SHIPMENT_KINDS = ("binaries", "binaries-dev-preview")
 SUPPORTED_SHIPMENT_KINDS = ("image",) + BINARIES_SHIPMENT_KINDS
 
 
+@dataclass(frozen=True)
+class AggregationProfile:
+    member: str
+    version: str
+    arches: tuple[str, ...]
+    application: str
+    source_component: str
+    aggregate_component: str
+    source_package: str
+    aggregate_package: str
+
+
+AGGREGATION_PROFILES = {
+    "oc-mirror-2.0": AggregationProfile(
+        member="oc-mirror-aggregate",
+        version="v2.0.0",
+        arches=("amd64", "arm64", "ppc64le", "s390x"),
+        application="oc-mirror-2-0",
+        source_component="oc-mirror-2-0-oc-mirror",
+        aggregate_component="oc-mirror-2-0-oc-mirror-aggregate-binaries",
+        source_package="oc-mirror-container",
+        aggregate_package="oc-mirror-aggregate-binaries-container",
+    ),
+}
+
+
 class BinaryReleaseKonfluxPipeline:
     """
-    Pipeline for shipping standalone CDN binary products (e.g. oc-mirror) built via Konflux.
+    Prepare Konflux shipments for standalone binaries and oc-mirror container images.
 
-    Unlike PrepareReleaseKonfluxPipeline (OCP payload) or ReleaseFromFbcPipeline (layered
-    products/FBC), this pipeline is for products released directly to the Customer Portal
-    Content Gateway via the `push-artifacts-to-cdn` Konflux pipeline. It takes a set of
-    already-built NVR(s), resolves them to a Konflux snapshot, and opens a shipment MR
-    referencing the product's CDN stage/prod ReleasePlans (defined in konflux-release-data
-    and ocp-shipment-data's config.yaml).
+    Standalone binaries use push-artifacts-to-cdn for Customer Portal / Content Gateway
+    delivery. Build NVRs resolve to snapshots and shipment files referencing stage/prod
+    ReleasePlans defined in konflux-release-data and ocp-shipment-data's config.yaml.
 
-    No release notes/advisory data is generated here: CDN ReleasePlanAdmissions carry their
-    own static release notes (product_id, synopsis, etc.) in konflux-release-data.
+    For oc-mirror, the container goes through rh-advisories to registry.redhat.io and the
+    aggregate binaries go through push-artifacts-to-cdn. Separate shipment files share one
+    MR, and both ReleasePlanAdmissions carry their release notes. Aggregation can build a
+    new transport image or verify an explicitly supplied existing aggregate before release.
     """
 
     def __init__(
@@ -72,10 +107,13 @@ class BinaryReleaseKonfluxPipeline:
         target_release_date: Optional[str] = None,
         release_plan_key: Optional[str] = None,
         shipment_kind: Optional[str] = None,
+        aggregate: bool = False,
+        build_only: bool = False,
     ) -> None:
         self.logger = logging.getLogger(__name__)
         self.runtime = runtime
         self.group = group
+        self.aggregation_profile = AGGREGATION_PROFILES.get(group)
         self.assembly = assembly
         self.nvrs = nvrs
         self.create_mr = create_mr
@@ -83,6 +121,14 @@ class BinaryReleaseKonfluxPipeline:
         self.target_release_date = target_release_date
         self.release_plan_key = release_plan_key
         self.shipment_kind = shipment_kind
+        self.aggregate = aggregate
+        self.build_only = build_only
+        if build_only and not aggregate:
+            raise ValueError("--build-only requires --aggregate")
+        if aggregate and (not self.aggregation_profile or len(nvrs) != 1):
+            raise ValueError(f"--aggregate requires group {', '.join(AGGREGATION_PROFILES)} and exactly one source NVR")
+        if aggregate and not build_only and (shipment_kind is not None or release_plan_key is not None):
+            raise ValueError("--aggregate cannot use --shipment-kind or --release-plan-key without --build-only")
         if shipment_kind is not None and shipment_kind not in SUPPORTED_SHIPMENT_KINDS:
             raise ValueError(
                 f"Unsupported --shipment-kind {shipment_kind!r}; supported: {', '.join(SUPPORTED_SHIPMENT_KINDS)}"
@@ -152,7 +198,7 @@ class BinaryReleaseKonfluxPipeline:
         """
         Check required environment variables for MR creation.
         """
-        if not self.create_mr:
+        if not self.create_mr or self.build_only or self.dry_run:
             return
 
         gitlab_token = os.getenv("GITLAB_TOKEN")
@@ -171,7 +217,7 @@ class BinaryReleaseKonfluxPipeline:
             shutil.rmtree(self.elliott_working_dir, ignore_errors=True)
         if self.doozer_working_dir.exists():
             shutil.rmtree(self.doozer_working_dir, ignore_errors=True)
-        if self.create_mr and self._shipment_data_repo_dir.exists():
+        if self.create_mr and not self.build_only and self._shipment_data_repo_dir.exists():
             shutil.rmtree(self._shipment_data_repo_dir, ignore_errors=True)
 
     async def setup_shipment_repo(self):
@@ -257,6 +303,36 @@ class BinaryReleaseKonfluxPipeline:
             groups.setdefault(key, []).append(nvr)
         return dict(sorted(groups.items()))
 
+    def _group_nvrs_by_shipment_kind(self) -> Dict[str, List[str]]:
+        """Route oc-mirror containers and transport images to their respective release pipelines."""
+        if not self.aggregation_profile:
+            return {self.shipment_kind or "image": self.nvrs}
+
+        kinds = {
+            self.aggregation_profile.source_package: "image",
+            self.aggregation_profile.aggregate_package: "binaries",
+        }
+        groups: Dict[str, List[str]] = {}
+        for nvr in self.nvrs:
+            name = parse_nvr(nvr)["name"]
+            if name not in kinds:
+                raise ValueError(f"Unsupported oc-mirror shipment build: {nvr}")
+            kind = kinds[name]
+            if self.shipment_kind and self.shipment_kind != kind:
+                raise ValueError(f"{nvr} requires shipment kind {kind}, not {self.shipment_kind}")
+            groups.setdefault(kind, []).append(nvr)
+        if len(groups) > 1 and self.release_plan_key:
+            raise ValueError("Combined oc-mirror shipments require separate image and binaries release-plan keys")
+        if any(len(builds) != 1 for builds in groups.values()):
+            raise ValueError("An oc-mirror release requires exactly one NVR per shipment kind")
+        if len(groups) == 1 and not self.shipment_kind:
+            kind = next(iter(groups))
+            raise ValueError(
+                f"A single-kind oc-mirror release requires explicit --shipment-kind {kind}. "
+                "For a combined release, use --aggregate or supply both the source and aggregate NVRs."
+            )
+        return dict(sorted(groups.items()))
+
     async def create_snapshot(self, builds: List[str]) -> Optional[Snapshot]:
         """
         Create a snapshot from a list of build NVRs using elliott.
@@ -301,15 +377,18 @@ class BinaryReleaseKonfluxPipeline:
             self.logger.debug(f"Raw output was: {stdout}")
             raise
 
-    def create_shipment_config(self, snapshot: Snapshot, rhel_suffix: Optional[str] = None) -> ShipmentConfig:
+    def create_shipment_config(
+        self, snapshot: Snapshot, rhel_suffix: Optional[str] = None, shipment_kind: Optional[str] = None
+    ) -> ShipmentConfig:
         """
-        Create a shipment configuration (kind "image") for the given snapshot, reading
+        Create a shipment configuration for the given snapshot, reading
         the stage/prod releasePlan names for the snapshot's application from config.yaml
         in the shipment data repo.
 
         When rhel_suffix is given (e.g. 'el8', 'el9'), the config.yaml lookup first tries
         the key '{application}-{rhel_suffix}' and falls back to '{application}'.
         When self.release_plan_key is set it replaces '{application}' in that lookup.
+        Oc-mirror binaries use the separate '{application}-binaries' entry.
         """
         if self.product is None:
             raise RuntimeError(
@@ -320,7 +399,11 @@ class BinaryReleaseKonfluxPipeline:
         application = snapshot.spec.application
         self.logger.info(f"Creating shipment config for application '{application}' (rhel_suffix={rhel_suffix!r})...")
 
-        metadata_extra = {"release_notes_in_rpa": True} if self.group.startswith("openshift-") else {}
+        metadata_extra = (
+            {"release_notes_in_rpa": True}
+            if self.group.startswith("openshift-") or self.group == "oc-mirror-2.0"
+            else {}
+        )
         metadata = Metadata(
             product=self.product,
             application=application,
@@ -331,6 +414,8 @@ class BinaryReleaseKonfluxPipeline:
         )
 
         base_key = self.release_plan_key or application
+        if self.aggregation_profile and shipment_kind == "binaries" and not self.release_plan_key:
+            base_key = f"{application}-binaries"
         stage_rpa = "n/a"
         prod_rpa = "n/a"
         config_path = self.shipment_data_repo._directory / "config.yaml"
@@ -383,8 +468,8 @@ class BinaryReleaseKonfluxPipeline:
 
         environments = Environments(stage=ShipmentEnv(releasePlan=stage_rpa), prod=ShipmentEnv(releasePlan=prod_rpa))
 
-        # CDN ReleasePlanAdmissions carry their own static release notes (product_id, synopsis,
-        # etc. in konflux-release-data), so no data.releaseNotes is generated here.
+        # Container and CDN ReleasePlanAdmissions carry their static release notes in
+        # konflux-release-data, so neither shipment needs data.releaseNotes here.
         shipment = Shipment(metadata=metadata, environments=environments, snapshot=snapshot, data=None)
 
         return ShipmentConfig(shipment=shipment)
@@ -557,19 +642,153 @@ class BinaryReleaseKonfluxPipeline:
             filepath = await self._write_shipment_file(advisory_kind, shipment_config, env, timestamp)
             self.logger.info(f"Created shipment file: {filepath}")
 
+    @staticmethod
+    def _aggregate_data_path() -> str:
+        """Require a remote recipe repository so its metadata and build context agree."""
+        data_path = os.environ.get("DOOZER_DATA_PATH", constants.OCP_BUILD_DATA_URL)
+        data_url = urlparse(data_path)
+        if data_url.scheme == "file" or (not data_url.scheme and ":" not in data_url.path):
+            raise ValueError(
+                "Aggregation requires a remote Git URL for DOOZER_DATA_PATH; local working trees are not supported. "
+                "The recipe and metadata must come from the same fetched build-data checkout."
+            )
+        return data_path
+
+    async def resolve_aggregate_parents(self, source_snapshot: Snapshot) -> Dict[str, str]:
+        """Resolve and validate the selected source image's four Linux architecture digests."""
+        profile = self.aggregation_profile
+        components = source_snapshot.spec.components
+        if source_snapshot.spec.application != profile.application or len(components) != 1:
+            raise ValueError(f"Aggregation requires one {profile.application} source component")
+        if components[0].name != profile.source_component:
+            raise ValueError("Source NVR must be the oc-mirror image build, not an existing aggregate")
+        source_image = components[0].containerImage
+        if not re.fullmatch(r".+@sha256:[0-9a-f]{64}", source_image):
+            raise ValueError("Source NVR must resolve to a digest-pinned image")
+        image_repo = source_image.split("@", 1)[0]
+        if ":" in image_repo.rsplit("/", 1)[-1]:
+            image_repo = image_repo.rsplit(":", 1)[0]
+        registry_config = os.environ.get("QUAY_AUTH_FILE")
+        parents = {}
+        for arch in profile.arches:
+            info = await oc_image_info_for_arch_async(
+                source_image, go_arch=f"linux/{arch}", registry_config=registry_config
+            )
+            digest = info.get("digest", "")
+            if not re.fullmatch(r"sha256:[0-9a-f]{64}", digest):
+                raise ValueError(f"No valid {arch} digest for {source_image}")
+            image_config = info.get("config") or {}
+            if image_config.get("os") != "linux" or image_config.get("architecture") != arch:
+                raise ValueError(f"{source_image} does not provide a linux/{arch} image")
+            parents[arch] = f"{image_repo}@{digest}"
+        self.logger.info("Aggregate source image: %s; parents: %s", source_image, parents)
+        return parents
+
+    @staticmethod
+    def verify_aggregate_parents(dockerfile_text: str, parents: Dict[str, str]):
+        """Require exactly the four selected source parents in a rebased aggregate Dockerfile."""
+        stages = re.findall(r"^FROM --platform=linux/(\S+) (\S+) AS (\S+)$", dockerfile_text, re.MULTILINE)
+        actual = {arch: image for arch, image, alias in stages if arch == alias}
+        if len(stages) != len(parents) or actual != parents:
+            raise ValueError("Rebased aggregate parents do not match the selected source NVR")
+
+    async def verify_reused_aggregate(self, source_snapshot: Snapshot, aggregate_snapshot: Snapshot):
+        """Verify a reused transport image's recorded build source against the selected container."""
+        component = aggregate_snapshot.spec.components[0]
+        if not re.fullmatch(r".+@sha256:[0-9a-f]{64}", component.containerImage):
+            raise ValueError("Reused aggregate must resolve to a digest-pinned image")
+        source = component.source.git if component.source else None
+        if not source or not source.url or not re.fullmatch(r"[0-9a-f]{40}", source.revision or ""):
+            raise ValueError("Reused aggregate requires a recorded Git URL and full rebase commit")
+        parents = await self.resolve_aggregate_parents(source_snapshot)
+        with tempfile.TemporaryDirectory(prefix="aggregate-verification-", dir=self.working_dir) as scratch:
+            repo = GitRepository(scratch)
+            await repo.setup(source.url)
+            await repo.fetch_switch_branch("aggregate-verification", upstream_ref=source.revision)
+            self.verify_aggregate_parents(await repo.read_file("Dockerfile"), parents)
+
+    async def build_aggregate(self, source_snapshot: Snapshot) -> str:
+        """Build one transport image from the selected oc-mirror NVR's four architecture images."""
+        profile = self.aggregation_profile
+        data_path = self._aggregate_data_path()
+        parents = await self.resolve_aggregate_parents(source_snapshot)
+        image_repo = source_snapshot.spec.components[0].containerImage.split("@", 1)[0]
+        if ":" in image_repo.rsplit("/", 1)[-1]:
+            image_repo = image_repo.rsplit(":", 1)[0]
+
+        with tempfile.TemporaryDirectory(prefix="aggregate-build-data-", dir=self.working_dir) as scratch:
+            data_dir = Path(scratch, "ocp-build-data")
+            data_repo = GitRepository(data_dir)
+            await data_repo.setup(data_path)
+            await data_repo.fetch_switch_branch(self.group)
+            config_path = data_dir / f"binaries/{profile.member}.yml"
+            config = stdlib_yaml.safe_load(config_path.read_text())
+            config["from"]["builder"] = [{"image": image} for image in parents.values()]
+            # Use this exact checkout for both metadata and the public rebase destination.
+            config["content"]["source"].pop("git", None)
+            config["content"]["source"]["alias"] = profile.member
+            config_path.write_text(stdlib_yaml.safe_dump(config, sort_keys=False))
+
+            base = [
+                "doozer",
+                f"--group={self.group}",
+                f"--assembly={self.assembly}",
+                "--build-system=konflux",
+                f"--data-path={data_dir}",
+                f"--working-dir={self.doozer_working_dir}",
+                f"--binaries={profile.member}",
+                "--source",
+                profile.member,
+                str(data_dir),
+            ]
+            await exectools.cmd_assert_async(
+                base
+                + [
+                    "beta:binaries:konflux:rebase",
+                    f"--version={profile.version}",
+                    f"--release={util.default_release_suffix()}",
+                    f"--image-repo={image_repo}",
+                    f"--message=Aggregate {self.nvrs[0]}",
+                    "--push",
+                ]
+            )
+            dockerfile = self.doozer_working_dir / f"konflux_build_sources/containers/{profile.member}/Dockerfile"
+            self.verify_aggregate_parents(dockerfile.read_text(), parents)
+            build = base + [
+                "beta:binaries:konflux:build",
+                f"--image-repo={image_repo}",
+                f"--konflux-namespace={resolve_konflux_namespace_by_product(self.product)}",
+            ]
+            kubeconfig = resolve_konflux_kubeconfig_by_product(self.product)
+            if kubeconfig:
+                build.append(f"--konflux-kubeconfig={kubeconfig}")
+            await exectools.cmd_assert_async(build)
+
+        with (self.doozer_working_dir / "record.log").open() as record_file:
+            records = record_util.parse_record_log(record_file)
+        builds = [r for r in records.get("binary_build_konflux", []) if r.get("name") == profile.member]
+        if len(builds) != 1 or builds[0].get("status") != "0":
+            raise ValueError("No successful aggregate build was recorded")
+        aggregate_nvr = builds[0].get("nvrs", "")
+        if not aggregate_nvr or aggregate_nvr == "n/a" or "," in aggregate_nvr:
+            raise ValueError("Expected exactly one aggregate NVR")
+        if is_nvr_embargoed(aggregate_nvr):
+            raise ValueError("Refusing to release an embargoed aggregate build")
+        self.logger.info("Aggregate NVR: %s; source NVR: %s", aggregate_nvr, self.nvrs[0])
+        return aggregate_nvr
+
     async def run(self) -> None:
         """
-        Execute the binary release workflow: resolve NVR(s) to a Konflux snapshot, build a
-        shipment config referencing the product's CDN releasePlans, and optionally open a
-        shipment MR.
+        Resolve builds and prepare their container-advisory or CDN shipment files.
         """
         self.logger.info(f"Starting binary release workflow for {self.group} {self.assembly}")
         self.logger.info(f"Processing {len(self.nvrs)} NVR(s): {self.nvrs}")
 
         self.check_env_vars()
-        self.setup_working_dir()
-        if self.create_mr:
-            await self.setup_shipment_repo()
+        if self.aggregate and self.dry_run:
+            self.working_dir.mkdir(parents=True, exist_ok=True)
+        else:
+            self.setup_working_dir()
 
         self.product = await self._load_product_from_group_config()
         self.logger.info(f"Loaded product '{self.product}' - continuing workflow for {self.product} {self.assembly}")
@@ -584,26 +803,53 @@ class BinaryReleaseKonfluxPipeline:
                 f"Refusing to create a release referencing embargoed (private-fix) NVR(s): {embargoed_nvrs}"
             )
 
-        # Group NVRs by RHEL version so each version gets its own snapshot and releasePlan.
-        nvr_groups = self._group_nvrs_by_rhel_version(self.nvrs)
-        multi_rhel = len(nvr_groups) > 1
-        self.logger.info(
-            "NVR groups by RHEL version: %s",
-            {k: len(v) for k, v in nvr_groups.items()},
-        )
+        if self.aggregate:
+            source_snapshot = await self.create_snapshot(self.nvrs)
+            if not source_snapshot:
+                raise RuntimeError("No snapshot could be created for the aggregate source NVR")
+            if self.dry_run:
+                self._aggregate_data_path()
+                await self.resolve_aggregate_parents(source_snapshot)
+                self.logger.info(
+                    "[DRY-RUN] Validated aggregate inputs for %s; build-only=%s", self.nvrs[0], self.build_only
+                )
+                return
+            aggregate_nvr = await self.build_aggregate(source_snapshot)
+            if self.build_only:
+                self.logger.info("--build-only: not creating a shipment for %s", aggregate_nvr)
+                return
+            self.nvrs = self.nvrs + [aggregate_nvr]
+
+        snapshots_by_kind = {}
+        for base_kind, kind_nvrs in self._group_nvrs_by_shipment_kind().items():
+            # Split RHEL variants within each artifact kind, preserving existing filenames.
+            nvr_groups = self._group_nvrs_by_rhel_version(kind_nvrs)
+            multi_rhel = len(nvr_groups) > 1
+            for rhel_suffix, group_nvrs in nvr_groups.items():
+                snapshot = await self.create_snapshot(group_nvrs)
+                if not snapshot:
+                    raise RuntimeError(f"No snapshot could be created for {base_kind} {rhel_suffix} NVR(s)")
+                if self.aggregation_profile:
+                    profile = self.aggregation_profile
+                    expected = profile.source_component if base_kind == "image" else profile.aggregate_component
+                    if snapshot.spec.application != profile.application or [
+                        component.name for component in snapshot.spec.components
+                    ] != [expected]:
+                        raise ValueError(f"Unexpected oc-mirror {base_kind} snapshot components")
+
+                advisory_kind = f"{base_kind}-{rhel_suffix}" if multi_rhel else base_kind
+                snapshots_by_kind[advisory_kind] = (base_kind, snapshot, rhel_suffix if multi_rhel else None)
+
+        if self.aggregation_profile and not self.aggregate and len(snapshots_by_kind) > 1:
+            await self.verify_reused_aggregate(snapshots_by_kind["image"][1], snapshots_by_kind["binaries"][1])
+
+        if self.create_mr:
+            await self.setup_shipment_repo()
 
         shipments_by_kind: Dict[str, ShipmentConfig] = {}
-        for rhel_suffix, group_nvrs in nvr_groups.items():
-            snapshot = await self.create_snapshot(group_nvrs)
-            if not snapshot:
-                raise RuntimeError(f"No snapshot could be created for {rhel_suffix} NVR(s)")
-
-            # Use a RHEL-qualified kind only when multiple versions are present, so that
-            # single-RHEL products continue to produce 'stream.image.<ts>.yaml' as before.
-            base_kind = self.shipment_kind or "image"
-            advisory_kind = f"{base_kind}-{rhel_suffix}" if multi_rhel else base_kind
-            rhel_suffix_for_lookup = rhel_suffix if multi_rhel else None
-            shipments_by_kind[advisory_kind] = self.create_shipment_config(snapshot, rhel_suffix=rhel_suffix_for_lookup)
+        for advisory_kind, (base_kind, snapshot, rhel_suffix) in snapshots_by_kind.items():
+            options = {"shipment_kind": base_kind} if self.aggregation_profile else {}
+            shipments_by_kind[advisory_kind] = self.create_shipment_config(snapshot, rhel_suffix=rhel_suffix, **options)
 
         timestamp = datetime.now(timezone.utc).strftime('%Y%m%d%H%M%S')
         if not self.create_mr:
@@ -670,8 +916,10 @@ class BinaryReleaseKonfluxPipeline:
     '--shipment-kind',
     default=None,
     help='Shipment file kind used in the file name and by shipment CI (default: image). '
-    'Required for openshift-* groups, e.g. binaries or binaries-dev-preview.',
+    'Required for single-kind oc-mirror releases and openshift-* groups, e.g. image, binaries or binaries-dev-preview.',
 )
+@click.option('--aggregate', is_flag=True, help='Aggregate the four architectures of one oc-mirror-2.0 source NVR.')
+@click.option('--build-only', is_flag=True, help='With --aggregate, build and verify without creating a shipment.')
 @pass_runtime
 @click_coroutine
 async def binary_release_konflux(
@@ -684,23 +932,30 @@ async def binary_release_konflux(
     target_release_date: Optional[str],
     release_plan_key: Optional[str],
     shipment_kind: Optional[str],
+    aggregate: bool,
+    build_only: bool,
 ):
     """
-    Create a shipment for a standalone CDN binary product built via Konflux.
+    Prepare container-advisory and CDN binary shipments from Konflux builds.
 
     This command resolves the given build NVR(s) into a Konflux snapshot and creates a
-    shipment file referencing the product's CDN stage/prod ReleasePlans (as configured in
-    ocp-shipment-data's config.yaml). Unlike release-from-fbc or prepare-release-konflux,
-    no advisory/release-notes data is generated - the CDN ReleasePlanAdmission already
-    carries static release notes.
+    shipment files using the stage/prod ReleasePlans in ocp-shipment-data's config.yaml.
+    For oc-mirror, the container uses rh-advisories and the aggregate uses push-artifacts-to-cdn.
+    Both RPAs carry their static release notes, so no per-shipment release notes are generated.
 
     \b
-    # oc-mirror 2.0 binary release:
+    # oc-mirror 2.0 container and binary release:
     $ artcd binary-release-konflux \\
         --group oc-mirror-2.0 \\
         --assembly stream \\
         --nvrs oc-mirror-container-2.0-202607291654.p2.g90b54b1.assembly.stream.el9 \\
-        --create-mr
+        --aggregate --create-mr
+
+    For oc-mirror, --aggregate builds the transport image and prepares both container
+    and binaries shipment files in one MR. To reuse a successful build, pass both
+    the source and aggregate NVRs without --aggregate.
+    An image-only or binaries-only oc-mirror release requires --shipment-kind image or binaries.
+    Add --build-only to stop after building and verifying that image.
     """
     nvrs_list = [nvr.strip() for nvr in nvrs.split(',') if nvr.strip()]
     if not nvrs_list:
@@ -716,6 +971,8 @@ async def binary_release_konflux(
         target_release_date=target_release_date,
         release_plan_key=release_plan_key,
         shipment_kind=shipment_kind,
+        aggregate=aggregate,
+        build_only=build_only,
     )
 
     await pipeline.run()

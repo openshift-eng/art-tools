@@ -243,6 +243,7 @@ class TestBinaryReleaseKonfluxPipeline(unittest.TestCase):
 
     def test_create_shipment_config_does_not_set_release_notes_in_rpa_for_non_ocp(self):
         pipeline = self._make_pipeline()
+        pipeline.group = "mirror-gui-1.0"
         config = pipeline.create_shipment_config(_make_snapshot())
 
         dumped = config.model_dump(exclude_unset=True, exclude_none=True)
@@ -635,6 +636,7 @@ class TestEmbargoedNvrDefensiveCheck(unittest.TestCase):
             group="oc-mirror-2.0",
             assembly="stream",
             nvrs=nvrs,
+            shipment_kind="image",
         )
         pipeline.check_env_vars = MagicMock()
         pipeline.setup_working_dir = MagicMock()
@@ -771,6 +773,14 @@ class TestCliValidation(unittest.TestCase):
         kwargs = mock_pipeline_cls.call_args.kwargs
         self.assertEqual(kwargs["release_plan_key"], "openshift-4-22-binaries")
         self.assertEqual(kwargs["shipment_kind"], "binaries")
+
+    @patch("pyartcd.pipelines.binary_release_konflux.BinaryReleaseKonfluxPipeline")
+    def test_aggregation_flags_are_passed_to_pipeline(self, mock_pipeline_cls):
+        mock_pipeline_cls.return_value.run = AsyncMock()
+        result = self._invoke(["--nvrs", "oc-mirror-container-2.0-1-1.el9", "--aggregate", "--build-only"])
+        self.assertIsNone(result.exception)
+        self.assertTrue(mock_pipeline_cls.call_args.kwargs["aggregate"])
+        self.assertTrue(mock_pipeline_cls.call_args.kwargs["build_only"])
 
     @patch("pyartcd.pipelines.binary_release_konflux.BinaryReleaseKonfluxPipeline")
     def test_invalid_target_release_date_raises(self, mock_pipeline_cls):
