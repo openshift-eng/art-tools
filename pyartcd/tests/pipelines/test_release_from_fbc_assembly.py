@@ -1,6 +1,7 @@
 """Exercise direct assembly recording through the release pipeline with mocked services."""
 
 import asyncio
+import os
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -99,6 +100,37 @@ def test_local_outputs_and_unified_consumer_contract(tmp_path, unified):
         assert records['oadp-operator']['operand_nvrs'] == [PIN]
     release._update_layered_product_shipment_mr.assert_not_awaited()
     release.create_shipment_mr.assert_not_awaited()
+
+
+def test_unified_records_honor_the_loaded_patch_policy(tmp_path):
+    """Generate usable unified records for a cross-patch FBC explicitly allowed by the group."""
+    release = pipeline(tmp_path, unified_fbc=True)
+    release.extract_fbc_nvr.return_value = FBC.replace('1.5.8', '1.5.7')
+    release._load_ignore_patch_version_from_group_config.return_value = True
+    asyncio.run(release.run())
+    config = YAML.load(tmp_path / 'assembly.yml')
+    records = recorded_assembly_fbcs(config, '1.5.8', '4.22', ignore_patch_version=True)
+    assert records['oadp-operator']['nvr'] == FBC.replace('1.5.8', '1.5.7')
+    assert records['oadp-operator']['operand_nvrs'] == [PIN]
+
+
+@pytest.mark.parametrize(
+    'data_path', ['git@github.com:my-team/build-data.git', 'https://github.com/my-team/build-data']
+)
+def test_assembly_lookup_normalizes_remote_build_data_and_preserves_gitref(tmp_path, data_path):
+    """Read SSH and HTTPS build-data URLs from the same repository and requested revision."""
+    release = ReleaseFromFbcPipeline(MagicMock(working_dir=tmp_path, dry_run=True, config={}), 'oadp-1.5', '1.5.8', [])
+    with (
+        patch.dict(os.environ, {'DOOZER_DATA_PATH': data_path, 'DOOZER_DATA_GITREF': 'release-policy'}),
+        patch('pyartcd.pipelines.release_from_fbc.get_github_client_for_org') as client,
+    ):
+        repo = client.return_value.get_repo.return_value
+        repo.get_contents.return_value.decoded_content = b'releases: {}\n'
+        assert release._load_layered_product_shipment_mr() is None
+    client.assert_called_once_with('my-team')
+    client.return_value.get_repo.assert_called_once_with('my-team/build-data')
+    repo.get_contents.assert_called_once_with('releases.yml', ref='release-policy')
+    assert release._releases_config == {'releases': {}}
 
 
 @pytest.mark.parametrize('test_mode,dry_run', [(False, False), (True, False), (False, True)])

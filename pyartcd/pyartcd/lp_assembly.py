@@ -50,13 +50,7 @@ def direct_release_assembly(releases: dict, assembly: str, pins: dict[str, str],
     parent_name = basis.get('assembly')
     parent = assembly_image_pins(Model(releases), parent_name) if parent_name else None
     old_members = definition.setdefault('members', {}).get('images', [])
-    exclusions = [deepcopy(member) for member in old_members if 'exclude' in member]
-    for member in exclusions:
-        # An explicit re-inclusion must not retain an old child NVR when the
-        # current input now matches the parent and needs no generated override.
-        if member.get('exclude') is False and member['distgit_key'] in pins:
-            member.get('metadata', {}).pop('is', None)
-    excluded_keys = {member['distgit_key'] for member in exclusions if member.get('exclude') is True}
+    excluded_keys = {member['distgit_key'] for member in old_members if member.get('exclude') is True}
     generated = image_pin_members({key: nvr for key, nvr in pins.items() if key not in excluded_keys}, parent)
     old_by_key = {member['distgit_key']: member for member in old_members}
     for member in generated:
@@ -67,7 +61,23 @@ def direct_release_assembly(releases: dict, assembly: str, pins: dict[str, str],
     definition['type'] = 'standard'
     basis['fbc_pullspecs'] = fbcs
     generated_keys = {member['distgit_key'] for member in generated}
-    definition['members']['images'] = generated + [m for m in exclusions if m['distgit_key'] not in generated_keys]
+    for old in old_members:
+        if old['distgit_key'] in generated_keys:
+            continue
+        member = deepcopy(old)
+        metadata = member.get('metadata', {})
+        image_pin = metadata.get('is', {})
+        image_pin.pop('nvr', None)
+        image_pin.pop('nvr!', None)
+        if not image_pin:
+            metadata.pop('is', None)
+        if not metadata:
+            member.pop('metadata', None)
+        # A redundant or removed pin must not discard unrelated image settings
+        # or explicit exclusions. A pin-only member can disappear entirely.
+        if set(member) - {'distgit_key', 'why'}:
+            generated.append(member)
+    definition['members']['images'] = generated
     shipment = definition.setdefault('group', {}).setdefault('shipment', {})
     shipment.setdefault('advisories', [{'kind': 'image'}, {'kind': 'fbc'}])
     return definition

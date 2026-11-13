@@ -23,6 +23,8 @@ receive child overrides and absent parent components remain inherited. Explicit
 exclusions are honored, and the parent is unchanged. Effective inherited pins
 are included in the image shipment. Standalone reruns replace the generated pin
 list so removed inputs do not remain pinned.
+Removing a redundant or obsolete pin preserves unrelated member settings, such
+as architecture overrides and explicit exclusions.
 
 Use `--unified-fbc` to record validated immutable FBC builds in
 `group.fbc_builds` and omit individual FBC shipment files. Operators, operands,
@@ -30,6 +32,8 @@ and bundles remain in the image shipment. The separate `lp-unified-fbc` job
 consumes these records; this option does not itself build a unified catalog.
 Omitting the option preserves individual FBC shipments and clears outdated
 unified records. The option is LP-only and cannot be used with `--ocp-optional`.
+The group's `ignore_patch_version` policy is honored when recording FBCs and
+when the unified consumer reads them; major and minor versions must still match.
 Tekton exposes `unified-fbc`, defaulting to `false`; deploy matching art-tools
 support before selecting it. OCP optional shipments retain their existing path.
 
@@ -61,7 +65,8 @@ these tags. FBC shipments retain their catalog release path. See the
 [shipment tag configuration](../elliott/README.md#shipment-release-tags).
 
 `release-from-fbc` uses `DOOZER_DATA_PATH` and `DOOZER_DATA_GITREF` consistently
-for product resolution and FBC refresh. A local path combined with an explicit ref
+for product resolution, assembly loading, and FBC refresh. Assembly loading accepts
+both SSH and HTTPS GitHub repository URLs. A local path combined with an explicit ref
 is rejected because Doozer reads local working-tree contents without checking
 out that ref. For a local checkout, select the revision yourself and unset
 `DOOZER_DATA_GITREF`; alternatively, use a remote Git URL with the requested ref.

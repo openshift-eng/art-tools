@@ -23,7 +23,7 @@ from artcommonlib.github_auth import build_git_auth_env, get_github_client_for_o
 from artcommonlib.gitlab import GitLabClient
 from artcommonlib.model import Model
 from artcommonlib.rpm_utils import parse_nvr
-from artcommonlib.util import new_roundtrip_yaml_handler
+from artcommonlib.util import convert_remote_git_to_https, new_roundtrip_yaml_handler
 from elliottlib.cli.konflux_release_cli import validate_snapshot_against_rpa
 from elliottlib.shipment_model import (
     Data,
@@ -297,7 +297,9 @@ class ReleaseFromFbcPipeline:
         elif data_path == constants.OCP_BUILD_DATA_URL and not data_gitref:
             content = self.get_file_from_branch(self.group, "releases.yml")
         else:
-            content = self.get_file_from_branch(data_gitref or self.group, 'releases.yml', data_path=data_path)
+            content = self.get_file_from_branch(
+                data_gitref or self.group, 'releases.yml', data_path=convert_remote_git_to_https(data_path)
+            )
         releases_config = yaml.load(content.decode()) or {}
         self._releases_config = releases_config
         self._configured_shipment_mr_url = get_shipment_mr_url(releases_config, self.assembly)
@@ -377,7 +379,7 @@ class ReleaseFromFbcPipeline:
         effective_pins = list(assembly_image_pins(Model(releases), self.assembly).values())
         if self.unified_fbc:
             self._assembly_definition['group']['fbc_builds'] = assembly_fbc_records(
-                self.assembly, nvrs, pullspecs, effective_pins
+                self.assembly, nvrs, pullspecs, effective_pins, ignore_patch_version=self._ignore_patch_version
             )
         else:
             # Records from a previous unified run no longer describe this preparation.
