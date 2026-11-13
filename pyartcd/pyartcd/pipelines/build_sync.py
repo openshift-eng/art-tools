@@ -630,8 +630,7 @@ class BuildSyncPipeline:
         if fail_count % forum_release_notify_frequency == 0:
             # For GA releases, let forum-ocp-release know why no new builds
             phase = SoftwareLifecyclePhase.from_name(self.group_runtime.group_config['software_lifecycle']['phase'])
-            if phase == SoftwareLifecyclePhase.RELEASE and self.build_system == 'brew':
-                # TODO 'brew' condition must be removed once Konflux is the primary build system
+            if phase in (SoftwareLifecyclePhase.RELEASE, SoftwareLifecyclePhase.EXTENDED_SUPPORT):
                 await self.notify_failures('#forum-ocp-release', report, fail_count)
 
     @start_as_current_span_async(TRACER, "build-sync.notify-failures")
