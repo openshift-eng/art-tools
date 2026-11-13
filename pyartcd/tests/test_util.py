@@ -800,3 +800,39 @@ class TestUtil(IsolatedAsyncioTestCase):
         mock_get_keys.return_value = []
         result = await util.get_counter_failures('ec-failure', 'openshift-4.21')
         self.assertEqual(result, {})
+
+
+class TestSelectPackageOwner(IsolatedAsyncioTestCase):
+    """Verify select_package_owner picks the ET package owner by software lifecycle phase."""
+
+    def setUp(self):
+        self.advisory_config = {
+            "package_owner": "normal@redhat.com",
+            "package_owner_eus": "eus@redhat.com",
+        }
+
+    def test_extended_support_uses_eus_owner(self):
+        self.assertEqual(
+            util.select_package_owner(self.advisory_config, "extended_support"),
+            "eus@redhat.com",
+        )
+
+    def test_extended_support_raises_when_eus_owner_absent(self):
+        config = {"package_owner": "normal@redhat.com"}
+        with self.assertRaises(ValueError):
+            util.select_package_owner(config, "extended_support")
+
+    def test_extended_support_raises_when_eus_owner_empty(self):
+        config = {"package_owner": "normal@redhat.com", "package_owner_eus": ""}
+        with self.assertRaises(ValueError):
+            util.select_package_owner(config, "extended_support")
+
+    def test_release_phase_uses_normal_owner(self):
+        self.assertEqual(util.select_package_owner(self.advisory_config, "release"), "normal@redhat.com")
+
+    def test_none_phase_uses_normal_owner(self):
+        self.assertEqual(util.select_package_owner(self.advisory_config, None), "normal@redhat.com")
+
+    def test_unknown_phase_raises(self):
+        with self.assertRaises(ValueError):
+            util.select_package_owner(self.advisory_config, "unknown")
