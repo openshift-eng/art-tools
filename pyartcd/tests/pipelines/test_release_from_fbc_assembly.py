@@ -9,7 +9,11 @@ from artcommonlib.util import new_roundtrip_yaml_handler
 from elliottlib.shipment_model import ComponentSource, GitSource, Snapshot, SnapshotComponent, SnapshotSpec
 from pyartcd.lp_fbc import recorded_assembly_fbcs
 from pyartcd.lp_shipment import ShipmentMRProductionError
-from pyartcd.pipelines.release_from_fbc import ReleaseFromFbcPipeline, release_from_fbc
+from pyartcd.pipelines.release_from_fbc import (
+    ReleaseFromFbcPipeline,
+    _validate_fbc_digest_pullspecs,
+    release_from_fbc,
+)
 
 PIN = 'oadp-operator-container-1.5.8-1.p0'
 BUNDLE = 'oadp-operator-metadata-container-1.5.8-1'
@@ -74,6 +78,66 @@ def external_services():
         patch('pyartcd.pipelines.release_from_fbc.validate_snapshot_against_rpa', new_callable=AsyncMock),
     ):
         yield
+
+
+@pytest.mark.parametrize('mode', ['normal', 'dry-run', 'test'])
+@pytest.mark.parametrize(
+    'pullspec',
+    [
+        'quay.io/test/fbc:latest',
+        'quay.io/test/fbc:v4.19__operator_nvr__oadp-operator-1.5.8-1',
+        'quay.io/test/fbc:tag@sha256:' + 'a' * 64,
+        'quay.io/test/fbc@sha256:abc',
+        'quay.io/test/fbc@sha256:' + 'z' * 64,
+        'quay.io/test/fbc@sha512:' + 'a' * 64,
+        ':@sha256:' + 'a' * 64,
+    ],
+)
+def test_lp_rejects_non_digest_inputs_before_external_work(tmp_path, mode, pullspec):
+    """Reject noncanonical inputs before setup, MR access, or catalog processing in every mode."""
+    release = pipeline(tmp_path, create_mr=True, test_mode=mode == 'test')
+    release.dry_run = mode == 'dry-run'
+    release.fbc_pullspecs = [PULLSPEC, pullspec]
+    with pytest.raises(ValueError, match='must use repository@sha256') as error:
+        asyncio.run(release.run())
+    assert pullspec in str(error.value)
+    release.check_env_vars.assert_not_called()
+    release.setup_working_dir.assert_not_called()
+    release.setup_shipment_repo.assert_not_awaited()
+    release._load_layered_product_shipment_mr.assert_not_called()
+    release.extract_fbc_nvr.assert_not_called()
+    release.create_snapshot.assert_not_awaited()
+    release.create_shipment_mr.assert_not_awaited()
+
+
+def test_digest_inputs_accept_registry_ports_and_multiple_catalogs():
+    """Allow untagged digest references, including registries with explicit ports."""
+    _validate_fbc_digest_pullspecs([PULLSPEC, 'registry.example:5000/team/fbc@sha256:' + 'b' * 64])
+
+
+def test_ocp_optional_tag_handling_is_unchanged(tmp_path):
+    """OCP optional tags still reach environment checks without the LP-only rejection."""
+    release = pipeline(tmp_path, ocp_optional=True)
+    release.group = 'openshift-4.22'
+    release.assembly = '4.22.0'
+    release.fbc_pullspecs = ['quay.io/test/fbc:latest']
+    release.check_env_vars.side_effect = RuntimeError('reached OCP environment checks')
+    with pytest.raises(RuntimeError, match='reached OCP environment checks'):
+        asyncio.run(release.run())
+    release.check_env_vars.assert_called_once()
+
+
+def test_refreshed_tags_are_rejected_before_snapshot_or_mr_updates(tmp_path):
+    """Require refresh results to remain immutable before using their catalog contents."""
+    release = pipeline(tmp_path, create_mr=True, refresh_fbcs=True)
+    release._refresh_fbc_pullspecs = AsyncMock(return_value=['quay.io/test/fbc:replacement'])
+    with pytest.raises(ValueError, match='must use repository@sha256'):
+        asyncio.run(release.run())
+    release.extract_fbc_nvr.assert_called_once_with(PULLSPEC)
+    release.validate_fbc_related_images.assert_awaited_once_with([PULLSPEC])
+    release.create_snapshot.assert_not_awaited()
+    release.create_shipment_mr.assert_not_awaited()
+    release._update_layered_product_shipment_mr.assert_not_awaited()
 
 
 @pytest.mark.parametrize('unified', [False, True])
