@@ -9,7 +9,7 @@ import ssl
 import subprocess
 from datetime import datetime, timezone
 from functools import cached_property
-from urllib.parse import quote, urlparse
+from urllib.parse import parse_qs, quote, urlparse
 
 import httpx
 
@@ -96,21 +96,39 @@ class PipelineRunLookup:
         if not isinstance(url, str):
             return None
         parsed = urlparse(url)
-        match = re.fullmatch(r'/k8s/ns/([a-z0-9-]+)/tekton.dev~v1~PipelineRun/([a-z0-9.-]+)', parsed.path)
-        if (
-            parsed.scheme != 'https'
-            or parsed.netloc != urlparse(tekton._get_console_url()).netloc
-            or not match
-            or match[1] != self.namespace
-        ):
+        uid = None
+        if parsed.netloc == urlparse(tekton.ART_PIPELINES_UI_URL).netloc and parsed.path in ('', '/'):
+            fragment = urlparse(parsed.fragment)
+            match = re.fullmatch(r'/run/([a-z0-9-]+)/([a-z0-9.-]+)', fragment.path)
+            query = parse_qs(fragment.query, keep_blank_values=True)
+            namespaces = query.get('namespace', [])
+            if namespaces and namespaces != [self.namespace]:
+                return None
+            uids = query.get('uid', [])
+            if uids:
+                if len(uids) != 1 or not uids[0]:
+                    return None
+                uid = uids[0]
+        elif parsed.netloc == urlparse(tekton._get_console_url()).netloc:
+            match = re.fullmatch(r'/k8s/ns/([a-z0-9-]+)/tekton.dev~v1~PipelineRun/([a-z0-9.-]+)', parsed.path)
+        else:
+            return None
+        if parsed.scheme != 'https' or not match or match[1] != self.namespace:
             return None
         name = match[2]
-        if name not in self._runs:
+        key = (name, uid)
+        if key not in self._runs:
             raw = self._oc('get', 'pipelinerun', name, '-n', self.namespace, '-o', 'json', '--ignore-not-found')
-            matches = [json.loads(raw)] if raw else self._archived(f"data.metadata.name == '{name}'")
-            self._runs[name] = matches[0] if len(matches) == 1 else None
-        run = self._runs[name]
+            matches = [json.loads(raw)] if raw else []
+            if not matches or (uid is not None and matches[0]['metadata']['uid'] != uid):
+                matches = self._archived(f"data.metadata.name == '{name}'")
+            if uid is not None:
+                matches = [run for run in matches if run['metadata']['uid'] == uid]
+            self._runs[key] = matches[0] if len(matches) == 1 else None
+        run = self._runs[key]
         if run:
+            if uid is not None and run['metadata']['uid'] != uid:
+                return None
             if isinstance(built_at, datetime):
                 created = datetime.fromisoformat(run['metadata']['creationTimestamp'].replace('Z', '+00:00'))
                 if created > built_at.replace(tzinfo=built_at.tzinfo or timezone.utc):

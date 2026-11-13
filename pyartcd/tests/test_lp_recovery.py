@@ -8,6 +8,7 @@ from unittest.mock import MagicMock
 import httpx
 import pytest
 from pyartcd.lp_recovery import PipelineRunLookup, RecoveryPlanner
+from pyartcd.tekton import ART_PIPELINES_UI_URL
 
 NAMESPACE = 'art-test-tenant'
 CONSOLE = 'https://console.example.com'
@@ -171,6 +172,40 @@ def url(name='images'):
     return f'{CONSOLE}/k8s/ns/{NAMESPACE}/tekton.dev~v1~PipelineRun/{name}'
 
 
+def ui_url(name='images', suffix='?tab=logs'):
+    return f'{ART_PIPELINES_UI_URL}/#/run/{NAMESPACE}/{name}{suffix}'
+
+
+@pytest.mark.parametrize('suffix', ['', '?tab=logs', '?uid=uid-images&tab=details&namespace=' + NAMESPACE])
+def test_lookup_art_ui_parent_and_preserves_uid(lookup, suffix):
+    parent = run('images', 'build-layered-products')
+    lookup._oc.return_value = json.dumps(parent)
+    assert lookup.from_url(ui_url(suffix=suffix), 'build-layered-products', 'test-1.0', 'stream') == parent
+
+
+@pytest.mark.parametrize('suffix', ['?uid=', '?uid=uid-images&uid=other', '?namespace=other-tenant'])
+def test_ui_url_rejects_invalid_uid(lookup, suffix):
+    assert lookup.from_url(ui_url(suffix=suffix), 'build-layered-products', 'test-1.0', 'stream') is None
+    lookup._oc.assert_not_called()
+
+
+def test_ui_uid_resolves_archived_parent_when_live_name_is_reused(lookup):
+    parent = run('images', 'build-layered-products')
+    reused = deepcopy(parent)
+    reused['metadata']['uid'] = 'new-uid'
+    lookup._oc.return_value = json.dumps(reused)
+    lookup._archived = MagicMock(return_value=[parent, reused])
+    assert lookup.from_url(ui_url(suffix='?uid=uid-images'), 'build-layered-products', 'test-1.0', 'stream') == parent
+    assert lookup.from_url(ui_url(suffix='?uid=missing'), 'build-layered-products', 'test-1.0', 'stream') is None
+
+
+def test_ui_url_without_uid_keeps_archive_name_ambiguity_guard(lookup):
+    parent = run('images', 'build-layered-products')
+    lookup._oc.return_value = ''
+    lookup._archived = MagicMock(return_value=[parent, deepcopy(parent)])
+    assert lookup.from_url(ui_url(), 'build-layered-products', 'test-1.0', 'stream') is None
+
+
 def test_lookup_live_parent_and_caches_it(lookup):
     parent = run('images', 'build-layered-products')
     lookup._oc.return_value = json.dumps(parent)
@@ -189,6 +224,10 @@ def test_lookup_live_parent_and_caches_it(lookup):
         'https://jenkins/job/1',
         url().replace(CONSOLE, 'https://another-cluster'),
         url().replace(NAMESPACE, 'another-tenant'),
+        ui_url().replace('https://', 'http://'),
+        ui_url().replace(ART_PIPELINES_UI_URL, 'https://another-cluster'),
+        ui_url().replace(NAMESPACE, 'another-tenant'),
+        ui_url().replace('/#/run/', '/other/#/run/'),
     ],
 )
 def test_invalid_or_cross_cluster_urls_are_not_followed(lookup, invalid):

@@ -1,3 +1,4 @@
+import json
 import unittest
 from copy import deepcopy
 from unittest.mock import MagicMock, patch
@@ -272,6 +273,66 @@ class HealthTests(unittest.TestCase):
             source="archive",
         )
         return runs + [scan, recovery]
+
+    def batched_bundle_recovery(self):
+        runs = complete_chain()
+        runs[2].update(status="Failed", operatorNvrs=["operator-a-1-1"])
+        other = run("other-bundle", PIPELINES[2], parent="images", status="Failed", operatorNvrs=["operator-b-1-1"])
+        retry = run(
+            "recovered-bundles",
+            PIPELINES[2],
+            rebuiltFrom=runs[2]["uid"],
+            rebuiltFromUids=[runs[2]["uid"], other["uid"]],
+            operatorNvrs=["operator-a-1-1", "operator-b-1-1", "operator-c-1-1"],
+            created="2026-10-08T12:00:00Z",
+        )
+        children = [
+            run("recovered-fbc", PIPELINES[3], parent=retry["name"], target="4.20", created="2026-10-08T13:00:00Z")
+        ]
+        return runs + [other, retry] + children
+
+    def test_explicit_batched_bundle_recovery_keeps_all_original_attempts(self):
+        runs = self.batched_bundle_recovery()
+        original = deepcopy(runs)
+        result = build_health(runs)[0]
+        self.assertEqual(result["health"], "Succeeded")
+        chain = result["currentChain"]
+        self.assertEqual([item["name"] for item in chain["stages"][2]["runs"]], ["recovered-bundles"])
+        self.assertTrue({"uid-bundle", "uid-other-bundle"}.issubset(item["uid"] for item in chain["attempts"]))
+        self.assertEqual(runs, original)
+
+    def test_batched_bundle_recovery_does_not_clear_uncovered_failures(self):
+        runs = self.batched_bundle_recovery()
+        runs[-3]["operatorNvrs"] = ["operator-b-1-1", "not-rebuilt-1-1"]
+        result = build_health(runs)[0]
+        self.assertEqual(result["health"], "Failed")
+        self.assertIn("uid-other-bundle", [item["uid"] for item in result["currentChain"]["failures"]])
+
+    def test_batched_bundle_recovery_rejects_foreign_or_active_sources(self):
+        for changes in (
+            {"group": "other-group"},
+            {"namespace": "other-namespace"},
+            {"target": "4.19"},
+            {"dryRun": True},
+            {"completed": None, "status": "Running"},
+            {"created": "2026-10-08T14:00:00Z", "completed": "2026-10-08T14:01:00Z"},
+        ):
+            with self.subTest(changes=changes):
+                runs = self.batched_bundle_recovery()
+                runs[-3].update(changes)
+                result = next(item for item in build_health(runs) if item["group"] == "acm-2.15")
+                self.assertNotEqual(result["health"], "Succeeded")
+
+    def test_health_run_reads_multiple_retry_sources_and_rejects_malformed_lists(self):
+        for value, expected in (
+            (json.dumps(["uid-a", "uid-b", "uid-a"]), ["uid-a", "uid-b"]),
+            ('[', []),
+            ('"uid-a"', []),
+            ('[null]', []),
+            ('[""]', []),
+        ):
+            raw = {"metadata": {"annotations": {"art.openshift.io/rebuilt-from-uids": value}}}
+            self.assertEqual(health_run(raw, {})["rebuiltFromUids"], expected)
 
     def test_unresolved_fbc_scan_recovery_matches_exact_inputs_and_keeps_history(self):
         for status in ("Succeeded", "Running", "Failed", "Cancelled"):
