@@ -321,6 +321,7 @@ class GenAssemblyLPPipeline:
                     members_images.append(
                         {
                             'distgit_key': distgit_key,
+                            'why': 'Pin this image build for the assembly',
                             'metadata': {'is': {'nvr!': nvr}},
                         }
                     )
@@ -331,6 +332,7 @@ class GenAssemblyLPPipeline:
             members_images = [
                 {
                     'distgit_key': distgit_key,
+                    'why': 'Pin this image build for the assembly',
                     'metadata': {'is': {'nvr': nvr}},
                 }
                 for distgit_key, nvr in sorted(operand_map.items())

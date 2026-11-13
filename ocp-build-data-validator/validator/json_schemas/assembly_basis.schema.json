@@ -20,6 +20,24 @@
       "type": "string",
       "minLength": 1
     },
+    "fbc_pullspecs": {
+      "description": "FBC pullspecs recorded by the layered product assembly generator",
+      "oneOf": [
+        {
+          "type": "array",
+          "items": {"type": "string", "minLength": 1}
+        },
+        {
+          "type": "object",
+          "additionalProperties": {
+            "oneOf": [
+              {"type": "string", "minLength": 1},
+              {"type": "array", "items": {"type": "string", "minLength": 1}}
+            ]
+          }
+        }
+      ]
+    },
     "patch_version": {
       "description": "For a custom release, explicitly set the patch version",
       "type": "integer",

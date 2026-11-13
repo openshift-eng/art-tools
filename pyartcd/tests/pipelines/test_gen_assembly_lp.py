@@ -148,6 +148,7 @@ class TestGenAssemblyLPPipeline(unittest.TestCase):
         self.assertEqual(assembly['type'], 'standard')
         self.assertIn('fbc_pullspecs', assembly['basis'])
         self.assertEqual(len(assembly['members']['images']), 2)
+        self.assertTrue(all(member.get('why') for member in assembly['members']['images']))
 
         nvrs = {e['distgit_key']: e['metadata']['is']['nvr'] for e in assembly['members']['images']}
         self.assertEqual(nvrs['console-container'], 'console-container-2.17.3-1')
@@ -232,6 +233,7 @@ class TestGenAssemblyLPPipeline(unittest.TestCase):
         self.assertEqual(len(assembly['members']['images']), 1)
 
         changed_entry = assembly['members']['images'][0]
+        self.assertTrue(changed_entry.get('why'))
         self.assertEqual(changed_entry['distgit_key'], 'search-v2-api-container')
         self.assertEqual(changed_entry['metadata']['is']['nvr!'], 'search-v2-api-container-2.17.3-2')
 
@@ -489,7 +491,11 @@ class TestCanonicalAssemblyKeys(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(
             result['releases']['3.18.3']['assembly']['members']['images'],
             [
-                {'distgit_key': 'quay-quay', 'metadata': {'is': {'nvr': self.pin}}},
+                {
+                    'distgit_key': 'quay-quay',
+                    'why': 'Pin this image build for the assembly',
+                    'metadata': {'is': {'nvr': self.pin}},
+                },
             ],
         )
 
