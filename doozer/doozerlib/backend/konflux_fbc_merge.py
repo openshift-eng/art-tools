@@ -50,6 +50,11 @@ def _package(blob: dict) -> str:
     return blob['name'] if blob['schema'] == 'olm.package' else blob.get('package', '')
 
 
+def _pullspec_digest(pullspec: str) -> str | None:
+    match = re.fullmatch(r'[^@\s]+@(sha256:[0-9a-f]{64})', pullspec or '')
+    return match.group(1) if match else None
+
+
 def _catalog_index(blobs: list[dict], packages: set[str]) -> dict[tuple[str, str, str], dict]:
     indexed = {}
     for blob in blobs:
@@ -85,8 +90,15 @@ def merge_layered_catalogs(baseline: list[dict], inputs: list[LayeredFbcInput]) 
         csv = source.csv_name
         if not csv:
             raise ValueError(f'{source.record.nvr}: source bundle {source.bundle.nvr} has no selected CSV name')
-        if ('olm.bundle', package, csv) not in catalog:
+        selected_bundle_key = ('olm.bundle', package, csv)
+        if selected_bundle_key not in catalog:
             raise ValueError(f'{source.record.nvr}: missing bundle {package}/{csv} for selected CSV')
+        selected_digest = _pullspec_digest(source.bundle.image_pullspec)
+        catalog_digest = _pullspec_digest(catalog[selected_bundle_key].get('image', ''))
+        if not selected_digest or catalog_digest != selected_digest:
+            raise ValueError(
+                f'{source.record.nvr}: FBC bundle {package}/{csv} does not match selected bundle {source.bundle.nvr}'
+            )
         defaults[package].add(catalog[package_key]['defaultChannel'])
         if package_key not in merged:
             merged[package_key] = catalog[package_key]

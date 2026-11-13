@@ -19,6 +19,8 @@ from doozerlib.backend.konflux_client import KonfluxClient
 from doozerlib.backend.konflux_fbc import get_target_fbc_arches
 from doozerlib.backend.konflux_fbc_merge import LayeredFbcInput, LayeredFbcMerger, merge_layered_catalogs
 
+BUNDLE_DIGEST = 'sha256:' + 'b' * 64
+
 
 def package(name='quay', default='stable-3.17'):
     return {'schema': 'olm.package', 'name': name, 'defaultChannel': default}
@@ -29,7 +31,7 @@ def channel(name, entries, pkg='quay'):
 
 
 def bundle(name, pkg='quay'):
-    return {'schema': 'olm.bundle', 'package': pkg, 'name': name, 'image': f'registry.example/{name}@sha256:abc'}
+    return {'schema': 'olm.bundle', 'package': pkg, 'name': name, 'image': f'registry.example/{name}@{BUNDLE_DIGEST}'}
 
 
 def source(version, catalog, channels=None, pkg='quay'):
@@ -46,7 +48,9 @@ def source(version, catalog, channels=None, pkg='quay'):
             rebase_commitish='b' * 40,
         ),
         bundle=KonfluxBundleBuildRecord(
-            nvr=f'{pkg}-operator-bundle-container-{version}.1-1', bundle_csv_name=f'{pkg}.v{version}.1'
+            nvr=f'{pkg}-operator-bundle-container-{version}.1-1',
+            bundle_csv_name=f'{pkg}.v{version}.1',
+            image_pullspec=f'quay.io/test/{pkg}-bundle@{BUNDLE_DIGEST}',
         ),
         package=pkg,
         channels=channels or (f'stable-{version}',),
@@ -167,6 +171,17 @@ class TestMergeLayeredCatalogs(unittest.TestCase):
     def test_selected_csv_must_belong_to_expected_package(self):
         self.first.catalog[-1]['package'] = 'other'
         with self.assertRaisesRegex(ValueError, 'missing bundle quay/quay.v3.17.1 for selected CSV'):
+            merge_layered_catalogs(self.baseline, [self.first])
+
+    def test_selected_bundle_digest_allows_delivery_repository_rewrite(self):
+        result = merge_layered_catalogs(self.baseline, [self.first])
+        selected = next(blob for blob in result if blob.get('name') == self.first.csv_name)
+        self.assertNotEqual(selected['image'].split('@', 1)[0], self.first.bundle.image_pullspec.split('@', 1)[0])
+        self.assertEqual(selected['image'].split('@', 1)[1], self.first.bundle.image_pullspec.split('@', 1)[1])
+
+    def test_selected_bundle_digest_must_match_fbc(self):
+        self.first.catalog[-1]['image'] = 'registry.example/quay@sha256:' + 'a' * 64
+        with self.assertRaisesRegex(ValueError, 'does not match selected bundle'):
             merge_layered_catalogs(self.baseline, [self.first])
 
     def test_selected_csv_must_appear_in_every_declared_channel(self):
