@@ -101,6 +101,28 @@ PRODUCT_CATALOG: tuple[ProductConfig, ...] = (
         fbc_stage_release_plans={(1, 5): "coo-advisory-stage-auto-1-5"},
         cpe_product_name="cluster_observability_operator",
     ),
+    # NOTE: dvo-images-base-silent / dvo-images-base and the dvo-advisory-stage-auto-0-7
+    # release plan reference konflux-release-data resources created in Phase 4 of
+    # onboarding. Reviewers must confirm these exist (or will be created) before
+    # relying on scan/release. cpe_product_name is taken from the operator's
+    # Containerfile CPE label (deployment_validator_operator) and should be
+    # confirmed against Pyxis/errata (note validator vs validation).
+    ProductConfig(
+        product_id=ProductId.DVO,
+        aliases=("dvo",),
+        namespace="art-dvo-tenant",
+        kubeconfig_env="DVO_KONFLUX_SA_KUBECONFIG",
+        base_image_release=ReleaseTarget(
+            release_plan="dvo-images-base-silent",
+            application="dvo-images-base",
+        ),
+        conforma_stage_policies=ConformaPolicies(
+            image_policy="rhtap-releng-tenant/registry-art-dvo-stage",
+            fbc_policy="rhtap-releng-tenant/fbc-stage",
+        ),
+        fbc_stage_release_plans={(0, 7): "dvo-advisory-stage-auto-0-7"},
+        cpe_product_name="deployment_validator_operator",
+    ),
     # NOTE: kueue-images-base-silent / kueue-images-base may not exist yet in
     # konflux-release-data. Reviewers must confirm these exist or create them.
     ProductConfig(
