@@ -234,6 +234,7 @@ PRODUCT_CATALOG: tuple[ProductConfig, ...] = (
         product_id=ProductId.OSUS,
         namespace="art-osus-tenant",
         kubeconfig_env="OSUS_KONFLUX_SA_KUBECONFIG",
+        fbc_stage_release_plans={(5, 0): "osus-advisory-stage-auto-5-0"},
         conforma_stage_policies=ConformaPolicies(
             image_policy="rhtap-releng-tenant/registry-art-osus-stage",
         ),
