@@ -271,7 +271,7 @@ class BugValidator:
         major, minor = self.runtime.get_major_minor()
         version = get_regression_check_gate_version(major, minor)
         try:
-            next_is_ga = self.runtime.is_version_in_lifecycle_phase("release", version)
+            next_is_ga = self.runtime.is_version_ga(version)
         except Exception as e:
             logger.warning(f"Failed to determine if {version} is GA: {e}. Assuming it is not GA.")
             next_is_ga = False

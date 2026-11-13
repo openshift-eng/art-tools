@@ -41,6 +41,7 @@ from artcommonlib.konflux.konflux_build_record import KonfluxBuildOutcome, Konfl
 from artcommonlib.konflux.konflux_db import KonfluxDb
 from artcommonlib.model import Model
 from artcommonlib.registry_config import RegistryConfig
+from artcommonlib.release_util import SoftwareLifecyclePhase
 from artcommonlib.rpm_utils import parse_nvr
 from artcommonlib.util import convert_remote_git_to_ssh, new_roundtrip_yaml_handler
 from doozerlib.backend.konflux_client import API_VERSION, KIND_SNAPSHOT
@@ -1889,7 +1890,7 @@ class PrepareReleaseKonfluxPipeline:
     async def check_bug_config_for_ga(self):
         """For standard (GA/z-stream) assemblies, verify that ocp-build-data is
         correctly configured for post-GA releases:
-        - software_lifecycle.phase must be 'release'
+        - software_lifecycle.phase must be 'release' or 'extended_support'
         - bug.yml target_release must include the z-stream entry (e.g. '4.22.z')
         """
         if self.assembly_type != AssemblyTypes.STANDARD:
@@ -1899,11 +1900,13 @@ class PrepareReleaseKonfluxPipeline:
         errors = []
         major, minor = self.release_name.split('.')[:2]
 
-        # Check 1: software_lifecycle.phase must be 'release'
+        # Check 1: software_lifecycle.phase must be 'release' or 'extended_support'
         phase = (self.group_config.get('software_lifecycle') or {}).get('phase')
-        if phase != 'release':
+        lifecycle_phase = SoftwareLifecyclePhase.from_name(phase) if phase else None
+        if lifecycle_phase not in (SoftwareLifecyclePhase.RELEASE, SoftwareLifecyclePhase.EXTENDED_SUPPORT):
             errors.append(
-                f"group.yml software_lifecycle.phase must be 'release' for a standard assembly, but found '{phase}'"
+                f"group.yml software_lifecycle.phase must be 'release' or 'extended_support' "
+                f"for a standard assembly, but found '{phase}'"
             )
 
         # Check 2: bug.yml target_release must include .z
