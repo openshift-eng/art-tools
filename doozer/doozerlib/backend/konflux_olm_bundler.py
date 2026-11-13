@@ -80,6 +80,28 @@ def _replace_pullspec(content: str, old_spec: str, new_spec: str) -> str:
     return "".join(result)
 
 
+def _find_matching_pullspec(content: str, upstream_spec: str) -> str | None:
+    """
+    Find the upstream pullspec in content, including a tag changed during operator rebase.
+
+    Arg(s):
+        content (str): Text content to search.
+        upstream_spec (str): Pullspec from image-references.
+    Return Value(s):
+        str | None: Matching pullspec, or None if the content does not reference it.
+    """
+    if _replace_pullspec(content, upstream_spec, "") != content:
+        return upstream_spec
+
+    if ":" in upstream_spec and "@" not in upstream_spec:
+        repo = upstream_spec.rsplit(":", maxsplit=1)[0]
+        match = re.search(re.escape(repo) + r":[a-zA-Z0-9._-]+", content)
+        if match:
+            return match.group(0)
+
+    return None
+
+
 class KonfluxOlmBundleRebaseError(Exception):
     """Raised when an operator bundle cannot be safely rebased, e.g. an embargoed operand
     image has no public substitute available."""
@@ -280,12 +302,17 @@ class KonfluxOlmBundleRebaser:
                 f"This fallback will be removed in a future release."
             )
 
+        bundle_manifest_files = [src for src in operator_bundle_dir.iterdir() if src.name != "image-references"]
+        bundle_manifest_contents: dict[Path, str] = {}
+        for src in bundle_manifest_files:
+            async with aiofiles.open(src, "r") as f:
+                bundle_manifest_contents[src] = await f.read()
+
         # Validate that containerImage annotation in CSV matches an entry in image-references
         csv_files = list(operator_bundle_dir.glob("*.clusterserviceversion.yaml"))
         if csv_files:
             csv_file = csv_files[0]
-            async with aiofiles.open(csv_file, "r") as f:
-                csv_content = await f.read()
+            csv_content = bundle_manifest_contents[csv_file]
             csv_data = yaml.safe_load(csv_content)
             container_image = csv_data.get("metadata", {}).get("annotations", {}).get("containerImage")
 
@@ -305,12 +332,28 @@ class KonfluxOlmBundleRebaser:
         resolved_operands: dict[str, tuple[str, str, str]] = {}
         resolve_from_db = operator_build.engine is Engine.KONFLUX and bool(image_references)
         found_resolved_operands: set[str] = set()
+        used_image_references = image_references
+        external_image_names: set[str] = set()
         if resolve_from_db:
             delivery_override_map, delivery_namespace_map = self._build_delivery_maps(metadata)
             external_image_names = self._get_external_image_names(operator_manifests_dir)
-            resolved_operands = await self._resolve_operands_from_db(
+            used_image_references, unused_image_references = self._find_used_image_references(
                 metadata,
                 image_references,
+                list(bundle_manifest_contents.values()),
+                delivery_override_map,
+                str(csv_config["registry"]) if csv_config.get("registry") else None,
+                external_image_names,
+            )
+            if unused_image_references:
+                logger.warning(
+                    "Skipping image-references entries not used by bundle manifests for %s: %s",
+                    metadata.distgit_key,
+                    [ref["name"] for ref in unused_image_references],
+                )
+            resolved_operands = await self._resolve_operands_from_db(
+                metadata,
+                used_image_references,
                 delivery_override_map,
                 delivery_namespace_map,
                 external_image_names,
@@ -322,12 +365,9 @@ class KonfluxOlmBundleRebaser:
         all_found_operands: Dict[
             str, Tuple[str, str, str]
         ] = {}  # map of image name to (old_pullspec, new_pullspec, nvr)
-        for src in operator_bundle_dir.iterdir():
-            if src.name == "image-references":
-                continue
+        for src in bundle_manifest_files:
             logger.info(f"Processing {src}...")
-            async with aiofiles.open(src, "r") as f:
-                content = await f.read()
+            content = bundle_manifest_contents[src]
 
             if resolve_from_db:
                 # Replace operand references using upstream specs from image-references.
@@ -336,21 +376,16 @@ class KonfluxOlmBundleRebaser:
                 found_images: dict[str, tuple[str, str, str]] = {}
                 found_resolved_in_manifest: set[str] = set()
                 for delivery_name, (upstream_spec, new_pullspec, operand_nvr) in resolved_operands.items():
-                    replaced_content = _replace_pullspec(content, upstream_spec, new_pullspec)
-                    if replaced_content == content and ":" in upstream_spec and "@" not in upstream_spec:
-                        # Exact upstream spec not found. art.yaml may have modified the tag
-                        # during operator rebase (e.g. :0.1.0 → :6.0.16). Fall back to
-                        # registry/repo prefix matching.
-                        repo = upstream_spec.rsplit(":", 1)[0]
-                        pattern = re.compile(re.escape(repo) + r":[a-zA-Z0-9._-]+")
-                        match = pattern.search(content)
-                        if match:
+                    matched_spec = _find_matching_pullspec(content, upstream_spec)
+                    replaced_content = content
+                    if matched_spec:
+                        if matched_spec != upstream_spec:
                             logger.info(
                                 "Upstream spec %s not found in CSV; matched art.yaml-modified spec %s",
                                 upstream_spec,
-                                match.group(0),
+                                matched_spec,
                             )
-                            replaced_content = _replace_pullspec(content, match.group(0), new_pullspec)
+                        replaced_content = _replace_pullspec(content, matched_spec, new_pullspec)
                     if replaced_content != content:
                         content = replaced_content
                         found_images[delivery_name] = (upstream_spec, new_pullspec, operand_nvr)
@@ -414,9 +449,11 @@ class KonfluxOlmBundleRebaser:
             )
 
         # Warn if the number of images found in the bundle doesn't match the image-references file
-        if len(all_found_operands) != len(image_references):
+        expected_image_reference_count = len(used_image_references) if resolve_from_db else len(image_references)
+        if len(all_found_operands) != expected_image_reference_count:
             logger.warning(
-                f"Found {len(all_found_operands)} images in the bundle, but {len(image_references)} in image-references"
+                f"Found {len(all_found_operands)} images in the bundle, but {expected_image_reference_count} used entries"
+                f" in image-references"
                 f" ({refs_path or 'file not found'})"
             )
             logger.warning(f"Found operands: {all_found_operands}")
@@ -540,6 +577,97 @@ class KonfluxOlmBundleRebaser:
             except (yaml.YAMLError, OSError) as e:
                 self._logger.warning("Failed to parse image YAML %s: %s", yml_path, e)
         return delivery_override_map, delivery_namespace_map
+
+    def _find_used_image_references(
+        self,
+        metadata: ImageMetadata,
+        image_references: list[dict],
+        manifest_contents: Sequence[str],
+        delivery_override_map: dict[str, str],
+        registry: str | None,
+        external_image_names: set[str],
+    ) -> tuple[list[dict], list[dict]]:
+        """
+        Select image-references entries consumed by bundle manifests.
+
+        Arg(s):
+            metadata (ImageMetadata): Operator metadata used to map bundle image names.
+            image_references (list[dict]): Entries read from image-references.
+            manifest_contents (Sequence[str]): Original bundle manifest contents.
+            delivery_override_map (dict[str, str]): Versioned-to-unversioned image name overrides.
+            registry (str | None): Registry used by older rebased bundle manifests.
+            external_image_names (set[str]): Images declared as external in art.yaml.
+        Return Value(s):
+            tuple[list[dict], list[dict]]: Used entries and unused entries, preserving source order.
+        """
+        legacy_image_names: set[str] = set()
+        if registry:
+            legacy_tag_pattern = self._get_image_reference_pattern(registry)
+            for content in manifest_contents:
+                for match in legacy_tag_pattern.finditer(content):
+                    image_short_name = match.group(1).rsplit("/", maxsplit=1)[-1]
+                    legacy_image_names.add(delivery_override_map.get(image_short_name, image_short_name))
+
+        used_image_references = []
+        unused_image_references = []
+        for image_reference in image_references:
+            name = image_reference["name"]
+            upstream_spec = image_reference["from"]["name"]
+            is_used = name in external_image_names or any(
+                _find_matching_pullspec(content, upstream_spec) is not None for content in manifest_contents
+            )
+
+            if not is_used and legacy_image_names:
+                delivery_names = self._get_image_reference_delivery_names(metadata, name, delivery_override_map)
+                is_used = any(
+                    delivery_name == legacy_name
+                    or (delivery_name.startswith(f"{legacy_name}-") and delivery_name[len(legacy_name) + 1 :].isdigit())
+                    for delivery_name in delivery_names
+                    for legacy_name in legacy_image_names
+                )
+
+            if is_used:
+                used_image_references.append(image_reference)
+            else:
+                unused_image_references.append(image_reference)
+
+        return used_image_references, unused_image_references
+
+    def _get_image_reference_delivery_names(
+        self,
+        metadata: ImageMetadata,
+        image_reference_name: str,
+        delivery_override_map: dict[str, str],
+    ) -> set[str]:
+        """
+        Get bundle and delivery names that may identify an image-reference entry.
+
+        Arg(s):
+            metadata (ImageMetadata): Operator metadata used to resolve the referenced image.
+            image_reference_name (str): The image name from an image-references entry.
+            delivery_override_map (dict[str, str]): Versioned-to-unversioned image name overrides.
+        Return Value(s):
+            set[str]: Names that can identify the referenced image in a legacy registry tag.
+        """
+        delivery_names = {image_reference_name, delivery_override_map.get(image_reference_name, image_reference_name)}
+        distgit_key = metadata.runtime.name_in_bundle_map.get(image_reference_name)
+        if not distgit_key:
+            return delivery_names
+
+        image_meta = metadata.runtime.image_map.get(distgit_key)
+        if image_meta is None:
+            image_meta = metadata.runtime.late_resolve_image(distgit_key, required=False)
+        if image_meta is None:
+            return delivery_names
+
+        image_short_name = image_meta.image_name_short
+        repo_names = image_meta.config.get("delivery", {}).get("delivery_repo_names") or []
+        if repo_names and "/" in str(repo_names[0]):
+            image_short_name = str(repo_names[0]).rsplit("/", maxsplit=1)[-1]
+        delivery_names.add(image_short_name)
+        delivery_names.add(delivery_override_map.get(image_short_name, image_short_name))
+
+        return delivery_names
 
     def _build_delivery_pullspec(
         self,
