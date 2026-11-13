@@ -58,7 +58,6 @@ class ProductConfig:
         conforma_stage_policies: Image and optional FBC Conforma stage policies.
         fbc_stage_release_plans: Product-version to FBC ReleasePlan mapping.
         cpe_product_name: Product name used in generated CPE labels.
-        use_assembly_image_tags: Add assembly-derived image tags to LP shipments.
     """
 
     product_id: ProductId
@@ -70,7 +69,6 @@ class ProductConfig:
     conforma_stage_policies: ConformaPolicies | None = None
     fbc_stage_release_plans: Mapping[tuple[int, int], str] = field(default_factory=dict)
     cpe_product_name: str | None = None
-    use_assembly_image_tags: bool = True
 
     def __post_init__(self) -> None:
         """

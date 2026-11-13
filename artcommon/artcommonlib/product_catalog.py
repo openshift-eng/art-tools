@@ -239,7 +239,6 @@ PRODUCT_CATALOG: tuple[ProductConfig, ...] = (
             fbc_policy="rhtap-releng-tenant/fbc-stage",
         ),
         cpe_product_name="openshift_update_service",
-        use_assembly_image_tags=False,
     ),
     ProductConfig(
         product_id=ProductId.MTC,

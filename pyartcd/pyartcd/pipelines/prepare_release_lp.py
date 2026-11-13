@@ -22,7 +22,6 @@ from artcommonlib.gitlab import GitLabClient
 from artcommonlib.konflux.konflux_build_record import KonfluxBundleBuildRecord, KonfluxFbcBuildRecord
 from artcommonlib.konflux.konflux_db import KonfluxDb
 from artcommonlib.model import Model
-from artcommonlib.product_catalog import find_product_config
 from artcommonlib.rpm_utils import parse_nvr
 from artcommonlib.util import (
     new_roundtrip_yaml_handler,
@@ -671,14 +670,8 @@ class PrepareReleaseLPPipeline:
 
         data = None
         if kind == 'image':
-            mapping = None
-            product_config = find_product_config(self.product or '')
-            if product_config is None or product_config.use_assembly_image_tags:
-                mapping = Mapping(
-                    defaults=MappingDefaults(tags=['v{{ assembly }}', 'v{{ assembly }}-{{ incrementer }}'])
-                )
-            if release_notes or mapping:
-                data = Data(releaseNotes=release_notes, mapping=mapping)
+            mapping = Mapping(defaults=MappingDefaults(tags=['v{{ assembly }}', 'v{{ assembly }}-{{ incrementer }}']))
+            data = Data(releaseNotes=release_notes, mapping=mapping)
 
         shipment = Shipment(metadata=metadata, environments=environments, snapshot=snapshot, data=data)
         return ShipmentConfig(shipment=shipment)

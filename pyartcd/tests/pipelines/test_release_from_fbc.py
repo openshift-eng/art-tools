@@ -45,22 +45,6 @@ def _make_snapshot(app="oadp-1-4"):
 
 
 class TestReleaseFromFbcPipeline(unittest.TestCase):
-    def test_osus_image_shipments_inherit_release_plan_tags(self):
-        pipeline = self._make_pipeline(group='osus-5.0', assembly='5.0.5')
-        pipeline.product = 'openshift-update-service'
-        snapshot = Snapshot(spec=SnapshotSpec(application='osus-5-0', components=[]), nvrs=[])
-        for notes in (None, ReleaseNotes(type='RHSA')):
-            with self.subTest(notes=notes):
-                shipment = pipeline.create_shipment_config('image', snapshot, notes).shipment
-                if notes is None:
-                    self.assertIsNone(shipment.data)
-                else:
-                    self.assertEqual(shipment.data.releaseNotes, notes)
-                    self.assertIsNone(shipment.data.mapping)
-                for env in ('stage', 'prod'):
-                    release = CreateReleaseCli.get_release_config(shipment, env, 'release', 'snapshot')
-                    self.assertNotIn('mapping', release.data or {})
-
     def _make_pipeline(self, jira_bugs=None, **overrides):
         runtime = MagicMock()
         runtime.dry_run = False
