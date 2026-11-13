@@ -30,6 +30,25 @@ def test_assembly_can_record_immutable_fbc_inputs():
     assert not releases_schema.validate(None, assembly())
 
 
+@pytest.mark.parametrize(
+    'pullspecs',
+    [
+        {'4.17': 'quay.io/example/catalog@sha256:abc'},
+        {'4.18': ['quay.io/example/first:tag', 'quay.io/example/second:tag']},
+        ['quay.io/example/catalog:tag'],
+    ],
+)
+def test_assembly_accepts_generated_basis_fbc_pullspecs(pullspecs):
+    config = {'releases': {'6.4.5': {'assembly': {'type': 'standard', 'basis': {'fbc_pullspecs': pullspecs}}}}}
+    assert not releases_schema.validate('releases.yml', config)
+
+
+@pytest.mark.parametrize('pullspecs', [42, {'4.18': [7]}, {'4.18': ''}])
+def test_assembly_rejects_invalid_basis_fbc_pullspecs(pullspecs):
+    config = {'releases': {'6.4.5': {'assembly': {'type': 'standard', 'basis': {'fbc_pullspecs': pullspecs}}}}}
+    assert releases_schema.validate('releases.yml', config)
+
+
 @pytest.mark.parametrize('field,value', [('nvr', ''), ('pullspec', 'quay.io/test/fbc:latest'), ('operand_nvrs', [])])
 def test_assembly_fbc_records_reject_incomplete_inputs(field, value):
     config = deepcopy(assembly())

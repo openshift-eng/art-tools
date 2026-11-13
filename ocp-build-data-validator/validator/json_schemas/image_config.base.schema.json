@@ -712,6 +712,7 @@
       "type": "string",
       "enum": [
         "auto",
+        "enabled",
         "disabled",
         "wip"
       ]

@@ -7,6 +7,10 @@ from validator.schema import image_schema
 
 
 class TestImageSchema(unittest.TestCase):
+    def test_explicit_enabled_mode_is_valid(self):
+        data = {'from': {}, 'name': 'test-image', 'for_release': False, 'mode': 'enabled'}
+        self.assertIsNone(image_schema.validate('images/test-image.yml', data))
+
     def test_its_enabled_boolean_and_merge_variants(self):
         for its_key in ("its", "its!", "its?"):
             for enabled_key in ("enabled", "enabled!", "enabled?"):
