@@ -93,11 +93,13 @@ def _find_matching_pullspec(content: str, upstream_spec: str) -> str | None:
     if _replace_pullspec(content, upstream_spec, "") != content:
         return upstream_spec
 
-    if ":" in upstream_spec and "@" not in upstream_spec:
+    last_segment = upstream_spec.rsplit("/", maxsplit=1)[-1]
+    if ":" in last_segment and "@" not in upstream_spec:
         repo = upstream_spec.rsplit(":", maxsplit=1)[0]
-        match = re.search(re.escape(repo) + r":[a-zA-Z0-9._-]+", content)
-        if match:
-            return match.group(0)
+        for match in re.finditer(re.escape(repo) + r":[a-zA-Z0-9._-]+", content):
+            candidate = match.group(0)
+            if _replace_pullspec(content, candidate, "") != content:
+                return candidate
 
     return None
 
@@ -661,6 +663,8 @@ class KonfluxOlmBundleRebaser:
             return delivery_names
 
         image_short_name = image_meta.image_name_short
+        delivery_names.add(image_short_name)
+        delivery_names.add(delivery_override_map.get(image_short_name, image_short_name))
         repo_names = image_meta.config.get("delivery", {}).get("delivery_repo_names") or []
         if repo_names and "/" in str(repo_names[0]):
             image_short_name = str(repo_names[0]).rsplit("/", maxsplit=1)[-1]
