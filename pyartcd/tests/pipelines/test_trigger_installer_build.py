@@ -53,6 +53,8 @@ async def test_published_payloads_trigger_without_acceptance_gate(services, vers
     assert params['assembly'] == 'stream'
     assert submit.call_args.kwargs['namespace'] == 'art-installer-agent-tenant'
     assert submit.call_args.kwargs['kubeconfig'] == '/test/kubeconfig'
+    assert submit.call_args.kwargs['run_name'].startswith('build-layered-products-installer-ove-ui-4-22-')
+    assert len(submit.call_args.kwargs['run_name']) <= 63
     assert 'installer-ove-ui-4.22/group.yml' in metadata.call_args.args[0]
 
 
