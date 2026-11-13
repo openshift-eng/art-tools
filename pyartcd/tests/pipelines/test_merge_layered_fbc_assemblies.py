@@ -84,6 +84,27 @@ def test_optional_filter_selects_only_matching_groups(tmp_path, sources):
     assert {s['assembly'] for s in plans[0].inputs.values()} == {'3.18.5'}
 
 
+@pytest.mark.parametrize('ignore_patch_version', [False, True])
+def test_assembly_consumer_honors_effective_group_patch_policy(tmp_path, sources, monkeypatch, ignore_patch_version):
+    """Load cross-patch records only when the selected build-data revision enables that policy."""
+    record = sources.documents['quay-3.18']['releases']['3.18.5']['assembly']['group']['fbc_builds']['4.22'][
+        'quay-operator'
+    ]
+    record['nvr'] = record['nvr'].replace('3.18.5', '3.18.4')
+    config = AsyncMock(
+        return_value={'product': 'quay', 'OCP_TARGET_VERSIONS': ['4.22'], 'ignore_patch_version': ignore_patch_version}
+    )
+    monkeypatch.setattr('pyartcd.pipelines.merge_layered_fbc.load_group_config', config)
+    consumer = pipeline(tmp_path, assemblies=('3.18.5',))
+    if not ignore_patch_version:
+        with pytest.raises(ValueError, match='do not match'):
+            asyncio.run(consumer._resolve_assemblies())
+    else:
+        plans = asyncio.run(consumer._resolve_assemblies())
+        assert list(plans[0].inputs) == [record['nvr']]
+    assert config.await_args.kwargs['doozer_data_gitref'] == sources.revisions['quay-3.18']
+
+
 def test_numeric_target_ordering(tmp_path, sources):
     sources.targets['quay-3.18'] = ['4.10', '4.9']
     records = sources.documents['quay-3.18']['releases']['3.18.5']['assembly']['group']['fbc_builds']

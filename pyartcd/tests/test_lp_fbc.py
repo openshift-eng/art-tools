@@ -74,6 +74,26 @@ def test_invalid_or_partial_outputs_are_not_recorded(nvrs, pullspecs, error):
         assembly_fbc_records(ASSEMBLY, nvrs, pullspecs, [PIN])
 
 
+def test_cross_patch_records_require_group_policy_in_writer_and_reader():
+    """Permit different patches only when both producer and consumer enable group policy."""
+    nvr = NVR.replace('3.18.5', '3.18.4')
+    with pytest.raises(ValueError, match='do not match'):
+        assembly_fbc_records(ASSEMBLY, [nvr], [PULLSPEC], [PIN])
+    config = releases()
+    config['releases'][ASSEMBLY]['assembly']['group']['fbc_builds'] = assembly_fbc_records(
+        ASSEMBLY, [nvr], [PULLSPEC], [PIN], ignore_patch_version=True
+    )
+    with pytest.raises(ValueError, match='do not match'):
+        recorded_assembly_fbcs(config, ASSEMBLY, '4.22')
+    assert recorded_assembly_fbcs(config, ASSEMBLY, '4.22', ignore_patch_version=True)['quay-operator']['nvr'] == nvr
+
+
+def test_cross_patch_policy_still_rejects_another_release_train():
+    """Ignoring patches must never permit a different major/minor version."""
+    with pytest.raises(ValueError, match='do not match'):
+        assembly_fbc_records(ASSEMBLY, [NVR.replace('3.18.5', '3.17.5')], [PULLSPEC], [PIN], ignore_patch_version=True)
+
+
 def test_record_metadata_must_match_its_operator_and_target():
     config = releases()
     config['releases'][ASSEMBLY]['assembly']['group']['fbc_builds'] = records()

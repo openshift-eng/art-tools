@@ -89,6 +89,31 @@ def test_reincluded_child_drops_stale_override_when_input_matches_parent():
     assert assembly_image_pins(Model(original), ASSEMBLY) == {'operator': PIN}
 
 
+@pytest.mark.parametrize('inherited', [False, True])
+def test_removed_or_redundant_pins_preserve_unrelated_member_settings(inherited):
+    """Keep image overrides when dropping a standalone pin or inheriting the same build."""
+    member = {
+        'distgit_key': 'operator',
+        'why': 'Restrict release architectures',
+        'metadata': {'is': {'nvr!' if inherited else 'nvr': 'oadp-operator-container-1.5.8-2'}, 'arches': ['x86_64']},
+    }
+    original = releases({'members': {'images': [member]}})
+    if inherited:
+        original['releases'][ASSEMBLY]['assembly']['basis'] = {'assembly': '1.5.7'}
+        original['releases']['1.5.7'] = {
+            'assembly': {'members': {'images': [{'distgit_key': 'operator', 'metadata': {'is': {'nvr': PIN}}}]}}
+        }
+    before = deepcopy(original)
+    definition = direct_release_assembly(original, ASSEMBLY, {'operator': PIN} if inherited else {}, {})
+    assert definition['members']['images'] == [
+        {'distgit_key': 'operator', 'why': 'Restrict release architectures', 'metadata': {'arches': ['x86_64']}}
+    ]
+    current = deepcopy(original)
+    current['releases'][ASSEMBLY]['assembly'] = definition
+    assert assembly_image_pins(Model(current), ASSEMBLY) == ({'operator': PIN} if inherited else {})
+    assert original == before
+
+
 @pytest.mark.parametrize('field', ['pin', 'pointer', 'fbc', 'parent'])
 def test_concurrent_release_changes_fail_without_writes(tmp_path, field):
     original = releases(direct_release_assembly({}, ASSEMBLY, {'operator': PIN}, {}))

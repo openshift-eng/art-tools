@@ -12,11 +12,32 @@ from pyartcd.fbc_util import validate_layered_product_fbc_nvrs
 from pyartcd.git import GitRepository
 
 
-def assembly_fbc_records(assembly: str, nvrs: list[str], pullspecs: list[str], operand_nvrs: list[str]) -> dict:
-    """Index a complete, validated build result by OCP target and operator."""
+def assembly_fbc_records(
+    assembly: str,
+    nvrs: list[str],
+    pullspecs: list[str],
+    operand_nvrs: list[str],
+    *,
+    ignore_patch_version: bool = False,
+) -> dict:
+    """Index a complete, validated build result by OCP target and operator.
+
+    Args:
+        assembly: Layered-product release version.
+        nvrs: FBC build NVRs to record.
+        pullspecs: Corresponding immutable catalog pullspecs.
+        operand_nvrs: Effective assembly image pins.
+        ignore_patch_version: Group policy allowing different patches on the same release train.
+
+    Returns:
+        FBC records grouped by OCP target and operator.
+
+    Raises:
+        ValueError: If build results are incomplete, inconsistent, or violate the version policy.
+    """
     if not nvrs or len(nvrs) != len(pullspecs) or not operand_nvrs:
         raise ValueError('Recording FBCs requires complete NVRs, pullspecs, and operand pins')
-    validate_layered_product_fbc_nvrs(assembly, nvrs)
+    validate_layered_product_fbc_nvrs(assembly, nvrs, ignore_patch_version=ignore_patch_version)
     records = {}
     for nvr, pullspec in zip(nvrs, pullspecs):
         target = extract_ocp_version_from_fbc_nvr(nvr)
@@ -35,8 +56,21 @@ def assembly_fbc_records(assembly: str, nvrs: list[str], pullspecs: list[str], o
     return records
 
 
-def recorded_assembly_fbcs(releases: dict, assembly: str, target: str) -> dict:
-    """Read only this assembly's records and reject records predating its current pins."""
+def recorded_assembly_fbcs(releases: dict, assembly: str, target: str, *, ignore_patch_version: bool = False) -> dict:
+    """Read this assembly's FBC records and validate them against its current pins.
+
+    Args:
+        releases: Build-data releases mapping.
+        assembly: Layered-product release version.
+        target: Requested OCP major/minor version.
+        ignore_patch_version: Version policy from the effective group configuration.
+
+    Returns:
+        Validated FBC records keyed by operator.
+
+    Raises:
+        ValueError: If records are missing, stale, inconsistent, or violate the version policy.
+    """
     definition = releases.get('releases', {}).get(assembly)
     if not isinstance(definition, dict):
         raise ValueError(f'Assembly {assembly} is missing from releases.yml')
@@ -58,7 +92,7 @@ def recorded_assembly_fbcs(releases: dict, assembly: str, target: str) -> dict:
             raise ValueError(f'Assembly {assembly} has an FBC for the wrong operator or target: {nvr}')
         nvrs.append(nvr)
         pullspecs.append(pullspec)
-    return assembly_fbc_records(assembly, nvrs, pullspecs, pins)[target]
+    return assembly_fbc_records(assembly, nvrs, pullspecs, pins, ignore_patch_version=ignore_patch_version)[target]
 
 
 async def update_assembly_fbcs(repo: GitRepository, group: str, assembly: str, records: dict, expected: dict) -> bool:
