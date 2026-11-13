@@ -71,6 +71,13 @@ class TestAggregationOptions(TestCase):
         with patch.dict(os.environ, {}, clear=True):
             pipeline.check_env_vars()
 
+    def test_other_products_keep_their_dry_run_shipment_credentials(self):
+        pipeline = _pipeline("/tmp/test", group="mirror-gui-1.0", aggregate=False, create_mr=True)
+        pipeline.dry_run = True
+        with patch.dict(os.environ, {"GITLAB_TOKEN": "unit-test-token"}, clear=True):
+            pipeline.check_env_vars()
+        self.assertEqual(pipeline.gitlab_token, "unit-test-token")
+
 
 class TestBuildAggregate(IsolatedAsyncioTestCase):
     def setUp(self):

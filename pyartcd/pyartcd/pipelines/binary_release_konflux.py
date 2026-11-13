@@ -198,7 +198,7 @@ class BinaryReleaseKonfluxPipeline:
         """
         Check required environment variables for MR creation.
         """
-        if not self.create_mr or self.build_only or self.dry_run:
+        if not self.create_mr or self.build_only or (self.dry_run and self.aggregate):
             return
 
         gitlab_token = os.getenv("GITLAB_TOKEN")
