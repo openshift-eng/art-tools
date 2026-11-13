@@ -65,8 +65,9 @@ async def trigger_installer_build(payload: str, kubeconfig: str | None = None, *
         raise ValueError(f'{group} version does not match payload version {version}')
     if 'x86_64' not in config.get('arches', []):
         raise ValueError(f'{group} does not support x86_64')
-    identity = hashlib.sha256(f'{group}:{digest}'.encode()).hexdigest()[:24]
-    run_name = f'installer-build-{version.major}-{version.minor}-{identity}'
+    # Match the pipeline/group naming convention while keeping submissions deterministic.
+    identity = hashlib.sha256(f'{group}:{digest}'.encode()).hexdigest()[:16]
+    run_name = f'build-layered-products-{group.replace(".", "-")}-{identity}'
     params = {
         'group': group,
         'assembly': 'stream',
