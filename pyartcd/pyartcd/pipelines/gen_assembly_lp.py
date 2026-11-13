@@ -64,8 +64,8 @@ class GenAssemblyLPPipeline:
         self.product: Optional[str] = None
         self._component_to_distgit_key: Optional[Dict[str, str]] = None
 
-        if not (self.fbc_pullspecs or self.basis_assembly or self.include or self.extra_image_nvrs):
-            raise ValueError("Provide --fbc-pullspecs, --basis-assembly, --include or --extra-image-nvrs")
+        if not self.fbc_pullspecs and not self.basis_assembly:
+            raise ValueError("At least one of --fbc-pullspecs or --basis-assembly must be provided")
 
     async def _load_product_from_group_config(self) -> str:
         try:
@@ -149,8 +149,6 @@ class GenAssemblyLPPipeline:
         version and contain identical product images after applying explicit overrides.
         """
         overrides = self._apply_extra_image_nvrs(self._apply_includes({}))
-        if not self.fbc_pullspecs:
-            return overrides
         all_related_nvrs = await validate_fbc_related_images(
             self.fbc_pullspecs,
             self.product,
@@ -575,8 +573,8 @@ async def gen_assembly_lp(
     fbc_pullspecs_list = [s.strip() for s in fbc_pullspecs.split(',') if s.strip()]
     extra_nvrs_list = [s.strip() for s in extra_image_nvrs.split(',') if s.strip()]
 
-    if not (fbc_pullspecs_list or basis_assembly or include or extra_nvrs_list):
-        raise click.ClickException("Provide --fbc-pullspecs, --basis-assembly, --include or --extra-image-nvrs")
+    if not fbc_pullspecs_list and not basis_assembly:
+        raise click.ClickException("At least one of --fbc-pullspecs or --basis-assembly must be provided")
 
     pipeline = GenAssemblyLPPipeline(
         runtime=runtime,

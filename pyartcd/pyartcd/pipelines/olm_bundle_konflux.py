@@ -306,7 +306,7 @@ async def olm_bundle_konflux(
     failed_stage_nvrs = []
 
     # Trigger FBC builds for successful bundles only
-    if operator_nvrs and group_config.get('konflux', {}).get('fbc', {}).get('enabled', True):
+    if operator_nvrs:
         runtime.logger.info(f'Found operator NVRs: {operator_nvrs}')
 
         use_tekton = tekton.is_tekton_context()

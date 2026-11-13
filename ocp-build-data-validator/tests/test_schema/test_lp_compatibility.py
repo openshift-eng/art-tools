@@ -10,8 +10,6 @@ from validator.schema import group_schema, image_schema
     'key,value',
     [
         ('image_repo', 'quay.io/art-builds'),
-        ('fbc', {'enabled': False}),
-        ('fbc', {'enabled': True}),
         ('ignore_patch_version', True),
         ('ignore_patch_version', False),
         ('OCP_RELEASE_NOTES_VERSION', '4.20'),
@@ -19,7 +17,7 @@ from validator.schema import group_schema, image_schema
 )
 def test_consumed_group_fields_are_supported(key, value):
     """Accept LP settings at the locations used by their actual pipeline consumers."""
-    data = {'konflux': {key: value}} if key in ('image_repo', 'fbc') else {key: value}
+    data = {'konflux': {key: value}} if key == 'image_repo' else {key: value}
     assert group_schema.validate('group.yml', data) == ''
 
 
@@ -28,9 +26,6 @@ def test_consumed_group_fields_are_supported(key, value):
     [
         {'konflux': {'image_repo': 7}},
         {'konflux': {'image_repo': ''}},
-        {'konflux': {'fbc': {'enabled': 'false'}}},
-        {'konflux': {'fbc': {'enabled': 0}}},
-        {'konflux': {'fbc': {'unknown': False}}},
         {'ignore_patch_version': 'true'},
         {'ignore_patch_version': 1},
         {'OCP_RELEASE_NOTES_VERSION': 4.20},

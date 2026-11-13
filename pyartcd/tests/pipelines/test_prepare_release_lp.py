@@ -354,23 +354,6 @@ class TestPrepareReleaseLPPipeline(unittest.TestCase):
 class TestPrepareReleaseLPMultiFBC(unittest.TestCase):
     """Tests for multi-FBC (multi-OCP-version) FBC builds in prepare-release-lp."""
 
-    @patch('pyartcd.pipelines.prepare_release_lp.load_group_config', new_callable=AsyncMock)
-    @patch('pyartcd.pipelines.prepare_release_lp.build_fbc_catalogs', new_callable=AsyncMock)
-    def test_osus_prepares_release_without_catalog_builds(self, build_catalogs, load_config):
-        load_config.return_value = {
-            'product': 'openshift-update-service',
-            'konflux': {'fbc': {'enabled': False}},
-            'OCP_TARGET_VERSIONS': ['4.22'],
-        }
-        pipeline = self._make_pipeline(group='osus-5.0', assembly='5.0.5', dry_run=False)
-        pipeline.product = asyncio.run(pipeline._load_product_from_group_config())
-        result = asyncio.run(pipeline._trigger_fbc_build(['openshift-update-service-rhel8-operator-container-5.0.5-1']))
-        self.assertEqual(result, ([], []))
-        build_catalogs.assert_not_awaited()
-        pipeline.refresh_fbcs = True
-        with self.assertRaisesRegex(ValueError, 'Cannot refresh FBCs'):
-            asyncio.run(pipeline._trigger_fbc_build(['openshift-update-service-rhel8-operator-container-5.0.5-1']))
-
     def _make_pipeline(self, **overrides):
         runtime = MagicMock()
         runtime.dry_run = overrides.pop('dry_run', True)

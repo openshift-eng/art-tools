@@ -36,8 +36,8 @@ class TestGenAssemblyLPPipeline(unittest.TestCase):
         }
         return pipeline
 
-    def test_init_requires_release_inputs(self):
-        """An assembly must have a catalog, basis, or explicit image pins."""
+    def test_init_requires_fbc_or_basis(self):
+        """Constructor raises when neither fbc_pullspecs nor basis_assembly is provided."""
         runtime = MagicMock()
         runtime.dry_run = True
         runtime.working_dir = MagicMock()
@@ -57,19 +57,6 @@ class TestGenAssemblyLPPipeline(unittest.TestCase):
         pipeline = self._make_pipeline()
         self.assertEqual(pipeline.fbc_pullspecs, ["quay.io/test/acm-fbc@sha256:abc"])
         self.assertIsNone(pipeline.basis_assembly)
-
-    @patch('pyartcd.pipelines.gen_assembly_lp.validate_fbc_related_images', new_callable=AsyncMock)
-    def test_initial_assembly_from_explicit_image_pins(self, validate_catalog):
-        nvr = 'search-v2-api-container-2.17.3-1'
-        for inputs in ({'include': [f'search-v2-api-container={nvr}']}, {'extra_image_nvrs': [nvr]}):
-            with self.subTest(inputs=inputs):
-                pipeline = self._make_pipeline(fbc_pullspecs=[], **inputs)
-                pins = asyncio.run(pipeline._extract_nvrs_from_fbc())
-                self.assertEqual(pins, {'search-v2-api-container': nvr})
-                definition = pipeline._generate_assembly_definition(pins)
-                images = definition['releases'][pipeline.assembly]['assembly']['members']['images']
-                self.assertEqual(images[0]['metadata']['is']['nvr'], nvr)
-        validate_catalog.assert_not_awaited()
 
     def test_init_accepts_basis_only(self):
         pipeline = self._make_pipeline(fbc_pullspecs=[], basis_assembly="2.17.2")
