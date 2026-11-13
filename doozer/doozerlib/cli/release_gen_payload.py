@@ -2777,9 +2777,20 @@ class PayloadGenerator:
         """
         inconsistencies = []
         # rpm_list will be a list of rpms.
-        # Each entry is another list in the format of [name, epoch, version, release, arch].
+        # Each entry is another list in the format of [name, epoch, version, release, arch, repo_name].
         rpm_list = rhcos_build.get_os_metadata_rpm_list()
-        rpms_dict = {entry[0]: entry[:-1] for entry in rpm_list if entry[-1] not in COREOS_RHEL10_STREAMS}
+        # Prefer the node/base layer's entry for a given package name over the extensions
+        # image's (e.g. 'kernel-core' is present in both); kernel-rt-core, however, is only
+        # ever shipped via the extensions image, so it's only found via the fallback below.
+        rpms_dict: Dict[str, List] = {}
+        extension_rpms_dict: Dict[str, List] = {}
+        for entry in rpm_list:
+            if entry[-1] in COREOS_RHEL10_STREAMS:
+                continue
+            target = extension_rpms_dict if 'extensions' in entry[-1] else rpms_dict
+            target[entry[0]] = entry[:-1]
+        for name, nevra in extension_rpms_dict.items():
+            rpms_dict.setdefault(name, nevra)
 
         def _to_nvr(nevra):
             return f'{nevra[0]}-{nevra[2]}-{nevra[3]}'
@@ -2864,11 +2875,29 @@ class PayloadGenerator:
 
         # Build per-stream RPM index. One RHCOSBuildInspector carries both RHEL9
         # (rhel-coreos) and RHEL10 (rhel-coreos-10) RPMs tagged by repo_name.
+        #
+        # get_os_metadata_rpm_list() returns entries from both the node/base layer
+        # (repo_name "rhel-coreos"/"rhel-coreos-10") and the extensions image
+        # (repo_name "...-extensions"). A payload member like driver-toolkit must be
+        # checked against what the node actually boots -- the base layer -- not against
+        # the extensions image, which may carry its own (possibly divergent, e.g. a
+        # kernel-64k variant) copy of the same package name. Whether the extensions
+        # image's own content is itself consistent with the base layer is a separate
+        # concern, handled elsewhere (detect_rhcos_inconsistent_rpms), so base-layer
+        # entries always take precedence here; an extensions-only entry (e.g.
+        # 'libreswan', which is never installed in the base layer) is used only as a
+        # fallback so packages exclusively shipped as an extension can still be checked.
         rhcos_rpm_vrs_by_stream: Dict[str, Dict[str, str]] = {}
+        rhcos_extension_rpm_vrs_by_stream: Dict[str, Dict[str, str]] = {}
         for rpm in primary_rhcos_build.get_os_metadata_rpm_list():
             name, _, version, release, _, repo_name = rpm
             stream = "rhel-coreos-10" if repo_name in COREOS_RHEL10_STREAMS else self.RHCOS_DEFAULT_STREAM
-            rhcos_rpm_vrs_by_stream.setdefault(stream, {})[name] = f"{version}-{release}"
+            target = rhcos_extension_rpm_vrs_by_stream if 'extensions' in repo_name else rhcos_rpm_vrs_by_stream
+            target.setdefault(stream, {})[name] = f"{version}-{release}"
+        for stream, extension_vrs in rhcos_extension_rpm_vrs_by_stream.items():
+            base_vrs = rhcos_rpm_vrs_by_stream.setdefault(stream, {})
+            for name, vr in extension_vrs.items():
+                base_vrs.setdefault(name, vr)
 
         logger.debug(f"Running payload consistency checks against {primary_rhcos_build}")
         for stream_name, consistency_config in stream_requirements.items():

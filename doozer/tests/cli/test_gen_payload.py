@@ -158,6 +158,37 @@ class TestGenPayloadCli(IsolatedAsyncioTestCase):
         _, _, _, rhcos_rpm_vrs, _, _ = validate_mock.call_args[0]
         self.assertEqual({"kernel-core": "6.12.0-100.el10"}, rhcos_rpm_vrs)
 
+    def test_find_rhcos_payload_rpm_inconsistencies_prefers_base_layer_over_extensions(self):
+        """A payload member (e.g. driver-toolkit) must be checked against the node/base
+        layer's kernel, not the extensions image's -- even if the extensions image carries
+        a divergent copy of the same package name (e.g. a kernel-64k variant bug). An
+        extensions-only package (e.g. libreswan) must still be found as a fallback."""
+        rhcos_build = MagicMock()
+        rhcos_build.runtime.logger = MagicMock()
+        rhcos_build.get_os_metadata_rpm_list.return_value = [
+            ("kernel-core", 0, "5.14.0", "687.66.1.el9_8", "x86_64", "rhel-coreos"),
+            # Extensions image carries a divergent (buggy) kernel-core; must NOT win.
+            ("kernel-core", 0, "5.14.0", "687.67.1.el9_8", "x86_64", "rhcos-coreos-extensions"),
+            # libreswan only ever exists in the extensions image; must still be found.
+            ("libreswan", 0, "5.3.2", "2.el9fdp", "x86_64", "rhcos-coreos-extensions"),
+        ]
+        payload_bri = {"driver-toolkit": MagicMock(), "ose-ovn-kubernetes": MagicMock()}
+        pg = rgp_cli.PayloadGenerator(runtime=MagicMock())
+        nested_config = {
+            "rhel-coreos": {"driver-toolkit": ["kernel"], "ose-ovn-kubernetes": ["libreswan"]},
+        }
+
+        with patch.object(rgp_cli.PayloadGenerator, "validate_pkg_consistency_req", return_value=None) as validate_mock:
+            pg.find_rhcos_payload_rpm_inconsistencies(rhcos_build, payload_bri, nested_config)
+
+        calls_by_pkg = {call.args[1]: call.args[3] for call in validate_mock.call_args_list}
+        self.assertEqual(
+            {"kernel-core": "5.14.0-687.66.1.el9_8", "libreswan": "5.3.2-2.el9fdp"}, calls_by_pkg["kernel"]
+        )
+        self.assertEqual(
+            {"kernel-core": "5.14.0-687.66.1.el9_8", "libreswan": "5.3.2-2.el9fdp"}, calls_by_pkg["libreswan"]
+        )
+
     def test_validate_pkg_consistency_req_kernel_mismatch_is_impermissible(self):
         """A kernel version mismatch against RHCOS is IMPERMISSIBLE -- it can never be waived
         via a release.yml permit, unlike a generic consistency drift."""
@@ -216,6 +247,21 @@ class TestGenPayloadCli(IsolatedAsyncioTestCase):
 
         self.assertIsNotNone(issue)
         self.assertEqual(AssemblyIssueCode.FAILED_CONSISTENCY_REQUIREMENT, issue.code)
+
+    def test_find_rhcos_build_kernel_inconsistencies_prefers_base_layer_kernel(self):
+        """kernel-core is compared using the node/base layer's value, not a divergent copy
+        the extensions image might carry; kernel-rt-core (extensions-only) is still found."""
+        rhcos_build = MagicMock()
+        rhcos_build.get_os_metadata_rpm_list.return_value = [
+            ("kernel-core", 0, "5.14.0", "687.66.1.el9_8", "x86_64", "rhel-coreos"),
+            # Divergent/buggy copy in the extensions image; must be ignored in favor of base.
+            ("kernel-core", 0, "5.14.0", "687.67.1.el9_8", "x86_64", "rhcos-coreos-extensions"),
+            ("kernel-rt-core", 0, "5.14.0", "687.66.1.rt7.198.el9_8", "x86_64", "rhcos-coreos-extensions"),
+        ]
+
+        inconsistencies = rgp_cli.PayloadGenerator.find_rhcos_build_kernel_inconsistencies(rhcos_build)
+
+        self.assertEqual([], inconsistencies)
 
     def test_detect_rhcos_kernel_inconsistencies_is_impermissible(self):
         """A kernel/kernel-rt mismatch within a single RHCOS build is IMPERMISSIBLE -- it
