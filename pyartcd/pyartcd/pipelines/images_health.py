@@ -35,6 +35,7 @@ class ImagesHealthPipeline:
         assembly: str,
         sync_jira: bool = True,
         ping_chai_bot: bool = False,
+        delete_stale_counters: bool = False,
     ):
         self.runtime = runtime
         self.versions = versions.split(',') if versions else ACTIVE_OCP_VERSIONS
@@ -47,6 +48,7 @@ class ImagesHealthPipeline:
         self.assembly = assembly
         self._sync_jira = sync_jira
         self.ping_chai_bot = ping_chai_bot
+        self.delete_stale_counters = delete_stale_counters
         self.report = []
         self.slack_client = self.runtime.new_slack_client()
         self.scanned_versions = []
@@ -55,8 +57,13 @@ class ImagesHealthPipeline:
         self.release_failures = {}  # version -> {image: {failure_count, jenkins_url, nvr, pipeline_url, ...}}
         self.jira_tickets: dict[tuple[str, str], str] = {}  # (image_name, group) -> ticket key
         self._valid_images_cache: dict[str, set[str]] = {}
+        self._all_defined_cache: dict[str, set[str]] = {}  # version -> enabled + disabled (file present) images
 
     async def run(self):
+        """
+        Scan the configured versions for build/rebase/EC/release failures, prune stale Redis
+        counters for deleted images, then sync Jira and emit Slack/chai-bot notifications.
+        """
         await asyncio.gather(*(self.get_report(v) for v in self.versions))
         await asyncio.gather(
             *(self.get_rebase_failures(v) for v in self.versions),
@@ -64,6 +71,20 @@ class ImagesHealthPipeline:
             *(self.get_release_failures(v) for v in self.versions),
         )
         self.runtime.logger.info('Found %s concerns', len(self.report))
+
+        # Prune Redis failure counters for images whose metadata file no longer exists.
+        # Runs only over versions that were actually scanned (build-permitted, not frozen).
+        # Contain failures per-version so a Redis error cannot abort the subsequent
+        # Jira sync / release-channel / public-channel / chai-bot steps.
+        prune_results = await asyncio.gather(
+            *(self._prune_deleted_counters(v) for v in self.scanned_versions),
+            return_exceptions=True,
+        )
+        for version, result in zip(self.scanned_versions, prune_results):
+            # BaseException (not just Exception) so a cancelled prune task (asyncio.CancelledError)
+            # is still logged rather than silently swallowed.
+            if isinstance(result, BaseException):
+                _LOGGER.exception("Stale counter pruning failed for openshift-%s; continuing", version, exc_info=result)
 
         if self._sync_jira and self.assembly == "stream":
             try:
@@ -240,10 +261,178 @@ class ImagesHealthPipeline:
             self._valid_images_cache[version] = valid_images
             return valid_images
         except Exception as e:
+            # Do NOT interpolate the exception message: it embeds the doozer command, which
+            # includes data_path (host) and @data_gitref. Log only the exception class name.
             self.runtime.logger.warning(
-                'Failed to fetch valid images for openshift-%s: %s. Proceeding without filtering.', version, e
+                'Failed to fetch valid images for openshift-%s (%s). Proceeding without filtering.',
+                version,
+                type(e).__name__,
             )
             return set()
+
+    async def _get_all_defined_images(self, version: str, doozer_working: str) -> tuple[set[str], bool]:
+        """
+        Get the set of ALL defined image distgit keys for a given version, i.e. every image
+        whose metadata FILE exists in ocp-build-data — including `mode: disabled` and `mode: wip`
+        images and (via --assembly stream) images that an assembly marks `exclude: true`.
+
+        This is the "A" set used to distinguish disabled-but-defined images (keep counters)
+        from images whose metadata file was deleted (prune counters).
+
+        Results are cached per version. The success flag must be used to gate deletions:
+        a failed load returns (set(), False) and callers must NEVER interpret an empty/failed
+        load as "everything was deleted".
+
+        Arg(s):
+            version (str): OCP version (e.g., "4.18")
+            doozer_working (str): Doozer working directory path
+        Return Value(s):
+            tuple[set[str], bool]: (set of defined image distgit keys, load_succeeded)
+        """
+        if version in self._all_defined_cache:
+            return self._all_defined_cache[version], True
+
+        group_param = f'--group=openshift-{version}'
+        if self.data_gitref:
+            group_param += f'@{self.data_gitref}'
+
+        # NOTE: --load-disabled, --load-wip and --assembly are doozer GLOBAL options and MUST
+        # precede the images:print subcommand, otherwise Click rejects the command.
+        # --load-disabled + --load-wip include mode:disabled and mode:wip images (their metadata
+        # files exist) so they are not falsely classified as deleted. --assembly stream is passed
+        # explicitly (not the global default 'test') so the all-defined set A reflects the stream
+        # assembly and excludes nothing, keeping A a superset of the enabled set E.
+        cmd = [
+            'doozer',
+            '--load-disabled',
+            '--load-wip',
+            '--assembly',
+            'stream',
+            f'--working-dir={doozer_working}',
+            f'--data-path={self.data_path}',
+            group_param,
+            'images:print',
+            '--show-base',
+            '--show-non-release',
+            '--short',
+            '{distgit_key}',
+        ]
+
+        try:
+            _, out, _ = await exectools.cmd_gather_async(cmd, stderr=None)
+            all_images = {line.strip() for line in out.strip().split('\n') if line.strip()}
+            self.runtime.logger.info(
+                'Found %d defined (enabled + disabled + wip) images for openshift-%s', len(all_images), version
+            )
+            self._all_defined_cache[version] = all_images
+            return all_images, True
+        except Exception as e:
+            # Do NOT interpolate the exception message: it embeds the doozer command, which
+            # includes data_path (host) and @data_gitref. Log only the exception class name.
+            self.runtime.logger.warning(
+                'Failed to load all defined images for openshift-%s (%s). Skipping stale counter pruning.',
+                version,
+                type(e).__name__,
+            )
+            return set(), False
+
+    async def _prune_deleted_counters(self, version: str):
+        """
+        Delete Redis failure counters for images whose metadata FILE no longer exists in
+        ocp-build-data. Images that are merely `mode: disabled` (or excluded by the current
+        assembly) keep their counters, because their metadata files still exist — those are
+        simply not reported, which already happens via _get_valid_images filtering.
+
+        Covers all failure families: build-failure, ec-failure, release-failure (build_system
+        konflux) and rebase-failure (build_system brew AND konflux). The whole counter branch
+        (count + metadata) is removed via util.reset_fail_counter, which is idempotent.
+
+        Guardrails:
+          - Skips entirely when the run is restricted via --image-list (cannot infer deletion
+            for unlisted images).
+          - Only runs for versions that were actually scanned (build-permitted, not frozen).
+          - Only deletes when the all-defined ("A") load succeeded cleanly AND returned a
+            non-empty set; a failed OR empty load deletes NOTHING.
+          - Only deletes against the default production data source; a non-default data_path or
+            a pinned data_gitref forces dry-run logging only.
+          - Dry-run by default: unless self.delete_stale_counters is True, only logs the
+            (image, group, counter_type, branch) tuples that WOULD be deleted.
+
+        Arg(s):
+            version (str): OCP version (e.g., "4.18")
+        """
+        group = f'openshift-{version}'
+
+        # Guardrail: cannot infer deletions for images outside a restricted scan.
+        if self.image_list:
+            self.runtime.logger.info('Skipping stale counter pruning for %s: run is restricted via --image-list', group)
+            return
+
+        # Guardrail: only prune versions that were actually scanned (build-permitted, not frozen).
+        if version not in self.scanned_versions:
+            self.runtime.logger.info('Skipping stale counter pruning for %s: version not scanned', group)
+            return
+
+        doozer_working = f'{self.doozer_working}-{version}'
+        all_defined, loaded_ok = await self._get_all_defined_images(version, doozer_working)
+
+        # Guardrail: never treat a failed OR empty "A" load as "everything deleted".
+        # A successful doozer run returning an empty set is treated as a failed load:
+        # a real group always defines at least one image.
+        if not loaded_ok or not all_defined:
+            self.runtime.logger.warning(
+                'Skipping stale counter pruning for %s: could not load a non-empty list of defined images', group
+            )
+            return
+
+        # Guardrail: only perform the actual deletion against the production data source.
+        # A fork or a pinned gitref may legitimately omit images that exist in production, and
+        # counter keys do not encode the data source — deleting based on a non-default source
+        # could drop counters for images that still exist upstream. Dry-run logging stays on.
+        effective_delete = self.delete_stale_counters
+        if effective_delete and (self.data_path != OCP_BUILD_DATA_URL or self.data_gitref):
+            self.runtime.logger.warning(
+                'Skipping stale counter deletion for %s: non-default data source '
+                '(data_path differs from default; gitref_set=%s); dry-run logging only',
+                group,
+                bool(self.data_gitref),
+            )
+            effective_delete = False
+
+        # (counter_type, build_systems) for each failure family.
+        counter_families = [
+            ('build-failure', ['konflux']),
+            ('ec-failure', ['konflux']),
+            ('release-failure', ['konflux']),
+            ('rebase-failure', ['brew', 'konflux']),
+        ]
+
+        for counter_type, build_systems in counter_families:
+            for build_system in build_systems:
+                failures = await util.get_counter_failures(
+                    counter_type, group=group, build_system=build_system, logger=self.runtime.logger
+                )
+                for image_name in failures:
+                    if image_name in all_defined:
+                        continue  # metadata file still exists (enabled or disabled) -> keep counter
+                    branch = f'count:{counter_type}:{build_system}:{group}:{image_name}'
+                    if effective_delete:
+                        self.runtime.logger.warning(
+                            'Deleting stale counter for deleted image %s (%s) type %s branch %s',
+                            image_name,
+                            group,
+                            counter_type,
+                            branch,
+                        )
+                        await util.reset_fail_counter(branch)
+                    else:
+                        self.runtime.logger.warning(
+                            '[DRY RUN] WOULD delete stale counter for deleted image %s (%s) type %s branch %s',
+                            image_name,
+                            group,
+                            counter_type,
+                            branch,
+                        )
 
     async def _get_typed_failures(self, version: str, counter_type: str) -> dict:
         """
@@ -1051,6 +1240,12 @@ class ImagesHealthPipeline:
 @click.option(
     '--sync-jira/--no-sync-jira', default=True, help='Create/close Jira tickets for build failures (default: enabled)'
 )
+@click.option(
+    '--delete-stale-counters/--no-delete-stale-counters',
+    default=False,
+    help='Delete Redis failure counters for images whose metadata file was removed from ocp-build-data. '
+    'Default: disabled (dry-run; only logs what would be deleted)',
+)
 @pass_runtime
 @click_coroutine
 async def images_health(
@@ -1064,6 +1259,7 @@ async def images_health(
     image_list: str,
     assembly: str,
     sync_jira: bool,
+    delete_stale_counters: bool,
 ):
     await ImagesHealthPipeline(
         runtime,
@@ -1076,4 +1272,5 @@ async def images_health(
         assembly,
         sync_jira=sync_jira,
         ping_chai_bot=ping_chai_bot,
+        delete_stale_counters=delete_stale_counters,
     ).run()
