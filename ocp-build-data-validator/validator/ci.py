@@ -12,7 +12,7 @@ from ruamel.yaml import YAML
 from ruamel.yaml.error import YAMLError
 from semver import Version
 
-from . import checks, releases, schema
+from . import checks, pyxis, releases, schema
 
 ROOT_FILES = {'group.yml', 'streams.yml', 'releases.yml', 'erratatool.yml', 'bug.yml', 'bugzilla.yml'}
 
@@ -163,6 +163,7 @@ def validate(
     rpa_root: Path | None,
     application: str | None,
     registry_auth_file: Path | None = None,
+    pyxis_root: Path | None = None,
 ) -> list[str]:
     """Collect file and repository errors while keeping WIP findings nonblocking."""
     errors = []
@@ -240,6 +241,11 @@ def validate(
             errors.extend(checks.validate_admissions(valid_images, rpa_root, application))
     except (ValueError, TypeError, KeyError, YAMLError) as error:
         errors.append(f'repository validation: {error}')
+    if pyxis_root:
+        try:
+            errors.extend(pyxis.validate_content_streams(valid_images, group, pyxis_root))
+        except (ValueError, TypeError, KeyError, OSError, YAMLError) as error:
+            errors.append(f'Pyxis validation: {error}')
     return errors
 
 
@@ -257,6 +263,7 @@ def main(argv=None) -> int:
         '--github-token-file', type=Path, help='File containing a read-only token for private GitHub sources'
     )
     parser.add_argument('--rpa-root', type=Path, help='Local konflux-release-data ReleasePlanAdmission directory')
+    parser.add_argument('--pyxis-root', type=Path, help='Local pyxis-repo-configs checkout containing products/')
     parser.add_argument('--application', help='Exact Konflux application whose stage/prod RPAs should be checked')
     parser.add_argument(
         '--registry-auth-file', type=Path, help='Docker/Podman pull-auth file for production FBC catalogs'
@@ -275,7 +282,14 @@ def main(argv=None) -> int:
             raise ValueError('Registry auth file does not exist')
         selected = select_files(root, args.base_ref)
         errors = validate(
-            root, selected, args.schema_only, token, args.rpa_root, args.application, args.registry_auth_file
+            root,
+            selected,
+            args.schema_only,
+            token,
+            args.rpa_root,
+            args.application,
+            args.registry_auth_file,
+            args.pyxis_root,
         )
         base = args.base_ref or prow_base_ref()
         if base:

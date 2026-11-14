@@ -156,3 +156,46 @@ mount an appropriate credential and pass this option before adopting these
 checks for private sources. Missing or inaccessible sources fail validation;
 a public upstream cannot hide an inaccessible midstream. ``--schema-only``
 continues to skip remote source checks.
+
+Pyxis product content streams
+----------------------------
+
+The shared LP and OCP entry point accepts ``--pyxis-root`` pointing to a local
+checkout of ``releng/pyxis-repo-configs``. It reads repository definitions under
+``products/``; product-listing files are not repository configurations. The Prow
+step supplies this checkout for both LP and OCP jobs.
+
+For both product families, the expected tag is ``v<major>.<minor>`` from the
+resolved ``group.yml.name``. For example, ``quay-3.18`` requires ``v3.18`` and
+``openshift-4.22`` requires ``v4.22``. Group variables are expanded first.
+``group.yml.version`` is deliberately not the source: some LPs use an upstream
+operator version there rather than the product stream. A group name without a
+resolvable product major/minor fails when there are delivery repositories to check.
+
+Every ``delivery.delivery_repo_names`` entry and
+``delivery.bundle_delivery_repo_name`` is matched exactly to a Pyxis
+``repository.repository``. RHEL suffixes are significant: an RHEL 8 entry cannot
+satisfy an RHEL 9 delivery repository. Each matching configuration must include
+the expected tag in ``content_stream_tags``. Additional streams are allowed,
+including streams on shared bundle repositories. ``includes_multiple_content_streams``
+and ``use_latest`` do not waive this requirement.
+
+There are **no floating-tag exceptions** for either LPs or OCP. ``latest`` alone
+fails. Any future exception must explicitly identify the repository, product
+stream and justification, and have regression coverage. Disabled/WIP images and
+images with ``for_release: false`` are excluded, matching RPA validation.
+Missing repositories, absent tags and malformed tag lists fail. Diagnostics name
+the repository, expected stream and existing Pyxis file to update; for a repository
+with no definition they identify the ``products/`` directory where it must be added.
+
+This check also runs with ``--schema-only`` when ``--pyxis-root`` is supplied;
+all Pyxis reads are local and require no Pyxis API credentials. For example::
+
+    uv run python -I -m validator.ci \
+      --repo /path/to/quay-3.18 \
+      --schema-only --pyxis-root /path/to/pyxis-repo-configs \
+      --report /tmp/validation.json
+
+Regression cases cover the Quay RHEL 9 repositories and the OCP AWS node
+termination handler corrected in `Pyxis MR !2027
+<https://gitlab.cee.redhat.com/releng/pyxis-repo-configs/-/merge_requests/2027>`__.
