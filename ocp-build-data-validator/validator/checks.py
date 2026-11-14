@@ -98,7 +98,9 @@ def validate_source_paths(data: dict, *, image: bool = True) -> list[str]:
     return [
         f'{name} must be a nonempty relative path inside the repository'
         for name, value, directory in paths
-        if value is not None and not relative_path(value, directory=directory)
+        if value is not None
+        and not (name == 'content.source.path' and value == '')
+        and not relative_path(value, directory=directory)
     ]
 
 

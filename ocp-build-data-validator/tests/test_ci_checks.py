@@ -99,6 +99,20 @@ def test_source_paths_cannot_escape_repository(path):
     assert any('relative' in error for error in checks.validate_image(data))
 
 
+def test_empty_source_path_means_repository_root():
+    """An explicitly empty source path is equivalent to the repository root."""
+    data = image()
+    data['content']['source']['path'] = ''
+    assert checks.validate_image(data) == []
+
+
+def test_empty_dockerfile_is_not_a_valid_source_file():
+    """Only the source directory may be empty, not a file path."""
+    data = image()
+    data['content']['source']['dockerfile'] = ''
+    assert any('dockerfile' in error for error in checks.validate_image(data))
+
+
 def test_reference_validation_reports_unknown_streams_and_missing_members():
     """Basic OCP member/stream validation remains available."""
     images = {'a': {'from': {'member': 'b'}}, 'b': {'from': {'member': 'a', 'builder': [{'stream': 'missing'}]}}}
