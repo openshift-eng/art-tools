@@ -31,7 +31,7 @@ class TestLPPreparationRPAValidation(IsolatedAsyncioTestCase):
                             "components": [
                                 {
                                     "name": "oadp-operator",
-                                    "containerImage": "quay.io/test/image@sha256:abc",
+                                    "containerImage": "quay.io/test/image@sha256:" + "a" * 64,
                                     "source": {"git": {"url": "https://example.com/source", "revision": "abc"}},
                                 }
                             ],
@@ -113,6 +113,11 @@ class TestLPPreparationRPAValidation(IsolatedAsyncioTestCase):
             pipeline.setup_shipment_repo = AsyncMock()
             pipeline._load_product_from_group_config = AsyncMock(return_value="oadp")
             pipeline._load_layered_product_shipment_mr = MagicMock(return_value=None)
+            # Exercise assembly generation with local metadata, keeping the RPA
+            # tests independent of Doozer, Brew, and the build-data repository.
+            pipeline._releases_config = {}
+            pipeline._component_doozer_keys = {"oadp-container": "oadp-operator"}
+            pipeline._load_component_doozer_keys = AsyncMock(return_value=pipeline._component_doozer_keys)
             pipeline._load_release_notes_template = MagicMock(return_value=None)
             pipeline.create_snapshot = AsyncMock(return_value=config.shipment.snapshot)
             pipeline.create_shipment_config = MagicMock(return_value=config)

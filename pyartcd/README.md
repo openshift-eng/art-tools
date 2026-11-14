@@ -1,5 +1,49 @@
 # Pyartcd
 
+## Direct layered-product release assemblies
+
+Layered-product `release-from-fbc` inputs must use
+`repository@sha256:<64 lowercase hex characters>`. Tag inputs, including
+`repository:tag@sha256:...`, are rejected before environment checks or repository
+setup, including in test mode and dry runs. This is a change for callers that
+previously supplied tags: use the catalog's immutable digest instead. Refreshed
+FBCs must also be digest-pinned. OCP optional input handling is unchanged.
+
+`release-from-fbc` generates `assembly.yml` in the ARTCD working directory from
+the validated product operator and operand NVRs selected for shipment. It uses
+canonical Doozer image keys, records source FBC pullspecs by OCP target, and
+creates a standard assembly. Generated bundles stay in the image shipment;
+external dependencies do not become invented assembly members.
+
+With `--create-mr`, normal creation, reuse, and forced replacement persist the
+complete assembly and `group.shipment.mr` together before making the shipment
+MR ready. Existing production-history checks still block these writes, including
+with `--force`. Concurrent assembly or inherited-pin changes fail preparation.
+Without `--create-mr`, shipment and assembly files are local outputs only.
+`--test --create-mr` still creates an isolated draft shipment MR and never writes
+assembly data or a shipment pointer to ocp-build-data. Dry runs do not publish.
+Test mode and dry runs also print the generated assembly YAML in the job logs
+so it remains inspectable after the task pod is removed.
+
+Existing `basis.assembly` inheritance follows `gen-assembly-lp`: changed builds
+receive child overrides and absent parent components remain inherited. Explicit
+exclusions are honored, and the parent is unchanged. Effective inherited pins
+are included in the image shipment. Standalone reruns replace the generated pin
+list so removed inputs do not remain pinned.
+Removing a redundant or obsolete pin preserves unrelated member settings, such
+as architecture overrides and explicit exclusions.
+
+Use `--unified-fbc` to record validated immutable FBC builds in
+`group.fbc_builds` and omit individual FBC shipment files. Operators, operands,
+and bundles remain in the image shipment. The separate `lp-unified-fbc` job
+consumes these records; this option does not itself build a unified catalog.
+Omitting the option preserves individual FBC shipments and clears outdated
+unified records. The option is LP-only and cannot be used with `--ocp-optional`.
+The group's `ignore_patch_version` policy is honored when recording FBCs and
+when the unified consumer reads them; major and minor versions must still match.
+Tekton exposes `unified-fbc`, defaulting to `false`; deploy matching art-tools
+support before selecting it. OCP optional shipments retain their existing path.
+
 Layered product builds support `version: auto` in `group.yml`. This derives the
 image build version from the group's `MAJOR.MINOR` suffix and fixes the patch
 component at zero. For example, both `acm-5.1` and `mce-5.1` resolve to `5.1.0`,
@@ -28,7 +72,8 @@ these tags. FBC shipments retain their catalog release path. See the
 [shipment tag configuration](../elliott/README.md#shipment-release-tags).
 
 `release-from-fbc` uses `DOOZER_DATA_PATH` and `DOOZER_DATA_GITREF` consistently
-for product resolution and FBC refresh. A local path combined with an explicit ref
+for product resolution, assembly loading, and FBC refresh. Assembly loading accepts
+both SSH and HTTPS GitHub repository URLs. A local path combined with an explicit ref
 is rejected because Doozer reads local working-tree contents without checking
 out that ref. For a local checkout, select the revision yourself and unset
 `DOOZER_DATA_GITREF`; alternatively, use a remote Git URL with the requested ref.

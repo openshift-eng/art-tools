@@ -134,7 +134,9 @@ class MergeLayeredFbcPipeline:
             for target in sorted(set(targets), key=lambda value: tuple(map(int, value.split('.')))):
                 if self.target and target != self.target:
                     continue
-                entries = recorded_assembly_fbcs(releases, assembly, target)
+                entries = recorded_assembly_fbcs(
+                    releases, assembly, target, ignore_patch_version=config.get('ignore_patch_version') is True
+                )
                 inputs = inputs_by_target.setdefault(target, {})
                 for operator, record in sorted(entries.items()):
                     if record['nvr'] in inputs:

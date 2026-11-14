@@ -20,6 +20,7 @@ from pyartcd.fbc_util import (
     validate_fbc_related_images,
 )
 from pyartcd.git import GitRepository
+from pyartcd.lp_assembly import image_pin_members
 from pyartcd.runtime import Runtime
 
 yaml = new_roundtrip_yaml_handler()
@@ -315,28 +316,12 @@ class GenAssemblyLPPipeline:
         }
 
         if self.basis_assembly and parent_operand_map is not None:
-            members_images = []
-            for distgit_key, nvr in sorted(operand_map.items()):
-                if parent_operand_map.get(distgit_key) != nvr:
-                    members_images.append(
-                        {
-                            'distgit_key': distgit_key,
-                            'why': 'Pin this image build for the assembly',
-                            'metadata': {'is': {'nvr!': nvr}},
-                        }
-                    )
+            members_images = image_pin_members(operand_map, parent_operand_map)
 
             if not members_images and not self.fbc_pullspecs:
                 group_info = {}
         else:
-            members_images = [
-                {
-                    'distgit_key': distgit_key,
-                    'why': 'Pin this image build for the assembly',
-                    'metadata': {'is': {'nvr': nvr}},
-                }
-                for distgit_key, nvr in sorted(operand_map.items())
-            ]
+            members_images = image_pin_members(operand_map)
 
         assembly_def: Dict = {
             'type': 'standard',
