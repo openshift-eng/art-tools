@@ -80,7 +80,7 @@ class ReconcileCIUpstreamLayeredPipeline:
         self.data_gitref = data_gitref
         self.assembly = assembly
         self.add_labels = add_labels
-        self.moist_run = moist_run
+        self.moist_run = moist_run or runtime.dry_run
 
         # Validate parameters
         self._validate_parameters()
@@ -276,6 +276,7 @@ class ReconcileCIUpstreamLayeredPipeline:
             for label in self.add_labels.split():
                 pr_args += f' --add-label "{label}"'
         if self.moist_run:
+            self._logger.warning('[DRY RUN] Would open reconciliation PRs for %s', self.group)
             pr_args += " --moist-run"  # doozer's dry-run equivalent for PRs
 
         last_stderr = ""
@@ -290,16 +291,6 @@ class ReconcileCIUpstreamLayeredPipeline:
 
             # Determine whether this attempt hit a transient failure
             is_transient = self._is_transient_error(last_stderr)
-
-            # rc == 1 with --moist-run is expected (simulation mode), not a failure.
-            # Log stderr at WARNING even here so real crashes aren't silently swallowed.
-            if rc == 1 and self.moist_run:
-                if last_stderr:
-                    self._logger.warning(f"{self.group}: doozer stderr during --moist-run (rc=1): {last_stderr[:500]}")
-                self._logger.info(f"{self.group}: PR simulation completed (rc=1 from --moist-run)")
-                if attempt > 1:
-                    self._logger.info(f"{self.group}: Succeeded on attempt {attempt}")
-                return 0
 
             # Transient failure on rc == 1 when NOT in moist-run is a real crash
             if rc == 1 and not self.moist_run and is_transient:
