@@ -14,6 +14,7 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 from typing import Dict, Iterable, List, Optional, OrderedDict, Union, cast
 
+import aiohttp
 import artcommonlib
 import yaml
 from artcommonlib import exectools, redis
@@ -405,6 +406,22 @@ def get_changes(yaml_data: dict) -> dict:
     return changes
 
 
+async def is_global_automation_frozen() -> bool:
+    """Read the master switch from canonical build-data main, regardless of group overrides."""
+    url = 'https://raw.githubusercontent.com/openshift-eng/ocp-build-data/main/config/automation.yml'
+    async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=30)) as session:
+        async with session.get(url) as response:
+            # Allow the automation change to be deployed before the new config is merged.
+            if response.status == 404:
+                return False
+            response.raise_for_status()
+            config = yaml.safe_load(await response.text())
+
+    if not isinstance(config, dict) or not isinstance(config.get('freeze_automation'), bool):
+        raise ValueError(f'{url} must define freeze_automation as a YAML boolean')
+    return config['freeze_automation']
+
+
 async def get_freeze_automation(
     group: str,
     doozer_data_path: str = constants.OCP_BUILD_DATA_URL,
@@ -413,8 +430,11 @@ async def get_freeze_automation(
     extra_vars: list = None,
 ) -> str:
     """
-    Returns freeze_automation flag for a specific group
+    Return the effective freeze flag, with the global switch taking precedence over the group.
     """
+    if await is_global_automation_frozen():
+        logger.warning('All groups are frozen by freeze_automation in ocp-build-data main/config/automation.yml')
+        return 'yes'
 
     group_param = f'--group={group}'
     if doozer_data_gitref:
@@ -488,6 +508,7 @@ async def is_build_permitted(
     """
     Check whether the group should be built right now.
     This depends on:
+        - global master switch on ocp-build-data main
         - group config 'freeze_automation'
         - manual/scheduled run
         - current day of the week
@@ -516,7 +537,7 @@ async def is_build_permitted(
     # Check for frozen automation
     # yaml parses unquoted "yes" as a boolean... accept either
     if freeze_automation in ['yes', 'True']:
-        logger.info('All automation is currently disabled by freeze_automation in group.yml.')
+        logger.info('Automation is disabled by the global or group freeze_automation setting.')
         return False
 
     # Check for frozen scheduled automation
