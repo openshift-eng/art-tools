@@ -95,6 +95,9 @@ class TagRPMsPipeline:
         return json.loads(out)
 
     async def handle_success(self):
+        if self._runtime.dry_run:
+            self.logger.warning('[DRY RUN] Would delete failure counter %s', self.fail_count_name)
+            return
         res = await redis.delete_key(self.fail_count_name)
         if res:
             self.logger.debug('Fail count "%s" deleted', self.fail_count_name)
@@ -108,7 +111,10 @@ class TagRPMsPipeline:
         self.logger.info('Failure count for %s: %s', self.group, fail_count)
 
         # Update fail counter on Redis
-        await redis.set_value(self.fail_count_name, fail_count)
+        if not self._runtime.dry_run:
+            await redis.set_value(self.fail_count_name, fail_count)
+        else:
+            self.logger.warning('[DRY RUN] Would update failure counter %s', self.fail_count_name)
 
         # Notify ART
         if fail_count % ART_NOTIFY_FREQUENCY == 0:
