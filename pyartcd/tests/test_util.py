@@ -4,6 +4,7 @@ from pathlib import Path
 from unittest import IsolatedAsyncioTestCase
 from unittest.mock import AsyncMock, MagicMock, patch
 
+import aiohttp
 from artcommonlib.variants import BuildVariant
 from pyartcd.build_strategy import BuildStrategy
 from pyartcd.counter_models import (
@@ -200,13 +201,12 @@ class TestUtil(IsolatedAsyncioTestCase):
         )
         self.assertEqual(url, 'https///github.com/openshift/ironic-image/blob/release-4.13/')
 
+    @patch("pyartcd.util.is_global_automation_frozen", return_value=False)
     @patch("artcommonlib.exectools.cmd_gather_async")
-    async def test_get_freeze_automation(self, cmd_gather_async: AsyncMock):
-        cmd_gather_async.return_value = (0, '', '')
+    async def test_get_freeze_automation(self, cmd_gather_async: AsyncMock, global_freeze: AsyncMock):
+        cmd_gather_async.return_value = (0, 'scheduled\n', '')
 
-        await util.get_freeze_automation(
-            group='openshift-4.15',
-        )
+        self.assertEqual(await util.get_freeze_automation(group='openshift-4.15'), 'scheduled')
         cmd_gather_async.assert_awaited_once_with(
             [
                 'doozer',
@@ -239,6 +239,71 @@ class TestUtil(IsolatedAsyncioTestCase):
                 'freeze_automation',
             ]
         )
+
+    @patch("pyartcd.util.aiohttp.ClientSession")
+    async def test_is_global_automation_frozen(self, session_class):
+        response = MagicMock(status=200)
+        session = MagicMock()
+        session_class.return_value.__aenter__.return_value = session
+        session.get.return_value.__aenter__.return_value = response
+        for value, expected in [('true', True), ('false', False)]:
+            with self.subTest(value=value):
+                response.text = AsyncMock(return_value=f'freeze_automation: {value}\n')
+                self.assertIs(await util.is_global_automation_frozen(), expected)
+        session.get.assert_called_with(
+            'https://raw.githubusercontent.com/openshift-eng/ocp-build-data/main/config/automation.yml'
+        )
+
+    @patch("pyartcd.util.aiohttp.ClientSession")
+    async def test_global_freeze_missing_config(self, session_class):
+        response = MagicMock(status=404)
+        session = MagicMock()
+        session_class.return_value.__aenter__.return_value = session
+        session.get.return_value.__aenter__.return_value = response
+        self.assertFalse(await util.is_global_automation_frozen())
+        response.text.assert_not_called()
+
+    @patch("pyartcd.util.aiohttp.ClientSession")
+    async def test_global_freeze_invalid_config(self, session_class):
+        response = MagicMock(status=200)
+        session = MagicMock()
+        session_class.return_value.__aenter__.return_value = session
+        session.get.return_value.__aenter__.return_value = response
+        for config in ['', '{}', '[]', 'freeze_automation: "false"', 'freeze_automation: scheduled', 'invalid: [']:
+            with self.subTest(config=config):
+                response.text = AsyncMock(return_value=config)
+                with self.assertRaises((ValueError, util.yaml.YAMLError)):
+                    await util.is_global_automation_frozen()
+
+    @patch("pyartcd.util.aiohttp.ClientSession")
+    async def test_global_freeze_read_failure(self, session_class):
+        session = MagicMock()
+        session_class.return_value.__aenter__.return_value = session
+        response = MagicMock(status=503)
+        session.get.return_value.__aenter__.return_value = response
+        response.raise_for_status.side_effect = aiohttp.ClientError('Service unavailable')
+        with self.assertRaises(aiohttp.ClientError):
+            await util.is_global_automation_frozen()
+        session.get.return_value.__aenter__.side_effect = asyncio.TimeoutError
+        with self.assertRaises(asyncio.TimeoutError):
+            await util.is_global_automation_frozen()
+
+    @patch("pyartcd.util.is_manual_build", return_value=True)
+    @patch("pyartcd.util.is_global_automation_frozen", return_value=True)
+    @patch("artcommonlib.exectools.cmd_gather_async")
+    async def test_global_freeze_overrides_groups(self, cmd_gather_async, global_freeze, manual_build):
+        # Even manual runs and custom group refs cannot override the master switch.
+        for group in ['openshift-4.18', 'openshift-4.22', 'acm-2.17']:
+            with self.subTest(group=group):
+                self.assertFalse(
+                    await util.is_build_permitted(
+                        group=group,
+                        data_path='https://github.com/random-fork/ocp-build-data',
+                        doozer_data_gitref='custom-ref',
+                    )
+                )
+        cmd_gather_async.assert_not_awaited()
+        manual_build.assert_not_called()
 
     @patch("pyartcd.util.get_weekday")
     @patch("pyartcd.util.is_manual_build")
