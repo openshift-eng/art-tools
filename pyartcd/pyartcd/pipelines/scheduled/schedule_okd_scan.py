@@ -67,7 +67,10 @@ async def run_for(version: str, runtime: Runtime, lock_manager: LockManager):
 
     # Schedule scan
     runtime.logger.info('[%s] Scheduling okd-scan', version)
-    jenkins.start_okd_scan_konflux(version=version, block_until_building=False)
+    if not runtime.dry_run:
+        jenkins.start_okd_scan_konflux(version=version, block_until_building=False)
+    else:
+        runtime.logger.warning('[DRY RUN] Would trigger %s job for %s', 'okd-scan-konflux', version)
 
 
 async def resolve_schedule_versions(runtime: Runtime, version: tuple) -> list[str]:

@@ -31,7 +31,10 @@ async def run_for(version: str, runtime: Runtime, lock_manager: LockManager):
 
     # Schedule scan
     runtime.logger.info(f'[{version}] Scheduling scan-operator')
-    jenkins.start_scan_operator(version=version, block_until_building=False)
+    if not runtime.dry_run:
+        jenkins.start_scan_operator(version=version, block_until_building=False)
+    else:
+        runtime.logger.warning('[DRY RUN] Would trigger %s job for %s', 'scan-operator', version)
 
 
 @cli.command('schedule-scan-operator')

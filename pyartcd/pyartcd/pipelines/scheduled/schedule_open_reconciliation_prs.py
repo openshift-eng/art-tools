@@ -16,6 +16,9 @@ async def run_for(version: str, runtime: Runtime):
         version: OCP version (e.g., "4.17")
         runtime: PyARTCD runtime instance
     """
+    if runtime.dry_run:
+        runtime.logger.warning('[DRY RUN] Would trigger %s job for %s', 'open-reconciliation-prs', version)
+        return
     try:
         runtime.logger.info('[%s] Scheduling open-reconciliation-prs', version)
         jenkins.start_open_reconciliation_prs(version=version, block_until_complete=False)
