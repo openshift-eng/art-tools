@@ -1190,10 +1190,98 @@ class JIRABugTracker(BugTracker):
     def filter_bugs_by_cutoff_event(
         self, bugs: Iterable, desired_statuses: Iterable[str], sweep_cutoff_timestamp: float, verbose=False
     ) -> List:
+        """Finds bugs whose status at the cutoff (S1) was one of ``desired_statuses`` and that did not
+        regress afterward.
+
+        ``desired_statuses`` is the caller-supplied cutoff floor (F), applied to S1 only; it is decoupled
+        from the current-status (S2) requirement, which is pinned separately by the search. For
+        find-bugs:sweep (ART-25075) F is ON_QA-or-higher ({ON_QA, VERIFIED}), while the current status is
+        independently pinned to VERIFIED by the Jira search. See
+        ``BugzillaBugTracker.filter_bugs_by_cutoff_event`` for the full S1/S2/A/F rule.
+        """
         dt = datetime.utcfromtimestamp(sweep_cutoff_timestamp).strftime("%Y/%m/%d %H:%M")
         val = ','.join(f'"{s}"' for s in desired_statuses)
         query = f"issue in ({','.join([b.id for b in bugs])}) and status was in ({val}) on(\"{dt}\")"
-        return self._search(query, verbose=verbose)
+        # Bugs whose status at the cutoff event (S1) was one of the desired statuses.
+        candidate_bugs = self._search(query, verbose=verbose)
+
+        # ART-25075: mirror the Bugzilla no-regression guard on the Jira path. Per @Justin Pierce, a bug that
+        # qualified at the cutoff must not have regressed afterward: every post-cutoff status change must be to a
+        # status strictly greater than the status that qualified it at the cutoff. Without this, a bug that was
+        # ON_QA at the cutoff, regressed (e.g. back to ASSIGNED/POST), and is VERIFIED now would be swept in.
+        qualified_bugs = []
+        for bug in candidate_bugs:
+            after_cutoff_status_changes = [
+                change for change in self._status_changes(bug.id) if change[0] > sweep_cutoff_timestamp
+            ]
+            if not after_cutoff_status_changes:
+                # No status change after the cutoff; the status now is the status at the cutoff.
+                sweep_cutoff_status = bug.status
+            else:
+                # The status at the cutoff is the old status of the first status change after the cutoff.
+                sweep_cutoff_status = after_cutoff_status_changes[0][1]
+
+            # Jira reports status *display names* (e.g. 'Verified', 'Release Pending', 'New') which are not
+            # members of constants.VALID_BUG_STATES ('VERIFIED', 'RELEASE_PENDING', 'NEW'). Normalize both the
+            # cutoff status and each post-cutoff status to a canonical rank before comparing (ART-25075).
+            # Fail closed: if either side is unrankable/unknown, we cannot prove the transition was safe, so we
+            # treat it as a regression and exclude the bug rather than silently sweeping it in.
+            cutoff_rank = _bug_status_rank(sweep_cutoff_status)
+            regressed_changes = []
+            for _, _old, new in after_cutoff_status_changes:
+                new_rank = _bug_status_rank(new)
+                if cutoff_rank is None or new_rank is None:
+                    logger.warning(
+                        f"{bug.id}: could not rank a status for the no-regression check "
+                        f"(cutoff status={sweep_cutoff_status!r}, post-cutoff status={new!r}); "
+                        f"treating it as a regression"
+                    )
+                    regressed_changes.append(new)
+                    continue
+                if new_rank <= cutoff_rank:
+                    regressed_changes.append(new)
+            if regressed_changes:
+                logger.warning(
+                    f"{bug.id} is ignored because its status was {sweep_cutoff_status} at the moment of sweep cutoff "
+                    f"({datetime.utcfromtimestamp(sweep_cutoff_timestamp)}), however its status changed back to "
+                    f"{regressed_changes} afterwards"
+                )
+                continue
+            qualified_bugs.append(bug)
+
+        return qualified_bugs
+
+    def _status_changes(self, bug_id: str) -> List:
+        """Returns the chronologically-sorted "status" field changes of a Jira issue from its changelog.
+
+        The full changelog is read from the dedicated, paginated ``issue/{key}/changelog`` endpoint so that
+        issues with long histories are not truncated. (``issue(expand='changelog')`` only returns the first
+        page of histories; and the pinned jira-python 3.10.5 has no ``issue_changelog`` helper, so we page
+        the endpoint directly.)
+
+        :param bug_id: a Jira issue key
+        :return: a list of (timestamp, old_status, new_status) tuples, sorted by timestamp ascending
+        """
+        changes = []
+        start_at = 0
+        while True:
+            page = self._client._get_json(f'issue/{bug_id}/changelog', params={'startAt': start_at, 'maxResults': 100})
+            histories = page.get('values', [])
+            for history in histories:
+                for item in history.get('items', []):
+                    if item.get('field') == 'status':
+                        changes.append(
+                            (
+                                datetime.strptime(history['created'], '%Y-%m-%dT%H:%M:%S.%f%z').timestamp(),
+                                item.get('fromString'),
+                                item.get('toString'),
+                            )
+                        )
+            start_at += len(histories)
+            if page.get('isLast') or not histories or start_at >= page.get('total', start_at):
+                break
+        changes.sort(key=lambda change: change[0])
+        return changes
 
     async def filter_attached_bugs(self, bugs: Iterable):
         bugs = list(bugs)
@@ -1349,14 +1437,20 @@ class BugzillaBugTracker(BugTracker):
         - S2 be the current state (as in the moment we are scanning) of Z
         - S1 be the state of the Z at the moment of the cutoff
         - A be the set of state changes Z after the cutoff
-        - F be the sweep states (MODIFIED, ON_QA, VERIFIED)
+        - F be the desired cutoff statuses: the caller-supplied ``desired_statuses``, applied to the status
+          *at the cutoff* (S1). F is decoupled from the current-status (S2) requirement, which is pinned
+          separately by the search. For find-bugs:sweep (ART-25075) the cutoff floor F is ON_QA-or-higher
+          ({ON_QA, VERIFIED}), while the current status is independently pinned to VERIFIED by the search.
 
         Then Z is swept in if all the following are true:
         - S1 ∈ F
-        - S2 ∈ F
+        - S2 is one of the statuses the search was restricted to (enforced upstream by the search, not here;
+          for the sweep this is VERIFIED)
         - A | ∄v : v <= S1
 
-        In prose: if a BZ seems to qualify for a sweep currently and at the cutoff event, then all state changes after the cutoff event must be to a greater than the state which qualified the BZ at the cutoff event.
+        In prose: if a BZ seems to qualify for a sweep currently (per the search) and at the cutoff event
+        (S1 ∈ F), then all state changes after the cutoff event must be to a state strictly greater than
+        the state which qualified the BZ at the cutoff event (the no-regression guard).
 
         :param bugs: a list of bugs
         :param desired_statuses: desired bug statuses
@@ -1693,6 +1787,26 @@ class SearchURL(object):
 def to_timestamp(dt: xmlrpc.client.DateTime):
     """Converts xmlrpc.client.DateTime to timestamp"""
     return datetime.strptime(dt.value, "%Y%m%dT%H:%M:%S").replace(tzinfo=timezone.utc).timestamp()
+
+
+def _bug_status_rank(status) -> Optional[int]:
+    """Returns the ordering rank of a bug status within ``constants.VALID_BUG_STATES``.
+
+    Jira reports status *display names* (e.g. 'Verified', 'Release Pending', 'New') that differ from the
+    canonical state names ('VERIFIED', 'RELEASE_PENDING', 'NEW'). Normalize by stripping, upper-casing and
+    replacing spaces with underscores before looking up the rank.
+
+    :param status: a bug status, as a canonical name or a Jira display name
+    :return: the index of the normalized status in ``constants.VALID_BUG_STATES``, or ``None`` if the status
+        is empty or cannot be mapped to a known state (so callers can skip it instead of raising ValueError)
+    """
+    if not status:
+        return None
+    normalized = str(status).strip().upper().replace(' ', '_')
+    try:
+        return constants.VALID_BUG_STATES.index(normalized)
+    except ValueError:
+        return None
 
 
 async def approximate_cutoff_timestamp(basis_event: int, koji_api: ClientSession, metas: Iterable[Metadata]) -> float:
