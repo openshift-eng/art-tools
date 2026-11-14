@@ -33,7 +33,11 @@ def plan_lineage_repairs(runs: list[dict]) -> tuple[list[dict], list[dict]]:
             return None
         candidate = matches[0]
         expected = 'build-layered-products' if pipeline_name(run) == 'olm-bundle-konflux' else 'olm-bundle-konflux'
-        if pipeline_name(candidate) == expected and identity(candidate) == identity(run) and real(candidate):
+        if (
+            pipeline_name(candidate) in (expected, 'layered-products-scan')
+            and identity(candidate) == identity(run)
+            and real(candidate)
+        ):
             if created(candidate) and created(candidate) <= created(run):
                 return candidate
         return None
