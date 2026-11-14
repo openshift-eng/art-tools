@@ -8,6 +8,7 @@ from pyartcd.pipelines.verify_stage_testing import StageTestingPipeline
 class TestStageTestingPipeline(unittest.IsolatedAsyncioTestCase):
     def setUp(self):
         self.runtime = MagicMock()
+        self.runtime.dry_run = False
         self.runtime.working_dir = MagicMock()
         self.runtime.working_dir.__truediv__ = MagicMock(return_value=MagicMock(mkdir=MagicMock()))
 
