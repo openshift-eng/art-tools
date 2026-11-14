@@ -114,6 +114,7 @@ class BuildConformaVerifyPipeline:
         self.dry_run = runtime.dry_run
         self.logger = LOGGER
         self._group_config = None
+        self._operator_bundle_names: Optional[dict[str, str]] = None
 
         self.working_dir = self.runtime.working_dir / "conforma_verify"
         self.working_dir.mkdir(parents=True, exist_ok=True)
@@ -252,6 +253,10 @@ class BuildConformaVerifyPipeline:
                     if r.nvr not in existing_nvrs:
                         fbc_records_list.append(r)
 
+        bundle_records_list, fbc_records_list = await self._filter_enabled_operator_records(
+            bundle_records_list, fbc_records_list
+        )
+
         if bundle_records_list:
             self.logger.info("Running EC verification for %d bundle builds...", len(bundle_records_list))
             passed, violations = await self._verify_records(bundle_records_list, build_type="bundle")
@@ -348,15 +353,45 @@ class BuildConformaVerifyPipeline:
 
         Uses doozer's "bundle-name" output format, which honors any per-image
         `bundle_name_override` config rather than assuming '{operator_name}-bundle'.
+        Only enabled operators are returned (doozer excludes `mode: disabled` images).
         """
-        cmd = self._doozer_base_command + ['olm-bundle:list-olm-operators', '--output-format', 'bundle-name']
-        _, out, _ = await exectools.cmd_gather_async(cmd, stderr=None)
-        bundle_names_by_operator: dict[str, str] = {}
-        for line in out.strip().split('\n') if out.strip() else []:
-            distgit_key, _, bundle_name = line.partition('\t')
-            if distgit_key and bundle_name:
-                bundle_names_by_operator[distgit_key] = bundle_name
-        return bundle_names_by_operator
+        if self._operator_bundle_names is None:
+            cmd = self._doozer_base_command + ['olm-bundle:list-olm-operators', '--output-format', 'bundle-name']
+            _, out, _ = await exectools.cmd_gather_async(cmd, stderr=None)
+            bundle_names_by_operator: dict[str, str] = {}
+            for line in out.strip().split('\n') if out.strip() else []:
+                distgit_key, _, bundle_name = line.partition('\t')
+                if distgit_key and bundle_name:
+                    bundle_names_by_operator[distgit_key] = bundle_name
+            self._operator_bundle_names = bundle_names_by_operator
+        return self._operator_bundle_names
+
+    async def _filter_enabled_operator_records(
+        self, bundle_records: list[KonfluxRecord], fbc_records: list[KonfluxRecord]
+    ) -> tuple[list[KonfluxRecord], list[KonfluxRecord]]:
+        """Drop bundle/FBC records whose owning operator is disabled in ocp-build-data.
+
+        `_find_latest_bundles`/`_find_latest_fbcs` query BigQuery by group/assembly only, so
+        they can return historical builds for operators since set to `mode: disabled`.
+        """
+        if not bundle_records and not fbc_records:
+            return bundle_records, fbc_records
+
+        bundle_names_by_operator = await self._find_operator_bundle_names()
+        enabled_bundle_names = set(bundle_names_by_operator.values())
+        enabled_fbc_names = {f'{distgit_key}-fbc' for distgit_key in bundle_names_by_operator}
+
+        filtered_bundles = [r for r in bundle_records if r.name in enabled_bundle_names]
+        if len(filtered_bundles) != len(bundle_records):
+            self.logger.info(
+                "Skipping %d bundle build(s) for disabled operators", len(bundle_records) - len(filtered_bundles)
+            )
+
+        filtered_fbcs = [r for r in fbc_records if r.name in enabled_fbc_names]
+        if len(filtered_fbcs) != len(fbc_records):
+            self.logger.info("Skipping %d FBC build(s) for disabled operators", len(fbc_records) - len(filtered_fbcs))
+
+        return filtered_bundles, filtered_fbcs
 
     async def _find_corresponding_builds(
         self, nvr_record_map: dict[str, KonfluxRecord], lookup_fbcs: bool = True
