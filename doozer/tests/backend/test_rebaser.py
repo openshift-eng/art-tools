@@ -98,14 +98,14 @@ FROM base1
 ENV ART_BUILD_ENGINE=konflux
 ENV ART_BUILD_DEPS_METHOD=cachi2
 ENV ART_BUILD_NETWORK=open
-RUN go clean -cache || true
 ENV ART_BUILD_DEPS_MODE=default
+# End Konflux-specific steps
+RUN go clean -cache || true
 USER 0
 RUN mkdir -p /tmp/art/yum_temp; mv /etc/yum.repos.d/*.repo /tmp/art/yum_temp/ || true
 COPY .oit/art-unsigned.repo /etc/yum.repos.d/
 RUN curl https://certs.corp.redhat.com/certs/Current-IT-Root-CAs.pem
 ADD https://certs.corp.redhat.com/certs/Current-IT-Root-CAs.pem /tmp/art
-# End Konflux-specific steps
 LABEL foo="bar baz"
 USER 1000
 FROM base2
@@ -114,14 +114,14 @@ FROM base2
 ENV ART_BUILD_ENGINE=konflux
 ENV ART_BUILD_DEPS_METHOD=cachi2
 ENV ART_BUILD_NETWORK=open
-RUN go clean -cache || true
 ENV ART_BUILD_DEPS_MODE=default
+# End Konflux-specific steps
+RUN go clean -cache || true
 USER 0
 RUN mkdir -p /tmp/art/yum_temp; mv /etc/yum.repos.d/*.repo /tmp/art/yum_temp/ || true
 COPY .oit/art-unsigned.repo /etc/yum.repos.d/
 RUN curl https://certs.corp.redhat.com/certs/Current-IT-Root-CAs.pem
 ADD https://certs.corp.redhat.com/certs/Current-IT-Root-CAs.pem /tmp/art
-# End Konflux-specific steps
 USER 2000
 RUN commands
 
@@ -168,14 +168,14 @@ FROM base1
 ENV ART_BUILD_ENGINE=konflux
 ENV ART_BUILD_DEPS_METHOD=cachi2
 ENV ART_BUILD_NETWORK=open
-RUN go clean -cache || true
 ENV ART_BUILD_DEPS_MODE=default
+# End Konflux-specific steps
+RUN go clean -cache || true
 USER 0
 RUN mkdir -p /tmp/art/yum_temp; mv /etc/yum.repos.d/*.repo /tmp/art/yum_temp/ || true
 COPY .oit/art-unsigned.repo /etc/yum.repos.d/
 RUN curl https://certs.corp.redhat.com/certs/Current-IT-Root-CAs.pem
 ADD https://certs.corp.redhat.com/certs/Current-IT-Root-CAs.pem /tmp/art
-# End Konflux-specific steps
 LABEL foo="bar baz"
 USER 1000
 FROM base2
@@ -184,14 +184,14 @@ FROM base2
 ENV ART_BUILD_ENGINE=konflux
 ENV ART_BUILD_DEPS_METHOD=cachi2
 ENV ART_BUILD_NETWORK=open
-RUN go clean -cache || true
 ENV ART_BUILD_DEPS_MODE=default
+# End Konflux-specific steps
+RUN go clean -cache || true
 USER 0
 RUN mkdir -p /tmp/art/yum_temp; mv /etc/yum.repos.d/*.repo /tmp/art/yum_temp/ || true
 COPY .oit/art-unsigned.repo /etc/yum.repos.d/
 RUN curl https://certs.corp.redhat.com/certs/Current-IT-Root-CAs.pem
 ADD https://certs.corp.redhat.com/certs/Current-IT-Root-CAs.pem /tmp/art
-# End Konflux-specific steps
 USER 2000
 RUN commands
 
@@ -238,10 +238,10 @@ FROM base1
 ENV ART_BUILD_ENGINE=konflux
 ENV ART_BUILD_DEPS_METHOD=cachi2
 ENV ART_BUILD_NETWORK=hermetic
-RUN go clean -cache || true
 ENV ART_BUILD_DEPS_MODE=default
-USER 0
 # End Konflux-specific steps
+RUN go clean -cache || true
+USER 0
 LABEL foo="bar baz"
 USER 1000
 FROM base2
@@ -250,10 +250,10 @@ FROM base2
 ENV ART_BUILD_ENGINE=konflux
 ENV ART_BUILD_DEPS_METHOD=cachi2
 ENV ART_BUILD_NETWORK=hermetic
-RUN go clean -cache || true
 ENV ART_BUILD_DEPS_MODE=default
-USER 0
 # End Konflux-specific steps
+RUN go clean -cache || true
+USER 0
 USER 2000
 RUN commands
 
@@ -297,10 +297,10 @@ FROM base1
 ENV ART_BUILD_ENGINE=konflux
 ENV ART_BUILD_DEPS_METHOD=cachi2
 ENV ART_BUILD_NETWORK=hermetic
-RUN go clean -cache || true
 ENV ART_BUILD_DEPS_MODE=default
-USER 0
 # End Konflux-specific steps
+RUN go clean -cache || true
+USER 0
 LABEL foo="bar baz"
 USER 1000
 FROM base2
@@ -309,10 +309,10 @@ FROM base2
 ENV ART_BUILD_ENGINE=konflux
 ENV ART_BUILD_DEPS_METHOD=cachi2
 ENV ART_BUILD_NETWORK=hermetic
-RUN go clean -cache || true
 ENV ART_BUILD_DEPS_MODE=default
-USER 0
 # End Konflux-specific steps
+RUN go clean -cache || true
+USER 0
 USER 2000
 RUN commands
 
@@ -352,14 +352,14 @@ FROM base1
 ENV ART_BUILD_ENGINE=konflux
 ENV ART_BUILD_DEPS_METHOD=cachi2
 ENV ART_BUILD_NETWORK=open
-RUN go clean -cache || true
 ENV ART_BUILD_DEPS_MODE=default
+# End Konflux-specific steps
+RUN go clean -cache || true
 USER 0
 RUN mkdir -p /tmp/art/yum_temp; mv /etc/yum.repos.d/*.repo /tmp/art/yum_temp/ || true
 COPY .oit/art-unsigned.repo /etc/yum.repos.d/
 RUN curl https://certs.corp.redhat.com/certs/Current-IT-Root-CAs.pem
 ADD https://certs.corp.redhat.com/certs/Current-IT-Root-CAs.pem /tmp/art
-# End Konflux-specific steps
 LABEL foo="bar baz"
 FROM base2
 
@@ -367,14 +367,14 @@ FROM base2
 ENV ART_BUILD_ENGINE=konflux
 ENV ART_BUILD_DEPS_METHOD=cachi2
 ENV ART_BUILD_NETWORK=open
-RUN go clean -cache || true
 ENV ART_BUILD_DEPS_MODE=default
+# End Konflux-specific steps
+RUN go clean -cache || true
 USER 0
 RUN mkdir -p /tmp/art/yum_temp; mv /etc/yum.repos.d/*.repo /tmp/art/yum_temp/ || true
 COPY .oit/art-unsigned.repo /etc/yum.repos.d/
 RUN curl https://certs.corp.redhat.com/certs/Current-IT-Root-CAs.pem
 ADD https://certs.corp.redhat.com/certs/Current-IT-Root-CAs.pem /tmp/art
-# End Konflux-specific steps
 RUN commands
 
 
@@ -426,6 +426,185 @@ COPY . /skills/
         self.assertEqual(expected.strip(), dfp.content.strip())
         self.assertNotIn("RUN go clean", dfp.content)
         self.assertNotIn("USER 0", dfp.content)
+
+    def test_add_build_repos_multistage_scratch(self):
+        """
+        Test multi-stage Dockerfile where the final stage is FROM scratch but
+        builder stages need repos. Shell commands (RUN, USER, COPY repos) should
+        only be injected into non-scratch stages. The scratch stage should only
+        get common ENV vars.
+        """
+        from types import SimpleNamespace
+
+        metadata = MagicMock()
+        metadata.get_konflux_network_mode.return_value = "open"
+        metadata.config.konflux = Model({})
+        metadata.config.konflux['cachito'] = SimpleNamespace(mode=Missing)
+        metadata.config.final_stage_user = Missing
+        metadata.is_lockfile_generation_enabled.return_value = False
+
+        dfp = DockerfileParser(path=self.directory.name)
+        dfp.content = """
+FROM golang:1.21 AS build
+RUN make build
+FROM scratch
+COPY --from=build /app /app
+"""
+        expected = """
+FROM golang:1.21 AS build
+
+# Start Konflux-specific steps
+ENV ART_BUILD_ENGINE=konflux
+ENV ART_BUILD_DEPS_METHOD=cachi2
+ENV ART_BUILD_NETWORK=open
+ENV ART_BUILD_DEPS_MODE=default
+# End Konflux-specific steps
+RUN go clean -cache || true
+USER 0
+RUN mkdir -p /tmp/art/yum_temp; mv /etc/yum.repos.d/*.repo /tmp/art/yum_temp/ || true
+COPY .oit/art-unsigned.repo /etc/yum.repos.d/
+RUN curl https://certs.corp.redhat.com/certs/Current-IT-Root-CAs.pem
+ADD https://certs.corp.redhat.com/certs/Current-IT-Root-CAs.pem /tmp/art
+RUN make build
+FROM scratch
+
+# Start Konflux-specific steps
+ENV ART_BUILD_ENGINE=konflux
+ENV ART_BUILD_DEPS_METHOD=cachi2
+ENV ART_BUILD_NETWORK=open
+ENV ART_BUILD_DEPS_MODE=default
+# End Konflux-specific steps
+COPY --from=build /app /app
+"""
+        rebaser = KonfluxRebaser(MagicMock(), MagicMock(), MagicMock(), "unsigned", "test-repo")
+        rebaser._add_build_repos(dfp=dfp, metadata=metadata, dest_dir=Path(self.directory.name))
+        self.maxDiff = None
+        self.assertEqual(expected.strip(), dfp.content.strip())
+
+        # Verify the scratch stage doesn't have shell commands
+        stages = dfp.content.split("FROM scratch")
+        self.assertEqual(len(stages), 2, "Should have exactly one FROM scratch stage")
+        scratch_stage = stages[1]
+        self.assertNotIn("RUN go clean", scratch_stage)
+        self.assertNotIn("USER 0", scratch_stage)
+        self.assertNotIn("COPY .oit/", scratch_stage)
+
+        # Verify the builder stage DOES have shell commands
+        builder_stage = stages[0]
+        self.assertIn("RUN go clean -cache || true", builder_stage)
+        self.assertIn("USER 0", builder_stage)
+        self.assertIn("COPY .oit/art-unsigned.repo", builder_stage)
+
+    def test_add_build_repos_no_shell_override_false(self):
+        """
+        Test that explicit konflux.no_shell: false overrides auto-detection
+        and forces shell commands even when from.stream is 'scratch' in config.
+        """
+        from types import SimpleNamespace
+
+        metadata = MagicMock()
+        metadata.get_konflux_network_mode.return_value = "hermetic"
+        metadata.config.konflux = Model({"no_shell": False})
+        metadata.config.konflux['cachito'] = SimpleNamespace(mode=Missing)
+        metadata.config.final_stage_user = Missing
+        metadata.is_lockfile_generation_enabled.return_value = False
+        # Config says scratch, but no_shell: false should override
+        metadata.config.get.return_value = {'stream': 'scratch'}
+
+        dfp = DockerfileParser(path=self.directory.name)
+        dfp.content = """
+FROM custom-scratch-like
+COPY . /app/
+"""
+        rebaser = KonfluxRebaser(MagicMock(), MagicMock(), MagicMock(), "unsigned", "test-repo")
+        rebaser._add_build_repos(dfp=dfp, metadata=metadata, dest_dir=Path(self.directory.name))
+
+        # With no_shell: false, shell commands should be injected even though
+        # config suggests scratch
+        self.assertIn("RUN go clean -cache || true", dfp.content)
+        self.assertIn("USER 0", dfp.content)
+
+    def test_add_build_repos_no_shell_override_true(self):
+        """
+        Test that explicit konflux.no_shell: true skips shell commands
+        for ALL stages, even non-scratch ones.
+        """
+        from types import SimpleNamespace
+
+        metadata = MagicMock()
+        metadata.get_konflux_network_mode.return_value = "open"
+        metadata.config.konflux = Model({"no_shell": True})
+        metadata.config.konflux['cachito'] = SimpleNamespace(mode=Missing)
+        metadata.config.final_stage_user = Missing
+        metadata.is_lockfile_generation_enabled.return_value = False
+
+        dfp = DockerfileParser(path=self.directory.name)
+        dfp.content = """
+FROM base1
+RUN something
+FROM base2
+RUN other
+"""
+        rebaser = KonfluxRebaser(MagicMock(), MagicMock(), MagicMock(), "unsigned", "test-repo")
+        rebaser._add_build_repos(dfp=dfp, metadata=metadata, dest_dir=Path(self.directory.name))
+
+        # With no_shell: true, no shell commands should appear
+        self.assertNotIn("RUN go clean", dfp.content)
+        self.assertNotIn("USER 0", dfp.content)
+        self.assertNotIn("COPY .oit/", dfp.content)
+
+        # But ENV vars should still be present
+        self.assertIn("ENV ART_BUILD_ENGINE=konflux", dfp.content)
+        self.assertIn("ENV ART_BUILD_DEPS_MODE=default", dfp.content)
+
+    def test_add_build_repos_multistage_scratch_no_final_cleanup(self):
+        """
+        Test that final stage cleanup is skipped when the final stage is FROM scratch
+        in a non-hermetic multi-stage build.
+        """
+        from types import SimpleNamespace
+
+        metadata = MagicMock()
+        metadata.get_konflux_network_mode.return_value = "open"
+        metadata.config.konflux = Model({})
+        metadata.config.konflux['cachito'] = SimpleNamespace(mode=Missing)
+        metadata.config.final_stage_user = Missing
+        metadata.is_lockfile_generation_enabled.return_value = False
+
+        dfp = DockerfileParser(path=self.directory.name)
+        dfp.content = """
+FROM golang:1.21 AS build
+USER 1000
+RUN make build
+FROM scratch
+COPY --from=build /app /app
+"""
+        rebaser = KonfluxRebaser(MagicMock(), MagicMock(), MagicMock(), "unsigned", "test-repo")
+        rebaser._add_build_repos(dfp=dfp, metadata=metadata, dest_dir=Path(self.directory.name))
+
+        # Final cleanup (repo removal) should NOT appear because final stage is scratch
+        self.assertNotIn("RUN rm -f /etc/yum.repos.d/art-*", dfp.content)
+        self.assertNotIn("RUN rm -rf /tmp/art", dfp.content)
+
+        # Builder stage should have repo injection
+        builder_content = dfp.content.split("FROM scratch")[0]
+        self.assertIn("COPY .oit/art-unsigned.repo", builder_content)
+        self.assertIn("RUN mkdir -p /tmp/art/yum_temp", builder_content)
+
+    def test_is_scratch_stage(self):
+        """Test the _is_scratch_stage static method."""
+        self.assertTrue(KonfluxRebaser._is_scratch_stage("scratch"))
+        self.assertTrue(KonfluxRebaser._is_scratch_stage("scratch AS final"))
+        self.assertTrue(KonfluxRebaser._is_scratch_stage("SCRATCH"))
+        self.assertTrue(KonfluxRebaser._is_scratch_stage("  scratch  "))
+        # FROM flags (e.g. --platform=$BUILDPLATFORM) should be skipped
+        self.assertTrue(KonfluxRebaser._is_scratch_stage("--platform=$BUILDPLATFORM scratch"))
+        self.assertTrue(KonfluxRebaser._is_scratch_stage("--platform=linux/amd64 scratch AS final"))
+        self.assertFalse(KonfluxRebaser._is_scratch_stage("--platform=$BUILDPLATFORM golang:1.21"))
+        self.assertFalse(KonfluxRebaser._is_scratch_stage("golang:1.21"))
+        self.assertFalse(KonfluxRebaser._is_scratch_stage("base1"))
+        self.assertFalse(KonfluxRebaser._is_scratch_stage("scratch-like"))
+        self.assertFalse(KonfluxRebaser._is_scratch_stage(""))
 
     def test_write_rpms_lock_file_enabled(self):
         metadata = MagicMock()
