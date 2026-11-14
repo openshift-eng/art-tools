@@ -187,6 +187,47 @@ class TestImageMetadata(unittest.TestCase):
         rt.logger = logging.getLogger('test_runtime')  # Use real logger
         return image.ImageMetadata(rt, data_obj)
 
+    def test_is_payload_true(self):
+        metadata = self._create_image_metadata('openshift/ose-console')
+        metadata.config = Model({'name': 'openshift/ose-console', 'for_payload': True, 'payload_name': 'console'})
+
+        self.assertTrue(metadata.is_payload)
+
+    def test_is_payload_default_false(self):
+        metadata = self._create_image_metadata('openshift/ose-console')
+        metadata.config = Model({'name': 'openshift/ose-console'})
+
+        self.assertFalse(metadata.is_payload)
+
+    def test_is_payload_conflicts_with_base_only_raises(self):
+        metadata = self._create_image_metadata('openshift/ose-console')
+        metadata.config = Model(
+            {'name': 'openshift/ose-console', 'for_payload': True, 'payload_name': 'console', 'base_only': True}
+        )
+
+        with self.assertRaises(ValueError):
+            metadata.is_payload
+
+    def test_get_payload_tag_info_explicit_name(self):
+        metadata = self._create_image_metadata('openshift/ose-console')
+        metadata.config = Model({'name': 'openshift/ose-console', 'for_payload': True, 'payload_name': 'console'})
+
+        self.assertEqual(metadata.get_payload_tag_info(), 'console')
+
+    def test_get_payload_tag_info_missing_payload_name_raises(self):
+        metadata = self._create_image_metadata('openshift/ose-console')
+        metadata.config = Model({'name': 'openshift/ose-console', 'for_payload': True})
+
+        with self.assertRaises(ValueError):
+            metadata.get_payload_tag_info()
+
+    def test_get_payload_tag_info_not_payload_raises(self):
+        metadata = self._create_image_metadata('openshift/ose-console')
+        metadata.config = Model({'name': 'openshift/ose-console'})
+
+        with self.assertRaises(ValueError):
+            metadata.get_payload_tag_info()
+
     def test_cachi2_enabled_1(self):
         metadata = self._create_image_metadata('openshift/test_0')
         mock_config = MagicMock()
