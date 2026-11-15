@@ -865,6 +865,10 @@ class KonfluxOcpPipeline:
                 raise result
 
     async def run(self):
+        if await util.is_global_automation_frozen():
+            LOGGER.warning('Skipping Konflux build: all groups are frozen by ocp-build-data main/config/automation.yml')
+            return
+
         # Unset XDG_RUNTIME_DIR to ensure we don't use default auth.json
         # All registry auth must come from explicit Jenkins credentials or oc login to temp files
         if 'XDG_RUNTIME_DIR' in os.environ:

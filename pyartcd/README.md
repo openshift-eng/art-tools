@@ -109,3 +109,7 @@ in effect so this code can be deployed before the config is merged. Other read
 errors and invalid config stop the check instead of permitting builds.
 This does not cancel builds already running or add freeze checks to commands
 that do not currently use them.
+
+Direct `beta:ocp4-konflux` builds also check the master switch before initializing
+registry credentials or running build operations, for every assembly.
+`--ignore-locks` skips concurrency locks and does not override the global freeze.

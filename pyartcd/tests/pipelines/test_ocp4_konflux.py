@@ -13,6 +13,51 @@ from pyartcd.pipelines.ocp4_konflux import KonfluxOcpPipeline
 from pyartcd.util import update_build_fail_counters
 
 
+class TestGlobalAutomationFreeze(unittest.IsolatedAsyncioTestCase):
+    @staticmethod
+    def make_pipeline(assembly='test'):
+        return KonfluxOcpPipeline(
+            runtime=MagicMock(),
+            version='4.22',
+            assembly=assembly,
+            image_build_strategy='only',
+            rpm_build_strategy='none',
+            build_priority='auto',
+        )
+
+    @patch('pyartcd.pipelines.ocp4_konflux.util.is_global_automation_frozen', return_value=True)
+    @patch('pyartcd.pipelines.ocp4_konflux.RegistryConfig')
+    @patch.dict(os.environ, {'XDG_RUNTIME_DIR': '/tmp/keep-runtime-dir'}, clear=True)
+    async def test_direct_run_skips_before_credentials_and_builds(self, registry_config, global_freeze):
+        for assembly in ('stream', 'test', '4.22.1'):
+            with self.subTest(assembly=assembly):
+                pipeline = self.make_pipeline(assembly)
+                pipeline._run_pipeline = AsyncMock()
+
+                await pipeline.run()
+
+                pipeline._run_pipeline.assert_not_awaited()
+                registry_config.assert_not_called()
+                self.assertEqual(os.environ['XDG_RUNTIME_DIR'], '/tmp/keep-runtime-dir')
+
+    @patch('pyartcd.pipelines.ocp4_konflux.util.is_global_automation_frozen', return_value=False)
+    @patch.dict(os.environ, {}, clear=True)
+    async def test_unfrozen_run_reaches_existing_credential_validation(self, global_freeze):
+        pipeline = self.make_pipeline()
+        with self.assertRaisesRegex(ValueError, 'QUAY_AUTH_FILE'):
+            await pipeline.run()
+
+    @patch('pyartcd.pipelines.ocp4_konflux.util.is_global_automation_frozen', side_effect=TimeoutError)
+    @patch('pyartcd.pipelines.ocp4_konflux.RegistryConfig')
+    async def test_global_freeze_read_failure_stops_build(self, registry_config, global_freeze):
+        pipeline = self.make_pipeline()
+        pipeline._run_pipeline = AsyncMock()
+        with self.assertRaises(TimeoutError):
+            await pipeline.run()
+        pipeline._run_pipeline.assert_not_awaited()
+        registry_config.assert_not_called()
+
+
 class TestUpdateBuildFailCounters(unittest.IsolatedAsyncioTestCase):
     """Tests for the shared Konflux build counter utility used by OCP."""
 
