@@ -618,7 +618,7 @@ class ImagesHealthPipeline:
                 '   - On success: report fixed images, changes made, and test build links; *ask user to approve PR*.',
                 '   - On approval: file PR attributed to bot (not Slack profile), *squash merge* (merge commits nullify `:noop`).'
                 ' PR description *must include* full clickable Jenkins build URL'
-                ' (e.g. `https://art-jenkins.apps.prod-stable-spoke1-dc-iad2.itup.redhat.com/job/aos-cd-builds/job/build%252Fokd/BUILD_NUMBER/`)'
+                ' (e.g. `https://art-jenkins.apps.int.prod-stable-spoke1-dc-iad2.itup.redhat.com/job/aos-cd-builds/job/build%252Fokd/BUILD_NUMBER/`)'
                 ' and full clickable Slack thread `https://` URL.',
                 '3. If confidence < 90% or upstream change required: diagnostic report only,'
                 ' suggest `art:bot-skip-auto-fix` label on Jira ticket, defer to humans.',
