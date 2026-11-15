@@ -461,7 +461,7 @@ class TestNotifyChaiBot(IsolatedAsyncioTestCase):
         concern = _make_concern('console', 'openshift-4.21', 'LATEST_ATTEMPT_FAILED', latest_success_idx=2)
         prompt = pipeline._build_chai_bot_prompt('4.21', [concern], {})
         self.assertIn('art:bot-skip-auto-fix', prompt)
-        self.assertIn('art-jenkins.apps.prod-stable-spoke1-dc-iad2.itup.redhat.com', prompt)
+        self.assertIn('art-jenkins.apps.int.prod-stable-spoke1-dc-iad2.itup.redhat.com', prompt)
 
     @patch("pyartcd.pipelines.okd_images_health.util.is_okd_version_enabled", new_callable=AsyncMock, return_value=True)
     async def test_run_calls_chai_bot_for_rebase_only_version(self, _mock_enabled):
