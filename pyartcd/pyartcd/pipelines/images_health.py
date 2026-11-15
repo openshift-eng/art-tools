@@ -982,7 +982,7 @@ class ImagesHealthPipeline:
                 ' apply `art:bot-skip-auto-fix` to the Jira ticket (ART can remove to retry).',
                 '   - On success: report fixed images, changes made, and test build links; *ask user to approve PR*.',
                 '   - On approval: file PR attributed to bot (not Slack profile). PR description *must include*'
-                ' full clickable Jenkins build URL (e.g. `https://art-jenkins.apps.prod-stable-spoke1-dc-iad2.itup.redhat.com/job/aos-cd-builds/job/build%252Focp4-konflux/BUILD_NUMBER/`)'
+                ' full clickable Jenkins build URL (e.g. `https://art-jenkins.apps.int.prod-stable-spoke1-dc-iad2.itup.redhat.com/job/aos-cd-builds/job/build%252Focp4-konflux/BUILD_NUMBER/`)'
                 ' and full clickable Slack thread `https://` URL.',
                 '3. If confidence < 90% or upstream change required: diagnostic report only,'
                 ' suggest `art:bot-skip-auto-fix` label on Jira ticket, defer to humans.',

@@ -106,9 +106,9 @@ def get_build_url():
 def get_build_path():
     """
     Examples:
-    - https://art-jenkins.apps.prod-stable-spoke1-dc-iad2.itup.redhat.com/job/aos-cd-builds/job/build%252Focp4/46870/ =>
+    - https://art-jenkins.apps.int.prod-stable-spoke1-dc-iad2.itup.redhat.com/job/aos-cd-builds/job/build%252Focp4/46870/ =>
         job/aos-cd-builds/job/build%252Focp4/46870
-    - https://art-jenkins.apps.prod-stable-spoke1-dc-iad2.itup.redhat.com/job/aos-cd-builds/job/build%252Focp4/46870 =>
+    - https://art-jenkins.apps.int.prod-stable-spoke1-dc-iad2.itup.redhat.com/job/aos-cd-builds/job/build%252Focp4/46870 =>
         job/aos-cd-builds/job/build%252Focp4/46870
     """
 
