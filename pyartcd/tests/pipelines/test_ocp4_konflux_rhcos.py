@@ -61,6 +61,7 @@ class TestRhcosPostBuildBuildCommand(unittest.IsolatedAsyncioTestCase):
 
 
 class TestRegistryAuthConfiguration(unittest.IsolatedAsyncioTestCase):
+    @patch('pyartcd.pipelines.ocp4_konflux.util.is_global_automation_frozen', return_value=False)
     @patch.dict(
         os.environ,
         {
@@ -80,6 +81,7 @@ class TestRegistryAuthConfiguration(unittest.IsolatedAsyncioTestCase):
         mock_registry_config,
         _mock_mkdtemp,
         _mock_copy,
+        mock_global_freeze,
     ):
         mock_registry_config.return_value.__enter__.return_value = '/tmp/merged-auth.json'
         pipeline = _make_pipeline()
@@ -87,6 +89,7 @@ class TestRegistryAuthConfiguration(unittest.IsolatedAsyncioTestCase):
 
         await pipeline.run()
 
+        mock_global_freeze.assert_awaited_once_with()
         registry_config_args = mock_registry_config.call_args.kwargs
         self.assertEqual(
             registry_config_args['source_files'],
