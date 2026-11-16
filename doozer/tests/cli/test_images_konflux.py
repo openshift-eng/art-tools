@@ -522,6 +522,14 @@ class TestBaseImageReleasePrioritisation(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(config.build_priority, '7')
         self.assertIsNone(config.build_priority_policy)
 
+        # Golang auto builds must also work when the policy service is unavailable.
+        runtime.group = 'golang-1.26'
+        cli.build_priority = 'auto'
+        self.policy_loader.side_effect = AssertionError('Golang builds must not fetch the policy')
+        await cli.run()
+        self.policy_loader.assert_not_awaited()
+        self.assertIsNone(mock_builder_cls.call_args.kwargs['config'].build_priority_policy)
+
 
 class TestKonfluxRebaseCli(unittest.IsolatedAsyncioTestCase):
     """Tests for beta:images:konflux:rebase state recording."""

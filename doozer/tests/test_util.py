@@ -578,6 +578,21 @@ class TestGetKonfluxBuildPriority(unittest.TestCase):
             metadata = self._make_metadata(children=children)
             self.assertEqual(util.get_konflux_build_priority(metadata, "golang-1.22"), "2")
 
+    def test_golang_builders_bypass_enabled_and_disabled_policies(self):
+        for enabled in (True, False):
+            policy = BuildPriorityPolicy.model_validate(
+                {
+                    'enabled': enabled,
+                    'rules': [{'product': 'ocp', 'priority': 4}],
+                    'default_priority': 10,
+                }
+            )
+            for children in (self.is_leaf, self.is_parent):
+                with self.subTest(enabled=enabled, parent=bool(children)):
+                    metadata = self._make_metadata(children=children)
+                    metadata.runtime.product = 'ocp'
+                    self.assertEqual(util.get_konflux_build_priority(metadata, 'golang-1.26', policy), '2')
+
     def test_enabled_policy_overrides_image_and_group_priorities(self):
         metadata = self._make_metadata(children=self.is_parent, image_config_priority=7, group_config_priority=8)
         metadata.runtime.product = 'ocp'

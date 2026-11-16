@@ -23,6 +23,12 @@ use priority 4. The stream list is maintained explicitly; this does not read a
 release calendar or automatically promote future streams. All other products
 use `default_priority`.
 
+Golang builders bypass policy loading and resolution, retaining their existing
+priority 2 default regardless of `enabled`. Release FBCs continue to request
+priority 2 directly through release preparation. Neither category needs a rule
+or depends on this policy being enabled. Explicit overrides keep their existing
+behavior for these builds.
+
 Rules are evaluated in order; the first match wins. Use canonical product IDs
 (for example, `ocp` or `rhacm2`). `versions` is an optional list of major/minor
 strings; `min_version: "4.18"` is also supported for a numeric lower bound.

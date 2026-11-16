@@ -482,7 +482,8 @@ def get_konflux_build_priority(metadata, group, policy: BuildPriorityPolicy | No
     :return: Priority value as string; "1" (high) "10" (low)
     """
     logger.info(f"Resolving build priority for {metadata.distgit_key}")
-    if policy is not None:
+    # Golang builders retain their existing priority independently of the incident policy.
+    if policy is not None and 'golang' not in group:
         priority = policy.priority_for(metadata.runtime.product, group)
         if priority is not None:
             return priority

@@ -415,7 +415,10 @@ class KonfluxBuildCli:
             )
 
         # Freeze one policy snapshot for the batch before submitting any builds.
-        priority_policy = await load_build_priority_policy() if self.build_priority == 'auto' else None
+        # Golang builders use their fixed default without depending on the policy service.
+        priority_policy = None
+        if self.build_priority == 'auto' and 'golang' not in group:
+            priority_policy = await load_build_priority_policy()
         config = KonfluxImageBuilderConfig(
             base_dir=Path(runtime.working_dir, constants.WORKING_SUBDIR_KONFLUX_BUILD_SOURCES),
             group_name=group,
