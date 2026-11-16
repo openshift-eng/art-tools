@@ -27,13 +27,14 @@ from pyartcd.util import load_group_config, resolve_build_version
 
 
 class LayeredProductsScanPipeline:
-    def __init__(self, runtime, group, data_path, assembly, data_gitref, image_list):
+    def __init__(self, runtime, group, data_path, assembly, data_gitref, image_list, rebuild_before=None):
         self.runtime = runtime
         self.group = group
         self.data_path = data_path
         self.assembly = assembly
         self.data_gitref = data_gitref
         self.image_list = image_list
+        self.rebuild_before = rebuild_before
 
         self.logger = logging.getLogger(__name__)
         self._doozer_working = self.runtime.working_dir / "doozer_working"
@@ -134,6 +135,8 @@ class LayeredProductsScanPipeline:
         )
         if self.runtime.dry_run:
             cmd.append('--dry-run')
+        if self.rebuild_before is not None:
+            cmd.append(f'--rebuild-before={self.rebuild_before}')
 
         _, out, _ = await exectools.cmd_gather_async(cmd, stderr=None)
         self.logger.info('scan-sources output for %s:\n%s', self.group, out)
@@ -809,10 +812,11 @@ class LayeredProductsScanPipeline:
 )
 @click.option('--data-gitref', required=False, default='', help='Doozer data path git [branch / tag / sha] to use')
 @click.option('--image-list', required=False, help='Comma/space-separated list to of images to scan, empty to scan all')
+@click.option('--rebuild-before', help='Override the build invalidation cutoff used by Doozer scan-sources')
 @pass_runtime
 @click_coroutine
 async def layered_products_scan(
-    runtime: Runtime, group: str, assembly: str, data_path: str, data_gitref, image_list: str
+    runtime: Runtime, group: str, assembly: str, data_path: str, data_gitref, image_list: str, rebuild_before: str
 ):
     if not os.getenv('KUBECONFIG'):
         if tekton.is_tekton_context():
@@ -832,6 +836,7 @@ async def layered_products_scan(
         data_path=data_path,
         data_gitref=data_gitref,
         image_list=image_list,
+        rebuild_before=rebuild_before,
     )
 
     if runtime.dry_run:

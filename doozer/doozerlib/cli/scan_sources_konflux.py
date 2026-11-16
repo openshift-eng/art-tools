@@ -19,7 +19,7 @@ from artcommonlib.arch_util import brew_arch_for_go_arch, go_arch_for_brew_arch
 from artcommonlib.constants import SCAN_SOURCES_CONCURRENCY_LIMIT
 from artcommonlib.exectools import cmd_gather_async
 from artcommonlib.github_auth import get_github_client_for_org, get_github_git_auth_env, get_github_git_pat_env
-from artcommonlib.konflux.konflux_build_record import Engine, KonfluxBuildOutcome, KonfluxBuildRecord
+from artcommonlib.konflux.konflux_build_record import Engine, KonfluxBuildRecord
 from artcommonlib.konflux.package_rpm_finder import PackageRpmFinder
 from artcommonlib.model import Missing, Model
 from artcommonlib.pushd import Dir
@@ -48,6 +48,8 @@ from doozerlib.source_resolver import SourceResolver
 from doozerlib.util import oc_image_info_for_arch_async
 
 DEFAULT_THRESHOLD_HOURS = 6
+# A fixed invalidation date, rather than a rolling build-age threshold.
+DEFAULT_REBUILD_BEFORE = '2026-11-16T00:00:00Z'
 
 FLOATING_GOLANG_BUILDER_TAG_RE = re.compile(r'^[^@\s]+:golang-builder-v[0-9]+\.[0-9]+-rhel[0-9]+$')
 
@@ -65,6 +67,7 @@ class ConfigScanSources:
         dry_run: bool = False,
         variant: str = 'ocp',
         skip_rpms: bool = False,
+        rebuild_before: Optional[datetime] = None,
     ):
         if runtime.konflux_db is None:
             raise DoozerFatalError('Cannot run scan-sources without a valid Konflux DB connection')
@@ -81,6 +84,11 @@ class ConfigScanSources:
         self.dry_run = dry_run
         self.variant = BuildVariant(variant.lower())
         self.skip_rpms = skip_rpms
+        if rebuild_before is not None:
+            if rebuild_before.tzinfo is None:
+                rebuild_before = rebuild_before.replace(tzinfo=timezone.utc)
+            rebuild_before = rebuild_before.astimezone(timezone.utc)
+        self.rebuild_before = rebuild_before
 
         # Ensure runtime.variant matches (should already be set by the command function)
         # This is kept for backward compatibility in case ConfigScanSources is instantiated directly
@@ -678,6 +686,11 @@ class ConfigScanSources:
             stage = 'upstream commit checks'
             await self.scan_for_upstream_changes(image_meta)
 
+            # A new source or config must not wait on an older cutoff rebuild failure.
+            stage = 'build cutoff checks'
+            if await self.scan_build_cutoff_changes(image_meta):
+                return
+
             # Check for dependency changes
             stage = 'dependency checks'
             await self.scan_dependency_changes(image_meta)
@@ -717,6 +730,72 @@ class ConfigScanSources:
         finally:
             changed = image_meta.distgit_key in self.changing_image_names
             span.set_attribute("changed", changed)
+
+    def get_build_cutoff_hint(self, build_record: KonfluxBuildRecord) -> Optional[RebuildHint]:
+        """Invalidate successful builds started before the configured UTC cutoff."""
+        if self.rebuild_before is None:
+            return None
+
+        start_time = build_record.start_time
+        if start_time is None:
+            reason = (
+                f'Build {build_record.nvr} has no start time; '
+                f'cannot verify it meets rebuild cutoff {self.rebuild_before.isoformat()}'
+            )
+        else:
+            if start_time.tzinfo is None:
+                start_time = start_time.replace(tzinfo=timezone.utc)
+            if start_time >= self.rebuild_before:
+                return None
+            reason = (
+                f'Build {build_record.nvr} started at {start_time.isoformat()}, '
+                f'before rebuild cutoff {self.rebuild_before.isoformat()}'
+            )
+        return RebuildHint(RebuildHintCode.BUILD_BEFORE_CUTOFF, reason)
+
+    @skip_check_if_changing
+    async def scan_build_cutoff_changes(self, image_meta: ImageMetadata) -> bool:
+        """Return whether the cutoff handled this image, including retry backoff."""
+        build_record = self.latest_image_build_records_map[image_meta.distgit_key]
+        rebuild_hint = self.get_build_cutoff_hint(build_record)
+        if rebuild_hint is None:
+            return False
+
+        if image_meta.config['is']:
+            issue = (
+                f'{rebuild_hint.reason}. Image is pinned to {build_record.nvr}; '
+                'update or remove the is pin to satisfy the cutoff. Automatic cutoff rebuild skipped.'
+            )
+            self.logger.warning('%s: %s', image_meta.distgit_key, issue)
+            self.issues.append({'name': image_meta.distgit_key, 'issue': issue})
+            return False
+
+        rebuild_interval = self.runtime.group_config.scan_freshness.threshold_hours or DEFAULT_THRESHOLD_HOURS
+        # Fetch the latest attempt so granular failure outcomes also enforce backoff.
+        failed_build_record = await image_meta.get_latest_build(
+            engine=Engine.KONFLUX.value,
+            outcome=None,
+            el_target=self._get_image_el_target(image_meta),
+            exclude_large_columns=True,
+            max_window_days=(rebuild_interval // 24) + 1,
+        )
+        if (
+            failed_build_record
+            and failed_build_record.outcome.is_failure()
+            and (build_record.start_time is None or failed_build_record.start_time > build_record.start_time)
+        ):
+            if failed_build_record.start_time + timedelta(hours=rebuild_interval) > datetime.now(timezone.utc):
+                self.add_assessment_reason(
+                    image_meta,
+                    RebuildHint(
+                        RebuildHintCode.DELAYING_NEXT_ATTEMPT,
+                        f'Waiting at least {rebuild_interval} hours after last failed build before cutoff rebuild',
+                    ),
+                )
+                return True
+
+        self.add_image_meta_change(image_meta, rebuild_hint)
+        return True
 
     def find_upstream_commit_hash(self, meta: Metadata):
         """
@@ -834,13 +913,13 @@ class ConfigScanSources:
         el_target = self._get_image_el_target(image_meta)
         failed_commit_build_record = await image_meta.get_latest_build(
             extra_patterns={'commitish': upstream_commit_hash},
-            outcome=KonfluxBuildOutcome.FAILURE,
+            outcome=None,
             exclude_large_columns=True,
             el_target=el_target,
         )
 
         # If not, this is a net-new upstream commit. Build it.
-        if not failed_commit_build_record:
+        if not failed_commit_build_record or not failed_commit_build_record.outcome.is_failure():
             self.add_image_meta_change(
                 image_meta,
                 RebuildHint(
@@ -1851,13 +1930,20 @@ class ConfigScanSources:
             latest_failed_build_record = await rpm_meta.get_latest_build(
                 el_target=el_target,
                 engine=Engine.BREW.value,
-                outcome=KonfluxBuildOutcome.FAILURE,
+                outcome=None,
                 exclude_large_columns=True,
                 max_window_days=max_failure_window_days,
             )
             now = datetime.now(timezone.utc)
 
-            if latest_failed_build_record and latest_failed_build_record.start_time > latest_build_record.start_time:
+            if (
+                latest_failed_build_record
+                and latest_failed_build_record.outcome.is_failure()
+                and (
+                    latest_build_record.start_time is None
+                    or latest_failed_build_record.start_time > latest_build_record.start_time
+                )
+            ):
                 # There is a failed build more recent than the latest successful one
                 self.logger.warning('Latest build for RPM %s in %s has failed', rpm_name, self.runtime.group)
 
@@ -1880,6 +1966,13 @@ class ConfigScanSources:
                             reason=f'Latest build {latest_failed_build_record.nvr} for {rpm_name} has failed',
                         ),
                     )
+                return
+
+            rebuild_hint = self.get_build_cutoff_hint(latest_build_record)
+            if rebuild_hint is not None:
+                self.add_rpm_meta_change(
+                    rpm_meta, RebuildHint(rebuild_hint.code, f'{el_target}: {rebuild_hint.reason}')
+                )
                 return
 
             # Scan for any build in this assembly which includes the git commit.
@@ -2278,11 +2371,20 @@ class ConfigScanSources:
 @click.option("--rebase-priv", default=False, is_flag=True, help='Try to reconcile public upstream into openshift-priv')
 @click.option('--dry-run', default=False, is_flag=True, help='Do not actually perform reconciliation, just log it')
 @click.option(
+    '--rebuild-before',
+    type=click.DateTime(formats=['%Y-%m-%d', '%Y-%m-%dT%H:%M:%S%z', '%Y-%m-%dT%H:%M:%S.%f%z']),
+    default=DEFAULT_REBUILD_BEFORE,
+    show_default=True,
+    help='Rebuild images and RPMs whose latest successful build started before this date (date-only values use UTC).',
+)
+@click.option(
     '--skip-rpms', default=False, is_flag=True, help='Skip RPM checks and only scan images (useful for local testing)'
 )
 @click_coroutine
 @pass_runtime
-async def config_scan_source_changes_konflux(runtime: Runtime, ci_kubeconfig, as_yaml, rebase_priv, dry_run, skip_rpms):
+async def config_scan_source_changes_konflux(
+    runtime: Runtime, ci_kubeconfig, as_yaml, rebase_priv, dry_run, skip_rpms, rebuild_before
+):
     """
     Determine if any rpms / images need to be rebuilt.
 
@@ -2290,9 +2392,11 @@ async def config_scan_source_changes_konflux(runtime: Runtime, ci_kubeconfig, as
     The method will report RPMs in this group if:
     - Their source git hash no longer matches their upstream source.
     - The buildroot used by the previous RPM build has changed.
+    - Their latest successful build started before --rebuild-before.
 
     \b
     It will report images if the latest build:
+    - Started before --rebuild-before.
     - Contains an RPM that is about to be rebuilt based on the RPM check above.
     - If the source git hash no longer matches the upstream source.
     - Contains any RPM (from anywhere in Red Hat) which has likely changed since the image was built.
@@ -2325,4 +2429,5 @@ async def config_scan_source_changes_konflux(runtime: Runtime, ci_kubeconfig, as
             variant=runtime.variant.value,
             skip_rpms=skip_rpms,
             session=session,
+            rebuild_before=rebuild_before,
         ).run()

@@ -15,6 +15,7 @@ from artcommonlib.konflux.konflux_build_record import (
 from artcommonlib.konflux.konflux_db import CacheRecordsType, KonfluxDb
 from artcommonlib.variants import BuildVariant, ProductId
 from google.cloud.bigquery import Row, SchemaField
+from sqlalchemy import Column, DateTime, MetaData, String, Table, create_engine, select
 
 
 class TestKonfluxDB(IsolatedAsyncioTestCase):
@@ -534,6 +535,69 @@ class TestKonfluxDB(IsolatedAsyncioTestCase):
         # When use_cache=False, _ensure_group_cached should not be called
         ensure_cached_mock.assert_not_called()
         select_mock.assert_called_once()
+
+    @patch('artcommonlib.bigquery.BigQueryClient.select')
+    async def test_latest_build_fallback_filters_terminal_outcomes(self, select_mock):
+        """Execute fallback predicates against pending and terminal attempts on a cache miss."""
+        engine = create_engine('sqlite://')
+        self.addCleanup(engine.dispose)
+        metadata = MetaData()
+        builds = Table(
+            'builds',
+            metadata,
+            Column('name', String),
+            Column('group', String),
+            Column('outcome', String),
+            Column('start_time', DateTime),
+        )
+        metadata.create_all(engine)
+        now = datetime.now(timezone.utc)
+        with engine.begin() as connection:
+            connection.execute(
+                builds.insert(),
+                [
+                    {
+                        'name': 'test-build',
+                        'group': 'test-group',
+                        'outcome': outcome.value,
+                        'start_time': now - timedelta(hours=hours),
+                    }
+                    for outcome, hours in [
+                        (KonfluxBuildOutcome.SUCCESS, 4),
+                        (KonfluxBuildOutcome.FAILURE, 3),
+                        (KonfluxBuildOutcome.BUILD_ERROR, 2),
+                        (KonfluxBuildOutcome.PENDING, 1),
+                    ]
+                ],
+            )
+
+            async def select_rows(where_clauses, order_by_clause, limit, **kwargs):
+                query = select(builds).where(*where_clauses).order_by(order_by_clause).limit(limit)
+                rows = connection.execute(query).mappings().all()
+                response = MagicMock()
+                response.total_rows = len(rows)
+                response.__next__.side_effect = iter(
+                    Row(tuple(row.values()), {key: index for index, key in enumerate(row)}) for row in rows
+                )
+                return response
+
+            select_mock.side_effect = select_rows
+            for outcome, expected in [
+                (None, KonfluxBuildOutcome.BUILD_ERROR),
+                (KonfluxBuildOutcome.FAILURE, KonfluxBuildOutcome.FAILURE),
+                (KonfluxBuildOutcome.SUCCESS, KonfluxBuildOutcome.SUCCESS),
+                (KonfluxBuildOutcome.PENDING, KonfluxBuildOutcome.PENDING),
+            ]:
+                with self.subTest(outcome=outcome):
+                    result = await self.db.get_latest_build(
+                        name='test-build',
+                        group='test-group',
+                        outcome=outcome,
+                        use_cache=False,
+                        max_window_days=1,
+                    )
+                    self.assertIsNotNone(result)
+                    self.assertEqual(result.outcome, expected)
 
     @patch('artcommonlib.konflux.konflux_db.KonfluxDb._ensure_group_cached')
     @patch('artcommonlib.bigquery.BigQueryClient.select')

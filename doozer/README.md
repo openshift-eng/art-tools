@@ -38,6 +38,24 @@ respectively, therefore those two files are released under [LGPL v3][].
 
 Checkout the [Usage doc](Usage.md)
 
+### Konflux scan-sources build invalidation
+
+`beta:config:konflux:scan-sources` marks images and ART-managed RPMs for rebuild
+when their latest successful build started before `2026-11-16T00:00:00Z`.
+This is a fixed cutoff, so a successful build started at or after that time
+satisfies the requirement. Builds with no recorded start time are also rebuilt
+because their freshness cannot be verified. Existing component filters, image
+descendant propagation, RPM target selection, and failed-build retry delays apply.
+Images with an `is:` pin are excluded from automatic cutoff rebuilds. A stale
+pin is reported in scan issues and logs so it can be updated or removed manually.
+
+Use `--rebuild-before YYYY-MM-DD` to override the cutoff (midnight UTC), or pass
+an ISO timestamp with a timezone, such as `2026-11-16T09:00:00-05:00`.
+The OCP `artcd beta:konflux:ocp4-scan` and `artcd layered-products-scan` pipelines
+use Doozer's default cutoff automatically and accept the same optional override.
+No build-data configuration is required. RHCOS detection and legacy Brew
+scan-sources are unchanged.
+
 ### Build-time Konflux verification eligibility
 
 An image's ocp-build-data YAML can override whether build-time Enterprise

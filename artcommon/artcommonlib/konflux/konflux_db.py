@@ -976,7 +976,7 @@ class KonfluxDb:
         :param name: component name, e.g. 'ironic' (optional if nvr provided)
         :param nvr: build NVR (optional, alternative to name search)
         :param group: e.g. 'openshift-4.18' (optional - will be extracted from nvr or use builder_base_image)
-        :param outcome: 'success' | 'failure'
+        :param outcome: Requested outcome; None selects terminal success and failure outcomes.
         :param assembly: assembly name filter
         :param el_target: e.g. 'el8', 'el9'
         :param artifact_type: 'rpm' | 'image'
@@ -1150,7 +1150,7 @@ class KonfluxDb:
         :param name: Component name
         :param nvr: Build NVR (alternative to name search)
         :param group: Group name (e.g., 'openshift-4.18')
-        :param outcome: Build outcome filter
+        :param outcome: Build outcome filter; None selects terminal outcomes, matching the group cache.
         :param assembly: Assembly name filter
         :param el_target: EL target filter
         :param artifact_type: Artifact type filter
@@ -1174,6 +1174,8 @@ class KonfluxDb:
             base_clauses.append(Column('group', String) == group)
         if outcome is not None:
             base_clauses.append(Column('outcome', String) == str(outcome))
+        else:
+            base_clauses.append(Column('outcome', String).in_(list(KonfluxBuildOutcome.db_filter_values())))
         if assembly is not None:
             base_clauses.append(Column('assembly', String) == assembly)
         if el_target is not None:

@@ -63,6 +63,7 @@ class RebuildHintCode(Enum):
     TASK_BUNDLE_OUTDATED = (True, 16)
     NETWORK_MODE_CHANGE = (True, 17)
     EXTERNAL_IMAGE_CHANGE = (True, 18)
+    BUILD_BEFORE_CUTOFF = (True, 19)
 
 
 class RebuildHint(NamedTuple):

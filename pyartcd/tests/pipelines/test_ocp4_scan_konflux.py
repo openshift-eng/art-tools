@@ -30,6 +30,19 @@ class TestOcp4ScanKonfluxPipeline(unittest.IsolatedAsyncioTestCase):
 
     @patch.dict(os.environ, {'KUBECONFIG': '/path/to/kubeconfig'})
     @patch('pyartcd.pipelines.ocp4_scan_konflux.exectools.cmd_gather_async')
+    async def test_get_changes_passes_cutoff_override_or_uses_doozer_default(self, mock_cmd_gather):
+        mock_cmd_gather.return_value = (0, yaml.safe_dump({'images': [], 'rpms': []}), '')
+        for cutoff in [None, '2026-11-16', '2026-11-16T09:00:00-05:00']:
+            with self.subTest(cutoff=cutoff):
+                pipeline = self._make_pipeline()
+                pipeline.rebuild_before = cutoff
+                await pipeline.get_changes()
+                cmd = mock_cmd_gather.call_args.args[0]
+                cutoff_args = [arg for arg in cmd if arg.startswith('--rebuild-before=')]
+                self.assertEqual(cutoff_args, [] if cutoff is None else [f'--rebuild-before={cutoff}'])
+
+    @patch.dict(os.environ, {'KUBECONFIG': '/path/to/kubeconfig'})
+    @patch('pyartcd.pipelines.ocp4_scan_konflux.exectools.cmd_gather_async')
     async def test_get_changes_captures_issues_and_command_failure(self, mock_cmd_gather):
         scan_output = yaml.dump(
             {

@@ -18,7 +18,7 @@ TRACER = trace.get_tracer(__name__)
 
 
 class Ocp4ScanPipeline:
-    def __init__(self, runtime, version, data_path, assembly, data_gitref, image_list, skip_rpms):
+    def __init__(self, runtime, version, data_path, assembly, data_gitref, image_list, skip_rpms, rebuild_before=None):
         self.runtime = runtime
         self.version = version
         self.data_path = data_path
@@ -26,6 +26,7 @@ class Ocp4ScanPipeline:
         self.data_gitref = data_gitref
         self.image_list = image_list
         self.skip_rpms = skip_rpms
+        self.rebuild_before = rebuild_before
 
         self.logger = logging.getLogger(__name__)
         self._doozer_working = self.runtime.working_dir / "doozer_working"
@@ -119,6 +120,8 @@ class Ocp4ScanPipeline:
         )
         if self.skip_rpms:
             cmd.append('--skip-rpms')
+        if self.rebuild_before is not None:
+            cmd.append(f'--rebuild-before={self.rebuild_before}')
         if self.runtime.dry_run:
             cmd.append('--dry-run')
 
@@ -389,10 +392,18 @@ class Ocp4ScanPipeline:
 @click.option('--data-gitref', required=False, default='', help='Doozer data path git [branch / tag / sha] to use')
 @click.option('--image-list', required=False, help='Comma/space-separated list to of images to scan, empty to scan all')
 @click.option('--skip-rpms', is_flag=True, default=False, help='Skip RPM checks and only scan images')
+@click.option('--rebuild-before', help='Override the build invalidation cutoff used by Doozer scan-sources')
 @pass_runtime
 @click_coroutine
 async def ocp4_scan(
-    runtime: Runtime, version: str, assembly: str, data_path: str, data_gitref, image_list: str, skip_rpms: bool
+    runtime: Runtime,
+    version: str,
+    assembly: str,
+    data_path: str,
+    data_gitref,
+    image_list: str,
+    skip_rpms: bool,
+    rebuild_before: str,
 ):
     # KUBECONFIG env var must be defined in order to scan sources
     if not os.getenv('KUBECONFIG'):
@@ -408,6 +419,7 @@ async def ocp4_scan(
         data_gitref=data_gitref,
         image_list=image_list,
         skip_rpms=skip_rpms,
+        rebuild_before=rebuild_before,
     )
 
     if runtime.dry_run:
