@@ -36,6 +36,7 @@ from artcommonlib.util import merge_objects, new_roundtrip_yaml_handler, product
 from doozerlib import util as doozerutil
 from doozerlib.constants import ART_BUILD_HISTORY_URL
 from errata_tool import ErrataConnector
+from tenacity import before_sleep_log, retry, retry_if_exception_type, stop_after_attempt, wait_fixed
 
 from pyartcd import constants, record
 from pyartcd.build_strategy import BuildStrategy
@@ -406,6 +407,13 @@ def get_changes(yaml_data: dict) -> dict:
     return changes
 
 
+@retry(
+    reraise=True,
+    stop=stop_after_attempt(3),
+    wait=wait_fixed(5),
+    retry=retry_if_exception_type((aiohttp.ClientError, asyncio.TimeoutError)),
+    before_sleep=before_sleep_log(logger, logging.WARNING),
+)
 async def is_global_automation_frozen() -> bool:
     """Read the master switch from canonical build-data main, regardless of group overrides."""
     url = 'https://raw.githubusercontent.com/openshift-eng/ocp-build-data/main/config/automation.yml'

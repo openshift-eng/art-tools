@@ -15,6 +15,7 @@ from pyartcd.counter_models import (
     RebaseCounterContext,
 )
 from pydantic import ValidationError
+from tenacity import wait_none
 
 from pyartcd import util
 
@@ -277,6 +278,11 @@ class TestUtil(IsolatedAsyncioTestCase):
 
     @patch("pyartcd.util.aiohttp.ClientSession")
     async def test_global_freeze_read_failure(self, session_class):
+        # Neutralize the tenacity retry wait so repeated transient failures don't add real sleeps.
+        original_wait = util.is_global_automation_frozen.retry.wait
+        util.is_global_automation_frozen.retry.wait = wait_none()
+        self.addCleanup(setattr, util.is_global_automation_frozen.retry, "wait", original_wait)
+
         session = MagicMock()
         session_class.return_value.__aenter__.return_value = session
         response = MagicMock(status=503)
@@ -284,6 +290,8 @@ class TestUtil(IsolatedAsyncioTestCase):
         response.raise_for_status.side_effect = aiohttp.ClientError('Service unavailable')
         with self.assertRaises(aiohttp.ClientError):
             await util.is_global_automation_frozen()
+        # Transient ClientError is retried up to 3 attempts before reraising.
+        self.assertEqual(response.raise_for_status.call_count, 3)
         session.get.return_value.__aenter__.side_effect = asyncio.TimeoutError
         with self.assertRaises(asyncio.TimeoutError):
             await util.is_global_automation_frozen()
