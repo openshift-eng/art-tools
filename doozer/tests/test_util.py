@@ -5,6 +5,7 @@ import unittest
 from unittest.mock import MagicMock, patch
 
 from artcommonlib.arch_util import brew_arch_for_go_arch, go_arch_for_brew_arch
+from artcommonlib.build_priority import BuildPriorityPolicy
 from artcommonlib.model import Model
 from artcommonlib.oc_image_info import oc_image_info__cached__lru, oc_image_info__cached_async__lru
 from doozerlib import util
@@ -576,6 +577,21 @@ class TestGetKonfluxBuildPriority(unittest.TestCase):
         for children in (self.is_leaf, self.is_parent):
             metadata = self._make_metadata(children=children)
             self.assertEqual(util.get_konflux_build_priority(metadata, "golang-1.22"), "2")
+
+    def test_enabled_policy_overrides_image_and_group_priorities(self):
+        metadata = self._make_metadata(children=self.is_parent, image_config_priority=7, group_config_priority=8)
+        metadata.runtime.product = 'ocp'
+        policy = BuildPriorityPolicy.model_validate(
+            {
+                'enabled': True,
+                'rules': [{'product': 'ocp', 'versions': ['4.20'], 'priority': 1}],
+            }
+        )
+        self.assertEqual(util.get_konflux_build_priority(metadata, 'openshift-4.20', policy), '1')
+        policy.enabled = False
+        self.assertEqual(util.get_konflux_build_priority(metadata, 'openshift-4.20', policy), '7')
+        metadata.config.konflux.get.return_value = None
+        self.assertEqual(util.get_konflux_build_priority(metadata, 'openshift-4.20', policy), '8')
 
     def test_priority_never_goes_below_1(self):
         metadata = self._make_metadata(children=self.is_parent, phase="pre-release")

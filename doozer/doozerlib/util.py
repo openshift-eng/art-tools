@@ -20,6 +20,7 @@ import yaml
 from artcommonlib import constants, exectools
 from artcommonlib.arch_util import GO_ARCHES, brew_arch_for_go_arch, go_arch_for_brew_arch, go_suffix_for_arch
 from artcommonlib.assembly import AssemblyTypes
+from artcommonlib.build_priority import BuildPriorityPolicy
 from artcommonlib.format_util import red_print
 from artcommonlib.model import Missing, Model
 from artcommonlib.release_util import split_el_suffix_in_release
@@ -472,7 +473,7 @@ def infer_assembly_type(custom, assembly_name):
         return AssemblyTypes.STANDARD
 
 
-def get_konflux_build_priority(metadata, group):
+def get_konflux_build_priority(metadata, group, policy: BuildPriorityPolicy | None = None):
     """
     Get the Konflux build priority based on the precedence rules.
 
@@ -481,6 +482,11 @@ def get_konflux_build_priority(metadata, group):
     :return: Priority value as string; "1" (high) "10" (low)
     """
     logger.info(f"Resolving build priority for {metadata.distgit_key}")
+    if policy is not None:
+        priority = policy.priority_for(metadata.runtime.product, group)
+        if priority is not None:
+            return priority
+
     phase = metadata.runtime.group_config.software_lifecycle.phase
 
     def higher_by(val: int) -> str:

@@ -4,6 +4,7 @@ from types import SimpleNamespace
 from unittest import mock
 
 import click
+from artcommonlib.build_priority import BuildPriorityPolicy
 from artcommonlib.conforma import resolve_stage_policy
 from artcommonlib.konflux.konflux_build_record import (
     KonfluxBuildOutcome,
@@ -335,6 +336,15 @@ class TestBaseImageReleasePrioritisation(unittest.IsolatedAsyncioTestCase):
     before leaf images, with an ``asyncio.sleep(0)`` yield in between.
     """
 
+    def setUp(self):
+        patcher = mock.patch(
+            'doozerlib.cli.images_konflux.load_build_priority_policy',
+            new_callable=mock.AsyncMock,
+            return_value=BuildPriorityPolicy(),
+        )
+        self.policy_loader = patcher.start()
+        self.addCleanup(patcher.stop)
+
     @mock.patch("doozerlib.cli.images_konflux.asyncio.sleep", new_callable=mock.AsyncMock)
     @mock.patch("doozerlib.cli.images_konflux.KonfluxImageBuilder")
     @mock.patch("doozerlib.cli.images_konflux.trace.get_current_span")
@@ -421,6 +431,12 @@ class TestBaseImageReleasePrioritisation(unittest.IsolatedAsyncioTestCase):
         submitted_order = [call.args[0].distgit_key for call in build_calls]
         self.assertEqual(submitted_order, ["base-b", "leaf-a", "leaf-c"])
 
+        self.policy_loader.assert_awaited_once_with()
+        self.assertIs(
+            mock_builder_cls.call_args.kwargs['config'].build_priority_policy,
+            self.policy_loader.return_value,
+        )
+
         # Verify the prioritisation was logged
         runtime.logger.info.assert_any_call(
             "Prioritised %d base_image_release image(s) for early PLR submission: %s",
@@ -481,7 +497,7 @@ class TestBaseImageReleasePrioritisation(unittest.IsolatedAsyncioTestCase):
             skip_checks=False,
             dry_run=False,
             plr_template="test-template",
-            build_priority="auto",
+            build_priority="7",
         )
 
         await cli.run()
@@ -492,6 +508,10 @@ class TestBaseImageReleasePrioritisation(unittest.IsolatedAsyncioTestCase):
 
         # No sleep(0) yield should happen when there are no base_image_release images
         mock_sleep.assert_not_awaited()
+        self.policy_loader.assert_not_awaited()
+        config = mock_builder_cls.call_args.kwargs['config']
+        self.assertEqual(config.build_priority, '7')
+        self.assertIsNone(config.build_priority_policy)
 
 
 class TestKonfluxRebaseCli(unittest.IsolatedAsyncioTestCase):
@@ -1227,6 +1247,15 @@ class TestKonfluxBuildCliStandaloneStageRelease(unittest.IsolatedAsyncioTestCase
 
 class TestKonfluxBuildPostBuildWiring(unittest.IsolatedAsyncioTestCase):
     """The build command delegates post-build callback assembly to the registry factory."""
+
+    def setUp(self):
+        patcher = mock.patch(
+            'doozerlib.cli.images_konflux.load_build_priority_policy',
+            new_callable=mock.AsyncMock,
+            return_value=BuildPriorityPolicy(),
+        )
+        self.policy_loader = patcher.start()
+        self.addCleanup(patcher.stop)
 
     @mock.patch("doozerlib.cli.images_konflux.asyncio.sleep", new_callable=mock.AsyncMock)
     @mock.patch("doozerlib.cli.images_konflux.build_post_build_callbacks")
