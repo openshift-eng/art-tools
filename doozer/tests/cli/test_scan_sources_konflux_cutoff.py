@@ -19,11 +19,12 @@ from doozerlib.runtime import Runtime
 CUTOFF = datetime(2026, 11, 16, tzinfo=timezone.utc)
 
 
-def build_record(start_time):
+def build_record(start_time, outcome=KonfluxBuildOutcome.SUCCESS):
     record = MagicMock(spec=KonfluxBuildRecord)
     record.nvr = 'test-component-1.0-1.el9'
     record.start_time = start_time
     record.commitish = 'abc123'
+    record.outcome = outcome
     return record
 
 
@@ -161,22 +162,61 @@ class TestBuildCutoff(IsolatedAsyncioTestCase):
 
     async def test_recent_failure_delays_cutoff_rebuild(self):
         now = CUTOFF + timedelta(hours=12)
-        self.image.get_latest_build.return_value = build_record(now - timedelta(hours=1))
-        with patch('doozerlib.cli.scan_sources_konflux.datetime') as mock_datetime:
-            mock_datetime.now.return_value = now
-            await self.scanner.scan_image(self.image)
-        self.assertEqual(self.scanner.changing_image_names, set())
-        self.assertEqual(
-            self.scanner.assessment_code['containers/test-image+False'], RebuildHintCode.DELAYING_NEXT_ATTEMPT
-        )
+        for outcome in KonfluxBuildOutcome:
+            if not outcome.is_failure():
+                continue
+            with self.subTest(outcome=outcome):
+                attempts = [
+                    self.scanner.latest_image_build_records_map['test-image'],
+                    build_record(now - timedelta(hours=7), KonfluxBuildOutcome.FAILURE),
+                    build_record(now - timedelta(hours=1), outcome),
+                ]
+
+                async def latest_build(**kwargs):
+                    requested_outcome = kwargs['outcome']
+                    matches = [r for r in attempts if requested_outcome is None or r.outcome == requested_outcome]
+                    return max(matches, key=lambda r: r.start_time, default=None)
+
+                self.image.get_latest_build = AsyncMock(side_effect=latest_build)
+                with patch('doozerlib.cli.scan_sources_konflux.datetime') as mock_datetime:
+                    mock_datetime.now.return_value = now
+                    await self.scanner.scan_image(self.image)
+                self.assertEqual(self.scanner.issues, [])
+                self.assertEqual(self.scanner.changing_image_names, set())
+                self.assertEqual(
+                    self.scanner.assessment_code['containers/test-image+False'], RebuildHintCode.DELAYING_NEXT_ATTEMPT
+                )
+                self.assertIsNone(self.image.get_latest_build.call_args.kwargs['outcome'])
 
     async def test_expired_failure_allows_cutoff_rebuild(self):
         now = CUTOFF + timedelta(hours=12)
-        self.image.get_latest_build.return_value = build_record(now - timedelta(hours=7))
+        self.image.get_latest_build.return_value = build_record(
+            now - timedelta(hours=7), KonfluxBuildOutcome.BUILD_ERROR
+        )
         with patch('doozerlib.cli.scan_sources_konflux.datetime') as mock_datetime:
             mock_datetime.now.return_value = now
             await self.scanner.scan_image(self.image)
         self.assertIn('test-image', self.scanner.changing_image_names)
+
+    async def test_successful_attempt_does_not_delay_cutoff_rebuild(self):
+        self.image.get_latest_build.return_value = self.scanner.latest_image_build_records_map['test-image']
+        await self.scanner.scan_image(self.image)
+        self.assertEqual(self.scanner.issues, [])
+        self.assertIn('test-image', self.scanner.changing_image_names)
+
+    async def test_upstream_commit_build_error_preserves_backoff(self):
+        now = CUTOFF + timedelta(hours=12)
+        failed_attempt = build_record(now - timedelta(hours=1), KonfluxBuildOutcome.BUILD_ERROR)
+
+        async def latest_build(**kwargs):
+            return failed_attempt if kwargs['outcome'] is None else None
+
+        self.image.get_latest_build = AsyncMock(side_effect=latest_build)
+        with patch('doozerlib.cli.scan_sources_konflux.datetime') as mock_datetime:
+            mock_datetime.now.return_value = now
+            await self.scanner.handle_missing_upstream_commit_build(self.image, 'abc123')
+        self.assertEqual(self.scanner.changing_image_names, set())
+        self.assertEqual(self.image.get_latest_build.call_args.kwargs['extra_patterns'], {'commitish': 'abc123'})
 
     async def test_no_latest_build_keeps_existing_reason(self):
         self.scanner.latest_image_build_records_map.clear()
@@ -195,7 +235,7 @@ class TestBuildCutoff(IsolatedAsyncioTestCase):
         self.scanner.latest_rpm_build_records_map = {'test-rpm': {'el8': fresh, 'el9': stale}}
 
         async def latest_build(**kwargs):
-            return None if kwargs.get('outcome') == KonfluxBuildOutcome.FAILURE else fresh
+            return fresh
 
         rpm.get_latest_build = AsyncMock(side_effect=latest_build)
         koji = self.runtime.pooled_koji_client_session.return_value.__enter__.return_value
@@ -218,7 +258,12 @@ class TestBuildCutoff(IsolatedAsyncioTestCase):
         rpm.config.targets = ['el9']
         rpm.determine_rhel_targets.return_value = [9]
         now = CUTOFF + timedelta(hours=12)
-        rpm.get_latest_build = AsyncMock(return_value=build_record(now - timedelta(hours=1)))
+        failed_attempt = build_record(now - timedelta(hours=1), KonfluxBuildOutcome.BUILD_ERROR)
+
+        async def latest_build(**kwargs):
+            return failed_attempt if kwargs['outcome'] is None else None
+
+        rpm.get_latest_build = AsyncMock(side_effect=latest_build)
         self.scanner.all_rpm_metas = {rpm}
         self.scanner.latest_rpm_build_records_map = {'test-rpm': {'el9': build_record(CUTOFF - timedelta(days=1))}}
         with patch('doozerlib.cli.scan_sources_konflux.datetime') as mock_datetime:

@@ -19,7 +19,7 @@ from artcommonlib.arch_util import brew_arch_for_go_arch, go_arch_for_brew_arch
 from artcommonlib.constants import SCAN_SOURCES_CONCURRENCY_LIMIT
 from artcommonlib.exectools import cmd_gather_async
 from artcommonlib.github_auth import get_github_client_for_org, get_github_git_auth_env, get_github_git_pat_env
-from artcommonlib.konflux.konflux_build_record import Engine, KonfluxBuildOutcome, KonfluxBuildRecord
+from artcommonlib.konflux.konflux_build_record import Engine, KonfluxBuildRecord
 from artcommonlib.konflux.package_rpm_finder import PackageRpmFinder
 from artcommonlib.model import Missing, Model
 from artcommonlib.pushd import Dir
@@ -761,15 +761,18 @@ class ConfigScanSources:
             return False
 
         rebuild_interval = self.runtime.group_config.scan_freshness.threshold_hours or DEFAULT_THRESHOLD_HOURS
+        # Fetch the latest attempt so granular failure outcomes also enforce backoff.
         failed_build_record = await image_meta.get_latest_build(
             engine=Engine.KONFLUX.value,
-            outcome=KonfluxBuildOutcome.FAILURE,
+            outcome=None,
             el_target=self._get_image_el_target(image_meta),
             exclude_large_columns=True,
             max_window_days=(rebuild_interval // 24) + 1,
         )
-        if failed_build_record and (
-            build_record.start_time is None or failed_build_record.start_time > build_record.start_time
+        if (
+            failed_build_record
+            and failed_build_record.outcome.is_failure()
+            and (build_record.start_time is None or failed_build_record.start_time > build_record.start_time)
         ):
             if failed_build_record.start_time + timedelta(hours=rebuild_interval) > datetime.now(timezone.utc):
                 self.add_assessment_reason(
@@ -900,13 +903,13 @@ class ConfigScanSources:
         el_target = self._get_image_el_target(image_meta)
         failed_commit_build_record = await image_meta.get_latest_build(
             extra_patterns={'commitish': upstream_commit_hash},
-            outcome=KonfluxBuildOutcome.FAILURE,
+            outcome=None,
             exclude_large_columns=True,
             el_target=el_target,
         )
 
         # If not, this is a net-new upstream commit. Build it.
-        if not failed_commit_build_record:
+        if not failed_commit_build_record or not failed_commit_build_record.outcome.is_failure():
             self.add_image_meta_change(
                 image_meta,
                 RebuildHint(
@@ -1917,15 +1920,19 @@ class ConfigScanSources:
             latest_failed_build_record = await rpm_meta.get_latest_build(
                 el_target=el_target,
                 engine=Engine.BREW.value,
-                outcome=KonfluxBuildOutcome.FAILURE,
+                outcome=None,
                 exclude_large_columns=True,
                 max_window_days=max_failure_window_days,
             )
             now = datetime.now(timezone.utc)
 
-            if latest_failed_build_record and (
-                latest_build_record.start_time is None
-                or latest_failed_build_record.start_time > latest_build_record.start_time
+            if (
+                latest_failed_build_record
+                and latest_failed_build_record.outcome.is_failure()
+                and (
+                    latest_build_record.start_time is None
+                    or latest_failed_build_record.start_time > latest_build_record.start_time
+                )
             ):
                 # There is a failed build more recent than the latest successful one
                 self.logger.warning('Latest build for RPM %s in %s has failed', rpm_name, self.runtime.group)
