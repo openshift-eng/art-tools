@@ -869,7 +869,8 @@ class KonfluxOcpPipeline:
     async def run(self):
         # Honor freeze_automation unless explicitly overridden for this invocation:
         # global 'yes' blocks all runs; global/group 'scheduled' blocks non-manual runs but allows
-        # manual ones; 'weekdays' allows weekends/manual only. Without the explicit override,
+        # manual ones; 'weekdays' allows weekends/manual only. Test assemblies use only
+        # the group policy. Without the explicit override,
         # a config read failure propagates (fail-closed).
         if self.ignore_automation_freeze:
             LOGGER.warning(
@@ -882,6 +883,7 @@ class KonfluxOcpPipeline:
             data_path=self.data_path,
             doozer_working=self.runtime.doozer_working,
             doozer_data_gitref=self.data_gitref,
+            ignore_global_freeze=self.assembly == 'test',
         ):
             LOGGER.warning(
                 'Skipping Konflux build: not permitted by freeze_automation '

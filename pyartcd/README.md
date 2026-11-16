@@ -168,22 +168,29 @@ Global and group values are case-insensitive, and surrounding whitespace is
 ignored. Invalid values stop the freeze check instead of permitting builds.
 
 This master switch takes precedence over group `freeze_automation` values and
-custom build-data paths or refs: whenever it is set to anything other than
-`false`/`no`, that value overrides the group's own setting. Set it back to
-`false` to restore each group's existing freeze policy.
+custom build-data paths or refs for scheduled jobs and direct non-test Konflux
+builds: whenever it is set to anything other than `false`/`no`, that value
+overrides the group's own setting. Direct `test` assembly Konflux builds use
+the group policy instead. Set the switch back to `false` to restore each
+group's existing freeze policy for all jobs.
 
-The switch is read on every freeze check. A missing file leaves group policies
-in effect so this code can be deployed before the config is merged. Other read
-errors and invalid/unknown config stop the check instead of permitting builds.
+The switch is read on every freeze check except direct `test` assembly builds.
+A missing file leaves group policies in effect so this code can be deployed
+before the config is merged. Other read errors and invalid/unknown config stop
+the check instead of permitting builds.
 This does not cancel builds already running or add freeze checks to commands
 that do not currently use them.
 
 Direct `beta:ocp4-konflux` builds also honor the master switch before
-initializing registry credentials or running build operations, for every
-assembly. The check is manual-aware: a global `scheduled` value permits manual
+initializing registry credentials or running build operations, except for
+`test` assembly. The check is manual-aware: a global `scheduled` value permits manual
 runs while blocking all non-manual ones; `weekdays` additionally permits
 non-manual runs on weekends; and a global `yes`/`true` blocks everything.
-`--ignore-locks` skips concurrency locks and does not override the freeze.
+Test builds use the group's `freeze_automation` policy, allowing a targeted
+build while scheduled automation remains frozen. A group set to `yes` still
+blocks test builds. `--ignore-locks` skips concurrency locks and does not
+override the freeze. `--ignore-automation-freeze` explicitly bypasses both
+global and group policies for any assembly.
 
 ## Payload synchronization
 

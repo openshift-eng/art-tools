@@ -482,24 +482,27 @@ async def get_freeze_automation(
     doozer_working: str = '',
     doozer_data_gitref: str = '',
     extra_vars: list = None,
+    ignore_global_freeze: bool = False,
 ) -> str:
     """
-    Return the effective freeze flag, with the global master switch taking precedence over the group.
+    Return the effective freeze flag, allowing a direct test build to use its group policy.
 
     The global state is read once; if it is anything other than 'no', that state
     is returned so 'yes'/'scheduled'/'weekdays' all override the group. Otherwise
     the group's own freeze_automation value is read via doozer config:read-group
-    and normalized. Invalid values raise ValueError instead of permitting builds.
+    and normalized. Direct test builds can skip the global state with ignore_global_freeze.
+    Invalid values raise ValueError instead of permitting builds.
     """
-    global_state = await get_global_freeze_automation()
-    if global_state != FREEZE_AUTOMATION_NO:
-        logger.warning(
-            'Global freeze_automation in ocp-build-data main/config/automation.yml is set to "%s"; '
-            'overriding group policy for %s',
-            global_state,
-            group,
-        )
-        return global_state
+    if not ignore_global_freeze:
+        global_state = await get_global_freeze_automation()
+        if global_state != FREEZE_AUTOMATION_NO:
+            logger.warning(
+                'Global freeze_automation in ocp-build-data main/config/automation.yml is set to "%s"; '
+                'overriding group policy for %s',
+                global_state,
+                group,
+            )
+            return global_state
 
     group_param = f'--group={group}'
     if doozer_data_gitref:
@@ -623,6 +626,7 @@ async def is_build_permitted(
     data_path: str = constants.OCP_BUILD_DATA_URL,
     doozer_working: str = '',
     doozer_data_gitref: str = '',
+    ignore_global_freeze: bool = False,
 ) -> bool:
     """
     Check whether the group should be built right now.
@@ -638,6 +642,7 @@ async def is_build_permitted(
         data_path: Path to ocp-build-data
         doozer_working: Doozer working directory
         doozer_data_gitref: Git ref for ocp-build-data
+        ignore_global_freeze: Use only the group policy, for a direct test build.
     """
     if not version and not group:
         raise ValueError("Either version or group must be provided")
@@ -650,6 +655,7 @@ async def is_build_permitted(
         doozer_data_path=data_path,
         doozer_working=doozer_working,
         doozer_data_gitref=doozer_data_gitref,
+        ignore_global_freeze=ignore_global_freeze,
     )
     logger.info('Group freeze automation flag is set to: "%s"', freeze_automation)
 

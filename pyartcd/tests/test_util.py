@@ -383,6 +383,34 @@ class TestUtil(IsolatedAsyncioTestCase):
         self.assertFalse(await util.is_build_permitted(group='openshift-4.18'))
         cmd_gather_async.assert_not_awaited()
 
+    @patch("pyartcd.util.get_weekday", return_value='Monday')
+    @patch("pyartcd.util.is_manual_build", return_value=False)
+    @patch("pyartcd.util.get_global_freeze_automation", return_value='yes')
+    @patch("artcommonlib.exectools.cmd_gather_async", return_value=(0, 'no\n', ''))
+    async def test_direct_test_build_uses_group_policy(self, cmd_gather_async, global_freeze, manual_build, weekday):
+        self.assertTrue(
+            await util.is_build_permitted(
+                version='5.0',
+                doozer_data_gitref='custom-ref',
+                ignore_global_freeze=True,
+            )
+        )
+        self.assertIn('--group=openshift-5.0@custom-ref', cmd_gather_async.await_args.args[0])
+
+        for group_state, manual, day, permitted in (
+            ('yes', True, 'Sunday', False),
+            ('scheduled', False, 'Sunday', False),
+            ('scheduled', True, 'Monday', True),
+            ('weekdays', False, 'Tuesday', False),
+            ('weekdays', False, 'Sunday', True),
+        ):
+            with self.subTest(group_state=group_state, manual=manual, day=day):
+                cmd_gather_async.return_value = (0, group_state, '')
+                manual_build.return_value = manual
+                weekday.return_value = day
+                self.assertEqual(await util.is_build_permitted(version='5.0', ignore_global_freeze=True), permitted)
+        global_freeze.assert_not_awaited()
+
     @patch("pyartcd.util.get_weekday")
     @patch("pyartcd.util.is_manual_build")
     @patch("pyartcd.util.get_freeze_automation")
