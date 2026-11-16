@@ -1,3 +1,4 @@
+import asyncio
 import logging
 import os
 import sys
@@ -8,7 +9,8 @@ from typing import List, Optional
 import click
 import yaml
 from artcommonlib import exectools
-from artcommonlib.build_visibility import is_nvr_embargoed
+from artcommonlib.build_visibility import is_nvr_embargoed, is_release_embargoed
+from artcommonlib.constants import KONFLUX_IMAGE_TEST_REPO
 from artcommonlib.pipeline_report import get_reporter
 from artcommonlib.product_catalog import get_kubeconfig_env_vars
 from artcommonlib.util import (
@@ -26,6 +28,7 @@ from pyartcd.build_strategy import BuildStrategy
 from pyartcd.cli import cli, click_coroutine, pass_runtime
 from pyartcd.counter_models import BuildFailCounterContext, RebaseCounterContext
 from pyartcd.locks import Lock
+from pyartcd.pipelines.sync_nvr_to_quay import sync_image_to_quay
 from pyartcd.runtime import Runtime
 from pyartcd.util import (
     default_release_suffix,
@@ -192,6 +195,43 @@ class BuildLayeredProductsPipeline:
             record_log: dict = record_util.parse_record_log(file)
             return record_log
 
+    async def mirror_test_builds_to_quay(self):
+        """Copy successful public test builds to art-images-test with build-specific tags."""
+        if self.assembly != 'test':
+            return
+
+        record_log = self.parse_record_log()
+        if not record_log:
+            self._logger.info('No build records to mirror')
+            return
+
+        async def sync_build(build):
+            nvr = build.get('nvrs')
+            if nvr:
+                embargoed = is_nvr_embargoed(nvr)
+            else:
+                embargoed = is_release_embargoed(build.get('release') or '', build_system='konflux')
+            if embargoed:
+                self._logger.info('Not syncing %s because it is in an embargoed release', build['image_pullspec'])
+                return
+
+            await sync_image_to_quay(
+                build['image_pullspec'],
+                KONFLUX_IMAGE_TEST_REPO,
+                [build['image_tag']],
+                dry_run=self.runtime.dry_run,
+                logger=self._logger,
+            )
+
+        # Attempt every successful image even if another sync fails, then surface the failure.
+        results = await asyncio.gather(
+            *[sync_build(build) for build in record_log.get('image_build_konflux', []) if not int(build['status'])],
+            return_exceptions=True,
+        )
+        for result in results:
+            if isinstance(result, BaseException):
+                raise result
+
     async def run(self):
         """Run the layered products rebase and build pipeline"""
         await get_reporter().note("Waiting for image selection")
@@ -226,8 +266,16 @@ class BuildLayeredProductsPipeline:
             await self._configure_installer_payload(group_config)
 
         image_repo = group_config.get('konflux', {}).get('image_repo') or KONFLUX_DEFAULT_IMAGE_REPO
-        await self._rebase_and_build(product, image_repo)
-        self.trigger_bundle_build()
+        try:
+            await self._rebase_and_build(product, image_repo)
+            self.trigger_bundle_build()
+        finally:
+            try:
+                await self.mirror_test_builds_to_quay()
+            except Exception:
+                self._logger.warning(
+                    'Failed to sync test builds to %s; continuing', KONFLUX_IMAGE_TEST_REPO, exc_info=True
+                )
 
         if self.embargoed_operators_skipped:
             self._logger.warning(

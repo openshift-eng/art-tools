@@ -5,6 +5,7 @@ from unittest import IsolatedAsyncioTestCase
 from unittest.mock import AsyncMock, MagicMock, Mock, patch
 
 import yaml
+from artcommonlib.constants import KONFLUX_IMAGE_TEST_REPO
 from artcommonlib.variants import BuildVariant
 from doozerlib.constants import KONFLUX_DEFAULT_IMAGE_REPO
 from pyartcd.build_strategy import BuildStrategy
@@ -43,6 +44,198 @@ class TestBuildLayeredProductsPipeline(IsolatedAsyncioTestCase):
                 data_path='https://github.com/openshift-eng/ocp-build-data',
                 skip_bundle_build=True,
             )
+
+    async def test_mirror_test_builds_skips_other_assemblies(self):
+        for assembly in ('stream', 'art2026111101', '1.4.9'):
+            with self.subTest(assembly=assembly):
+                self.pipeline.assembly = assembly
+                with (
+                    patch.object(self.pipeline, 'parse_record_log') as records,
+                    patch('pyartcd.pipelines.build_layered_products.sync_image_to_quay') as sync,
+                ):
+                    await self.pipeline.mirror_test_builds_to_quay()
+                records.assert_not_called()
+                sync.assert_not_called()
+
+    async def test_mirror_test_builds_filters_failed_private_and_unknown_visibility(self):
+        self.pipeline.assembly = 'test'
+        records = []
+        for name, nvr, release in (
+            ('public', 'operator-1.4.9-1.p2', '1.p3'),
+            ('private', 'operator-1.4.9-1.p3', '1.p2'),
+            ('unknown', 'operator-1.4.9-1', '1.p2'),
+            ('release-public', '', '1.p2'),
+            ('release-private', '', '1.p3'),
+            ('release-unknown', '', ''),
+        ):
+            records.append(
+                {
+                    'status': '0',
+                    'nvrs': nvr,
+                    'release': release,
+                    'image_pullspec': f'quay.io/source/images@sha256:{name}',
+                    'image_tag': f'{name}-tag',
+                }
+            )
+        records.append({'status': '-1'})
+        with (
+            patch.object(self.pipeline, 'parse_record_log', return_value={'image_build_konflux': records}),
+            patch('pyartcd.pipelines.build_layered_products.sync_image_to_quay', new_callable=AsyncMock) as sync,
+        ):
+            await self.pipeline.mirror_test_builds_to_quay()
+        self.assertEqual(sync.await_count, 2)
+        for call, name in zip(sync.await_args_list, ('public', 'release-public')):
+            self.assertEqual(
+                call.args,
+                (
+                    f'quay.io/source/images@sha256:{name}',
+                    KONFLUX_IMAGE_TEST_REPO,
+                    [f'{name}-tag'],
+                ),
+            )
+            self.assertEqual(call.kwargs, {'dry_run': False, 'logger': self.runtime.logger})
+
+    async def test_mirror_test_builds_without_records_is_noop(self):
+        self.pipeline.assembly = 'test'
+        for records in (None, {}, {'image_build_konflux': []}):
+            with (
+                self.subTest(records=records),
+                patch.object(self.pipeline, 'parse_record_log', return_value=records),
+                patch('pyartcd.pipelines.build_layered_products.sync_image_to_quay', new_callable=AsyncMock) as sync,
+            ):
+                await self.pipeline.mirror_test_builds_to_quay()
+                sync.assert_not_awaited()
+
+    async def test_mirror_test_builds_honors_dry_run(self):
+        self.pipeline.assembly = 'test'
+        self.runtime.dry_run = True
+        records = {
+            'image_build_konflux': [
+                {
+                    'status': '0',
+                    'nvrs': 'operator-1.4.9-1.p2',
+                    'image_pullspec': 'quay.io/source/images@sha256:abc',
+                    'image_tag': 'operator-tag',
+                }
+            ]
+        }
+        with (
+            patch.object(self.pipeline, 'parse_record_log', return_value=records),
+            patch('pyartcd.pipelines.build_layered_products.sync_image_to_quay', new_callable=AsyncMock) as sync,
+        ):
+            await self.pipeline.mirror_test_builds_to_quay()
+        sync.assert_awaited_once_with(
+            'quay.io/source/images@sha256:abc',
+            KONFLUX_IMAGE_TEST_REPO,
+            ['operator-tag'],
+            dry_run=True,
+            logger=self.runtime.logger,
+        )
+
+    async def test_mirror_test_builds_attempts_all_images_before_raising(self):
+        self.pipeline.assembly = 'test'
+        records = {
+            'image_build_konflux': [
+                {
+                    'status': '0',
+                    'nvrs': f'operator-1.4.9-{index}.p2',
+                    'image_pullspec': f'quay.io/source/images@sha256:{index}',
+                    'image_tag': f'operator-{index}',
+                }
+                for index in range(2)
+            ]
+        }
+        with (
+            patch.object(self.pipeline, 'parse_record_log', return_value=records),
+            patch(
+                'pyartcd.pipelines.build_layered_products.sync_image_to_quay',
+                new_callable=AsyncMock,
+                side_effect=[RuntimeError('sync failed'), None],
+            ) as sync,
+            self.assertRaisesRegex(RuntimeError, 'sync failed'),
+        ):
+            await self.pipeline.mirror_test_builds_to_quay()
+        self.assertEqual(sync.await_count, 2)
+
+    async def test_mirror_test_builds_rejects_ambiguous_visibility(self):
+        self.pipeline.assembly = 'test'
+        records = {
+            'image_build_konflux': [
+                {
+                    'status': '0',
+                    'nvrs': 'operator-1.4.9-1.p2.gabc.p3',
+                    'image_pullspec': 'quay.io/source/images@sha256:abc',
+                    'image_tag': 'operator-tag',
+                }
+            ]
+        }
+        with (
+            patch.object(self.pipeline, 'parse_record_log', return_value=records),
+            patch('pyartcd.pipelines.build_layered_products.sync_image_to_quay', new_callable=AsyncMock) as sync,
+            self.assertRaisesRegex(ValueError, 'multiple visibility-suffix'),
+        ):
+            await self.pipeline.mirror_test_builds_to_quay()
+        sync.assert_not_awaited()
+
+    async def test_run_mirrors_successful_records_even_after_partial_build_failure(self):
+        self.pipeline.assembly = 'test'
+        for build_error in (None, ChildProcessError('one image failed')):
+            with self.subTest(build_error=build_error):
+
+                async def build(*args):
+                    Path(self.runtime.doozer_working, 'record.log').write_text(
+                        'image_build_konflux|name=operator|status=0|nvrs=operator-1.4.9-1.p2|'
+                        'image_pullspec=quay.io/source/images@sha256:abc|image_tag=operator-tag\n'
+                        'image_build_konflux|name=failed|status=-1\n'
+                    )
+                    if build_error:
+                        raise build_error
+
+                with (
+                    patch(
+                        'pyartcd.pipelines.build_layered_products.load_group_config', return_value={'product': 'oadp'}
+                    ),
+                    patch.object(self.pipeline, '_rebase_and_build', side_effect=build),
+                    patch.object(self.pipeline, 'trigger_bundle_build'),
+                    patch(
+                        'pyartcd.pipelines.build_layered_products.sync_image_to_quay', new_callable=AsyncMock
+                    ) as sync,
+                ):
+                    if build_error:
+                        with self.assertRaisesRegex(ChildProcessError, 'one image failed'):
+                            await self.pipeline.run()
+                    else:
+                        await self.pipeline.run()
+                sync.assert_awaited_once_with(
+                    'quay.io/source/images@sha256:abc',
+                    KONFLUX_IMAGE_TEST_REPO,
+                    ['operator-tag'],
+                    dry_run=False,
+                    logger=self.runtime.logger,
+                )
+
+    async def test_run_sync_failure_does_not_change_build_result(self):
+        self.pipeline.assembly = 'test'
+        for build_error in (None, ChildProcessError('build failed')):
+            with (
+                self.subTest(build_error=build_error),
+                patch('pyartcd.pipelines.build_layered_products.load_group_config', return_value={'product': 'oadp'}),
+                patch.object(self.pipeline, '_rebase_and_build', side_effect=build_error),
+                patch.object(self.pipeline, 'trigger_bundle_build') as trigger,
+                patch.object(self.pipeline, 'mirror_test_builds_to_quay', side_effect=RuntimeError('sync failed')),
+            ):
+                self.runtime.logger.warning.reset_mock()
+                if build_error:
+                    with self.assertRaises(ChildProcessError) as raised:
+                        await self.pipeline.run()
+                    self.assertIs(raised.exception, build_error)
+                    trigger.assert_not_called()
+                else:
+                    await self.pipeline.run()
+                    trigger.assert_called_once()
+                self.runtime.logger.warning.assert_called_once_with(
+                    'Failed to sync test builds to %s; continuing', KONFLUX_IMAGE_TEST_REPO, exc_info=True
+                )
 
     def test_test_assembly_sets_test_banner(self):
         """When assembly is 'test', the Jenkins title should include [TEST]."""
