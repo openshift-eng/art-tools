@@ -584,10 +584,10 @@ class TestGetKonfluxBuildPriority(unittest.TestCase):
         policy = BuildPriorityPolicy.model_validate(
             {
                 'enabled': True,
-                'rules': [{'product': 'ocp', 'versions': ['4.20'], 'priority': 1}],
+                'rules': [{'product': 'ocp', 'versions': ['4.20'], 'priority': 2}],
             }
         )
-        self.assertEqual(util.get_konflux_build_priority(metadata, 'openshift-4.20', policy), '1')
+        self.assertEqual(util.get_konflux_build_priority(metadata, 'openshift-4.20', policy), '2')
         policy.enabled = False
         self.assertEqual(util.get_konflux_build_priority(metadata, 'openshift-4.20', policy), '7')
         metadata.config.konflux.get.return_value = None

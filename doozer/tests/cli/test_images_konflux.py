@@ -40,6 +40,15 @@ class TestKueueProductPolicies(unittest.TestCase):
 
 
 class TestKonfluxBuildStagePolicies(unittest.IsolatedAsyncioTestCase):
+    def setUp(self):
+        patcher = mock.patch(
+            'doozerlib.cli.images_konflux.load_build_priority_policy',
+            new_callable=mock.AsyncMock,
+            return_value=BuildPriorityPolicy(),
+        )
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
     async def test_cli_passes_one_resolved_policy_to_builder(self):
         for product, assembly, phase in (
             ("ocp", "stream", "release"),

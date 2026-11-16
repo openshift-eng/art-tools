@@ -12,10 +12,10 @@ def incident_policy(**overrides):
         {
             'enabled': True,
             'rules': [
-                {'product': 'ocp', 'versions': ['4.19', '4.20', '4.21', '4.22', '5.0'], 'priority': 1},
-                {'product': 'ocp', 'priority': 3},
+                {'product': 'ocp', 'versions': ['4.19', '4.20', '4.21', '4.22', '5.0'], 'priority': 2},
+                {'product': 'ocp', 'priority': 4},
             ],
-            'default_priority': 2,
+            'default_priority': 3,
             **overrides,
         }
     )
@@ -23,17 +23,17 @@ def incident_policy(**overrides):
 
 @pytest.mark.parametrize('version', ['4.19', '4.20', '4.21', '4.22', '5.0'])
 def test_development_cutoff_streams(version):
-    assert incident_policy().priority_for('ocp', f'openshift-{version}') == '1'
+    assert incident_policy().priority_for('ocp', f'openshift-{version}') == '2'
 
 
 @pytest.mark.parametrize('version', ['4.9', '4.13', '4.15', '4.17', '4.18', '4.23', '5.1'])
 def test_other_ocp_streams(version):
-    assert incident_policy().priority_for('ocp', f'openshift-{version}') == '3'
+    assert incident_policy().priority_for('ocp', f'openshift-{version}') == '4'
 
 
 @pytest.mark.parametrize('product,group', [('rhacm2', 'acm-2.17'), ('openshift-logging', 'logging-6.6')])
 def test_layered_products(product, group):
-    assert incident_policy().priority_for(product, group) == '2'
+    assert incident_policy().priority_for(product, group) == '3'
 
 
 def test_disabled_and_missing_flag_retain_existing_behavior():
@@ -42,23 +42,23 @@ def test_disabled_and_missing_flag_retain_existing_behavior():
 
 
 def test_min_version_uses_numeric_comparison():
-    policy = incident_policy(rules=[{'product': 'ocp', 'min_version': '4.18', 'priority': 1}])
-    assert policy.priority_for('ocp', 'openshift-4.9') == '2'
-    assert policy.priority_for('ocp', 'openshift-4.18') == '1'
-    assert policy.priority_for('ocp', 'openshift-4.20') == '1'
-    assert policy.priority_for('ocp', 'openshift-5.0') == '1'
-    assert policy.priority_for('ocp', 'unversioned') == '2'
+    policy = incident_policy(rules=[{'product': 'ocp', 'min_version': '4.18', 'priority': 2}])
+    assert policy.priority_for('ocp', 'openshift-4.9') == '3'
+    assert policy.priority_for('ocp', 'openshift-4.18') == '2'
+    assert policy.priority_for('ocp', 'openshift-4.20') == '2'
+    assert policy.priority_for('ocp', 'openshift-5.0') == '2'
+    assert policy.priority_for('ocp', 'unversioned') == '3'
 
 
 def test_incident_override_precedes_general_rule():
     policy = incident_policy(
         rules=[
-            {'product': 'rhacm2', 'versions': ['2.17'], 'priority': 1},
-            {'product': 'rhacm2', 'priority': 3},
+            {'product': 'rhacm2', 'versions': ['2.17'], 'priority': 2},
+            {'product': 'rhacm2', 'priority': 4},
         ]
     )
-    assert policy.priority_for('rhacm2', 'acm-2.17') == '1'
-    assert policy.priority_for('rhacm2', 'acm-2.16') == '3'
+    assert policy.priority_for('rhacm2', 'acm-2.17') == '2'
+    assert policy.priority_for('rhacm2', 'acm-2.16') == '4'
 
 
 @pytest.mark.parametrize(
@@ -69,16 +69,18 @@ def test_incident_override_precedes_general_rule():
         {'enabled': 1},
         {'enabeld': True},
         {'default_priority': 0},
+        {'default_priority': 1},
         {'default_priority': 11},
         {'default_priority': True},
         {'default_priority': '2'},
-        {'rules': [{'product': 'unknown', 'priority': 2}]},
+        {'rules': [{'product': 'unknown', 'priority': 3}]},
         {'rules': [{'product': 'ocp', 'priority': 0}]},
+        {'rules': [{'product': 'ocp', 'priority': 1}]},
         {'rules': [{'product': 'ocp', 'priority': 11}]},
         {'rules': [{'product': 'ocp', 'priority': True}]},
-        {'rules': [{'product': 'ocp', 'priority': 2, 'versions': []}]},
-        {'rules': [{'product': 'ocp', 'priority': 2, 'versions': [4.20]}]},
-        {'rules': [{'product': 'ocp', 'priority': 2, 'min_version': '4.18.0'}]},
+        {'rules': [{'product': 'ocp', 'priority': 3, 'versions': []}]},
+        {'rules': [{'product': 'ocp', 'priority': 3, 'versions': [4.20]}]},
+        {'rules': [{'product': 'ocp', 'priority': 3, 'min_version': '4.18.0'}]},
     ],
 )
 def test_invalid_policy_is_rejected_even_when_disabled(config):
@@ -95,14 +97,14 @@ class TestLoadBuildPriorityPolicy(IsolatedAsyncioTestCase):
         self.session_class.return_value.__aenter__.return_value = self.session
         self.response = MagicMock()
         self.response.status = 200
-        self.response.text = AsyncMock(return_value='enabled: true\ndefault_priority: 2\n')
+        self.response.text = AsyncMock(return_value='enabled: true\ndefault_priority: 3\n')
         self.session.get.return_value.__aenter__.return_value = self.response
 
     async def test_fetches_canonical_main_snapshot(self):
         policy = await load_build_priority_policy()
         self.session.get.assert_called_once_with(BUILD_PRIORITY_POLICY_URL)
         self.response.raise_for_status.assert_called_once()
-        assert policy.priority_for('rhacm2', 'acm-2.17') == '2'
+        assert policy.priority_for('rhacm2', 'acm-2.17') == '3'
 
     async def test_missing_file_retains_normal_priorities(self):
         self.response.status = 404

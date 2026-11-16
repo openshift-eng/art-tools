@@ -11,15 +11,15 @@ enabled: false
 rules:
   - product: ocp
     versions: ["4.19", "4.20", "4.21", "4.22", "5.0"]
-    priority: 1
+    priority: 2
   - product: ocp
-    priority: 3
-default_priority: 2
+    priority: 4
+default_priority: 3
 ```
 
 With this example enabled, the listed development-cutoff OCP streams have
-highest priority, layered products use priority 2, and remaining OCP streams
-use priority 3. The stream list is maintained explicitly; this does not read a
+priority 2, layered products use priority 3, and remaining OCP streams
+use priority 4. The stream list is maintained explicitly; this does not read a
 release calendar or automatically promote future streams. All other products
 use `default_priority`.
 
@@ -28,7 +28,8 @@ Rules are evaluated in order; the first match wins. Use canonical product IDs
 strings; `min_version: "4.18"` is also supported for a numeric lower bound.
 Version selection uses the product version at the end of the group name.
 A rule without version constraints matches every version of that product.
-Priorities must be integers from 1 (highest) to 10 (lowest).
+Policy priorities must be integers from 2 (highest allowed) to 10 (lowest).
+Priority 1 is reserved and rejected in both rules and `default_priority`.
 
 When `enabled: false`, or when the file is absent, existing behavior is retained:
 Doozer uses image/group overrides and builder/lifecycle/dependency defaults;

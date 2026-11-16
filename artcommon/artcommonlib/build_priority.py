@@ -15,7 +15,7 @@ LOGGER = logging.getLogger(__name__)
 BUILD_PRIORITY_POLICY_URL = (
     'https://raw.githubusercontent.com/openshift-eng/ocp-build-data/main/config/build-priority.yml'
 )
-Priority = Annotated[int, Field(strict=True, ge=1, le=10)]
+Priority = Annotated[int, Field(strict=True, ge=2, le=10)]
 ProductVersion = Annotated[str, StringConstraints(pattern=r'^\d+\.\d+$')]
 
 
