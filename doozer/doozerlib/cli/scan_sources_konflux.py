@@ -678,10 +678,6 @@ class ConfigScanSources:
                 )
                 return
 
-            stage = 'build cutoff checks'
-            if await self.scan_build_cutoff_changes(image_meta):
-                return
-
             # Check if there has been a config change since last build
             stage = 'config digest checks'
             await self.scan_for_config_changes(image_meta)
@@ -689,6 +685,11 @@ class ConfigScanSources:
             # Check if there's already a build from upstream latest commit
             stage = 'upstream commit checks'
             await self.scan_for_upstream_changes(image_meta)
+
+            # A new source or config must not wait on an older cutoff rebuild failure.
+            stage = 'build cutoff checks'
+            if await self.scan_build_cutoff_changes(image_meta):
+                return
 
             # Check for dependency changes
             stage = 'dependency checks'

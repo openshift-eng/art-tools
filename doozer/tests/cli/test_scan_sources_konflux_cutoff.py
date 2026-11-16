@@ -13,7 +13,7 @@ from doozerlib.cli.scan_sources_konflux import (
     config_scan_source_changes_konflux,
 )
 from doozerlib.image import ImageMetadata
-from doozerlib.metadata import RebuildHintCode
+from doozerlib.metadata import RebuildHint, RebuildHintCode
 from doozerlib.runtime import Runtime
 
 CUTOFF = datetime(2026, 11, 16, tzinfo=timezone.utc)
@@ -75,6 +75,8 @@ class TestBuildCutoff(IsolatedAsyncioTestCase):
         self.runtime.image_metas.return_value = []
         self.runtime.rpm_metas.return_value = []
         self.scanner = ConfigScanSources(self.runtime, '', MagicMock(), as_yaml=True, rebuild_before=CUTOFF)
+        self.scanner.scan_for_config_changes = AsyncMock()
+        self.scanner.scan_for_upstream_changes = AsyncMock()
         self.image = MagicMock(spec=ImageMetadata)
         self.image.distgit_key = 'test-image'
         self.image.qualified_key = 'containers/test-image'
@@ -115,7 +117,7 @@ class TestBuildCutoff(IsolatedAsyncioTestCase):
         scanner = ConfigScanSources(self.runtime, '', MagicMock(), False, rebuild_before=datetime(2026, 11, 16))
         self.assertEqual(scanner.rebuild_before, CUTOFF)
 
-    async def test_old_images_rebuild_in_ocp_and_lp_without_other_checks(self):
+    async def test_old_images_rebuild_in_ocp_and_lp_after_source_and_config_checks(self):
         for group in ['openshift-4.22', 'oadp-1.5']:
             with self.subTest(group=group):
                 self.runtime.group = group
@@ -124,10 +126,51 @@ class TestBuildCutoff(IsolatedAsyncioTestCase):
                     await self.scanner.scan_image(self.image)
                 self.assertIn('test-image', self.scanner.changing_image_names)
                 self.assertEqual(self.scanner.issues, [])
-                config_scan.assert_not_awaited()
+                config_scan.assert_awaited_once_with(self.image)
+                self.scanner.scan_for_upstream_changes.assert_awaited_with(self.image)
                 self.assertEqual(
                     self.scanner.assessment_code['containers/test-image+True'], RebuildHintCode.BUILD_BEFORE_CUTOFF
                 )
+
+    async def test_new_upstream_fix_is_not_delayed_by_old_commit_failure(self):
+        now = CUTOFF + timedelta(hours=12)
+        failed_attempt = build_record(now - timedelta(hours=1), KonfluxBuildOutcome.BUILD_ERROR)
+        failed_attempt.commitish = 'old-commit'
+
+        async def latest_build(**kwargs):
+            if kwargs.get('extra_patterns', {}).get('commitish') == 'new-fix':
+                return None
+            return failed_attempt
+
+        self.image.get_latest_build = AsyncMock(side_effect=latest_build)
+        self.scanner.scan_for_upstream_changes = ConfigScanSources.scan_for_upstream_changes.__get__(self.scanner)
+        with (
+            patch.object(self.scanner, 'find_upstream_commit_hash', return_value='new-fix'),
+            patch('doozerlib.cli.scan_sources_konflux.datetime') as mock_datetime,
+        ):
+            mock_datetime.now.return_value = now
+            await self.scanner.scan_image(self.image)
+
+        self.assertEqual(self.scanner.issues, [])
+        self.assertIn('test-image', self.scanner.changing_image_names)
+        self.assertEqual(
+            self.scanner.assessment_code['containers/test-image+True'], RebuildHintCode.NEW_UPSTREAM_COMMIT
+        )
+
+    async def test_config_fix_is_not_delayed_by_old_failure(self):
+        self.image.get_latest_build.return_value = build_record(
+            CUTOFF + timedelta(hours=11), KonfluxBuildOutcome.BUILD_ERROR
+        )
+        self.scanner.scan_for_config_changes.side_effect = lambda meta: self.scanner.add_image_meta_change(
+            meta, RebuildHint(RebuildHintCode.CONFIG_CHANGE, 'Metadata configuration change')
+        )
+
+        await self.scanner.scan_image(self.image)
+
+        self.assertEqual(self.scanner.issues, [])
+        self.assertIn('test-image', self.scanner.changing_image_names)
+        self.assertEqual(self.scanner.assessment_code['containers/test-image+True'], RebuildHintCode.CONFIG_CHANGE)
+        self.image.get_latest_build.assert_not_awaited()
 
     async def test_successful_rebuild_satisfies_cutoff(self):
         self.scanner.latest_image_build_records_map['test-image'] = build_record(CUTOFF)
