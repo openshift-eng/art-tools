@@ -178,6 +178,47 @@ class TestBuildCutoff(IsolatedAsyncioTestCase):
         self.assertEqual(self.scanner.changing_image_names, set())
         self.image.get_latest_build.assert_not_awaited()
 
+    async def test_stale_pin_reports_issue_without_repeated_cutoff_rebuilds(self):
+        pinned_build = self.scanner.latest_image_build_records_map['test-image']
+        self.image.config = Model({'is': {'nvr': pinned_build.nvr}})
+        child = MagicMock(spec=ImageMetadata)
+        child.distgit_key = 'child'
+        child.qualified_key = 'containers/child'
+        self.image.get_descendants.return_value = [child]
+        self.scanner.all_image_metas = {self.image}
+
+        # Even a successful replacement cannot change the NVR selected by the pin.
+        self.image.get_latest_build.return_value = build_record(CUTOFF + timedelta(hours=1))
+        for _ in range(2):
+            self.scanner.issues.clear()
+            self.assertFalse(await self.scanner.scan_build_cutoff_changes(self.image))
+            self.assertEqual(self.scanner.changing_image_names, set())
+            self.assertEqual(self.scanner.assessment_code, {})
+            self.assertEqual(len(self.scanner.issues), 1)
+            self.assertEqual(self.scanner.issues[0]['name'], 'test-image')
+            self.assertIn(pinned_build.nvr, self.scanner.issues[0]['issue'])
+            self.assertIn('update or remove the is pin', self.scanner.issues[0]['issue'])
+
+            with patch('doozerlib.cli.scan_sources_konflux.click.echo') as echo:
+                self.scanner.generate_report()
+            report = yaml.safe_load(echo.call_args.args[0])
+            self.assertEqual(report['images'], [])
+            self.assertEqual(report['issues'], self.scanner.issues)
+
+        self.image.get_latest_build.assert_not_awaited()
+        self.image.get_descendants.assert_not_called()
+
+    async def test_fresh_pin_does_not_report_cutoff_issue(self):
+        pinned_build = build_record(CUTOFF)
+        self.image.config = Model({'is': {'nvr': pinned_build.nvr}})
+        self.scanner.latest_image_build_records_map['test-image'] = pinned_build
+
+        self.assertFalse(await self.scanner.scan_build_cutoff_changes(self.image))
+
+        self.assertEqual(self.scanner.issues, [])
+        self.assertEqual(self.scanner.changing_image_names, set())
+        self.image.get_latest_build.assert_not_awaited()
+
     async def test_missing_start_time_is_rebuilt(self):
         self.scanner.latest_image_build_records_map['test-image'] = build_record(None)
         await self.scanner.scan_image(self.image)

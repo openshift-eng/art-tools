@@ -761,6 +761,15 @@ class ConfigScanSources:
         if rebuild_hint is None:
             return False
 
+        if image_meta.config['is']:
+            issue = (
+                f'{rebuild_hint.reason}. Image is pinned to {build_record.nvr}; '
+                'update or remove the is pin to satisfy the cutoff. Automatic cutoff rebuild skipped.'
+            )
+            self.logger.warning('%s: %s', image_meta.distgit_key, issue)
+            self.issues.append({'name': image_meta.distgit_key, 'issue': issue})
+            return False
+
         rebuild_interval = self.runtime.group_config.scan_freshness.threshold_hours or DEFAULT_THRESHOLD_HOURS
         # Fetch the latest attempt so granular failure outcomes also enforce backoff.
         failed_build_record = await image_meta.get_latest_build(

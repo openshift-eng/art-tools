@@ -46,6 +46,8 @@ This is a fixed cutoff, so a successful build started at or after that time
 satisfies the requirement. Builds with no recorded start time are also rebuilt
 because their freshness cannot be verified. Existing component filters, image
 descendant propagation, RPM target selection, and failed-build retry delays apply.
+Images with an `is:` pin are excluded from automatic cutoff rebuilds. A stale
+pin is reported in scan issues and logs so it can be updated or removed manually.
 
 Use `--rebuild-before YYYY-MM-DD` to override the cutoff (midnight UTC), or pass
 an ISO timestamp with a timezone, such as `2026-11-16T09:00:00-05:00`.
