@@ -7,6 +7,7 @@ Collection of Release tools for managing OCP releases
 - [pyartcd](./pyartcd) - code for release pipelines
 - [ocp-build-data-validator](./ocp-build-data-validator) - schema validator for [ocp-build-data](https://github.com/openshift/ocp-build-data)
 - [artcommon](./artcommon) - common package used by Doozer, Elliott, pyartcd
+- [Central image build priorities](./docs/build-priority.md) - optional incident priority policy
 
 ## Setup
 

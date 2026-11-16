@@ -8,6 +8,7 @@ from typing import List, Optional
 import click
 import yaml
 from artcommonlib import exectools
+from artcommonlib.build_priority import load_build_priority_policy
 from artcommonlib.build_visibility import is_nvr_embargoed
 from artcommonlib.pipeline_report import get_reporter
 from artcommonlib.product_catalog import get_kubeconfig_env_vars
@@ -467,6 +468,8 @@ class BuildLayeredProductsPipeline:
         else:
             self._logger.info(f"Building all images for assembly {self.assembly}")
 
+        policy = await load_build_priority_policy()
+        build_priority = policy.priority_for(product, self.group) or '3'
         build_cmd = self._doozer_base_command(build_variant)
         if strategy == BuildStrategy.ONLY:
             build_cmd.append(f"--images={image_list}")
@@ -476,7 +479,7 @@ class BuildLayeredProductsPipeline:
             [
                 "beta:images:konflux:build",
                 f"--image-repo={image_repo}",
-                "--build-priority=3",
+                f"--build-priority={build_priority}",
             ]
         )
 

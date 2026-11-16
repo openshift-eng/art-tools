@@ -35,6 +35,9 @@ def get_ocp_build_data_dir(file):
 
 
 def get_artifact_type(file):
+    if os.path.basename(file) == 'build-priority.yml':
+        return 'build-priority'
+
     if 'releases.yml' in file:
         return 'releases'
 

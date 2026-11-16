@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import Dict, List, Optional, Sequence, Tuple
 
 import click
+from artcommonlib.build_priority import load_build_priority_policy
 from artcommonlib.conforma import resolve_stage_policy
 from artcommonlib.constants import KONFLUX_DEFAULT_NAMESPACE
 from artcommonlib.konflux.konflux_build_record import (
@@ -413,6 +414,11 @@ class KonfluxBuildCli:
                 f"{', '.join(sorted(invalid_annotations))}"
             )
 
+        # Freeze one policy snapshot for the batch before submitting any builds.
+        # Golang builders use their fixed default without depending on the policy service.
+        priority_policy = None
+        if self.build_priority == 'auto' and 'golang' not in group:
+            priority_policy = await load_build_priority_policy()
         config = KonfluxImageBuilderConfig(
             base_dir=Path(runtime.working_dir, constants.WORKING_SUBDIR_KONFLUX_BUILD_SOURCES),
             group_name=group,
@@ -426,6 +432,7 @@ class KonfluxBuildCli:
             dry_run=self.dry_run,
             plr_template=self.plr_template,
             build_priority=self.build_priority,
+            build_priority_policy=priority_policy,
             ec_policy_configuration=ec_policy,
             skip_ec_verify=self.skip_ec_verify,
             effective_time=self.effective_time,
