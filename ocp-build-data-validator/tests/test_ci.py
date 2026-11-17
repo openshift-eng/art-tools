@@ -7,6 +7,43 @@ import pytest
 from validator import ci
 
 
+@pytest.mark.parametrize('host', ['registry.access.redhat.com', 'registry.access.redhat.io'])
+@pytest.mark.parametrize('location', ['stream', 'parent', 'builder'])
+def test_cli_rejects_unauthenticated_redhat_registry(tmp_path, host, location):
+    """Check real metadata through the shared CLI, including nested image references."""
+    repository(tmp_path)
+    pullspec = f'{host}/ubi9/go-toolset:1.27'
+    if location == 'stream':
+        path, field = 'streams.yml', '$.builder.image'
+        (tmp_path / path).write_text(f'builder:\n  image: {pullspec}\n')
+    else:
+        path = 'images/test.yml'
+        field = '$.from.image' if location == 'parent' else '$.from.builder[0].image'
+        parent = f'image: {pullspec}' if location == 'parent' else f'builder:\n    - image: {pullspec}'
+        (tmp_path / path).write_text(
+            f'name: test/image\nowners: [test@example.com]\ndelivery:\n  delivery_repo_names: [test/image]\n'
+            f'from:\n  {parent}\n'
+        )
+    report = tmp_path / 'report.json'
+    assert ci.main(['--repo', str(tmp_path), '--schema-only', '--report', str(report)]) == 1
+    errors = json.loads(report.read_text())['errors']
+    assert any(path in e and field in e and pullspec in e and 'registry.redhat.io' in e for e in errors), errors
+
+
+@pytest.mark.parametrize(
+    'pullspec',
+    [
+        'registry.redhat.io/ubi9/ubi:latest',
+        'quay.io/example/image:latest',
+        'registry.access.redhat.com.example.org/image:latest',
+    ],
+)
+def test_cli_accepts_other_registry_pullspecs(tmp_path, pullspec):
+    repository(tmp_path)
+    (tmp_path / 'streams.yml').write_text(f'builder:\n  image: {pullspec}\n')
+    assert ci.main(['--repo', str(tmp_path), '--schema-only']) == 0
+
+
 def git(root, *args):
     """Execute a Git command in the temporary test repository and return its output."""
     return subprocess.run(['git', '-C', str(root), *args], check=True, capture_output=True).stdout

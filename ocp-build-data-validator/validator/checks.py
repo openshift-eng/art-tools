@@ -60,6 +60,30 @@ def validate_fbc_catalogs(group: dict, auth_file: Path | None = None) -> list[st
     return errors
 
 
+def validate_registry_pullspecs(data: dict) -> list[str]:
+    """Reject unauthenticated Red Hat registry hosts in image reference fields."""
+    errors = []
+
+    def visit(value, path):
+        if isinstance(value, dict):
+            for key, item in value.items():
+                field = f'{path}.{key}'
+                if (
+                    key == 'image'
+                    and isinstance(item, str)
+                    and re.match(r'^(?:docker://)?registry\.access\.redhat\.(?:com|io)/', item, re.IGNORECASE)
+                ):
+                    errors.append(f'{field}: {item}: use registry.redhat.io for Red Hat images')
+                else:
+                    visit(item, field)
+        elif isinstance(value, list):
+            for index, item in enumerate(value):
+                visit(item, f'{path}[{index}]')
+
+    visit(data, '$')
+    return errors
+
+
 def validate_image(data: dict) -> list[str]:
     """Validate ownership, release delivery names and source paths for an enabled image."""
     errors = []

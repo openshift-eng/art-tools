@@ -208,6 +208,8 @@ def validate(
             data = read_metadata(root, relative)
             if data.get('mode') == 'disabled':
                 continue
+            if relative == Path('streams.yml') or relative.parts[0] == 'images':
+                file_errors.extend(checks.validate_registry_pullspecs(data))
             error = schema.validate(str(relative), data, str(root / 'images'))
             if error:
                 raise ValueError(error)
