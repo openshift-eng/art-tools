@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 
+import asyncio
 import os
 import tempfile
 import unittest
@@ -8,14 +9,16 @@ from unittest.mock import ANY, AsyncMock, MagicMock, patch
 
 from artcommonlib.constants import KONFLUX_IMAGE_TEST_REPO
 from artcommonlib.variants import BuildVariant
+from click.testing import CliRunner
 from pyartcd.counter_models import BuildFailCounterContext
-from pyartcd.pipelines.ocp4_konflux import KonfluxOcpPipeline
+from pyartcd.pipelines.ocp4_konflux import KonfluxOcpPipeline, ocp4
+from pyartcd.runtime import Runtime
 from pyartcd.util import update_build_fail_counters
 
 
 class TestGlobalAutomationFreeze(unittest.IsolatedAsyncioTestCase):
     @staticmethod
-    def make_pipeline(assembly='test'):
+    def make_pipeline(assembly='test', **kwargs):
         return KonfluxOcpPipeline(
             runtime=MagicMock(),
             version='4.22',
@@ -23,6 +26,7 @@ class TestGlobalAutomationFreeze(unittest.IsolatedAsyncioTestCase):
             image_build_strategy='only',
             rpm_build_strategy='none',
             build_priority='auto',
+            **kwargs,
         )
 
     @patch('pyartcd.pipelines.ocp4_konflux.util.is_build_permitted', new_callable=AsyncMock, return_value=False)
@@ -60,6 +64,27 @@ class TestGlobalAutomationFreeze(unittest.IsolatedAsyncioTestCase):
         pipeline._run_pipeline.assert_not_awaited()
         registry_config.assert_not_called()
 
+    @patch('pyartcd.pipelines.ocp4_konflux.util.is_build_permitted', side_effect=TimeoutError)
+    @patch('pyartcd.pipelines.ocp4_konflux.RegistryConfig')
+    @patch.dict(os.environ, {'QCI_USER': 'test-user', 'QCI_PASSWORD': 'test-password'}, clear=True)
+    async def test_explicit_override_runs_pipeline_without_evaluating_freeze(self, registry_config, build_permitted):
+        with tempfile.TemporaryDirectory() as directory:
+            auth_file = Path(directory) / 'auth.json'
+            auth_file.write_text('{}')
+            registry_config.return_value.__enter__.return_value = str(auth_file)
+            pipeline = self.make_pipeline('stream', ignore_automation_freeze=True)
+            pipeline._run_pipeline = AsyncMock()
+
+            with (
+                patch.dict(os.environ, {'QUAY_AUTH_FILE': str(auth_file), 'RHCOS_QUAY_AUTH_FILE': str(auth_file)}),
+                self.assertLogs('pyartcd.pipelines.ocp4_konflux', level='WARNING') as logs,
+            ):
+                await pipeline.run()
+
+        build_permitted.assert_not_awaited()
+        pipeline._run_pipeline.assert_awaited_once()
+        self.assertIn('--ignore-automation-freeze was explicitly set', '\n'.join(logs.output))
+
     @patch('pyartcd.util.is_manual_build')
     @patch('pyartcd.util.get_global_freeze_automation', new_callable=AsyncMock, return_value='scheduled')
     @patch.dict(os.environ, {}, clear=True)
@@ -76,6 +101,59 @@ class TestGlobalAutomationFreeze(unittest.IsolatedAsyncioTestCase):
         pipeline = self.make_pipeline('stream')
         with self.assertRaisesRegex(ValueError, 'QUAY_AUTH_FILE'):
             await pipeline.run()
+
+
+class TestAutomationFreezeOption(unittest.TestCase):
+    def test_cli_override_preserves_build_lock(self):
+        async def run_locked(coro, **kwargs):
+            await coro
+
+        args = [
+            '--version',
+            '4.21',
+            '--assembly',
+            'stream',
+            '--image-build-strategy',
+            'none',
+            '--image-list',
+            '',
+            '--rpm-build-strategy',
+            'only',
+            '--rpm-list',
+            'openshift',
+            '--build-priority',
+            'auto',
+        ]
+        for override in (False, True):
+            with self.subTest(override=override):
+                loop = asyncio.new_event_loop()
+                asyncio.set_event_loop(loop)
+                try:
+                    with (
+                        patch('pyartcd.pipelines.ocp4_konflux.KonfluxOcpPipeline') as pipeline_class,
+                        patch(
+                            'pyartcd.pipelines.ocp4_konflux.jenkins.get_build_path_or_random', return_value='test-run'
+                        ),
+                        patch(
+                            'pyartcd.pipelines.ocp4_konflux.locks.run_with_lock',
+                            new_callable=AsyncMock,
+                            side_effect=run_locked,
+                        ) as run_with_lock,
+                    ):
+                        pipeline_class.return_value.run = AsyncMock()
+                        result = CliRunner().invoke(
+                            ocp4,
+                            args + (['--ignore-automation-freeze'] if override else []),
+                            obj=MagicMock(spec=Runtime),
+                        )
+                        self.assertEqual(result.exit_code, 0, result.output or str(result.exception))
+                        self.assertIs(pipeline_class.call_args.kwargs['ignore_automation_freeze'], override)
+                        run_with_lock.assert_awaited_once()
+                        self.assertEqual(run_with_lock.call_args.kwargs['lock_name'], 'lock:build-konflux:4.21:stream')
+                        pipeline_class.return_value.run.assert_awaited_once()
+                finally:
+                    loop.close()
+                    asyncio.set_event_loop(None)
 
 
 class TestUpdateBuildFailCounters(unittest.IsolatedAsyncioTestCase):
