@@ -402,7 +402,9 @@ class TestSyncNvrToQuayPipeline(unittest.IsolatedAsyncioTestCase):
     @mock.patch("pyartcd.pipelines.sync_nvr_to_quay.sync_to_quay", new_callable=mock.AsyncMock)
     @mock.patch("pyartcd.pipelines.sync_nvr_to_quay.is_nvr_embargoed", return_value=False)
     @mock.patch("pyartcd.pipelines.sync_nvr_to_quay.KonfluxDb")
-    async def test_non_embargoed_nvr_synced_to_sd_handoff_regardless_of_flag(self, mock_db_cls, mock_embargo, mock_sync):
+    async def test_non_embargoed_nvr_synced_to_sd_handoff_regardless_of_flag(
+        self, mock_db_cls, mock_embargo, mock_sync
+    ):
         runtime = _make_runtime(dry_run=False)
         record = _make_record(embargoed=False, image_tag="foo-tag")
         _db_with_results(mock_db_cls, [record])
