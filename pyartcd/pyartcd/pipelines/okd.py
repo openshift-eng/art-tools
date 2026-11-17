@@ -12,8 +12,6 @@ import click
 import yaml
 from artcommonlib import exectools
 from artcommonlib.arch_util import go_arch_for_brew_arch, go_suffix_for_arch
-from artcommonlib.konflux.konflux_build_record import ArtifactType, Engine, KonfluxBuildOutcome, KonfluxBuildRecord
-from artcommonlib.konflux.konflux_db import KonfluxDb
 from artcommonlib.util import oc_image_info_for_arch_async
 from artcommonlib.variants import BuildVariant
 from async_lru import alru_cache
@@ -44,7 +42,6 @@ OKD_ARCHES = ('x86_64', 'aarch64')
 # Payload tag/distgit key used as a stand-in when a component has no image for a given arch.
 # Mirrors the 'pod' substitution doozer's release:gen-payload does for OCP payloads.
 POD_PLACEHOLDER_TAG = 'pod'
-POD_PLACEHOLDER_IMAGE_NAME = 'openshift-enterprise-pod'
 
 
 class BuildPlan:
@@ -606,34 +603,27 @@ class KonfluxOkdPipeline:
             return None
 
     @alru_cache
-    async def _get_pod_placeholder_pullspec(self) -> Optional[str]:
+    async def _get_current_tag_pullspec(self, namespace: str, is_name: str, tag: str) -> Optional[str]:
         """
-        Find the latest successful build of the 'pod' payload component (manifest-list
-        pullspec), used as a stand-in for components with no image for a given arch.
-        Mirrors doozer's release:gen-payload 'pod' substitution for OCP payloads.
+        Look up the pullspec currently tagged in an imagestream. Used to find the
+        last-known-good 'pod' image to serve as a placeholder when a component has
+        no image for a given arch.
 
         Cached per pipeline instance: every missing-arch image in a run would
-        otherwise trigger the same lookup.
+        otherwise trigger the same 'oc get istag' call.
         """
-        db = KonfluxDb()
-        db.bind(KonfluxBuildRecord)
-        build = await db.get_latest_build(
-            name=POD_PLACEHOLDER_IMAGE_NAME,
-            group=f'openshift-{self.version}',
-            assembly=self.assembly,
-            outcome=KonfluxBuildOutcome.SUCCESS,
-            engine=Engine.KONFLUX,
-            artifact_type=ArtifactType.IMAGE,
-            exclude_large_columns=True,
-        )
-        if not build:
-            self.logger.warning(
-                'No successful %s build found for group openshift-%s; no pod placeholder available',
-                POD_PLACEHOLDER_IMAGE_NAME,
-                self.version,
-            )
+        cmd = [
+            'oc',
+            'get',
+            'istag',
+            f'{namespace}/{is_name}:{tag}',
+            '-o',
+            'jsonpath={.image.dockerImageReference}',
+        ]
+        rc, out, _ = await exectools.cmd_gather_async(cmd, check=False)
+        if rc != 0 or not out.strip():
             return None
-        return build.image_pullspec
+        return out.strip()
 
     async def update_imagestreams(self):
         """
@@ -747,15 +737,15 @@ class KonfluxOkdPipeline:
             for arch, info in arch_imagestreams.items():
                 arch_pullspec = await self._get_arch_pullspec(image_pullspec, info['go_arch'])
                 if not arch_pullspec and payload_tag != POD_PLACEHOLDER_TAG:
-                    # No image for this arch (e.g. not built for it): fall back to the latest
-                    # 'pod' build, resolved to this arch, so the imagestream still carries a
-                    # complete set of tags for this arch.
-                    pod_pullspec = await self._get_pod_placeholder_pullspec()
-                    if pod_pullspec:
-                        arch_pullspec = await self._get_arch_pullspec(pod_pullspec, info['go_arch'])
+                    # No image for this arch (e.g. not built for it): fall back to whatever
+                    # 'pod' image is already tagged here, so the imagestream still carries
+                    # a complete set of tags for this arch.
+                    arch_pullspec = await self._get_current_tag_pullspec(
+                        info['namespace'], info['is_name'], POD_PLACEHOLDER_TAG
+                    )
                     if arch_pullspec:
                         self.logger.warning(
-                            'No %s image for %s; using pod placeholder for this tag',
+                            'No %s image for %s; using existing pod placeholder for this tag',
                             info['go_arch'],
                             image_name,
                         )
