@@ -38,6 +38,10 @@ from pyartcd.util import (
 
 OKD_ARCHES = ('x86_64', 'aarch64')
 
+# Payload tag used as a stand-in when a component has no image for a given arch.
+# Mirrors the 'pod' substitution doozer's release:gen-payload does for OCP payloads.
+POD_PLACEHOLDER_TAG = 'pod'
+
 
 class BuildPlan:
     def __init__(self, image_build_strategy=BuildStrategy.ALL):
@@ -597,6 +601,25 @@ class KonfluxOkdPipeline:
             self.logger.warning('Failed to resolve %s pullspec from %s: %s', go_arch, manifest_list_pullspec, e)
             return None
 
+    async def _get_current_tag_pullspec(self, namespace: str, is_name: str, tag: str, env: dict) -> Optional[str]:
+        """
+        Look up the pullspec currently tagged in an imagestream. Used to find the
+        last-known-good 'pod' image to serve as a placeholder when a component has
+        no image for a given arch.
+        """
+        cmd = [
+            'oc',
+            'get',
+            'istag',
+            f'{namespace}/{is_name}:{tag}',
+            '-o',
+            'jsonpath={.image.dockerImageReference}',
+        ]
+        rc, out, _ = await exectools.cmd_gather_async(cmd, check=False, env=env)
+        if rc != 0 or not out.strip():
+            return None
+        return out.strip()
+
     async def update_imagestreams(self):
         """
         Update static OKD imagestreams with successfully built images:
@@ -708,6 +731,20 @@ class KonfluxOkdPipeline:
             # Tag arch-specific pullspecs into per-arch imagestreams
             for arch, info in arch_imagestreams.items():
                 arch_pullspec = await self._get_arch_pullspec(image_pullspec, info['go_arch'])
+                if not arch_pullspec and payload_tag != POD_PLACEHOLDER_TAG:
+                    # No image for this arch (e.g. not built for it): fall back to whatever
+                    # 'pod' image is already tagged here, so the imagestream still carries
+                    # a complete set of tags for this arch.
+                    arch_pullspec = await self._get_current_tag_pullspec(
+                        info['namespace'], info['is_name'], POD_PLACEHOLDER_TAG, env
+                    )
+                    if arch_pullspec:
+                        self.logger.warning(
+                            'No %s image for %s; using existing pod placeholder for this tag',
+                            info['go_arch'],
+                            image_name,
+                        )
+
                 if arch_pullspec:
                     arch_target = f'{info["namespace"]}/{info["is_name"]}:{payload_tag}'
                     try:
@@ -718,7 +755,7 @@ class KonfluxOkdPipeline:
                         self.logger.warning('Failed to tag %s %s into imagestream: %s', image_name, info['go_arch'], e)
                 else:
                     self.logger.warning(
-                        'Skipping %s imagestream tag for %s: could not resolve %s pullspec',
+                        'Skipping %s imagestream tag for %s: could not resolve %s pullspec and no pod placeholder available',
                         info['go_arch'],
                         image_name,
                         info['go_arch'],
