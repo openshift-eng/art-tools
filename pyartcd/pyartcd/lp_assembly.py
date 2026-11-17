@@ -56,6 +56,9 @@ def direct_release_assembly(releases: dict, assembly: str, pins: dict[str, str],
     for member in generated:
         old = deepcopy(old_by_key.get(member['distgit_key'], {}))
         metadata = old.setdefault('metadata', {})
+        # Current inputs own the pin, regardless of its previous merge operator.
+        for field in ('is!', 'is?', 'is-'):
+            metadata.pop(field, None)
         metadata['is'] = member['metadata']['is']
         member.update(old)
     definition['type'] = 'standard'
@@ -66,11 +69,17 @@ def direct_release_assembly(releases: dict, assembly: str, pins: dict[str, str],
             continue
         member = deepcopy(old)
         metadata = member.get('metadata', {})
-        image_pin = metadata.get('is', {})
-        image_pin.pop('nvr', None)
-        image_pin.pop('nvr!', None)
-        if not image_pin:
-            metadata.pop('is', None)
+        for field in ('is', 'is!', 'is?'):
+            image_pin = metadata.get(field, {})
+            for nvr_field in ('nvr', 'nvr!', 'nvr?'):
+                image_pin.pop(nvr_field, None)
+            if not image_pin:
+                metadata.pop(field, None)
+        if member['distgit_key'] in pins and member['distgit_key'] not in excluded_keys:
+            # A selection matching the parent needs no child pin, but must
+            # remove a previous suppression so the parent pin takes effect.
+            for field in ('is', 'is!', 'is?', 'is-'):
+                metadata.pop(field, None)
         if not metadata:
             member.pop('metadata', None)
         # A redundant or removed pin must not discard unrelated image settings

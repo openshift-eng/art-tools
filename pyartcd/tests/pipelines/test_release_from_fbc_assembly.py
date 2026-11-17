@@ -178,6 +178,44 @@ def test_unified_records_honor_the_loaded_patch_policy(tmp_path):
     assert records['oadp-operator']['operand_nvrs'] == [PIN]
 
 
+@pytest.mark.parametrize('operation', ['replace', 'remove'])
+@pytest.mark.parametrize('unified', [False, True])
+def test_is_replace_operator_does_not_leave_obsolete_builds_in_the_shipment(tmp_path, operation, unified):
+    """Reconcile is! members through the pipeline without adding their old builds to the image shipment."""
+    release = pipeline(tmp_path, unified_fbc=unified)
+    key = 'oadp-operator' if operation == 'replace' else 'oadp-velero'
+    old_nvr = f'{key}-container-1.5.8-0.p0'
+    release._component_doozer_keys['oadp-velero-container'] = 'oadp-velero'
+    release._releases_config = {
+        'releases': {
+            '1.5.8': {
+                'assembly': {
+                    'type': 'standard',
+                    'members': {
+                        'images': [
+                            {
+                                'distgit_key': key,
+                                'why': 'Keep architecture restrictions',
+                                'metadata': {'is!': {'nvr': old_nvr}, 'arches': ['x86_64']},
+                            }
+                        ]
+                    },
+                }
+            }
+        }
+    }
+    asyncio.run(release.run())
+    shipment = release.write_shipment_files_locally.await_args.args[0]['image'].shipment
+    assert shipment.snapshot.nvrs == [PIN, BUNDLE]
+    members = {member['distgit_key']: member for member in release._assembly_definition['members']['images']}
+    assert members[key]['metadata'] == (
+        {'arches': ['x86_64'], 'is': {'nvr': PIN}} if operation == 'replace' else {'arches': ['x86_64']}
+    )
+    if unified:
+        records = recorded_assembly_fbcs(YAML.load(tmp_path / 'assembly.yml'), '1.5.8', '4.22')
+        assert records['oadp-operator']['operand_nvrs'] == [PIN]
+
+
 @pytest.mark.parametrize(
     'data_path', ['git@github.com:my-team/build-data.git', 'https://github.com/my-team/build-data']
 )

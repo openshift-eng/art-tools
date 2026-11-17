@@ -31,7 +31,8 @@ exclusions are honored, and the parent is unchanged. Effective inherited pins
 are included in the image shipment. Standalone reruns replace the generated pin
 list so removed inputs do not remain pinned.
 Removing a redundant or obsolete pin preserves unrelated member settings, such
-as architecture overrides and explicit exclusions.
+as architecture overrides and explicit exclusions. Pin reconciliation handles
+merge-operator forms such as `metadata.is!` as well as ordinary `metadata.is`.
 
 Use `--unified-fbc` to record validated immutable FBC builds in
 `group.fbc_builds` and omit individual FBC shipment files. Operators, operands,

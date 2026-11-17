@@ -114,6 +114,65 @@ def test_removed_or_redundant_pins_preserve_unrelated_member_settings(inherited)
     assert original == before
 
 
+@pytest.mark.parametrize('pin_field', ['is', 'is!', 'is?'])
+@pytest.mark.parametrize('operation', ['replace', 'remove', 'inherit'])
+def test_merge_operator_pin_forms_are_reconciled(pin_field, operation):
+    """Replace or remove supported pin forms without reviving stale pins or dropping image settings."""
+    original = releases(
+        {
+            'type': 'standard',
+            'members': {
+                'images': [
+                    {
+                        'distgit_key': 'operator',
+                        'why': 'Keep architecture restrictions',
+                        'metadata': {pin_field: {'nvr': 'oadp-operator-container-1.5.8-0'}, 'arches': ['x86_64']},
+                    }
+                ]
+            },
+        }
+    )
+    if operation == 'inherit':
+        original['releases'][ASSEMBLY]['assembly']['basis'] = {'assembly': '1.5.7'}
+        original['releases']['1.5.7'] = {
+            'assembly': {'members': {'images': [{'distgit_key': 'operator', 'metadata': {'is': {'nvr': PIN}}}]}}
+        }
+    before = deepcopy(original)
+    selected = {} if operation == 'remove' else {'operator': PIN}
+    definition = direct_release_assembly(original, ASSEMBLY, selected, {})
+    metadata = definition['members']['images'][0]['metadata']
+    assert metadata == (
+        {'arches': ['x86_64'], 'is': {'nvr': PIN}} if operation == 'replace' else {'arches': ['x86_64']}
+    )
+    current = deepcopy(original)
+    current['releases'][ASSEMBLY]['assembly'] = definition
+    assert assembly_image_pins(Model(current), ASSEMBLY) == selected
+    assert original == before
+
+
+@pytest.mark.parametrize('selected_pin', [None, PIN, 'oadp-operator-container-1.5.8-2'])
+def test_explicit_pin_removal_is_preserved_unless_reselected(selected_pin):
+    """Keep an inherited-pin suppression until the current release explicitly selects that image."""
+    original = releases(
+        {
+            'basis': {'assembly': '1.5.7'},
+            'members': {
+                'images': [{'distgit_key': 'operator', 'metadata': {'is-': {'nvr': PIN}, 'arches': ['x86_64']}}]
+            },
+        }
+    )
+    original['releases']['1.5.7'] = {
+        'assembly': {'members': {'images': [{'distgit_key': 'operator', 'metadata': {'is': {'nvr': PIN}}}]}}
+    }
+    selected = {'operator': selected_pin} if selected_pin else {}
+    definition = direct_release_assembly(original, ASSEMBLY, selected, {})
+    original['releases'][ASSEMBLY]['assembly'] = definition
+    assert assembly_image_pins(Model(original), ASSEMBLY) == selected
+    metadata = definition['members']['images'][0]['metadata']
+    assert ('is-' in metadata) is (selected_pin is None)
+    assert metadata['arches'] == ['x86_64']
+
+
 @pytest.mark.parametrize('field', ['pin', 'pointer', 'fbc', 'parent'])
 def test_concurrent_release_changes_fail_without_writes(tmp_path, field):
     original = releases(direct_release_assembly({}, ASSEMBLY, {'operator': PIN}, {}))
