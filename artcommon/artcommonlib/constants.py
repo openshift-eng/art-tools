@@ -112,3 +112,46 @@ COREOS_RHEL10_STREAMS = [
     "rhel-coreos-10-extensions",
 ]
 # Legacy constant removed - use get_art_prod_image_repo_for_version() from artcommonlib.util instead
+
+# ---------------------------------------------------------------------------
+# freeze_automation
+# ---------------------------------------------------------------------------
+# Single source of truth for the valid `freeze_automation` values. These are
+# shared by doozer (group.yml enforcement in doozerlib.runtime), pyartcd (the
+# pipeline freeze checks in pyartcd.util), and the global master switch stored
+# in config/automation.yml on ocp-build-data main. The master switch takes
+# precedence over group values.
+FREEZE_AUTOMATION_YES = 'yes'  # freeze everything, including manually-triggered runs
+FREEZE_AUTOMATION_SCHEDULED = 'scheduled'  # only manually-triggered runs are permitted
+FREEZE_AUTOMATION_WEEKDAYS = 'weekdays'  # automated runs permitted only on weekends; manual always permitted
+FREEZE_AUTOMATION_NO = 'no'  # not frozen; defer to each group's own policy
+
+VALID_FREEZE_AUTOMATION_VALUES = (
+    FREEZE_AUTOMATION_YES,
+    FREEZE_AUTOMATION_SCHEDULED,
+    FREEZE_AUTOMATION_WEEKDAYS,
+    FREEZE_AUTOMATION_NO,
+)
+
+
+def normalize_freeze_automation(value) -> str:
+    """Normalize a freeze_automation value to one of VALID_FREEZE_AUTOMATION_VALUES.
+
+    Accepts a Python/YAML boolean (True -> 'yes', False -> 'no'), the
+    yaml-booleanish strings 'yes'/'true'/'True' (-> 'yes') and
+    'no'/'false'/'False' (-> 'no'), and the string constants 'scheduled' and
+    'weekdays'. Raises ValueError for any other value.
+    """
+    if isinstance(value, bool):
+        return FREEZE_AUTOMATION_YES if value else FREEZE_AUTOMATION_NO
+    if isinstance(value, str):
+        lowered = value.strip().lower()
+        if lowered in ('yes', 'true'):
+            return FREEZE_AUTOMATION_YES
+        if lowered in ('no', 'false'):
+            return FREEZE_AUTOMATION_NO
+        if lowered == FREEZE_AUTOMATION_SCHEDULED:
+            return FREEZE_AUTOMATION_SCHEDULED
+        if lowered == FREEZE_AUTOMATION_WEEKDAYS:
+            return FREEZE_AUTOMATION_WEEKDAYS
+    raise ValueError(f'Invalid freeze_automation value: {value!r}')
