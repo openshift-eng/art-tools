@@ -865,8 +865,20 @@ class KonfluxOcpPipeline:
                 raise result
 
     async def run(self):
-        if await util.is_global_automation_frozen():
-            LOGGER.warning('Skipping Konflux build: all groups are frozen by ocp-build-data main/config/automation.yml')
+        # Honor the freeze_automation master switch (and group policy) in a manual-aware way:
+        # global 'yes' blocks all runs; global/group 'scheduled' blocks non-manual runs but allows
+        # manual ones; 'weekdays' allows weekends/manual only. A config read failure propagates
+        # (fail-closed), so builds are never produced when the switch cannot be evaluated.
+        if not await util.is_build_permitted(
+            group=f'openshift-{self.version}',
+            data_path=self.data_path,
+            doozer_working=self.runtime.doozer_working,
+            doozer_data_gitref=self.data_gitref,
+        ):
+            LOGGER.warning(
+                'Skipping Konflux build: not permitted by freeze_automation '
+                '(master switch in ocp-build-data main/config/automation.yml or group policy)'
+            )
             return
 
         # Unset XDG_RUNTIME_DIR to ensure we don't use default auth.json

@@ -20,7 +20,14 @@ import yaml
 from artcommonlib import exectools, redis
 from artcommonlib.arch_util import go_suffix_for_arch
 from artcommonlib.assembly import assembly_type
-from artcommonlib.constants import ACTIVE_OCP_VERSIONS
+from artcommonlib.constants import (
+    ACTIVE_OCP_VERSIONS,
+    FREEZE_AUTOMATION_NO,
+    FREEZE_AUTOMATION_SCHEDULED,
+    FREEZE_AUTOMATION_WEEKDAYS,
+    FREEZE_AUTOMATION_YES,
+    normalize_freeze_automation,
+)
 from artcommonlib.exectools import limit_concurrency
 from artcommonlib.github_auth import get_github_client_for_org
 from artcommonlib.konflux.konflux_build_record import KonfluxBuildOutcome
@@ -414,20 +421,38 @@ def get_changes(yaml_data: dict) -> dict:
     retry=retry_if_exception_type((aiohttp.ClientError, asyncio.TimeoutError)),
     before_sleep=before_sleep_log(logger, logging.WARNING),
 )
-async def is_global_automation_frozen() -> bool:
-    """Read the master switch from canonical build-data main, regardless of group overrides."""
+async def get_global_freeze_automation() -> str:
+    """Read the global master switch from canonical build-data main and return its normalized state.
+
+    Returns one of artcommonlib.constants.VALID_FREEZE_AUTOMATION_VALUES
+    ('yes'/'scheduled'/'weekdays'/'no'). The config may set freeze_automation as a
+    YAML boolean (true -> 'yes', false -> 'no') or any of the valid string
+    constants. A missing config file (404) is treated as not frozen ('no') so
+    this code can be deployed before the config is merged. Genuinely unknown or
+    malformed config raises ValueError (or a YAML error).
+    """
     url = 'https://raw.githubusercontent.com/openshift-eng/ocp-build-data/main/config/automation.yml'
     async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=30)) as session:
         async with session.get(url) as response:
             # Allow the automation change to be deployed before the new config is merged.
             if response.status == 404:
-                return False
+                return FREEZE_AUTOMATION_NO
             response.raise_for_status()
             config = yaml.safe_load(await response.text())
 
-    if not isinstance(config, dict) or not isinstance(config.get('freeze_automation'), bool):
-        raise ValueError(f'{url} must define freeze_automation as a YAML boolean')
-    return config['freeze_automation']
+    if not isinstance(config, dict) or 'freeze_automation' not in config:
+        raise ValueError(f'{url} must define freeze_automation')
+    return normalize_freeze_automation(config['freeze_automation'])
+
+
+async def is_global_automation_frozen() -> bool:
+    """Whether the global master switch hard-freezes all automation (global 'yes'/true).
+
+    Preserved for existing binary callers. Note that 'scheduled' and 'weekdays'
+    are NOT hard freezes and return False here; use is_build_permitted() or
+    get_freeze_automation() to honor those in a manual-aware way.
+    """
+    return (await get_global_freeze_automation()) == FREEZE_AUTOMATION_YES
 
 
 async def get_freeze_automation(
@@ -438,11 +463,21 @@ async def get_freeze_automation(
     extra_vars: list = None,
 ) -> str:
     """
-    Return the effective freeze flag, with the global switch taking precedence over the group.
+    Return the effective freeze flag, with the global master switch taking precedence over the group.
+
+    The global state is read once; if it is anything other than 'no', that state
+    is returned so 'yes'/'scheduled'/'weekdays' all override the group. Otherwise
+    the group's own freeze_automation value is read via doozer config:read-group.
     """
-    if await is_global_automation_frozen():
-        logger.warning('All groups are frozen by freeze_automation in ocp-build-data main/config/automation.yml')
-        return 'yes'
+    global_state = await get_global_freeze_automation()
+    if global_state != FREEZE_AUTOMATION_NO:
+        logger.warning(
+            'Global freeze_automation in ocp-build-data main/config/automation.yml is set to "%s"; '
+            'overriding group policy for %s',
+            global_state,
+            group,
+        )
+        return global_state
 
     group_param = f'--group={group}'
     if doozer_data_gitref:
@@ -506,6 +541,58 @@ def get_weekday() -> str:
     return datetime.today().strftime("%A")
 
 
+def is_freeze_state_build_permitted(freeze_automation: str) -> bool:
+    """
+    Decide whether build-producing work is permitted right now given an already
+    resolved freeze_automation state, honoring manual vs scheduled runs and the
+    current day of the week.
+
+    This is the single source of truth for interpreting a freeze_automation
+    value and is shared by is_build_permitted and build_plashets'
+    is_compose_build_permitted so the two cannot drift apart. Semantics:
+        - 'yes'/'True'  -> never permitted (hard freeze, including manual runs)
+        - 'scheduled'   -> permitted only for manual runs
+        - 'weekdays'    -> manual runs always permitted; non-manual runs permitted
+                           only on weekends (plus the images-health Monday exception)
+        - anything else -> permitted
+    """
+    # Hard freeze: nothing is permitted, not even manual runs.
+    # yaml parses unquoted "yes" as a boolean... accept the 'True' alias too
+    if freeze_automation in [FREEZE_AUTOMATION_YES, 'True']:
+        logger.info('Automation is disabled by the global or group freeze_automation setting.')
+        return False
+
+    # Only manual runs are permitted.
+    if freeze_automation == FREEZE_AUTOMATION_SCHEDULED and not is_manual_build():
+        logger.info(
+            'Only manual runs are permitted according to freeze_automation and this run appears to be non-manual.'
+        )
+        return False
+
+    # Automated runs are permitted only on weekends; manual runs are always permitted.
+    if freeze_automation == FREEZE_AUTOMATION_WEEKDAYS:
+        # Manual builds are always permitted
+        if is_manual_build():
+            logger.info('Current build is permitted as it has been triggered manually')
+            return True
+
+        # Check current day of the week
+        weekday = get_weekday()
+        if weekday in ['Saturday', 'Sunday']:
+            logger.info(f'Automation is permitted during weekends, and today is {weekday}')
+            return True
+
+        if weekday in ['Monday'] and os.environ.get('JOB_BASE_NAME', '') in ['images-health']:
+            logger.info(f"Permitting automated run of {os.environ['JOB_BASE_NAME']} on Monday")
+            return True
+
+        logger.info('Scheduled builds are permitted only on weekends, and today is %s', weekday)
+        return False
+
+    # Fallback to default
+    return True
+
+
 async def is_build_permitted(
     version: str = '',
     group: str = '',
@@ -542,42 +629,7 @@ async def is_build_permitted(
     )
     logger.info('Group freeze automation flag is set to: "%s"', freeze_automation)
 
-    # Check for frozen automation
-    # yaml parses unquoted "yes" as a boolean... accept either
-    if freeze_automation in ['yes', 'True']:
-        logger.info('Automation is disabled by the global or group freeze_automation setting.')
-        return False
-
-    # Check for frozen scheduled automation
-    if freeze_automation == "scheduled" and not is_manual_build():
-        logger.info(
-            'Only manual runs are permitted according to freeze_automation in group.yml '
-            'and this run appears to be non-manual.'
-        )
-        return False
-
-    # Check if group can run on weekends
-    if freeze_automation == 'weekdays':
-        # Manual builds are always permitted
-        if is_manual_build():
-            logger.info('Current build is permitted as it has been triggered manually')
-            return True
-
-        # Check current day of the week
-        weekday = get_weekday()
-        if weekday in ['Saturday', 'Sunday']:
-            logger.info(f'Automation is permitted during weekends, and today is {weekday}')
-            return True
-
-        if weekday in ['Monday'] and os.environ.get('JOB_BASE_NAME', '') in ['images-health']:
-            logger.info(f"Permitting automated run of {os.environ['JOB_BASE_NAME']} on Monday")
-            return True
-
-        logger.info('Scheduled builds for %s are permitted only on weekends, and today is %s', version, weekday)
-        return False
-
-    # Fallback to default
-    return True
+    return is_freeze_state_build_permitted(freeze_automation)
 
 
 def log_dir_tree(path_to_dir):

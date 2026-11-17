@@ -27,6 +27,11 @@ from artcommonlib.assembly import (
 from artcommonlib.config import BuildDataLoader
 from artcommonlib.config.plashet import PlashetConfig
 from artcommonlib.config.repo import ContentSet, Repo, RepoList, RepoSync
+from artcommonlib.constants import (
+    FREEZE_AUTOMATION_NO,
+    FREEZE_AUTOMATION_SCHEDULED,  # noqa: F401  re-exported for backward compatibility
+    FREEZE_AUTOMATION_YES,
+)
 from artcommonlib.model import Missing, Model
 from artcommonlib.pushd import Dir
 from artcommonlib.runtime import GroupRuntime
@@ -46,14 +51,13 @@ from doozerlib.repos import Repos
 from doozerlib.rpmcfg import RPMMetadata
 from doozerlib.source_resolver import SourceResolver
 
-# Values corresponds to schema for group.yml: freeze_automation. When
-# 'yes', doozer itself will inhibit build/rebase related activity
-# (exiting with an error if someone tries). Other values can
-# be interpreted & enforced by the build pipelines (e.g. by
-# invoking config:read-config).
-FREEZE_AUTOMATION_YES = 'yes'
-FREEZE_AUTOMATION_SCHEDULED = 'scheduled'  # inform the pipeline that only manually run tasks should be permitted
-FREEZE_AUTOMATION_NO = 'no'
+# freeze_automation constants (FREEZE_AUTOMATION_YES / SCHEDULED / NO) are the
+# single source of truth in artcommonlib.constants and are imported above.
+# They are re-exported here so existing `from doozerlib.runtime import
+# FREEZE_AUTOMATION_*` callers keep working. When the group value is 'yes',
+# doozer itself inhibits build/rebase related activity (exiting with an error if
+# someone tries). Other values are interpreted & enforced by the build pipelines
+# (e.g. by invoking config:read-group).
 
 
 # doozer cancel brew builds on SIGINT (Ctrl-C)
