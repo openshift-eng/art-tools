@@ -130,12 +130,6 @@ class ArtNotifyPipeline:
                         continue
                     total_eligible_builds += 1
 
-                    # this is a special case for build-sync job
-                    # we want to filter out UNVIABLE builds since they are not real failures
-                    if job_name == 'build/build-sync' and 'UNVIABLE' in build['displayName']:
-                        self.logger.info(f"unviable build-sync run found: {build['number']}. skipping")
-                        continue
-
                     if build['result'] == 'FAILURE':
                         failed_job_ids.append(build['number'])
 

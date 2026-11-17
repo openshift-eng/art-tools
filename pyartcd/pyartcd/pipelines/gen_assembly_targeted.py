@@ -305,7 +305,7 @@ class GenAssemblyTargetedPipeline:
 @click.option(
     "--auto-trigger-build-sync",
     is_flag=True,
-    help="Trigger build-sync automatically after PR creation",
+    help="Trigger Konflux build-sync after PR creation (unsupported for Brew assemblies)",
 )
 @pass_runtime
 @click_coroutine

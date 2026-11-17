@@ -1,7 +1,7 @@
 from unittest import IsolatedAsyncioTestCase
 from unittest.mock import AsyncMock, MagicMock, patch
 
-from pyartcd.pipelines.scheduled import schedule_ocp4_scan, schedule_ocp4_scan_konflux
+from pyartcd.pipelines.scheduled import schedule_ocp4_scan_konflux
 
 
 class TestGlobalAutomationFreeze(IsolatedAsyncioTestCase):
@@ -11,7 +11,6 @@ class TestGlobalAutomationFreeze(IsolatedAsyncioTestCase):
         runtime = MagicMock()
         lock_manager = MagicMock(is_locked=AsyncMock(return_value=False))
         for scheduler, trigger in [
-            (schedule_ocp4_scan, 'start_ocp4_scan'),
             (schedule_ocp4_scan_konflux, 'start_ocp4_scan_konflux'),
         ]:
             for frozen in [True, False]:

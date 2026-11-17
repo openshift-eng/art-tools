@@ -113,3 +113,9 @@ that do not currently use them.
 Direct `beta:ocp4-konflux` builds also check the master switch before initializing
 registry credentials or running build operations, for every assembly.
 `--ignore-locks` skips concurrency locks and does not override the global freeze.
+
+## Payload synchronization
+
+`artcd build-sync` syncs Konflux payloads and defaults to `--build-system=konflux`.
+Brew assembly definitions can be generated with `gen-assembly`, but cannot use
+`--auto-trigger-build-sync`.

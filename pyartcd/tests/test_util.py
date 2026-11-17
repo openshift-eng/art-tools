@@ -21,6 +21,25 @@ from pyartcd import util
 
 
 class TestUtil(IsolatedAsyncioTestCase):
+    @patch('pyartcd.util.GitRepository')
+    @patch('pyartcd.util.get_github_client_for_org')
+    async def test_brew_assembly_auto_sync_fails_before_git_or_github_changes(self, github, repository):
+        with self.assertRaisesRegex(ValueError, 'Brew build-sync has been retired'):
+            await util.create_or_update_assembly_pr(
+                runtime=MagicMock(),
+                group='openshift-4.19',
+                assembly='custom',
+                build_system='brew',
+                assembly_definition={},
+                title='Custom assembly',
+                body='',
+                working_dir=Path('/unused'),
+                logger=MagicMock(),
+                auto_trigger_build_sync=True,
+            )
+        repository.assert_not_called()
+        github.assert_not_called()
+
     def test_fail_counter_helpers_are_defined_in_pyartcd_util(self):
         """Failure counter helpers are owned by the pyartcd utility module."""
         self.assertEqual(util.increment_fail_counter.__module__, util.__name__)

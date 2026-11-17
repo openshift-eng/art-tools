@@ -1641,6 +1641,9 @@ async def create_or_update_assembly_pr(
     Return Value(s):
         PR object, or None if nothing to commit
     """
+    if auto_trigger_build_sync and build_system != 'konflux':
+        raise ValueError('Brew build-sync has been retired; disable auto-trigger-build-sync for Brew assemblies')
+
     _yaml = new_roundtrip_yaml_handler()
     log = logger
     log.info("Creating ocp-build-data PR...")

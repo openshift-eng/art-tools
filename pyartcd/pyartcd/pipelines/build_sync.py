@@ -62,6 +62,9 @@ class BuildSyncPipeline:
         embargo_permit_ack: bool,
         build_system: str,
     ):
+        if build_system != 'konflux':
+            raise ValueError('Brew build-sync has been retired; use build_system="konflux"')
+
         self.runtime = runtime
         self.version = version
         self.group = f'openshift-{version}'
@@ -87,11 +90,10 @@ class BuildSyncPipeline:
 
         self._registry_config: str | None = None
 
-        # Imagestream name for Brew builds is 4.y-art-latest
-        # For konflux, it is 4.y-konflux-art-latest
+        # Some Konflux streams retain the original 4.y-art-latest name.
         self.is_base_name = (
             f'{self.version}-art-latest'
-            if build_system == 'brew' or uses_konflux_imagestream_override(self.version)
+            if uses_konflux_imagestream_override(self.version)
             else f'{self.version}-konflux-art-latest'
         )
 
@@ -198,8 +200,7 @@ class BuildSyncPipeline:
         current_span.set_attribute("build-sync.supported_arches_count", len(self.supported_arches))
         self.logger.info('Supported arches for this build: %s', ', '.join(self.supported_arches))
 
-        if self.build_system == 'konflux':
-            jenkins.update_title(' [KONFLUX]')
+        jenkins.update_title(' [KONFLUX]')
 
         if self.assembly not in ('stream', 'test') and not self.runtime.dry_run:
             text_body = f"Build sync job [run]({self.job_run}) has been triggered"
@@ -696,7 +697,10 @@ class BuildSyncPipeline:
     help="To permit embargoed builds to be promoted after embargo lift",
 )
 @click.option(
-    "--build-system", required=False, default='brew', help="Whether a Brew payload or a Konflux one has to be produced"
+    "--build-system",
+    type=click.Choice(['konflux']),
+    default='konflux',
+    help="Build system to sync; the Brew build-sync pipeline has been retired",
 )
 @pass_runtime
 @click_coroutine
@@ -733,14 +737,8 @@ async def build_sync(
         build_system=build_system,
     )
 
-    if build_system == 'brew':
-        lock = locks.Lock.BUILD_SYNC
-        lock_name = locks.Lock.BUILD_SYNC.value.format(version=version)
-    elif build_system == 'konflux':
-        lock = locks.Lock.BUILD_SYNC_KONFLUX
-        lock_name = locks.Lock.BUILD_SYNC_KONFLUX.value.format(version=version)
-    else:
-        raise ValueError(f'Invalid build system: {build_system}')
+    lock = locks.Lock.BUILD_SYNC_KONFLUX
+    lock_name = lock.value.format(version=version)
 
     span = trace.get_current_span()
     span.set_attributes(
