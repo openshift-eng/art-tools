@@ -341,14 +341,30 @@ class Repo(object):
 
         return result
 
-    @limit_concurrency(limit=8)
     async def get_repodata(self, arch: str):
         repodata = self._repodatas.get(arch)
         if repodata:
             return repodata
+        # All entry points share this lock, including callers on other threads
+        # and event loops. Acquire it before taking a download concurrency slot.
+        lock = self._repodata_cache_locks[arch]
+        while not lock.acquire(blocking=False):
+            await asyncio.sleep(0.1)
+        try:
+            repodata = self._repodatas.get(arch)
+            if repodata:
+                return repodata
+            repodata = await self._load_repodata(arch)
+            self._repodatas[arch] = repodata
+            return repodata
+        finally:
+            lock.release()
+
+    @limit_concurrency(limit=8)
+    async def _load_repodata(self, arch: str):
         name = f"{self.name}-{arch}"
         repourl = cast(str, self.baseurl("unsigned", arch))
-        repodata = self._repodatas[arch] = await RepodataLoader().load(name, repourl, optional=self.cs_optional)
+        repodata = await RepodataLoader().load(name, repourl, optional=self.cs_optional)
 
         if self.excludepkgs:
             LOGGER.info(f"Excluding packages from {name} based on following patterns: {self.excludepkgs}")
@@ -383,16 +399,7 @@ class Repo(object):
         return repodata
 
     async def get_repodata_threadsafe(self, arch: str):
-        repodata = self._repodatas.get(arch)
-        if repodata:
-            return repodata
-        lock = self._repodata_cache_locks[arch]
-        while not lock.acquire(blocking=False):
-            await asyncio.sleep(1)
-        try:
-            return await self.get_repodata(arch)
-        finally:
-            lock.release()
+        return await self.get_repodata(arch)
 
 
 # Base header for all content_sets.yml output

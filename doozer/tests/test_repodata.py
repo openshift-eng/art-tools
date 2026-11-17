@@ -1,5 +1,8 @@
 import asyncio
-from io import StringIO
+import gzip
+import lzma
+import weakref
+from io import BytesIO, StringIO
 from typing import Optional
 from unittest import IsolatedAsyncioTestCase, TestCase
 from unittest.mock import ANY, AsyncMock, MagicMock, Mock, patch
@@ -912,6 +915,74 @@ data:
 
 
 class TestRepodataLoader(IsolatedAsyncioTestCase):
+    PRIMARY_XML = b'''<metadata xmlns="http://linux.duke.edu/metadata/common"
+        xmlns:rpm="http://linux.duke.edu/metadata/rpm">
+        <package type="rpm"><name>example</name><arch>x86_64</arch>
+        <version epoch="0" ver="1.2" rel="3"/>
+        <checksum type="sha256">abc</checksum><size package="42"/>
+        <location href="example.rpm"/>
+        <format><rpm:sourcerpm>example.src.rpm</rpm:sourcerpm>
+        <rpm:requires><rpm:entry name="libexample"/></rpm:requires></format>
+        </package></metadata>'''
+
+    async def test_primary_download_streams_gzip_and_xz(self):
+        for extension, compress in [('gz', gzip.compress), ('xz', lzma.compress)]:
+            with self.subTest(extension=extension):
+                payload = compress(self.PRIMARY_XML)
+
+                async def chunks(size):
+                    for start in range(0, len(payload), 13):
+                        yield payload[start : start + 13]
+
+                response = Mock()
+                response.read = AsyncMock(side_effect=AssertionError('Primary download must be streamed'))
+                response.content.iter_chunked.side_effect = chunks
+                session = Mock()
+                session.get.return_value = AsyncMock()
+                session.get.return_value.__aenter__.return_value = response
+                rpms = await RepodataLoader._fetch_primary_rpms(
+                    session, f'https://example.invalid/primary.xml.{extension}'
+                )
+                self.assertEqual([rpm.nevra for rpm in rpms], ['example-0:1.2-3.x86_64'])
+                self.assertEqual(rpms[0].requires, ['libexample'])
+                self.assertEqual(rpms[0].sourcerpm, 'example.src.rpm')
+                self.assertEqual(rpms[0].size, 42)
+                response.read.assert_not_awaited()
+                response.raise_for_status.assert_called_once()
+
+    def test_primary_parser_releases_completed_packages(self):
+        package = self.PRIMARY_XML.split(b'<package', 1)[1].split(b'</package>', 1)[0]
+        xml = (
+            self.PRIMARY_XML.split(b'<package', 1)[0] + (b'<package' + package + b'</package>') * 1000 + b'</metadata>'
+        )
+        references = []
+        convert = Rpm.from_metadata
+
+        def record_package(element):
+            references.append(weakref.ref(element))
+            if len(references) % 100 == 0:
+                self.assertLess(sum(reference() is not None for reference in references), 10)
+            return convert(element)
+
+        class BoundedReader(BytesIO):
+            def read(self, size=-1):
+                if not 0 < size <= 64 * 1024:
+                    raise AssertionError('Primary XML must be read in bounded chunks')
+                return super().read(size)
+
+        with patch.object(Rpm, 'from_metadata', new=record_package):
+            rpms = RepodataLoader._parse_primary(BoundedReader(xml))
+        self.assertEqual(len(rpms), 1000)
+        self.assertTrue(all(reference() is None for reference in references))
+
+    def test_primary_parser_rejects_entities_and_truncated_xml(self):
+        for xml in [
+            b'<!DOCTYPE metadata [<!ENTITY example "expanded">]><metadata>&example;</metadata>',
+            self.PRIMARY_XML[:-8],
+        ]:
+            with self.subTest(xml=xml[:40]), self.assertRaises((ET.ParseError, ET.EntitiesForbidden)):
+                RepodataLoader._parse_primary(BytesIO(xml))
+
     def test_cancelled_error_is_not_retryable(self):
         self.assertFalse(_is_retryable_repodata_error(asyncio.CancelledError()))
 
@@ -1001,9 +1072,10 @@ class TestRepodataLoader(IsolatedAsyncioTestCase):
         self.assertEqual(response.raise_for_status.call_count, 1)
         cmd_gather_async.assert_not_awaited()
 
+    @patch("doozerlib.repodata.RepodataLoader._fetch_primary_rpms", autospec=True)
     @patch("doozerlib.repodata.RepodataLoader._fetch_remote_compressed", autospec=True)
     @patch("aiohttp.ClientSession", autospec=True)
-    async def test_load(self, ClientSession: Mock, _fetch_remote_compressed: AsyncMock):
+    async def test_load(self, ClientSession: Mock, _fetch_remote_compressed: AsyncMock, _fetch_primary_rpms: AsyncMock):
         repo_name = "test-x86_64"
         repo_url = "https://example.com/repos/test/x86_64/os"
         loader = RepodataLoader()
@@ -1088,8 +1160,11 @@ data:
             raise ValueError("url")
 
         _fetch_remote_compressed.side_effect = _fake_fetch_remote_compressed
+        _fetch_primary_rpms.side_effect = lambda session, url: RepodataLoader._parse_primary(
+            BytesIO(_fake_fetch_remote_compressed(session, url))
+        )
         repodata = await loader.load(repo_name, repo_url)
-        _fetch_remote_compressed.assert_any_await(
+        _fetch_primary_rpms.assert_awaited_once_with(
             ANY,
             "https://example.com/repos/test/x86_64/os/repodata/06ed3172b751202671416050ea432945e54a36ee1ab8ef2cc71307234343f1ef-primary.xml.gz",
         )
