@@ -227,6 +227,20 @@ class TestSyncRhcosPipeline(IsolatedAsyncioTestCase):
         )
 
     @patch("pyartcd.pipelines.sync_rhcos.create_signatory")
+    async def test_sign_sha256sum_dry_run_skips_all_transports(self, mock_create_signatory):
+        for transport in ("umb", "direct"):
+            with self.subTest(transport=transport):
+                pipeline = self._make_pipeline(signing_env="stage", signing_transport=transport)
+                pipeline.runtime.dry_run = True
+                pipeline.staging_dir.mkdir(parents=True, exist_ok=True)
+                # Valid signing inputs must not make a dry-run contact either signing service.
+                (pipeline.staging_dir / "sha256sum.txt").write_text("abc123  file.bin\n")
+                with patch.dict(os.environ, {"SIGNING_CERT": "/fake/cert", "SIGNING_KEY": "/fake/key"}):
+                    await pipeline._sign_sha256sum()
+                mock_create_signatory.assert_not_called()
+                self.assertFalse((pipeline.staging_dir / "sha256sum.txt.gpg").exists())
+
+    @patch("pyartcd.pipelines.sync_rhcos.create_signatory")
     async def test_sign_sha256sum(self, mock_create_signatory):
         pipeline = self._make_pipeline(signing_env="prod")
         pipeline.staging_dir.mkdir(parents=True, exist_ok=True)
