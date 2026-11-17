@@ -374,7 +374,7 @@ class GenAssemblyLPPipeline:
 
         build_url = os.environ.get("BUILD_URL")
         if build_url:
-            body += f"\n\n**Jenkins job:** [{build_url}]({build_url})"
+            body += f"\n\n**Pipeline run:** [{build_url}]({build_url})"
 
         if self.fbc_pullspecs:
             body += f"\n\n**FBC pullspecs:** {len(self.fbc_pullspecs)} provided"

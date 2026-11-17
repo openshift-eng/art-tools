@@ -10,56 +10,80 @@ from pyartcd.pipelines.merge_layered_fbc import MergeLayeredFbcPipeline
 
 def pipeline(tmp_path, target=None, assemblies=('3.18.5', '3.17.9'), **kwargs):
     runtime = Mock(working_dir=tmp_path, doozer_working=tmp_path / 'doozer', dry_run=True)
+    kwargs.setdefault('product', 'quay')
     return MergeLayeredFbcPipeline(runtime, target, assemblies=assemblies, **kwargs)
 
 
 @pytest.fixture
-def sources(monkeypatch):
-    targets = {'quay-3.18': ['4.22', '4.21'], 'quay-3.17': ['4.21', '4.20']}
-    versions = {'quay-3.18': '3.18.5', 'quay-3.17': '3.17.9'}
-    revisions = {group: hashlib.sha1(group.encode()).hexdigest() for group in targets}
-    documents = {}
-    for group, assembly in versions.items():
-        pin = f'quay-operator-container-{assembly}-1'
-        records = {
-            target: {
-                'quay-operator': {
-                    'nvr': f'quay-operator-fbc-{assembly}-1.ocp{target}',
-                    'pullspec': 'quay.io/test/fbc@sha256:'
-                    + hashlib.sha256(f'{assembly}/{target}'.encode()).hexdigest(),
-                    'operand_nvrs': [pin],
-                }
-            }
-            for target in targets[group]
+def source_factory(monkeypatch):
+    def create(
+        product='quay',
+        versions=None,
+        targets=None,
+    ):
+        versions = versions or {f'{product}-3.18': '3.18.5', f'{product}-3.17': '3.17.9'}
+        targets = targets or {
+            f'{product}-3.18': ['4.22', '4.21'],
+            f'{product}-3.17': ['4.21', '4.20'],
         }
-        documents[group] = {
-            'releases': {
-                assembly: {
-                    'assembly': {
-                        'members': {'images': [{'distgit_key': 'quay-operator', 'metadata': {'is': {'nvr': pin}}}]},
-                        'group': {'fbc_builds': records},
+        revisions = {group: hashlib.sha1(group.encode()).hexdigest() for group in targets}
+        documents = {}
+        for group, assembly in versions.items():
+            operator = f'{product}-operator'
+            pin = f'{operator}-container-{assembly}-1'
+            records = {
+                target: {
+                    operator: {
+                        'nvr': f'{operator}-fbc-{assembly}-1.ocp{target}',
+                        'pullspec': 'quay.io/test/fbc@sha256:'
+                        + hashlib.sha256(f'{assembly}/{target}'.encode()).hexdigest(),
+                        'operand_nvrs': [pin],
+                    }
+                }
+                for target in targets[group]
+            }
+            documents[group] = {
+                'releases': {
+                    assembly: {
+                        'assembly': {
+                            'members': {'images': [{'distgit_key': operator, 'metadata': {'is': {'nvr': pin}}}]},
+                            'group': {'fbc_builds': records},
+                        }
                     }
                 }
             }
-        }
-    repo = Mock()
-    repo.get_branch.side_effect = lambda group: SimpleNamespace(commit=SimpleNamespace(sha=revisions[group]))
-    by_revision = {revision: group for group, revision in revisions.items()}
-    repo.get_contents.side_effect = lambda path, ref: SimpleNamespace(
-        decoded_content=json.dumps(documents[by_revision[ref]]).encode(),
-    )
-    client = Mock()
-    client.get_repo.return_value = repo
-    monkeypatch.setattr('pyartcd.pipelines.merge_layered_fbc.get_github_client_for_org', lambda owner: client)
+        repo = Mock()
+        repo.get_branch.side_effect = lambda group: SimpleNamespace(commit=SimpleNamespace(sha=revisions[group]))
+        by_revision = {revision: group for group, revision in revisions.items()}
+        repo.get_contents.side_effect = lambda path, ref: SimpleNamespace(
+            decoded_content=json.dumps(documents[by_revision[ref]]).encode(),
+        )
+        client = Mock()
+        client.get_repo.return_value = repo
+        monkeypatch.setattr('pyartcd.pipelines.merge_layered_fbc.get_github_client_for_org', lambda owner: client)
+        state = SimpleNamespace(
+            repo=repo,
+            documents=documents,
+            targets=targets,
+            revisions=revisions,
+            product=product,
+        )
 
-    async def group_config(group, assembly, **kwargs):
-        assert assembly == versions[group]
-        assert kwargs['doozer_data_gitref'] == revisions[group]
-        return {'product': 'quay', 'OCP_TARGET_VERSIONS': targets[group]}
+        async def group_config(group, assembly, **kwargs):
+            assert assembly == versions[group]
+            assert kwargs['doozer_data_gitref'] == revisions[group]
+            return {'product': state.product, 'OCP_TARGET_VERSIONS': targets[group]}
 
-    config = AsyncMock(side_effect=group_config)
-    monkeypatch.setattr('pyartcd.pipelines.merge_layered_fbc.load_group_config', config)
-    return SimpleNamespace(repo=repo, documents=documents, targets=targets, revisions=revisions)
+        config = AsyncMock(side_effect=group_config)
+        monkeypatch.setattr('pyartcd.pipelines.merge_layered_fbc.load_group_config', config)
+        return state
+
+    return create
+
+
+@pytest.fixture
+def sources(source_factory):
+    return source_factory()
 
 
 def test_discovers_union_and_selects_only_compatible_assemblies(tmp_path, sources):
@@ -82,6 +106,40 @@ def test_optional_filter_selects_only_matching_groups(tmp_path, sources):
     plans = asyncio.run(pipeline(tmp_path, target='4.22')._resolve_assemblies())
     assert len(plans) == 1
     assert {s['assembly'] for s in plans[0].inputs.values()} == {'3.18.5'}
+
+
+@pytest.mark.parametrize(
+    'product,versions,targets',
+    [
+        ('mta', {'mta-8.2': '8.2.1', 'mta-8.1': '8.1.5'}, {'mta-8.2': ['4.22'], 'mta-8.1': ['4.21']}),
+        ('logging', {'logging-6.2': '6.2.3'}, {'logging-6.2': ['4.18', '4.19']}),
+    ],
+)
+def test_resolves_assemblies_for_any_layered_product(tmp_path, source_factory, product, versions, targets):
+    sources = source_factory(product=product, versions=versions, targets=targets)
+    p = pipeline(tmp_path, assemblies=tuple(versions.values()), product=product)
+    plans = asyncio.run(p._resolve_assemblies())
+    assert {record['group'] for plan in plans for record in plan.inputs.values()} == set(versions)
+    assert p.product == product
+    assert sources.repo.get_branch.call_count == len(versions)
+
+
+def test_assembly_inputs_require_an_explicit_product(tmp_path, sources):
+    with pytest.raises(ValueError, match='layered-product identity'):
+        asyncio.run(pipeline(tmp_path, product=None)._resolve_assemblies())
+    sources.repo.get_branch.assert_not_called()
+
+
+def test_rejects_group_product_mismatch(tmp_path, sources):
+    sources.product = 'mta'
+    with pytest.raises(ValueError, match='does not belong to product quay'):
+        asyncio.run(pipeline(tmp_path)._resolve_assemblies())
+
+
+@pytest.mark.parametrize('product', ['', 'ocp', '../mta'])
+def test_rejects_invalid_or_non_layered_product(tmp_path, product):
+    with pytest.raises(ValueError, match='layered-product identity|Invalid source group name'):
+        asyncio.run(pipeline(tmp_path, product=product)._resolve_assemblies())
 
 
 def test_numeric_target_ordering(tmp_path, sources):
@@ -269,3 +327,13 @@ def test_cli_target_concurrency_defaults_to_serial_and_rejects_zero():
         assert context.params['max_concurrent_targets'] == 2
     with pytest.raises(BadParameter):
         command.make_context('lp-unified-fbc', ['--max-concurrent-targets=0'])
+
+
+def test_cli_describes_generic_layered_product_assembly_inputs():
+    from pyartcd.cli import cli
+
+    command = cli.commands['lp-unified-fbc']
+    with command.make_context('lp-unified-fbc', [], resilient_parsing=True) as context:
+        help_text = command.get_help(context)
+    assert 'Full layered-product assembly version' in help_text
+    assert 'required with --assembly' in help_text
