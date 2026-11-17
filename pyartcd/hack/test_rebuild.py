@@ -4,7 +4,7 @@ from pathlib import Path
 from unittest import IsolatedAsyncioTestCase
 from unittest.mock import AsyncMock, MagicMock, Mock, patch
 
-from pyartcd.pipelines.rebuild import PlashetBuildResult, RebuildPipeline, RebuildType
+from rebuild import PlashetBuildResult, RebuildPipeline, RebuildType
 
 from pyartcd import constants
 
@@ -175,8 +175,8 @@ class TestRebuildPipeline(IsolatedAsyncioTestCase):
             ]
         )
 
-    @patch("pyartcd.pipelines.rebuild.RebuildPipeline._build_plashet_for_assembly")
-    @patch("pyartcd.pipelines.rebuild.RebuildPipeline._build_plashet_from_tags")
+    @patch("rebuild.RebuildPipeline._build_plashet_for_assembly")
+    @patch("rebuild.RebuildPipeline._build_plashet_from_tags")
     async def test_build_plashets_rhcos(
         self, _build_plashet_from_tags: AsyncMock, _build_plashet_for_assembly: AsyncMock
     ):
@@ -225,8 +225,8 @@ class TestRebuildPipeline(IsolatedAsyncioTestCase):
             ],
         )
 
-    @patch("pyartcd.pipelines.rebuild.RebuildPipeline._build_plashet_for_assembly")
-    @patch("pyartcd.pipelines.rebuild.RebuildPipeline._build_plashet_from_tags")
+    @patch("rebuild.RebuildPipeline._build_plashet_for_assembly")
+    @patch("rebuild.RebuildPipeline._build_plashet_from_tags")
     async def test_build_plashets_image(
         self, _build_plashet_from_tags: AsyncMock, _build_plashet_for_assembly: AsyncMock
     ):
@@ -572,11 +572,11 @@ images:
         }
         self.assertEqual(actual, expected)
 
-    @patch("pyartcd.pipelines.rebuild.RebuildPipeline._generate_example_schema")
-    @patch("pyartcd.pipelines.rebuild.RebuildPipeline._rebase_and_build_rpm")
-    @patch("pyartcd.pipelines.rebuild.datetime")
-    @patch("pyartcd.pipelines.rebuild.load_releases_config")
-    @patch("pyartcd.pipelines.rebuild.load_group_config")
+    @patch("rebuild.RebuildPipeline._generate_example_schema")
+    @patch("rebuild.RebuildPipeline._rebase_and_build_rpm")
+    @patch("rebuild.datetime")
+    @patch("rebuild.load_releases_config")
+    @patch("rebuild.load_group_config")
     async def test_run_rpm(
         self,
         load_group_config: AsyncMock,
@@ -613,17 +613,17 @@ images:
         _rebase_and_build_rpm.assert_called_once_with("202107160000.p?")
         _generate_example_schema.assert_called_once_with(_rebase_and_build_rpm.return_value)
 
-    @patch("pyartcd.pipelines.rebuild.RebuildPipeline._generate_example_schema")
-    @patch("pyartcd.pipelines.rebuild.RebuildPipeline._build_image")
-    @patch("pyartcd.pipelines.rebuild.RebuildPipeline._copy_plashet_out_to_remote")
-    @patch("pyartcd.pipelines.rebuild.RebuildPipeline._generate_repo_file_for_image")
-    @patch("pyartcd.pipelines.rebuild.RebuildPipeline._rebase_image")
-    @patch("pyartcd.pipelines.rebuild.RebuildPipeline._build_plashets")
-    @patch("pyartcd.pipelines.rebuild.RebuildPipeline._get_meta_config")
-    @patch("pyartcd.pipelines.rebuild.load_releases_config")
-    @patch("pyartcd.pipelines.rebuild.load_group_config")
+    @patch("rebuild.RebuildPipeline._generate_example_schema")
+    @patch("rebuild.RebuildPipeline._build_image")
+    @patch("rebuild.RebuildPipeline._copy_plashet_out_to_remote")
+    @patch("rebuild.RebuildPipeline._generate_repo_file_for_image")
+    @patch("rebuild.RebuildPipeline._rebase_image")
+    @patch("rebuild.RebuildPipeline._build_plashets")
+    @patch("rebuild.RebuildPipeline._get_meta_config")
+    @patch("rebuild.load_releases_config")
+    @patch("rebuild.load_group_config")
     @patch("builtins.open")
-    @patch("pyartcd.pipelines.rebuild.datetime")
+    @patch("rebuild.datetime")
     async def test_run_image(
         self,
         mock_datetime: Mock,
@@ -686,13 +686,13 @@ images:
         _build_image.assert_awaited_once_with("https://example.com/dir2/rebuild.repo")
         _generate_example_schema.assert_called_once_with(_build_image.return_value)
 
-    @patch("pyartcd.pipelines.rebuild.RebuildPipeline._copy_plashet_out_to_remote")
-    @patch("pyartcd.pipelines.rebuild.RebuildPipeline._generate_repo_file_for_rhcos")
-    @patch("pyartcd.pipelines.rebuild.RebuildPipeline._build_plashets")
-    @patch("pyartcd.pipelines.rebuild.load_releases_config")
-    @patch("pyartcd.pipelines.rebuild.load_group_config")
+    @patch("rebuild.RebuildPipeline._copy_plashet_out_to_remote")
+    @patch("rebuild.RebuildPipeline._generate_repo_file_for_rhcos")
+    @patch("rebuild.RebuildPipeline._build_plashets")
+    @patch("rebuild.load_releases_config")
+    @patch("rebuild.load_group_config")
     @patch("builtins.open")
-    @patch("pyartcd.pipelines.rebuild.datetime")
+    @patch("rebuild.datetime")
     async def test_run_rhcos(
         self,
         mock_datetime: Mock,

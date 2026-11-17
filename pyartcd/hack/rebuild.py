@@ -1,3 +1,8 @@
+"""Archived Brew rebuild implementation, including custom plashet injection.
+
+Kept for reference; not registered as an artcd command. See README.md here.
+"""
+
 import asyncio
 import logging
 import os
@@ -15,9 +20,6 @@ import yaml
 from artcommonlib import exectools
 from artcommonlib.assembly import AssemblyTypes
 from artcommonlib.util import get_ocp_version_from_group
-
-from pyartcd import constants, jenkins, locks
-from pyartcd.cli import cli, click_coroutine, pass_runtime
 from pyartcd.record import parse_record_log
 from pyartcd.runtime import Runtime
 from pyartcd.util import (
@@ -27,6 +29,8 @@ from pyartcd.util import (
     load_group_config,
     load_releases_config,
 )
+
+from pyartcd import constants
 
 
 class RebuildType(Enum):
@@ -686,85 +690,3 @@ class RebuildPipeline:
             },
         }
         return schema
-
-
-@cli.command("rebuild")
-@click.option(
-    "--ocp-build-data-url",
-    metavar='BUILD_DATA',
-    default=None,
-    help=f"Git repo or directory containing groups metadata e.g. {constants.OCP_BUILD_DATA_URL}",
-)
-@click.option("--version", required=True, help="OSE Version")
-@click.option(
-    "--assembly",
-    metavar="ASSEMBLY_NAME",
-    required=True,
-    help="The name of an assembly to rebase & build for. e.g. 4.9.1",
-)
-@click.option(
-    "--type",
-    metavar="BUILD_TYPE",
-    required=True,
-    type=click.Choice(("rpm", "image", "rhcos")),
-    help="image or rpm or rhcos",
-)
-@click.option(
-    "--component",
-    "-c",
-    metavar="DISTGIT_KEY",
-    help="The name of a component to rebase & build for. e.g. openshift-enterprise-cli",
-)
-@click.option(
-    '--ignore-locks',
-    is_flag=True,
-    default=False,
-    help='Do not wait for other builds in this version to complete (use only if you know they will not conflict)',
-)
-@pass_runtime
-@click_coroutine
-async def rebuild(
-    runtime: Runtime,
-    ocp_build_data_url: str,
-    version: str,
-    assembly: str,
-    type: str,
-    component: Optional[str],
-    ignore_locks: bool,
-):
-    if type != "rhcos" and not component:
-        raise click.BadParameter(f"'--component' is required for type {type}")
-    elif type == "rhcos" and component:
-        raise click.BadParameter("Option '--component' cannot be used when --type == 'rhcos'")
-    pipelines = [
-        RebuildPipeline(
-            runtime,
-            group=f'openshift-{version}',
-            assembly=assembly,
-            plashet_remote=remote,
-            type=RebuildType[type.upper()],
-            dg_key=component,
-            ocp_build_data_url=ocp_build_data_url,
-        )
-        for remote in constants.PLASHET_REMOTES
-    ]
-
-    if ignore_locks:
-        await asyncio.gather(*[pipeline.run() for pipeline in pipelines])
-
-    else:
-        lock = locks.Lock.BUILD
-        lock_name = lock.value.format(version=version)
-        lock_identifier = jenkins.get_build_path_or_random()
-
-        await asyncio.gather(
-            *[
-                locks.run_with_lock(
-                    coro=pipeline.run(),
-                    lock=lock,
-                    lock_name=lock_name,
-                    lock_id=lock_identifier,
-                )
-                for pipeline in pipelines
-            ]
-        )

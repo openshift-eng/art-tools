@@ -373,7 +373,11 @@ class GenAssemblyPipeline:
     is_flag=True,
     help="Custom assemblies are not for official release. They can, for example, not have all required arches for the group.",
 )
-@click.option('--auto-trigger-build-sync', is_flag=True, help='Will trigger build-sync automatically after PR creation')
+@click.option(
+    '--auto-trigger-build-sync',
+    is_flag=True,
+    help='Trigger Konflux build-sync after PR creation (unsupported for Brew assemblies)',
+)
 @click.option(
     "--arch",
     "arches",
