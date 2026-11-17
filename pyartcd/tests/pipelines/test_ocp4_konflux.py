@@ -25,10 +25,12 @@ class TestGlobalAutomationFreeze(unittest.IsolatedAsyncioTestCase):
             build_priority='auto',
         )
 
-    @patch('pyartcd.pipelines.ocp4_konflux.util.is_global_automation_frozen', return_value=True)
+    @patch('pyartcd.pipelines.ocp4_konflux.util.is_build_permitted', new_callable=AsyncMock, return_value=False)
     @patch('pyartcd.pipelines.ocp4_konflux.RegistryConfig')
     @patch.dict(os.environ, {'XDG_RUNTIME_DIR': '/tmp/keep-runtime-dir'}, clear=True)
-    async def test_direct_run_skips_before_credentials_and_builds(self, registry_config, global_freeze):
+    async def test_direct_run_skips_before_credentials_and_builds(self, registry_config, build_permitted):
+        # freeze_automation forbids the run (e.g. a global 'yes' hard stop, or 'scheduled' on a
+        # non-manual run): the build is skipped before any credentials or builds are touched.
         for assembly in ('stream', 'test', '4.22.1'):
             with self.subTest(assembly=assembly):
                 pipeline = self.make_pipeline(assembly)
@@ -40,22 +42,40 @@ class TestGlobalAutomationFreeze(unittest.IsolatedAsyncioTestCase):
                 registry_config.assert_not_called()
                 self.assertEqual(os.environ['XDG_RUNTIME_DIR'], '/tmp/keep-runtime-dir')
 
-    @patch('pyartcd.pipelines.ocp4_konflux.util.is_global_automation_frozen', return_value=False)
+    @patch('pyartcd.pipelines.ocp4_konflux.util.is_build_permitted', new_callable=AsyncMock, return_value=True)
     @patch.dict(os.environ, {}, clear=True)
-    async def test_unfrozen_run_reaches_existing_credential_validation(self, global_freeze):
+    async def test_permitted_run_reaches_existing_credential_validation(self, build_permitted):
         pipeline = self.make_pipeline()
         with self.assertRaisesRegex(ValueError, 'QUAY_AUTH_FILE'):
             await pipeline.run()
 
-    @patch('pyartcd.pipelines.ocp4_konflux.util.is_global_automation_frozen', side_effect=TimeoutError)
+    @patch('pyartcd.pipelines.ocp4_konflux.util.is_build_permitted', side_effect=TimeoutError)
     @patch('pyartcd.pipelines.ocp4_konflux.RegistryConfig')
-    async def test_global_freeze_read_failure_stops_build(self, registry_config, global_freeze):
+    async def test_global_freeze_read_failure_stops_build(self, registry_config, build_permitted):
+        # Fail closed: an error evaluating freeze_automation must stop the build, not permit it.
         pipeline = self.make_pipeline()
         pipeline._run_pipeline = AsyncMock()
         with self.assertRaises(TimeoutError):
             await pipeline.run()
         pipeline._run_pipeline.assert_not_awaited()
         registry_config.assert_not_called()
+
+    @patch('pyartcd.util.is_manual_build')
+    @patch('pyartcd.util.get_global_freeze_automation', new_callable=AsyncMock, return_value='scheduled')
+    @patch.dict(os.environ, {}, clear=True)
+    async def test_global_scheduled_is_manual_aware(self, global_freeze, manual_build):
+        # A global 'scheduled' blocks a non-manual run entirely (skips before credential checks)...
+        manual_build.return_value = False
+        pipeline = self.make_pipeline('stream')
+        pipeline._run_pipeline = AsyncMock()
+        await pipeline.run()
+        pipeline._run_pipeline.assert_not_awaited()
+
+        # ...but permits a manual run, which then proceeds to the existing credential validation.
+        manual_build.return_value = True
+        pipeline = self.make_pipeline('stream')
+        with self.assertRaisesRegex(ValueError, 'QUAY_AUTH_FILE'):
+            await pipeline.run()
 
 
 class TestUpdateBuildFailCounters(unittest.IsolatedAsyncioTestCase):

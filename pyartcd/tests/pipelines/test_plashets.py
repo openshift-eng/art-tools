@@ -104,3 +104,62 @@ class TestBuildCompose(unittest.IsolatedAsyncioTestCase):
 
         # Verify that the logger was called with the auto-generated release
         runtime.logger.info.assert_called_once_with('Auto-generated release timestamp: 202401011200.p?')
+
+
+class TestComposeBuildPermitted(unittest.IsolatedAsyncioTestCase):
+    @staticmethod
+    def _pipeline(group='openshift-4.18'):
+        runtime = MagicMock()
+        runtime.new_slack_client.return_value = MagicMock(say=AsyncMock())
+        return BuildPlashetsPipeline(runtime=runtime, group=group, release='rel', assembly='stream')
+
+    @patch('pyartcd.util.get_weekday')
+    @patch('pyartcd.util.is_manual_build')
+    @patch('pyartcd.pipelines.build_plashets.get_freeze_automation', new_callable=AsyncMock)
+    async def test_weekdays_is_weekday_aware(self, get_freeze, is_manual, get_weekday):
+        # 'weekdays' must match is_build_permitted: block weekday non-manual composes, permit weekend
+        # ones, and always permit manual composes (the bug was permitting weekday automated composes).
+        get_freeze.return_value = 'weekdays'
+        pipeline = self._pipeline()
+
+        is_manual.return_value = False
+        get_weekday.return_value = 'Wednesday'
+        self.assertFalse(await pipeline.is_compose_build_permitted())
+
+        for weekend_day in ('Saturday', 'Sunday'):
+            with self.subTest(weekday=weekend_day):
+                get_weekday.return_value = weekend_day
+                self.assertTrue(await pipeline.is_compose_build_permitted())
+
+        is_manual.return_value = True
+        get_weekday.return_value = 'Wednesday'
+        self.assertTrue(await pipeline.is_compose_build_permitted())
+
+        # No Slack alert for the 'weekdays' state.
+        pipeline.slack_client.say.assert_not_awaited()
+
+    @patch('pyartcd.util.is_manual_build')
+    @patch('pyartcd.pipelines.build_plashets.get_freeze_automation', new_callable=AsyncMock)
+    async def test_scheduled_and_hard_freeze(self, get_freeze, is_manual):
+        pipeline = self._pipeline()
+
+        # 'scheduled' blocks non-manual composes and permits manual ones (with a Slack alert).
+        get_freeze.return_value = 'scheduled'
+        is_manual.return_value = False
+        self.assertFalse(await pipeline.is_compose_build_permitted())
+        pipeline.slack_client.say.assert_not_awaited()
+
+        is_manual.return_value = True
+        self.assertTrue(await pipeline.is_compose_build_permitted())
+        pipeline.slack_client.say.assert_awaited_once()
+
+        # 'yes' is a hard freeze: nothing is permitted, not even manual composes.
+        get_freeze.return_value = 'yes'
+        is_manual.return_value = True
+        self.assertFalse(await pipeline.is_compose_build_permitted())
+
+    @patch('pyartcd.pipelines.build_plashets.get_freeze_automation', new_callable=AsyncMock)
+    async def test_golang_group_skips_freeze_check(self, get_freeze):
+        pipeline = self._pipeline(group='golang-1.22')
+        self.assertTrue(await pipeline.is_compose_build_permitted())
+        get_freeze.assert_not_awaited()
