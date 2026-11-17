@@ -10,6 +10,7 @@ from pyartcd.pipelines.merge_layered_fbc import MergeLayeredFbcPipeline
 
 def pipeline(tmp_path, target=None, assemblies=('3.18.5', '3.17.9'), **kwargs):
     runtime = Mock(working_dir=tmp_path, doozer_working=tmp_path / 'doozer', dry_run=True)
+    kwargs.setdefault('product', 'quay')
     return MergeLayeredFbcPipeline(runtime, target, assemblies=assemblies, **kwargs)
 
 
@@ -123,10 +124,10 @@ def test_resolves_assemblies_for_any_layered_product(tmp_path, source_factory, p
     assert sources.repo.get_branch.call_count == len(versions)
 
 
-def test_omitted_product_preserves_quay_default(tmp_path, sources):
-    p = pipeline(tmp_path)
-    asyncio.run(p._resolve_assemblies())
-    assert p.product == 'quay'
+def test_assembly_inputs_require_an_explicit_product(tmp_path, sources):
+    with pytest.raises(ValueError, match='layered-product identity'):
+        asyncio.run(pipeline(tmp_path, product=None)._resolve_assemblies())
+    sources.repo.get_branch.assert_not_called()
 
 
 def test_rejects_group_product_mismatch(tmp_path, sources):
@@ -335,4 +336,4 @@ def test_cli_describes_generic_layered_product_assembly_inputs():
     with command.make_context('lp-unified-fbc', [], resilient_parsing=True) as context:
         help_text = command.get_help(context)
     assert 'Full layered-product assembly version' in help_text
-    assert 'Layered-product identity used to validate' in help_text
+    assert 'required with --assembly' in help_text

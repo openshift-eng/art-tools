@@ -96,11 +96,7 @@ class MergeLayeredFbcPipeline:
         """
         if self.builds or self.options['--fbc-branch'] or self.skip_rebase:
             raise ValueError('--assembly cannot be combined with --fbc-build, --fbc-branch, or --skip-rebase')
-        # Preserve the original Quay default for existing callers while allowing
-        # every layered product to use the assembly-driven workflow explicitly.
-        if self.product is None:
-            self.product = 'quay'
-        elif not self.product or self.product == 'ocp':
+        if not self.product or self.product == 'ocp':
             raise ValueError('Assembly inputs require a layered-product identity')
         selections = {}
         for assembly in self.assemblies:
@@ -394,7 +390,7 @@ class MergeLayeredFbcPipeline:
 )
 @click.option(
     '--product',
-    help='Layered-product identity used to validate sources and resolve assembly groups; defaults to quay.',
+    help='Layered-product identity used to validate sources and resolve assembly groups; required with --assembly.',
 )
 @click.option('--data-path', default=constants.OCP_BUILD_DATA_URL)
 @click.option('--fbc-repo')
