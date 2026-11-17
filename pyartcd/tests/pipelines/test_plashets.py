@@ -1,10 +1,39 @@
+import asyncio
 import unittest
 from unittest.mock import AsyncMock, MagicMock, patch
 
-from pyartcd.pipelines.build_plashets import BuildPlashetsPipeline
+from click.testing import CliRunner
+from pyartcd.pipelines.build_plashets import BuildPlashetsPipeline, build_plashets_cli
+from pyartcd.runtime import Runtime
 
 
 class TestBuildCompose(unittest.IsolatedAsyncioTestCase):
+    @patch('pyartcd.jenkins.init_jenkins')
+    @patch('pyartcd.pipelines.build_plashets.get_freeze_automation', new_callable=AsyncMock, return_value='yes')
+    @patch('pyartcd.pipelines.build_plashets.build_plashets', new_callable=AsyncMock, return_value={})
+    async def test_hard_freeze_requires_explicit_override(self, build_plashets, get_freeze, _init):
+        for override in (False, True):
+            with self.subTest(override=override):
+                build_plashets.reset_mock()
+                get_freeze.reset_mock()
+                pipeline = BuildPlashetsPipeline(
+                    runtime=MagicMock(dry_run=True),
+                    group='openshift-4.21',
+                    release='test',
+                    assembly='stream',
+                    ignore_automation_freeze=override,
+                )
+
+                await pipeline.run()
+
+                if override:
+                    get_freeze.assert_not_awaited()
+                    build_plashets.assert_awaited_once()
+                    pipeline.runtime.logger.warning.assert_called_once()
+                else:
+                    get_freeze.assert_awaited_once()
+                    build_plashets.assert_not_awaited()
+
     @patch('pyartcd.jenkins.init_jenkins')
     @patch('pyartcd.jenkins.start_build')
     @patch('pyartcd.pipelines.build_plashets.build_plashets', new_callable=AsyncMock, return_value={})
@@ -104,6 +133,46 @@ class TestBuildCompose(unittest.IsolatedAsyncioTestCase):
 
         # Verify that the logger was called with the auto-generated release
         runtime.logger.info.assert_called_once_with('Auto-generated release timestamp: 202401011200.p?')
+
+
+class TestComposeFreezeOption(unittest.TestCase):
+    def test_cli_override_preserves_compose_lock(self):
+        async def run_locked(coro, **kwargs):
+            await coro
+
+        for override in (False, True):
+            with self.subTest(override=override):
+                loop = asyncio.new_event_loop()
+                asyncio.set_event_loop(loop)
+                try:
+                    with (
+                        patch('pyartcd.pipelines.build_plashets.BuildPlashetsPipeline') as pipeline_class,
+                        patch(
+                            'pyartcd.pipelines.build_plashets.jenkins.get_build_path_or_random', return_value='test-run'
+                        ),
+                        patch(
+                            'pyartcd.pipelines.build_plashets.locks.run_with_lock',
+                            new_callable=AsyncMock,
+                            side_effect=run_locked,
+                        ) as run_with_lock,
+                    ):
+                        pipeline_class.return_value.run = AsyncMock()
+                        args = ['--group', 'openshift-4.21', '--assembly', 'stream', '--release', 'test']
+                        result = CliRunner().invoke(
+                            build_plashets_cli,
+                            args + (['--ignore-automation-freeze'] if override else []),
+                            obj=MagicMock(spec=Runtime),
+                        )
+                        self.assertEqual(result.exit_code, 0, result.output or str(result.exception))
+                        self.assertIs(pipeline_class.call_args.kwargs['ignore_automation_freeze'], override)
+                        run_with_lock.assert_awaited_once()
+                        self.assertEqual(
+                            run_with_lock.call_args.kwargs['lock_name'], 'lock:compose:stream:openshift-4.21'
+                        )
+                        pipeline_class.return_value.run.assert_awaited_once()
+                finally:
+                    loop.close()
+                    asyncio.set_event_loop(None)
 
 
 class TestComposeBuildPermitted(unittest.IsolatedAsyncioTestCase):

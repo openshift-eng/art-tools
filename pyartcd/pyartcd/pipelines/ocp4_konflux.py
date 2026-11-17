@@ -1005,6 +1005,7 @@ class KonfluxOcpPipeline:
                 data_path=self.data_path,
                 data_gitref=self.data_gitref,
                 dry_run=self.runtime.dry_run,
+                ignore_automation_freeze=self.ignore_automation_freeze,
                 block_until_complete=True,
             )
 

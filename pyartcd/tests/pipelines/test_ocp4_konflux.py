@@ -85,6 +85,37 @@ class TestGlobalAutomationFreeze(unittest.IsolatedAsyncioTestCase):
         pipeline._run_pipeline.assert_awaited_once()
         self.assertIn('--ignore-automation-freeze was explicitly set', '\n'.join(logs.output))
 
+    @patch('pyartcd.pipelines.ocp4_konflux.uses_konflux_imagestream_override', return_value=True)
+    @patch('pyartcd.pipelines.ocp4_konflux.jenkins.update_description')
+    @patch('pyartcd.pipelines.ocp4_konflux.jenkins.start_build_plashets')
+    async def test_freeze_override_is_forwarded_to_plashet_job(self, start_plashets, _description, _override):
+        for override in (False, True):
+            with self.subTest(override=override):
+                start_plashets.reset_mock()
+                pipeline = self.make_pipeline('stream', ignore_automation_freeze=override)
+                pipeline.runtime.dry_run = True
+                for method in (
+                    'initialize',
+                    'rebase_and_build_rpms',
+                    'rebase_and_build_images',
+                    'sync_images',
+                    'sweep_bugs',
+                    'sweep_golang_bugs',
+                    'mirror_streams_to_ci',
+                    'mirror_test_builds_to_quay',
+                    'clean_up',
+                ):
+                    setattr(pipeline, method, AsyncMock())
+                pipeline.trigger_bundle_build = MagicMock()
+
+                await pipeline._run_pipeline()
+
+                start_plashets.assert_called_once()
+                self.assertIs(start_plashets.call_args.kwargs['ignore_automation_freeze'], override)
+                self.assertTrue(start_plashets.call_args.kwargs['block_until_complete'])
+                pipeline.rebase_and_build_rpms.assert_awaited_once()
+                pipeline.rebase_and_build_images.assert_awaited_once()
+
     @patch('pyartcd.util.is_manual_build')
     @patch('pyartcd.util.get_global_freeze_automation', new_callable=AsyncMock, return_value='scheduled')
     @patch.dict(os.environ, {}, clear=True)

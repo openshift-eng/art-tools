@@ -33,6 +33,7 @@ class BuildPlashetsPipeline:
         data_gitref='',
         copy_links=False,
         version=None,
+        ignore_automation_freeze=False,
     ):
         self.runtime = runtime
         self.group = group
@@ -43,14 +44,21 @@ class BuildPlashetsPipeline:
         self.data_gitref = data_gitref
         self.copy_links = copy_links
         self.version = version
+        self.ignore_automation_freeze = ignore_automation_freeze
 
         self.slack_client = runtime.new_slack_client()
 
     async def run(self):
         jenkins.init_jenkins()
 
-        # Check if compose build is permitted
-        if not await self.is_compose_build_permitted():
+        # Honor the same explicit override as the parent OCP build.
+        if self.ignore_automation_freeze:
+            self.runtime.logger.warning(
+                'Ignoring global and group freeze_automation for %s because '
+                '--ignore-automation-freeze was explicitly set',
+                self.group,
+            )
+        elif not await self.is_compose_build_permitted():
             self.runtime.logger.info("Skipping compose build as it's not permitted")
             return
 
@@ -162,6 +170,12 @@ class BuildPlashetsPipeline:
 @click.option('--data-gitref', required=False, default='', help='Doozer data path git [branch / tag / sha] to use')
 @click.option('--copy-links', is_flag=True, default=False, help='Call rsync with --copy-links instead of --links')
 @click.option(
+    '--ignore-automation-freeze',
+    is_flag=True,
+    default=False,
+    help='Ignore global and group freeze_automation policy for this run; compose locks still apply',
+)
+@click.option(
     '--version',
     required=False,
     default='',
@@ -178,6 +192,7 @@ async def build_plashets_cli(
     data_path: str,
     data_gitref: str,
     copy_links: bool,
+    ignore_automation_freeze: bool,
     version: str,
 ):
     # Auto-generate release timestamp if not provided
@@ -209,6 +224,7 @@ async def build_plashets_cli(
         data_gitref=data_gitref,
         copy_links=copy_links,
         version=version or None,
+        ignore_automation_freeze=ignore_automation_freeze,
     )
 
     lock = Lock.PLASHET

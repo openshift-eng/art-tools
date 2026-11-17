@@ -178,6 +178,25 @@ class TestJenkinsStartBuild(unittest.TestCase):
                     },
                 )
 
+    @mock.patch('pyartcd.jenkins.start_build')
+    def test_start_build_plashets_forwards_freeze_override(self, start_build_mock):
+        for options in ({}, {'ignore_automation_freeze': True}):
+            with self.subTest(options=options):
+                start_build_mock.reset_mock()
+                jenkins.start_build_plashets(
+                    group='openshift-4.21',
+                    release='test',
+                    assembly='stream',
+                    block_until_complete=True,
+                    **options,
+                )
+                self.assertEqual(start_build_mock.call_args.kwargs['job'], Jobs.BUILD_PLASHETS)
+                self.assertIs(
+                    start_build_mock.call_args.kwargs['params']['IGNORE_AUTOMATION_FREEZE'],
+                    options.get('ignore_automation_freeze', False),
+                )
+                self.assertTrue(start_build_mock.call_args.kwargs['block_until_complete'])
+
     @mock.patch("pyartcd.jenkins.start_build")
     def test_start_build_sync_rejects_brew_before_triggering(self, start_build_mock):
         with self.assertRaisesRegex(ValueError, 'Brew build-sync has been retired'):
