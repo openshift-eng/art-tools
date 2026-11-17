@@ -1,5 +1,8 @@
+import asyncio
 import base64
 import json
+import threading
+import time
 from datetime import datetime, timezone
 from unittest import IsolatedAsyncioTestCase
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -65,6 +68,140 @@ class TestScanSourcesKonflux(IsolatedAsyncioTestCase):
         if hasattr(self, '_github_patch'):
             self._github_patch.stop()
         super().tearDown()
+
+
+class TestUpstreamRefResolution(TestScanSourcesKonflux):
+    def setUp(self):
+        super().setUp()
+        self.runtime.stage = False
+        self.runtime.group_config = Model({'use_source_fallback_branch': 'yes'})
+
+    def source_meta(self, url='https://github.com/openshift/test', target='main', **git_options):
+        meta = MagicMock(spec=ImageMetadata)
+        meta.distgit_key = 'test'
+        meta.config = Model({'content': {'source': {'git': {'url': url, 'branch': {'target': target}, **git_options}}}})
+        return meta
+
+    @patch('doozerlib.cli.scan_sources_konflux.SourceResolver.detect_remote_source_branch')
+    async def test_shared_refs_coalesce_concurrent_and_later_lookups(self, detect):
+        detect.return_value = ('main', 'commit')
+        first = self.source_meta(url='git@github.com:openshift/test.git')
+        second = self.source_meta(url='https://github.com/elsewhere/push', url_pull='https://github.com/openshift/test')
+        results = await asyncio.gather(
+            self.scanner.find_upstream_commit_hash(first), self.scanner.find_upstream_commit_hash(second)
+        )
+        self.assertEqual(results, ['commit', 'commit'])
+        self.assertEqual(await self.scanner.find_upstream_commit_hash(first), 'commit')
+        detect.assert_called_once_with(
+            {'url': 'https://github.com/openshift/test', 'branch': {'target': 'main', 'stage': None, 'fallback': None}},
+            False,
+            'yes',
+        )
+
+    @patch('doozerlib.cli.scan_sources_konflux.SourceResolver.detect_remote_source_branch')
+    async def test_cache_separates_branch_selection_inputs(self, detect):
+        detect.return_value = ('main', 'commit')
+        metas = [
+            self.source_meta(),
+            self.source_meta(target='release'),
+            self.source_meta(url='https://github.com/other/test'),
+        ]
+        for field in ('stage', 'fallback'):
+            meta = self.source_meta()
+            meta.config.content.source.git.branch[field] = 'other'
+            metas.append(meta)
+        for meta in metas:
+            await self.scanner.find_upstream_commit_hash(meta)
+        self.runtime.stage = True
+        await self.scanner.find_upstream_commit_hash(metas[0])
+        self.runtime.group_config.use_source_fallback_branch = 'never'
+        await self.scanner.find_upstream_commit_hash(metas[0])
+        self.assertEqual(detect.call_count, 7)
+
+    @patch('doozerlib.cli.scan_sources_konflux.SourceResolver.detect_remote_source_branch')
+    async def test_failed_resolution_can_be_retried(self, detect):
+        detect.side_effect = [IOError('transient failure'), ('main', 'commit')]
+        meta = self.source_meta()
+        with self.assertRaisesRegex(IOError, 'transient failure'):
+            await self.scanner.find_upstream_commit_hash(meta)
+        self.assertEqual(await self.scanner.find_upstream_commit_hash(meta), 'commit')
+        self.assertEqual(detect.call_count, 2)
+
+    @patch('doozerlib.cli.scan_sources_konflux.SourceResolver.detect_remote_source_branch')
+    async def test_ref_cache_is_scoped_to_scan_instance(self, detect):
+        detect.side_effect = [('main', 'before'), ('main', 'after')]
+        meta = self.source_meta()
+        self.assertEqual(await self.scanner.find_upstream_commit_hash(meta), 'before')
+        next_scan = ConfigScanSources(self.runtime, self.ci_kubeconfig, self.session, as_yaml=False)
+        self.assertEqual(await next_scan.find_upstream_commit_hash(meta), 'after')
+
+    async def test_resolution_does_not_block_event_loop(self):
+        loop = asyncio.get_running_loop()
+        loop_ran = threading.Event()
+        observed = []
+
+        def detect(*args):
+            loop.call_soon_threadsafe(loop_ran.set)
+            observed.append(loop_ran.wait(timeout=2))
+            return 'main', 'commit'
+
+        with patch('doozerlib.cli.scan_sources_konflux.SourceResolver.detect_remote_source_branch', side_effect=detect):
+            self.assertEqual(await self.scanner.find_upstream_commit_hash(self.source_meta()), 'commit')
+        self.assertEqual(observed, [True])
+
+    async def test_resolution_concurrency_is_bounded(self):
+        self.scanner._source_ref_semaphore = asyncio.Semaphore(2)
+        lock = threading.Lock()
+        barrier = threading.Barrier(2)
+        active = maximum = 0
+
+        def detect(*args):
+            nonlocal active, maximum
+            with lock:
+                active += 1
+                maximum = max(maximum, active)
+            try:
+                barrier.wait(timeout=2)
+                time.sleep(0.005)
+                return 'main', 'commit'
+            finally:
+                with lock:
+                    active -= 1
+
+        with patch('doozerlib.cli.scan_sources_konflux.SourceResolver.detect_remote_source_branch', side_effect=detect):
+            await asyncio.gather(
+                *(self.scanner.find_upstream_commit_hash(self.source_meta(target=f'branch-{i}')) for i in range(6))
+            )
+        self.assertEqual(maximum, 2)
+
+    @patch('doozerlib.cli.scan_sources_konflux.SourceResolver._get_remote_branch_ref')
+    async def test_existing_fallback_stage_and_commit_pin_semantics(self, get_ref):
+        for strategy, stage, expected_branch, replies in (
+            ('yes', False, 'fallback', [None, 'commit']),
+            ('always', False, 'fallback', ['commit']),
+            ('never', False, 'main', ['commit']),
+            ('yes', True, 'staging', ['commit']),
+        ):
+            with self.subTest(strategy=strategy, stage=stage):
+                self.runtime.stage = stage
+                self.runtime.group_config.use_source_fallback_branch = strategy
+                meta = self.source_meta(branch={'target': 'main', 'fallback': 'fallback', 'stage': 'staging'})
+                get_ref.reset_mock(side_effect=True)
+                get_ref.side_effect = replies
+                self.assertEqual(await self.scanner.find_upstream_commit_hash(meta), 'commit')
+                self.assertEqual(get_ref.call_args.args[1], expected_branch)
+
+        self.runtime.stage = False
+        get_ref.reset_mock()
+        pinned = 'a' * 40
+        self.assertEqual(await self.scanner.find_upstream_commit_hash(self.source_meta(target=pinned)), pinned)
+        get_ref.assert_not_called()
+
+    async def test_missing_git_source_preserves_configuration_error(self):
+        meta = self.source_meta()
+        del meta.config.content.source['git']
+        with self.assertRaisesRegex(IOError, 'content.source.git is not defined'):
+            await self.scanner.find_upstream_commit_hash(meta)
 
 
 class TestMinimalCrashIsolation(TestScanSourcesKonflux):
