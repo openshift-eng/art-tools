@@ -3,7 +3,12 @@ import unittest
 from unittest import mock
 
 import pytest
-from artcommonlib.constants import KONFLUX_DEFAULT_IMAGE_REPO, KONFLUX_IMAGE_TEST_REPO, RHCOS_IMAGE_REPO
+from artcommonlib.constants import (
+    KONFLUX_DEFAULT_IMAGE_REPO,
+    KONFLUX_IMAGE_TEST_REPO,
+    RHCOS_IMAGE_REPO,
+    SD_HANDOFF_REPO,
+)
 from pyartcd.pipelines.sync_nvr_to_quay import SyncNvrToQuayPipeline, sync_image_to_quay
 from pyartcd.runtime import Runtime
 
@@ -136,6 +141,27 @@ class TestSyncNvrToQuayPipelineValidation(unittest.IsolatedAsyncioTestCase):
         runtime = _make_runtime()
         with pytest.raises(ValueError, match="Invalid record_id"):
             SyncNvrToQuayPipeline(runtime, nvrs=["ose-foo-4.18.0-1"], record_id="0123abcd\n")
+
+    def test_allow_embargoed_rejected_for_non_embargo_capable_repo(self):
+        """--allow-embargoed must never silently apply to a repo not explicitly embargo-capable."""
+        runtime = _make_runtime()
+        with pytest.raises(ValueError, match="allow-embargoed"):
+            SyncNvrToQuayPipeline(
+                runtime,
+                nvrs=["ose-foo-4.18.0-1"],
+                target_repo=KONFLUX_IMAGE_TEST_REPO,
+                allow_embargoed=True,
+            )
+
+    def test_allow_embargoed_accepted_for_sd_handoff(self):
+        runtime = _make_runtime()
+        pipeline = SyncNvrToQuayPipeline(
+            runtime,
+            nvrs=["ose-foo-4.18.0-1"],
+            target_repo=SD_HANDOFF_REPO,
+            allow_embargoed=True,
+        )
+        assert pipeline.allow_embargoed is True
 
 
 class TestSyncNvrToQuayPipeline(unittest.IsolatedAsyncioTestCase):
@@ -335,6 +361,60 @@ class TestSyncNvrToQuayPipeline(unittest.IsolatedAsyncioTestCase):
         await pipeline.run()
 
         mock_sync.assert_not_awaited()
+
+    @mock.patch("pyartcd.pipelines.sync_nvr_to_quay.sync_to_quay", new_callable=mock.AsyncMock)
+    @mock.patch("pyartcd.pipelines.sync_nvr_to_quay.is_nvr_embargoed", return_value=True)
+    @mock.patch("pyartcd.pipelines.sync_nvr_to_quay.KonfluxDb")
+    async def test_embargoed_nvr_still_skipped_for_sd_handoff_without_allow_embargoed(
+        self, mock_db_cls, mock_embargo, mock_sync
+    ):
+        runtime = _make_runtime(dry_run=False)
+        record = _make_record(embargoed=False)
+        _db_with_results(mock_db_cls, [record])
+
+        pipeline = SyncNvrToQuayPipeline(runtime, nvrs=["ose-foo-4.18.0-1.p3"], target_repo=SD_HANDOFF_REPO)
+        await pipeline.run()
+
+        mock_sync.assert_not_awaited()
+
+    @mock.patch("pyartcd.pipelines.sync_nvr_to_quay.sync_to_quay", new_callable=mock.AsyncMock)
+    @mock.patch("pyartcd.pipelines.sync_nvr_to_quay.is_nvr_embargoed", return_value=True)
+    @mock.patch("pyartcd.pipelines.sync_nvr_to_quay.KonfluxDb")
+    async def test_embargoed_nvr_synced_to_sd_handoff_with_allow_embargoed(self, mock_db_cls, mock_embargo, mock_sync):
+        runtime = _make_runtime(dry_run=False)
+        record = _make_record(embargoed=True, image_tag="foo-tag")
+        _db_with_results(mock_db_cls, [record])
+
+        pipeline = SyncNvrToQuayPipeline(
+            runtime,
+            nvrs=["ose-foo-4.18.0-1.p3"],
+            target_repo=SD_HANDOFF_REPO,
+            allow_embargoed=True,
+        )
+        await pipeline.run()
+
+        mock_sync.assert_awaited_once_with(
+            record.image_pullspec,
+            SD_HANDOFF_REPO,
+            ["foo-tag"],
+        )
+
+    @mock.patch("pyartcd.pipelines.sync_nvr_to_quay.sync_to_quay", new_callable=mock.AsyncMock)
+    @mock.patch("pyartcd.pipelines.sync_nvr_to_quay.is_nvr_embargoed", return_value=False)
+    @mock.patch("pyartcd.pipelines.sync_nvr_to_quay.KonfluxDb")
+    async def test_non_embargoed_nvr_synced_to_sd_handoff_regardless_of_flag(self, mock_db_cls, mock_embargo, mock_sync):
+        runtime = _make_runtime(dry_run=False)
+        record = _make_record(embargoed=False, image_tag="foo-tag")
+        _db_with_results(mock_db_cls, [record])
+
+        pipeline = SyncNvrToQuayPipeline(runtime, nvrs=["ose-foo-4.18.0-1"], target_repo=SD_HANDOFF_REPO)
+        await pipeline.run()
+
+        mock_sync.assert_awaited_once_with(
+            record.image_pullspec,
+            SD_HANDOFF_REPO,
+            ["foo-tag"],
+        )
 
     @mock.patch("pyartcd.pipelines.sync_nvr_to_quay.sync_to_quay", new_callable=mock.AsyncMock)
     @mock.patch("pyartcd.pipelines.sync_nvr_to_quay.is_nvr_embargoed", return_value=False)
