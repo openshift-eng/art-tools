@@ -4,15 +4,16 @@ import sys
 from pathlib import Path
 
 import pytest
-from validator import ci
+from validator import checks, ci
 
 
 @pytest.mark.parametrize('host', ['registry.access.redhat.com', 'registry.access.redhat.io'])
+@pytest.mark.parametrize('port', ['', ':443'])
 @pytest.mark.parametrize('location', ['stream', 'parent', 'builder'])
-def test_cli_rejects_unauthenticated_redhat_registry(tmp_path, host, location):
+def test_cli_rejects_unauthenticated_redhat_registry(tmp_path, host, port, location):
     """Check real metadata through the shared CLI, including nested image references."""
     repository(tmp_path)
-    pullspec = f'{host}/ubi9/go-toolset:1.27'
+    pullspec = f'{host}{port}/ubi9/go-toolset:1.27'
     if location == 'stream':
         path, field = 'streams.yml', '$.builder.image'
         (tmp_path / path).write_text(f'builder:\n  image: {pullspec}\n')
@@ -28,6 +29,36 @@ def test_cli_rejects_unauthenticated_redhat_registry(tmp_path, host, location):
     assert ci.main(['--repo', str(tmp_path), '--schema-only', '--report', str(report)]) == 1
     errors = json.loads(report.read_text())['errors']
     assert any(path in e and field in e and pullspec in e and 'registry.redhat.io' in e for e in errors), errors
+
+
+def test_cli_checks_registry_after_group_variable_substitution(tmp_path):
+    repository(tmp_path)
+    (tmp_path / 'group.yml').write_text('name: test\nvars: {REGISTRY: registry.access.redhat.com}\n')
+    (tmp_path / 'streams.yml').write_text('builder:\n  image: "{REGISTRY}/ubi9/ubi:latest"\n')
+    report = tmp_path / 'report.json'
+    assert ci.main(['--repo', str(tmp_path), '--schema-only', '--report', str(report)]) == 1
+    assert any(
+        '$.builder.image' in e and 'registry.access.redhat.com/ubi9/ubi:latest' in e
+        for e in json.loads(report.read_text())['errors']
+    )
+
+
+def test_registry_check_handles_recursive_and_shared_yaml_nodes():
+    loop = []
+    loop.append(loop)
+    shared = {'image': 'registry.access.redhat.com/image:latest'}
+    errors = checks.validate_registry_pullspecs({'loop': loop, 'first': shared, 'second': shared})
+    assert any('$.loop[0]' in e and 'recursive' in e for e in errors)
+    assert any('$.first.image' in e for e in errors)
+    assert any('$.second.image' in e for e in errors)
+
+
+def test_cli_reports_recursive_yaml_alias(tmp_path):
+    repository(tmp_path)
+    (tmp_path / 'streams.yml').write_text('builder:\n  image: quay.io/test/image:latest\n  aliases: &loop [*loop]\n')
+    report = tmp_path / 'report.json'
+    assert ci.main(['--repo', str(tmp_path), '--schema-only', '--report', str(report)]) == 1
+    assert any('recursive YAML alias' in e for e in json.loads(report.read_text())['errors'])
 
 
 @pytest.mark.parametrize(
