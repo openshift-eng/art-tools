@@ -7,7 +7,7 @@ Unit tests for the okd pipeline.
 import tempfile
 from pathlib import Path
 from unittest import IsolatedAsyncioTestCase
-from unittest.mock import ANY, AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import yaml
 from artcommonlib.variants import BuildVariant
@@ -878,7 +878,7 @@ class TestUpdateImagestreamsDataPath(IsolatedAsyncioTestCase):
         with (
             patch.object(pipeline, '_tag_image_to_stream', new_callable=AsyncMock) as mock_tag,
             patch.object(pipeline, '_get_arch_pullspec', new_callable=AsyncMock, side_effect=arch_pullspec_side_effect),
-            patch.object(pipeline, '_get_current_tag_pullspec', new_callable=AsyncMock, return_value=None),
+            patch.object(pipeline, '_get_pod_placeholder_pullspec', new_callable=AsyncMock, return_value=None),
             patch('pyartcd.pipelines.okd.jenkins'),
         ):
             await pipeline.update_imagestreams()
@@ -891,8 +891,8 @@ class TestUpdateImagestreamsDataPath(IsolatedAsyncioTestCase):
             self.assertEqual(first_call[1]['target_tag'], 'origin/scos-4.22-art:cli')
 
     async def test_update_imagestreams_arm64_failure_falls_back_to_pod_placeholder(self):
-        """When arm64 pullspec resolution fails, the existing 'pod' tag in the arm64
-        imagestream is used as a placeholder so the tag isn't simply dropped."""
+        """When arm64 pullspec resolution fails, the latest 'pod' build is resolved to
+        arm64 and used as a placeholder so the tag isn't simply dropped."""
 
         data_path = 'https://github.com/openshift-eng/ocp-build-data'
         pipeline = self._make_pipeline(data_path)
@@ -910,30 +910,35 @@ class TestUpdateImagestreamsDataPath(IsolatedAsyncioTestCase):
         (images_dir / 'cli.yml').write_text(yaml.dump({'name': 'openshift/ose-cli', 'for_payload': True}))
 
         amd64_pullspec = 'quay.io/okd/cli@sha256:amd64digest'
-        pod_placeholder_pullspec = 'quay.io/okd/pod@sha256:poddigest'
+        pod_manifest_pullspec = 'quay.io/okd/pod@sha256:podmanifest'
+        pod_arm64_pullspec = 'quay.io/okd/pod@sha256:podarm64digest'
 
         def arch_pullspec_side_effect(pullspec, go_arch):
-            return amd64_pullspec if go_arch == 'amd64' else None
+            if pullspec == 'quay.io/okd/cli@sha256:abc' and go_arch == 'amd64':
+                return amd64_pullspec
+            if pullspec == pod_manifest_pullspec and go_arch == 'arm64':
+                return pod_arm64_pullspec
+            return None
 
         with (
             patch.object(pipeline, '_tag_image_to_stream', new_callable=AsyncMock) as mock_tag,
             patch.object(pipeline, '_get_arch_pullspec', new_callable=AsyncMock, side_effect=arch_pullspec_side_effect),
             patch.object(
                 pipeline,
-                '_get_current_tag_pullspec',
+                '_get_pod_placeholder_pullspec',
                 new_callable=AsyncMock,
-                return_value=pod_placeholder_pullspec,
-            ) as mock_get_current_tag,
+                return_value=pod_manifest_pullspec,
+            ) as mock_get_pod_placeholder,
             patch('pyartcd.pipelines.okd.jenkins'),
         ):
             await pipeline.update_imagestreams()
 
-            # amd64 tag succeeds; arm64 tag uses the pod placeholder pullspec
+            # amd64 tag succeeds; arm64 tag uses the pod placeholder resolved to arm64
             self.assertEqual(mock_tag.call_count, 2)
             second_call = mock_tag.call_args_list[1]
-            self.assertEqual(second_call[1]['source_pullspec'], pod_placeholder_pullspec)
+            self.assertEqual(second_call[1]['source_pullspec'], pod_arm64_pullspec)
             self.assertEqual(second_call[1]['target_tag'], 'origin-arm64/scos-4.22-art-arm64:cli')
-            mock_get_current_tag.assert_awaited_once_with('origin-arm64', 'scos-4.22-art-arm64', 'pod', ANY)
+            mock_get_pod_placeholder.assert_awaited_once()
 
 
 class TestGetArchPullspec(IsolatedAsyncioTestCase):
