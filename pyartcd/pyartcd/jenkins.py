@@ -931,6 +931,7 @@ def start_build_plashets(
     copy_links=False,
     dry_run=False,
     version=None,
+    ignore_automation_freeze=False,
     **kwargs,
 ) -> Optional[str]:
     params = {
@@ -943,6 +944,7 @@ def start_build_plashets(
         'COPY_LINKS': copy_links,
         'DRY_RUN': dry_run,
         'VERSION': version,
+        'IGNORE_AUTOMATION_FREEZE': ignore_automation_freeze,
     }
 
     return start_build(
