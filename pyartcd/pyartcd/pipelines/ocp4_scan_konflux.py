@@ -8,7 +8,7 @@ from artcommonlib.telemetry import start_as_current_span_async
 from opentelemetry import trace
 from opentelemetry.trace import StatusCode
 
-from pyartcd import constants, jenkins, locks, util
+from pyartcd import constants, jenkins, locks, tekton, util
 from pyartcd.cli import cli, click_coroutine, pass_runtime
 from pyartcd.locks import Lock
 from pyartcd.runtime import Runtime
@@ -17,8 +17,27 @@ from pyartcd.util import has_layered_rhcos
 TRACER = trace.get_tracer(__name__)
 
 
+def _update_title(title):
+    if tekton.is_tekton_context():
+        logging.getLogger(__name__).info('Scan status: %s', title.strip())
+        tekton.annotate_current_pipelinerun({'art.openshift.io/scan-status': title.strip()})
+    else:
+        jenkins.update_title(title)
+
+
 class Ocp4ScanPipeline:
-    def __init__(self, runtime, version, data_path, assembly, data_gitref, image_list, skip_rpms, rebuild_before=None):
+    def __init__(
+        self,
+        runtime,
+        version,
+        data_path,
+        assembly,
+        data_gitref,
+        image_list,
+        skip_rpms,
+        rebuild_before=None,
+        ci_kubeconfig=None,
+    ):
         self.runtime = runtime
         self.version = version
         self.data_path = data_path
@@ -27,6 +46,7 @@ class Ocp4ScanPipeline:
         self.image_list = image_list
         self.skip_rpms = skip_rpms
         self.rebuild_before = rebuild_before
+        self.ci_kubeconfig = ci_kubeconfig
 
         self.logger = logging.getLogger(__name__)
         self._doozer_working = self.runtime.working_dir / "doozer_working"
@@ -34,6 +54,7 @@ class Ocp4ScanPipeline:
         self.changes = {}
         self.report = {}
         self.issues = []
+        self._summary_messages = []
         self.command_failed = False
         self.command_failure_message = ''
 
@@ -55,6 +76,15 @@ class Ocp4ScanPipeline:
             f'--assembly={self.assembly}',
             '--build-system=konflux',
         ]
+
+    def _update_description(self, description):
+        if tekton.is_tekton_context():
+            message = description.replace('<br/>', '').strip()
+            self.logger.info('%s', message)
+            self._summary_messages.append(message)
+            tekton.annotate_current_pipelinerun({'art.openshift.io/scan-summary': '; '.join(self._summary_messages)})
+        else:
+            jenkins.update_description(description)
 
     @start_as_current_span_async(TRACER, "ocp4-scan-konflux.run", record_resources=True)
     async def run(self):
@@ -114,7 +144,7 @@ class Ocp4ScanPipeline:
             [
                 'beta:config:konflux:scan-sources',
                 '--yaml',
-                f'--ci-kubeconfig={os.environ["KUBECONFIG"]}',
+                f'--ci-kubeconfig={self.ci_kubeconfig or os.environ["KUBECONFIG"]}',
                 '--rebase-priv',
             ]
         )
@@ -172,11 +202,11 @@ class Ocp4ScanPipeline:
         image_names = sorted({issue.get('name') for issue in self.issues if issue.get('name')})
 
         if 1 <= len(image_names) <= 10:
-            jenkins.update_description(f'Scan failures: {", ".join(image_names)}<br/>')
+            self._update_description(f'Scan failures: {", ".join(image_names)}<br/>')
         elif image_names:
-            jenkins.update_description(f'{len(image_names)} images had scan failures. Check scan-sources output<br/>')
+            self._update_description(f'{len(image_names)} images had scan failures. Check scan-sources output<br/>')
         else:
-            jenkins.update_description('Scan failures detected. Check scan-sources output<br/>')
+            self._update_description('Scan failures detected. Check scan-sources output<br/>')
 
     async def _handle_scan_issues(self):
         """
@@ -271,11 +301,11 @@ class Ocp4ScanPipeline:
             return
 
         # Update Jenkins title and description
-        jenkins.update_title(' [SOURCE CHANGES]')
+        _update_title(' [SOURCE CHANGES]')
         if changed_rpm:
-            jenkins.update_description(f'Changed {len(changed_rpm)} RPMs<br/>')
+            self._update_description(f'Changed {len(changed_rpm)} RPMs<br/>')
         if changed_ocp_images:
-            jenkins.update_description(f'Changed {len(changed_ocp_images)} OCP images<br/>')
+            self._update_description(f'Changed {len(changed_ocp_images)} OCP images<br/>')
 
         if self.runtime.dry_run:
             self.logger.info('Would have triggered a %s ocp4 build for %s', self.version, ','.join(changed_ocp_images))
@@ -300,14 +330,14 @@ class Ocp4ScanPipeline:
 
         if self.rhcos_inconsistent or self.rhcos_outdated:
             # Update Jenkins title and description
-            jenkins.update_title(' [RHCOS CHANGES]')
+            _update_title(' [RHCOS CHANGES]')
 
             if self.rhcos_inconsistent:
                 self.logger.info('Detected inconsistent RHCOS RPMs:\n%s', self.inconsistent_rhcos_rpms)
-                jenkins.update_description('RHCOS inconsistent<br/>')
+                self._update_description('RHCOS inconsistent<br/>')
             if self.rhcos_outdated:
                 self.logger.info('Detected outdated RHCOS RPMs:\n%s', self.changes.get('rhcos', None))
-                jenkins.update_description('RHCOS outdated<br/>')
+                self._update_description('RHCOS outdated<br/>')
 
             if self.runtime.dry_run:
                 self.logger.info('Would have triggered a %s RHCOS build', self.version)
@@ -393,6 +423,7 @@ class Ocp4ScanPipeline:
 @click.option('--image-list', required=False, help='Comma/space-separated list to of images to scan, empty to scan all')
 @click.option('--skip-rpms', is_flag=True, default=False, help='Skip RPM checks and only scan images')
 @click.option('--rebuild-before', help='Override the build invalidation cutoff used by Doozer scan-sources')
+@click.option('--ci-kubeconfig', envvar='KUBECONFIG', help='CI cluster credentials (defaults to KUBECONFIG)')
 @pass_runtime
 @click_coroutine
 async def ocp4_scan(
@@ -404,12 +435,14 @@ async def ocp4_scan(
     image_list: str,
     skip_rpms: bool,
     rebuild_before: str,
+    ci_kubeconfig: str,
 ):
-    # KUBECONFIG env var must be defined in order to scan sources
-    if not os.getenv('KUBECONFIG'):
-        raise RuntimeError('Environment variable KUBECONFIG must be defined')
+    # Keep CI reads separate from the local artc service-account context.
+    if not ci_kubeconfig:
+        raise RuntimeError('--ci-kubeconfig or environment variable KUBECONFIG must be defined')
 
-    jenkins.init_jenkins()
+    if not runtime.dry_run or not tekton.is_tekton_context():
+        jenkins.init_jenkins()
 
     pipeline = Ocp4ScanPipeline(
         runtime=runtime,
@@ -420,6 +453,7 @@ async def ocp4_scan(
         image_list=image_list,
         skip_rpms=skip_rpms,
         rebuild_before=rebuild_before,
+        ci_kubeconfig=ci_kubeconfig,
     )
 
     if runtime.dry_run:
@@ -428,7 +462,13 @@ async def ocp4_scan(
     else:
         lock = Lock.SCAN_KONFLUX
         lock_name = lock.value.format(version=version)
-        lock_identifier = jenkins.get_build_path_or_random()
+        if tekton.is_tekton_context():
+            lock_identifier = (
+                f'k8s/ns/{os.environ["TASKRUN_NAMESPACE"]}/tekton.dev~v1~PipelineRun/'
+                f'{tekton.get_current_pipelinerun_name()}'
+            )
+        else:
+            lock_identifier = jenkins.get_build_path_or_random()
 
         # Scheduled builds are already being skipped if the lock is already acquired.
         # For manual builds, we need to check if the build and scan locks are already acquired,
@@ -454,4 +494,4 @@ async def ocp4_scan(
         )
 
     if pipeline.skipped:
-        jenkins.update_title(' [SKIPPED][LOCKED]')
+        _update_title(' [SKIPPED][LOCKED]')
