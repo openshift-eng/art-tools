@@ -4,10 +4,11 @@ import io
 import logging
 import lzma
 import re
+import tempfile
 import xml.etree.ElementTree
 from dataclasses import dataclass, field
 from logging import Logger
-from typing import Any, Dict, Iterable, List, Optional, Set, Tuple, Union
+from typing import Any, BinaryIO, Dict, Iterable, List, Optional, Set, Tuple, Union
 from urllib import parse
 
 import aiohttp
@@ -400,6 +401,17 @@ class Repodata:
         primary_rpms = [
             Rpm.from_metadata(metadata) for metadata in primary.findall("common:package[@type='rpm']", NAMESPACES)
         ]
+        return Repodata.from_rpms(name, primary_rpms, modules_yaml, modules_checksum, modules_size, modules_url)
+
+    @staticmethod
+    def from_rpms(
+        name: str,
+        primary_rpms: List[Rpm],
+        modules_yaml: List[Dict],
+        modules_checksum: Optional[str] = None,
+        modules_size: Optional[int] = None,
+        modules_url: Optional[str] = None,
+    ):
         modules = [RpmModule.from_metadata(metadata) for metadata in modules_yaml if metadata['document'] == 'modulemd']
         default_streams: Dict[str, str] = {}
         for metadata in modules_yaml:
@@ -421,6 +433,39 @@ class Repodata:
 
 
 class RepodataLoader:
+    @staticmethod
+    def _parse_primary(stream: BinaryIO) -> List[Rpm]:
+        # Drop each package's XML after conversion; descriptions and dependency
+        # lists can make a complete primary.xml tree several GiB in size.
+        events = ET.iterparse(stream, events=("start", "end"))
+        _, root = next(events)
+        rpms = []
+        for event, element in events:
+            if event == "end" and element.tag == f"{{{NAMESPACES['common']}}}package":
+                if element.get("type") == "rpm":
+                    rpms.append(Rpm.from_metadata(element))
+                root.clear()
+        return rpms
+
+    @staticmethod
+    async def _fetch_primary_rpms(session: aiohttp.ClientSession, url: str) -> List[Rpm]:
+        # Spool compressed bytes to disk so neither the download nor the
+        # decompressed XML needs to fit in memory.
+        with tempfile.TemporaryFile() as compressed:
+            async with session.get(url) as resp:
+                resp.raise_for_status()
+                async for chunk in resp.content.iter_chunked(1024 * 1024):
+                    compressed.write(chunk)
+            compressed.seek(0)
+            if url.endswith('.gz'):
+                uncompressed = gzip.GzipFile(fileobj=compressed)
+            elif url.endswith('.xz'):
+                uncompressed = lzma.LZMAFile(compressed)
+            else:
+                raise IOError(f'Unknown compression for: {url}')
+            with uncompressed:
+                return RepodataLoader._parse_primary(uncompressed)
+
     @staticmethod
     async def _fetch_remote_compressed(session: aiohttp.ClientSession, url: Optional[str]):
         if not url:
@@ -518,18 +563,18 @@ class RepodataLoader:
                 & retry_if_exception(_is_retryable_repodata_error),
                 before_sleep=before_sleep_log(LOGGER, logging.WARNING),
             )
-            async def fetch_remote_compressed(url: Optional[str]):
-                return await self._fetch_remote_compressed(session, url)
+            async def fetch_metadata(fetch, url: Optional[str]):
+                return await fetch(session, url)
 
-            primary_bytes, modules_bytes = await asyncio.gather(
-                fetch_remote_compressed(primary_url),
-                fetch_remote_compressed(modules_url),
+            primary_rpms, modules_bytes = await asyncio.gather(
+                fetch_metadata(self._fetch_primary_rpms, primary_url),
+                fetch_metadata(self._fetch_remote_compressed, modules_url),
             )
 
         yaml = YAML(typ='safe')
-        repodata = Repodata.from_metadatas(
+        repodata = Repodata.from_rpms(
             repo_name,
-            ET.fromstring(primary_bytes),
+            primary_rpms,
             list(yaml.load_all(modules_bytes) if modules_bytes else []),
             modules_checksum=modules_checksum,
             modules_size=modules_size,
