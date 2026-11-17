@@ -108,13 +108,18 @@ own `freeze_automation` setting:
 - `scheduled` — block **all** non-manual (timer-triggered) runs, on every day of
   the week; manual runs are always permitted.
 - `weekdays` — block non-manual runs **on weekdays** but permit them **on
-  weekends** (Saturday/Sunday); manual runs are always permitted.
+  weekends** (Saturday/Sunday). Non-manual `images-health` runs are also
+  permitted on Monday when `JOB_BASE_NAME=images-health`. Manual runs are
+  always permitted.
 - `false` (or `no`) — not frozen; defer to each group's own
   `freeze_automation` policy.
 
-Both `scheduled` and `weekdays` always permit manual runs; they differ only in
-whether non-manual runs are allowed on weekends (`weekdays` allows them,
-`scheduled` does not).
+Both `scheduled` and `weekdays` always permit manual runs. `scheduled` blocks
+every non-manual run; `weekdays` permits the weekend runs and Monday health
+check described above.
+
+Global and group values are case-insensitive, and surrounding whitespace is
+ignored. Invalid values stop the freeze check instead of permitting builds.
 
 This master switch takes precedence over group `freeze_automation` values and
 custom build-data paths or refs: whenever it is set to anything other than

@@ -467,7 +467,8 @@ async def get_freeze_automation(
 
     The global state is read once; if it is anything other than 'no', that state
     is returned so 'yes'/'scheduled'/'weekdays' all override the group. Otherwise
-    the group's own freeze_automation value is read via doozer config:read-group.
+    the group's own freeze_automation value is read via doozer config:read-group
+    and normalized. Invalid values raise ValueError instead of permitting builds.
     """
     global_state = await get_global_freeze_automation()
     if global_state != FREEZE_AUTOMATION_NO:
@@ -495,7 +496,7 @@ async def get_freeze_automation(
         'freeze_automation',
     ]
     _, out, _ = await exectools.cmd_gather_async(cmd)
-    return out.strip()
+    return normalize_freeze_automation(out)
 
 
 async def has_layered_rhcos(doozer_base_command: list) -> bool:
@@ -554,11 +555,13 @@ def is_freeze_state_build_permitted(freeze_automation: str) -> bool:
         - 'scheduled'   -> permitted only for manual runs
         - 'weekdays'    -> manual runs always permitted; non-manual runs permitted
                            only on weekends (plus the images-health Monday exception)
-        - anything else -> permitted
+        - 'no'/'False'  -> permitted
+        - invalid values raise ValueError
     """
+    freeze_automation = normalize_freeze_automation(freeze_automation)
+
     # Hard freeze: nothing is permitted, not even manual runs.
-    # yaml parses unquoted "yes" as a boolean... accept the 'True' alias too
-    if freeze_automation in [FREEZE_AUTOMATION_YES, 'True']:
+    if freeze_automation == FREEZE_AUTOMATION_YES:
         logger.info('Automation is disabled by the global or group freeze_automation setting.')
         return False
 

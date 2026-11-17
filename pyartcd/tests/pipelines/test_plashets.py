@@ -182,6 +182,21 @@ class TestComposeBuildPermitted(unittest.IsolatedAsyncioTestCase):
         runtime.new_slack_client.return_value = MagicMock(say=AsyncMock())
         return BuildPlashetsPipeline(runtime=runtime, group=group, release='rel', assembly='stream')
 
+    @patch('pyartcd.jenkins.init_jenkins')
+    @patch('pyartcd.jenkins.start_sync_for_ci')
+    @patch('pyartcd.util.get_global_freeze_automation', new_callable=AsyncMock, return_value='no')
+    @patch('pyartcd.util.exectools.cmd_gather_async', new_callable=AsyncMock, return_value=(0, 'weekday\n', ''))
+    async def test_invalid_group_freeze_stops_compose_and_ci_sync(self, _read_group, _global_freeze, sync, _init):
+        pipeline = self._pipeline()
+        pipeline.build = AsyncMock()
+
+        with self.assertRaisesRegex(ValueError, 'Invalid freeze_automation value'):
+            await pipeline.run()
+
+        pipeline.build.assert_not_awaited()
+        sync.assert_not_called()
+        pipeline.slack_client.say.assert_not_awaited()
+
     @patch('pyartcd.util.get_weekday')
     @patch('pyartcd.util.is_manual_build')
     @patch('pyartcd.pipelines.build_plashets.get_freeze_automation', new_callable=AsyncMock)
