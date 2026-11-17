@@ -616,7 +616,9 @@ class KonfluxOkdPipeline:
             'oc',
             'get',
             'istag',
-            f'{namespace}/{is_name}:{tag}',
+            '-n',
+            namespace,
+            f'{is_name}:{tag}',
             '-o',
             'jsonpath={.image.dockerImageReference}',
         ]
