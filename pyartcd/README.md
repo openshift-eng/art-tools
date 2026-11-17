@@ -113,24 +113,9 @@ that do not currently use them.
 Direct `beta:ocp4-konflux` builds also check the master switch before initializing
 registry credentials or running build operations, for every assembly.
 `--ignore-locks` skips concurrency locks and does not override the global freeze.
-## Retired Brew OCP jobs
 
-The Brew OCP Jenkins jobs `ocp4`, `ocp4_scan`, `build-sync` and `olm_bundle`,
-their scan scheduler, and the legacy `rebuild` job have been retired.
-Use these Jenkins jobs for supported workflows:
+## Payload synchronization
 
-| Former job | Replacement |
-| --- | --- |
-| `build/ocp4` | `build/ocp4-konflux` |
-| `build/ocp4_scan` | `build/ocp4-scan-konflux` |
-| `build/build-sync` | `build/build-sync-konflux` |
-| `build/olm_bundle` | `build/olm_bundle_konflux` |
-
-The `artcd ocp`, `ocp4-scan`, `olm-bundle` and `schedule-ocp4-scan` commands
-are removed. `artcd build-sync` remains shared with the Konflux job, defaults
-to Konflux, and rejects `--build-system=brew`. Brew assembly definitions can
-still be generated, but cannot use `--auto-trigger-build-sync`.
-
-The old rebuild implementation and its tests are preserved in
-[`hack/`](hack/README.md), including custom plashet injection. This is archived
-code, not a supported Konflux replacement for that feature.
+`artcd build-sync` syncs Konflux payloads and defaults to `--build-system=konflux`.
+Brew assembly definitions can be generated with `gen-assembly`, but cannot use
+`--auto-trigger-build-sync`.
