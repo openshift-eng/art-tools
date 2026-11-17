@@ -41,7 +41,6 @@ class Jobs(Enum):
     BASE_IMAGE_RELEASE = 'aos-cd-builds/build%2Fbase-image-release'
     SYNC_FOR_CI = 'scheduled-builds/sync-for-ci'
     MICROSHIFT_SYNC = 'aos-cd-builds/build%2Fmicroshift_sync'
-    CINCINNATI_PRS = 'aos-cd-builds/build%2Fcincinnati-prs'
     RHCOS_SYNC = 'aos-cd-builds/build%2Frhcos_sync'
     BINARIES_CDN_RELEASE = 'aos-cd-builds/build%2Fbinaries-cdn-release'
     BUILD_PLASHETS = 'aos-cd-builds/build%2Fbuild-plashets'
@@ -725,23 +724,6 @@ def start_build_sync_multi(
     return start_build(
         job=Jobs.BUILD_SYNC_MULTI,
         params=params,
-        **kwargs,
-    )
-
-
-def start_cincinnati_prs(
-    from_releases: list, release_name: str, advisory_id: int, candidate_pr_note: str, skip_ota_notification, **kwargs
-) -> Optional[str]:
-    return start_build(
-        job=Jobs.CINCINNATI_PRS,
-        params={
-            'FROM_RELEASE_TAG': ','.join(from_releases),
-            'RELEASE_NAME': release_name,
-            'ADVISORY_NUM': advisory_id,
-            'CANDIDATE_PR_NOTE': candidate_pr_note,
-            'SKIP_OTA_SLACK_NOTIFICATION': skip_ota_notification,
-            'GITHUB_ORG': 'openshift',
-        },
         **kwargs,
     )
 
