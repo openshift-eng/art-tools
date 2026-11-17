@@ -555,7 +555,6 @@ class TestPromotePipeline(IsolatedAsyncioTestCase):
     @patch("pyartcd.locks.run_with_lock", new_callable=MagicMock)
     @patch("pyartcd.pipelines.promote.PromotePipeline.sign_artifacts")
     @patch("pyartcd.jira_client.JIRAClient.from_url", return_value=None)
-    @patch("pyartcd.jenkins.start_cincinnati_prs")
     @patch("pyartcd.pipelines.promote.PromotePipeline.build_release_image", return_value=None)
     @patch(
         "pyartcd.pipelines.promote.get_release_image_info",
@@ -620,7 +619,6 @@ class TestPromotePipeline(IsolatedAsyncioTestCase):
         load_releases_config: AsyncMock,
         get_release_image_info: AsyncMock,
         build_release_image: AsyncMock,
-        start_cincinnati_prs: Mock,
         from_url: Mock,
         sign_artifacts: AsyncMock,
         run_with_lock: AsyncMock,
