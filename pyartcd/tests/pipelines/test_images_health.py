@@ -715,30 +715,6 @@ class TestSyncJiraIntegration(IsolatedAsyncioTestCase):
         mock_slack.say.assert_called()
 
 
-class TestGroupFailuresByImage(TestCase):
-    def test_groups_across_versions(self):
-        failures_by_version = {
-            '4.18': {
-                'img-a': {'failure_count': 3, 'jenkins_url': 'http://j/1', 'build_system': 'konflux'},
-            },
-            '4.19': {
-                'img-a': {'failure_count': 1, 'jenkins_url': 'http://j/2', 'build_system': 'konflux'},
-                'img-b': {'failure_count': 2, 'jenkins_url': 'http://j/3', 'build_system': 'brew'},
-            },
-        }
-
-        result = ImagesHealthPipeline._group_failures_by_image(failures_by_version)
-
-        self.assertEqual(len(result['img-a']), 2)
-        self.assertEqual(len(result['img-b']), 1)
-        self.assertEqual(result['img-a'][0]['version'], '4.18')
-        self.assertEqual(result['img-a'][1]['version'], '4.19')
-
-    def test_empty_input(self):
-        result = ImagesHealthPipeline._group_failures_by_image({})
-        self.assertEqual(result, {})
-
-
 class TestRedisFailuresToJiraDict(TestCase):
     def test_converts_version_keyed_to_tuple_keyed(self):
         failures = {

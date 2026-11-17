@@ -42,10 +42,9 @@ class TestBinarySchema(unittest.TestCase):
         data.update(overrides)
         return data
 
-    def test_artifact_type_and_namespace(self):
+    def test_artifact_type(self):
         self.assertEqual(support.get_artifact_type(self.file), "binary")
         self.assertEqual(support.get_artifact_type("ocp-build-data/images/ose-installer.yml"), "image")
-        self.assertEqual(support.get_namespace({}, self.file), "containers")
 
     def test_valid_binary(self):
         self.assertIsNone(binary_schema.validate(self.file, self._data()))

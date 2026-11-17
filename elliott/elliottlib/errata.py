@@ -8,7 +8,6 @@ Classes representing an ERRATUM (a single errata)
 
 """
 
-import datetime
 import json
 import re
 import ssl
@@ -228,83 +227,6 @@ def get_erratum_content_type(advisory_id: str):
         if data is not None:
             return data.get('content_types')[0]
     return None
-
-
-def new_erratum(
-    et_data,
-    errata_type,
-    boilerplate_name,
-    release_date=None,
-    create=False,
-    assigned_to=None,
-    manager=None,
-    package_owner=None,
-):
-    """5.2.1.1. POST /api/v1/erratum
-
-    Create a new advisory.
-    Takes an unrealized advisory object and related attributes using the following format:
-
-    https://errata.devel.redhat.com/documentation/developer-guide/api-http-api.html#advisories
-
-    :param et_data: The ET data dump we got from our erratatool.yml file
-    :param errata_type: The type of advisory to create (RHBA or RHEA)
-    :param string boilerplate_name: The name of boilerplate template to use
-        It is looked up from the erratatool.yml file
-    :param string release_date: A date in the form YYYY-Mon-DD
-    :param bool create: If true, create the erratum in the Errata
-        tool, by default just the DATA we would have POSTed is
-        returned
-    :param string assigned_to: The email address of the group responsible for
-        examining and approving the advisory entries
-    :param string manager: The email address of the manager responsible for
-        managing the contents and status of this advisory
-    :param string package_owner: The email address of the person who is handling
-        the details and status of this advisory
-
-    :return: An Advisory object
-    :raises: exceptions.ErrataToolUnauthenticatedException if the user is not authenticated to make the request
-    """
-    if errata_type not in ['RHBA', 'RHEA']:
-        raise ValueError("errata_type must be one of 'RHBA' or 'RHEA'")
-
-    if not release_date:
-        release_date = datetime.datetime.now() + datetime.timedelta(days=21)
-
-    if "boilerplates" not in et_data:
-        raise ValueError("`boilerplates` is required in erratatool.yml")
-
-    if boilerplate_name not in et_data["boilerplates"]:
-        raise ValueError(f"Boilerplate {boilerplate_name} not found in erratatool.yml")
-
-    boilerplate = et_data['boilerplates'][boilerplate_name]
-
-    if 'release' in boilerplate:
-        release = boilerplate['release']
-    else:
-        release = et_data['release']
-
-    e = Advisory(
-        product=et_data['product'],
-        release=release,
-        errata_type=errata_type,
-        synopsis=boilerplate['synopsis'],
-        topic=boilerplate['topic'],
-        description=boilerplate['description'],
-        solution=boilerplate['solution'],
-        qe_email=assigned_to,
-        qe_group=et_data['quality_responsibility_name'],
-        owner_email=package_owner,
-        manager_email=manager,
-        date=release_date,
-    )
-
-    if create:
-        # THIS IS NOT A DRILL
-        e.commit()
-        return e
-    else:
-        return e
 
 
 def build_signed(build):
@@ -724,37 +646,6 @@ def is_advisory_impact_smaller_than(advisory, impact):
     return i.index(advisory.security_impact) < i.index(impact)
 
 
-def set_blocking_advisory(target_advisory_id, blocking_advisory_id, blocking_state="SHIPPED_LIVE") -> dict:
-    """Set a blocker advisory (at blocking state) for given target advisory
-
-    :param target_advisory_id: advisory number of the target
-    :param blocking_advisory_id: advisory number of the blocker
-    :param blocking_state: a valid advisory state like "SHIPPED_LIVE" (default to "SHIPPED_LIVE")
-    """
-    response = ErrataConnector()._post(
-        f'/api/v1/erratum/{target_advisory_id}/add_blocking_errata', json={"blocking_errata": blocking_advisory_id}
-    )
-    if response.status_code != requests.codes.created:
-        # The endpoint 404s if the advisory is already in the list
-        # with the error text "Advisory already listed"
-        # so only warn if the error is something else
-        if "Advisory already listed" not in response.text:
-            logger.warning(
-                f'Failed to set blocking advisory {blocking_advisory_id} for advisory {target_advisory_id}'
-                f' with error: {response.text} status code: {response.status_code}'
-            )
-    data = {"blocking_errata": blocking_advisory_id, "blocker_state": blocking_state}
-    response = ErrataConnector()._post(
-        f'/api/v1/erratum/{target_advisory_id}/set_blocker_state_for_blocking_errata', json=data
-    )
-    if response.status_code != requests.codes.created:
-        raise IOError(
-            f'Failed to set blocking advisory {blocking_advisory_id} for advisory {target_advisory_id} '
-            f'with error: {response.text} status code: {response.status_code}'
-        )
-    return response.json()
-
-
 def get_blocking_advisories(advisory_id) -> List[int]:
     """Get a list of blocking advisory ids for a given advisory
     Raises IOError if the advisory or blocking_advisories not found
@@ -846,28 +737,6 @@ def get_file_meta(advisory_id) -> List[dict]:
     return ErrataConnector()._get(f'/api/v1/erratum/{advisory_id}/filemeta')
 
 
-def create_batch(release_version, release_date):
-    """Create batch for a release
-    https://errata.devel.redhat.com/documentation/developer-guide/api-http-api.html#batches
-    :param release_version: release name, e.g. 4.14.12
-    :param release_date: release date, e.g. 2024-02-08
-    :return: return the batch id which used as parameter when creating advisory
-
-    """
-    data = {
-        "name": f"OCP {release_version}",
-        "release_name": "RHOSE ASYNC - AUTO",
-        "release_date": release_date,
-        "description": f"OCP {release_version}",
-        "is_active": True,
-    }
-    response = ErrataConnector()._post("/api/v1/batches", json=data)
-    if response.status_code != requests.codes.created:
-        raise IOError(f'Failed to create batch with code {response.status_code} and error: {response.text}')
-    else:
-        return response.json()['data']['id']
-
-
 def lock_batch(batch_id):
     """Update lock status of a batch.
     PUT /api/v1/batches/{id}
@@ -891,27 +760,6 @@ def get_advisory_batch(advisory_id):
     erratum = get_raw_erratum(advisory_id)['errata']
     advisory_type_key = list(erratum.keys())[0]
     return erratum[advisory_type_key]['batch_id']
-
-
-def set_advisory_batch(advisory_id, batch_id):
-    """Set the batch for an advisory.
-    POST /api/v1/erratum/{id}/change_batch
-    Request body may contain:
-        batch_id - id of the batch (integer)
-        batch_name - name of the batch (string) - alternative to batch_id
-        clear_batch - removes erratum from batch (boolean)
-        is_batch_blocker - indicates if advisory blocks batch (boolean)
-    """
-    # Make sure the batch is unlocked
-    unlock_batch(batch_id)
-
-    # Set the batch
-    response = ErrataConnector()._post(f'/api/v1/erratum/{advisory_id}/change_batch', json={"batch_id": batch_id})
-    if response.status_code != requests.codes.created:
-        raise IOError(f'Failed to set advisory batch with code {response.status_code} and error: {response.text}')
-
-    # Lock the batch
-    lock_batch(batch_id)
 
 
 def unset_advisory_batch(advisory_id):

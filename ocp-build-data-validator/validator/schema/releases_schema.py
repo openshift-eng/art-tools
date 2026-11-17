@@ -1,17 +1,9 @@
+import importlib.resources as importlib_resources
 import json
-import sys
 
 from jsonschema import RefResolver, ValidationError
 from jsonschema.validators import validator_for
 from schema import SchemaError
-
-if sys.version_info < (3, 9):
-    # importlib.resources either doesn't exist or lacks the files()
-    # function, so use the PyPI version:
-    import importlib_resources
-else:
-    # importlib.resources has files(), so use that:
-    import importlib.resources as importlib_resources
 
 
 def _demerge(data):

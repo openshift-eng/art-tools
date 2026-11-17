@@ -11,7 +11,7 @@ import shutil
 import stat
 from pathlib import Path
 from tempfile import TemporaryDirectory
-from typing import Dict, List, Optional, Set, Tuple, cast
+from typing import Dict, List, Optional, Tuple, cast
 
 import aiofiles
 import bashlex
@@ -2827,106 +2827,6 @@ class KonfluxRebaser:
                 )
             )
         return str(csvs[0]), image_refs
-
-    @start_as_current_span_async(TRACER, "rebase.replace_internal_image_refs")
-    async def _replace_internal_image_refs(
-        self,
-        metadata: ImageMetadata,
-        csv_file: str,
-        image_refs: list,
-        registry: str,
-        image_map: dict,
-        external_image_names: Optional[Set[str]] = None,
-    ) -> None:
-        """Replace internal ART-built image references in the CSV file.
-
-        Collects all replacements first, then performs a single read-modify-write cycle.
-
-        Args:
-            metadata: The ImageMetadata for this operator bundle.
-            csv_file: Path to the CSV file.
-            image_refs: List of image references from image-references file.
-            registry: The registry to use for replacements.
-            image_map: Mapping of image names.
-            external_image_names: Set of image names defined in external-images config.
-                                  These will be skipped as they are handled by _replace_external_image_refs.
-        """
-
-        def _map_image_name(name, image_map):
-            for match, replacement in image_map.items():
-                if name.find(match) != -1:
-                    return name.replace(match, replacement)
-            return name
-
-        namespace = self._runtime.group_config.get('csv_namespace', None)
-        if not namespace:
-            raise ValueError('csv_namespace is required in group.yaml when any image defines update-csv')
-
-        if external_image_names is None:
-            external_image_names = set()
-
-        # Collect all replacements first
-        replacements: List[Tuple[str, str]] = []
-        for ref in image_refs:
-            name = ref['name']
-            mapped_name = _map_image_name(name, image_map)
-            spec = ref['from']['name']
-
-            # Skip images that are defined in external-images config
-            # They will be handled by _replace_external_image_refs
-            if name in external_image_names:
-                self._logger.info(f"Skipping {name} - defined in external-images config")
-                continue
-
-            distgit = self._runtime.name_in_bundle_map.get(name, None)
-            # fail if upstream is referring to an image we don't actually build
-            if not distgit:
-                raise ValueError(
-                    'Unable to find {} in image-references data for {}'.format(mapped_name, metadata.distgit_key)
-                )
-
-            meta = self._runtime.image_map.get(distgit, None)
-            if meta:  # image is currently being processed
-                image_tag = f"{meta.image_name_short}:{self.uuid_tag}"
-            else:
-                meta = self._runtime.late_resolve_image(distgit, required=False)
-                if meta is None:
-                    from doozerlib.exceptions import DoozerFatalError
-
-                    raise DoozerFatalError(
-                        f'Attempted to load image {distgit} but it has mode disabled; '
-                        f'{metadata.distgit_key} references it in image-references'
-                    )
-                build = await meta.get_latest_build(
-                    el_target=self._get_el_target_string(meta.branch_el_target()),
-                    engine=Engine.KONFLUX,
-                    exclude_large_columns=True,
-                )
-                if not build:
-                    raise ValueError(f'Could not find latest build for {meta.distgit_key}')
-                v = build.version
-                r = build.release
-                image_tag = '{}:{}-{}'.format(meta.image_name_short, v, r)
-
-            if metadata.distgit_key != meta.distgit_key:
-                if metadata.distgit_key not in meta.config.dependents:
-                    raise ValueError(
-                        f'Related image contains {meta.distgit_key} but this does not have {metadata.distgit_key} in dependents'
-                    )
-
-            replace = '{}/{}/{}'.format(registry, namespace, image_tag)
-            replacements.append((spec, replace))
-
-        # Perform single read-modify-write cycle
-        async with aiofiles.open(csv_file, 'r', encoding='utf-8') as f:
-            content = await f.read()
-
-        for spec, replace in replacements:
-            content = content.replace(spec + '\n', replace + '\n')
-            content = content.replace(spec + '"', replace + '"')
-
-        async with aiofiles.open(csv_file, 'w', encoding='utf-8') as f:
-            await f.write(content)
 
     @start_as_current_span_async(TRACER, "rebase.apply_art_yaml_updates")
     async def _apply_art_yaml_updates(

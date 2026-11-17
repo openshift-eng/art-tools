@@ -641,10 +641,7 @@ def fire_and_forget(cwd, shell_cmd, quiet=True, env=None):
         DETACHED_PROCESS = 0x00000008  # 0x8 | 0x200 == 0x208
         kwargs.update(creationflags=DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP)
 
-    elif sys.version_info < (3, 2):  # assume posix
-        kwargs.update(preexec_fn=os.setsid)
-
-    else:  # Python 3.2+ and Unix
+    else:  # Unix
         kwargs.update(start_new_session=True)
 
     p = subprocess.Popen(

@@ -4,8 +4,8 @@
 This module provides validation for group.yml files using JSON schemas.
 """
 
+import importlib.resources as importlib_resources
 import json
-import sys
 
 from artcommonlib.util import validate_bridge_release_basis_group
 from jsonschema import RefResolver, ValidationError
@@ -13,14 +13,6 @@ from jsonschema.validators import validator_for
 from schema import SchemaError
 
 from validator.support import replace_vars
-
-if sys.version_info < (3, 9):
-    # importlib.resources either doesn't exist or lacks the files()
-    # function, so use the PyPI version:
-    import importlib_resources
-else:
-    # importlib.resources has files(), so use that:
-    import importlib.resources as importlib_resources
 
 
 def _demerge(data):
