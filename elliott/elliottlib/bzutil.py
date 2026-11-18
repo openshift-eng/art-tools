@@ -1102,6 +1102,12 @@ class JIRABugTracker(BugTracker):
             return []
         return [JIRABug(j) for j in results]
 
+    def search_jql(self, query: str, verbose: bool = False) -> List[JIRABug]:
+        """
+        Search Jira with a complete caller-provided JQL expression.
+        """
+        return self._search(query, verbose=verbose)
+
     def blocker_search(self, status, search_filter='default', verbose=False, **kwargs):
         query = self._query(
             status=status,
