@@ -683,6 +683,112 @@ class TestSlackReporting(unittest.TestCase):
         self.assertIn("effective_time=`now`", msg)
 
 
+class TestFindOperatorBundleNames(unittest.TestCase):
+    def test_parses_tab_separated_output(self):
+        p = _make_pipeline()
+        with patch(
+            "pyartcd.pipelines.build_conforma_verify.exectools.cmd_gather_async",
+            new=AsyncMock(return_value=(0, "cluster-api-operator\tcluster-api-operator-bundle\nmco\tmco-bundle\n", "")),
+        ) as cmd_gather:
+            result = asyncio.run(p._find_operator_bundle_names())
+
+        self.assertEqual(
+            result,
+            {"cluster-api-operator": "cluster-api-operator-bundle", "mco": "mco-bundle"},
+        )
+        cmd = cmd_gather.await_args.args[0]
+        self.assertIn('olm-bundle:list-olm-operators', cmd)
+        self.assertIn('--output-format', cmd)
+        self.assertIn('bundle-name', cmd)
+
+    def test_empty_output_returns_empty_dict(self):
+        p = _make_pipeline()
+        with patch(
+            "pyartcd.pipelines.build_conforma_verify.exectools.cmd_gather_async",
+            new=AsyncMock(return_value=(0, "", "")),
+        ):
+            result = asyncio.run(p._find_operator_bundle_names())
+
+        self.assertEqual(result, {})
+
+    def test_result_is_cached_after_first_call(self):
+        p = _make_pipeline()
+        with patch(
+            "pyartcd.pipelines.build_conforma_verify.exectools.cmd_gather_async",
+            new=AsyncMock(return_value=(0, "op\top-bundle\n", "")),
+        ) as cmd_gather:
+            first = asyncio.run(p._find_operator_bundle_names())
+            second = asyncio.run(p._find_operator_bundle_names())
+
+        self.assertEqual(first, second)
+        cmd_gather.assert_awaited_once()
+
+
+class TestFilterEnabledOperatorRecords(unittest.TestCase):
+    @staticmethod
+    def _record(name: str):
+        record = MagicMock()
+        record.name = name
+        return record
+
+    def test_no_records_short_circuits_without_calling_doozer(self):
+        p = _make_pipeline()
+        with patch(
+            "pyartcd.pipelines.build_conforma_verify.exectools.cmd_gather_async",
+            new=AsyncMock(side_effect=AssertionError("doozer should not be called")),
+        ) as cmd_gather:
+            bundles, fbcs = asyncio.run(p._filter_enabled_operator_records([], []))
+
+        self.assertEqual(bundles, [])
+        self.assertEqual(fbcs, [])
+        cmd_gather.assert_not_awaited()
+
+    def test_drops_records_for_disabled_operators(self):
+        p = _make_pipeline()
+        enabled_bundle = self._record("cluster-api-operator-bundle")
+        disabled_bundle = self._record("legacy-operator-bundle")
+        enabled_fbc = self._record("cluster-api-operator-fbc")
+        disabled_fbc = self._record("legacy-operator-fbc")
+
+        with patch(
+            "pyartcd.pipelines.build_conforma_verify.exectools.cmd_gather_async",
+            new=AsyncMock(return_value=(0, "cluster-api-operator\tcluster-api-operator-bundle\n", "")),
+        ):
+            bundles, fbcs = asyncio.run(
+                p._filter_enabled_operator_records([enabled_bundle, disabled_bundle], [enabled_fbc, disabled_fbc])
+            )
+
+        self.assertEqual(bundles, [enabled_bundle])
+        self.assertEqual(fbcs, [enabled_fbc])
+
+    def test_all_records_enabled_are_kept(self):
+        p = _make_pipeline()
+        bundle = self._record("op-bundle")
+        fbc = self._record("op-fbc")
+
+        with patch(
+            "pyartcd.pipelines.build_conforma_verify.exectools.cmd_gather_async",
+            new=AsyncMock(return_value=(0, "op\top-bundle\n", "")),
+        ):
+            bundles, fbcs = asyncio.run(p._filter_enabled_operator_records([bundle], [fbc]))
+
+        self.assertEqual(bundles, [bundle])
+        self.assertEqual(fbcs, [fbc])
+
+    def test_reuses_cached_operator_bundle_names(self):
+        p = _make_pipeline()
+        bundle = self._record("op-bundle")
+
+        with patch(
+            "pyartcd.pipelines.build_conforma_verify.exectools.cmd_gather_async",
+            new=AsyncMock(return_value=(0, "op\top-bundle\n", "")),
+        ) as cmd_gather:
+            asyncio.run(p._filter_enabled_operator_records([bundle], []))
+            asyncio.run(p._filter_enabled_operator_records([bundle], []))
+
+        cmd_gather.assert_awaited_once()
+
+
 class TestDoozerBaseCommand(unittest.TestCase):
     def test_builds_correct_command(self):
         p = _make_pipeline(data_gitref="my-branch")
