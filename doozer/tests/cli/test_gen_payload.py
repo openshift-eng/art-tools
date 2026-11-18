@@ -17,17 +17,10 @@ from doozerlib.image import ImageMetadata
 from flexmock import flexmock
 
 
-async def no_sleep(arg):
-    pass
-
-
 # ART regulates the frequency of multi payloads by extracting a timestamp
 # from the name. This function makes it easier to generate these names.
 def as_multi_release_name(prefix):
     return f'{prefix}-multi-2024-10-10-061203'
-
-
-rgp_cli.asyncio.sleep = no_sleep
 
 
 class TestGenPayloadCli(IsolatedAsyncioTestCase):
@@ -1323,7 +1316,8 @@ class TestGenPayloadCli(IsolatedAsyncioTestCase):
         gpcli.generate_specific_payload_imagestreams = AsyncMock()
         gpcli.sync_heterogeneous_payloads = AsyncMock()
 
-        await gpcli.sync_payloads()
+        with patch("doozerlib.cli.release_gen_payload.asyncio.sleep", new_callable=AsyncMock):
+            await gpcli.sync_payloads()
         self.assertEqual(gpcli.mirror_payload_content.await_count, 1)
         self.assertEqual(gpcli.generate_specific_payload_imagestreams.await_count, 1)
         gpcli.sync_heterogeneous_payloads.assert_awaited_once()
