@@ -1,14 +1,27 @@
 import asyncio
 import enum
 import logging
+import os
 from types import coroutine
 
 from aioredlock import Aioredlock, LockError
 from artcommonlib import redis
 from tenacity import TryAgain, retry, retry_if_exception_type, stop_after_attempt, wait_fixed
 
-from pyartcd import constants, tekton
+from pyartcd import constants, jenkins, tekton
 from pyartcd.tekton_locks import parse_k8s_lock_path
+
+
+def get_run_lock_owner() -> str:
+    """Return the Redis lock owner for the current run."""
+    if not tekton.is_tekton_context():
+        return jenkins.get_build_path_or_random()
+
+    namespace = os.environ.get('TASKRUN_NAMESPACE')
+    run_name = tekton.get_current_pipelinerun_name()
+    if not namespace or not run_name:
+        raise RuntimeError('TASKRUN_NAMESPACE and TEKTON_PIPELINERUN_NAME are required for Tekton lock ownership')
+    return f'k8s/ns/{namespace}/tekton.dev~v1~PipelineRun/{run_name}'
 
 
 def _lock_owner_url(lock_id):
