@@ -1173,6 +1173,7 @@ class TestArchSuffixedNamespace(IsolatedAsyncioTestCase):
         with (
             patch.object(pipeline, '_tag_image_to_stream', new_callable=AsyncMock),
             patch.object(pipeline, '_get_arch_pullspec', new_callable=AsyncMock, side_effect=arch_pullspec_side_effect),
+            patch.object(pipeline, '_get_current_tag_pullspec', new_callable=AsyncMock, return_value=None),
             patch('pyartcd.pipelines.okd.jenkins') as mock_jenkins,
         ):
             await pipeline.update_imagestreams()
@@ -1183,7 +1184,7 @@ class TestArchSuffixedNamespace(IsolatedAsyncioTestCase):
             self.assertEqual(len(success_calls), 1)
             success_msg = success_calls[0][0][0]
             self.assertIn('origin/scos-4.22-art', success_msg)
-            # Should NOT mention the arm64 imagestream since it wasn't updated
+            # Should NOT mention the arm64 imagestream since it wasn't updated (no pod placeholder either)
             self.assertNotIn('arm64', success_msg)
 
 
