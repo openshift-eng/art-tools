@@ -1,4 +1,5 @@
 import asyncio
+import os
 import unittest
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -8,6 +9,45 @@ from pyartcd.runtime import Runtime
 
 
 class TestBuildCompose(unittest.IsolatedAsyncioTestCase):
+    @patch.dict(
+        os.environ,
+        {
+            'TASKRUN_NAMESPACE': 'art-openshift-tenant',
+            'TASKRUN_NAME': 'build-plashets-task',
+            'TEKTON_PIPELINERUN_NAME': 'build-plashets-test',
+        },
+        clear=True,
+    )
+    @patch('pyartcd.tekton.annotate_current_pipelinerun')
+    @patch('pyartcd.jenkins.init_jenkins')
+    @patch('pyartcd.jenkins.start_sync_for_ci')
+    async def test_tekton_context_only_uses_jenkins_for_live_stream_handoff(self, sync, init, annotate):
+        pipeline = BuildPlashetsPipeline(
+            runtime=MagicMock(dry_run=True),
+            group='openshift-4.22',
+            release='20261118134500.p?',
+            assembly='stream',
+            repos='one,two three , four',
+        )
+        pipeline.is_compose_build_permitted = AsyncMock(return_value=True)
+        pipeline.build = AsyncMock()
+
+        await pipeline.run()
+
+        self.assertEqual(pipeline.repos, ['one', 'two', 'three', 'four'])
+        pipeline.build.assert_awaited_once()
+        sync.assert_not_called()
+        init.assert_not_called()
+        annotate.assert_called_once_with(
+            {'art.openshift.io/build-plashets-status': 'openshift-4.22 - 20261118134500.p? - stream [DRY_RUN]'}
+        )
+
+        pipeline.runtime.dry_run = False
+        await pipeline.run()
+
+        init.assert_not_called()
+        sync.assert_called_once_with(version='4.22', block_until_building=False)
+
     @patch('pyartcd.jenkins.init_jenkins')
     @patch('pyartcd.pipelines.build_plashets.get_freeze_automation', new_callable=AsyncMock, return_value='yes')
     @patch('pyartcd.pipelines.build_plashets.build_plashets', new_callable=AsyncMock, return_value={})
@@ -166,6 +206,7 @@ class TestComposeFreezeOption(unittest.TestCase):
                         self.assertEqual(result.exit_code, 0, result.output or str(result.exception))
                         self.assertIs(pipeline_class.call_args.kwargs['ignore_automation_freeze'], override)
                         run_with_lock.assert_awaited_once()
+                        self.assertEqual(run_with_lock.call_args.kwargs['lock_id'], 'test-run')
                         self.assertEqual(
                             run_with_lock.call_args.kwargs['lock_name'], 'lock:compose:stream:openshift-4.21'
                         )

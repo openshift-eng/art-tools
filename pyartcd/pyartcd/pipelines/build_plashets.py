@@ -5,7 +5,7 @@ import click
 from artcommonlib.constants import FREEZE_AUTOMATION_SCHEDULED
 from artcommonlib.util import isolate_major_minor_in_group
 
-from pyartcd import jenkins, locks, util
+from pyartcd import jenkins, locks, tekton, util
 from pyartcd.cli import cli, click_coroutine, pass_runtime
 from pyartcd.constants import OCP_BUILD_DATA_URL
 from pyartcd.locks import Lock
@@ -39,7 +39,7 @@ class BuildPlashetsPipeline:
         self.group = group
         self.release = release
         self.assembly = assembly
-        self.repos = repos.split(',') if repos else []
+        self.repos = repos.replace(',', ' ').split() if repos else []
         self.data_path = data_path
         self.data_gitref = data_gitref
         self.copy_links = copy_links
@@ -49,7 +49,13 @@ class BuildPlashetsPipeline:
         self.slack_client = runtime.new_slack_client()
 
     async def run(self):
-        jenkins.init_jenkins()
+        if tekton.is_tekton_context():
+            title = f'{self.group} - {self.release} - {self.assembly}'
+            if self.runtime.dry_run:
+                title += ' [DRY_RUN]'
+            util.update_run_title(title, annotation_key='art.openshift.io/build-plashets-status')
+        else:
+            jenkins.init_jenkins()
 
         # Honor the same explicit override as the parent OCP build.
         if self.ignore_automation_freeze:
@@ -229,7 +235,7 @@ async def build_plashets_cli(
 
     lock = Lock.PLASHET
     lock_name = lock.value.format(assembly=assembly, group=group)
-    lock_identifier = jenkins.get_build_path_or_random()
+    lock_identifier = locks.get_run_lock_owner()
 
     await locks.run_with_lock(
         coro=pipeline.run(),
