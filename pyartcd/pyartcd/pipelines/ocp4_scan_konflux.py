@@ -15,14 +15,7 @@ from pyartcd.runtime import Runtime
 from pyartcd.util import has_layered_rhcos
 
 TRACER = trace.get_tracer(__name__)
-
-
-def _update_title(title):
-    if tekton.is_tekton_context():
-        logging.getLogger(__name__).info('Scan status: %s', title.strip())
-        tekton.annotate_current_pipelinerun({'art.openshift.io/scan-status': title.strip()})
-    else:
-        jenkins.update_title(title)
+SCAN_STATUS_ANNOTATION = 'art.openshift.io/scan-status'
 
 
 class Ocp4ScanPipeline:
@@ -301,7 +294,7 @@ class Ocp4ScanPipeline:
             return
 
         # Update Jenkins title and description
-        _update_title(' [SOURCE CHANGES]')
+        util.update_run_title(' [SOURCE CHANGES]', annotation_key=SCAN_STATUS_ANNOTATION)
         if changed_rpm:
             self._update_description(f'Changed {len(changed_rpm)} RPMs<br/>')
         if changed_ocp_images:
@@ -330,7 +323,7 @@ class Ocp4ScanPipeline:
 
         if self.rhcos_inconsistent or self.rhcos_outdated:
             # Update Jenkins title and description
-            _update_title(' [RHCOS CHANGES]')
+            util.update_run_title(' [RHCOS CHANGES]', annotation_key=SCAN_STATUS_ANNOTATION)
 
             if self.rhcos_inconsistent:
                 self.logger.info('Detected inconsistent RHCOS RPMs:\n%s', self.inconsistent_rhcos_rpms)
@@ -494,4 +487,4 @@ async def ocp4_scan(
         )
 
     if pipeline.skipped:
-        _update_title(' [SKIPPED][LOCKED]')
+        util.update_run_title(' [SKIPPED][LOCKED]', annotation_key=SCAN_STATUS_ANNOTATION)

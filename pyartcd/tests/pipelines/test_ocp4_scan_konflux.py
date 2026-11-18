@@ -289,7 +289,8 @@ class TestTektonScanner(unittest.IsolatedAsyncioTestCase):
     @patch.dict(os.environ, {'TASKRUN_NAME': 'task', 'TEKTON_PIPELINERUN_NAME': 'scan'})
     @patch('pyartcd.pipelines.ocp4_scan_konflux.tekton.annotate_current_pipelinerun')
     @patch('pyartcd.pipelines.ocp4_scan_konflux.jenkins')
-    async def test_source_changes_still_trigger_jenkins_from_tekton(self, jenkins, annotate):
+    @patch('pyartcd.jenkins.update_title')
+    async def test_source_changes_still_trigger_jenkins_from_tekton(self, update_title, jenkins, annotate):
         runtime = MagicMock(spec=Runtime)
         runtime.dry_run = False
         runtime.working_dir = Path('/tmp')
@@ -297,11 +298,12 @@ class TestTektonScanner(unittest.IsolatedAsyncioTestCase):
         pipeline.changes = {'images': ['operator'], 'rpms': ['rpm']}
         pipeline.report = {'images': [{'name': 'operator', 'changed': True}]}
         pipeline.handle_source_changes()
-        jenkins.update_title.assert_not_called()
+        update_title.assert_not_called()
         jenkins.update_description.assert_not_called()
         jenkins.start_ocp4_konflux.assert_called_once_with(
             build_version='5.1', assembly='stream', image_list=['operator'], rpm_list=['rpm']
         )
+        annotate.assert_any_call({'art.openshift.io/scan-status': '[SOURCE CHANGES]'})
         annotate.assert_called_with({'art.openshift.io/scan-summary': 'Changed 1 RPMs; Changed 1 OCP images'})
 
     @patch.dict(os.environ, {'KUBECONFIG': '/wrong-cluster'})
@@ -338,7 +340,6 @@ class TestTektonScanner(unittest.IsolatedAsyncioTestCase):
         jenkins.start_ocp4_konflux.assert_not_called()
         jenkins.start_rhcos.assert_not_called()
         jenkins.start_build_sync.assert_not_called()
-        jenkins.update_title.assert_not_called()
         annotate.assert_called_with(
             {
                 'art.openshift.io/scan-summary': (
@@ -417,7 +418,7 @@ class TestTektonScannerLocks(unittest.IsolatedAsyncioTestCase):
         with (
             patch('pyartcd.pipelines.ocp4_scan_konflux.Ocp4ScanPipeline', return_value=self.pipeline),
             patch('pyartcd.pipelines.ocp4_scan_konflux.jenkins.init_jenkins') as init_jenkins,
-            patch('pyartcd.pipelines.ocp4_scan_konflux._update_title') as title,
+            patch('pyartcd.tekton.annotate_current_pipelinerun') as annotate,
             patch('pyartcd.locks.LockManager.from_lock', side_effect=self.make_lock_manager),
         ):
             try:
@@ -436,7 +437,7 @@ class TestTektonScannerLocks(unittest.IsolatedAsyncioTestCase):
                 init_jenkins.assert_called_once()
                 for manager in self.managers:
                     manager.destroy.assert_awaited_once()
-        return title
+        return annotate
 
     async def test_live_scan_acquires_both_locks_with_tekton_owner_then_release(self):
         from pyartcd.tekton_locks import parse_k8s_lock_path
@@ -457,26 +458,26 @@ class TestTektonScannerLocks(unittest.IsolatedAsyncioTestCase):
                 self.events.clear()
                 self.managers.clear()
                 self.pipeline.run.reset_mock()
-                title = await self.invoke()
+                annotate = await self.invoke()
                 self.pipeline.run.assert_not_awaited()
                 self.assertEqual(self.held, {key})
-                title.assert_called_once_with(' [SKIPPED][LOCKED]')
+                annotate.assert_called_once_with({'art.openshift.io/scan-status': '[SKIPPED][LOCKED]'})
 
     async def test_existing_scan_lock_skips_scanning(self):
         self.held.add(self.scan_key)
-        title = await self.invoke()
+        annotate = await self.invoke()
         self.pipeline.run.assert_not_awaited()
         self.assertEqual(self.events, [])
         self.assertEqual(self.held, {self.scan_key})
-        title.assert_called_once_with(' [SKIPPED][LOCKED]')
+        annotate.assert_called_once_with({'art.openshift.io/scan-status': '[SKIPPED][LOCKED]'})
 
     async def test_existing_build_lock_skips_scanning_and_releases_scan_lock(self):
         self.held.add(self.build_key)
-        title = await self.invoke()
+        annotate = await self.invoke()
         self.pipeline.run.assert_not_awaited()
         self.assertEqual(self.events[-1], ('release', self.scan_key))
         self.assertEqual(self.held, {self.build_key})
-        title.assert_called_once_with(' [SKIPPED][LOCKED]')
+        annotate.assert_called_once_with({'art.openshift.io/scan-status': '[SKIPPED][LOCKED]'})
 
     async def test_scan_failure_releases_both_locks(self):
         self.failure = RuntimeError('scan failed')
@@ -499,7 +500,7 @@ class TestTektonScannerLocks(unittest.IsolatedAsyncioTestCase):
                 patch('pyartcd.pipelines.ocp4_scan_konflux.tekton.is_tekton_context', return_value=is_tekton),
                 patch('pyartcd.pipelines.ocp4_scan_konflux.Ocp4ScanPipeline', return_value=self.pipeline),
                 patch('pyartcd.pipelines.ocp4_scan_konflux.jenkins') as jenkins,
-                patch('pyartcd.pipelines.ocp4_scan_konflux._update_title') as title,
+                patch('pyartcd.util.update_run_title') as title,
                 patch('pyartcd.locks.LockManager.from_lock') as locks,
             ):
                 self.pipeline.skipped = True
