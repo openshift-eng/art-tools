@@ -21,7 +21,10 @@ With this example enabled, the listed development-cutoff OCP streams have
 priority 2, layered products use priority 3, and remaining OCP streams
 use priority 4. The stream list is maintained explicitly; this does not read a
 release calendar or automatically promote future streams. All other products
-use `default_priority`.
+covered by the policy use `default_priority`.
+
+OKD image builds always use priority 8, matching the OKD group configuration.
+They bypass the central policy and use 8 even when `--build-priority` is supplied.
 
 Golang builders bypass policy loading and resolution, retaining their existing
 priority 2 default regardless of `enabled`. Release FBCs continue to request
@@ -37,12 +40,12 @@ A rule without version constraints matches every version of that product.
 Policy priorities must be integers from 2 (highest allowed) to 10 (lowest).
 Priority 1 is reserved and rejected in both rules and `default_priority`.
 
-When `enabled: false`, or when the file is absent, existing behavior is retained:
-Doozer uses image/group overrides and builder/lifecycle/dependency defaults;
-`artcd build-layered-products` keeps its current explicit priority 3. An explicit
-numeric Doozer `--build-priority` overrides the central policy and does not fetch
-it. A missing `enabled` field defaults to false. Invalid configuration and
-fetch failures stop submission instead of silently using a different policy.
+When `enabled: false`, or when the file is absent, Doozer resolves automatic
+priorities for builds covered by the policy from image/group overrides and
+builder/lifecycle/dependency defaults. `artcd build-layered-products` uses
+priority 3. For builds covered by the policy, an explicit numeric Doozer
+`--build-priority` bypasses the policy. A missing `enabled` field defaults to
+false. Invalid configuration and fetch failures stop submission.
 
 Deploy the tooling before enabling the policy. Set `enabled: true` for an
 incident and restore `false` afterward. Operators can reorder rules or place a
