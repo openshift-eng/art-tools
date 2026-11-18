@@ -114,6 +114,15 @@ def test_optional_filter_selects_only_matching_groups(tmp_path, sources):
         ('mta', {'mta-8.2': '8.2.1', 'mta-8.1': '8.1.5'}, {'mta-8.2': ['4.22'], 'mta-8.1': ['4.21']}),
         ('logging', {'logging-6.2': '6.2.3'}, {'logging-6.2': ['4.18', '4.19']}),
         ('cluster-observability-operator', {'coo-1.5': '1.5.6'}, {'coo-1.5': ['4.21', '4.22']}),
+        ('rhacm2', {'acm-5.1': '5.1.1'}, {'acm-5.1': ['4.22']}),
+        ('external-secrets-operator', {'external-secrets-1.1': '1.1.1'}, {'external-secrets-1.1': ['4.22']}),
+        ('openshift-logging', {'logging-6.8': '6.8.1'}, {'logging-6.8': ['4.22']}),
+        ('multicluster-engine', {'mce-5.1': '5.1.1'}, {'mce-5.1': ['4.22']}),
+        ('mirror_gui', {'mirror-gui-1.0': '1.0.1'}, {'mirror-gui-1.0': ['4.22']}),
+        ('rhmtc', {'mtc-1.8': '1.8.1'}, {'mtc-1.8': ['4.22']}),
+        ('openshift-update-service', {'osus-5.0': '5.0.1'}, {'osus-5.0': ['4.22']}),
+        ('openshift-opentelemetry-operator', {'rhosdt-0.163': '0.163.1'}, {'rhosdt-0.163': ['4.22']}),
+        ('zero-trust-workload-identity-manager', {'zero-trust-1.1': '1.1.1'}, {'zero-trust-1.1': ['4.22']}),
     ],
 )
 def test_resolves_assemblies_for_any_layered_product(tmp_path, source_factory, product, versions, targets):
