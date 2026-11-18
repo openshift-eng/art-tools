@@ -51,11 +51,12 @@ async def run_for(
         span.set_attribute("skipped_reason", "not_permitted")
         return
 
-    if tekton_namespace is not None:
-        if runtime.dry_run:
-            runtime.logger.info('[%s] Would start ocp4-scan-konflux in %s', version, tekton_namespace)
-            return
+    if runtime.dry_run:
+        runtime.logger.warning('[DRY RUN] Would trigger %s job for %s', 'ocp4-scan-konflux', version)
+        span.set_attribute("triggered", False)
+        return
 
+    if tekton_namespace is not None:
         # Use the same name if Kubernetes runs the scheduler Job's pod again.
         job_name = os.getenv('K8S_JOB_NAME')
         run_name = f'{job_name}-{version.replace(".", "-")}' if job_name else None

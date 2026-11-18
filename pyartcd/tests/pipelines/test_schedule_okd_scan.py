@@ -91,6 +91,7 @@ class TestRunFor(IsolatedAsyncioTestCase):
     )
     async def test_schedules_when_enabled(self, _permitted, _enabled, start_scan):
         runtime = MagicMock()
+        runtime.dry_run = False
         runtime.working_dir = MagicMock()
         runtime.logger = MagicMock()
         lock_manager = MagicMock()
