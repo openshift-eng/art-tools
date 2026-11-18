@@ -49,6 +49,7 @@ PRODUCT_CATALOG: tuple[ProductConfig, ...] = (
     ProductConfig(product_id=ProductId.OKD),
     ProductConfig(
         product_id=ProductId.ACM,
+        build_data_group_prefix="acm",
         namespace="art-acm-tenant",
         kubeconfig_env="ACM_KONFLUX_SA_KUBECONFIG",
         base_image_release=ReleaseTarget(
@@ -88,6 +89,7 @@ PRODUCT_CATALOG: tuple[ProductConfig, ...] = (
     ),
     ProductConfig(
         product_id=ProductId.COO,
+        build_data_group_prefix="coo",
         namespace="art-coo-tenant",
         kubeconfig_env="COO_KONFLUX_SA_KUBECONFIG",
         base_image_release=ReleaseTarget(
@@ -124,6 +126,7 @@ PRODUCT_CATALOG: tuple[ProductConfig, ...] = (
     ),
     ProductConfig(
         product_id=ProductId.EXTERNAL_SECRETS,
+        build_data_group_prefix="external-secrets",
         namespace="art-oap-tenant",
         kubeconfig_env="OAP_KONFLUX_SA_KUBECONFIG",
         base_image_release=ReleaseTarget(
@@ -139,6 +142,7 @@ PRODUCT_CATALOG: tuple[ProductConfig, ...] = (
     ),
     ProductConfig(
         product_id=ProductId.MCE,
+        build_data_group_prefix="mce",
         namespace="art-acm-tenant",
         kubeconfig_env="ACM_KONFLUX_SA_KUBECONFIG",
         base_image_release=ReleaseTarget(
@@ -164,6 +168,7 @@ PRODUCT_CATALOG: tuple[ProductConfig, ...] = (
     ProductConfig(
         aliases=("logging",),
         product_id=ProductId.LOGGING,
+        build_data_group_prefix="logging",
         namespace="art-logging-tenant",
         kubeconfig_env="LOGGING_KONFLUX_SA_KUBECONFIG",
         base_image_release=ReleaseTarget(
@@ -232,6 +237,7 @@ PRODUCT_CATALOG: tuple[ProductConfig, ...] = (
     ),
     ProductConfig(
         product_id=ProductId.OSUS,
+        build_data_group_prefix="osus",
         namespace="art-osus-tenant",
         kubeconfig_env="OSUS_KONFLUX_SA_KUBECONFIG",
         conforma_stage_policies=ConformaPolicies(
@@ -242,6 +248,7 @@ PRODUCT_CATALOG: tuple[ProductConfig, ...] = (
     ),
     ProductConfig(
         product_id=ProductId.MTC,
+        build_data_group_prefix="mtc",
         namespace="art-mtc-tenant",
         kubeconfig_env="MTC_KONFLUX_SA_KUBECONFIG",
         base_image_release=ReleaseTarget(
@@ -285,6 +292,7 @@ PRODUCT_CATALOG: tuple[ProductConfig, ...] = (
     ),
     ProductConfig(
         product_id=ProductId.MIRROR_GUI,
+        build_data_group_prefix="mirror-gui",
         aliases=("mirror-gui",),
         namespace="art-oc-mirror-tenant",
         kubeconfig_env="OC_MIRROR_KONFLUX_SA_KUBECONFIG",
@@ -295,6 +303,7 @@ PRODUCT_CATALOG: tuple[ProductConfig, ...] = (
     ),
     ProductConfig(
         product_id=ProductId.RHOSDT,
+        build_data_group_prefix="rhosdt",
         namespace="art-rhosdt-tenant",
         kubeconfig_env="RHOSDT_KONFLUX_SA_KUBECONFIG",
         base_image_release=ReleaseTarget(
@@ -310,6 +319,7 @@ PRODUCT_CATALOG: tuple[ProductConfig, ...] = (
     ),
     ProductConfig(
         product_id=ProductId.ZERO_TRUST,
+        build_data_group_prefix="zero-trust",
         namespace="art-oap-tenant",
         kubeconfig_env="OAP_KONFLUX_SA_KUBECONFIG",
         base_image_release=ReleaseTarget(
