@@ -23,7 +23,7 @@ ENV PATH="/usr/local/bin:$PATH"
 # rpm-lockfile-prototype shells out to skopeo to copy a base image's rootfs
 # locally so it can inspect the RPM DB there.
 RUN dnf -y install python3.11 python3.11-pip python3.11-wheel python3.11-devel gcc krb5-devel wget tar gzip git krb5-workstation \
-    brewkoji rhpkg podman skopeo python3-rpm python3-pip python3-dnf jq \
+    brewkoji rhpkg podman skopeo python3-rpm python3-pip python3-dnf python3-requests jq \
     && uv pip install --system --upgrade setuptools \
     && dnf clean all
 
@@ -78,9 +78,6 @@ RUN curl -fsSLo "oras_${ORAS_VERSION}_linux_amd64.tar.gz" \
 
 # Set workspace
 WORKDIR /home/dev
-
-# Fixes issue "ERROR: Cannot uninstall requests 2.25.1, RECORD file not found. Hint: The package was installed by rpm."
-RUN rpm -e --nodeps python3-requests
 
 # Copy art-tools and run the install script
 COPY . .
