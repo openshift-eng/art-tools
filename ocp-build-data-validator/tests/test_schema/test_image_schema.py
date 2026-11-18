@@ -194,6 +194,7 @@ class TestImageSchema(unittest.TestCase):
             'name': '1234',
             'from': {},
             'for_payload': True,
+            'payload_name': 'test-payload',
             'delivery': {'delivery_repo_names': ['foo', 'bar']},
         }
         self.assertIsNone(image_schema.validate('filename', valid_data))
