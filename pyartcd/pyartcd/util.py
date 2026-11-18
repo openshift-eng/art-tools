@@ -45,7 +45,7 @@ from doozerlib.constants import ART_BUILD_HISTORY_URL
 from errata_tool import ErrataConnector
 from tenacity import before_sleep_log, retry, retry_if_exception_type, stop_after_attempt, wait_fixed
 
-from pyartcd import constants, record
+from pyartcd import constants, jenkins, record, tekton
 from pyartcd.build_strategy import BuildStrategy
 from pyartcd.counter_models import (
     BuildFailCounterContext,
@@ -58,6 +58,27 @@ from pyartcd.jenkins import start_build_sync
 from pyartcd.mail import MailService
 
 logger = logging.getLogger(__name__)
+
+
+def update_run_title(title: str, *, annotation_key: str | None = None) -> None:
+    """Update the Jenkins title or log and optionally annotate a Tekton run."""
+    if tekton.is_tekton_context():
+        status = title.strip()
+        logger.info('Run status: %s', status)
+        if annotation_key is not None:
+            tekton.annotate_current_pipelinerun({annotation_key: status})
+    else:
+        jenkins.update_title(title)
+
+
+def update_run_description(description: str) -> str | None:
+    """Append to the Jenkins description or log and return the Tekton text."""
+    if tekton.is_tekton_context():
+        message = description.replace('<br/>', '\n').strip()
+        logger.info('%s', message)
+        return message
+    jenkins.update_description(description)
+    return None
 
 
 def isolate_el_version_in_release(release: str) -> Optional[int]:

@@ -1,12 +1,29 @@
 import asyncio
+import os
 from unittest import IsolatedAsyncioTestCase, TestCase
 from unittest.mock import Mock, patch
 
 from aioredlock import Aioredlock
-from pyartcd.locks import DEFAULT_LOCK_TIMEOUT, LOCK_POLICY, LOCK_WAIT_LOG_INTERVAL, Lock, LockManager
+from pyartcd.locks import (
+    DEFAULT_LOCK_TIMEOUT,
+    LOCK_POLICY,
+    LOCK_WAIT_LOG_INTERVAL,
+    Lock,
+    LockManager,
+    get_run_lock_owner,
+)
 
 
 class TestLocks(TestCase):
+    @patch.dict(os.environ, {'TASKRUN_NAME': 'task', 'TEKTON_PIPELINERUN_NAME': 'scan'}, clear=True)
+    def test_tekton_lock_owner_requires_namespace(self):
+        with self.assertRaisesRegex(RuntimeError, 'TASKRUN_NAMESPACE'):
+            get_run_lock_owner()
+
+    @patch.dict(os.environ, {'BUILD_URL': 'https://jenkins.example/job/test/42/'}, clear=True)
+    def test_jenkins_lock_owner_uses_build_path(self):
+        self.assertEqual(get_run_lock_owner(), 'job/test/42')
+
     def test_lock_policy(self):
         lock: Lock = Lock.BUILD
         lock_policy: dict = LOCK_POLICY[lock]
