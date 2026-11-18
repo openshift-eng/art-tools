@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import Dict, List, Optional, Sequence, Tuple
 
 import click
+from artcommonlib.build_priority import load_build_priority_policy
 from artcommonlib.conforma import resolve_stage_policy
 from artcommonlib.constants import KONFLUX_DEFAULT_NAMESPACE
 from artcommonlib.konflux.konflux_build_record import (
@@ -366,8 +367,10 @@ class KonfluxBuildCli:
         if self.runtime.variant is BuildVariant.OKD:
             major, minor = runtime.get_major_minor_fields()
             group = f'okd-{major}.{minor}'
+            build_priority = '8'
         else:
             group = runtime.group
+            build_priority = self.build_priority
 
         lifecycle = runtime.group_config.get("software_lifecycle")
         ec_policy = resolve_stage_policy(
@@ -413,6 +416,11 @@ class KonfluxBuildCli:
                 f"{', '.join(sorted(invalid_annotations))}"
             )
 
+        # Freeze one policy snapshot for the batch before submitting any builds.
+        # Golang builders use their fixed default without depending on the policy service.
+        priority_policy = None
+        if build_priority == 'auto' and 'golang' not in group:
+            priority_policy = await load_build_priority_policy()
         config = KonfluxImageBuilderConfig(
             base_dir=Path(runtime.working_dir, constants.WORKING_SUBDIR_KONFLUX_BUILD_SOURCES),
             group_name=group,
@@ -425,7 +433,8 @@ class KonfluxBuildCli:
             skip_tasks=self.skip_tasks,
             dry_run=self.dry_run,
             plr_template=self.plr_template,
-            build_priority=self.build_priority,
+            build_priority=build_priority,
+            build_priority_policy=priority_policy,
             ec_policy_configuration=ec_policy,
             skip_ec_verify=self.skip_ec_verify,
             effective_time=self.effective_time,
@@ -702,7 +711,7 @@ class KonfluxBuildCli:
     metavar='PRIORITY',
     default='auto',
     required=True,
-    help='Kueue build priority. Use "auto" for automatic resolution from image/group config, or specify a number 1-10 (where 1 is highest priority). Takes precedence over group and image config settings.',
+    help='Kueue build priority. Use "auto" for automatic resolution or specify a number 1-10 (where 1 is highest priority). OKD builds always use priority 8.',
 )
 @click.option(
     '--network-mode',

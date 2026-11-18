@@ -112,6 +112,7 @@ class KonfluxOcpPipeline:
         build_priority: str = None,
         use_mass_rebuild_locks: bool = False,
         network_mode: Optional[str] = None,
+        ignore_automation_freeze: bool = False,
     ):
         self.runtime = runtime
         self.assembly = assembly
@@ -132,6 +133,7 @@ class KonfluxOcpPipeline:
         self.build_priority = build_priority
         self.use_mass_rebuild_locks = use_mass_rebuild_locks
         self.network_mode = network_mode
+        self.ignore_automation_freeze = ignore_automation_freeze
 
         # If build plan includes more than half or excludes less than half or rebuilds everything, it's a mass rebuild
         self.mass_rebuild = False
@@ -865,6 +867,28 @@ class KonfluxOcpPipeline:
                 raise result
 
     async def run(self):
+        # Honor freeze_automation unless explicitly overridden for this invocation:
+        # global 'yes' blocks all runs; global/group 'scheduled' blocks non-manual runs but allows
+        # manual ones; 'weekdays' allows weekends/manual only. Without the explicit override,
+        # a config read failure propagates (fail-closed).
+        if self.ignore_automation_freeze:
+            LOGGER.warning(
+                'Ignoring global and group freeze_automation for openshift-%s because '
+                '--ignore-automation-freeze was explicitly set',
+                self.version,
+            )
+        elif not await util.is_build_permitted(
+            group=f'openshift-{self.version}',
+            data_path=self.data_path,
+            doozer_working=self.runtime.doozer_working,
+            doozer_data_gitref=self.data_gitref,
+        ):
+            LOGGER.warning(
+                'Skipping Konflux build: not permitted by freeze_automation '
+                '(master switch in ocp-build-data main/config/automation.yml or group policy)'
+            )
+            return
+
         # Unset XDG_RUNTIME_DIR to ensure we don't use default auth.json
         # All registry auth must come from explicit Jenkins credentials or oc login to temp files
         if 'XDG_RUNTIME_DIR' in os.environ:
@@ -981,6 +1005,7 @@ class KonfluxOcpPipeline:
                 data_path=self.data_path,
                 data_gitref=self.data_gitref,
                 dry_run=self.runtime.dry_run,
+                ignore_automation_freeze=self.ignore_automation_freeze,
                 block_until_complete=True,
             )
 
@@ -1108,6 +1133,12 @@ class KonfluxOcpPipeline:
     default=False,
     help='Do not wait for other builds in this version to complete (use only if you know they will not conflict)',
 )
+@click.option(
+    '--ignore-automation-freeze',
+    is_flag=True,
+    default=False,
+    help='Ignore global and group freeze_automation policy for this run; build locks still apply',
+)
 @click.option("--skip-rebase", is_flag=True, help="(For testing) Skip the rebase step")
 @click.option("--skip-bundle-build", is_flag=True, help="(For testing) Skip the bundle build step")
 @click.option("--skip-build-sync-konflux", is_flag=True, help="(For testing) Skip the build-sync-konflux step")
@@ -1170,6 +1201,7 @@ async def ocp4(
     data_gitref: Optional[str],
     kubeconfig: Optional[str],
     ignore_locks: bool,
+    ignore_automation_freeze: bool,
     skip_rebase: bool,
     skip_bundle_build: bool,
     skip_build_sync_konflux: bool,
@@ -1210,6 +1242,7 @@ async def ocp4(
         build_priority=build_priority,
         use_mass_rebuild_locks=use_mass_rebuild_locks,
         network_mode=network_mode,
+        ignore_automation_freeze=ignore_automation_freeze,
     )
 
     if ignore_locks:

@@ -738,27 +738,6 @@ class ImagesHealthPipeline:
                     unfurl_media=False,
                 )
 
-    @staticmethod
-    def _group_failures_by_image(failures_by_version: dict) -> dict[str, list[dict]]:
-        """
-        Group version-keyed Redis failures into an image-keyed structure.
-
-        Arg(s):
-            failures_by_version (dict): {version: {image: {failure_count, ...}}}
-        Return Value(s):
-            dict: {image_name: [{version, failure_count, jenkins_url, build_system, ...}, ...]}
-        """
-        grouped = {}
-        for version, failures in failures_by_version.items():
-            for image_name, failure_info in failures.items():
-                grouped.setdefault(image_name, []).append(
-                    {
-                        'version': version,
-                        **failure_info,
-                    }
-                )
-        return grouped
-
     def _format_redis_failure_line(self, image_name: str, failure_info: dict) -> str:
         """
         Format a single Redis failure entry for the release channel thread.
@@ -772,24 +751,6 @@ class ImagesHealthPipeline:
         failure_count = failure_info.get('failure_count', 0)
         jenkins_url = failure_info.get('jenkins_url', '')
         line = f'- `{image_name}`: Failed {failure_count} time{"s" if failure_count != 1 else ""}'
-        if jenkins_url:
-            line += f' ({self.url_text(jenkins_url, "Last failure job")})'
-        return line
-
-    def _format_forum_redis_failure_inline(self, failure: dict) -> str:
-        """
-        Format a single Redis failure entry as inline text (no leading bullet/newline).
-
-        Arg(s):
-            failure (dict): Failure data with version, failure_count, jenkins_url, etc.
-        Return Value(s):
-            str: Formatted text fragment
-        """
-        version = failure.get('version', '?')
-        failure_count = failure.get('failure_count', 0)
-        jenkins_url = failure.get('jenkins_url', '')
-        build_system = failure.get('build_system', 'unknown')
-        line = f'openshift-{version} ({build_system}): Failed {failure_count} time{"s" if failure_count != 1 else ""}'
         if jenkins_url:
             line += f' ({self.url_text(jenkins_url, "Last failure job")})'
         return line
@@ -826,26 +787,6 @@ class ImagesHealthPipeline:
 
         # ConcernCode.LATEST_ATTEMPT_FAILED
         message += f' - Latest attempt failed ({concern["latest_success_idx"]} attempts since last success)'
-        return message
-
-    def get_message_for_forum(self, concern: dict):
-        code = concern['code']
-        group = concern['group']
-
-        start_date = (datetime.now(timezone.utc) - timedelta(days=DELTA_DAYS)).strftime('%Y-%m-%d')
-        end_date = datetime.now(timezone.utc).strftime('%Y-%m-%d')
-        art_dash_link = f'{ART_BUILD_HISTORY_URL}/?name=^{concern["image_name"]}$&group={group}&assembly=stream&engine=konflux&dateRange={start_date}+to+{end_date}&outcome=Success&outcome=Failure'
-        logs_link = self.url_text(self.get_logs_url(concern), "logs")
-
-        message = f'{self.url_text(art_dash_link, f"{group}")}: '
-
-        if code == ConcernCode.FAILING_AT_LEAST_FOR.value:
-            message += f'more than {LIMIT_BUILD_RESULTS} failures ({logs_link}).'
-
-        else:  # ConcernCode.LATEST_ATTEMPT_FAILED
-            message += f'{concern["latest_success_idx"]} failures ({logs_link}).'
-
-        message += self._jira_link(concern)
         return message
 
     @staticmethod
@@ -982,7 +923,7 @@ class ImagesHealthPipeline:
                 ' apply `art:bot-skip-auto-fix` to the Jira ticket (ART can remove to retry).',
                 '   - On success: report fixed images, changes made, and test build links; *ask user to approve PR*.',
                 '   - On approval: file PR attributed to bot (not Slack profile). PR description *must include*'
-                ' full clickable Jenkins build URL (e.g. `https://art-jenkins.apps.prod-stable-spoke1-dc-iad2.itup.redhat.com/job/aos-cd-builds/job/build%252Focp4-konflux/BUILD_NUMBER/`)'
+                ' full clickable Jenkins build URL (e.g. `https://art-jenkins.apps.int.prod-stable-spoke1-dc-iad2.itup.redhat.com/job/aos-cd-builds/job/build%252Focp4-konflux/BUILD_NUMBER/`)'
                 ' and full clickable Slack thread `https://` URL.',
                 '3. If confidence < 90% or upstream change required: diagnostic report only,'
                 ' suggest `art:bot-skip-auto-fix` label on Jira ticket, defer to humans.',

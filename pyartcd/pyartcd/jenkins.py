@@ -27,25 +27,20 @@ jenkins_client: Optional[Jenkins] = None
 
 
 class Jobs(Enum):
-    BUILD_SYNC = 'aos-cd-builds/build%2Fbuild-sync'
     BUILD_SYNC_KONFLUX = 'aos-cd-builds/build%2Fbuild-sync-konflux'
     BUILD_SYNC_MULTI = 'aos-cd-builds/build%2Fbuild-sync-multi'
     BUILD_MICROSHIFT = 'aos-cd-builds/build%2Fbuild-microshift'
     BUILD_MICROSHIFT_BOOTC = 'aos-cd-builds/build%2Fbuild-microshift-bootc'
-    OCP4 = 'aos-cd-builds/build%2Focp4'
     OKD = 'aos-cd-builds/build%2Fokd'
     OKD_SCAN_KONFLUX = 'aos-cd-builds/build%2Fokd-scan'
     OCP4_KONFLUX = 'aos-cd-builds/build%2Focp4-konflux'
     RHCOS_NODE_IMAGE_POST_BUILD = 'aos-cd-builds/build%2Frhcos-node-image-post-build'
-    OCP4_SCAN = 'aos-cd-builds/build%2Focp4_scan'
     OCP4_SCAN_KONFLUX = 'aos-cd-builds/build%2Focp4-scan-konflux'
     RHCOS = 'aos-cd-builds/build%2Frhcos'
-    OLM_BUNDLE = 'aos-cd-builds/build%2Folm_bundle'
     OLM_BUNDLE_KONFLUX = 'aos-cd-builds/build%2Folm_bundle_konflux'
     BASE_IMAGE_RELEASE = 'aos-cd-builds/build%2Fbase-image-release'
     SYNC_FOR_CI = 'scheduled-builds/sync-for-ci'
     MICROSHIFT_SYNC = 'aos-cd-builds/build%2Fmicroshift_sync'
-    CINCINNATI_PRS = 'aos-cd-builds/build%2Fcincinnati-prs'
     RHCOS_SYNC = 'aos-cd-builds/build%2Frhcos_sync'
     BINARIES_CDN_RELEASE = 'aos-cd-builds/build%2Fbinaries-cdn-release'
     BUILD_PLASHETS = 'aos-cd-builds/build%2Fbuild-plashets'
@@ -106,9 +101,9 @@ def get_build_url():
 def get_build_path():
     """
     Examples:
-    - https://art-jenkins.apps.prod-stable-spoke1-dc-iad2.itup.redhat.com/job/aos-cd-builds/job/build%252Focp4/46870/ =>
+    - https://art-jenkins.apps.int.prod-stable-spoke1-dc-iad2.itup.redhat.com/job/aos-cd-builds/job/build%252Focp4/46870/ =>
         job/aos-cd-builds/job/build%252Focp4/46870
-    - https://art-jenkins.apps.prod-stable-spoke1-dc-iad2.itup.redhat.com/job/aos-cd-builds/job/build%252Focp4/46870 =>
+    - https://art-jenkins.apps.int.prod-stable-spoke1-dc-iad2.itup.redhat.com/job/aos-cd-builds/job/build%252Focp4/46870 =>
         job/aos-cd-builds/job/build%252Focp4/46870
     """
 
@@ -421,45 +416,6 @@ def start_build(
     return result
 
 
-def start_ocp4(
-    build_version: str, assembly: str, rpm_list: list, image_list: list, comment_on_pr: bool, **kwargs
-) -> Optional[str]:
-    params = {
-        'BUILD_VERSION': build_version,
-        'ASSEMBLY': assembly,
-    }
-
-    # If any rpm/image changed, force a build with only changed sources
-    if rpm_list or image_list:
-        params['PIN_BUILDS'] = True
-
-    # Build only changed RPMs or none
-    if rpm_list:
-        params['BUILD_RPMS'] = 'only'
-        params['RPM_LIST'] = ','.join(rpm_list)
-    else:
-        params['BUILD_RPMS'] = 'none'
-
-    # Build only changed images or none
-    if image_list:
-        params['BUILD_IMAGES'] = 'only'
-        params['IMAGE_LIST'] = ','.join(image_list)
-    else:
-        params['BUILD_IMAGES'] = 'none'
-
-    if comment_on_pr:
-        params['COMMENT_ON_PR'] = True
-
-    # SKIP_PLASHETS defaults to True for manual builds, setting to False for scheduled
-    params['SKIP_PLASHETS'] = False
-
-    return start_build(
-        job=Jobs.OCP4,
-        params=params,
-        **kwargs,
-    )
-
-
 def start_okd(
     build_version: str,
     assembly: str,
@@ -516,17 +472,6 @@ def start_ocp4_konflux(
 
     return start_build(
         job=Jobs.OCP4_KONFLUX,
-        params=params,
-        **kwargs,
-    )
-
-
-def start_ocp4_scan(version: str, **kwargs) -> Optional[str]:
-    params = {
-        'VERSION': version,
-    }
-    return start_build(
-        job=Jobs.OCP4_SCAN,
         params=params,
         **kwargs,
     )
@@ -730,10 +675,13 @@ def start_build_sync(
     assembly: str,
     doozer_data_path: Optional[str] = None,
     doozer_data_gitref: Optional[str] = None,
-    build_system: Optional[str] = 'brew',
+    build_system: str = 'konflux',
     exclude_arches: list = None,
     **kwargs,
 ) -> Optional[str]:
+    if build_system != 'konflux':
+        raise ValueError('Brew build-sync has been retired; use build_system="konflux" for Konflux assemblies')
+
     params = {
         'BUILD_VERSION': build_version,
         'ASSEMBLY': assembly,
@@ -745,16 +693,10 @@ def start_build_sync(
     if exclude_arches:
         params['EXCLUDE_ARCHES'] = ','.join(exclude_arches)
 
-    if build_system == 'brew':
-        return start_build(
-            job=Jobs.BUILD_SYNC,
-            params=params | kwargs,
-        )
-    elif build_system == 'konflux':
-        return start_build(
-            job=Jobs.BUILD_SYNC_KONFLUX,
-            params=params | kwargs,
-        )
+    return start_build(
+        job=Jobs.BUILD_SYNC_KONFLUX,
+        params=params | kwargs,
+    )
 
 
 def start_build_sync_multi(
@@ -786,23 +728,6 @@ def start_build_sync_multi(
     )
 
 
-def start_cincinnati_prs(
-    from_releases: list, release_name: str, advisory_id: int, candidate_pr_note: str, skip_ota_notification, **kwargs
-) -> Optional[str]:
-    return start_build(
-        job=Jobs.CINCINNATI_PRS,
-        params={
-            'FROM_RELEASE_TAG': ','.join(from_releases),
-            'RELEASE_NAME': release_name,
-            'ADVISORY_NUM': advisory_id,
-            'CANDIDATE_PR_NOTE': candidate_pr_note,
-            'SKIP_OTA_SLACK_NOTIFICATION': skip_ota_notification,
-            'GITHUB_ORG': 'openshift',
-        },
-        **kwargs,
-    )
-
-
 def start_build_microshift(build_version: str, assembly: str, dry_run: bool, **kwargs) -> Optional[str]:
     return start_build(
         job=Jobs.BUILD_MICROSHIFT,
@@ -810,31 +735,6 @@ def start_build_microshift(build_version: str, assembly: str, dry_run: bool, **k
             'BUILD_VERSION': build_version,
             'ASSEMBLY': assembly,
             'DRY_RUN': dry_run,
-        },
-        **kwargs,
-    )
-
-
-def start_olm_bundle(
-    build_version: str,
-    assembly: str,
-    operator_nvrs: list,
-    doozer_data_path: str = constants.OCP_BUILD_DATA_URL,
-    doozer_data_gitref: str = '',
-    **kwargs,
-) -> Optional[str]:
-    if not operator_nvrs:
-        logger.warning('Empty operator NVR received: skipping olm-bundle')
-        return
-
-    return start_build(
-        job=Jobs.OLM_BUNDLE,
-        params={
-            'BUILD_VERSION': build_version,
-            'ASSEMBLY': assembly,
-            'DOOZER_DATA_PATH': doozer_data_path,
-            'DOOZER_DATA_GITREF': doozer_data_gitref,
-            'OPERATOR_NVRS': ','.join(operator_nvrs),
         },
         **kwargs,
     )
@@ -1031,6 +931,7 @@ def start_build_plashets(
     copy_links=False,
     dry_run=False,
     version=None,
+    ignore_automation_freeze=False,
     **kwargs,
 ) -> Optional[str]:
     params = {
@@ -1043,6 +944,7 @@ def start_build_plashets(
         'COPY_LINKS': copy_links,
         'DRY_RUN': dry_run,
         'VERSION': version,
+        'IGNORE_AUTOMATION_FREEZE': ignore_automation_freeze,
     }
 
     return start_build(

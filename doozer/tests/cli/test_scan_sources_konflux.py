@@ -12,6 +12,7 @@ from doozerlib.cli.scan_sources_konflux import ConfigScanSources
 from doozerlib.image import ImageMetadata
 from doozerlib.metadata import RebuildHintCode
 from doozerlib.runtime import Runtime
+from tenacity import wait_none
 
 
 class TestScanSourcesKonflux(IsolatedAsyncioTestCase):
@@ -593,15 +594,19 @@ class TestGetCurrentTaskBundleShas(TestScanSourcesKonflux):
         )
 
     async def test_get_current_task_bundle_shas_http_error(self):
-        """Test that GitHub API errors propagate so @retry can handle them."""
+        """
+        Test that GitHub API errors propagate after the retries are exhausted.
+        """
         from github import GithubException
 
-        self.mock_github_client.get_repo.return_value.get_contents.side_effect = GithubException(
-            404, {"message": "Not Found"}, None
-        )
+        get_contents = self.mock_github_client.get_repo.return_value.get_contents
+        get_contents.side_effect = GithubException(404, {"message": "Not Found"}, None)
 
-        with self.assertRaises(GithubException):
-            await self.scanner.get_current_task_bundle_shas()
+        with patch.object(ConfigScanSources.get_current_task_bundle_shas.retry, "wait", wait_none()):
+            with self.assertRaises(GithubException):
+                await self.scanner.get_current_task_bundle_shas()
+
+        self.assertEqual(get_contents.call_count, 10)
 
     async def test_get_current_task_bundle_shas_yaml_parse_error(self):
         """Test handling of YAML parsing errors."""

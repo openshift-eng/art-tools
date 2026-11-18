@@ -30,7 +30,7 @@ class TestJenkinsStartBuild(unittest.TestCase):
     @mock.patch("pyartcd.jenkins.init_jenkins")
     @mock.patch("pyartcd.jenkins.jenkins_client")
     def test_start_build_dont_block(self, mock_client, mock_init_jenkins):
-        job = Jobs.OCP4
+        job = Jobs.OCP4_KONFLUX
         params = {"param1": "value1", "param2": "value2"}
         mock_job = mock.MagicMock()
         mock_client.get_job.return_value = mock_job
@@ -44,7 +44,7 @@ class TestJenkinsStartBuild(unittest.TestCase):
     @mock.patch("pyartcd.jenkins.init_jenkins")
     @mock.patch("pyartcd.jenkins.jenkins_client")
     def test_start_build_block_until_building(self, mock_client, mock_init_jenkins, mock_build):
-        job = Jobs.OCP4
+        job = Jobs.OCP4_KONFLUX
         params = {"param1": "value1", "param2": "value2"}
         delay = 10
         mock_client.get_job.return_value = mock_job = mock.MagicMock()
@@ -68,7 +68,7 @@ class TestJenkinsStartBuild(unittest.TestCase):
     @mock.patch("pyartcd.jenkins.init_jenkins")
     @mock.patch("pyartcd.jenkins.jenkins_client")
     def test_start_build_block_until_complete(self, mock_client, mock_init_jenkins, mock_build):
-        job = Jobs.OCP4
+        job = Jobs.OCP4_KONFLUX
         params = {"param1": "value1", "param2": "value2"}
         delay = 10
         mock_client.get_job.return_value = mock_job = mock.MagicMock()
@@ -104,7 +104,7 @@ class TestJenkinsStartBuild(unittest.TestCase):
         clear=False,
     )
     def test_start_build_can_return_build_url(self, mock_client, mock_init_jenkins, mock_build):
-        job = Jobs.OCP4
+        job = Jobs.OCP4_KONFLUX
         mock_job = mock.MagicMock()
         mock_client.get_job.return_value = mock_job
         mock_queue_item = mock.MagicMock()
@@ -126,31 +126,82 @@ class TestJenkinsStartBuild(unittest.TestCase):
 
         # Trailing slash will be removed
         os.environ['BUILD_URL'] = (
-            'https://art-jenkins.apps.prod-stable-spoke1-dc-iad2.itup.redhat.com/'
-            'job/aos-cd-builds/job/build%252Focp4/46870/'
+            'https://art-jenkins.apps.int.prod-stable-spoke1-dc-iad2.itup.redhat.com/'
+            'job/aos-cd-builds/job/build%252Focp4-konflux/46870/'
         )
         self.assertEqual(
             jenkins.get_build_url(),
-            'https://art-jenkins.apps.prod-stable-spoke1-dc-iad2.itup.redhat.com/'
-            'job/aos-cd-builds/job/build%252Focp4/46870',
+            'https://art-jenkins.apps.int.prod-stable-spoke1-dc-iad2.itup.redhat.com/'
+            'job/aos-cd-builds/job/build%252Focp4-konflux/46870',
         )
 
         # Build path
         build_path = jenkins.get_build_path()
-        self.assertEqual(build_path, 'job/aos-cd-builds/job/build%252Focp4/46870')
+        self.assertEqual(build_path, 'job/aos-cd-builds/job/build%252Focp4-konflux/46870')
 
     def test_get_build_id_from_url(self):
         build_url = (
-            'https://art-jenkins.apps.prod-stable-spoke1-dc-iad2.itup.redhat.com/'
-            'job/aos-cd-builds/job/build%252Focp4/46870/'
+            'https://art-jenkins.apps.int.prod-stable-spoke1-dc-iad2.itup.redhat.com/'
+            'job/aos-cd-builds/job/build%252Focp4-konflux/46870/'
         )
         self.assertEqual(jenkins.get_build_id_from_url(build_url), 46870)
 
         build_url = (
-            'https://art-jenkins.apps.prod-stable-spoke1-dc-iad2.itup.redhat.com/'
-            'job/aos-cd-builds/job/build%252Focp4/46870'
+            'https://art-jenkins.apps.int.prod-stable-spoke1-dc-iad2.itup.redhat.com/'
+            'job/aos-cd-builds/job/build%252Focp4-konflux/46870'
         )
         self.assertEqual(jenkins.get_build_id_from_url(build_url), 46870)
+
+    @mock.patch("pyartcd.jenkins.start_build")
+    def test_start_build_sync_preserves_konflux_parameters(self, start_build_mock):
+        for selection in ({}, {'build_system': 'konflux'}):
+            with self.subTest(selection=selection):
+                start_build_mock.reset_mock()
+                jenkins.start_build_sync(
+                    build_version='4.22',
+                    assembly='stream',
+                    doozer_data_path='https://github.com/example/ocp-build-data',
+                    doozer_data_gitref='assembly-branch',
+                    exclude_arches=['s390x', 'ppc64le'],
+                    SKIP_MULTI_ARCH_PAYLOAD='auto',
+                    **selection,
+                )
+                start_build_mock.assert_called_once_with(
+                    job=Jobs.BUILD_SYNC_KONFLUX,
+                    params={
+                        'BUILD_VERSION': '4.22',
+                        'ASSEMBLY': 'stream',
+                        'DOOZER_DATA_PATH': 'https://github.com/example/ocp-build-data',
+                        'DOOZER_DATA_GITREF': 'assembly-branch',
+                        'EXCLUDE_ARCHES': 's390x,ppc64le',
+                        'SKIP_MULTI_ARCH_PAYLOAD': 'auto',
+                    },
+                )
+
+    @mock.patch('pyartcd.jenkins.start_build')
+    def test_start_build_plashets_forwards_freeze_override(self, start_build_mock):
+        for options in ({}, {'ignore_automation_freeze': True}):
+            with self.subTest(options=options):
+                start_build_mock.reset_mock()
+                jenkins.start_build_plashets(
+                    group='openshift-4.21',
+                    release='test',
+                    assembly='stream',
+                    block_until_complete=True,
+                    **options,
+                )
+                self.assertEqual(start_build_mock.call_args.kwargs['job'], Jobs.BUILD_PLASHETS)
+                self.assertIs(
+                    start_build_mock.call_args.kwargs['params']['IGNORE_AUTOMATION_FREEZE'],
+                    options.get('ignore_automation_freeze', False),
+                )
+                self.assertTrue(start_build_mock.call_args.kwargs['block_until_complete'])
+
+    @mock.patch("pyartcd.jenkins.start_build")
+    def test_start_build_sync_rejects_brew_before_triggering(self, start_build_mock):
+        with self.assertRaisesRegex(ValueError, 'Brew build-sync has been retired'):
+            jenkins.start_build_sync('4.19', 'custom', build_system='brew')
+        start_build_mock.assert_not_called()
 
     @mock.patch("pyartcd.jenkins.start_build")
     def test_start_build_conforma_verify_uses_group_parameter(self, start_build_mock):

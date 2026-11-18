@@ -419,35 +419,6 @@ class ImagesHealthPipeline:
         message += f' - Latest attempt failed ({concern["latest_success_idx"]} attempts since last success)'
         return message
 
-    def get_message_for_okd_channel(self, concern: dict):
-        """
-        Format a concern message for the general #art-okd-release channel.
-        Shows group (version) and failure details with links.
-
-        Arg(s):
-            concern (dict): Concern data from doozer images:health
-        Return Value(s):
-            str: Formatted message with links and details
-        """
-        code = concern['code']
-        group = concern['group']
-        # Transform openshift-X.Y to okd-X.Y for display
-        okd_group = group.replace('openshift-', 'okd-')
-
-        start_date = (datetime.now(timezone.utc) - timedelta(days=DELTA_DAYS)).strftime('%Y-%m-%d')
-        end_date = datetime.now(timezone.utc).strftime('%Y-%m-%d')
-        art_dash_link = f'{ART_BUILD_HISTORY_URL}/?name=^{concern["image_name"]}$&group={okd_group}&assembly=stream&engine=konflux&dateRange={start_date}+to+{end_date}&outcome=Success&outcome=Failure'
-        logs_link = self.url_text(self.get_logs_url(concern), "logs")
-
-        message = f'{self.url_text(art_dash_link, f"{okd_group}")}: '
-
-        if code == ConcernCode.FAILING_AT_LEAST_FOR.value:
-            message += f'more than {LIMIT_BUILD_RESULTS} failures ({logs_link}).'
-        else:  # ConcernCode.LATEST_ATTEMPT_FAILED
-            message += f'{concern["latest_success_idx"]} failures ({logs_link}).'
-
-        return message
-
     @staticmethod
     def get_search_url(concern):
         """
@@ -618,7 +589,7 @@ class ImagesHealthPipeline:
                 '   - On success: report fixed images, changes made, and test build links; *ask user to approve PR*.',
                 '   - On approval: file PR attributed to bot (not Slack profile), *squash merge* (merge commits nullify `:noop`).'
                 ' PR description *must include* full clickable Jenkins build URL'
-                ' (e.g. `https://art-jenkins.apps.prod-stable-spoke1-dc-iad2.itup.redhat.com/job/aos-cd-builds/job/build%252Fokd/BUILD_NUMBER/`)'
+                ' (e.g. `https://art-jenkins.apps.int.prod-stable-spoke1-dc-iad2.itup.redhat.com/job/aos-cd-builds/job/build%252Fokd/BUILD_NUMBER/`)'
                 ' and full clickable Slack thread `https://` URL.',
                 '3. If confidence < 90% or upstream change required: diagnostic report only,'
                 ' suggest `art:bot-skip-auto-fix` label on Jira ticket, defer to humans.',

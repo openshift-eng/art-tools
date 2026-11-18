@@ -3,6 +3,7 @@
 Test the Repo class
 """
 
+import asyncio
 import unittest
 from unittest.mock import Mock, patch
 
@@ -222,6 +223,82 @@ class TestRepo(unittest.IsolatedAsyncioTestCase):
             repodata = await repo.get_repodata('x86_64')
             actual = {r.name for r in repodata.primary_rpms}
             self.assertEqual(expected, actual)
+
+    async def test_concurrent_repodata_calls_share_filtered_result(self):
+        repo = Repo('example', self.repo_config, self.arches)
+        repo.includepkgs = ['keep']
+        keep, discard = Mock(), Mock()
+        keep.name, discard.name = 'keep', 'discard'
+        metadata = Mock(primary_rpms=[keep, discard])
+        started, release = asyncio.Event(), asyncio.Event()
+
+        async def load(*args, **kwargs):
+            started.set()
+            await release.wait()
+            return metadata
+
+        with patch('doozerlib.repos.RepodataLoader.load', side_effect=load) as loader:
+            first = asyncio.create_task(repo.get_repodata('x86_64'))
+            await asyncio.wait_for(started.wait(), 1)
+            second = asyncio.create_task(repo.get_repodata('x86_64'))
+            third = asyncio.create_task(repo.get_repodata_threadsafe('x86_64'))
+            await asyncio.sleep(0)
+            release.set()
+            results = await asyncio.wait_for(asyncio.gather(first, second, third), 1)
+            loader.assert_awaited_once()
+        self.assertTrue(all(result is metadata for result in results))
+        self.assertEqual(metadata.primary_rpms, [keep])
+
+    async def test_failed_or_cancelled_repodata_load_can_be_retried(self):
+        for error in [RuntimeError('download failed'), asyncio.CancelledError()]:
+            with self.subTest(error=type(error).__name__):
+                repo = Repo('example', self.repo_config, self.arches)
+                metadata = Mock(primary_rpms=[])
+                with patch('doozerlib.repos.RepodataLoader.load', side_effect=[error, metadata]) as loader:
+                    with self.assertRaises(type(error)):
+                        await repo.get_repodata('x86_64')
+                    self.assertNotIn('x86_64', repo._repodatas)
+                    self.assertIs(await asyncio.wait_for(repo.get_repodata('x86_64'), 1), metadata)
+                    self.assertEqual(loader.await_count, 2)
+
+    async def test_cancelling_repodata_waiter_does_not_cancel_loader(self):
+        repo = Repo('example', self.repo_config, self.arches)
+        started, release = asyncio.Event(), asyncio.Event()
+        metadata = Mock(primary_rpms=[])
+
+        async def load(*args, **kwargs):
+            started.set()
+            await release.wait()
+            return metadata
+
+        with patch('doozerlib.repos.RepodataLoader.load', side_effect=load) as loader:
+            first = asyncio.create_task(repo.get_repodata('x86_64'))
+            await asyncio.wait_for(started.wait(), 1)
+            waiter = asyncio.create_task(repo.get_repodata('x86_64'))
+            await asyncio.sleep(0)
+            waiter.cancel()
+            with self.assertRaises(asyncio.CancelledError):
+                await waiter
+            release.set()
+            self.assertIs(await asyncio.wait_for(first, 1), metadata)
+            self.assertIs(await repo.get_repodata('x86_64'), metadata)
+            loader.assert_awaited_once()
+
+    async def test_repodata_loads_different_arches_concurrently(self):
+        repo = Repo('example', self.repo_config, self.arches)
+        started = set()
+        both_started = asyncio.Event()
+
+        async def load(name, *args, **kwargs):
+            started.add(name)
+            if len(started) == 2:
+                both_started.set()
+            await asyncio.wait_for(both_started.wait(), 1)
+            return Mock(primary_rpms=[])
+
+        with patch('doozerlib.repos.RepodataLoader.load', side_effect=load) as loader:
+            await asyncio.wait_for(asyncio.gather(repo.get_repodata('x86_64'), repo.get_repodata('s390x')), 1)
+            self.assertEqual(loader.await_count, 2)
 
     def test_init_with_new_style_config(self):
         """Test that Repo.__init__ accepts new-style RepoConf (Pydantic model)"""

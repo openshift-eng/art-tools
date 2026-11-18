@@ -4,6 +4,7 @@ from types import SimpleNamespace
 from unittest import mock
 
 import click
+from artcommonlib.build_priority import BuildPriorityPolicy
 from artcommonlib.conforma import resolve_stage_policy
 from artcommonlib.konflux.konflux_build_record import (
     KonfluxBuildOutcome,
@@ -39,6 +40,15 @@ class TestKueueProductPolicies(unittest.TestCase):
 
 
 class TestKonfluxBuildStagePolicies(unittest.IsolatedAsyncioTestCase):
+    def setUp(self):
+        patcher = mock.patch(
+            'doozerlib.cli.images_konflux.load_build_priority_policy',
+            new_callable=mock.AsyncMock,
+            return_value=BuildPriorityPolicy(),
+        )
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
     async def test_cli_passes_one_resolved_policy_to_builder(self):
         for product, assembly, phase in (
             ("ocp", "stream", "release"),
@@ -85,6 +95,37 @@ class TestKonfluxBuildStagePolicies(unittest.IsolatedAsyncioTestCase):
                     if phase is None
                     else resolve_stage_policy(product, assembly=assembly, lifecycle_phase=phase),
                 )
+
+
+class TestOkdBuildPriority(unittest.IsolatedAsyncioTestCase):
+    @mock.patch("doozerlib.cli.images_konflux.load_build_priority_policy")
+    @mock.patch("doozerlib.cli.images_konflux.KonfluxImageBuilder")
+    async def test_okd_always_uses_priority_eight(self, builder_cls, policy_loader):
+        runtime = mock.MagicMock(spec=Runtime)
+        runtime.working_dir = "/tmp"
+        runtime.group = "openshift-4.22"
+        runtime.assembly = "stream"
+        runtime.product = "ocp"
+        runtime.variant = BuildVariant.OKD
+        runtime.get_major_minor_fields.return_value = (4, 22)
+        runtime.group_config = Model({"konflux": {"build_priority": 8}})
+        runtime.ordered_image_metas.return_value = []
+        runtime.exclude = ()
+        runtime.source_resolver = mock.Mock()
+        runtime.konflux_db = mock.Mock()
+        runtime.record_logger = mock.Mock()
+        builder_cls.return_value.validate_custom_integration_test_scenarios = mock.AsyncMock()
+        builder_cls.return_value._konflux_client = mock.AsyncMock()
+
+        for requested_priority in ("auto", "1"):
+            with self.subTest(requested_priority=requested_priority):
+                cli = KonfluxBuildCli(runtime, None, None, "test", "test", None, False, True, None, requested_priority)
+                await cli.run()
+
+                config = builder_cls.call_args.kwargs["config"]
+                self.assertEqual(config.build_priority, "8")
+                self.assertIsNone(config.build_priority_policy)
+        policy_loader.assert_not_awaited()
 
 
 class TestKonfluxBundleCli(unittest.IsolatedAsyncioTestCase):
@@ -335,6 +376,15 @@ class TestBaseImageReleasePrioritisation(unittest.IsolatedAsyncioTestCase):
     before leaf images, with an ``asyncio.sleep(0)`` yield in between.
     """
 
+    def setUp(self):
+        patcher = mock.patch(
+            'doozerlib.cli.images_konflux.load_build_priority_policy',
+            new_callable=mock.AsyncMock,
+            return_value=BuildPriorityPolicy(),
+        )
+        self.policy_loader = patcher.start()
+        self.addCleanup(patcher.stop)
+
     @mock.patch("doozerlib.cli.images_konflux.asyncio.sleep", new_callable=mock.AsyncMock)
     @mock.patch("doozerlib.cli.images_konflux.KonfluxImageBuilder")
     @mock.patch("doozerlib.cli.images_konflux.trace.get_current_span")
@@ -421,6 +471,12 @@ class TestBaseImageReleasePrioritisation(unittest.IsolatedAsyncioTestCase):
         submitted_order = [call.args[0].distgit_key for call in build_calls]
         self.assertEqual(submitted_order, ["base-b", "leaf-a", "leaf-c"])
 
+        self.policy_loader.assert_awaited_once_with()
+        self.assertIs(
+            mock_builder_cls.call_args.kwargs['config'].build_priority_policy,
+            self.policy_loader.return_value,
+        )
+
         # Verify the prioritisation was logged
         runtime.logger.info.assert_any_call(
             "Prioritised %d base_image_release image(s) for early PLR submission: %s",
@@ -481,7 +537,7 @@ class TestBaseImageReleasePrioritisation(unittest.IsolatedAsyncioTestCase):
             skip_checks=False,
             dry_run=False,
             plr_template="test-template",
-            build_priority="auto",
+            build_priority="7",
         )
 
         await cli.run()
@@ -492,6 +548,18 @@ class TestBaseImageReleasePrioritisation(unittest.IsolatedAsyncioTestCase):
 
         # No sleep(0) yield should happen when there are no base_image_release images
         mock_sleep.assert_not_awaited()
+        self.policy_loader.assert_not_awaited()
+        config = mock_builder_cls.call_args.kwargs['config']
+        self.assertEqual(config.build_priority, '7')
+        self.assertIsNone(config.build_priority_policy)
+
+        # Golang auto builds must also work when the policy service is unavailable.
+        runtime.group = 'golang-1.26'
+        cli.build_priority = 'auto'
+        self.policy_loader.side_effect = AssertionError('Golang builds must not fetch the policy')
+        await cli.run()
+        self.policy_loader.assert_not_awaited()
+        self.assertIsNone(mock_builder_cls.call_args.kwargs['config'].build_priority_policy)
 
 
 class TestKonfluxRebaseCli(unittest.IsolatedAsyncioTestCase):
@@ -1227,6 +1295,15 @@ class TestKonfluxBuildCliStandaloneStageRelease(unittest.IsolatedAsyncioTestCase
 
 class TestKonfluxBuildPostBuildWiring(unittest.IsolatedAsyncioTestCase):
     """The build command delegates post-build callback assembly to the registry factory."""
+
+    def setUp(self):
+        patcher = mock.patch(
+            'doozerlib.cli.images_konflux.load_build_priority_policy',
+            new_callable=mock.AsyncMock,
+            return_value=BuildPriorityPolicy(),
+        )
+        self.policy_loader = patcher.start()
+        self.addCleanup(patcher.stop)
 
     @mock.patch("doozerlib.cli.images_konflux.asyncio.sleep", new_callable=mock.AsyncMock)
     @mock.patch("doozerlib.cli.images_konflux.build_post_build_callbacks")

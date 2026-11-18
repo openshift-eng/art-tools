@@ -14,6 +14,7 @@ from artcommonlib import bigquery, exectools
 from artcommonlib import constants as artlib_constants
 from artcommonlib import util as artlib_util
 from artcommonlib.arch_util import go_arch_for_brew_arch
+from artcommonlib.build_priority import BuildPriorityPolicy
 from artcommonlib.build_visibility import is_release_embargoed
 from artcommonlib.konflux.konflux_build_record import (
     ArtifactType,
@@ -101,6 +102,7 @@ class KonfluxImageBuilderConfig:
     skip_tasks: tuple[str, ...] = ()
     dry_run: bool = False
     build_priority: Optional[str] = None
+    build_priority_policy: BuildPriorityPolicy | None = None
     ec_policy_configuration: Optional[str] = None
     skip_ec_verify: bool = False
     effective_time: str = "now"
@@ -315,7 +317,9 @@ class KonfluxImageBuilder:
             ec_pipeline_url = ''
             # Resolve build priority based on precedence rules
             if self._config.build_priority == "auto":
-                build_priority = util.get_konflux_build_priority(metadata=metadata, group=self._config.group_name)
+                build_priority = util.get_konflux_build_priority(
+                    metadata=metadata, group=self._config.group_name, policy=self._config.build_priority_policy
+                )
                 logger.info(f"Auto-resolved build priority for {metadata.distgit_key}: {build_priority}")
             else:
                 # If it's a specific number (1-10), use it directly

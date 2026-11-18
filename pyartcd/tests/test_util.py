@@ -4,6 +4,7 @@ from pathlib import Path
 from unittest import IsolatedAsyncioTestCase
 from unittest.mock import AsyncMock, MagicMock, patch
 
+import aiohttp
 from artcommonlib.variants import BuildVariant
 from pyartcd.build_strategy import BuildStrategy
 from pyartcd.counter_models import (
@@ -14,11 +15,31 @@ from pyartcd.counter_models import (
     RebaseCounterContext,
 )
 from pydantic import ValidationError
+from tenacity import wait_none
 
 from pyartcd import util
 
 
 class TestUtil(IsolatedAsyncioTestCase):
+    @patch('pyartcd.util.GitRepository')
+    @patch('pyartcd.util.get_github_client_for_org')
+    async def test_brew_assembly_auto_sync_fails_before_git_or_github_changes(self, github, repository):
+        with self.assertRaisesRegex(ValueError, 'Brew build-sync has been retired'):
+            await util.create_or_update_assembly_pr(
+                runtime=MagicMock(),
+                group='openshift-4.19',
+                assembly='custom',
+                build_system='brew',
+                assembly_definition={},
+                title='Custom assembly',
+                body='',
+                working_dir=Path('/unused'),
+                logger=MagicMock(),
+                auto_trigger_build_sync=True,
+            )
+        repository.assert_not_called()
+        github.assert_not_called()
+
     def test_fail_counter_helpers_are_defined_in_pyartcd_util(self):
         """Failure counter helpers are owned by the pyartcd utility module."""
         self.assertEqual(util.increment_fail_counter.__module__, util.__name__)
@@ -151,62 +172,13 @@ class TestUtil(IsolatedAsyncioTestCase):
         actual = await util.load_group_config("openshift-4.9", "art0001")
         self.assertEqual(actual["key"], "value")
 
-    def test_dockerfile_url_for(self):
-        # HTTPS url
-        url = util.dockerfile_url_for(
-            url='https://github.com/openshift/ironic-image',
-            branch='release-4.13',
-            sub_path='scripts',
-        )
-        self.assertEqual(url, 'https///github.com/openshift/ironic-image/blob/release-4.13/scripts')
-
-        # Empty subpath
-        url = util.dockerfile_url_for(
-            url='https://github.com/openshift/ironic-image',
-            branch='release-4.13',
-            sub_path='',
-        )
-        self.assertEqual(url, 'https///github.com/openshift/ironic-image/blob/release-4.13/')
-
-        # Empty url
-        url = util.dockerfile_url_for(
-            url='',
-            branch='release-4.13',
-            sub_path='',
-        )
-        self.assertEqual(url, '')
-
-        # Empty branch
-        url = util.dockerfile_url_for(
-            url='https://github.com/openshift/ironic-image',
-            branch='',
-            sub_path='scripts',
-        )
-        self.assertEqual(url, '')
-
-        # SSH remote
-        url = util.dockerfile_url_for(
-            url='git@github.com:openshift/ironic-image.git',
-            branch='release-4.13',
-            sub_path='scripts',
-        )
-        self.assertEqual(url, 'https///github.com/openshift/ironic-image/blob/release-4.13/scripts')
-
-        # SSH remote, empty subpath
-        url = util.dockerfile_url_for(
-            url='git@github.com:openshift/ironic-image.git',
-            branch='release-4.13',
-            sub_path='',
-        )
-        self.assertEqual(url, 'https///github.com/openshift/ironic-image/blob/release-4.13/')
-
+    @patch("pyartcd.util.get_global_freeze_automation", new_callable=AsyncMock, return_value='no')
     @patch("artcommonlib.exectools.cmd_gather_async")
-    async def test_get_freeze_automation(self, cmd_gather_async: AsyncMock):
-        cmd_gather_async.return_value = (0, '', '')
+    async def test_get_freeze_automation(self, cmd_gather_async: AsyncMock, global_freeze: AsyncMock):
+        # When the global master switch is 'no', defer to the group's own value via config:read-group.
+        cmd_gather_async.return_value = (0, 'scheduled\n', '')
 
-        await util.get_freeze_automation(
-            group='openshift-4.15',
-        )
+        self.assertEqual(await util.get_freeze_automation(group='openshift-4.15'), 'scheduled')
         cmd_gather_async.assert_awaited_once_with(
             [
                 'doozer',
@@ -239,6 +211,159 @@ class TestUtil(IsolatedAsyncioTestCase):
                 'freeze_automation',
             ]
         )
+
+        # A non-'no' global state takes precedence and is propagated without ever reading the group.
+        for global_state in ('yes', 'scheduled', 'weekdays'):
+            with self.subTest(global_state=global_state):
+                global_freeze.return_value = global_state
+                cmd_gather_async.reset_mock()
+                self.assertEqual(await util.get_freeze_automation(group='openshift-4.15'), global_state)
+                cmd_gather_async.assert_not_awaited()
+
+    @patch('pyartcd.util.get_weekday', return_value='Wednesday')
+    @patch('pyartcd.util.is_manual_build', return_value=False)
+    @patch('pyartcd.util.get_global_freeze_automation', new_callable=AsyncMock, return_value='no')
+    @patch('pyartcd.util.exectools.cmd_gather_async', new_callable=AsyncMock)
+    async def test_group_freeze_values_are_normalized_before_build_check(self, read_group, *_):
+        for value, normalized, permitted in [
+            ('Scheduled\n', 'scheduled', False),
+            (' weekdays \n', 'weekdays', False),
+            ('True\n', 'yes', False),
+            ('yes\n', 'yes', False),
+            ('False\n', 'no', True),
+            ('false\n', 'no', True),
+            ('no\n', 'no', True),
+        ]:
+            with self.subTest(value=value):
+                read_group.return_value = (0, value, '')
+                self.assertEqual(await util.get_freeze_automation(group='openshift-4.18'), normalized)
+                self.assertEqual(await util.is_build_permitted(group='openshift-4.18'), permitted)
+
+    @patch('pyartcd.util.is_manual_build', return_value=True)
+    @patch('pyartcd.util.get_global_freeze_automation', new_callable=AsyncMock, return_value='no')
+    @patch('pyartcd.util.exectools.cmd_gather_async', new_callable=AsyncMock)
+    async def test_invalid_group_freeze_values_stop_build_checks(self, read_group, _global_freeze, is_manual):
+        for value in ['weekday', 'bogus', '', '\n', '42', '{}', '[]']:
+            with self.subTest(value=value):
+                read_group.return_value = (0, value, '')
+                with self.assertRaisesRegex(ValueError, 'Invalid freeze_automation value'):
+                    await util.get_freeze_automation(group='openshift-4.18')
+                with self.assertRaisesRegex(ValueError, 'Invalid freeze_automation value'):
+                    await util.is_build_permitted(group='openshift-4.18')
+        is_manual.assert_not_called()
+
+    @patch("pyartcd.util.aiohttp.ClientSession")
+    async def test_is_global_automation_frozen(self, session_class):
+        response = MagicMock(status=200)
+        session = MagicMock()
+        session_class.return_value.__aenter__.return_value = session
+        session.get.return_value.__aenter__.return_value = response
+        # A hard freeze is only the global 'yes'/true; scheduled/weekdays/false are NOT hard freezes.
+        for value, expected in [
+            ('true', True),
+            ('yes', True),
+            ('false', False),
+            ('scheduled', False),
+            ('weekdays', False),
+        ]:
+            with self.subTest(value=value):
+                response.text = AsyncMock(return_value=f'freeze_automation: {value}\n')
+                self.assertIs(await util.is_global_automation_frozen(), expected)
+        session.get.assert_called_with(
+            'https://raw.githubusercontent.com/openshift-eng/ocp-build-data/main/config/automation.yml'
+        )
+
+    @patch("pyartcd.util.aiohttp.ClientSession")
+    async def test_get_global_freeze_automation(self, session_class):
+        response = MagicMock(status=200)
+        session = MagicMock()
+        session_class.return_value.__aenter__.return_value = session
+        session.get.return_value.__aenter__.return_value = response
+        # YAML booleans and the valid string constants are all accepted and normalized.
+        for value, expected in [
+            ('true', 'yes'),
+            ('false', 'no'),
+            ('"yes"', 'yes'),
+            ('scheduled', 'scheduled'),
+            ('weekdays', 'weekdays'),
+        ]:
+            with self.subTest(value=value):
+                response.text = AsyncMock(return_value=f'freeze_automation: {value}\n')
+                self.assertEqual(await util.get_global_freeze_automation(), expected)
+        session.get.assert_called_with(
+            'https://raw.githubusercontent.com/openshift-eng/ocp-build-data/main/config/automation.yml'
+        )
+
+    @patch("pyartcd.util.aiohttp.ClientSession")
+    async def test_global_freeze_missing_config(self, session_class):
+        response = MagicMock(status=404)
+        session = MagicMock()
+        session_class.return_value.__aenter__.return_value = session
+        session.get.return_value.__aenter__.return_value = response
+        # 404 -> not frozen for both the string and boolean views of the switch.
+        self.assertEqual(await util.get_global_freeze_automation(), 'no')
+        self.assertFalse(await util.is_global_automation_frozen())
+        response.text.assert_not_called()
+
+    @patch("pyartcd.util.aiohttp.ClientSession")
+    async def test_global_freeze_invalid_config(self, session_class):
+        response = MagicMock(status=200)
+        session = MagicMock()
+        session_class.return_value.__aenter__.return_value = session
+        session.get.return_value.__aenter__.return_value = response
+        # Only genuine junk raises; 'scheduled'/'weekdays' are now valid values (covered elsewhere).
+        for config in ['', '{}', '[]', 'freeze_automation: bogus', 'freeze_automation: maybe', 'invalid: [']:
+            with self.subTest(config=config):
+                response.text = AsyncMock(return_value=config)
+                with self.assertRaises((ValueError, util.yaml.YAMLError)):
+                    await util.get_global_freeze_automation()
+
+    @patch("pyartcd.util.aiohttp.ClientSession")
+    async def test_global_freeze_read_failure(self, session_class):
+        # Neutralize the tenacity retry wait so repeated transient failures don't add real sleeps.
+        original_wait = util.get_global_freeze_automation.retry.wait
+        util.get_global_freeze_automation.retry.wait = wait_none()
+        self.addCleanup(setattr, util.get_global_freeze_automation.retry, "wait", original_wait)
+
+        session = MagicMock()
+        session_class.return_value.__aenter__.return_value = session
+        response = MagicMock(status=503)
+        session.get.return_value.__aenter__.return_value = response
+        response.raise_for_status.side_effect = aiohttp.ClientError('Service unavailable')
+        with self.assertRaises(aiohttp.ClientError):
+            await util.get_global_freeze_automation()
+        # Transient ClientError is retried up to 3 attempts before reraising.
+        self.assertEqual(response.raise_for_status.call_count, 3)
+        session.get.return_value.__aenter__.side_effect = asyncio.TimeoutError
+        with self.assertRaises(asyncio.TimeoutError):
+            await util.get_global_freeze_automation()
+
+    @patch("pyartcd.util.is_manual_build", return_value=True)
+    @patch("pyartcd.util.get_global_freeze_automation", new_callable=AsyncMock, return_value='yes')
+    @patch("artcommonlib.exectools.cmd_gather_async")
+    async def test_global_freeze_overrides_groups(self, cmd_gather_async, global_freeze, manual_build):
+        # A global 'yes' is a hard stop: even manual runs and custom group refs cannot override it,
+        # and the group value is never read.
+        for group in ['openshift-4.18', 'openshift-4.22', 'acm-2.17']:
+            with self.subTest(group=group):
+                self.assertFalse(
+                    await util.is_build_permitted(
+                        group=group,
+                        data_path='https://github.com/random-fork/ocp-build-data',
+                        doozer_data_gitref='custom-ref',
+                    )
+                )
+        cmd_gather_async.assert_not_awaited()
+        manual_build.assert_not_called()
+
+        # A global 'scheduled' is manual-aware: it permits a manual build but blocks a non-manual one,
+        # still without reading the group value.
+        global_freeze.return_value = 'scheduled'
+        manual_build.return_value = True
+        self.assertTrue(await util.is_build_permitted(group='openshift-4.18'))
+        manual_build.return_value = False
+        self.assertFalse(await util.is_build_permitted(group='openshift-4.18'))
+        cmd_gather_async.assert_not_awaited()
 
     @patch("pyartcd.util.get_weekday")
     @patch("pyartcd.util.is_manual_build")
@@ -276,8 +401,8 @@ class TestUtil(IsolatedAsyncioTestCase):
 
         # Unknown value for 'freeze_automation'
         get_freeze_automation_mock.return_value = 'unknown'
-        res = await util.is_build_permitted(version='4.15')
-        self.assertTrue(res)
+        with self.assertRaisesRegex(ValueError, 'Invalid freeze_automation value'):
+            await util.is_build_permitted(version='4.15')
 
     @patch("pyartcd.util.exectools.cmd_gather_async", new_callable=AsyncMock)
     async def test_is_okd_version_enabled(self, cmd_gather_async: AsyncMock):

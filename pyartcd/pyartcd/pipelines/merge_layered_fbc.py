@@ -85,16 +85,25 @@ class MergeLayeredFbcPipeline:
         self.skip_tasks = skip_tasks
 
     async def _resolve_assemblies(self) -> list[FbcTargetPlan]:
-        if self.product not in (None, 'quay'):
-            raise ValueError('Assembly inputs currently support product quay only')
+        """Resolve named layered-product assemblies into per-OCP build plans.
+
+        Returns:
+            Validated source FBC selections grouped into OCP target plans.
+
+        Raises:
+            ValueError: If the product, assembly, group configuration, or
+                recorded FBC inputs are invalid or inconsistent.
+        """
         if self.builds or self.options['--fbc-branch'] or self.skip_rebase:
             raise ValueError('--assembly cannot be combined with --fbc-build, --fbc-branch, or --skip-rebase')
-        self.product = 'quay'
+        if not self.product or self.product == 'ocp':
+            raise ValueError('Assembly inputs require a layered-product identity')
         selections = {}
         for assembly in self.assemblies:
             if not re.fullmatch(r'[0-9]+\.[0-9]+\.[0-9]+', assembly):
                 raise ValueError(f'Assembly {assembly} must have MAJOR.MINOR.PATCH format')
-            group = 'quay-' + '.'.join(assembly.split('.')[:2])
+            group = self.product + '-' + '.'.join(assembly.split('.')[:2])
+            validate_git_group_name(group)
             if group in selections:
                 raise ValueError(f'Multiple assemblies supplied for {group}')
             selections[group] = assembly
@@ -366,7 +375,12 @@ class MergeLayeredFbcPipeline:
     multiple=True,
     help='FBC NVR or pullspec; repeat for each source version. Optional when --fbc-branch is set.',
 )
-@click.option('--assembly', 'assemblies', multiple=True, help='Full Quay assembly version; repeat for each release.')
+@click.option(
+    '--assembly',
+    'assemblies',
+    multiple=True,
+    help='Full layered-product assembly version; repeat for each release.',
+)
 @click.option(
     '--max-concurrent-targets',
     type=click.IntRange(min=1),
@@ -374,7 +388,10 @@ class MergeLayeredFbcPipeline:
     show_default=True,
     help='Maximum assembly targets built at once; serial execution bounds catalog memory.',
 )
-@click.option('--product', help='Require all source builds to belong to this product.')
+@click.option(
+    '--product',
+    help='Layered-product identity used to validate sources and resolve assembly groups; required with --assembly.',
+)
 @click.option('--data-path', default=constants.OCP_BUILD_DATA_URL)
 @click.option('--fbc-repo')
 @click.option('--fbc-branch', help='Build this existing FBC source branch directly; implies --skip-rebase.')

@@ -2,6 +2,7 @@ import json
 import traceback
 
 import click
+from artcommonlib.constants import FREEZE_AUTOMATION_SCHEDULED
 from artcommonlib.util import isolate_major_minor_in_group
 
 from pyartcd import jenkins, locks, util
@@ -10,7 +11,7 @@ from pyartcd.constants import OCP_BUILD_DATA_URL
 from pyartcd.locks import Lock
 from pyartcd.plashets import build_plashets
 from pyartcd.runtime import Runtime
-from pyartcd.util import get_freeze_automation, is_manual_build
+from pyartcd.util import get_freeze_automation, is_freeze_state_build_permitted
 
 
 class RpmMirror:
@@ -32,6 +33,7 @@ class BuildPlashetsPipeline:
         data_gitref='',
         copy_links=False,
         version=None,
+        ignore_automation_freeze=False,
     ):
         self.runtime = runtime
         self.group = group
@@ -42,14 +44,21 @@ class BuildPlashetsPipeline:
         self.data_gitref = data_gitref
         self.copy_links = copy_links
         self.version = version
+        self.ignore_automation_freeze = ignore_automation_freeze
 
         self.slack_client = runtime.new_slack_client()
 
     async def run(self):
         jenkins.init_jenkins()
 
-        # Check if compose build is permitted
-        if not await self.is_compose_build_permitted():
+        # Honor the same explicit override as the parent OCP build.
+        if self.ignore_automation_freeze:
+            self.runtime.logger.warning(
+                'Ignoring global and group freeze_automation for %s because '
+                '--ignore-automation-freeze was explicitly set',
+                self.group,
+            )
+        elif not await self.is_compose_build_permitted():
             self.runtime.logger.info("Skipping compose build as it's not permitted")
             return
 
@@ -101,9 +110,12 @@ class BuildPlashetsPipeline:
 
     async def is_compose_build_permitted(self) -> bool:
         """
-        If automation is not frozen, go ahead
-        If scheduled automation is frozen and job was triggered by hand, return True
-        Otherwise, return False
+        Decide whether a compose may be built right now based on the group's
+        effective freeze_automation state. The decision is delegated to the
+        shared util.is_freeze_state_build_permitted helper so it stays in sync
+        with is_build_permitted: 'yes'/'True' block everything, 'scheduled'
+        permits only manual runs, and 'weekdays' permits weekend (or manual)
+        runs while blocking weekday non-manual runs.
         """
 
         if self.group.startswith('golang'):
@@ -118,20 +130,16 @@ class BuildPlashetsPipeline:
         )
         self.runtime.logger.info('Automation freeze state for %s: %s', self.group, automation_freeze_state)
 
-        # If automation is not frozen, allow compose
-        if automation_freeze_state not in ['scheduled', 'yes', 'True']:
-            return True
+        permitted = is_freeze_state_build_permitted(automation_freeze_state)
 
-        # If scheduled automation is frozen and this is a manual build, allow compose
-        if automation_freeze_state == 'scheduled' and is_manual_build():
-            # Send a Slack notification since we're running compose build during automation freeze
+        # If a manual compose is permitted while scheduled automation is frozen, alert on Slack since
+        # we're running a compose build during an active automation freeze.
+        if permitted and automation_freeze_state == FREEZE_AUTOMATION_SCHEDULED:
             channel = self.group if self.group.startswith('openshift-') else None
             self.slack_client.bind_channel(channel)
             await self.slack_client.say(f":alert: ocp4 build compose running during automation freeze for {self.group}")
-            return True
 
-        # In all other case, forbid compose
-        return False
+        return permitted
 
 
 @cli.command(
@@ -162,6 +170,12 @@ class BuildPlashetsPipeline:
 @click.option('--data-gitref', required=False, default='', help='Doozer data path git [branch / tag / sha] to use')
 @click.option('--copy-links', is_flag=True, default=False, help='Call rsync with --copy-links instead of --links')
 @click.option(
+    '--ignore-automation-freeze',
+    is_flag=True,
+    default=False,
+    help='Ignore global and group freeze_automation policy for this run; compose locks still apply',
+)
+@click.option(
     '--version',
     required=False,
     default='',
@@ -178,6 +192,7 @@ async def build_plashets_cli(
     data_path: str,
     data_gitref: str,
     copy_links: bool,
+    ignore_automation_freeze: bool,
     version: str,
 ):
     # Auto-generate release timestamp if not provided
@@ -209,6 +224,7 @@ async def build_plashets_cli(
         data_gitref=data_gitref,
         copy_links=copy_links,
         version=version or None,
+        ignore_automation_freeze=ignore_automation_freeze,
     )
 
     lock = Lock.PLASHET

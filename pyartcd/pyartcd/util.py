@@ -14,12 +14,20 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 from typing import Dict, Iterable, List, Optional, OrderedDict, Union, cast
 
+import aiohttp
 import artcommonlib
 import yaml
 from artcommonlib import exectools, redis
 from artcommonlib.arch_util import go_suffix_for_arch
 from artcommonlib.assembly import assembly_type
-from artcommonlib.constants import ACTIVE_OCP_VERSIONS
+from artcommonlib.constants import (
+    ACTIVE_OCP_VERSIONS,
+    FREEZE_AUTOMATION_NO,
+    FREEZE_AUTOMATION_SCHEDULED,
+    FREEZE_AUTOMATION_WEEKDAYS,
+    FREEZE_AUTOMATION_YES,
+    normalize_freeze_automation,
+)
 from artcommonlib.exectools import limit_concurrency
 from artcommonlib.github_auth import get_github_client_for_org
 from artcommonlib.konflux.konflux_build_record import KonfluxBuildOutcome
@@ -35,6 +43,7 @@ from artcommonlib.util import merge_objects, new_roundtrip_yaml_handler, product
 from doozerlib import util as doozerutil
 from doozerlib.constants import ART_BUILD_HISTORY_URL
 from errata_tool import ErrataConnector
+from tenacity import before_sleep_log, retry, retry_if_exception_type, stop_after_attempt, wait_fixed
 
 from pyartcd import constants, record
 from pyartcd.build_strategy import BuildStrategy
@@ -405,6 +414,47 @@ def get_changes(yaml_data: dict) -> dict:
     return changes
 
 
+@retry(
+    reraise=True,
+    stop=stop_after_attempt(3),
+    wait=wait_fixed(5),
+    retry=retry_if_exception_type((aiohttp.ClientError, asyncio.TimeoutError)),
+    before_sleep=before_sleep_log(logger, logging.WARNING),
+)
+async def get_global_freeze_automation() -> str:
+    """Read the global master switch from canonical build-data main and return its normalized state.
+
+    Returns one of artcommonlib.constants.VALID_FREEZE_AUTOMATION_VALUES
+    ('yes'/'scheduled'/'weekdays'/'no'). The config may set freeze_automation as a
+    YAML boolean (true -> 'yes', false -> 'no') or any of the valid string
+    constants. A missing config file (404) is treated as not frozen ('no') so
+    this code can be deployed before the config is merged. Genuinely unknown or
+    malformed config raises ValueError (or a YAML error).
+    """
+    url = 'https://raw.githubusercontent.com/openshift-eng/ocp-build-data/main/config/automation.yml'
+    async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=30)) as session:
+        async with session.get(url) as response:
+            # Allow the automation change to be deployed before the new config is merged.
+            if response.status == 404:
+                return FREEZE_AUTOMATION_NO
+            response.raise_for_status()
+            config = yaml.safe_load(await response.text())
+
+    if not isinstance(config, dict) or 'freeze_automation' not in config:
+        raise ValueError(f'{url} must define freeze_automation')
+    return normalize_freeze_automation(config['freeze_automation'])
+
+
+async def is_global_automation_frozen() -> bool:
+    """Whether the global master switch hard-freezes all automation (global 'yes'/true).
+
+    Preserved for existing binary callers. Note that 'scheduled' and 'weekdays'
+    are NOT hard freezes and return False here; use is_build_permitted() or
+    get_freeze_automation() to honor those in a manual-aware way.
+    """
+    return (await get_global_freeze_automation()) == FREEZE_AUTOMATION_YES
+
+
 async def get_freeze_automation(
     group: str,
     doozer_data_path: str = constants.OCP_BUILD_DATA_URL,
@@ -413,8 +463,22 @@ async def get_freeze_automation(
     extra_vars: list = None,
 ) -> str:
     """
-    Returns freeze_automation flag for a specific group
+    Return the effective freeze flag, with the global master switch taking precedence over the group.
+
+    The global state is read once; if it is anything other than 'no', that state
+    is returned so 'yes'/'scheduled'/'weekdays' all override the group. Otherwise
+    the group's own freeze_automation value is read via doozer config:read-group
+    and normalized. Invalid values raise ValueError instead of permitting builds.
     """
+    global_state = await get_global_freeze_automation()
+    if global_state != FREEZE_AUTOMATION_NO:
+        logger.warning(
+            'Global freeze_automation in ocp-build-data main/config/automation.yml is set to "%s"; '
+            'overriding group policy for %s',
+            global_state,
+            group,
+        )
+        return global_state
 
     group_param = f'--group={group}'
     if doozer_data_gitref:
@@ -432,7 +496,7 @@ async def get_freeze_automation(
         'freeze_automation',
     ]
     _, out, _ = await exectools.cmd_gather_async(cmd)
-    return out.strip()
+    return normalize_freeze_automation(out)
 
 
 async def has_layered_rhcos(doozer_base_command: list) -> bool:
@@ -478,6 +542,60 @@ def get_weekday() -> str:
     return datetime.today().strftime("%A")
 
 
+def is_freeze_state_build_permitted(freeze_automation: str) -> bool:
+    """
+    Decide whether build-producing work is permitted right now given an already
+    resolved freeze_automation state, honoring manual vs scheduled runs and the
+    current day of the week.
+
+    This is the single source of truth for interpreting a freeze_automation
+    value and is shared by is_build_permitted and build_plashets'
+    is_compose_build_permitted so the two cannot drift apart. Semantics:
+        - 'yes'/'True'  -> never permitted (hard freeze, including manual runs)
+        - 'scheduled'   -> permitted only for manual runs
+        - 'weekdays'    -> manual runs always permitted; non-manual runs permitted
+                           only on weekends (plus the images-health Monday exception)
+        - 'no'/'False'  -> permitted
+        - invalid values raise ValueError
+    """
+    freeze_automation = normalize_freeze_automation(freeze_automation)
+
+    # Hard freeze: nothing is permitted, not even manual runs.
+    if freeze_automation == FREEZE_AUTOMATION_YES:
+        logger.info('Automation is disabled by the global or group freeze_automation setting.')
+        return False
+
+    # Only manual runs are permitted.
+    if freeze_automation == FREEZE_AUTOMATION_SCHEDULED and not is_manual_build():
+        logger.info(
+            'Only manual runs are permitted according to freeze_automation and this run appears to be non-manual.'
+        )
+        return False
+
+    # Automated runs are permitted only on weekends; manual runs are always permitted.
+    if freeze_automation == FREEZE_AUTOMATION_WEEKDAYS:
+        # Manual builds are always permitted
+        if is_manual_build():
+            logger.info('Current build is permitted as it has been triggered manually')
+            return True
+
+        # Check current day of the week
+        weekday = get_weekday()
+        if weekday in ['Saturday', 'Sunday']:
+            logger.info(f'Automation is permitted during weekends, and today is {weekday}')
+            return True
+
+        if weekday in ['Monday'] and os.environ.get('JOB_BASE_NAME', '') in ['images-health']:
+            logger.info(f"Permitting automated run of {os.environ['JOB_BASE_NAME']} on Monday")
+            return True
+
+        logger.info('Scheduled builds are permitted only on weekends, and today is %s', weekday)
+        return False
+
+    # Fallback to default
+    return True
+
+
 async def is_build_permitted(
     version: str = '',
     group: str = '',
@@ -488,6 +606,7 @@ async def is_build_permitted(
     """
     Check whether the group should be built right now.
     This depends on:
+        - global master switch on ocp-build-data main
         - group config 'freeze_automation'
         - manual/scheduled run
         - current day of the week
@@ -513,42 +632,7 @@ async def is_build_permitted(
     )
     logger.info('Group freeze automation flag is set to: "%s"', freeze_automation)
 
-    # Check for frozen automation
-    # yaml parses unquoted "yes" as a boolean... accept either
-    if freeze_automation in ['yes', 'True']:
-        logger.info('All automation is currently disabled by freeze_automation in group.yml.')
-        return False
-
-    # Check for frozen scheduled automation
-    if freeze_automation == "scheduled" and not is_manual_build():
-        logger.info(
-            'Only manual runs are permitted according to freeze_automation in group.yml '
-            'and this run appears to be non-manual.'
-        )
-        return False
-
-    # Check if group can run on weekends
-    if freeze_automation == 'weekdays':
-        # Manual builds are always permitted
-        if is_manual_build():
-            logger.info('Current build is permitted as it has been triggered manually')
-            return True
-
-        # Check current day of the week
-        weekday = get_weekday()
-        if weekday in ['Saturday', 'Sunday']:
-            logger.info(f'Automation is permitted during weekends, and today is {weekday}')
-            return True
-
-        if weekday in ['Monday'] and os.environ.get('JOB_BASE_NAME', '') in ['images-health']:
-            logger.info(f"Permitting automated run of {os.environ['JOB_BASE_NAME']} on Monday")
-            return True
-
-        logger.info('Scheduled builds for %s are permitted only on weekends, and today is %s', version, weekday)
-        return False
-
-    # Fallback to default
-    return True
+    return is_freeze_state_build_permitted(freeze_automation)
 
 
 def log_dir_tree(path_to_dir):
@@ -626,153 +710,6 @@ def build_history_link_url(
     return build_history_url
 
 
-def dockerfile_url_for(url, branch, sub_path) -> str:
-    if not url or not branch:
-        return ''
-
-    # if it looks like an ssh GitHub remote, transform it to https
-    url = url.replace('git@', 'https://')
-    url = url.replace(':', '/')
-    url = url.replace('.git', '')
-
-    return f"{url}/blob/{branch}/{sub_path if sub_path else ''}"
-
-
-def notify_dockerfile_reconciliations(version: str, doozer_working: str, mail_client: MailService):
-    """
-    Loop through all new commits that affect dockerfiles and notify their owners
-    """
-
-    with open(Path(doozer_working) / "record.log", "r") as file:
-        record_log: dict = record.parse_record_log(file)
-
-    distgit_notify = record.get_distgit_notify(record_log)
-
-    # Convert the dict to a list of tuples
-    distgit_notify = [(key, value) for key, value in distgit_notify.items()]
-
-    for i in range(len(distgit_notify)):
-        distgit = distgit_notify[i][0]
-
-        val = distgit_notify[i][1]
-        if not val.get('owners'):
-            continue
-
-        alias = val['source_alias']
-        url = dockerfile_url_for(alias['origin_url'], alias['branch'], val['source_dockerfile_subpath'])
-        dockerfile_url = f'Upstream source file: {url}' if url else ''
-
-        # Populate the introduction for all emails to owners
-        explanation_body = """Why am I receiving this?
-------------------------
-You are receiving this message because you are listed as an owner for an
-OpenShift related image - or you recently made a modification to the definition
-of such an image in github. Upstream (github) OpenShift Dockerfiles are
-regularly pulled from their upstream source and used as an input to build our
-productized images - RHEL-based OpenShift Container Platform (OCP) images.
-
-To serve as an input to RHEL/OCP images, upstream Dockerfiles are
-programmatically modified before they are checked into a downstream git
-repository which houses all Red Hat images:
- - https://pkgs.devel.redhat.com/cgit/containers/
-
-We call this programmatic modification "reconciliation" and you will receive an
-email when the upstream Dockerfile changes so that you can review the
-differences between the upstream & downstream Dockerfiles.\n"""
-
-        if val.get('failure', None):
-            email_subject = f'FAILURE: Error reconciling Dockerfile for {val["image"]} in OCP v{version}'
-            explanation_body += f"""
-What do I need to do?
----------------------
-An error occurred during your reconciliation. Until this issue is addressed,
-your upstream changes may not be reflected in the product build.
-
-Please review the error message reported below to see if the issue is due to upstream
-content. If it is not, the Automated Release Tooling (ART) team will engage to address
-the issue. Please direct any questions to the ART team (#forum-ocp-art on slack).
-
-Error Reported
---------------
-{val['failure']}\n"""
-
-        elif val.get('sha', None):
-            email_subject = f'SUCCESS: Changed Dockerfile reconciled for {val["image"]} in OCP v{version}'
-            explanation_body += f"""
-What do I need to do?
----------------------
-You may want to look at the result of the reconciliation. Usually,
-reconciliation is transparent and safe. However, you may be interested in any
-changes being performed by the OCP build system.
-
-
-What changed this time?
------------------------
-Reconciliation has just been performed for the image: {val["image"]}
-{dockerfile_url}
-The reconciled (downstream OCP) Dockerfile can be viewed here:
- - https://pkgs.devel.redhat.com/cgit/{distgit}/tree/Dockerfile?id={val["sha"]}
-
-Please direct any questions to the Automated Release Tooling team (#forum-ocp-art on slack).\n"""
-
-        else:
-            raise RuntimeError('Unable to determine notification reason; something is broken')
-
-        mail_client.send_mail(
-            to=val['owners'],
-            subject=email_subject,
-            content=explanation_body,
-        )
-
-
-def notify_bz_info_missing(version: str, doozer_working: str, mail_client: MailService):
-    with open(Path(doozer_working) / "record.log", "r") as file:
-        record_log: dict = record.parse_record_log(file)
-
-    bz_notify_entries = record_log.get('bz_maintainer_notify', [])
-    for bz_notify in bz_notify_entries:
-        owners = bz_notify.get('owners', '')
-        if not owners:
-            continue
-
-        public_upstream_url = bz_notify['public_upstream_url']
-        distgit = bz_notify['distgit']
-        email_subject = (
-            f'[ACTION REQUIRED] Bugzilla component information missing for image {distgit} in OCP v{version}'
-        )
-        explanation_body = f"""
-Why am I receiving this?
-------------------------
-You are receiving this message because you are listed as an owner for an
-OpenShift related image - or you recently made a modification to the definition
-of such an image in github.
-
-To comply with prodsec requirements, all images in the OpenShift product
-should identify their Bugzilla component. To accomplish this, ART
-expects to find Bugzilla component information in the default branch of
-the image's upstream repository or requires it in ART image metadata.
-
-What should I do?
-------------------------
-There are two options to supply Bugzilla component information.
-1) The OWNERS file in the default branch (e.g. main / master) of {public_upstream_url}
-   can be updated to include the bugzilla component information.
-
-2) The component information can be specified directly in the
-   ART metadata for the image {distgit}.
-
-Details for either approach can be found here:
-https://docs.google.com/document/d/1V_DGuVqbo6CUro0RC86THQWZPrQMwvtDr0YQ0A75QbQ/edit?usp=sharing
-
-Thanks for your help!\n"""
-
-        mail_client.send_mail(
-            to=owners,
-            subject=email_subject,
-            content=explanation_body,
-        )
-
-
 async def notify_branch_protection_missing(version: str, doozer_working: str, mail_client: MailService):
     """
     Notify component owners when their upstream branch does not have branch protection enabled.
@@ -839,92 +776,6 @@ Please direct any questions to the Automated Release Tooling team (#forum-ocp-ar
 
         # Mark as notified with 1-day TTL
         await redis.set_value(redis_key, "1", expiry=86400)
-
-
-def mail_build_failure_owners(failed_builds: dict, doozer_working: str, mail_client: MailService, default_owner: str):
-    """
-     Send email to owners of failed image builds.
-
-
-     :param failed_builds: map of records as below (all values strings)
-
-     presto:
-         status: -1
-         push_status: 0
-         distgit: presto
-         image: openshift/ose-presto
-         owners: sd-operator-metering@redhat.com,czibolsk@redhat.com
-         version: v4.0.6
-         release: 1
-         dir: doozer_working/distgits/containers/presto
-         dockerfile: doozer_working/distgits/containers/presto/Dockerfile
-         task_id: 20415814
-         task_url: https://brewweb.engineering.redhat.com/brew/taskinfo?taskID=20415814
-         message: "Exception occurred: ;;; Traceback (most recent call last): [...]"
-
-    :param doozer_working: path to Doozer working directory
-
-    :param mail_client: MailService instance
-
-    :param return_address: replies to the email will go to this
-
-    :param default_owner: if no owner is listed, send build failure email to this
-    """
-
-    for failure in failed_builds.values():
-        if failure['status'] == '0':
-            continue
-
-        container_log = """
---------------------------------------------------------------------------
-The following logs are just the container build portion of the OSBS build:
---------------------------------------------------------------------------\n"""
-        container_log_file = (
-            f'{doozer_working}/brew-logs/{failure["distgit"]}/noarch-{failure["task_id"]}/container-build-x86_64.log'
-        )
-
-        try:
-            with open(container_log_file) as f:
-                container_log += f.read()
-
-        except:
-            container_log = "Unfortunately there were no container build logs; something else about the build failed."
-            logger.warning(
-                'No container build log for failed %s build\n(task url %s)\nat path %s',
-                failure['distgit'],
-                failure['task_url'],
-                container_log,
-            )
-
-        explanation_body = f"ART's brew/OSBS build of OCP image {failure['image']}:{failure['version']} has failed.\n\n"
-        if failure['owners']:
-            explanation_body += "This email is addressed to the owner(s) of this image per ART's build configuration."
-        else:
-            explanation_body += 'There is no owner listed for this build (you may want to add one).'
-        explanation_body += '\n\n'
-        explanation_body += (
-            "Builds may fail for many reasons, some under owner control, some under ART's control, "
-            "and some in the domain of other groups. This message is only sent when the build fails "
-            "consistently, so it is unlikely this failure will resolve itself without intervention.\n\n"
-        )
-        explanation_body += (
-            f'The brew build task {failure["task_url"]} failed with error message:\n'
-            f'{failure["message"]}\n'
-            f'{container_log}'
-        )
-
-        # Send email to owners of failed image builds
-        # If art is the only owner of image (example for our ci golang builder images) send instead to our default automation email
-        owner = (
-            failure['owners']
-            if (failure['owners'] and failure['owners'] != ["aos-team-art@redhat.com"])
-            else default_owner
-        )
-        mail_client.send_mail(
-            to=['aos-art-automation+failed-ocp-build@redhat.com', owner],
-            subject=f'Failed OCP build of {failure["image"]}:{failure["version"]}',
-            content=explanation_body,
-        )
 
 
 async def invalidate_cloudfront_cache(invalidation_path):
@@ -1612,6 +1463,9 @@ async def create_or_update_assembly_pr(
     Return Value(s):
         PR object, or None if nothing to commit
     """
+    if auto_trigger_build_sync and build_system != 'konflux':
+        raise ValueError('Brew build-sync has been retired; disable auto-trigger-build-sync for Brew assemblies')
+
     _yaml = new_roundtrip_yaml_handler()
     log = logger
     log.info("Creating ocp-build-data PR...")

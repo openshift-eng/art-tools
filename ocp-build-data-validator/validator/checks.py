@@ -7,6 +7,7 @@ from pathlib import Path
 from urllib.parse import quote
 
 import requests
+from artcommonlib.gitdata import SafeFormatter
 from requests.adapters import HTTPAdapter
 from ruamel.yaml import YAML
 from ruamel.yaml.error import YAMLError
@@ -57,6 +58,40 @@ def validate_fbc_catalogs(group: dict, auth_file: Path | None = None) -> list[st
                     f'OCP_TARGET_VERSIONS: could not verify FBC catalog {catalog}; '
                     'check registry access/authentication (--registry-auth-file) and retry'
                 )
+    return errors
+
+
+def validate_registry_pullspecs(data: dict, variables: dict | None = None) -> list[str]:
+    """Reject unauthenticated Red Hat registry hosts in image reference fields."""
+    errors = []
+
+    def visit(value, path, ancestors):
+        if isinstance(value, (dict, list)):
+            if id(value) in ancestors:
+                errors.append(f'{path}: recursive YAML alias is not supported')
+                return
+            ancestors = ancestors | {id(value)}
+        if isinstance(value, dict):
+            for key, item in value.items():
+                field = f'{path}.{key}'
+                if key == 'image' and isinstance(item, str):
+                    resolved = item
+                    if variables:
+                        try:
+                            resolved = SafeFormatter().format(item, **variables)
+                        except (KeyError, IndexError, AttributeError, TypeError, ValueError):
+                            pass  # GitData retains the original text when formatting fails.
+                    if re.match(
+                        r'^(?:docker://)?registry\.access\.redhat\.(?:com|io)(?::[0-9]+)?/', resolved, re.IGNORECASE
+                    ):
+                        errors.append(f'{field}: {resolved}: use registry.redhat.io for Red Hat images')
+                else:
+                    visit(item, field, ancestors)
+        elif isinstance(value, list):
+            for index, item in enumerate(value):
+                visit(item, f'{path}[{index}]', ancestors)
+
+    visit(data, '$', set())
     return errors
 
 

@@ -5,6 +5,7 @@ from unittest import IsolatedAsyncioTestCase
 from unittest.mock import AsyncMock, MagicMock, Mock, patch
 
 import yaml
+from artcommonlib.build_priority import BuildPriorityPolicy
 from artcommonlib.variants import BuildVariant
 from doozerlib.constants import KONFLUX_DEFAULT_IMAGE_REPO
 from pyartcd.build_strategy import BuildStrategy
@@ -14,6 +15,13 @@ from pyartcd.runtime import Runtime
 
 class TestBuildLayeredProductsPipeline(IsolatedAsyncioTestCase):
     def setUp(self):
+        policy_patcher = patch(
+            'pyartcd.pipelines.build_layered_products.load_build_priority_policy',
+            new_callable=AsyncMock,
+            return_value=BuildPriorityPolicy(),
+        )
+        self.policy_loader = policy_patcher.start()
+        self.addCleanup(policy_patcher.stop)
         self.runtime = Mock(spec=Runtime)
         self.tmpdir = tempfile.mkdtemp()
         self.runtime.working_dir = Path(self.tmpdir)
@@ -650,6 +658,33 @@ class TestBuildLayeredProductsPipeline(IsolatedAsyncioTestCase):
         self.assertFalse(any(arg.startswith('--images=') for arg in cmd))
         self.assertFalse(any(arg.startswith('--exclude=') for arg in cmd))
         self.assertIn('--build-priority=3', cmd)
+
+    async def test_enabled_policy_replaces_layered_product_fixed_priority(self):
+        self.policy_loader.return_value = BuildPriorityPolicy(enabled=True, default_priority=2)
+        with (
+            patch('pyartcd.pipelines.build_layered_products.exectools.cmd_assert_async', new_callable=AsyncMock) as cmd,
+            patch(
+                'pyartcd.pipelines.build_layered_products.resolve_konflux_kubeconfig_by_product',
+                return_value='/tmp/kube',
+            ),
+        ):
+            await self.pipeline._build(
+                BuildStrategy.ALL, None, [], 'oadp', KONFLUX_DEFAULT_IMAGE_REPO, BuildVariant.OADP
+            )
+        self.policy_loader.assert_awaited_once_with()
+        self.assertIn('--build-priority=2', cmd.call_args.args[0])
+        self.assertNotIn('--build-priority=3', cmd.call_args.args[0])
+
+    async def test_policy_failure_does_not_submit_layered_product_builds(self):
+        self.policy_loader.side_effect = ValueError('invalid priority policy')
+        with patch(
+            'pyartcd.pipelines.build_layered_products.exectools.cmd_assert_async', new_callable=AsyncMock
+        ) as cmd:
+            with self.assertRaisesRegex(ValueError, 'invalid priority policy'):
+                await self.pipeline._build(
+                    BuildStrategy.ALL, None, [], 'oadp', KONFLUX_DEFAULT_IMAGE_REPO, BuildVariant.OADP
+                )
+        cmd.assert_not_awaited()
 
     def _write_image_build_record_log(self, entries):
         """Write an image_build_konflux record.log with the given (name, nvr) entries, all successful with a bundle."""

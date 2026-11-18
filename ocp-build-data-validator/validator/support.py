@@ -35,6 +35,9 @@ def get_ocp_build_data_dir(file):
 
 
 def get_artifact_type(file):
+    if os.path.basename(file) == 'build-priority.yml':
+        return 'build-priority'
+
     if 'releases.yml' in file:
         return 'releases'
 
@@ -82,30 +85,8 @@ def resource_exists(url):
         return 200 <= requests.head(url).status_code < 400
 
 
-def resource_is_reachable(url):
-    try:
-        requests.head(url)
-        return True
-    except requests.exceptions.ConnectionError:
-        return False
-
-
-def get_namespace(data, file):
-    if 'distgit' in data and 'namespace' in data['distgit']:
-        return data['distgit']['namespace']
-    artifact_type = get_artifact_type(file)
-    return {'image': 'containers', 'binary': 'containers', 'rpm': 'rpms'}.get(artifact_type, '???')
-
-
 def get_repository_name(file):
     return os.path.basename(file).split('.')[0]
-
-
-def get_distgit_branch(data, group_cfg):
-    if 'distgit' in data and 'branch' in data['distgit']:
-        return replace_vars(data['distgit']['branch'], group_cfg['vars'])
-
-    return replace_vars(group_cfg['branch'], group_cfg['vars'])
 
 
 def replace_vars(text, vars_map):
