@@ -60,14 +60,25 @@ from pyartcd.mail import MailService
 logger = logging.getLogger(__name__)
 
 
-def update_run_title(title: str, *, annotation_key: str) -> None:
-    """Update the Jenkins build title or a Tekton PipelineRun annotation."""
+def update_run_title(title: str, *, annotation_key: str | None = None) -> None:
+    """Update the Jenkins title or log and optionally annotate a Tekton run."""
     if tekton.is_tekton_context():
         status = title.strip()
         logger.info('Run status: %s', status)
-        tekton.annotate_current_pipelinerun({annotation_key: status})
+        if annotation_key is not None:
+            tekton.annotate_current_pipelinerun({annotation_key: status})
     else:
         jenkins.update_title(title)
+
+
+def update_run_description(description: str) -> str | None:
+    """Append to the Jenkins description or log and return the Tekton text."""
+    if tekton.is_tekton_context():
+        message = description.replace('<br/>', '\n').strip()
+        logger.info('%s', message)
+        return message
+    jenkins.update_description(description)
+    return None
 
 
 def isolate_el_version_in_release(release: str) -> Optional[int]:

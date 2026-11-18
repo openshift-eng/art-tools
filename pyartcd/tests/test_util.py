@@ -1,4 +1,5 @@
 import asyncio
+import os
 import tempfile
 from pathlib import Path
 from unittest import IsolatedAsyncioTestCase
@@ -21,6 +22,23 @@ from pyartcd import util
 
 
 class TestUtil(IsolatedAsyncioTestCase):
+    @patch.dict(os.environ, {'TASKRUN_NAME': 'task', 'TEKTON_PIPELINERUN_NAME': 'build'}, clear=True)
+    def test_run_reporting_can_log_without_annotations_in_tekton(self):
+        with (
+            patch('pyartcd.tekton.annotate_current_pipelinerun') as annotate,
+            patch('pyartcd.jenkins.update_title') as update_title,
+            patch('pyartcd.jenkins.update_description') as update_description,
+            self.assertLogs('pyartcd.util') as logs,
+        ):
+            util.update_run_title(' [READY]')
+            description = util.update_run_description('One image<br/><a href="https://example.com">Build history</a>')
+
+        self.assertEqual(description, 'One image\n<a href="https://example.com">Build history</a>')
+        self.assertEqual([record.getMessage() for record in logs.records], ['Run status: [READY]', description])
+        annotate.assert_not_called()
+        update_title.assert_not_called()
+        update_description.assert_not_called()
+
     @patch('pyartcd.util.GitRepository')
     @patch('pyartcd.util.get_github_client_for_org')
     async def test_brew_assembly_auto_sync_fails_before_git_or_github_changes(self, github, repository):

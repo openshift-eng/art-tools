@@ -47,6 +47,7 @@ class Ocp4ScanPipeline:
         self.changes = {}
         self.report = {}
         self.issues = []
+        self._scan_statuses = []
         self._summary_messages = []
         self.command_failed = False
         self.command_failure_message = ''
@@ -70,14 +71,17 @@ class Ocp4ScanPipeline:
             '--build-system=konflux',
         ]
 
-    def _update_description(self, description):
+    def _update_title(self, title):
         if tekton.is_tekton_context():
-            message = description.replace('<br/>', '').strip()
-            self.logger.info('%s', message)
+            self._scan_statuses.append(title.strip())
+            title = ' '.join(self._scan_statuses)
+        util.update_run_title(title, annotation_key=SCAN_STATUS_ANNOTATION)
+
+    def _update_description(self, description):
+        message = util.update_run_description(description)
+        if message is not None:
             self._summary_messages.append(message)
             tekton.annotate_current_pipelinerun({'art.openshift.io/scan-summary': '; '.join(self._summary_messages)})
-        else:
-            jenkins.update_description(description)
 
     @start_as_current_span_async(TRACER, "ocp4-scan-konflux.run", record_resources=True)
     async def run(self):
@@ -294,7 +298,7 @@ class Ocp4ScanPipeline:
             return
 
         # Update Jenkins title and description
-        util.update_run_title(' [SOURCE CHANGES]', annotation_key=SCAN_STATUS_ANNOTATION)
+        self._update_title(' [SOURCE CHANGES]')
         if changed_rpm:
             self._update_description(f'Changed {len(changed_rpm)} RPMs<br/>')
         if changed_ocp_images:
@@ -323,7 +327,7 @@ class Ocp4ScanPipeline:
 
         if self.rhcos_inconsistent or self.rhcos_outdated:
             # Update Jenkins title and description
-            util.update_run_title(' [RHCOS CHANGES]', annotation_key=SCAN_STATUS_ANNOTATION)
+            self._update_title(' [RHCOS CHANGES]')
 
             if self.rhcos_inconsistent:
                 self.logger.info('Detected inconsistent RHCOS RPMs:\n%s', self.inconsistent_rhcos_rpms)
@@ -455,13 +459,7 @@ async def ocp4_scan(
     else:
         lock = Lock.SCAN_KONFLUX
         lock_name = lock.value.format(version=version)
-        if tekton.is_tekton_context():
-            lock_identifier = (
-                f'k8s/ns/{os.environ["TASKRUN_NAMESPACE"]}/tekton.dev~v1~PipelineRun/'
-                f'{tekton.get_current_pipelinerun_name()}'
-            )
-        else:
-            lock_identifier = jenkins.get_build_path_or_random()
+        lock_identifier = locks.get_run_lock_owner()
 
         # Scheduled builds are already being skipped if the lock is already acquired.
         # For manual builds, we need to check if the build and scan locks are already acquired,
