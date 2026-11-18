@@ -1,5 +1,6 @@
 import json
 import sys
+from dataclasses import replace
 from datetime import datetime, timezone
 from typing import Dict, List, Optional, Set
 
@@ -17,6 +18,9 @@ from artcommonlib.rpm_utils import parse_nvr
 from artcommonlib.util import is_ocp_delivery_repo, new_roundtrip_yaml_handler
 
 from elliottlib import Runtime, bzutil, constants, errata
+from elliottlib.bug_sweep_plugins.contracts import PluginContext, PluginDisposition, PluginResult
+from elliottlib.bug_sweep_plugins.registry import create_plugins
+from elliottlib.bug_sweep_plugins.runner import evaluate_plugins
 from elliottlib.bzutil import Bug, BugTracker, JIRABug, is_rhcos_pscomponent
 from elliottlib.cli import common
 from elliottlib.cli.common import click_coroutine
@@ -247,9 +251,92 @@ async def find_bugs_sweep_cli(
     sys.exit(0)
 
 
-async def get_bugs_sweep(runtime: Runtime, find_bugs_obj, bug_tracker, filter_attached_bugs: bool = True):
+def _run_evidence_plugins(
+    runtime: Runtime,
+    bug_tracker: BugTracker,
+    evidence_plugins: tuple[str, ...],
+    excluded_issue_keys: Set[str],
+) -> tuple[PluginResult, ...]:
+    """
+    Evaluate and log selected plugins, returning their validated eligibility overlay.
+    """
+    plugins = create_plugins({"name": name} for name in evidence_plugins)
+    evaluation = evaluate_plugins(
+        plugins,
+        PluginContext(
+            runtime=runtime,
+            bug_tracker=bug_tracker,
+            excluded_issue_keys=frozenset(excluded_issue_keys),
+        ),
+    )
+    for result in evaluation:
+        if result.warnings:
+            logger.warning(
+                "Evidence plugin %s completed with warnings: %s",
+                result.plugin_name,
+                "; ".join(result.warnings),
+            )
+        decision_counts = {
+            disposition: sum(decision.disposition is disposition for decision in result.decisions)
+            for disposition in PluginDisposition
+        }
+        for decision in result.decisions:
+            if decision.disposition is PluginDisposition.REVIEW:
+                logger.warning(
+                    "Evidence plugin %s requires review for %s: %s",
+                    result.plugin_name,
+                    decision.issue_key,
+                    decision.reason,
+                )
+            else:
+                logger.debug(
+                    "Evidence plugin %s decided %s for %s: %s",
+                    result.plugin_name,
+                    decision.disposition.value,
+                    decision.issue_key,
+                    decision.reason,
+                )
+        logger.info(
+            "Evidence plugin %s claimed %s issue(s): include=%s suppress=%s review=%s",
+            result.plugin_name,
+            len(result.decisions),
+            decision_counts[PluginDisposition.INCLUDE],
+            decision_counts[PluginDisposition.SUPPRESS],
+            decision_counts[PluginDisposition.REVIEW],
+        )
+    return evaluation
+
+
+async def get_bugs_sweep(
+    runtime: Runtime,
+    find_bugs_obj: FindBugsMode,
+    bug_tracker: BugTracker,
+    filter_attached_bugs: bool = True,
+    evidence_plugins: tuple[str, ...] = (),
+    log_search: bool = False,
+    plugin_results: list[PluginResult] | None = None,
+) -> type_bug_list:
+    """
+    Resolve plugin eligibility and apply the shared release bug selection policy.
+
+    Plugins run before ordinary status/time selection. Every claimed issue is removed
+    from that path, while plugin INCLUDE issues are added after status/time filtering.
+    Attachment deduplication, ART ownership, assembly includes, and final assembly
+    excludes remain common sweep responsibilities.
+    """
     releases_config = runtime.get_releases_config()
     is_targeted = assembly_targeted_fixes_only(releases_config, runtime.assembly)
+    included_bug_ids, excluded_bug_ids = get_assembly_bug_ids(
+        runtime, bug_tracker_type=bug_tracker.type, use_own_only=is_targeted
+    )
+    if included_bug_ids & excluded_bug_ids:
+        raise ValueError(
+            f"The following {bug_tracker.type} bugs are defined in both 'include' and 'exclude': "
+            f"{included_bug_ids & excluded_bug_ids}"
+        )
+
+    plugin_included_bugs: list[Bug] = []
+    plugin_evaluation: tuple[PluginResult, ...] = ()
     if is_targeted:
         own_issues = assembly_own_issues_config(releases_config, runtime.assembly)
         if not list(own_issues.include):
@@ -268,7 +355,36 @@ async def get_bugs_sweep(runtime: Runtime, find_bugs_obj, bug_tracker, filter_at
         )
         bugs = []
     else:
+        plugin_claimed_issue_keys: frozenset[str] = frozenset()
+        if evidence_plugins:
+            plugin_evaluation = _run_evidence_plugins(
+                runtime,
+                bug_tracker,
+                evidence_plugins,
+                excluded_bug_ids,
+            )
+            plugin_claimed_issue_keys = frozenset(
+                decision.issue_key for result in plugin_evaluation for decision in result.decisions
+            )
+            plugin_included_bugs = [
+                decision.issue
+                for result in plugin_evaluation
+                for decision in result.decisions
+                if decision.disposition is PluginDisposition.INCLUDE
+            ]
+        if log_search:
+            statuses = sorted(find_bugs_obj.status)
+            target_releases = bug_tracker.target_release()
+            logger.info(
+                "Searching %s for bugs with status %s and target releases: %s\n",
+                bug_tracker.type,
+                statuses,
+                target_releases,
+            )
         bugs = find_bugs_obj.search(bug_tracker_obj=bug_tracker, verbose=runtime.debug)
+        if plugin_claimed_issue_keys:
+            bugs = [bug for bug in bugs if str(bug.id) not in plugin_claimed_issue_keys]
+
     if bugs:
         sweep_cutoff_timestamp = await get_sweep_cutoff_timestamp(runtime)
         if sweep_cutoff_timestamp:
@@ -291,6 +407,26 @@ async def get_bugs_sweep(runtime: Runtime, find_bugs_obj, bug_tracker, filter_at
             logger.info(f"{len(qualified_bugs)} of {len(bugs)} bugs are qualified for the cutoff time {utc_ts}")
             bugs = qualified_bugs
 
+    if evidence_plugins and is_targeted:
+        logger.info(
+            "Skipping evidence plugins for targeted assembly %s; only explicit assembly issues are eligible",
+            runtime.assembly,
+        )
+
+    if not is_targeted and plugin_included_bugs:
+        bugs.extend(plugin_included_bugs)
+
+    review_bugs = [
+        decision.issue
+        for result in plugin_evaluation
+        for decision in result.decisions
+        if decision.disposition is PluginDisposition.REVIEW and decision.issue_key not in excluded_bug_ids
+    ]
+    review_keys = {str(bug.id) for bug in review_bugs}
+    if filter_attached_bugs:
+        bugs.extend(review_bugs)
+
+    if bugs:
         if filter_attached_bugs:
             # filter bugs that have been swept into other advisories
             logger.info("Filtering bugs that haven't been attached to any advisories...")
@@ -315,17 +451,31 @@ async def get_bugs_sweep(runtime: Runtime, find_bugs_obj, bug_tracker, filter_at
                 if filtered_count:
                     logger.info(f"Filtered {filtered_count} bugs already attached to open shipment MRs")
 
+        if filter_attached_bugs and review_keys:
+            surviving_review_keys = {str(bug.id) for bug in bugs} & review_keys
+            bugs = [bug for bug in bugs if str(bug.id) not in review_keys]
+        else:
+            surviving_review_keys = review_keys
+
         if find_bugs_obj.art_managed_trackers_only:
             bugs = filter_art_managed_jira_trackers(runtime, bugs, bug_tracker_type=bug_tracker.type)
+    else:
+        surviving_review_keys = review_keys if not filter_attached_bugs else set()
 
-    included_bug_ids, excluded_bug_ids = get_assembly_bug_ids(
-        runtime, bug_tracker_type=bug_tracker.type, use_own_only=is_targeted
-    )
-    if included_bug_ids & excluded_bug_ids:
-        raise ValueError(
-            f"The following {bug_tracker.type} bugs are defined in both 'include' and 'exclude': "
-            f"{included_bug_ids & excluded_bug_ids}"
+    if plugin_results is not None:
+        plugin_results.extend(
+            replace(
+                result,
+                decisions=tuple(
+                    decision
+                    for decision in result.decisions
+                    if decision.disposition is not PluginDisposition.REVIEW
+                    or decision.issue_key in surviving_review_keys
+                ),
+            )
+            for result in plugin_evaluation
         )
+
     if included_bug_ids:
         logger.warning(
             f"The following {bug_tracker.type} bugs will be additionally included because they are "
@@ -333,8 +483,8 @@ async def get_bugs_sweep(runtime: Runtime, find_bugs_obj, bug_tracker, filter_at
         )
         # filter out bugs that are already swept in
         # so that we don't double add them
-        bug_ids = {b.id for b in bugs}
-        included_bug_ids = included_bug_ids - bug_ids
+        bug_ids = {str(b.id) for b in bugs}
+        included_bug_ids = {issue_id for issue_id in included_bug_ids if str(issue_id) not in bug_ids}
         included_bugs = bug_tracker.get_bugs(included_bug_ids)
         if find_bugs_obj.cve_only:
             logger.info("checking if cve tracker bug found in included bug list")
