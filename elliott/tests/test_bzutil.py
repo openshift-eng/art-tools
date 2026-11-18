@@ -324,6 +324,229 @@ class TestJIRABugTracker(unittest.TestCase):
         self.assertIn("OCPBUGS-11111", bug_ids)
         self.assertIn("OCPBUGS-22222", bug_ids)
 
+    @staticmethod
+    def _changelog_page(changes, start_at=0, total=None, is_last=True):
+        # Mimics one page of the paginated issue/{key}/changelog endpoint. Defaults produce a single, final
+        # page; pass start_at/total/is_last to model a multi-page response for the pagination loop.
+        return {
+            "startAt": start_at,
+            "maxResults": 100,
+            "total": total if total is not None else start_at + len(changes),
+            "isLast": is_last,
+            "values": [
+                {"created": created, "items": [{"field": "status", "fromString": frm, "toString": to}]}
+                for created, frm, to in changes
+            ],
+        }
+
+    def test_filter_bugs_by_cutoff_event_no_regression(self):
+        # ART-25075: the Jira cutoff filter must mirror the Bugzilla no-regression guard. A bug that was ON_QA at
+        # the cutoff and is VERIFIED now with no regression is swept in; a bug that was ON_QA at the cutoff but
+        # regressed afterward (even though it is VERIFIED now) is excluded.
+        config = {
+            "project": "OCPBUGS",
+            "server": JIRA_SERVER_URL,
+            "token_auth": "mock_token",
+        }
+        mock_jira_client = flexmock()
+        flexmock(JIRABugTracker).should_receive("login").and_return(mock_jira_client)
+        flexmock(JIRABugTracker).should_receive("_init_fields")
+        tracker = JIRABugTracker(config)
+
+        sweep_cutoff_timestamp = datetime(2021, 6, 30, 12, 30, 00, 0, tzinfo=timezone.utc).timestamp()
+
+        # Both bugs were ON_QA at the cutoff (so the "status was in" JQL returns both) and are VERIFIED now.
+        bug_ok = flexmock(id="OCPBUGS-101", status="VERIFIED")
+        bug_regressed = flexmock(id="OCPBUGS-102", status="VERIFIED")
+        flexmock(tracker).should_receive("_search").and_return([bug_ok, bug_regressed])
+
+        # bug_ok: ON_QA -> VERIFIED after the cutoff -> no regression -> included
+        mock_jira_client.should_receive("_get_json").with_args(
+            "issue/OCPBUGS-101/changelog", params={"startAt": 0, "maxResults": 100}
+        ).and_return(self._changelog_page([("2021-06-30T14:00:00.000+0000", "ON_QA", "VERIFIED")]))
+        # bug_regressed: ON_QA -> ASSIGNED (regression) then ASSIGNED -> VERIFIED after the cutoff -> excluded
+        mock_jira_client.should_receive("_get_json").with_args(
+            "issue/OCPBUGS-102/changelog", params={"startAt": 0, "maxResults": 100}
+        ).and_return(
+            self._changelog_page(
+                [
+                    ("2021-06-30T13:00:00.000+0000", "ON_QA", "ASSIGNED"),
+                    ("2021-06-30T15:00:00.000+0000", "ASSIGNED", "VERIFIED"),
+                ]
+            )
+        )
+
+        actual = tracker.filter_bugs_by_cutoff_event(
+            [bug_ok, bug_regressed], {"ON_QA", "VERIFIED"}, sweep_cutoff_timestamp
+        )
+        self.assertEqual(["OCPBUGS-101"], [bug.id for bug in actual])
+
+    def test_filter_bugs_by_cutoff_event_verified_then_regressed_excluded(self):
+        # ART-25075 (Joep's case): a bug that was VERIFIED at the cutoff, regressed to ASSIGNED after the
+        # cutoff, and is VERIFIED now must be EXCLUDED by the no-regression guard, because ASSIGNED's index
+        # is <= VERIFIED's index in constants.VALID_BUG_STATES.
+        config = {
+            "project": "OCPBUGS",
+            "server": JIRA_SERVER_URL,
+            "token_auth": "mock_token",
+        }
+        mock_jira_client = flexmock()
+        flexmock(JIRABugTracker).should_receive("login").and_return(mock_jira_client)
+        flexmock(JIRABugTracker).should_receive("_init_fields")
+        tracker = JIRABugTracker(config)
+
+        sweep_cutoff_timestamp = datetime(2021, 6, 30, 12, 30, 00, 0, tzinfo=timezone.utc).timestamp()
+
+        # VERIFIED at the cutoff (so the "status was in" JQL returns it) and VERIFIED now.
+        bug = flexmock(id="OCPBUGS-200", status="VERIFIED")
+        flexmock(tracker).should_receive("_search").and_return([bug])
+
+        # After the cutoff: VERIFIED -> ASSIGNED (regression) then ASSIGNED -> VERIFIED (current).
+        mock_jira_client.should_receive("_get_json").with_args(
+            "issue/OCPBUGS-200/changelog", params={"startAt": 0, "maxResults": 100}
+        ).and_return(
+            self._changelog_page(
+                [
+                    ("2021-06-30T13:00:00.000+0000", "VERIFIED", "ASSIGNED"),
+                    ("2021-06-30T16:00:00.000+0000", "ASSIGNED", "VERIFIED"),
+                ]
+            )
+        )
+
+        actual = tracker.filter_bugs_by_cutoff_event([bug], {"ON_QA", "VERIFIED"}, sweep_cutoff_timestamp)
+        self.assertEqual([], [bug.id for bug in actual])
+
+    def test_filter_bugs_by_cutoff_event_display_name_statuses(self):
+        # ART-25075: the Jira changelog reports status *display names* (e.g. 'Verified', 'Release Pending',
+        # 'New') that are NOT members of constants.VALID_BUG_STATES. The filter must normalize them before
+        # ranking and must not raise. A display-name regression (Verified@cutoff -> 'New') is excluded; a
+        # clean display-name promotion (Verified@cutoff -> 'Release Pending') is included.
+        config = {
+            "project": "OCPBUGS",
+            "server": JIRA_SERVER_URL,
+            "token_auth": "mock_token",
+        }
+        mock_jira_client = flexmock()
+        flexmock(JIRABugTracker).should_receive("login").and_return(mock_jira_client)
+        flexmock(JIRABugTracker).should_receive("_init_fields")
+        tracker = JIRABugTracker(config)
+
+        sweep_cutoff_timestamp = datetime(2021, 6, 30, 12, 30, 00, 0, tzinfo=timezone.utc).timestamp()
+
+        bug_regressed = flexmock(id="OCPBUGS-301", status="Verified")
+        bug_clean = flexmock(id="OCPBUGS-302", status="Release Pending")
+        flexmock(tracker).should_receive("_search").and_return([bug_regressed, bug_clean])
+
+        # bug_regressed: Verified -> New (regression) then New -> Verified -> excluded (does not raise)
+        mock_jira_client.should_receive("_get_json").with_args(
+            "issue/OCPBUGS-301/changelog", params={"startAt": 0, "maxResults": 100}
+        ).and_return(
+            self._changelog_page(
+                [
+                    ("2021-06-30T13:00:00.000+0000", "Verified", "New"),
+                    ("2021-06-30T16:00:00.000+0000", "New", "Verified"),
+                ]
+            )
+        )
+        # bug_clean: Verified -> Release Pending after the cutoff (promotion) -> included
+        mock_jira_client.should_receive("_get_json").with_args(
+            "issue/OCPBUGS-302/changelog", params={"startAt": 0, "maxResults": 100}
+        ).and_return(self._changelog_page([("2021-06-30T14:00:00.000+0000", "Verified", "Release Pending")]))
+
+        actual = tracker.filter_bugs_by_cutoff_event(
+            [bug_regressed, bug_clean], {"ON_QA", "VERIFIED"}, sweep_cutoff_timestamp
+        )
+        self.assertEqual(["OCPBUGS-302"], [bug.id for bug in actual])
+
+    def test_filter_bugs_by_cutoff_event_unrankable_status_fails_closed(self):
+        # ART-25075: fail closed on an unrankable/unknown post-cutoff status. A bug that was ON_QA at the
+        # cutoff, transitioned to 'In Progress' (not in constants.VALID_BUG_STATES) after the cutoff, and is
+        # VERIFIED now cannot be proven safe, so it must be EXCLUDED rather than swept in.
+        config = {
+            "project": "OCPBUGS",
+            "server": JIRA_SERVER_URL,
+            "token_auth": "mock_token",
+        }
+        mock_jira_client = flexmock()
+        flexmock(JIRABugTracker).should_receive("login").and_return(mock_jira_client)
+        flexmock(JIRABugTracker).should_receive("_init_fields")
+        tracker = JIRABugTracker(config)
+
+        sweep_cutoff_timestamp = datetime(2021, 6, 30, 12, 30, 00, 0, tzinfo=timezone.utc).timestamp()
+
+        bug = flexmock(id="OCPBUGS-400", status="VERIFIED")
+        flexmock(tracker).should_receive("_search").and_return([bug])
+
+        # ON_QA -> 'In Progress' (unrankable) then 'In Progress' -> VERIFIED after the cutoff -> excluded
+        mock_jira_client.should_receive("_get_json").with_args(
+            "issue/OCPBUGS-400/changelog", params={"startAt": 0, "maxResults": 100}
+        ).and_return(
+            self._changelog_page(
+                [
+                    ("2021-06-30T13:00:00.000+0000", "ON_QA", "In Progress"),
+                    ("2021-06-30T16:00:00.000+0000", "In Progress", "VERIFIED"),
+                ]
+            )
+        )
+
+        actual = tracker.filter_bugs_by_cutoff_event([bug], {"ON_QA", "VERIFIED"}, sweep_cutoff_timestamp)
+        self.assertEqual([], [bug.id for bug in actual])
+
+    def test_status_changes_paginates_changelog(self):
+        # ART-25075 (nitpick): _status_changes must follow the changelog endpoint's pagination. A post-cutoff
+        # status change living on the SECOND page must be detected, and the second request must use the correct
+        # next startAt (so an off-by-one in the loop would make this test fail).
+        config = {
+            "project": "OCPBUGS",
+            "server": JIRA_SERVER_URL,
+            "token_auth": "mock_token",
+        }
+        mock_jira_client = flexmock()
+        flexmock(JIRABugTracker).should_receive("login").and_return(mock_jira_client)
+        flexmock(JIRABugTracker).should_receive("_init_fields")
+        tracker = JIRABugTracker(config)
+
+        # First page: non-final (isLast=False), 1 of 2 histories, a pre-cutoff status change.
+        mock_jira_client.should_receive("_get_json").with_args(
+            "issue/OCPBUGS-500/changelog", params={"startAt": 0, "maxResults": 100}
+        ).and_return(
+            self._changelog_page(
+                [("2021-06-30T10:00:00.000+0000", "MODIFIED", "ON_QA")],
+                start_at=0,
+                total=2,
+                is_last=False,
+            )
+        )
+        # Second page: final, requested at startAt=1 (len of first page), carrying the post-cutoff change.
+        mock_jira_client.should_receive("_get_json").with_args(
+            "issue/OCPBUGS-500/changelog", params={"startAt": 1, "maxResults": 100}
+        ).and_return(
+            self._changelog_page(
+                [("2021-06-30T18:00:00.000+0000", "ON_QA", "VERIFIED")],
+                start_at=1,
+                total=2,
+                is_last=True,
+            )
+        )
+
+        changes = tracker._status_changes("OCPBUGS-500")
+        # Both pages' status changes are collected and chronologically sorted.
+        self.assertEqual(
+            [
+                (
+                    datetime(2021, 6, 30, 10, 0, 0, tzinfo=timezone.utc).timestamp(),
+                    "MODIFIED",
+                    "ON_QA",
+                ),
+                (
+                    datetime(2021, 6, 30, 18, 0, 0, tzinfo=timezone.utc).timestamp(),
+                    "ON_QA",
+                    "VERIFIED",
+                ),
+            ],
+            changes,
+        )
+
     def test_get_available_target_versions_server(self):
         """Test fetching available target versions from JIRA Server/DC"""
         config = {"project": "OCPBUGS", "server": JIRA_SERVER_URL}
@@ -1200,6 +1423,130 @@ class TestBugzillaBug(unittest.TestCase):
         }
         actual = bug_tracker.filter_bugs_by_cutoff_event(bugs, desired_statuses, sweep_cutoff_timestamp)
         self.assertListEqual([1, 2, 4, 5, 7, 8], [bug.id for bug in actual])
+
+    def test_filter_bugs_by_cutoff_event_onqa_floor(self):
+        # ART-25075: with the sweep cutoff floor loosened to ON_QA-or-higher, a bug that was ON_QA at the
+        # cutoff and is VERIFIED now (no regression) must be swept in, while a bug that was ON_QA at the
+        # cutoff but regressed below ON_QA afterward must still be excluded.
+        bzapi = mock.MagicMock()
+        with mock.patch("elliottlib.bzutil.BugzillaBugTracker.login") as mock_login:
+            mock_login.return_value = bzapi
+            bug_tracker = bzutil.BugzillaBugTracker({})
+        desired_statuses = {"ON_QA", "VERIFIED"}
+        sweep_cutoff_timestamp = datetime(2021, 6, 30, 12, 30, 00, 0, tzinfo=timezone.utc).timestamp()
+        bugs = [
+            # ON_QA at cutoff, VERIFIED now, no regression -> swept in
+            mock.MagicMock(
+                id=101,
+                status="VERIFIED",
+                creation_time=xmlrpc.client.DateTime("20210630T00:00:00"),
+            ),
+            # ON_QA at cutoff, regressed to ASSIGNED afterward (even though VERIFIED now) -> excluded
+            mock.MagicMock(
+                id=102,
+                status="VERIFIED",
+                creation_time=xmlrpc.client.DateTime("20210630T00:00:00"),
+            ),
+        ]
+        bzapi.bugs_history_raw.return_value = {
+            "bugs": [
+                {
+                    "id": 101,
+                    "history": [
+                        {
+                            "when": xmlrpc.client.DateTime("20210630T14:00:00"),
+                            "changes": [
+                                {
+                                    "field_name": "status",
+                                    "removed": "ON_QA",
+                                    "added": "VERIFIED",
+                                },
+                            ],
+                        },
+                    ],
+                },
+                {
+                    "id": 102,
+                    "history": [
+                        {
+                            "when": xmlrpc.client.DateTime("20210630T13:00:00"),
+                            "changes": [
+                                {
+                                    "field_name": "status",
+                                    "removed": "ON_QA",
+                                    "added": "ASSIGNED",
+                                },
+                            ],
+                        },
+                        {
+                            "when": xmlrpc.client.DateTime("20210630T15:00:00"),
+                            "changes": [
+                                {
+                                    "field_name": "status",
+                                    "removed": "ASSIGNED",
+                                    "added": "VERIFIED",
+                                },
+                            ],
+                        },
+                    ],
+                },
+            ],
+        }
+        actual = bug_tracker.filter_bugs_by_cutoff_event(bugs, desired_statuses, sweep_cutoff_timestamp)
+        self.assertListEqual([101], [bug.id for bug in actual])
+
+        # Under the previous VERIFIED-only cutoff floor, the ON_QA-at-cutoff bug (101) would have been dropped.
+        actual_verified_only = bug_tracker.filter_bugs_by_cutoff_event(bugs, {"VERIFIED"}, sweep_cutoff_timestamp)
+        self.assertListEqual([], [bug.id for bug in actual_verified_only])
+
+    def test_filter_bugs_by_cutoff_event_verified_then_regressed_excluded(self):
+        # ART-25075 (Joep's case) mirrored on the Bugzilla path: a bug that was VERIFIED at the cutoff,
+        # regressed to ASSIGNED after the cutoff, and is VERIFIED now must be EXCLUDED by the no-regression
+        # guard (ASSIGNED's index <= VERIFIED's index in constants.VALID_BUG_STATES).
+        bzapi = mock.MagicMock()
+        with mock.patch("elliottlib.bzutil.BugzillaBugTracker.login") as mock_login:
+            mock_login.return_value = bzapi
+            bug_tracker = bzutil.BugzillaBugTracker({})
+        desired_statuses = {"ON_QA", "VERIFIED"}
+        sweep_cutoff_timestamp = datetime(2021, 6, 30, 12, 30, 00, 0, tzinfo=timezone.utc).timestamp()
+        bugs = [
+            mock.MagicMock(
+                id=200,
+                status="VERIFIED",
+                creation_time=xmlrpc.client.DateTime("20210630T00:00:00"),
+            ),
+        ]
+        bzapi.bugs_history_raw.return_value = {
+            "bugs": [
+                {
+                    "id": 200,
+                    "history": [
+                        {
+                            "when": xmlrpc.client.DateTime("20210630T13:00:00"),
+                            "changes": [
+                                {
+                                    "field_name": "status",
+                                    "removed": "VERIFIED",
+                                    "added": "ASSIGNED",
+                                },
+                            ],
+                        },
+                        {
+                            "when": xmlrpc.client.DateTime("20210630T16:00:00"),
+                            "changes": [
+                                {
+                                    "field_name": "status",
+                                    "removed": "ASSIGNED",
+                                    "added": "VERIFIED",
+                                },
+                            ],
+                        },
+                    ],
+                },
+            ],
+        }
+        actual = bug_tracker.filter_bugs_by_cutoff_event(bugs, desired_statuses, sweep_cutoff_timestamp)
+        self.assertListEqual([], [bug.id for bug in actual])
 
 
 class TestBZUtil(unittest.IsolatedAsyncioTestCase):
