@@ -102,6 +102,7 @@ class BuildPlashetsPipeline:
                 copy_links=self.copy_links,
                 dry_run=self.runtime.dry_run,
                 version=self.version,
+                skip_remote_cleanup_preview=tekton.is_tekton_context(),
             )
             self.runtime.logger.info('Built plashets: %s', json.dumps(plashets_built, indent=4))
 

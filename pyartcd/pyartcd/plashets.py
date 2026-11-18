@@ -218,6 +218,7 @@ async def build_plashets(
     copy_links: bool = False,
     dry_run: bool = False,
     version: str | None = None,
+    skip_remote_cleanup_preview: bool = False,
 ) -> dict:
     """
     Unless no RPMs have changed, create multiple yum repos (one for each arch) of RPMs
@@ -234,6 +235,7 @@ async def build_plashets(
     :param data_gitref: Doozer data path git [branch / tag / sha] to use
     :param dry_run: do not actually run the command, just log it
     :param copy_links: transform symlink into referent file/dir
+    :param skip_remote_cleanup_preview: suppress the read-only SSH cleanup preview in dry runs
 
     Returns a list describing the plashets that have been built. The dict will look like this:
     {
@@ -400,7 +402,12 @@ async def build_plashets(
         await asyncio.gather(
             *[
                 copy_to_remote(
-                    plashet_remote['host'], local_base_dir, remote_base_dir, dry_run=dry_run, copy_links=copy_links
+                    plashet_remote['host'],
+                    local_base_dir,
+                    remote_base_dir,
+                    dry_run=dry_run,
+                    copy_links=copy_links,
+                    skip_remote_cleanup_preview=skip_remote_cleanup_preview,
                 )
                 for plashet_remote in PLASHET_REMOTES
             ]
@@ -531,6 +538,7 @@ async def copy_to_remote(
     remote_base_dir: os.PathLike,
     dry_run: bool = False,
     copy_links: bool = False,
+    skip_remote_cleanup_preview: bool = False,
 ):
     """
     Copies plashet out to remote host (ocp-artifacts)
@@ -579,6 +587,10 @@ async def copy_to_remote(
     else:
         logger.info("Executing %s", ' '.join(cmd))
         await exectools.cmd_assert_async(cmd, env=os.environ.copy())
+
+    if dry_run and skip_remote_cleanup_preview:
+        logger.info('[DRY RUN] Skipping SSH cleanup preview for %s:%s', plashet_remote_host, remote_base_dir)
+        return
 
     # Clean up old revision directories on the remote, keeping the 3 most recent.
     keep = 3

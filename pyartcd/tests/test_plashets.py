@@ -71,6 +71,7 @@ class TestCopyToRemoteCleanup(unittest.IsolatedAsyncioTestCase):
             local_base_dir=Path('/tmp/plashet-working/4.20/stream/el9'),
             remote_base_dir=Path(BASE),
             dry_run=False,
+            skip_remote_cleanup_preview=True,
         )
         # mkdir + rsync
         assert mock_cmd.await_count == 2
@@ -90,3 +91,16 @@ class TestCopyToRemoteCleanup(unittest.IsolatedAsyncioTestCase):
         mock_cmd.assert_not_awaited()
         # cleanup still called with dry_run=True
         mock_cleanup.assert_awaited_once_with('remote-host', Path(BASE), keep=3, dry_run=True)
+
+    @patch('pyartcd.plashets.run_cleanup_script', new_callable=AsyncMock)
+    @patch('pyartcd.plashets.exectools.cmd_assert_async', new_callable=AsyncMock)
+    async def test_dry_run_without_remote_cleanup_preview_does_not_contact_publisher(self, mock_cmd, mock_cleanup):
+        await copy_to_remote(
+            plashet_remote_host='remote-host',
+            local_base_dir=Path('/tmp/plashet-working/4.20/stream/el9'),
+            remote_base_dir=Path(BASE),
+            dry_run=True,
+            skip_remote_cleanup_preview=True,
+        )
+        mock_cmd.assert_not_awaited()
+        mock_cleanup.assert_not_awaited()
