@@ -31,7 +31,7 @@ from artcommonlib.util import (
 )
 from artcommonlib.variants import BuildVariant
 
-from pyartcd import constants, jenkins, locks, util
+from pyartcd import build_status, constants, jenkins, locks, tekton, util
 from pyartcd import record as record_util
 from pyartcd.build_strategy import BuildStrategy
 from pyartcd.cli import cli, click_coroutine, pass_runtime
@@ -408,7 +408,7 @@ class KonfluxOcpPipeline:
                 description_parts.append(f'{len(skipped_due_to_parent_failure)} images skipped due to parent failures')
 
         if description_parts:
-            jenkins.update_description('<br/>'.join(description_parts) + '<br/>')
+            build_status.update_description('<br/>'.join(description_parts) + '<br/>')
 
         failed_entries = {
             entry['name']: entry for entry in record_log.get('image_build_konflux', []) if int(entry['status'])
@@ -597,14 +597,14 @@ class KonfluxOcpPipeline:
 
     def check_building_images(self):
         if self.build_plan.image_build_strategy == BuildStrategy.NONE:
-            jenkins.update_title('[NO IMAGES]')
+            build_status.update_title('[NO IMAGES]')
 
         elif self.build_plan.image_build_strategy == BuildStrategy.ALL:
             self.build_plan.images_included = []
             self.build_plan.images_excluded = []
             self.mass_rebuild = True
-            jenkins.update_title('[mass rebuild]')
-            jenkins.update_description(f'Images: building {self.build_plan.active_image_count} images.<br/>')
+            build_status.update_title('[mass rebuild]')
+            build_status.update_description(f'Images: building {self.build_plan.active_image_count} images.<br/>')
 
         elif self.build_plan.image_build_strategy == BuildStrategy.ONLY:
             self.build_plan.images_included = self.image_list
@@ -612,14 +612,14 @@ class KonfluxOcpPipeline:
 
             n_images = len(self.build_plan.images_included)
             if n_images == 1:
-                jenkins.update_title(f'[{self.build_plan.images_included[0]}]')
+                build_status.update_title(f'[{self.build_plan.images_included[0]}]')
             else:
-                jenkins.update_title(f'[{n_images} images]')
+                build_status.update_title(f'[{n_images} images]')
 
             if n_images <= 10:
-                jenkins.update_description(f'Images: building {", ".join(self.build_plan.images_included)}.<br/>')
+                build_status.update_description(f'Images: building {", ".join(self.build_plan.images_included)}.<br/>')
             else:
-                jenkins.update_description(f'Images: building {n_images} images.<br/>')
+                build_status.update_description(f'Images: building {n_images} images.<br/>')
 
             # It's a mass rebuild if we included more than half of all active images in the group
             if n_images > self.build_plan.active_image_count / 2:
@@ -630,20 +630,20 @@ class KonfluxOcpPipeline:
             self.build_plan.images_excluded = self.image_list
 
             n_images = self.build_plan.active_image_count - len(self.build_plan.images_excluded)
-            jenkins.update_title(f'[{n_images} images]')
+            build_status.update_title(f'[{n_images} images]')
             if len(self.build_plan.images_excluded) <= 10:
-                jenkins.update_description(
+                build_status.update_description(
                     f'Images: building all images except {",".join(self.build_plan.images_excluded)}.<br/>'
                 )
             else:
-                jenkins.update_description(f'Images: building {n_images} images.<br/>')
+                build_status.update_description(f'Images: building {n_images} images.<br/>')
 
             # It's a mass rebuild if we excluded less than half of all active images in the group
             if n_images < self.build_plan.active_image_count / 2:
                 self.mass_rebuild = True
 
         if self.mass_rebuild:
-            jenkins.update_title(' [MASS REBUILD]')
+            build_status.update_title(' [MASS REBUILD]')
 
     def check_building_rpms(self):
         # If the version is not in the override list, skip the RPM rebase and build
@@ -655,13 +655,13 @@ class KonfluxOcpPipeline:
             self.build_plan.rpm_build_strategy = BuildStrategy.NONE
 
         if self.build_plan.rpm_build_strategy == BuildStrategy.NONE:
-            jenkins.update_title('[NO RPMs]')
+            build_status.update_title('[NO RPMs]')
 
         elif self.build_plan.rpm_build_strategy == BuildStrategy.ALL:
             self.build_plan.rpms_included = []
             self.build_plan.rpms_excluded = []
-            jenkins.update_description('Building all RPMs.<br/>')
-            jenkins.update_title('[All RPMs]')
+            build_status.update_description('Building all RPMs.<br/>')
+            build_status.update_title('[All RPMs]')
 
         elif self.build_plan.rpm_build_strategy == BuildStrategy.ONLY:
             self.build_plan.rpms_included = self.rpm_list
@@ -669,29 +669,32 @@ class KonfluxOcpPipeline:
 
             n_rpms = len(self.build_plan.rpms_included)
             if n_rpms == 1:
-                jenkins.update_title(f'[{self.build_plan.rpms_included[0]}]')
+                build_status.update_title(f'[{self.build_plan.rpms_included[0]}]')
             else:
-                jenkins.update_title(f'[{n_rpms} RPMs]')
+                build_status.update_title(f'[{n_rpms} RPMs]')
 
             if n_rpms <= 10:
-                jenkins.update_description(f'RPMs: building {", ".join(self.build_plan.rpms_included)}.<br/>')
+                build_status.update_description(f'RPMs: building {", ".join(self.build_plan.rpms_included)}.<br/>')
             else:
-                jenkins.update_description(f'RPMs: building {n_rpms} RPMs.<br/>')
+                build_status.update_description(f'RPMs: building {n_rpms} RPMs.<br/>')
 
         else:  # build_plan.rpm_build_strategy == BuildStrategy.EXCEPT
             self.build_plan.rpms_included = []
             self.build_plan.rpms_excluded = self.rpm_list
 
             n_rpms = self.build_plan.active_rpm_count - len(self.build_plan.rpms_excluded)
-            jenkins.update_title(f'[{n_rpms} RPMs]')
+            build_status.update_title(f'[{n_rpms} RPMs]')
             if len(self.build_plan.images_excluded) <= 10:
-                jenkins.update_description(f'Building all RPMs except {",".join(self.build_plan.rpms_excluded)}.<br/>')
+                build_status.update_description(
+                    f'Building all RPMs except {",".join(self.build_plan.rpms_excluded)}.<br/>'
+                )
             else:
-                jenkins.update_description(f'RPMs: building {n_rpms} RPMs.<br/>')
+                build_status.update_description(f'RPMs: building {n_rpms} RPMs.<br/>')
 
     async def initialize(self):
-        jenkins.init_jenkins()
-        jenkins.update_title(f' - {self.version} [{self.assembly}] ')
+        if not tekton.is_tekton_context():
+            jenkins.init_jenkins()
+        build_status.update_title(f' - {self.version} [{self.assembly}] ')
         await self.init_build_plan()
 
     async def clean_up(self):
@@ -895,7 +898,7 @@ class KonfluxOcpPipeline:
             LOGGER.info('Unsetting XDG_RUNTIME_DIR to prevent use of default registry auth')
             del os.environ['XDG_RUNTIME_DIR']
 
-        # Get Jenkins credentials
+        # Load registry credentials.
         quay_auth_file = os.getenv('QUAY_AUTH_FILE')
         redhat_registry_auth_file = os.getenv('KONFLUX_OPERATOR_INDEX_AUTH_FILE')
         rhcos_quay_auth_file = os.getenv('RHCOS_QUAY_AUTH_FILE')
@@ -903,12 +906,12 @@ class KonfluxOcpPipeline:
         if not quay_auth_file:
             raise ValueError(
                 "QUAY_AUTH_FILE environment variable is required but not set. "
-                "Ensure Jenkins credentials are properly bound."
+                "Bind the registry credentials before running the build."
             )
         if not rhcos_quay_auth_file:
             raise ValueError(
                 "RHCOS_QUAY_AUTH_FILE environment variable is required but not set. "
-                "Ensure Jenkins credentials are properly bound."
+                "Bind the registry credentials before running the build."
             )
 
         # Build source files list
@@ -923,7 +926,7 @@ class KonfluxOcpPipeline:
         if not qci_user or not qci_password:
             raise ValueError(
                 "QCI_USER and QCI_PASSWORD environment variables are required but not set. "
-                "Ensure Jenkins credentials are properly bound."
+                "Bind the registry credentials before running the build."
             )
         credentials = [
             RegistryCredential(REGISTRY_QUAY_OPENSHIFT, qci_user, qci_password),
@@ -981,7 +984,6 @@ class KonfluxOcpPipeline:
         """Core pipeline logic wrapped by global registry auth config."""
         await self.initialize()
 
-        # Add build history link after initialize() so jenkins_client is available
         job_url = os.getenv('BUILD_URL', '')
         build_history_url = build_history_link_url(
             group=f'openshift-{self.version}',
@@ -990,7 +992,7 @@ class KonfluxOcpPipeline:
             job_url=job_url,
             outcomes=['Pending', 'Success', 'Failure'],
         )
-        jenkins.update_description(f'<a href="{build_history_url}">Status of image builds</a><br/>')
+        build_status.update_description(f'<a href="{build_history_url}">Status of image builds</a><br/>')
 
         # Rebase and build RPMs
         await self.rebase_and_build_rpms(self.release)
@@ -1091,7 +1093,7 @@ class KonfluxOcpPipeline:
 
         failed_rpms = list(failed_map.keys())
         self.runtime.logger.warning('Following rpms failed to rebase or build: %s', ', '.join(failed_rpms))
-        jenkins.update_description(f'Failed rpms: {", ".join(failed_rpms)}<br/>')
+        build_status.update_description(f'Failed rpms: {", ".join(failed_rpms)}<br/>')
 
 
 @cli.command("beta:ocp4-konflux", help="A pipeline to build images with Konflux for OCP 4")
