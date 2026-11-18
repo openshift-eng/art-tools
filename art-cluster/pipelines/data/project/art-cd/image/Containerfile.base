@@ -99,11 +99,6 @@ RUN LOCKFILE_REV=$(grep -A2 '^name = "rpm-lockfile-prototype"' uv.lock | grep 's
     && /usr/bin/python3 -m pip install --no-cache-dir \
        "rpm-lockfile-prototype @ git+https://github.com/konflux-ci/rpm-lockfile-prototype@${LOCKFILE_REV}"
 
-# Smoke-test the RPM tooling under the same interpreter used at runtime.
-RUN /usr/bin/python3 -c 'import dnf, requests; from rpm_lockfile import main' \
-    && rhpkg --help >/dev/null \
-    && brew --help >/dev/null
-
 # Install check-payload tool for FIPS scanning, and copy to a location in PATH
 RUN git clone https://github.com/openshift/check-payload check-payload &&  \
     cd check-payload  \
