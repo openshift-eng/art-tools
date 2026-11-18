@@ -1,4 +1,5 @@
 import os
+import subprocess
 import tempfile
 from dataclasses import replace
 from pathlib import Path
@@ -8,7 +9,9 @@ from unittest.mock import AsyncMock, MagicMock, call, patch
 import yaml
 from artcommonlib.model import Model
 from doozerlib.source_resolver import SourceResolver
+from doozerlib.util import is_commit_in_public_upstream_async
 from elliottlib.shipment_model import ComponentSource, GitSource, Snapshot, SnapshotComponent, SnapshotSpec
+from pyartcd.git import GitRepository
 from pyartcd.pipelines import binary_release_konflux as release
 
 SOURCE_NVR = "oc-mirror-container-2.0-202611121200.p2.assembly.stream.el9"
@@ -94,6 +97,11 @@ class TestBuildAggregate(IsolatedAsyncioTestCase):
         self.extra_stage = False
         self.record_count = 1
         self.recipe_source_url = RECIPE_SOURCE_URL
+        self.git_assert = release.exectools.cmd_assert_async
+        self.git_gather = release.exectools.cmd_gather_async
+        self.group_config_command = self.enterContext(
+            patch.object(release.exectools, "cmd_gather_async", new_callable=AsyncMock, return_value=(0, "[]", ""))
+        )
         self.commands = self.enterContext(patch.object(release.exectools, "cmd_assert_async", new_callable=AsyncMock))
         self.commands.side_effect = self.command
         self.image_info = self.enterContext(patch.object(release, "oc_image_info_for_arch_async"))
@@ -121,24 +129,27 @@ class TestBuildAggregate(IsolatedAsyncioTestCase):
         self.recipe_repo = repo
 
         async def fetch(branch):
-            config = self.data_dir / "binaries/oc-mirror-aggregate.yml"
-            config.parent.mkdir(parents=True)
-            config.write_text(
-                yaml.safe_dump(
-                    {
-                        "from": {"builder": [{"member": "oc-mirror"}] * 4},
-                        "content": {
-                            "source": {
-                                "git": {"url": self.recipe_source_url},
-                                "path": "binaries/oc-mirror-aggregate",
-                            }
-                        },
-                    }
-                )
-            )
+            self.write_recipe(self.data_dir)
 
         repo.fetch_switch_branch = AsyncMock(side_effect=fetch)
         return repo
+
+    def write_recipe(self, directory):
+        config = directory / "binaries/oc-mirror-aggregate.yml"
+        config.parent.mkdir(parents=True)
+        config.write_text(
+            yaml.safe_dump(
+                {
+                    "from": {"builder": [{"member": "oc-mirror"}] * 4},
+                    "content": {
+                        "source": {
+                            "git": {"url": self.recipe_source_url},
+                            "path": "binaries/oc-mirror-aggregate",
+                        }
+                    },
+                }
+            )
+        )
 
     async def command(self, argv):
         if "beta:binaries:konflux:rebase" in argv:
@@ -182,33 +193,87 @@ class TestBuildAggregate(IsolatedAsyncioTestCase):
         for invocation in self.image_info.await_args_list:
             self.assertEqual(invocation.args[0], self.source.spec.components[0].containerImage)
 
-    async def test_recipe_alias_keeps_the_fetched_checkout_and_private_rebase_destination(self):
-        await self.pipeline.build_aggregate(self.source)
-        checkout = Path(self.tmp.name, "checkout")
-        (checkout / "binaries/oc-mirror-aggregate").mkdir(parents=True)
-        resolver = SourceResolver(str(checkout / "sources"), None, Model({"public_upstreams": []}))
+    async def test_recipe_alias_fetches_public_upstream_for_the_private_fix_check(self):
+        branch = self.pipeline.group
+        member = self.pipeline.aggregation_profile.member
+        public_url = "https://github.com/openshift/ocp-build-data"
+        public_repo = Path(self.tmp.name, "public-build-data")
+        subprocess.run(["git", "init", "-b", branch, str(public_repo)], check=True, capture_output=True)
+        self.write_recipe(public_repo)
+        recipe_dir = public_repo / "binaries" / member
+        recipe_dir.mkdir()
+        (recipe_dir / "Dockerfile").write_text("FROM scratch\n")
+        subprocess.run(["git", "-C", str(public_repo), "add", "."], check=True, capture_output=True)
+        subprocess.run(
+            [
+                "git",
+                "-C",
+                str(public_repo),
+                "-c",
+                "user.name=Test",
+                "-c",
+                "user.email=test@example.com",
+                "commit",
+                "-m",
+                "Add recipe",
+            ],
+            check=True,
+            capture_output=True,
+        )
+        group_config = {
+            "public_upstreams": [
+                {"private": "https://github.com/openshift-priv", "public": "https://github.com/openshift"}
+            ]
+        }
 
-        def git_metadata(command, **kwargs):
-            if command[-1] == "remote.origin.url":
-                return 0, RECIPE_SOURCE_URL, ""
-            if command[1] == "rev-parse":
-                return 0, "oc-mirror-2.0", ""
-            return 1, "", ""
+        async def read_group(argv, **kwargs):
+            if argv[0] == "git":
+                return await self.git_gather(argv, **kwargs)
+            self.assertIn(f"--data-path={self.data_dir}", argv)
+            self.assertIn(f"--assembly={self.pipeline.assembly}", argv)
+            self.assertIn("--build-system=konflux", argv)
+            self.assertEqual(argv[-1], "public_upstreams")
+            return 0, yaml.safe_dump(group_config["public_upstreams"]), ""
 
-        with (
-            patch("doozerlib.source_resolver.exectools.cmd_gather", side_effect=git_metadata),
-            patch(
-                "doozerlib.source_resolver.exectools.cmd_assert", side_effect=[("a" * 40, ""), ("0", ""), ("aaa", "")]
-            ),
-            patch("doozerlib.source_resolver.git_clone", side_effect=AssertionError("Unexpected remote clone")),
+        async def run_command(argv, **kwargs):
+            if argv[0] == "git":
+                return await self.git_assert(argv, **kwargs)
+            if "beta:binaries:konflux:rebase" in argv:
+                recipe = yaml.safe_load((self.data_dir / f"binaries/{member}.yml").read_text())
+                resolver = SourceResolver(str(self.data_dir / "sources"), None, Model(group_config))
+                source_index = argv.index("--source")
+                resolver.register_source_alias(*argv[source_index + 1 : source_index + 3])
+                meta = MagicMock(config=Model(recipe))
+                source = resolver.resolve_source(meta)
+                source_dir = SourceResolver.get_source_dir(source, meta)
+                self.assertEqual(source_dir, self.data_dir / "binaries" / member)
+                self.assertEqual(source.url, "https://github.com/openshift-priv/ocp-build-data")
+                self.assertTrue(source.has_public_upstream)
+                self.assertFalse(source.is_fork_build)
+                self.assertTrue(
+                    await is_commit_in_public_upstream_async(
+                        source.commit_hash, source.public_upstream_branch, source_dir
+                    )
+                )
+            return await self.command(argv)
+
+        def data_repo(directory):
+            self.data_dir = Path(directory)
+            return GitRepository(directory)
+
+        self.repo_cls.side_effect = data_repo
+        self.group_config_command.side_effect = read_group
+        self.commands.side_effect = run_command
+        with patch.dict(
+            os.environ,
+            {
+                "DOOZER_DATA_PATH": public_url,
+                "GIT_CONFIG_COUNT": "1",
+                "GIT_CONFIG_KEY_0": f"url.{public_repo.as_uri()}.insteadOf",
+                "GIT_CONFIG_VALUE_0": public_url,
+            },
         ):
-            resolver.register_source_alias("oc-mirror-aggregate", str(checkout))
-            meta = MagicMock(config=Model(self.pinned))
-            meta.has_source.return_value = True
-            source = resolver.resolve_source(meta)
-        self.assertEqual(SourceResolver.get_source_dir(source, meta), checkout / "binaries/oc-mirror-aggregate")
-        self.assertEqual(source.url, RECIPE_SOURCE_URL)
-        self.assertIsNone(source.pull_url)
+            self.assertEqual(await self.pipeline.build_aggregate(self.source), AGGREGATE_NVR)
 
     async def test_rebase_destination_comes_from_the_recipe(self):
         self.recipe_source_url = "git@github.com:example/ocp-build-data.git"

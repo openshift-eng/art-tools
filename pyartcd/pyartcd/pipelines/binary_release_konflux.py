@@ -19,6 +19,7 @@ from artcommonlib.build_visibility import is_nvr_embargoed
 from artcommonlib.constants import SHIPMENT_DATA_URL_TEMPLATE
 from artcommonlib.github_auth import build_git_auth_env
 from artcommonlib.gitlab import GitLabClient
+from artcommonlib.model import ListModel
 from artcommonlib.release_util import isolate_el_version_in_release
 from artcommonlib.rpm_utils import parse_nvr
 from artcommonlib.util import (
@@ -27,6 +28,7 @@ from artcommonlib.util import (
     resolve_konflux_kubeconfig_by_product,
     resolve_konflux_namespace_by_product,
 )
+from doozerlib.source_resolver import SourceResolver
 from elliottlib.shipment_model import (
     Environments,
     Metadata,
@@ -747,6 +749,21 @@ class BinaryReleaseKonfluxPipeline:
                 profile.member,
                 str(data_dir),
             ]
+            _, upstream_config, _ = await exectools.cmd_gather_async(
+                base + ["config:read-group", "--yaml", "--default", "[]", "public_upstreams"]
+            )
+            public_url, public_branch, has_public_upstream = SourceResolver.get_public_upstream(
+                source_git_url, ListModel(stdlib_yaml.safe_load(upstream_config))
+            )
+            if has_public_upstream:
+                # Local aliases skip the fetch that normally supplies Doozer's private-fix check.
+                await exectools.to_thread(
+                    SourceResolver.setup_and_fetch_public_upstream_source,
+                    public_url,
+                    public_branch or self.group,
+                    str(data_dir),
+                )
+
             await exectools.cmd_assert_async(
                 base
                 + [
