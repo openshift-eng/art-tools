@@ -5,9 +5,34 @@ from functools import wraps
 from string import Template
 
 import redis
+import redis.exceptions
 from artcommonlib import constants
+from tenacity import retry, retry_if_exception, stop_after_attempt, wait_fixed
 
 logger = logging.getLogger(__name__)
+
+
+def _is_transient_connection_error(exc: BaseException) -> bool:
+    # Retry transient connection/timeout failures, but never a bad password.
+    if isinstance(exc, redis.exceptions.AuthenticationError):
+        return False
+    return isinstance(exc, (redis.exceptions.ConnectionError, redis.exceptions.TimeoutError))
+
+
+def _log_connect_retry(retry_state) -> None:
+    # Log only the attempt number and exception type; raw text can embed the Redis host.
+    exc = retry_state.outcome.exception()
+    logger.warning("Redis connect attempt %d failed: %s", retry_state.attempt_number, type(exc).__name__)
+
+
+# Bounded retry on transient Redis connection establishment only (never around commands)
+_REDIS_CONNECT_RETRY = dict(
+    reraise=True,
+    stop=stop_after_attempt(3),
+    wait=wait_fixed(1),
+    retry=retry_if_exception(_is_transient_connection_error),
+    before_sleep=_log_connect_retry,
+)
 
 # Redis instance template, to be rendered with env vars
 redis_url_template = Template('${protocol}://:${redis_password}@${redis_host}:${redis_port}')
@@ -32,11 +57,19 @@ def redis_url(use_ssl=True):
 def handle_connection(func):
     @wraps(func)
     async def wrapper(*args, **kwargs):
-        url = redis_url(use_ssl=True)
-        conn = await redis.asyncio.from_url(url, decode_responses=True)
-        res = await func(conn, *args, **kwargs)
-        await conn.aclose()
-        return res
+        conn = await redis.asyncio.from_url(redis_url(use_ssl=True), decode_responses=True)
+
+        # redis.asyncio.Redis.ping is a plain def returning a coroutine, so wrap it in an
+        # async def; otherwise tenacity picks sync Retrying and never retries the connect.
+        @retry(**_REDIS_CONNECT_RETRY)
+        async def _ping():
+            await conn.ping()
+
+        try:
+            await _ping()
+            return await func(conn, *args, **kwargs)
+        finally:
+            await conn.aclose()
 
     return wrapper
 
@@ -44,11 +77,12 @@ def handle_connection(func):
 def handle_connection_sync(func):
     @wraps(func)
     def wrapper(*args, **kwargs):
-        url = redis_url(use_ssl=True)
-        conn = redis.from_url(url, decode_responses=True)
-        res = func(conn, *args, **kwargs)
-        conn.close()
-        return res
+        conn = redis.from_url(redis_url(use_ssl=True), decode_responses=True)
+        try:
+            retry(**_REDIS_CONNECT_RETRY)(conn.ping)()
+            return func(conn, *args, **kwargs)
+        finally:
+            conn.close()
 
     return wrapper
 
