@@ -17,6 +17,15 @@ from artcommonlib.variants import ProductId
 
 
 class TestProductCatalog(unittest.TestCase):
+    def test_build_data_group_prefix_is_optional(self):
+        """Override COO's branch prefix without requiring other products to configure one."""
+        coo = get_product_config("cluster-observability-operator")
+        self.assertEqual(coo.build_data_group_prefix, "coo")
+        self.assertEqual(coo.product_name, "cluster-observability-operator")
+        for product in ("quay", "mta"):
+            with self.subTest(product=product):
+                self.assertIsNone(get_product_config(product).build_data_group_prefix)
+
     def test_kueue_canonical_product_preserves_cpe_and_release_configuration(self):
         """Resolve canonical and legacy Kueue names without changing CPE or release configuration."""
         config = get_product_config("kueue")

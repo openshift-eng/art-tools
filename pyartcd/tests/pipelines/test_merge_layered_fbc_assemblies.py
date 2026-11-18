@@ -113,6 +113,7 @@ def test_optional_filter_selects_only_matching_groups(tmp_path, sources):
     [
         ('mta', {'mta-8.2': '8.2.1', 'mta-8.1': '8.1.5'}, {'mta-8.2': ['4.22'], 'mta-8.1': ['4.21']}),
         ('logging', {'logging-6.2': '6.2.3'}, {'logging-6.2': ['4.18', '4.19']}),
+        ('cluster-observability-operator', {'coo-1.5': '1.5.6'}, {'coo-1.5': ['4.21', '4.22']}),
     ],
 )
 def test_resolves_assemblies_for_any_layered_product(tmp_path, source_factory, product, versions, targets):
@@ -134,6 +135,15 @@ def test_rejects_group_product_mismatch(tmp_path, sources):
     sources.product = 'mta'
     with pytest.raises(ValueError, match='does not belong to product quay'):
         asyncio.run(pipeline(tmp_path)._resolve_assemblies())
+
+
+def test_group_prefix_override_still_validates_canonical_product(tmp_path, source_factory):
+    sources = source_factory(versions={'coo-1.5': '1.5.6'}, targets={'coo-1.5': ['4.22']})
+    with pytest.raises(ValueError, match='coo-1.5 does not belong to product cluster-observability-operator'):
+        asyncio.run(
+            pipeline(tmp_path, assemblies=('1.5.6',), product='cluster-observability-operator')._resolve_assemblies()
+        )
+    sources.repo.get_branch.assert_called_once_with('coo-1.5')
 
 
 @pytest.mark.parametrize('product', ['', 'ocp', '../mta'])

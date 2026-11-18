@@ -88,6 +88,7 @@ PRODUCT_CATALOG: tuple[ProductConfig, ...] = (
     ),
     ProductConfig(
         product_id=ProductId.COO,
+        build_data_group_prefix="coo",
         namespace="art-coo-tenant",
         kubeconfig_env="COO_KONFLUX_SA_KUBECONFIG",
         base_image_release=ReleaseTarget(
