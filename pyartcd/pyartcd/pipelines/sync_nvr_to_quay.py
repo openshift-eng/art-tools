@@ -5,7 +5,8 @@ into an approved quay repo, tagging it so quay does not garbage-collect it.
 Modeled on mirror_images_to_ci.py (Pipeline class + @cli.command + click options
 + registration in pipelines/__init__.py).
 
-Embargoed NVRs are NEVER synced to the target repo.
+Embargoed NVRs are NEVER synced, except to a destination explicitly marked
+embargo-capable (EMBARGO_ALLOWED_REPOS) and only when --allow-embargoed is set.
 """
 
 import logging
@@ -14,7 +15,12 @@ import re
 
 import click
 from artcommonlib.build_visibility import is_nvr_embargoed
-from artcommonlib.constants import KONFLUX_DEFAULT_IMAGE_REPO, KONFLUX_IMAGE_TEST_REPO, RHCOS_IMAGE_REPO
+from artcommonlib.constants import (
+    KONFLUX_DEFAULT_IMAGE_REPO,
+    KONFLUX_IMAGE_TEST_REPO,
+    RHCOS_IMAGE_REPO,
+    SD_HANDOFF_REPO,
+)
 from artcommonlib.konflux.konflux_build_record import KonfluxBuildOutcome, KonfluxBuildRecord
 from artcommonlib.konflux.konflux_db import KonfluxDb
 from artcommonlib.registry_config import RegistryConfig
@@ -32,6 +38,16 @@ LOGGER = logging.getLogger(__name__)
 ALLOWED_TARGET_REPOS = frozenset(
     {
         KONFLUX_IMAGE_TEST_REPO,
+        SD_HANDOFF_REPO,
+    }
+)
+
+# The only destinations ever permitted to carry embargoed content, and only when the
+# operator explicitly opts in via --allow-embargoed. Any repo not listed here stays
+# hard-blocked for embargoed NVRs no matter what flags are passed (see _validate_parameters).
+EMBARGO_ALLOWED_REPOS = frozenset(
+    {
+        SD_HANDOFF_REPO,
     }
 )
 
@@ -78,6 +94,7 @@ class SyncNvrToQuayPipeline:
         target_repo: str = KONFLUX_IMAGE_TEST_REPO,
         allow_failed: bool = False,
         record_id: str = "",
+        allow_embargoed: bool = False,
     ) -> None:
         """Initialize the pipeline and validate its parameters.
 
@@ -86,6 +103,8 @@ class SyncNvrToQuayPipeline:
         :param target_repo: Target quay repo; must be on the server-side allowlist.
         :param allow_failed: Also consider terminal failed builds (e.g. its_error).
         :param record_id: Konflux build record_id to disambiguate multiple records for one NVR.
+        :param allow_embargoed: Allow syncing embargoed NVRs. Only takes effect for a target_repo
+            in EMBARGO_ALLOWED_REPOS; otherwise it is rejected outright by _validate_parameters.
         :raises ValueError: If any parameter fails validation.
         """
         self.runtime = runtime
@@ -94,6 +113,7 @@ class SyncNvrToQuayPipeline:
         self.target_repo = target_repo
         self.allow_failed = allow_failed
         self.record_id = record_id
+        self.allow_embargoed = allow_embargoed
         # Maps each synced NVR -> list of destination pullspecs created on the target repo.
         self.created_pullspecs: dict = {}
 
@@ -107,6 +127,14 @@ class SyncNvrToQuayPipeline:
         if self.target_repo not in ALLOWED_TARGET_REPOS:
             raise ValueError(
                 f"Target repo {self.target_repo!r} is not allowed. Allowed repos: {sorted(ALLOWED_TARGET_REPOS)}"
+            )
+
+        # Hard guarantee: --allow-embargoed can never apply to a destination that isn't
+        # explicitly marked embargo-capable, even by mistake.
+        if self.allow_embargoed and self.target_repo not in EMBARGO_ALLOWED_REPOS:
+            raise ValueError(
+                f"--allow-embargoed cannot be used with target repo {self.target_repo!r}; "
+                f"embargoed content may only be synced to: {sorted(EMBARGO_ALLOWED_REPOS)}"
             )
 
         # Allow-list each NVR's format before it can reach the DB query layer.
@@ -187,10 +215,14 @@ class SyncNvrToQuayPipeline:
         self._logger.info("Processing NVR %s", nvr)
         record = await self._resolve_record(db, nvr)
 
-        # EMBARGO GATE: embargoed builds must NEVER be synced to this repo, regardless of allow_failed.
+        # EMBARGO GATE: embargoed builds are synced only if the operator explicitly opted in
+        # with --allow-embargoed, and _validate_parameters already guarantees that flag can
+        # only be set when target_repo is in EMBARGO_ALLOWED_REPOS.
         if is_nvr_embargoed(nvr) or getattr(record, "embargoed", False):
-            self._logger.warning("Skipping %s: NVR is embargoed and must not be synced", nvr)
-            return
+            if not self.allow_embargoed:
+                self._logger.warning("Skipping %s: NVR is embargoed and must not be synced", nvr)
+                return
+            self._logger.warning("Syncing EMBARGOED NVR %s to %s (ALLOW_EMBARGOED set)", nvr, self.target_repo)
 
         # SAFETY GUARD: a failed build (e.g. build_error) may have no image to mirror.
         if not record.image_pullspec:
@@ -244,11 +276,15 @@ class SyncNvrToQuayPipeline:
             # Merge the default konflux creds with the RHCOS creds (when available) so the mirror
             # can read an RHCOS source as well as a konflux source, and write to art-images-test.
             rhcos_quay_auth_file = os.environ.get("RHCOS_QUAY_AUTH_FILE")
+            sd_handoff_quay_auth_file = os.environ.get("SD_HANDOFF_QUAY_AUTH_FILE")
             source_files = [quay_auth_file]
             registries = [KONFLUX_DEFAULT_IMAGE_REPO, KONFLUX_IMAGE_TEST_REPO]
             if rhcos_quay_auth_file and os.path.exists(rhcos_quay_auth_file):
                 source_files.append(rhcos_quay_auth_file)
                 registries.append(RHCOS_IMAGE_REPO)
+            if sd_handoff_quay_auth_file and os.path.exists(sd_handoff_quay_auth_file):
+                source_files.append(sd_handoff_quay_auth_file)
+                registries.append(SD_HANDOFF_REPO)
 
             with RegistryConfig(source_files=source_files, registries=registries) as merged_auth_file:
                 previous_auth_file = os.environ.get("QUAY_AUTH_FILE")
@@ -301,7 +337,8 @@ class SyncNvrToQuayPipeline:
 @cli.command(
     "sync-nvr-to-quay",
     help="Sync Konflux-built image(s) identified by NVR into an approved quay repo, "
-    "tagging them so quay does not garbage-collect them. Embargoed NVRs are never synced.",
+    "tagging them so quay does not garbage-collect them. Embargoed NVRs are never synced "
+    "unless --allow-embargoed is set and target-repo is explicitly embargo-capable.",
 )
 @click.option(
     "--nvr",
@@ -327,9 +364,18 @@ class SyncNvrToQuayPipeline:
     default="",
     help="Konflux build record_id, used to disambiguate when multiple records exist for one NVR.",
 )
+@click.option(
+    "--allow-embargoed",
+    is_flag=True,
+    default=False,
+    help="Allow syncing embargoed NVRs. Only takes effect when target-repo is explicitly "
+    "embargo-capable (currently only sd-handoff); otherwise this flag is rejected outright.",
+)
 @pass_runtime
 @click_coroutine
-async def sync_nvr_to_quay_cli(runtime: Runtime, nvr: str, target_repo: str, allow_failed: bool, record_id: str):
+async def sync_nvr_to_quay_cli(
+    runtime: Runtime, nvr: str, target_repo: str, allow_failed: bool, record_id: str, allow_embargoed: bool
+):
     """CLI entrypoint for the sync-nvr-to-quay pipeline."""
     nvrs = [n.strip() for n in nvr.split(",") if n.strip()]
     pipeline = SyncNvrToQuayPipeline(
@@ -338,5 +384,6 @@ async def sync_nvr_to_quay_cli(runtime: Runtime, nvr: str, target_repo: str, all
         target_repo=target_repo,
         allow_failed=allow_failed,
         record_id=record_id,
+        allow_embargoed=allow_embargoed,
     )
     await pipeline.run()
