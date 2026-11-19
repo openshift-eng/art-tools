@@ -204,9 +204,17 @@ class KonfluxOcpPipeline:
         if self.assembly != 'stream':
             return
 
-        failed_entries = {
-            entry['name']: entry for entry in record_log.get('image_build_konflux', []) if int(entry['status'])
-        }
+        # last_status covers non-parent image outcomes in this run (mirrors ocp.py spam gate).
+        failed_entries = {}
+        last_status = {}
+        for entry in record_log.get('image_build_konflux', []):
+            if 'parent images failed to build' in entry.get('message', ''):
+                continue
+            name = entry['name']
+            if int(entry['status']):
+                failed_entries[name] = entry
+
+            last_status[name] = entry['status']
         if not failed_entries:
             return
 
@@ -218,15 +226,8 @@ class KonfluxOcpPipeline:
         if not build_failed_images:
             return
 
-        # Ratio over non-parent image outcomes in this run (mirrors ocp.py spam gate).
-        last_status = {}
-        for entry in record_log.get('image_build_konflux', []):
-            if 'parent images failed to build' in entry.get('message', ''):
-                continue
-            last_status[entry['name']] = entry['status']
-
         total = len(last_status)
-        failed = len({name for name, status in last_status.items() if int(status)})
+        failed = len(failed_entries)
         ratio = failed / total if total else 0
 
         if (total > 10 and ratio > 0.25) or (ratio > 1 and failed == total):
@@ -237,7 +238,7 @@ class KonfluxOcpPipeline:
             )
             return
 
-        failed_map = {name: failed_entries[name] for name in build_failed_images if name in failed_entries}
+        failed_map = {name: failed_entries[name] for name in build_failed_images}
 
         # Only alert once a failure has repeated across consecutive runs, using the same
         # counters update_build_fail_counters() just incremented for this run.
