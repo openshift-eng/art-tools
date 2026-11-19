@@ -223,7 +223,7 @@ class BuildSyncPipeline:
         jenkins.update_title(' [KONFLUX]')
 
         if self.private_only:
-            await self._update_nightly_imagestreams()
+            await self._sync_assembly_imagestreams()
             return
 
         if self.assembly not in ('stream', 'test') and not self.runtime.dry_run:
@@ -237,8 +237,8 @@ class BuildSyncPipeline:
         self.logger.info('Backup all imagestreams...')
         await self._backup_all_imagestreams()
 
-        self.logger.info('Update nightly imagestreams...')
-        await self._update_nightly_imagestreams()
+        self.logger.info('Sync assembly imagestreams...')
+        await self._sync_assembly_imagestreams()
 
     @start_as_current_span_async(TRACER, "build-sync.handle-success")
     async def handle_success(self):
@@ -468,11 +468,8 @@ class BuildSyncPipeline:
             await self.slack_client.say(f'Unable to mirror CoreOS images to CI for {self.version}: {e}')
 
     @start_as_current_span_async(TRACER, "build-sync.update-nightly-imagestreams")
-    async def _update_nightly_imagestreams(self):
-        """
-        Determine the content to update in the ART latest imagestreams and apply those changes on the CI cluster.
-        The verb will also mirror out images to the quay monorepo.
-        """
+    async def _sync_assembly_imagestreams(self):
+        """Mirror the assembly's component images to Quay and sync its ImageStreams on the CI cluster."""
         current_span = trace.get_current_span()
         current_span.set_attribute("build-sync.version", self.version)
         current_span.set_attribute("build-sync.assembly", self.assembly)
