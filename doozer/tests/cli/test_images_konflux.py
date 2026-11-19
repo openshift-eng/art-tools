@@ -129,13 +129,6 @@ class TestOkdBuildPriority(unittest.IsolatedAsyncioTestCase):
                 self.assertEqual(config.build_priority, requested_priority)
                 self.assertIs(config.build_priority_policy, expected_policy)
 
-        runtime.product = "ocp"
-        runtime.group_config = Model({"konflux": {"build_priority": 8}})
-        cli = KonfluxBuildCli(runtime, None, None, "test", "test", None, False, True, None, "auto")
-        await cli.run()
-        config = builder_cls.call_args.kwargs["config"]
-        self.assertEqual(config.build_priority, "auto")
-        self.assertIsNone(config.build_priority_policy)
         policy_loader.assert_awaited_once()
 
 

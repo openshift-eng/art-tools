@@ -416,11 +416,8 @@ class KonfluxBuildCli:
 
         # Freeze one policy snapshot for the batch before submitting any builds.
         # Golang builders use their fixed default without depending on the policy service.
-        # Older OKD group refs lack product: okd and must keep their group priority
-        # instead of matching an OCP rule in the central policy.
         priority_policy = None
-        legacy_okd = runtime.variant is BuildVariant.OKD and runtime.product != BuildVariant.OKD.value
-        if self.build_priority == 'auto' and 'golang' not in group and not legacy_okd:
+        if self.build_priority == 'auto' and 'golang' not in group:
             priority_policy = await load_build_priority_policy()
         config = KonfluxImageBuilderConfig(
             base_dir=Path(runtime.working_dir, constants.WORKING_SUBDIR_KONFLUX_BUILD_SOURCES),

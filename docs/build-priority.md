@@ -34,8 +34,6 @@ unless an image-specific priority is set. An explicit numeric
 The OKD Jenkins job passes `--build-priority=auto` to `artcd okd`. Direct
 `artcd okd` invocations must request `auto` to use the central policy; their
 default remains priority 10. Doozer image builds default to `auto`.
-OKD builds using older group refs without `okd.product` also retain their
-image/group priorities instead of matching an OCP policy rule.
 
 Golang builders bypass policy loading and resolution, retaining their existing
 priority 2 default regardless of `enabled`. Release FBCs continue to request
