@@ -367,10 +367,8 @@ class KonfluxBuildCli:
         if self.runtime.variant is BuildVariant.OKD:
             major, minor = runtime.get_major_minor_fields()
             group = f'okd-{major}.{minor}'
-            build_priority = '8'
         else:
             group = runtime.group
-            build_priority = self.build_priority
 
         lifecycle = runtime.group_config.get("software_lifecycle")
         ec_policy = resolve_stage_policy(
@@ -418,8 +416,11 @@ class KonfluxBuildCli:
 
         # Freeze one policy snapshot for the batch before submitting any builds.
         # Golang builders use their fixed default without depending on the policy service.
+        # Older OKD group refs lack product: okd and must keep their group priority
+        # instead of matching an OCP rule in the central policy.
         priority_policy = None
-        if build_priority == 'auto' and 'golang' not in group:
+        legacy_okd = runtime.variant is BuildVariant.OKD and runtime.product != BuildVariant.OKD.value
+        if self.build_priority == 'auto' and 'golang' not in group and not legacy_okd:
             priority_policy = await load_build_priority_policy()
         config = KonfluxImageBuilderConfig(
             base_dir=Path(runtime.working_dir, constants.WORKING_SUBDIR_KONFLUX_BUILD_SOURCES),
@@ -433,7 +434,7 @@ class KonfluxBuildCli:
             skip_tasks=self.skip_tasks,
             dry_run=self.dry_run,
             plr_template=self.plr_template,
-            build_priority=build_priority,
+            build_priority=self.build_priority,
             build_priority_policy=priority_policy,
             ec_policy_configuration=ec_policy,
             skip_ec_verify=self.skip_ec_verify,
@@ -711,7 +712,7 @@ class KonfluxBuildCli:
     metavar='PRIORITY',
     default='auto',
     required=True,
-    help='Kueue build priority. Use "auto" for automatic resolution or specify a number 1-10 (where 1 is highest priority). OKD builds always use priority 8.',
+    help='Kueue build priority. Use "auto" for the central policy when enabled, then image/group config; or specify a number 1-10 (where 1 is highest priority).',
 )
 @click.option(
     '--network-mode',

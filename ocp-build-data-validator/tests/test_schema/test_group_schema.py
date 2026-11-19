@@ -140,10 +140,15 @@ class TestGroupSchema(unittest.TestCase):
             "vars": {"MAJOR": 4, "MINOR": 21},
             "okd": {
                 "enabled": True,
+                "product": "okd",
                 "konflux": {"build_priority": 8},
             },
         }
         self.assertEqual("", group_schema.validate("group.yml", valid_data))
+
+    def test_validate_with_invalid_okd_product(self):
+        invalid_data = {"okd": {"product": "ocp"}}
+        self.assertIn("'okd' was expected", group_schema.validate("group.yml", invalid_data))
 
     def test_validate_with_invalid_okd_enabled_flag(self):
         invalid_data = {

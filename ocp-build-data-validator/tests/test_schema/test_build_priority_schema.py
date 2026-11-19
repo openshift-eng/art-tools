@@ -10,7 +10,10 @@ def test_build_priority_policy_dispatch():
             path,
             {
                 'enabled': False,
-                'rules': [{'product': 'ocp', 'versions': ['4.19', '5.0'], 'priority': 2}],
+                'rules': [
+                    {'product': 'okd', 'priority': 8},
+                    {'product': 'ocp', 'versions': ['4.19', '5.0'], 'priority': 2},
+                ],
                 'default_priority': 3,
             },
         )

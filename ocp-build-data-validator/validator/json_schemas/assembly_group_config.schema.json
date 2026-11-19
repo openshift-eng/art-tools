@@ -807,6 +807,10 @@
     "okd": {
       "type": "object",
       "properties": {
+        "product": {"const": "okd"},
+        "product!": {"$ref": "#/properties/okd/properties/product"},
+        "product?": {"$ref": "#/properties/okd/properties/product"},
+        "product-": {},
         "branch": {
           "type": "string"
         },
