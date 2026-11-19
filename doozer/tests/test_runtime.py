@@ -2,8 +2,10 @@
 import logging
 import unittest
 from types import SimpleNamespace
+from unittest import mock
 
 from artcommonlib.model import Model
+from artcommonlib.variants import BuildVariant
 from doozerlib import runtime
 
 
@@ -23,6 +25,19 @@ class TestRuntime(unittest.TestCase):
     @staticmethod
     def _entry(key, data):
         return SimpleNamespace(key=key, data=Model(dict_to_model=data))
+
+    def test_okd_group_config_overrides_product(self):
+        group_config = {"product": "ocp", "okd": {"product": "okd"}}
+        for variant, expected in ((BuildVariant.OCP, "ocp"), (BuildVariant.OKD, "okd")):
+            with self.subTest(variant=variant):
+                rt = stub_runtime()
+                rt.variant = variant
+                rt.get_replace_vars = mock.Mock(return_value={})
+                rt.get_releases_config = mock.Mock(return_value={})
+                rt._build_data_loader = mock.Mock()
+                rt._build_data_loader.load_group_config.return_value = group_config
+
+                self.assertEqual(rt.get_group_config().product, expected)
 
     def test_populate_image_name_maps_skips_non_olm_duplicates(self):
         rt = stub_runtime()
