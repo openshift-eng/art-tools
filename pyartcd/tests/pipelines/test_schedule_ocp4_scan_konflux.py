@@ -15,7 +15,7 @@ class TestOcpScanScheduler(IsolatedAsyncioTestCase):
 
     @patch.object(scheduler.tekton, 'start_pipeline_run')
     @patch.object(scheduler.util, 'is_build_permitted', return_value=True)
-    @patch.dict('os.environ', {'K8S_JOB_NAME': 'ocp4-scan-konflux-hp-1234'})
+    @patch.dict('os.environ', {'K8S_JOB_NAME': 'ocp4-scan-konflux-hp-1234', 'POD_NAMESPACE': 'art-scheduler-tenant'})
     async def test_starts_existing_pipeline_with_jenkins_scan_inputs(self, is_permitted, start_run):
         await scheduler.run_for('4.22', self.runtime, self.lock_manager, tekton_namespace=self.namespace)
 
@@ -28,6 +28,7 @@ class TestOcpScanScheduler(IsolatedAsyncioTestCase):
             {'version': '4.22'},
             namespace=self.namespace,
             run_name='ocp4-scan-konflux-hp-1234-4-22',
+            scheduler_job='art-scheduler-tenant/ocp4-scan-konflux-hp-1234',
         )
 
     @patch.object(scheduler.tekton, 'start_pipeline_run')

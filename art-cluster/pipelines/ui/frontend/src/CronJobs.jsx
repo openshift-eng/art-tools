@@ -1,8 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { Alert, Button, Label, Spinner, Title } from '@patternfly/react-core';
-import { navigateRow, viewHref } from './navigation';
-
-const consoleBase = 'https://console-openshift-console.apps.artc2023.pc3z.p1.openshiftapps.com';
+import { navigateRow, openshiftResourceHref, viewHref } from './navigation';
 
 function useCronJobData(path, request) {
   const [result, setResult] = useState(null);
@@ -24,10 +22,6 @@ function useCronJobData(path, request) {
 
 function CronJobState({ suspended }) {
   return <Label color={suspended ? 'grey' : 'green'}>{suspended ? 'Suspended' : 'Enabled'}</Label>;
-}
-
-function consoleHref(namespace, kind, name) {
-  return `${consoleBase}/k8s/ns/${encodeURIComponent(namespace)}/batch~v1~${kind}/${encodeURIComponent(name)}`;
 }
 
 export function CronJobs({ namespace, request, formatDate }) {
@@ -84,7 +78,7 @@ export function CronJobDetail({ view, request, formatDate, Status }) {
         <div><div className="eyebrow">{cronjob.namespace}</div><Title headingLevel="h1" size="2xl">{cronjob.name}</Title></div>
         <div className="detail-actions">
           <Button variant="secondary" onClick={refresh}>Refresh</Button>
-          <Button component="a" variant="secondary" href={consoleHref(cronjob.namespace, 'CronJob', cronjob.name)}>View in OpenShift</Button>
+          <Button component="a" variant="secondary" href={openshiftResourceHref(cronjob.namespace, 'batch~v1~CronJob', cronjob.name)}>View in OpenShift</Button>
         </div>
       </div>
       <section className="panel">
@@ -107,7 +101,7 @@ export function CronJobDetail({ view, request, formatDate, Status }) {
                 <thead><tr><th>Job</th><th>Status</th><th>Created</th><th>Started</th><th>Completed</th></tr></thead>
                 <tbody>{cronjob.jobs.map((run) => (
                   <tr key={run.name}>
-                    <td className="primary-cell"><a href={consoleHref(cronjob.namespace, 'Job', run.name)}>{run.name}</a></td>
+                    <td className="primary-cell"><a href={openshiftResourceHref(cronjob.namespace, 'batch~v1~Job', run.name)}>{run.name}</a></td>
                     <td><Status value={run.status} /></td>
                     <td>{formatDate(run.created)}</td>
                     <td>{formatDate(run.started)}</td>

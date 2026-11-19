@@ -6,6 +6,8 @@ The interface uses a compact top navigation and supports light and dark themes. 
 
 The **CronJobs** page shows the schedule, time zone, suspension state, and recent Kubernetes Jobs for tenant CronJobs. Recent Jobs are matched to the current CronJob by owner UID and link to logs in the OpenShift console. The tab uses the signed-in user's namespace permissions and the UI OAuth scope for `batch/v1` CronJob and Job reads.
 
+Scheduled scan PipelineRuns record their source Job and link to it from the run page. For older scheduled scans, the UI verifies the Job and its CronJob owner before displaying a link.
+
 ## Incidents
 
 The Incidents navigation page and shared announcement strip read from the `art-pipelines-incidents` ConfigMap. The backend reads `/etc/incidents/incidents.json` for each `/api/incidents` request, and the frontend refreshes incident data every 30 seconds. A slim yellow strip sits above the app header on every page and is visible to all app viewers. It shows open incidents that have **Show in banner** enabled, one at a time, and advances every eight seconds when there are several. Closing an incident removes it from the strip. The Incidents page keeps active, resolved, and deleted entries visible, including incidents with banner display disabled. Each incident supports a severity (`info`, `warning`, or `danger`), title, short banner message, status, start/update/close/delete timestamps, description, up to ten HTTP(S) links, a banner visibility setting, and timestamped incident history.

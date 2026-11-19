@@ -97,6 +97,7 @@ def start_pipeline_run(
     use_current_parent: bool = True,
     kubeconfig: Optional[str] = None,
     run_name: Optional[str] = None,
+    scheduler_job: Optional[str] = None,
 ) -> Optional[str]:
     """Create a Tekton PipelineRun to trigger a downstream pipeline.
 
@@ -115,6 +116,7 @@ def start_pipeline_run(
     ``kubeconfig`` selects the target cluster without changing process environment.
     ``run_name`` uses a deterministic name and reuses a matching existing run on
     AlreadyExists. Other failures propagate; deduplication lasts while the run exists.
+    ``scheduler_job`` records the triggering Kubernetes Job as ``namespace/name``.
 
     Returns the created PipelineRun name, or None if it could not be parsed.
     """
@@ -125,6 +127,8 @@ def start_pipeline_run(
 
     labels = {"app": "artcd"}
     annotations = {}
+    if scheduler_job:
+        annotations["art.openshift.io/scheduler-job"] = scheduler_job
 
     if params.get("group"):
         labels["art.openshift.io/group"] = params["group"]

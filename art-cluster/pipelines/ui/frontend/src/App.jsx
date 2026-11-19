@@ -7,7 +7,7 @@ import Components from './Components';
 import Incidents from './Incidents';
 import IncidentBanner from './IncidentBanner';
 import { CronJobDetail, CronJobs } from './CronJobs';
-import { isPlainClick, navigateRow, hasReleaseStatus, parseHash, pipelineTabs, runTabs, viewHref } from './navigation';
+import { isPlainClick, navigateRow, hasReleaseStatus, openshiftResourceHref, parseHash, pipelineTabs, runTabs, viewHref } from './navigation';
 
 const api = createApi();
 const { request } = api;
@@ -73,7 +73,7 @@ function RunDetails({ run, filterNamespace }) {
   const parentHref = run.parentPipelineRun
     ? viewHref({ kind: 'run', namespace: run.namespace, name: run.parentPipelineRun, filterNamespace })
     : null;
-  const consoleHref = `https://console-openshift-console.apps.artc2023.pc3z.p1.openshiftapps.com/k8s/ns/${encodeURIComponent(run.namespace)}/tekton.dev~v1~PipelineRun/${encodeURIComponent(run.name)}`;
+  const consoleHref = openshiftResourceHref(run.namespace, 'tekton.dev~v1~PipelineRun', run.name);
   return <section className="panel run-details-panel" role="tabpanel" aria-label="PipelineRun details">
     <h2>PipelineRun details</h2>
     <div className="run-details-grid">
@@ -499,7 +499,24 @@ function RunDetail({ view, csrfToken }) {
     <Button component="a" variant="link" className="back" href={viewHref({ kind: 'runs', filterNamespace: view.filterNamespace })}>← PipelineRuns</Button>
     {error && <Alert variant="danger" title={error} className="notice" />}
     {!run ? <div className="loading"><Spinner size="lg" /></div> : <>
-      <div className="page-heading detail-heading"><div><div className="eyebrow">{run.namespace} / {run.pipeline || 'PipelineRun'}</div><Title headingLevel="h1" size="2xl">{run.name}</Title><div className="detail-meta"><Status value={run.status} /><span>Created {formatDate(run.created)}</span>{run.parentPipelineRun && <span>Parent PipelineRun: <a href={viewHref({ kind: 'run', namespace: run.namespace, name: run.parentPipelineRun, filterNamespace: view.filterNamespace })}>{run.parentPipelineRun}</a></span>}{run.rebuiltFrom && <span>Rebuilt from <a href={viewHref({ kind: 'run', namespace: run.namespace, name: run.rebuiltFrom.name, uid: run.rebuiltFrom.uid, filterNamespace: view.filterNamespace })}>{run.rebuiltFrom.name}</a></span>}</div>{children?.items.length > 0 && <div className="related-runs"><strong>Triggered PipelineRuns</strong><div>{children.items.map((child) => <a key={child.uid} href={viewHref({ kind: 'run', namespace: run.namespace, name: child.name, uid: child.uid, filterNamespace: view.filterNamespace })}>{child.name}</a>)}</div></div>}</div><div className="detail-actions"><Button variant="secondary" onClick={refreshVisible}>Refresh</Button>{run.pipeline && <Button variant="primary" onClick={() => setForm(true)}>Rebuild with parameters</Button>}</div></div>
+      <div className="page-heading detail-heading">
+        <div>
+          <div className="eyebrow">{run.namespace} / {run.pipeline || 'PipelineRun'}</div>
+          <Title headingLevel="h1" size="2xl">{run.name}</Title>
+          <div className="detail-meta">
+            <Status value={run.status} />
+            <span>Created {formatDate(run.created)}</span>
+            {run.parentPipelineRun && <span>Parent PipelineRun: <a href={viewHref({ kind: 'run', namespace: run.namespace, name: run.parentPipelineRun, filterNamespace: view.filterNamespace })}>{run.parentPipelineRun}</a></span>}
+            {run.schedulerJob && <span>Scheduler Job <a href={openshiftResourceHref(run.schedulerJob.namespace, 'batch~v1~Job', run.schedulerJob.name)}>{run.schedulerJob.name}</a></span>}
+            {run.rebuiltFrom && <span>Rebuilt from <a href={viewHref({ kind: 'run', namespace: run.namespace, name: run.rebuiltFrom.name, uid: run.rebuiltFrom.uid, filterNamespace: view.filterNamespace })}>{run.rebuiltFrom.name}</a></span>}
+          </div>
+          {children?.items.length > 0 && <div className="related-runs"><strong>Triggered PipelineRuns</strong><div>{children.items.map((child) => <a key={child.uid} href={viewHref({ kind: 'run', namespace: run.namespace, name: child.name, uid: child.uid, filterNamespace: view.filterNamespace })}>{child.name}</a>)}</div></div>}
+        </div>
+        <div className="detail-actions">
+          <Button variant="secondary" onClick={refreshVisible}>Refresh</Button>
+          {run.pipeline && <Button variant="primary" onClick={() => setForm(true)}>Rebuild with parameters</Button>}
+        </div>
+      </div>
       {childrenError && <Alert variant="warning" title={`Child PipelineRuns could not be loaded: ${childrenError}`} className="notice" />}
       {children?.errors?.length > 0 && <Alert variant="warning" title="Some child PipelineRuns could not be loaded" className="notice" />}
       <DetailTabs view={view} tabs={runTabs} labels={{ details: 'Details', components: `Components (${run.components?.length || 0})`, logs: 'Logs', events: 'Events', parameters: `Parameters (${run.parameters.length})`, tasks: `Task runs (${run.tasks.length})` }} activeTab={activeTab} onSelect={setActiveTab} ariaLabel="PipelineRun views" />

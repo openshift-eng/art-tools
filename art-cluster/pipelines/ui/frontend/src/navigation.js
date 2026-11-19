@@ -38,6 +38,11 @@ export function isPlainClick(event) {
   return event.button === 0 && !event.ctrlKey && !event.metaKey && !event.shiftKey && !event.altKey && !event.defaultPrevented;
 }
 
+export function openshiftResourceHref(namespace, resource, name) {
+  const consoleBase = 'https://console-openshift-console.apps.artc2023.pc3z.p1.openshiftapps.com';
+  return `${consoleBase}/k8s/ns/${encodeURIComponent(namespace)}/${resource}/${encodeURIComponent(name)}`;
+}
+
 export function navigateRow(event, href, browser = window) {
   if (event.defaultPrevented || event.target.closest('a, button, input, select, textarea, summary, [role="button"]')) return;
   if (event.type === 'keydown' ? event.key !== 'Enter' : ![0, 1].includes(event.button)) return;
