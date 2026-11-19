@@ -6,6 +6,7 @@ import ReleaseStatus from './ReleaseStatus';
 import Components from './Components';
 import Incidents from './Incidents';
 import IncidentBanner from './IncidentBanner';
+import { CronJobDetail, CronJobs } from './CronJobs';
 import { isPlainClick, navigateRow, hasReleaseStatus, parseHash, pipelineTabs, runTabs, viewHref } from './navigation';
 
 const api = createApi();
@@ -199,6 +200,7 @@ function App() {
       <nav className="topnav" aria-label="Workspace navigation">
         <a className={view.kind === 'pipelines' || view.kind === 'pipeline' ? 'nav active' : 'nav'} href={viewHref({ kind: 'pipelines', filterNamespace: namespace })}>Pipelines</a>
         <a className={view.kind === 'runs' || view.kind === 'run' ? 'nav active' : 'nav'} href={viewHref({ kind: 'runs', filterNamespace: namespace })}>PipelineRuns</a>
+        <a className={view.kind === 'cronjobs' || view.kind === 'cronjob' ? 'nav active' : 'nav'} href={viewHref({ kind: 'cronjobs', filterNamespace: namespace })}>CronJobs</a>
         <a className={view.kind === 'health' ? 'nav active' : 'nav'} href={viewHref({ kind: 'health', filterNamespace: namespace })}>PipelineHealth</a>
         {showReleaseStatus && <a className={view.kind === 'release-status' ? 'nav active' : 'nav'} href={viewHref({ kind: 'release-status', filterNamespace: namespace })}>ReleaseStatus</a>}
         <a className={view.kind === 'incidents' ? 'nav active' : 'nav'} href={viewHref({ kind: 'incidents', filterNamespace: namespace })}>Incidents{activeIncidents.length > 0 && <Label color="orange" className="incident-count">{activeIncidents.length}</Label>}</a>
@@ -224,6 +226,8 @@ function App() {
         {error && <Alert variant="danger" title={error} className="notice" />}
         {view.kind === 'pipelines' && <Pipelines namespace={namespace} />}
         {view.kind === 'runs' && <Runs namespace={namespace} />}
+        {view.kind === 'cronjobs' && <CronJobs namespace={namespace} request={request} formatDate={formatDate} />}
+        {view.kind === 'cronjob' && <CronJobDetail view={view} request={request} formatDate={formatDate} Status={Status} />}
         {view.kind === 'health' && <PipelineHealth namespace={namespace} request={request} />}
         {view.kind === 'release-status' && (showReleaseStatus ? <ReleaseStatus namespace={namespace} request={request} /> : <div className="empty">{releaseCapability?.namespace !== namespace ? 'Checking release pipeline availability…' : releaseCapability.error || 'ReleaseStatus is available for tenants with a release-from-fbc pipeline.'}</div>)}
         {view.kind === 'incidents' && <Incidents

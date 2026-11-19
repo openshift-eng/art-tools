@@ -1,5 +1,6 @@
 export const pipelineTabs = ['details', 'runs'];
 export const runTabs = ['details', 'components', 'logs', 'events', 'parameters', 'tasks'];
+const listRoutes = ['runs', 'cronjobs', 'health', 'release-status', 'incidents'];
 
 export function parseHash(hash = window.location.hash) {
   const [path, search] = hash.replace(/^#\/?/, '').split('?');
@@ -7,6 +8,9 @@ export function parseHash(hash = window.location.hash) {
   const kind = route === 'releases' ? 'release-status' : route;
   const params = new URLSearchParams(search);
   const filterNamespace = params.get('namespace') || '';
+  if (kind === 'cronjob' && namespace && name) {
+    return { kind, namespace: decodeURIComponent(namespace), name: decodeURIComponent(name), filterNamespace };
+  }
   if ((kind === 'pipeline' || kind === 'run') && namespace && name) {
     const tabs = kind === 'pipeline' ? pipelineTabs : runTabs;
     return {
@@ -15,13 +19,13 @@ export function parseHash(hash = window.location.hash) {
       tab: tabs.includes(params.get('tab')) ? params.get('tab') : 'details',
     };
   }
-  return { kind: ['runs', 'health', 'release-status', 'incidents'].includes(kind) ? kind : 'pipelines', filterNamespace };
+  return { kind: listRoutes.includes(kind) ? kind : 'pipelines', filterNamespace };
 }
 
 export function viewHref(view) {
   const params = new URLSearchParams();
-  let path = ['runs', 'health', 'release-status', 'incidents'].includes(view.kind) ? view.kind : 'pipelines';
-  if (view.kind === 'pipeline' || view.kind === 'run') {
+  let path = listRoutes.includes(view.kind) ? view.kind : 'pipelines';
+  if (['pipeline', 'run', 'cronjob'].includes(view.kind)) {
     path = `${view.kind}/${encodeURIComponent(view.namespace)}/${encodeURIComponent(view.name)}`;
     if (view.kind === 'run' && view.uid) params.set('uid', view.uid);
     if (view.tab) params.set('tab', view.tab);

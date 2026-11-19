@@ -221,6 +221,45 @@ def pipeline_summary(pipeline: dict) -> dict:
     }
 
 
+def cronjob_summary(cronjob: dict) -> dict:
+    metadata, spec = cronjob["metadata"], cronjob["spec"]
+    status = cronjob.get("status") or {}
+    return {
+        "namespace": metadata["namespace"],
+        "name": metadata["name"],
+        "schedule": spec["schedule"],
+        "timeZone": spec.get("timeZone"),
+        "suspended": spec.get("suspend", False),
+        "activeJobs": len(status.get("active") or []),
+        "lastScheduled": status.get("lastScheduleTime"),
+        "lastSuccessful": status.get("lastSuccessfulTime"),
+    }
+
+
+def job_summary(job: dict) -> dict:
+    metadata = job["metadata"]
+    status = job.get("status") or {}
+    conditions = {item["type"]: item for item in status.get("conditions") or [] if item.get("status") == "True"}
+    result = "Pending"
+    completed = status.get("completionTime")
+    if "Failed" in conditions:
+        result = "Failed"
+        completed = conditions["Failed"].get("lastTransitionTime")
+    elif "Complete" in conditions:
+        result = "Succeeded"
+    elif job.get("spec", {}).get("suspend"):
+        result = "Suspended"
+    elif status.get("active"):
+        result = "Running"
+    return {
+        "name": metadata["name"],
+        "status": result,
+        "created": metadata.get("creationTimestamp"),
+        "started": status.get("startTime"),
+        "completed": completed,
+    }
+
+
 def pipeline_sort_key(pipeline: dict) -> tuple[str, int, str]:
     name = pipeline["name"]
     return (pipeline["namespace"], PIPELINE_PRIORITY.get(name, len(PIPELINE_ORDER)), name)
@@ -624,6 +663,52 @@ async def pipelines(request: Request, namespace: str | None = None, q: str = "")
         groups = await asyncio.gather(*(read(name) for name in names))
     items = [item for group in groups for item in group if q.lower() in item["name"].lower()]
     return {"items": sorted(items, key=pipeline_sort_key)}
+
+
+@app.get("/api/cronjobs")
+async def cronjobs(request: Request, response: Response, namespace: str | None = None):
+    response.headers["Cache-Control"] = "no-store"
+    names = selected_namespaces(namespace)
+    async with Gateway(user_token(request)) as gateway:
+
+        async def read(current: str):
+            try:
+                return [
+                    cronjob_summary(item) async for item in gateway.list_kube(current, "cronjobs", api_group="batch/v1")
+                ]
+            except UpstreamError as error:
+                if error.status == 403 and namespace is None:
+                    return []
+                raise
+
+        groups = await asyncio.gather(*(read(name) for name in names))
+    items = [item for group in groups for item in group]
+    return {"items": sorted(items, key=lambda item: (item["namespace"], item["name"]))}
+
+
+@app.get("/api/cronjobs/{namespace}/{name}")
+async def cronjob_detail(request: Request, response: Response, namespace: str, name: str):
+    response.headers["Cache-Control"] = "no-store"
+    allowed_namespace(namespace)
+    async with Gateway(user_token(request)) as gateway:
+        cronjob = await gateway.cronjob(namespace, name)
+        uid = cronjob["metadata"]["uid"]
+        jobs = []
+        try:
+            async for job in gateway.list_kube(namespace, "jobs", api_group="batch/v1"):
+                if any(
+                    owner.get("kind") == "CronJob" and owner.get("uid") == uid
+                    for owner in job["metadata"].get("ownerReferences") or []
+                ):
+                    jobs.append(job_summary(job))
+        except UpstreamError as error:
+            if error.status != 403:
+                raise
+            jobs = None
+
+    if jobs is not None:
+        jobs.sort(key=lambda job: (job["created"] or "", job["name"]), reverse=True)
+    return {**cronjob_summary(cronjob), "jobs": jobs}
 
 
 @app.get("/api/pipelines/latest-runs")

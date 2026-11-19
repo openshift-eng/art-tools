@@ -3,12 +3,18 @@ import test from 'node:test';
 import { hasReleaseStatus, isPlainClick, navigateRow, parseHash, pipelineTabs, runTabs, viewHref } from '../src/navigation.js';
 
 test('list routes preserve the tenant and accept existing URLs', () => {
-  for (const kind of ['pipelines', 'runs', 'health', 'release-status']) {
+  for (const kind of ['pipelines', 'runs', 'cronjobs', 'health', 'release-status']) {
     for (const filterNamespace of ['', 'art-acm-tenant']) {
       assert.deepEqual(parseHash(viewHref({ kind, filterNamespace })), { kind, filterNamespace });
     }
   }
   assert.deepEqual(parseHash(''), { kind: 'pipelines', filterNamespace: '' });
+});
+
+test('CronJob links preserve the resource namespace and the catalog filter', () => {
+  const view = { kind: 'cronjob', namespace: 'art-openshift-tenant', name: 'ocp4-scan-konflux-hp', filterNamespace: '' };
+  assert.deepEqual(parseHash(viewHref(view)), view);
+  assert.deepEqual(parseHash(viewHref({ ...view, filterNamespace: view.namespace })), { ...view, filterNamespace: view.namespace });
 });
 
 test('detail links preserve tabs, resource namespace, filter namespace, encoding, and run UID', () => {
