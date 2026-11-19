@@ -10,11 +10,12 @@ from unittest.mock import ANY, AsyncMock, MagicMock, patch
 from artcommonlib.constants import KONFLUX_IMAGE_TEST_REPO
 from artcommonlib.variants import BuildVariant
 from click.testing import CliRunner
-from pyartcd import util
 from pyartcd.counter_models import BuildFailCounterContext
 from pyartcd.pipelines.ocp4_konflux import KonfluxOcpPipeline, ocp4
 from pyartcd.runtime import Runtime
 from pyartcd.util import update_build_fail_counters
+
+from pyartcd import util
 
 
 class TestGlobalAutomationFreeze(unittest.IsolatedAsyncioTestCase):

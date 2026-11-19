@@ -259,6 +259,7 @@ class KonfluxOcpPipeline:
             )
         except Exception:
             LOGGER.exception("Failed to send Konflux image build failure notifications")
+
     def building_images(self):
         """
         Returns True if images are being built, False otherwise.
