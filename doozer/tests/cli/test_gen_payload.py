@@ -1271,10 +1271,28 @@ class TestGenPayloadCli(IsolatedAsyncioTestCase):
         gpcli.payload_generator.find_rhcos_build_rpm_inconsistencies.assert_called_once_with([rhcos_build])
         self.assertFalse(gpcli.apply)
 
-    def test_private_assembly_rejects_public_embargo_ack_and_multi_payload_generation(self):
-        for options in ({"embargo_permit_ack": True}, {"apply_multi_arch": True}):
-            with self.subTest(options=options), self.assertRaises(DoozerFatalError):
-                self.private_assembly_cli(**options).validate_parameters()
+    def test_private_assembly_rejects_public_embargo_ack(self):
+        with self.assertRaises(DoozerFatalError):
+            self.private_assembly_cli(embargo_permit_ack=True).validate_parameters()
+
+    @patch("doozerlib.cli.release_gen_payload.oc.project")
+    async def test_private_assembly_stages_multi_payload_in_private_repo(self, project):
+        gpcli = self.private_assembly_cli(apply_multi_arch=True)
+        gpcli.runtime.get_minor_version.return_value = "4.22"
+        gpcli.validate_parameters()
+        repo = "quay.io/openshift-release-dev/ocp-release-priv"
+        digest_pullspec = f"{repo}@sha256:pinned"
+        gpcli.create_multi_release_image = AsyncMock(return_value=digest_pullspec)
+        gpcli.apply_multi_imagestream_update = AsyncMock()
+
+        await gpcli.sync_heterogeneous_payloads({True: {}, False: {}})
+
+        stream, _, destination, tag, _, private_mode = gpcli.create_multi_release_image.await_args.args
+        self.assertTrue(private_mode)
+        self.assertEqual(stream, "4.22-art-assembly-art1-multi-priv")
+        self.assertEqual(destination, f"{repo}:{tag}")
+        project.assert_called_once_with("ocp-multi-priv")
+        gpcli.apply_multi_imagestream_update.assert_awaited_once_with(digest_pullspec, stream, tag)
 
     def test_private_assembly_requires_private_destination(self):
         gpcli = self.private_assembly_cli()

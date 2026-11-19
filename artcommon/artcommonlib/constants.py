@@ -72,6 +72,7 @@ OTEL_EXPORTER_OTLP_ENDPOINT = (
 
 # Registry paths for authentication and image operations
 REGISTRY_QUAY_OCP_RELEASE_DEV = "quay.io/openshift-release-dev"
+PRIVATE_RELEASE_IMAGE_REPO = f"{REGISTRY_QUAY_OCP_RELEASE_DEV}/ocp-release-priv"
 REGISTRY_QUAY_OPENSHIFT = "quay.io/openshift"
 REGISTRY_QUAY_CI = "quay.io/openshift/ci"
 REGISTRY_QUAY_PROXY_CI = "quay-proxy.ci.openshift.org/openshift/ci"

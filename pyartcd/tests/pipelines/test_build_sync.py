@@ -82,7 +82,7 @@ class TestBuildSync(IsolatedAsyncioTestCase):
         self.assertIn(f'--group=openshift-4.22@{data_ref}', command)
         self.assertIn(f'--data-path={data_path}', command)
         self.assertIn('--apply', command)
-        self.assertNotIn('--apply-multi-arch', command)
+        self.assertIn('--apply-multi-arch', command)
         pipeline.comment_on_assembly_pr.assert_not_awaited()
         pipeline._backup_all_imagestreams.assert_not_awaited()
         pipeline._populate_ci_imagestreams.assert_not_awaited()

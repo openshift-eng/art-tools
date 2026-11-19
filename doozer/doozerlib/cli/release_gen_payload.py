@@ -29,6 +29,7 @@ from artcommonlib.assembly import (
 )
 from artcommonlib.constants import (
     COREOS_RHEL10_STREAMS,
+    PRIVATE_RELEASE_IMAGE_REPO,
 )
 from artcommonlib.exectools import manifest_tool
 from artcommonlib.format_util import red_print
@@ -800,8 +801,6 @@ class GenPayloadCli:
                 raise DoozerFatalError("Private assembly mirroring requires Konflux")
             if self.embargo_permit_ack:
                 raise DoozerFatalError("--embargo-permit-ack is incompatible with visibility: private")
-            if self.apply_multi_arch:
-                raise DoozerFatalError("Multi-arch release payload generation is unavailable for private assemblies")
             private_repo = get_art_prod_image_repo_for_version(int(rt.group_config.vars["MAJOR"]), "dev-priv")
             if self.full_component_repo(RepositoryType.PRIVATE) != private_repo:
                 raise DoozerFatalError(f"A private assembly must mirror to {private_repo}")
@@ -2251,8 +2250,8 @@ class GenPayloadCli:
            single-arch assemblies, but written to a file rather than applied to the cluster.
         2. For each arch, a payload image based on its CVO, built with references to the (multi-arch)
            components in this imagestream and stored in
-           * quay.io/openshift-release-dev/ocp-release-nightly for nightlies or
-           * quay.io/openshift-release-dev/ocp-release for standard/custom releases.
+           * the selected public payload repository for public payloads or
+           * quay.io/openshift-release-dev/ocp-release-priv for private custom assemblies.
         3. A multi payload image, which is a manifest list built from the arch-specific release
            payload images and stored in the same quay.io repos as above.
         4. A _release_ imagestream per assembly to record tag(s) for multi-arch payload image(s)
@@ -2261,15 +2260,8 @@ class GenPayloadCli:
         """
 
         for private_mode in self.privacy_modes:
-            if private_mode:
-                # The CI image registry does not support manifest lists. Thus, we need to publish
-                # our nightly release payloads to quay.io. As of this writing, we don't have a
-                # private quay repository into which we could push embargoed release heterogeneous
-                # release payloads.
-                red_print(
-                    "PRIVATE MODE MULTI PAYLOADS ARE CURRENTLY DISABLED. "
-                    "WE NEED A PRIVATE QUAY REPO FOR PRIVATE MULTI RELEASE PAYLOADS"
-                )
+            if private_mode and not self.private_only:
+                self.logger.info("Multi-arch staging for private nightlies is disabled")
                 continue
 
             imagestream_namespace, imagestream_name = payload_imagestream_namespace_and_name(
@@ -2297,7 +2289,8 @@ class GenPayloadCli:
 
             # We will then stitch those arch specific payload images together into a release payload
             # manifest list.
-            multi_release_dest: str = f"quay.io/{'/'.join(self.release_repo)}:{multi_release_manifest_list_tag}"
+            release_repo = PRIVATE_RELEASE_IMAGE_REPO if private_mode else f"quay.io/{'/'.join(self.release_repo)}"
+            multi_release_dest = f"{release_repo}:{multi_release_manifest_list_tag}"
             final_multi_pullspec: str = await self.create_multi_release_image(
                 imagestream_name, multi_release_is, multi_release_dest, multi_release_istag, multi_specs, private_mode
             )
@@ -2431,7 +2424,8 @@ class GenPayloadCli:
         # We need a unique tag for the manifest list image so that it does not get garbage collected.
         # To calculate a tag that will vary depending on the individual manifests being added,
         # we've calculated a sha256 of all the manifests being added.
-        output_pullspec: str = f"{self.full_component_repo()}:sha256-{manifest_list_hash.hexdigest()}"
+        repository_type = RepositoryType.PRIVATE if self.private_only else RepositoryType.PUBLIC
+        output_pullspec = f"{self.full_component_repo(repository_type)}:sha256-{manifest_list_hash.hexdigest()}"
 
         # write the manifest list to a file and push it to the registry.
         async with aiofiles.open(component_manifest_path, mode="w+") as ml:

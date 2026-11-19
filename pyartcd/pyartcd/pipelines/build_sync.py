@@ -510,7 +510,7 @@ class BuildSyncPipeline:
             cmd.append('--emergency-ignore-issues')
         if self.embargo_permit_ack:
             cmd.append('--embargo-permit-ack')
-        if not self.private_only and not self.skip_multiarch_payload and not self.runtime.dry_run:
+        if not self.skip_multiarch_payload and not self.runtime.dry_run:
             cmd.append('--apply-multi-arch')
         if self.exclude_arches:
             cmd.extend([f'--exclude-arch={arch}' for arch in self.exclude_arches])
