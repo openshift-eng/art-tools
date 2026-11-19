@@ -108,13 +108,7 @@ class Gateway:
                 return
 
     async def list_kube(
-        self,
-        namespace: str,
-        resource: str,
-        *,
-        api_group: str = "tekton.dev/v1",
-        label_selector: str | None = None,
-        field_selector: str | None = None,
+        self, namespace: str, resource: str, *, api_group: str = "tekton.dev/v1", label_selector: str | None = None
     ):
         token = ""
         while True:
@@ -123,8 +117,6 @@ class Gateway:
                 params["continue"] = token
             if label_selector:
                 params["labelSelector"] = label_selector
-            if field_selector:
-                params["fieldSelector"] = field_selector
             data = await self.kube_json(
                 "GET", f"/apis/{api_group}/namespaces/{quote(namespace)}/{resource}", params=params
             )

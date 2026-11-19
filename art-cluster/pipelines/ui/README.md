@@ -6,7 +6,7 @@ The interface uses a compact top navigation and supports light and dark themes. 
 
 The **CronJobs** page shows the schedule, time zone, suspension state, and recent Kubernetes Jobs for tenant CronJobs. Recent Jobs are matched to the current CronJob by owner UID and link to logs in the OpenShift console. The tab uses the signed-in user's namespace permissions and the UI OAuth scope for `batch/v1` CronJob and Job reads.
 
-Scheduled scan PipelineRuns record their source Job and link to it from the run page. For older scheduled scans, the UI verifies the Job and its CronJob owner before displaying a link.
+Scheduled scan PipelineRuns record their source Job and link to it from the run page.
 
 ## Incidents
 

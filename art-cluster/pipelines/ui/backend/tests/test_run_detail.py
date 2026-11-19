@@ -4,7 +4,6 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import httpx
 from pipeline_ui import app as api
-from pipeline_ui.cluster import UpstreamError
 
 NAMESPACE = "art-test-tenant"
 
@@ -64,35 +63,6 @@ class RunDetailTests(unittest.IsolatedAsyncioTestCase):
             response.json()["schedulerJob"], {"namespace": "art-scheduler-tenant", "name": "scheduler-12345"}
         )
         self.gateway.list_kube.assert_not_called()
-
-    async def test_legacy_scheduler_job_is_linked_only_when_its_owner_is_verified(self):
-        name = "ocp4-scan-konflux-hp-29918426"
-        self.run["metadata"]["name"] = f"{name}-4-20"
-        self.run["spec"]["pipelineRef"]["name"] = "ocp4-scan-konflux"
-        path = f"/api/runs/{NAMESPACE}/{name}-4-20"
-
-        for owner in ("ocp4-scan-konflux-hp", "unrelated-cronjob", None):
-            with self.subTest(owner=owner):
-
-                async def list_jobs(*args, **kwargs):
-                    if owner:
-                        yield {
-                            "metadata": {"ownerReferences": [{"kind": "CronJob", "name": owner, "controller": True}]}
-                        }
-
-                self.gateway.list_kube.side_effect = list_jobs
-                response = await self.client.get(path)
-                self.assertEqual(response.status_code, 200)
-                expected = {"namespace": NAMESPACE, "name": name} if owner == "ocp4-scan-konflux-hp" else None
-                self.assertEqual(response.json()["schedulerJob"], expected)
-                self.gateway.list_kube.assert_called_with(
-                    NAMESPACE, "jobs", api_group="batch/v1", field_selector=f"metadata.name={name}"
-                )
-
-        self.gateway.list_kube.side_effect = UpstreamError(403, "Forbidden")
-        response = await self.client.get(path)
-        self.assertEqual(response.status_code, 200)
-        self.assertIsNone(response.json()["schedulerJob"])
 
     async def test_components_available_for_live_and_archived_details(self):
         self.run["metadata"]["annotations"].update(

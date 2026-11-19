@@ -53,7 +53,6 @@ PIPELINE_ORDER = (
 PIPELINE_PRIORITY = {name: priority for priority, names in enumerate(PIPELINE_ORDER) for name in names}
 SCHEDULER_JOB_ANNOTATION = "art.openshift.io/scheduler-job"
 SCHEDULER_JOB_REF = re.compile(r"([a-z0-9](?:[-a-z0-9]*[a-z0-9])?)/([a-z0-9](?:[-.a-z0-9]*[a-z0-9])?)")
-SCHEDULED_SCAN_RUN = re.compile(r"(ocp4-scan-konflux-hp-[0-9]+)-[0-9]+-[0-9]+")
 CSRF_COOKIE = "__Host-art-pipelines-csrf"
 INCIDENTS_FILE = Path(os.getenv("INCIDENTS_FILE", "/etc/incidents/incidents.json"))
 MAX_INCIDENTS = 20
@@ -804,57 +803,24 @@ async def runs(
     return {"items": items[start : start + page_size], "total": len(items), "page": page, "errors": errors}
 
 
-async def scheduler_job_ref(gateway: Gateway, namespace: str, run: dict) -> dict | None:
-    metadata = run["metadata"]
-    annotation = (metadata.get("annotations") or {}).get(SCHEDULER_JOB_ANNOTATION)
-    if annotation:
-        if ref := SCHEDULER_JOB_REF.fullmatch(annotation):
-            return {"namespace": ref[1], "name": ref[2]}
-        return None
-
-    # Earlier scheduler runs recorded the Job only in their deterministic name.
-    match = SCHEDULED_SCAN_RUN.fullmatch(metadata["name"])
-    if not match or pipeline_name(run) != "ocp4-scan-konflux":
-        return None
-    name = match[1]
-    try:
-        async for job in gateway.list_kube(
-            namespace, "jobs", api_group="batch/v1", field_selector=f"metadata.name={name}"
-        ):
-            if any(
-                owner.get("kind") == "CronJob"
-                and owner.get("name") == "ocp4-scan-konflux-hp"
-                and owner.get("controller")
-                for owner in job["metadata"].get("ownerReferences") or []
-            ):
-                return {"namespace": namespace, "name": name}
-    except UpstreamError as error:
-        if error.status == 401:
-            raise
-        logger.debug("Scheduler Job lookup failed for %s/%s: %s", namespace, name, error.message)
-    except httpx.RequestError as error:
-        logger.debug("Scheduler Job lookup failed for %s/%s: %s", namespace, name, error)
-    return None
-
-
 @app.get("/api/runs/{namespace}/{name}")
 async def run_detail(request: Request, namespace: str, name: str, uid: str | None = None):
     allowed_namespace(namespace)
     async with Gateway(user_token(request)) as gateway:
         run, source, _ = await find_run(gateway, namespace, name, uid)
-        scheduler_job = await scheduler_job_ref(gateway, namespace, run)
     metadata = run.get("metadata", {})
     labels = metadata.get("labels") or {}
     annotations = metadata.get("annotations") or {}
     rebuilt_from_name = annotations.get(REBUILT_FROM_NAME_ANNOTATION)
     rebuilt_from_uid = annotations.get(REBUILT_FROM_ANNOTATION)
+    scheduler_job = SCHEDULER_JOB_REF.fullmatch(annotations.get(SCHEDULER_JOB_ANNOTATION) or "")
     return {
         **run_summary(run, source),
         **component_details(run),
         "labels": labels,
         "annotations": annotations,
         "parentPipelineRun": labels.get("art.openshift.io/parent-pipelinerun"),
-        "schedulerJob": scheduler_job,
+        "schedulerJob": {"namespace": scheduler_job[1], "name": scheduler_job[2]} if scheduler_job else None,
         "rebuiltFrom": (
             {"name": rebuilt_from_name, "uid": rebuilt_from_uid} if rebuilt_from_name and rebuilt_from_uid else None
         ),
