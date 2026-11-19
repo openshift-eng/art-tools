@@ -878,7 +878,7 @@ class TestUpdateImagestreamsDataPath(IsolatedAsyncioTestCase):
         with (
             patch.object(pipeline, '_tag_image_to_stream', new_callable=AsyncMock) as mock_tag,
             patch.object(pipeline, '_get_arch_pullspec', new_callable=AsyncMock, side_effect=arch_pullspec_side_effect),
-            patch.object(pipeline, '_get_current_tag_pullspec', new_callable=AsyncMock, return_value=None),
+            patch.object(pipeline, '_get_current_pod_pullspec', new_callable=AsyncMock, return_value=None),
             patch('pyartcd.pipelines.okd.jenkins'),
         ):
             await pipeline.update_imagestreams()
@@ -920,7 +920,7 @@ class TestUpdateImagestreamsDataPath(IsolatedAsyncioTestCase):
             patch.object(pipeline, '_get_arch_pullspec', new_callable=AsyncMock, side_effect=arch_pullspec_side_effect),
             patch.object(
                 pipeline,
-                '_get_current_tag_pullspec',
+                '_get_current_pod_pullspec',
                 new_callable=AsyncMock,
                 return_value=pod_placeholder_pullspec,
             ) as mock_get_current_tag,
@@ -933,11 +933,11 @@ class TestUpdateImagestreamsDataPath(IsolatedAsyncioTestCase):
             second_call = mock_tag.call_args_list[1]
             self.assertEqual(second_call[1]['source_pullspec'], pod_placeholder_pullspec)
             self.assertEqual(second_call[1]['target_tag'], 'origin-arm64/scos-4.22-art-arm64:cli')
-            mock_get_current_tag.assert_awaited_once_with('origin-arm64', 'scos-4.22-art-arm64', 'pod')
+            mock_get_current_tag.assert_awaited_once_with('origin-arm64', 'scos-4.22-art-arm64')
 
 
-class TestGetCurrentTagPullspec(IsolatedAsyncioTestCase):
-    """Tests for _get_current_tag_pullspec: istag lookup and its per-instance caching."""
+class TestGetCurrentPodPullspec(IsolatedAsyncioTestCase):
+    """Tests for _get_current_pod_pullspec: istag lookup and its per-instance caching."""
 
     def setUp(self):
         self.mock_runtime = MagicMock()
@@ -965,39 +965,39 @@ class TestGetCurrentTagPullspec(IsolatedAsyncioTestCase):
         )
 
     @patch('pyartcd.pipelines.okd.exectools.cmd_gather_async', new_callable=AsyncMock)
-    async def test_get_current_tag_pullspec_returns_pullspec(self, mock_cmd):
+    async def test_get_current_pod_pullspec_returns_pullspec(self, mock_cmd):
         mock_cmd.return_value = (0, 'quay.io/okd/pod@sha256:poddigest\n', '')
 
-        result = await self.pipeline._get_current_tag_pullspec('origin-arm64', 'scos-4.22-art-arm64', 'pod')
+        result = await self.pipeline._get_current_pod_pullspec('origin-arm64', 'scos-4.22-art-arm64')
 
         self.assertEqual(result, 'quay.io/okd/pod@sha256:poddigest')
 
     @patch('pyartcd.pipelines.okd.exectools.cmd_gather_async', new_callable=AsyncMock)
-    async def test_get_current_tag_pullspec_returns_none_on_failure(self, mock_cmd):
+    async def test_get_current_pod_pullspec_returns_none_on_failure(self, mock_cmd):
         mock_cmd.return_value = (1, '', 'not found')
 
-        result = await self.pipeline._get_current_tag_pullspec('origin-arm64', 'scos-4.22-art-arm64', 'pod')
+        result = await self.pipeline._get_current_pod_pullspec('origin-arm64', 'scos-4.22-art-arm64')
 
         self.assertIsNone(result)
 
     @patch('pyartcd.pipelines.okd.exectools.cmd_gather_async', new_callable=AsyncMock)
-    async def test_get_current_tag_pullspec_is_cached(self, mock_cmd):
+    async def test_get_current_pod_pullspec_is_cached(self, mock_cmd):
         """Repeated calls with the same args only invoke 'oc' once."""
         mock_cmd.return_value = (0, 'quay.io/okd/pod@sha256:poddigest\n', '')
 
-        first = await self.pipeline._get_current_tag_pullspec('origin-arm64', 'scos-4.22-art-arm64', 'pod')
-        second = await self.pipeline._get_current_tag_pullspec('origin-arm64', 'scos-4.22-art-arm64', 'pod')
+        first = await self.pipeline._get_current_pod_pullspec('origin-arm64', 'scos-4.22-art-arm64')
+        second = await self.pipeline._get_current_pod_pullspec('origin-arm64', 'scos-4.22-art-arm64')
 
         self.assertEqual(first, second)
         mock_cmd.assert_awaited_once()
 
     @patch('pyartcd.pipelines.okd.exectools.cmd_gather_async', new_callable=AsyncMock)
-    async def test_get_current_tag_pullspec_cache_is_keyed_by_args(self, mock_cmd):
-        """Different (namespace, is_name, tag) args are not conflated by the cache."""
+    async def test_get_current_pod_pullspec_cache_is_keyed_by_args(self, mock_cmd):
+        """Different (namespace, is_name) args are not conflated by the cache."""
         mock_cmd.return_value = (0, 'quay.io/okd/pod@sha256:poddigest\n', '')
 
-        await self.pipeline._get_current_tag_pullspec('origin-arm64', 'scos-4.22-art-arm64', 'pod')
-        await self.pipeline._get_current_tag_pullspec('origin-ppc64le', 'scos-4.22-art-ppc64le', 'pod')
+        await self.pipeline._get_current_pod_pullspec('origin-arm64', 'scos-4.22-art-arm64')
+        await self.pipeline._get_current_pod_pullspec('origin-ppc64le', 'scos-4.22-art-ppc64le')
 
         self.assertEqual(mock_cmd.await_count, 2)
 
@@ -1173,7 +1173,7 @@ class TestArchSuffixedNamespace(IsolatedAsyncioTestCase):
         with (
             patch.object(pipeline, '_tag_image_to_stream', new_callable=AsyncMock),
             patch.object(pipeline, '_get_arch_pullspec', new_callable=AsyncMock, side_effect=arch_pullspec_side_effect),
-            patch.object(pipeline, '_get_current_tag_pullspec', new_callable=AsyncMock, return_value=None),
+            patch.object(pipeline, '_get_current_pod_pullspec', new_callable=AsyncMock, return_value=None),
             patch('pyartcd.pipelines.okd.jenkins') as mock_jenkins,
         ):
             await pipeline.update_imagestreams()

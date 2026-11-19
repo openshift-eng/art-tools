@@ -603,10 +603,10 @@ class KonfluxOkdPipeline:
             return None
 
     @alru_cache
-    async def _get_current_tag_pullspec(self, namespace: str, is_name: str, tag: str) -> Optional[str]:
+    async def _get_current_pod_pullspec(self, namespace: str, is_name: str) -> Optional[str]:
         """
-        Look up the pullspec currently tagged in an imagestream. Used to find the
-        last-known-good 'pod' image to serve as a placeholder when a component has
+        Look up the pullspec currently tagged as 'pod' in an imagestream. Used to find
+        the last-known-good 'pod' image to serve as a placeholder when a component has
         no image for a given arch.
 
         Cached per pipeline instance: every missing-arch image in a run would
@@ -618,7 +618,7 @@ class KonfluxOkdPipeline:
             'istag',
             '-n',
             namespace,
-            f'{is_name}:{tag}',
+            f'{is_name}:{POD_PLACEHOLDER_TAG}',
             '-o',
             'jsonpath={.image.dockerImageReference}',
         ]
@@ -742,9 +742,7 @@ class KonfluxOkdPipeline:
                     # No image for this arch (e.g. not built for it): fall back to whatever
                     # 'pod' image is already tagged here, so the imagestream still carries
                     # a complete set of tags for this arch.
-                    arch_pullspec = await self._get_current_tag_pullspec(
-                        info['namespace'], info['is_name'], POD_PLACEHOLDER_TAG
-                    )
+                    arch_pullspec = await self._get_current_pod_pullspec(info['namespace'], info['is_name'])
                     if arch_pullspec:
                         self.logger.warning(
                             'No %s image for %s; using existing pod placeholder for this tag',
