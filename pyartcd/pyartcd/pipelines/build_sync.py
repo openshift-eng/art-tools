@@ -8,6 +8,7 @@ import click
 import yaml
 from artcommonlib import exectools, redis, rhcos
 from artcommonlib.arch_util import go_arch_for_brew_arch, go_suffix_for_arch
+from artcommonlib.assembly import assembly_is_private
 from artcommonlib.constants import (
     KONFLUX_DEFAULT_IMAGE_REPO,
     REGISTRY_CI_OPENSHIFT,
@@ -15,6 +16,7 @@ from artcommonlib.constants import (
 )
 from artcommonlib.exectools import limit_concurrency
 from artcommonlib.github_auth import get_github_client_for_org
+from artcommonlib.model import Model
 from artcommonlib.redis import RedisError
 from artcommonlib.registry_config import RegistryConfig
 from artcommonlib.release_util import SoftwareLifecyclePhase
@@ -26,7 +28,7 @@ from pyartcd import constants, jenkins, locks
 from pyartcd.cli import cli, click_coroutine, pass_runtime
 from pyartcd.jenkins import get_build_url
 from pyartcd.runtime import GroupRuntime, Runtime
-from pyartcd.util import branch_arches
+from pyartcd.util import branch_arches, load_releases_config
 
 TRACER = trace.get_tracer(__name__)
 GEN_PAYLOAD_ARTIFACTS_OUT_DIR = 'gen-payload-artifacts'
@@ -44,6 +46,17 @@ class BuildSyncPipeline:
             self.data_path,
             self.doozer_data_gitref,
         )
+        if self.assembly not in ("stream", "test"):
+            group_ref = f"{self.group}@{self.doozer_data_gitref}" if self.doozer_data_gitref else self.group
+            releases = await load_releases_config(group_ref, self.data_path)
+            if not isinstance(releases, dict):
+                raise ValueError(f"Unable to load assembly visibility from {group_ref}")
+            self.private_only = assembly_is_private(Model(releases), self.assembly)
+            if self.private_only and (self.publish or self.retrigger_current_nightly or self.embargo_permit_ack):
+                raise ValueError(
+                    "visibility: private is incompatible with --publish, --retrigger-current-nightly, "
+                    "and --embargo-permit-ack"
+                )
         return self
 
     def __init__(
@@ -79,6 +92,7 @@ class BuildSyncPipeline:
         self.supported_arches = []
         self.skip_multiarch_payload = skip_multiarch_payload
         self.embargo_permit_ack = embargo_permit_ack
+        self.private_only = False
         self.build_system = build_system
         self.logger = runtime.logger
         self.working_dir = self.runtime.working_dir
@@ -199,8 +213,17 @@ class BuildSyncPipeline:
         )
         current_span.set_attribute("build-sync.supported_arches_count", len(self.supported_arches))
         self.logger.info('Supported arches for this build: %s', ', '.join(self.supported_arches))
+        unknown_arches = sorted(set(self.exclude_arches).difference(self.supported_arches))
+        if unknown_arches:
+            raise ValueError(f"Cannot exclude unsupported architectures: {', '.join(unknown_arches)}")
+        selected_arches = [arch for arch in self.supported_arches if arch not in self.exclude_arches]
+        self.logger.info("Selected arches for this build: %s", ", ".join(selected_arches))
 
         jenkins.update_title(' [KONFLUX]')
+
+        if self.private_only:
+            await self._update_nightly_imagestreams()
+            return
 
         if self.assembly not in ('stream', 'test') and not self.runtime.dry_run:
             text_body = f"Build sync job [run]({self.job_run}) has been triggered"
@@ -222,7 +245,7 @@ class BuildSyncPipeline:
         current_span.set_attribute("build-sync.assembly", self.assembly)
         current_span.set_attribute("build-sync.build_system", self.build_system)
 
-        if self.assembly != 'stream':
+        if self.assembly != 'stream' and not self.private_only:
             # Comment on the PR that the job succeeded
             await self.comment_on_assembly_pr(f"Build sync job [run]({self.job_run}) succeeded!")
             await self.slack_client.say(
@@ -489,13 +512,18 @@ class BuildSyncPipeline:
             cmd.append('--emergency-ignore-issues')
         if self.embargo_permit_ack:
             cmd.append('--embargo-permit-ack')
-        if not self.skip_multiarch_payload and not self.runtime.dry_run:
+        if self.assembly not in ('stream', 'test'):
+            cmd.append('--expect-private-assembly' if self.private_only else '--expect-standard-assembly')
+        if not self.private_only and not self.skip_multiarch_payload and not self.runtime.dry_run:
             cmd.append('--apply-multi-arch')
         if self.exclude_arches:
             cmd.extend([f'--exclude-arch={arch}' for arch in self.exclude_arches])
         if self.runtime.dry_run:
             cmd.extend(['--skip-gc-tagging', '--moist-run'])
         await exectools.cmd_assert_async(cmd, env=os.environ.copy())
+
+        if self.private_only:
+            return
 
         # Populate CI imagestreams
         await self._populate_ci_imagestreams()

@@ -24,7 +24,12 @@ from artcommonlib.arch_util import (
     go_arch_for_brew_arch,
     go_suffix_for_arch,
 )
-from artcommonlib.assembly import AssemblyTypes, assembly_config_struct, assembly_targeted_fixes_only
+from artcommonlib.assembly import (
+    AssemblyTypes,
+    assembly_config_struct,
+    assembly_is_private,
+    assembly_targeted_fixes_only,
+)
 from artcommonlib.constants import REGISTRY_CI_OPENSHIFT, REGISTRY_QUAY_OCP_RELEASE_DEV, REGISTRY_REDHAT_IO
 from artcommonlib.exceptions import VerificationError
 from artcommonlib.exectools import manifest_tool, manifest_tool_auth_file, to_thread
@@ -286,6 +291,8 @@ class PromotePipeline:
             raise ValueError(
                 f"To promote this release, assembly {self.assembly} must be explicitly defined in releases.yml."
             )
+        if assembly_is_private(Model(releases_config), self.assembly):
+            raise ValueError("Private assembly promotion is unavailable")
         permits = util.get_assembly_promotion_permits(releases_config, self.assembly)
 
         # Get release name

@@ -190,6 +190,25 @@ class TestPromotePipeline(IsolatedAsyncioTestCase):
     @patch("pyartcd.jira_client.JIRAClient.from_url", return_value=None)
     @patch(
         "pyartcd.pipelines.promote.util.load_releases_config",
+        return_value={"releases": {"art1": {"assembly": {"type": "custom", "visibility": "private"}}}},
+    )
+    async def test_run_rejects_private_assembly_before_promotion(self, _releases, _jira, _registry):
+        runtime = MagicMock(
+            config={"jira": {"url": JIRA_SERVER_URL}},
+            working_dir=Path("/path/to/working"),
+            dry_run=False,
+        )
+        pipeline = await PromotePipeline.create(
+            runtime, group="openshift-4.22", assembly="art1", signing_env="prod", skip_sigstore=True
+        )
+        with self.assertRaisesRegex(ValueError, "Private assembly promotion is unavailable"):
+            await pipeline.run()
+        pipeline._slack_client.say_in_thread.assert_not_called()
+
+    @patch("pyartcd.pipelines.promote.RegistryConfig")
+    @patch("pyartcd.jira_client.JIRAClient.from_url", return_value=None)
+    @patch(
+        "pyartcd.pipelines.promote.util.load_releases_config",
         return_value={
             "releases": {"stream": {"assembly": {"type": "stream"}}},
         },

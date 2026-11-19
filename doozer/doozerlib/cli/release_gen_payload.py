@@ -19,7 +19,14 @@ import openshift_client as oc
 import yaml
 from artcommonlib import exectools, rhcos
 from artcommonlib.arch_util import brew_arch_for_go_arch, go_arch_for_brew_arch, go_suffix_for_arch
-from artcommonlib.assembly import AssemblyIssue, AssemblyIssueCode, AssemblyTypes, assembly_basis, assembly_basis_event
+from artcommonlib.assembly import (
+    AssemblyIssue,
+    AssemblyIssueCode,
+    AssemblyTypes,
+    assembly_basis,
+    assembly_basis_event,
+    assembly_is_private,
+)
 from artcommonlib.constants import (
     COREOS_RHEL10_STREAMS,
 )
@@ -181,6 +188,7 @@ class RepositoryType(Enum):
     is_flag=True,
     help="Allow embargoed builds to sync publicly in named assemblies",
 )
+@click.option("--expect-private-assembly/--expect-standard-assembly", default=None, hidden=True)
 @click.option(
     "--multi-model",
     metavar="SPEC",
@@ -209,6 +217,7 @@ async def release_gen_payload(
     moist_run: bool,
     embargo_permit_ack: bool,
     multi_model: str,
+    expect_private_assembly: Optional[bool],
 ):
     """
 Computes a set of imagestream tags which can be assembled into an OpenShift release for this
@@ -300,6 +309,7 @@ read and propagate/expose this annotation in its display of the release image.
         moist_run,
         embargo_permit_ack,
         multi_model,
+        expect_private_assembly=expect_private_assembly,
     ).run()
 
 
@@ -457,6 +467,7 @@ class GenPayloadCli:
         moist_run: bool = False,
         embargo_permit_ack: bool = False,
         multi_model: str = None,
+        expect_private_assembly: Optional[bool] = None,
     ):
         self.runtime = runtime
         self.package_rpm_finder = PackageRpmFinder(runtime)
@@ -487,12 +498,13 @@ class GenPayloadCli:
         self.private_payload_entries_for_arch: Dict[str, Dict[str, PayloadEntry]] = {}
         # for gathering issues that are found while evaluating the payload:
         self.assembly_issues: List[AssemblyIssue] = list()
-        # private releases (only nightlies) can reference private component builds
+        self.private_only = False
         self.privacy_modes: List[bool] = [False]
         # do we proceed with this payload after weighing issues against permits?
         self.payload_permitted = False
         # Allows embargoed builds to be released
         self.embargo_permit_ack = embargo_permit_ack
+        self.expect_private_assembly = expect_private_assembly
         # Track mismatched siblings.
         # This will be used to prevent syncing out mismatched siblings for development releases per ART-13996
         self.mismatched_siblings = []
@@ -787,8 +799,23 @@ class GenPayloadCli:
         if rt.assembly and rt.assembly != "stream" and "art-latest" in self.base_imagestream[1]:
             raise ValueError('"art-latest" imagestreams should only be used for the "stream" assembly')
 
-        if rt.assembly_type is AssemblyTypes.STREAM:
-            # Only nightlies have the concept of private and public payloads
+        self.private_only = assembly_is_private(rt.releases_config, rt.assembly)
+        if self.expect_private_assembly is not None and self.private_only != self.expect_private_assembly:
+            raise DoozerFatalError("Assembly visibility differs from the visibility selected by BuildSync")
+        if self.private_only:
+            if rt.build_system != "konflux":
+                raise DoozerFatalError("Private assembly mirroring requires Konflux")
+            if self.embargo_permit_ack:
+                raise DoozerFatalError("--embargo-permit-ack is incompatible with visibility: private")
+            if self.apply_multi_arch:
+                raise DoozerFatalError("Multi-arch release payload generation is unavailable for private assemblies")
+            private_repo = get_art_prod_image_repo_for_version(int(rt.group_config.vars["MAJOR"]), "dev-priv")
+            if self.full_component_repo(RepositoryType.PRIVATE) != private_repo:
+                raise DoozerFatalError(f"A private assembly must mirror to {private_repo}")
+            if self.base_imagestream[0] != default_imagestream_namespace_base_name():
+                raise DoozerFatalError("A private assembly must use the default base ImageStream namespace")
+            self.privacy_modes = [True]
+        elif rt.assembly_type is AssemblyTypes.STREAM:
             self.privacy_modes = [False, True]
 
         if rt.assembly_type is not AssemblyTypes.STREAM and self.emergency_ignore_issues:
@@ -1198,7 +1225,16 @@ class GenPayloadCli:
             if arch in self.exclude_arch:
                 self.logger.info(f"Excluding payload files architecture: {arch}")
                 continue
-            # No adjustment for private or public; the assembly's canonical payload content is the same.
+            private_entries, private_payload_issues = self.payload_generator.find_payload_entries(
+                assembly_inspector,
+                arch,
+                self.full_component_repo(repo_type=RepositoryType.PRIVATE),
+                registry_config=registry_config,
+            )
+            private_entries_for_arch[arch] = private_entries
+            if self.private_only:
+                self.assembly_issues.extend(private_payload_issues)
+                continue
 
             entries: Dict[str, PayloadEntry]  # Key of this dict is release payload tag name
             payload_issues: List[AssemblyIssue]
@@ -1265,14 +1301,6 @@ class GenPayloadCli:
             embargo_issues = self.payload_generator.embargo_issues_for_payload(public_entries, arch)
             self.assembly_issues.extend(embargo_issues)
 
-            private_entries, private_payload_issues = self.payload_generator.find_payload_entries(
-                assembly_inspector,
-                arch,
-                self.full_component_repo(repo_type=RepositoryType.PRIVATE),
-                registry_config=registry_config,
-            )
-            private_entries_for_arch[arch] = private_entries
-
             # Check to see if there are private only issues, and add them to the list of assembly issues
             private_only_issues = set(private_payload_issues) - set(payload_issues)
 
@@ -1297,7 +1325,8 @@ class GenPayloadCli:
             False: [],
             True: [],
         }  # privacy mode: list of BuildInspector
-        for arch, entries in self.payload_entries_for_arch.items():
+        entries_for_arch = self.private_payload_entries_for_arch if self.private_only else self.payload_entries_for_arch
+        for entries in entries_for_arch.values():
             for tag, payload_entry in entries.items():
                 if payload_entry.image_meta:
                     # Record the issues previously found for this image in corresponding payload_entry
@@ -1310,8 +1339,7 @@ class GenPayloadCli:
 
                     await self.detect_rhcos_issues(payload_entry, assembly_inspector)
                     # Record the build to enable later consistency checks between all RHCOS builds.
-                    # There are presently no private RHCOS builds, so add only to private_mode=False.
-                    targeted_rhcos_builds[False].append(payload_entry.rhcos_build)
+                    targeted_rhcos_builds[self.private_only].append(payload_entry.rhcos_build)
 
                     if cross_payload_requirements:
                         consistency_issues = self.payload_generator.find_rhcos_payload_rpm_inconsistencies(
@@ -1793,7 +1821,7 @@ class GenPayloadCli:
         self, arch: str, payload_entries: Dict[str, PayloadEntry], dest_repo: str, private: bool = False
     ):
         """
-        Ensure an arch's payload entries are synced out for the public to access.
+        Mirror an architecture's payload entries to the selected component repository.
         """
 
         # Prevents writing the same destination twice (not supported by oc if in the same mirroring file):
@@ -1917,7 +1945,7 @@ class GenPayloadCli:
             if (
                 payload_entry.image_meta
                 and payload_entry.image_meta.distgit_key in self.mismatched_siblings
-                and self.runtime.assembly_type == AssemblyTypes.STREAM
+                and (self.runtime.assembly_type == AssemblyTypes.STREAM or self.private_only)
             ):
                 self.logger.warning(
                     f"Skipping imagestream tag for {payload_entry.image_meta.distgit_key} "
