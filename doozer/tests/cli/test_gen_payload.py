@@ -1276,11 +1276,6 @@ class TestGenPayloadCli(IsolatedAsyncioTestCase):
             with self.subTest(options=options), self.assertRaises(DoozerFatalError):
                 self.private_assembly_cli(**options).validate_parameters()
 
-    def test_private_assembly_rejects_visibility_mismatch(self):
-        gpcli = self.private_assembly_cli(expect_private_assembly=False)
-        with self.assertRaisesRegex(DoozerFatalError, "Assembly visibility differs"):
-            gpcli.validate_parameters()
-
     def test_private_assembly_requires_private_destination(self):
         gpcli = self.private_assembly_cli()
         gpcli.private_component_repo = gpcli.component_repo

@@ -55,7 +55,7 @@ class TestBuildSync(IsolatedAsyncioTestCase):
         self, load_releases_config, _group_runtime, branch_arches, execute, _jenkins
     ):
         data_path = 'https://example.com/private-build-data'
-        data_ref = 'private-hotfix'
+        data_ref = 'a' * 40
         load_releases_config.return_value = {
             "releases": {"art1": {"assembly": {"type": "custom", "visibility": "private"}}}
         }
@@ -82,7 +82,6 @@ class TestBuildSync(IsolatedAsyncioTestCase):
         self.assertIn(f'--group=openshift-4.22@{data_ref}', command)
         self.assertIn(f'--data-path={data_path}', command)
         self.assertIn('--apply', command)
-        self.assertIn('--expect-private-assembly', command)
         self.assertNotIn('--apply-multi-arch', command)
         pipeline.comment_on_assembly_pr.assert_not_awaited()
         pipeline._backup_all_imagestreams.assert_not_awaited()

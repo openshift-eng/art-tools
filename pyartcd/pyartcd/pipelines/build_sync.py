@@ -46,6 +46,7 @@ class BuildSyncPipeline:
             self.data_path,
             self.doozer_data_gitref,
         )
+        # Only named custom assemblies can opt into private mirroring.
         if self.assembly not in ("stream", "test"):
             group_ref = f"{self.group}@{self.doozer_data_gitref}" if self.doozer_data_gitref else self.group
             releases = await load_releases_config(group_ref, self.data_path)
@@ -512,8 +513,6 @@ class BuildSyncPipeline:
             cmd.append('--emergency-ignore-issues')
         if self.embargo_permit_ack:
             cmd.append('--embargo-permit-ack')
-        if self.assembly not in ('stream', 'test'):
-            cmd.append('--expect-private-assembly' if self.private_only else '--expect-standard-assembly')
         if not self.private_only and not self.skip_multiarch_payload and not self.runtime.dry_run:
             cmd.append('--apply-multi-arch')
         if self.exclude_arches:

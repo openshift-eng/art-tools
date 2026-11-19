@@ -188,7 +188,6 @@ class RepositoryType(Enum):
     is_flag=True,
     help="Allow embargoed builds to sync publicly in named assemblies",
 )
-@click.option("--expect-private-assembly/--expect-standard-assembly", default=None, hidden=True)
 @click.option(
     "--multi-model",
     metavar="SPEC",
@@ -217,7 +216,6 @@ async def release_gen_payload(
     moist_run: bool,
     embargo_permit_ack: bool,
     multi_model: str,
-    expect_private_assembly: Optional[bool],
 ):
     """
 Computes a set of imagestream tags which can be assembled into an OpenShift release for this
@@ -309,7 +307,6 @@ read and propagate/expose this annotation in its display of the release image.
         moist_run,
         embargo_permit_ack,
         multi_model,
-        expect_private_assembly=expect_private_assembly,
     ).run()
 
 
@@ -467,7 +464,6 @@ class GenPayloadCli:
         moist_run: bool = False,
         embargo_permit_ack: bool = False,
         multi_model: str = None,
-        expect_private_assembly: Optional[bool] = None,
     ):
         self.runtime = runtime
         self.package_rpm_finder = PackageRpmFinder(runtime)
@@ -504,7 +500,6 @@ class GenPayloadCli:
         self.payload_permitted = False
         # Allows embargoed builds to be released
         self.embargo_permit_ack = embargo_permit_ack
-        self.expect_private_assembly = expect_private_assembly
         # Track mismatched siblings.
         # This will be used to prevent syncing out mismatched siblings for development releases per ART-13996
         self.mismatched_siblings = []
@@ -800,8 +795,6 @@ class GenPayloadCli:
             raise ValueError('"art-latest" imagestreams should only be used for the "stream" assembly')
 
         self.private_only = assembly_is_private(rt.releases_config, rt.assembly)
-        if self.expect_private_assembly is not None and self.private_only != self.expect_private_assembly:
-            raise DoozerFatalError("Assembly visibility differs from the visibility selected by BuildSync")
         if self.private_only:
             if rt.build_system != "konflux":
                 raise DoozerFatalError("Private assembly mirroring requires Konflux")
