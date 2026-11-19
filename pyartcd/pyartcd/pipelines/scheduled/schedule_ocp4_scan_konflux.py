@@ -1,12 +1,14 @@
 import asyncio
+import hashlib
+import os
 
 import click
-from artcommonlib import redis
+from artcommonlib import exectools, redis
 from artcommonlib.telemetry import start_as_current_span_async
 from opentelemetry import trace
 from opentelemetry.trace import StatusCode
 
-from pyartcd import jenkins, util
+from pyartcd import jenkins, tekton, util
 from pyartcd.cli import cli, click_coroutine, pass_runtime
 from pyartcd.locks import Lock, LockManager
 from pyartcd.runtime import Runtime
@@ -15,7 +17,14 @@ TRACER = trace.get_tracer(__name__)
 
 
 @start_as_current_span_async(TRACER, "schedule-ocp4-scan-konflux.run-for")
-async def run_for(version: str, runtime: Runtime, lock_manager: LockManager, serial: bool = False):
+async def run_for(
+    version: str,
+    runtime: Runtime,
+    lock_manager: LockManager,
+    serial: bool = False,
+    *,
+    tekton_namespace: str | None = None,
+):
     span = trace.get_current_span()
     span.set_attribute("version", version)
     span.set_attribute("serial", serial)
@@ -42,7 +51,28 @@ async def run_for(version: str, runtime: Runtime, lock_manager: LockManager, ser
         span.set_attribute("skipped_reason", "not_permitted")
         return
 
-    # Schedule scan
+    if tekton_namespace is not None:
+        if runtime.dry_run:
+            runtime.logger.info('[%s] Would start ocp4-scan-konflux in %s', version, tekton_namespace)
+            return
+
+        # Use the same name if Kubernetes runs the scheduler Job's pod again.
+        job_name = os.getenv('K8S_JOB_NAME')
+        run_name = f'{job_name}-{version.replace(".", "-")}' if job_name else None
+        if run_name and len(run_name) > 63:
+            # Tekton uses the PipelineRun name as a label value on child resources.
+            digest = hashlib.sha256(run_name.encode()).hexdigest()[:12]
+            run_name = f'{run_name[:50].rstrip("-.")}-{digest}'
+        await exectools.to_thread(
+            tekton.start_pipeline_run,
+            'ocp4-scan-konflux',
+            {'version': version},
+            namespace=tekton_namespace,
+            run_name=run_name,
+        )
+        span.set_attribute("triggered", True)
+        return
+
     span.set_attribute("triggered", True)
     if serial:
         runtime.logger.info('[%s] Scheduling ocp4-scan-konflux (serial: waiting for completion)', version)
@@ -64,21 +94,55 @@ async def run_for(version: str, runtime: Runtime, lock_manager: LockManager, ser
 @cli.command('schedule-ocp4-scan-konflux')
 @click.option('--version', '-v', required=True, help='OCP version to scan', multiple=True)
 @click.option('--serial', is_flag=True, default=False, help='Run scans sequentially, waiting for each to complete')
+@click.option('--tekton-namespace', help='Submit scans as Tekton PipelineRuns in this namespace')
 @pass_runtime
 @click_coroutine
-async def ocp4_scan_konflux(runtime: Runtime, version: tuple, serial: bool):
-    jenkins.init_jenkins()
-    lock_manager = LockManager([redis.redis_url()])
+async def ocp4_scan_konflux(runtime: Runtime, version: tuple, serial: bool, tekton_namespace: str | None = None):
+    if tekton_namespace is not None:
+        if not tekton_namespace.strip():
+            raise click.UsageError('--tekton-namespace must be a non-empty namespace name')
+        if serial:
+            raise click.UsageError('--serial is only supported for Jenkins scans')
+        version = tuple(dict.fromkeys(version))
+    else:
+        jenkins.init_jenkins()
+
     with TRACER.start_as_current_span("schedule-ocp4-scan-konflux") as span:
         span.set_attribute("versions", list(version))
         span.set_attribute("serial", serial)
         span.set_attribute("version_count", len(version))
+        lock_manager = None
         try:
-            if serial:
+            lock_manager = LockManager([redis.redis_url()])
+            if tekton_namespace is not None:
+                results = await asyncio.gather(
+                    *(run_for(v, runtime, lock_manager, tekton_namespace=tekton_namespace) for v in version),
+                    return_exceptions=True,
+                )
+                failures = [
+                    (scan_version, result)
+                    for scan_version, result in zip(version, results, strict=True)
+                    if isinstance(result, BaseException)
+                ]
+                for scan_version, error in failures:
+                    runtime.logger.error('[%s] Failed to schedule ocp4-scan-konflux', scan_version, exc_info=error)
+                if failures:
+                    raise failures[0][1]
+            elif serial:
                 runtime.logger.info('Running scans serially for versions: %s', ', '.join(version))
                 for v in version:
                     await run_for(v, runtime, lock_manager, serial=True)
             else:
                 await asyncio.gather(*[run_for(v, runtime, lock_manager) for v in version])
+        except Exception:
+            if tekton_namespace is not None and not runtime.dry_run:
+                try:
+                    slack_client = runtime.new_slack_client()
+                    slack_client.bind_channel('#art-release')
+                    await slack_client.say('Error scheduling OCP Konflux scans in artc. Check the scheduler Job logs.')
+                except Exception:
+                    runtime.logger.exception('Failed to report the artc scheduler error to Slack')
+            raise
         finally:
-            await lock_manager.destroy()
+            if lock_manager is not None:
+                await lock_manager.destroy()
