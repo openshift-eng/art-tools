@@ -841,11 +841,14 @@ def mail_build_failure_owners_konflux(
         else:
             owner = default_owner
 
-        mail_client.send_mail(
-            to=[_KONFLUX_FAILURE_NOTIFY, owner],
-            subject=f'Failed OCP Konflux build of {name}:{nvrs}',
-            content=explanation_body,
-        )
+        try:
+            mail_client.send_mail(
+                to=[_KONFLUX_FAILURE_NOTIFY, owner],
+                subject=f'Failed OCP Konflux build of {name}:{nvrs}',
+                content=explanation_body,
+            )
+        except Exception:
+            logger.exception("Failed to send Konflux build failure notification for %s", name)
 
 
 async def invalidate_cloudfront_cache(invalidation_path):

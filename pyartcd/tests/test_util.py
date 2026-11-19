@@ -1049,3 +1049,12 @@ class TestMailBuildFailureOwnersKonflux(IsolatedAsyncioTestCase):
             self.mail_client.send_mail.call_args.kwargs.get('content') or self.mail_client.send_mail.call_args[0][2]
         )
         self.assertIn('only sent when the build fails consistently', content)
+
+    def test_continues_after_one_delivery_fails(self):
+        failed = {
+            'ironic': self._failure(name='ironic'),
+            'ceo': self._failure(name='ceo'),
+        }
+        self.mail_client.send_mail.side_effect = [Exception('smtp error'), None]
+        util.mail_build_failure_owners_konflux(failed, self.mail_client, self.default_owner)
+        self.assertEqual(self.mail_client.send_mail.call_count, 2)
