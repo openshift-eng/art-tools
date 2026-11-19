@@ -1282,6 +1282,9 @@ class KonfluxImageBuilder:
         release = df.labels['release']
         nvr = "-".join([component_name, version, release])
 
+        is_stage_ref = KonfluxRebaser._identify_stage_references(df)
+        parent_images = [image for image, is_ref in zip(df.parent_images, is_stage_ref) if not is_ref]
+
         pipelinerun_dict = pipelinerun_info.to_dict()
         pipelinerun_name = pipelinerun_info.name
         # Pipelinerun names will eventually repeat over time, so also gather the pipelinerun uid
@@ -1319,7 +1322,7 @@ class KonfluxImageBuilder:
             'engine': Engine.KONFLUX,
             'outcome': outcome,
             'parent_images': await self.extract_parent_image_nvrs(
-                df.parent_images, logger, self._config.registry_auth_file
+                parent_images, logger, self._config.registry_auth_file
             ),
             'art_job_url': os.getenv('BUILD_URL', 'n/a'),
             'build_id': f'{pipelinerun_name}-{pipelinerun_uid}',
