@@ -2700,16 +2700,17 @@ class PayloadGenerator:
                 # No build for this component at present.
                 continue
 
-            # Here we check the raw config - before it is affected by assembly overrides. Why?
-            # If an artist overrides one sibling's git url, but not another, the following
-            # scan would not be able to detect that they were siblings. Instead, we rely on the
-            # original image metadata to determine sibling-ness.
-            raw_source = build_record_inspector.get_image_meta().raw_config.content.source
+            image_meta = build_record_inspector.get_image_meta()
+            # Group siblings by the original source URL, even when an assembly overrides it.
+            raw_source = image_meta.raw_config.content.source
 
-            if raw_source.allow_mismatched_siblings:
+            if (
+                raw_source.allow_mismatched_siblings
+                or image_meta.config.content.source.allow_mismatched_siblings is True
+            ):
                 logger.info(
                     "Skipping sibling check for %s (allow_mismatched_siblings is set)",
-                    build_record_inspector.get_image_meta().distgit_key,
+                    image_meta.distgit_key,
                 )
                 continue
 
