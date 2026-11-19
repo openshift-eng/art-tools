@@ -530,6 +530,7 @@ class TestKonfluxImageBuilder(unittest.IsolatedAsyncioTestCase):
                 "release": "1.el9",
             }
             mock_dockerfile_parser.return_value.parent_images = []
+            mock_dockerfile_parser.return_value.json = "[]"
             mock_bigquery_client.return_value.client.insert_rows_json.side_effect = lambda *args, **kwargs: block_write(
                 taskrun_started, taskrun_release
             )
@@ -612,6 +613,7 @@ class TestKonfluxImageBuilder(unittest.IsolatedAsyncioTestCase):
                 "release": "1.el9",
             }
             mock_dockerfile.parent_images = []
+            mock_dockerfile.json = "[]"
             mock_dockerfile_parser.return_value = mock_dockerfile
             mock_bigquery_client.return_value.client.insert_rows_json.return_value = None
 
@@ -675,6 +677,7 @@ class TestKonfluxImageBuilder(unittest.IsolatedAsyncioTestCase):
                 "release": "1.el9",
             }
             mock_dockerfile.parent_images = []
+            mock_dockerfile.json = "[]"
             mock_dockerfile_parser.return_value = mock_dockerfile
             mock_bigquery_client.return_value.client.insert_rows_json.return_value = None
 
@@ -693,6 +696,56 @@ class TestKonfluxImageBuilder(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(build_record.image_tag, "test-tag")
         self.assertEqual(build_record.installed_rpms, ["pkg-1.0-1"])
         self.assertEqual(build_record.installed_packages, ["srcpkg-1.0-1"])
+
+    async def test_update_konflux_db_does_not_inspect_build_stage_names_as_parents(self):
+        metadata = self._metadata()
+        build_repo = MagicMock()
+        build_repo.https_url = "https://example.com/repo.git"
+        build_repo.commit_hash = "test-commit-hash"
+        build_repo.local_dir = Path(self.temp_dir.name)
+        Path(self.temp_dir.name, "Dockerfile").write_text(
+            "FROM --platform=linux/amd64 quay.io/test/art-images@sha256:aaa AS art_amd64\n"
+            "FROM --platform=linux/arm64 quay.io/test/art-images@sha256:bbb AS art_arm64\n"
+            "FROM art_amd64 AS packer\n"
+            "RUN true\n"
+            "FROM registry.redhat.io/rhel9/rhel-minimal:latest\n"
+            'LABEL io.openshift.build.source-location="https://example.com/source-repo.git" '
+            'io.openshift.build.commit.id="source-commit-id" com.redhat.component="test-component" '
+            'version="1.0" release="1.el9"\n'
+        )
+        pipelinerun = PipelineRunInfo(
+            {
+                "metadata": {
+                    "name": "test-pipelinerun",
+                    "uid": "test-uid",
+                    "labels": {"appstudio.openshift.io/component": "test-component"},
+                },
+                "status": {"startTime": "2023-10-01T12:00:00Z", "completionTime": "2023-10-01T12:30:00Z"},
+            },
+            {},
+        )
+
+        with (
+            patch.object(
+                self.builder, "extract_parent_image_nvrs", new=AsyncMock(return_value=["a-1-1", "b-1-1", "c-1-1"])
+            ) as mock_extract,
+            patch("doozerlib.backend.konflux_image_builder.bigquery.BigQueryClient") as mock_bigquery_client,
+        ):
+            mock_bigquery_client.return_value.client.insert_rows_json.return_value = None
+            await self.builder.update_konflux_db(
+                metadata, build_repo, pipelinerun, KonfluxBuildOutcome.FAILURE, ["x86_64"], "5"
+            )
+
+        self.assertEqual(
+            mock_extract.await_args.args[0],
+            [
+                "quay.io/test/art-images@sha256:aaa",
+                "quay.io/test/art-images@sha256:bbb",
+                "registry.redhat.io/rhel9/rhel-minimal:latest",
+            ],
+        )
+        build_record = metadata.runtime.konflux_db.add_build.call_args[0][0]
+        self.assertEqual(build_record.parent_images, ["a-1-1", "b-1-1", "c-1-1"])
 
     async def test_update_konflux_db_its_error_records_pullspec_without_extraction(self):
         """A non-SUCCESS build with IMAGE_URL/IMAGE_DIGEST present (e.g. its_error) still records
@@ -742,6 +795,7 @@ class TestKonfluxImageBuilder(unittest.IsolatedAsyncioTestCase):
                 "release": "1.el9",
             }
             mock_dockerfile.parent_images = []
+            mock_dockerfile.json = "[]"
             mock_dockerfile_parser.return_value = mock_dockerfile
             mock_bigquery_client.return_value.client.insert_rows_json.return_value = None
 
@@ -809,6 +863,7 @@ class TestKonfluxImageBuilder(unittest.IsolatedAsyncioTestCase):
                 "release": "1.el9",
             }
             mock_dockerfile.parent_images = []
+            mock_dockerfile.json = "[]"
             mock_dockerfile_parser.return_value = mock_dockerfile
             mock_bigquery_client.return_value.client.insert_rows_json.return_value = None
 
@@ -880,6 +935,7 @@ class TestKonfluxImageBuilder(unittest.IsolatedAsyncioTestCase):
                 "release": "1.el9",
             }
             mock_dockerfile.parent_images = []
+            mock_dockerfile.json = "[]"
             mock_dockerfile_parser.return_value = mock_dockerfile
             mock_bigquery_client.return_value.client.insert_rows_json.return_value = None
 
@@ -954,6 +1010,7 @@ class TestKonfluxImageBuilder(unittest.IsolatedAsyncioTestCase):
                 "release": "1.el9",
             }
             mock_dockerfile.parent_images = []
+            mock_dockerfile.json = "[]"
             mock_dockerfile_parser.return_value = mock_dockerfile
             mock_bigquery_client.return_value.client.insert_rows_json.return_value = None
 
@@ -1024,6 +1081,7 @@ class TestKonfluxImageBuilder(unittest.IsolatedAsyncioTestCase):
                 "release": "1.el9_6",
             }
             mock_dockerfile.parent_images = []
+            mock_dockerfile.json = "[]"
             mock_dockerfile_parser.return_value = mock_dockerfile
             mock_bigquery_client.return_value.client.insert_rows_json.return_value = None
 
@@ -1092,6 +1150,7 @@ class TestKonfluxImageBuilder(unittest.IsolatedAsyncioTestCase):
                 "release": "1.scos9",
             }
             mock_dockerfile.parent_images = []
+            mock_dockerfile.json = "[]"
             mock_dockerfile_parser.return_value = mock_dockerfile
             mock_bigquery_client.return_value.client.insert_rows_json.return_value = None
 
@@ -1224,6 +1283,7 @@ class TestKonfluxImageBuilder(unittest.IsolatedAsyncioTestCase):
                 "release": "1.el9",
             }
             mock_dockerfile.parent_images = []
+            mock_dockerfile.json = "[]"
             mock_dockerfile_parser.return_value = mock_dockerfile
             mock_bigquery_client.return_value.client.insert_rows_json.return_value = None
 
@@ -1294,6 +1354,7 @@ class TestKonfluxImageBuilder(unittest.IsolatedAsyncioTestCase):
                 "release": "1.el9",
             }
             mock_dockerfile.parent_images = []
+            mock_dockerfile.json = "[]"
             mock_dockerfile_parser.return_value = mock_dockerfile
             mock_bigquery_client.return_value.client.insert_rows_json.return_value = None
 

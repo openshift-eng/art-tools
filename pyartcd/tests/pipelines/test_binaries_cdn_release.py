@@ -12,10 +12,9 @@ from pyartcd.pipelines.binaries_cdn_release import (
     BINARIES,
     BinariesCdnReleasePipeline,
     binaries_cdn_enabled,
-    cgw_version_file_content,
+    cgw_version_name,
     parse_binary_dockerfile_parents,
-    rpa_product_version_name,
-    set_rpa_product_version_name,
+    rpa_product_version_names,
 )
 
 from pyartcd import constants
@@ -72,35 +71,22 @@ def _pipeline(working_dir: str, client_type: str = "ocp", **kwargs) -> BinariesC
         assembly="4.22.18",
         release_name=kwargs.pop("release_name", "4.22.18"),
         client_type=client_type,
-        poll_seconds=1,
         **kwargs,
     )
 
 
 class TestHelpers(TestCase):
-    def test_cgw_version_file_content_ga(self):
-        self.assertEqual(
-            cgw_version_file_content("4.22.18", True, "2026-10-20"),
-            '---\nversionName: "4.22.18"\nga: true\ntermsAndConditions: "Anonymous Download"\n'
-            'hidden: false\ninvisible: false\nreleaseDate: "2026-10-20"\n',
-        )
+    def test_cgw_version_name_is_major_minor_for_every_client_type(self):
+        for client_type in ("ocp", "ocp-dev-preview"):
+            with self.subTest(client_type=client_type):
+                self.assertEqual(cgw_version_name("4.22", client_type), "4.22")
 
-    def test_cgw_version_file_content_dev_preview(self):
-        self.assertIn("ga: false\n", cgw_version_file_content("4.23.0-ec.2", False, "2026-10-20"))
-
-    def test_rpa_product_version_name_round_trip(self):
-        text = RPA_TEMPLATE.format(version="4.22.17")
-        self.assertEqual(rpa_product_version_name(text), "4.22.17")
-        updated = set_rpa_product_version_name(text, "4.22.18")
-        self.assertEqual(rpa_product_version_name(updated), "4.22.18")
-        self.assertEqual(updated, RPA_TEMPLATE.format(version="4.22.18"))
-
-    def test_rpa_product_version_name_requires_exactly_one(self):
-        with self.assertRaises(ValueError):
-            rpa_product_version_name("spec: {}\n")
+    def test_rpa_product_version_names(self):
+        self.assertEqual(rpa_product_version_names(RPA_TEMPLATE.format(version="4.22")), ["4.22"])
+        self.assertEqual(rpa_product_version_names("spec: {}\n"), [])
+        self.assertEqual(rpa_product_version_names("productVersionName: 4.22\n"), [])
         twice = RPA_TEMPLATE.format(version="a") + '            productVersionName: "b"\n'
-        with self.assertRaises(ValueError):
-            set_rpa_product_version_name(twice, "c")
+        self.assertEqual(rpa_product_version_names(twice), ["a", "b"])
 
     def test_parse_binary_dockerfile_parents_reads_all_twelve_parents(self):
         self.assertEqual(parse_binary_dockerfile_parents(REBASED_DOCKERFILE, PREFIX_TAG), EXPECTED_PARENTS)
@@ -141,10 +127,12 @@ class TestHelpers(TestCase):
             preview = _pipeline(tmp, client_type="ocp-dev-preview", version="5.0", release_name="5.0.0-ec.6")
         self.assertEqual(ga.release_plan_key, "openshift-4-22-binaries")
         self.assertEqual(ga.rpa_names, ["ocp-art-binaries-stage-4-22", "ocp-art-binaries-prod-4-22"])
+        self.assertEqual(ga.cgw_version, "4.22")
         self.assertEqual(preview.release_plan_key, "openshift-5-0-binaries-dev-preview")
         self.assertEqual(
             preview.rpa_names, ["ocp-art-binaries-dev-preview-stage-5-0", "ocp-art-binaries-dev-preview-prod-5-0"]
         )
+        self.assertEqual(preview.cgw_version, "5.0")
 
     def test_constructor_rejects_bad_input(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -165,7 +153,10 @@ class TestHelpers(TestCase):
     def test_cli_command_registered(self):
         self.assertIn("binaries-cdn-release", cli.commands)
         self.assertNotIn("installer-cdn-release", cli.commands)
-        self.assertEqual([p.name for p in cli.commands["binaries-cdn-release"].params][:2], ["binary", "version"])
+        params = [p.name for p in cli.commands["binaries-cdn-release"].params]
+        self.assertEqual(params[:2], ["binary", "version"])
+        self.assertNotIn("skip_cgw_mr", params)
+        self.assertNotIn("cgw_mr_timeout_hours", params)
 
 
 class TestCollectAndBuild(IsolatedAsyncioTestCase):
@@ -286,132 +277,100 @@ class TestCollectAndBuild(IsolatedAsyncioTestCase):
                 await pipeline.build_binary(["RELEASE_VERSION=4.22.18"])
 
 
-class TestEnsureCgwVersion(IsolatedAsyncioTestCase):
+class TestVerifyCgwOnboarding(TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
         self.addCleanup(self.tmp.cleanup)
-        self.enterContext(patch.dict(os.environ, {"GITLAB_TOKEN": "t", "BUILD_URL": "https://jenkins/job/1"}))
-        self.enterContext(patch("pyartcd.pipelines.binaries_cdn_release.asyncio.sleep", new_callable=AsyncMock))
+        self.enterContext(patch.dict(os.environ, {"GITLAB_TOKEN": "t"}))
         self.project = MagicMock()
         self.gitlab = MagicMock()
         self.gitlab.get_project.return_value = self.project
-        self.gitlab.list_merge_requests.return_value = []
         self.enterContext(patch.object(BinariesCdnReleasePipeline, "_gitlab", return_value=self.gitlab))
         self.files = {}
         self.project.files.get.side_effect = self._get_file
 
     def _get_file(self, file_path, ref):
+        self.assertEqual(ref, "main")
         if file_path not in self.files:
             raise GitlabGetError("404 File Not Found", response_code=404)
         f = MagicMock()
         f.decode.return_value = self.files[file_path].encode()
         return f
 
-    def _set_rpas(self, version):
+    def _onboard(self, rpa_version="4.22", prefix="ocp-art-binaries", version_file="4.22"):
         for env in ("stage", "prod"):
-            self.files[f"{icr.KRD_RPA_DIR}/ocp-art-binaries-{env}-4-22.yaml"] = RPA_TEMPLATE.format(version=version)
+            self.files[f"{icr.KRD_RPA_DIR}/{prefix}-{env}-4-22.yaml"] = RPA_TEMPLATE.format(version=rpa_version)
+        if version_file:
+            self.files[f"{icr.KRD_CGW_DIR}/openshift-install/{version_file}.yaml"] = "versionName: x\n"
 
-    def _merged_mr(self, sync_status="success"):
-        mr = MagicMock(iid=7, web_url="https://gitlab/mr/7", state="merged", merge_commit_sha="abc")
-        self.project.mergerequests.get.return_value = mr
-        job = MagicMock(status=sync_status, web_url="https://gitlab/job/1")
-        job.name = "sync_cgw"
-        pipeline = MagicMock()
-        pipeline.jobs.list.return_value = [job]
-        self.project.pipelines.list.return_value = [pipeline]
-        return mr
-
-    async def test_noop_when_main_is_already_up_to_date(self):
-        self._set_rpas("4.22.18")
-        self.files[f"{icr.KRD_CGW_DIR}/openshift-install/4.22.18.yaml"] = "x"
-        await _pipeline(self.tmp.name).ensure_cgw_version()
+    def _assert_read_only(self):
         self.project.commits.create.assert_not_called()
         self.project.mergerequests.create.assert_not_called()
+        self.gitlab.list_merge_requests.assert_not_called()
 
-    async def test_creates_mr_with_version_file_and_rpa_bumps_then_waits(self):
-        self._set_rpas("4.22.17")
-        mr = self._merged_mr()
-        self.project.mergerequests.create.return_value = mr
-        with patch.object(icr, "datetime") as dt:
-            dt.now.return_value.strftime.return_value = "2026-10-20"
-            await _pipeline(self.tmp.name).ensure_cgw_version()
-        commit = self.project.commits.create.call_args.args[0]
-        self.assertEqual(commit["branch"], "binaries-cdn-4-22/openshift-install/ocp/4.22.18")
-        self.assertEqual(commit["start_branch"], "main")
-        actions = {a["file_path"]: a for a in commit["actions"]}
-        version_action = actions["data/external/developer-portal/openshift-install/4.22.18.yaml"]
-        self.assertEqual(version_action["action"], "create")
-        self.assertEqual(version_action["content"], cgw_version_file_content("4.22.18", True, "2026-10-20"))
+    def test_passes_when_rpas_and_version_are_on_main(self):
+        self._onboard()
+        _pipeline(self.tmp.name, release_name="4.22.22").verify_cgw_onboarding()
+        self.gitlab.get_project.assert_called_once_with(icr.KRD_PROJECT)
+        self._assert_read_only()
+
+    def test_dev_preview_uses_its_rpas_and_the_same_version(self):
+        self._onboard(prefix="ocp-art-binaries-dev-preview")
+        _pipeline(self.tmp.name, client_type="ocp-dev-preview", release_name="4.22.0-ec.6").verify_cgw_onboarding()
+        self._assert_read_only()
+
+    def test_fails_when_an_rpa_is_missing(self):
+        self._onboard()
+        del self.files[f"{icr.KRD_RPA_DIR}/ocp-art-binaries-prod-4-22.yaml"]
+        with self.assertRaises(RuntimeError) as ctx:
+            _pipeline(self.tmp.name).verify_cgw_onboarding()
+        message = str(ctx.exception)
+        self.assertIn("openshift-4.22 is not onboarded", message)
+        self.assertIn(f"missing {icr.KRD_RPA_DIR}/ocp-art-binaries-prod-4-22.yaml", message)
+        self.assertNotIn("ocp-art-binaries-stage-4-22", message)
+        self._assert_read_only()
+
+    def test_fails_when_rpa_still_names_a_release(self):
+        self._onboard(rpa_version="4.22.18")
+        with self.assertRaises(RuntimeError) as ctx:
+            _pipeline(self.tmp.name, release_name="4.22.22").verify_cgw_onboarding()
+        message = str(ctx.exception)
+        self.assertIn("not onboarded", message)
         for env in ("stage", "prod"):
-            action = actions[f"{icr.KRD_RPA_DIR}/ocp-art-binaries-{env}-4-22.yaml"]
-            self.assertEqual(action["action"], "update")
-            self.assertEqual(rpa_product_version_name(action["content"]), "4.22.18")
-        self.assertEqual(self.project.mergerequests.create.call_args.args[0]["source_branch"], commit["branch"])
-        self.project.pipelines.list.assert_called_with(ref="main", sha="abc", get_all=True)
+            self.assertIn(
+                f"{icr.KRD_RPA_DIR}/ocp-art-binaries-{env}-4-22.yaml has productVersionName ['4.22.18'], "
+                'expected exactly one "4.22"',
+                message,
+            )
+        self._assert_read_only()
 
-    async def test_refuses_when_another_release_mr_is_open(self):
-        self._set_rpas("4.22.17")
-        other = MagicMock(
-            source_branch="binaries-cdn-4-22/openshift-install/ocp/4.22.17", web_url="https://gitlab/mr/6"
-        )
-        self.gitlab.list_merge_requests.return_value = [other]
+    def test_fails_when_rpa_has_two_product_versions(self):
+        self._onboard()
+        path = f"{icr.KRD_RPA_DIR}/ocp-art-binaries-stage-4-22.yaml"
+        self.files[path] += '            productVersionName: "4.22"\n'
         with self.assertRaises(RuntimeError) as ctx:
-            await _pipeline(self.tmp.name).ensure_cgw_version()
-        self.assertIn("https://gitlab/mr/6", str(ctx.exception))
-        self.project.commits.create.assert_not_called()
+            _pipeline(self.tmp.name).verify_cgw_onboarding()
+        self.assertIn(f"{path} has productVersionName ['4.22', '4.22']", str(ctx.exception))
 
-    async def test_open_dev_preview_mr_does_not_block_ga(self):
-        self._set_rpas("4.22.17")
-        preview = MagicMock(
-            source_branch="binaries-cdn-4-22/openshift-install/ocp-dev-preview/4.22.0-ec.5",
-            web_url="https://gitlab/mr/7",
-        )
-        self.gitlab.list_merge_requests.return_value = [preview]
-        self.project.mergerequests.create.return_value = self._merged_mr()
-        await _pipeline(self.tmp.name).ensure_cgw_version()
-        self.project.commits.create.assert_called_once()
-
-    async def test_reuses_open_mr_for_same_release(self):
-        self._set_rpas("4.22.17")
-        mr = self._merged_mr()
-        mr.source_branch = "binaries-cdn-4-22/openshift-install/ocp/4.22.18"
-        self.gitlab.list_merge_requests.return_value = [mr]
-        await _pipeline(self.tmp.name).ensure_cgw_version()
-        self.project.commits.create.assert_not_called()
-
-    async def test_fails_when_sync_cgw_fails(self):
-        self._set_rpas("4.22.17")
-        self.project.mergerequests.create.return_value = self._merged_mr(sync_status="failed")
-        with self.assertRaises(RuntimeError):
-            await _pipeline(self.tmp.name).ensure_cgw_version()
-
-    async def test_fails_when_mr_closed(self):
-        self._set_rpas("4.22.17")
-        mr = MagicMock(iid=7, web_url="https://gitlab/mr/7", state="closed")
-        self.project.mergerequests.create.return_value = mr
-        self.project.mergerequests.get.return_value = mr
-        with self.assertRaises(RuntimeError):
-            await _pipeline(self.tmp.name).ensure_cgw_version()
-
-    async def test_times_out_when_mr_not_merged(self):
-        self._set_rpas("4.22.17")
-        mr = MagicMock(iid=7, web_url="https://gitlab/mr/7", state="opened")
-        self.project.mergerequests.create.return_value = mr
-        self.project.mergerequests.get.return_value = mr
-        pipeline = _pipeline(self.tmp.name, cgw_mr_timeout_hours=3 / 3600)
-        with self.assertRaises(TimeoutError):
-            await pipeline.ensure_cgw_version()
-
-    async def test_fails_when_version_not_onboarded(self):
+    def test_fails_when_version_file_is_missing(self):
+        self._onboard(version_file="4.22.22")
         with self.assertRaises(RuntimeError) as ctx:
-            await _pipeline(self.tmp.name).ensure_cgw_version()
-        self.assertIn("not onboarded", str(ctx.exception))
+            _pipeline(self.tmp.name, release_name="4.22.22").verify_cgw_onboarding()
+        self.assertIn(f"missing {icr.KRD_CGW_DIR}/openshift-install/4.22.yaml", str(ctx.exception))
+        self._assert_read_only()
 
-    async def test_dry_run_creates_nothing(self):
-        self._set_rpas("4.22.17")
-        await _pipeline(self.tmp.name, dry_run=True).ensure_cgw_version()
-        self.project.commits.create.assert_not_called()
-        self.project.mergerequests.create.assert_not_called()
+    def test_other_gitlab_errors_propagate(self):
+        self.project.files.get.side_effect = GitlabGetError("500", response_code=500)
+        with self.assertRaises(GitlabGetError):
+            _pipeline(self.tmp.name).verify_cgw_onboarding()
+
+    def test_dry_run_still_checks(self):
+        with self.assertRaises(RuntimeError):
+            _pipeline(self.tmp.name, dry_run=True).verify_cgw_onboarding()
+        self._onboard()
+        _pipeline(self.tmp.name, dry_run=True).verify_cgw_onboarding()
+        self.assertEqual(self.project.files.get.call_count, 6)
+        self._assert_read_only()
 
 
 class TestRun(IsolatedAsyncioTestCase):
@@ -443,10 +402,10 @@ class TestRun(IsolatedAsyncioTestCase):
         pipeline.collect_release_values = AsyncMock(return_value=(["RELEASE_VERSION=4.22.18"], EXPECTED_PARENTS))
         nvr = "openshift-install-binaries-container-v4.22.0-1.p2.assembly.4.22.18.el9"
         pipeline.build_binary = AsyncMock(return_value={"nvrs": nvr, "dockerfile": str(df)})
-        pipeline.ensure_cgw_version = AsyncMock()
+        pipeline.verify_cgw_onboarding = MagicMock()
         await pipeline.run()
         pipeline.collect_release_values.assert_awaited_once_with(["x86_64"], False)
-        pipeline.ensure_cgw_version.assert_awaited_once()
+        pipeline.verify_cgw_onboarding.assert_called_once_with()
         kwargs = self.binary.call_args.kwargs
         self.assertEqual(kwargs["group"], "openshift-4.22")
         self.assertEqual(kwargs["nvrs"], [nvr])
@@ -475,10 +434,10 @@ class TestRun(IsolatedAsyncioTestCase):
         pipeline.binary_configured = AsyncMock(return_value=True)
         pipeline.collect_release_values = AsyncMock(return_value=(["RELEASE_VERSION=4.22.18"], EXPECTED_PARENTS))
         pipeline.build_binary = AsyncMock(return_value={"nvrs": "x-1-1.el9", "dockerfile": str(df)})
-        pipeline.ensure_cgw_version = AsyncMock()
+        pipeline.verify_cgw_onboarding = MagicMock()
         await pipeline.run()
         pipeline.build_binary.assert_awaited_once()
-        pipeline.ensure_cgw_version.assert_not_awaited()
+        pipeline.verify_cgw_onboarding.assert_not_called()
         self.binary.assert_not_called()
 
     async def test_build_only_stops_after_verified_build(self):
@@ -488,10 +447,10 @@ class TestRun(IsolatedAsyncioTestCase):
         pipeline.binary_configured = AsyncMock(return_value=True)
         pipeline.collect_release_values = AsyncMock(return_value=(["RELEASE_VERSION=4.22.18"], EXPECTED_PARENTS))
         pipeline.build_binary = AsyncMock(return_value={"nvrs": "x-1-1.el9", "dockerfile": str(df)})
-        pipeline.ensure_cgw_version = AsyncMock()
+        pipeline.verify_cgw_onboarding = MagicMock()
         await pipeline.run()
         pipeline.build_binary.assert_awaited_once()
-        pipeline.ensure_cgw_version.assert_not_awaited()
+        pipeline.verify_cgw_onboarding.assert_not_called()
         self.binary.assert_not_called()
 
     async def test_parent_mismatch_stops_before_release(self):
@@ -503,10 +462,10 @@ class TestRun(IsolatedAsyncioTestCase):
         pipeline.binary_configured = AsyncMock(return_value=True)
         pipeline.collect_release_values = AsyncMock(return_value=(["RELEASE_VERSION=4.22.18"], wrong))
         pipeline.build_binary = AsyncMock(return_value={"nvrs": "x-1-1.el9", "dockerfile": str(df)})
-        pipeline.ensure_cgw_version = AsyncMock()
+        pipeline.verify_cgw_onboarding = MagicMock()
         with self.assertRaises(RuntimeError):
             await pipeline.run()
-        pipeline.ensure_cgw_version.assert_not_awaited()
+        pipeline.verify_cgw_onboarding.assert_not_called()
         self.binary.assert_not_called()
 
     async def test_given_nvr_skips_build_and_dev_preview_uses_dev_preview_plans(self):
@@ -516,15 +475,14 @@ class TestRun(IsolatedAsyncioTestCase):
             version="5.0",
             release_name="5.0.0-ec.6",
             nvr="openshift-install-binaries-container-v5.0.0-1.p2.assembly.ec.6.el9",
-            skip_cgw_mr=True,
         )
         pipeline.binary_configured = AsyncMock(return_value=True)
         pipeline.collect_release_values = AsyncMock(return_value=(["RELEASE_VERSION=5.0.0-ec.6"], {}))
         pipeline.build_binary = AsyncMock()
-        pipeline.ensure_cgw_version = AsyncMock()
+        pipeline.verify_cgw_onboarding = MagicMock()
         await pipeline.run()
         pipeline.build_binary.assert_not_awaited()
-        pipeline.ensure_cgw_version.assert_not_awaited()
+        pipeline.verify_cgw_onboarding.assert_called_once_with()
         kwargs = self.binary.call_args.kwargs
         self.assertEqual(kwargs["release_plan_key"], "openshift-5-0-binaries-dev-preview")
         self.assertEqual(kwargs["shipment_kind"], "binaries-dev-preview")
@@ -535,7 +493,43 @@ class TestRun(IsolatedAsyncioTestCase):
         )
         pipeline.binary_configured = AsyncMock(return_value=True)
         pipeline.collect_release_values = AsyncMock(return_value=([], {}))
-        pipeline.ensure_cgw_version = AsyncMock()
+        pipeline.verify_cgw_onboarding = MagicMock()
         await pipeline.run()
-        pipeline.ensure_cgw_version.assert_not_awaited()
+        pipeline.verify_cgw_onboarding.assert_not_called()
         self.binary.assert_not_called()
+
+    async def test_not_onboarded_stops_before_release(self):
+        pipeline = _pipeline(
+            self.tmp.name, nvr="openshift-install-binaries-container-v4.22.0-1.p2.assembly.4.22.18.el9"
+        )
+        pipeline.binary_configured = AsyncMock(return_value=True)
+        pipeline.collect_release_values = AsyncMock(return_value=([], {}))
+        pipeline.verify_cgw_onboarding = MagicMock(side_effect=RuntimeError("openshift-4.22 is not onboarded"))
+        with self.assertRaises(RuntimeError):
+            await pipeline.run()
+        self.binary.assert_not_called()
+
+    async def test_dry_run_without_nvr_checks_onboarding_then_stops(self):
+        pipeline = _pipeline(self.tmp.name, dry_run=True)
+        pipeline.binary_configured = AsyncMock(return_value=True)
+        pipeline.collect_release_values = AsyncMock(return_value=(["RELEASE_VERSION=4.22.18"], EXPECTED_PARENTS))
+        pipeline.build_binary = AsyncMock(return_value={"nvrs": "n/a", "dockerfile": "/nonexistent"})
+        pipeline.verify_cgw_onboarding = MagicMock()
+        await pipeline.run()
+        pipeline.build_binary.assert_awaited_once()
+        pipeline.verify_cgw_onboarding.assert_called_once_with()
+        self.binary.assert_not_called()
+
+    async def test_dry_run_with_nvr_checks_onboarding_and_runs_shipment_dry(self):
+        pipeline = _pipeline(
+            self.tmp.name,
+            dry_run=True,
+            nvr="openshift-install-binaries-container-v4.22.0-1.p2.assembly.4.22.18.el9",
+        )
+        pipeline.binary_configured = AsyncMock(return_value=True)
+        pipeline.collect_release_values = AsyncMock(return_value=([], {}))
+        pipeline.verify_cgw_onboarding = MagicMock()
+        await pipeline.run()
+        pipeline.verify_cgw_onboarding.assert_called_once_with()
+        self.assertTrue(self.binary.call_args.kwargs["runtime"].dry_run)
+        self.binary.return_value.run.assert_awaited_once()
