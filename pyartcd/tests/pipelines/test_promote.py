@@ -157,6 +157,63 @@ class TestPromotePipeline(IsolatedAsyncioTestCase):
             else:
                 os.environ[key] = value
 
+    @patch("pyartcd.jira_client.JIRAClient.from_url", return_value=None)
+    async def test_private_multi_promotion_requires_private_staging(self, _jira):
+        pipeline = PromotePipeline(
+            MagicMock(config={}, working_dir=Path("/path/to/working"), dry_run=False),
+            group="openshift-4.22",
+            assembly="art1",
+            signing_env="prod",
+        )
+        pipeline.private_only = True
+        pipeline.get_multi_image_digest = AsyncMock(return_value=None)
+        pipeline.get_image_stream = AsyncMock(
+            return_value={
+                "spec": {
+                    "tags": [{"from": {"name": "quay.io/openshift-release-dev/ocp-release-nightly@sha256:example"}}]
+                }
+            }
+        )
+        pipeline.get_image_info = AsyncMock()
+        with self.assertRaisesRegex(ValueError, "must reference a digest in the private payload repository"):
+            await pipeline._promote_heterogeneous_payload(
+                AssemblyTypes.CUSTOM, "4.22.1-assembly.art1", ["x86_64"], [], [], {}, tag_stable=False
+            )
+        pipeline.get_multi_image_digest.assert_awaited_once_with(
+            "quay.io/openshift-release-dev/ocp-release-priv:4.22.1-assembly.art1-multi"
+        )
+        pipeline.get_image_stream.assert_awaited_once_with("ocp-multi-priv", "4.22-art-assembly-art1-multi-priv")
+        pipeline.get_image_info.assert_not_awaited()
+
+    @patch("pyartcd.jira_client.JIRAClient.from_url", return_value=None)
+    @patch("pyartcd.pipelines.promote.SigstoreSignatory")
+    async def test_private_sigstore_uses_private_registry_and_disables_rekor(self, signatory, _jira):
+        pipeline = PromotePipeline(
+            MagicMock(config={}, working_dir=Path("/path/to/working"), dry_run=False),
+            group="openshift-4.22",
+            assembly="art1",
+            signing_env="prod",
+        )
+        pipeline.private_only = True
+        repo = "quay.io/openshift-release-dev/ocp-release-priv"
+        component_repo = "quay.io/openshift-release-dev/ocp-v4.0-art-dev-priv"
+        signed_digest = "sha256:" + "a" * 64
+        cosign = signatory.return_value
+        release = Mock(manifests_to_sign=[f"{repo}@{signed_digest}"])
+        cosign.discover_release_image = AsyncMock(return_value=(release, {}))
+        cosign.discover_component_images = AsyncMock(
+            return_value=({f"{component_repo}@{signed_digest}", f"quay.io/example/public@{signed_digest}"}, {})
+        )
+        cosign.sign_release_images = AsyncMock(return_value={})
+        cosign.sign_component_images = AsyncMock(return_value={})
+        with patch.dict(os.environ, {"REKOR_URL": "https://rekor.example.com"}):
+            await pipeline.sigstore_sign(
+                "4.22.1-assembly.art1", {"x86_64": {"image": f"{repo}:test", "digest": signed_digest}}
+            )
+        self.assertEqual(signatory.call_args.kwargs["rekor_url"], "")
+        cosign.sign_release_images.assert_awaited_once_with([release])
+        cosign.sign_component_images.assert_awaited_once_with({f"{component_repo}@{signed_digest}"})
+
     @patch("pyartcd.pipelines.promote.RegistryConfig")
     @patch("pyartcd.jira_client.JIRAClient.from_url", return_value=None)
     @patch("pyartcd.pipelines.promote.util.load_releases_config", return_value={})
@@ -185,6 +242,87 @@ class TestPromotePipeline(IsolatedAsyncioTestCase):
         load_releases_config.assert_awaited_once_with(
             group='openshift-4.10', data_path='https://example.com/ocp-build-data.git'
         )
+
+    @patch("pyartcd.pipelines.promote.RegistryConfig")
+    @patch("pyartcd.jira_client.JIRAClient.from_url", return_value=None)
+    @patch(
+        "pyartcd.pipelines.promote.util.load_releases_config",
+        return_value={
+            "releases": {
+                "art1": {"assembly": {"type": "custom", "visibility": "private", "basis": {"patch_version": 1}}}
+            }
+        },
+    )
+    async def test_private_promotion_uses_selected_ref_and_private_destinations(self, releases, _jira, _registry):
+        runtime = MagicMock(
+            config={"jira": {"url": JIRA_SERVER_URL}},
+            working_dir=Path("/path/to/working"),
+            dry_run=False,
+        )
+        build_data = "https://example.com/private-build-data"
+        build_data_ref = "a" * 40
+        pipeline = await PromotePipeline.create(
+            runtime,
+            group="openshift-4.22",
+            assembly="art1",
+            signing_env="prod",
+            data_path=build_data,
+            data_gitref=build_data_ref,
+        )
+        pipeline.group_runtime._group_config = Model({"konflux": {"arches": ["aarch64"]}})
+        pipeline.get_image_stream = AsyncMock(return_value={"metadata": {}})
+        pipeline._fix_failed_imagestream_imports = AsyncMock()
+        pipeline.get_image_stream_tag = AsyncMock(return_value=None)
+        pipeline.build_release_image = AsyncMock()
+        pipeline.sigstore_sign = AsyncMock()
+        pipeline.sign_artifacts = AsyncMock()
+        pipeline.extract_and_publish_clients = AsyncMock()
+        pipeline.update_shipment_with_payload_shas = AsyncMock()
+        pipeline.ocp_doomsday_backup = AsyncMock()
+        release_name = "4.22.1-assembly.art1"
+        repo = "quay.io/openshift-release-dev/ocp-release-priv"
+        digest = "sha256:" + "b" * 64
+        payload = {"image": f"{repo}:{release_name}-aarch64", "digest": digest, "metadata": {"version": release_name}}
+
+        async def tag_after_signing(*_):
+            pipeline.sigstore_sign.assert_awaited_once_with(release_name, {"aarch64": payload})
+
+        pipeline.tag_release = AsyncMock(side_effect=tag_after_signing)
+        with (
+            patch.dict(
+                os.environ,
+                {"KMS_CRED_FILE": "fake", "KMS_KEY_ID": "fake", "QUAY_AUTH_FILE": "/path/to/quay-auth.json"},
+                clear=True,
+            ),
+            patch("pyartcd.pipelines.promote.SigstoreSignatory.ENV", {}),
+            patch("pyartcd.pipelines.promote.get_release_image_info", side_effect=[None, payload]),
+        ):
+            await pipeline.run()
+
+        releases.assert_awaited_once_with(group=f"openshift-4.22@{build_data_ref}", data_path=build_data)
+        pipeline.get_image_stream.assert_any_await("ocp-arm64-priv", "4.22-art-assembly-art1-arm64-priv")
+        pipeline._fix_failed_imagestream_imports.assert_awaited_once_with(
+            "ocp-arm64-priv", "4.22-art-assembly-art1-arm64-priv"
+        )
+        pipeline.build_release_image.assert_awaited_once_with(
+            release_name,
+            "aarch64",
+            [],
+            [],
+            {},
+            payload["image"],
+            None,
+            "4.22-art-assembly-art1-arm64-priv",
+            keep_manifest_list=False,
+        )
+        pipeline.tag_release.assert_awaited_once_with(
+            f"{repo}@{digest}", f"ocp-arm64-priv/release-arm64-priv:{release_name}"
+        )
+        pipeline.sign_artifacts.assert_not_awaited()
+        pipeline.extract_and_publish_clients.assert_not_awaited()
+        pipeline.update_shipment_with_payload_shas.assert_not_awaited()
+        pipeline.ocp_doomsday_backup.assert_not_awaited()
+        pipeline._slack_client.say_in_thread.assert_not_called()
 
     @patch("pyartcd.pipelines.promote.RegistryConfig")
     @patch("pyartcd.jira_client.JIRAClient.from_url", return_value=None)
