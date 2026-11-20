@@ -24,28 +24,18 @@ from artcommonlib.arch_util import (
     go_arch_for_brew_arch,
     go_suffix_for_arch,
 )
-from artcommonlib.assembly import (
-    AssemblyTypes,
-    assembly_config_struct,
-    assembly_is_private,
-    assembly_targeted_fixes_only,
-)
-from artcommonlib.constants import (
-    PRIVATE_RELEASE_IMAGE_REPO,
-    REGISTRY_CI_OPENSHIFT,
-    REGISTRY_QUAY_OCP_RELEASE_DEV,
-    REGISTRY_REDHAT_IO,
-)
+from artcommonlib.assembly import AssemblyTypes, assembly_config_struct, assembly_targeted_fixes_only
+from artcommonlib.constants import REGISTRY_CI_OPENSHIFT, REGISTRY_QUAY_OCP_RELEASE_DEV, REGISTRY_REDHAT_IO
 from artcommonlib.exceptions import VerificationError
 from artcommonlib.exectools import manifest_tool, manifest_tool_auth_file, to_thread
 from artcommonlib.github_auth import get_github_client_for_org
 from artcommonlib.gitlab import GitLabClient
 from artcommonlib.jira_config import JIRA_EMAIL, JIRA_SERVER_URL
-from artcommonlib.model import Missing, Model
+from artcommonlib.model import Model
 from artcommonlib.oc_image_info import oc_image_info__cached_async
 from artcommonlib.registry_config import RegistryConfig
 from artcommonlib.rhcos import get_primary_container_name
-from artcommonlib.util import get_art_prod_image_repo_for_version, isolate_major_minor_in_group
+from artcommonlib.util import isolate_major_minor_in_group
 from doozerlib.cli.release_gen_payload import (
     assembly_imagestream_base_name_generic,
     default_imagestream_namespace_base_name,
@@ -142,8 +132,6 @@ class PromotePipeline:
             self.runtime.working_dir,
             self.group,
             self.assembly,
-            self.data_path,
-            self.data_gitref,
         )
         return self
 
@@ -167,8 +155,6 @@ class PromotePipeline:
         use_multi_hack: bool = False,
         signing_env: Optional[str] = None,
         signing_transport: str = "umb",
-        data_path: Optional[str] = None,
-        data_gitref: Optional[str] = None,
     ) -> None:
         self.runtime = runtime
         self.group = group
@@ -191,7 +177,6 @@ class PromotePipeline:
         self.use_multi_hack = use_multi_hack
         self._multi_enabled = False
         self._binaries_cdn_enabled = False
-        self.private_only = False
         if signing_transport not in ("umb", "direct"):
             raise ValueError("signing_transport must be either 'umb' or 'direct'")
         self.signing_transport = signing_transport
@@ -215,36 +200,29 @@ class PromotePipeline:
         self._elliott_env_vars["ELLIOTT_WORKING_DIR"] = str(self._elliott_working_dir)
         self._elliott_lock = asyncio.Lock()
         self._ocp_build_data_url = self.runtime.config.get("build_config", {}).get("ocp_build_data_url")
-        self.data_path = (
-            data_path
-            or self._ocp_build_data_url
-            or self._doozer_env_vars.get("DOOZER_DATA_PATH")
-            or constants.OCP_BUILD_DATA_URL
-        )
-        self.data_gitref = data_gitref
         self._jira_client = JIRAClient.from_url(
             JIRA_SERVER_URL,
             basic_auth=(JIRA_EMAIL, os.environ.get("JIRA_TOKEN")),
         )
-        if data_path or self._ocp_build_data_url:
-            self._elliott_env_vars["ELLIOTT_DATA_PATH"] = self.data_path
-            self._doozer_env_vars["DOOZER_DATA_PATH"] = self.data_path
+        if self._ocp_build_data_url:
+            self._elliott_env_vars["ELLIOTT_DATA_PATH"] = self._ocp_build_data_url
+            self._doozer_env_vars["DOOZER_DATA_PATH"] = self._ocp_build_data_url
 
         self._registry_config: Optional[str] = None
 
     def check_environment_variables(self):
         logger = self.runtime.logger
 
-        required_vars = [] if self.private_only else ["JIRA_TOKEN", "QUAY_PASSWORD"]
-        if not self.private_only and not self.skip_signing:
-            if not self.skip_mirror_binaries:
-                required_vars += ["AWS_SHARED_CREDENTIALS_FILE", "CLOUDFLARE_ENDPOINT"]
+        required_vars = ["JIRA_TOKEN", "QUAY_PASSWORD"]
+        if not self.skip_mirror_binaries and not self.skip_signing:
+            required_vars += ["AWS_SHARED_CREDENTIALS_FILE", "CLOUDFLARE_ENDPOINT"]
+        if not self.skip_signing:
             required_vars += ["REDIS_SERVER_PASSWORD"]
             if self.signing_transport == "umb":
                 required_vars += ["SIGNING_CERT", "SIGNING_KEY"]
         if not self.skip_sigstore:
             required_vars += ["KMS_CRED_FILE", "KMS_KEY_ID"]
-        if not self.private_only and not self.skip_build_microshift:
+        if not self.skip_build_microshift:
             required_vars += ["JENKINS_SERVICE_ACCOUNT", "JENKINS_SERVICE_ACCOUNT_TOKEN"]
 
         for env_var in required_vars:
@@ -258,6 +236,8 @@ class PromotePipeline:
     async def run(self):
         """Promote and verify an OCP release, then submit its optional installer build."""
         logger = self.runtime.logger
+        self.check_environment_variables()
+
         if 'XDG_RUNTIME_DIR' in os.environ:
             logger.info('Unsetting XDG_RUNTIME_DIR to prevent use of default registry auth')
             del os.environ['XDG_RUNTIME_DIR']
@@ -299,18 +279,13 @@ class PromotePipeline:
         logger.info("Loading build data...")
         group_config = self.group_runtime.group_config
         releases_config = await util.load_releases_config(
-            group=f"{self.group}@{self.data_gitref}" if self.data_gitref else self.group,
-            data_path=self.data_path,
+            group=self.group,
+            data_path=self._doozer_env_vars.get("DOOZER_DATA_PATH", None) or constants.OCP_BUILD_DATA_URL,
         )
         if releases_config.get("releases", {}).get(self.assembly) is None:
             raise ValueError(
                 f"To promote this release, assembly {self.assembly} must be explicitly defined in releases.yml."
             )
-        self.private_only = assembly_is_private(Model(releases_config), self.assembly)
-        self.check_environment_variables()
-        if self.private_only:
-            await self._promote_private_assembly(group_config, releases_config)
-            return
         permits = util.get_assembly_promotion_permits(releases_config, self.assembly)
 
         # Get release name
@@ -802,90 +777,6 @@ class PromotePipeline:
         if tag_stable:
             await self._trigger_installer_build(release_infos)
 
-    async def _promote_private_assembly(self, group_config: Model, releases_config: Dict) -> None:
-        """Build, sign, and register a hotfix using only its private destinations."""
-        release_name = util.get_release_name_for_assembly(self.group, releases_config, self.assembly)
-        if not VersionInfo.is_valid(release_name):
-            raise ValueError(f"Release name `{release_name}` is not a valid semver.")
-
-        konflux_arches = group_config.get("konflux", {}).get("arches", Missing)
-        arches = group_config.get("arches", []) if konflux_arches is Missing else konflux_arches
-        arches = list(dict.fromkeys(map(brew_arch_for_go_arch, arches)))
-        if not arches:
-            raise ValueError("No Konflux arches specified in group config.")
-        self._multi_enabled = group_config.get("multi_arch", {}).get("enabled", False)
-        if self.multi_only and not self._multi_enabled:
-            raise ValueError("Can't promote a multi payload: multi_arch.enabled is not set in group config")
-
-        if not self.skip_sigstore and (
-            os.environ.get("COSIGN_REPOSITORY") or SigstoreSignatory.ENV.get("COSIGN_REPOSITORY")
-        ):
-            raise ValueError("Unset COSIGN_REPOSITORY before signing private payloads")
-        assembly_type = AssemblyTypes.CUSTOM
-        target_arches = [] if self.multi_only else list(arches)
-        if self._multi_enabled and not self.no_multi:
-            target_arches.append("multi")
-        targets = {}
-        for arch in target_arches:
-            namespace = f"ocp{go_suffix_for_arch(arch, is_private=True)}"
-            stream = self._get_image_stream_name(assembly_type, arch)
-            if not await self.get_image_stream(namespace, stream):
-                raise ValueError(f"Private release ImageStream {namespace}/{stream} is unavailable")
-            targets[arch] = (namespace, stream)
-
-        previous_list = [
-            version.strip() for version in (group_config.get("upgrades") or "").split(",") if version.strip()
-        ]
-        next_list = [
-            version.strip() for version in (group_config.get("upgrades_next") or "").split(",") if version.strip()
-        ]
-        if any(not VersionInfo.is_valid(version) for version in previous_list + next_list):
-            raise ValueError("Upgrade edges must be valid semvers.")
-        description = group_config.get("description")
-        metadata = {"description": str(description)} if description else {}
-        release_infos = await self.promote(
-            assembly_type, release_name, arches, previous_list, next_list, metadata, tag_stable=False
-        )
-        if not self.runtime.dry_run:
-            for info in release_infos.values():
-                if not info["image"].startswith(f"{PRIVATE_RELEASE_IMAGE_REPO}:") or not re.fullmatch(
-                    r"sha256:[0-9a-f]{64}", info["digest"]
-                ):
-                    raise ValueError("Private promotion returned an unexpected payload repository or digest")
-
-        if not self.skip_sigstore:
-            if self.runtime.dry_run:
-                self._logger.info("[DRY RUN] Would sign private release payloads with Sigstore")
-            else:
-                await self.sigstore_sign(release_name, release_infos)
-
-        content = {}
-        for arch, info in release_infos.items():
-            namespace, stream = targets[arch]
-            digest = info["digest"]
-            pullspec = f"{PRIVATE_RELEASE_IMAGE_REPO}@{digest}"
-            if self.runtime.dry_run and digest.startswith("fake:"):
-                pullspec = info["image"]
-            image_stream_tag = f"{stream}:{info['metadata']['version']}"
-            existing = await self.get_image_stream_tag(namespace, image_stream_tag)
-            if existing and existing["tag"]["from"]["name"] != pullspec and not self.permit_overwrite:
-                raise ValueError(f"Private ImageStreamTag {namespace}/{image_stream_tag} has a different pullspec")
-            if not existing or existing["tag"]["from"]["name"] != pullspec:
-                await self.tag_release(pullspec, f"{namespace}/{image_stream_tag}")
-            content[arch] = {"pullspec": info["image"], "digest": digest, "metadata": info["metadata"]}
-
-        json.dump(
-            {
-                "group": self.group,
-                "assembly": self.assembly,
-                "type": assembly_type.value,
-                "visibility": "private",
-                "name": release_name,
-                "content": content,
-            },
-            sys.stdout,
-        )
-
     async def _trigger_installer_build(self, release_infos: Dict) -> None:
         """Submit the x86_64 ISO build once, without waiting for it or retrying it.
 
@@ -942,7 +833,7 @@ class PromotePipeline:
         major, _ = isolate_major_minor_in_group(self.group)
         if major is None:
             raise ValueError(f"Cannot determine major version from group name: {self.group}")
-        go_arch_suffix = go_suffix_for_arch(arch, is_private=self.private_only)
+        go_arch_suffix = go_suffix_for_arch(arch)
         if assembly_type == AssemblyTypes.PREVIEW:
             return f'{major}-dev-preview{go_arch_suffix}'
         if major >= 5:
@@ -1047,9 +938,7 @@ class PromotePipeline:
     async def sign_artifacts(
         self, release_name: str, client_type: str, release_infos: Dict, message_digests: List[str]
     ):
-        """Sign artifacts and publish their legacy signatures."""
-        if self.private_only:
-            raise ValueError("The public legacy signature store cannot be used for private assemblies")
+        """Signs artifacts and publishes signature files to mirror"""
         if self.signing_transport == "direct" and self.runtime.dry_run:
             self._logger.info("[DRY RUN] Skipping direct signing")
             return
@@ -1429,7 +1318,7 @@ class PromotePipeline:
             signing_creds=os.environ.get("KMS_CRED_FILE", "dummy-file"),
             # Allow AWS_KEY_ID to be a comma delimited list
             signing_key_ids=os.environ.get("KMS_KEY_ID", "dummy-key").strip().split(','),
-            rekor_url="" if self.private_only else os.environ.get("REKOR_URL", ""),
+            rekor_url=os.environ.get("REKOR_URL", ""),
             concurrency_limit=CONCURRENCY_LIMIT,
             # force_resign defaults to False: already-signed manifests are skipped, not re-signed.
         )
@@ -1459,13 +1348,6 @@ class PromotePipeline:
         if all_errors:
             raise IOError(f"Release image discovery failed: {all_errors}")
 
-        if self.private_only and any(
-            not manifest.startswith(f"{PRIVATE_RELEASE_IMAGE_REPO}@sha256:")
-            for release in release_images
-            for manifest in release.manifests_to_sign
-        ):
-            raise ValueError("Private payload signing discovered a manifest outside the private payload repository")
-
         # --- Phase 2: Discover component images from ALL arch release images ---
         # Each arch-specific release references arch-specific component digests,
         # so we must discover from every release image to cover all architectures.
@@ -1483,11 +1365,6 @@ class PromotePipeline:
 
         if all_errors:
             raise IOError(f"Component image discovery failed: {all_errors}")
-
-        if self.private_only:
-            major, _ = isolate_major_minor_in_group(self.group)
-            component_repo = get_art_prod_image_repo_for_version(major, "dev-priv")
-            component_images = {image for image in component_images if image.startswith(f"{component_repo}@sha256:")}
 
         # --- Phase 3: Sign release images (with canonical tags) ---
         self._logger.info(
@@ -2205,14 +2082,16 @@ class PromotePipeline:
         :param tag_stable: Whether to tag the promoted payload to "4-stable[-$arch]" release stream.
         :return: A dict. Keys are architecture name, values are release_info dicts.
         """
-        go_arch_suffix = go_suffix_for_arch(arch, is_private=self.private_only)
+        # This suffix will be used to construct imagestream name
+        # We always want to promote from public imagestream and never private,
+        # therefore is_private should always be set to False
+        go_arch_suffix = go_suffix_for_arch(arch, is_private=False)
 
         brew_arch = brew_arch_for_go_arch(
             arch
         )  # ensure we are using Brew arches (e.g. aarch64) instead of golang arches (e.g. arm64).
         dest_image_tag = f"{release_name}-{brew_arch}"
-        destination_repo = PRIVATE_RELEASE_IMAGE_REPO if self.private_only else self.DEST_RELEASE_IMAGE_REPO
-        dest_image_pullspec = f"{destination_repo}:{dest_image_tag}"
+        dest_image_pullspec = f"{self.DEST_RELEASE_IMAGE_REPO}:{dest_image_tag}"
         self._logger.info(
             "Checking if release image %s for %s (%s) already exists...", release_name, arch, dest_image_pullspec
         )
@@ -2234,12 +2113,12 @@ class PromotePipeline:
                     f"{major}.{minor}", self.assembly, assembly_type, build_system='konflux'
                 ),
                 arch,
-                private=self.private_only,
+                private=False,
             )
             imagestream = await self.get_image_stream(is_namespace, is_name)
             if not imagestream:
                 raise ValueError(f"Image stream {is_name} is not found. Did you run build-sync?")
-            await self._fix_failed_imagestream_imports(is_namespace, is_name)
+            await self._fix_failed_imagestream_imports(f"ocp{go_arch_suffix}", is_name)
             self._logger.info(
                 "Building arch-specific release image %s for %s (%s)...", release_name, arch, dest_image_pullspec
             )
@@ -2285,15 +2164,13 @@ class PromotePipeline:
                     },
                 }
                 major, minor = isolate_major_minor_in_group(self.group)
+                go_arch_suffix = go_suffix_for_arch(arch, is_private=False)
                 dest_image_info["references"]["metadata"] = {
                     "annotations": {
                         "release.openshift.io/from-image-stream": f"fake{go_arch_suffix}/{major}.{minor}-art-assembly-{self.assembly}{go_arch_suffix}"
                     }
                 }
 
-        if self.private_only:
-            dest_image_info["image"] = dest_image_pullspec
-            return dest_image_info
         if not tag_stable:
             self._logger.info("Release image %s will not appear on the release controller.", dest_image_pullspec)
             return dest_image_info
@@ -2348,8 +2225,7 @@ class PromotePipeline:
         :return: A dict. Keys are architecture name, values are release_info dicts.
         """
         dest_image_tag = f"{release_name}-multi"
-        destination_repo = PRIVATE_RELEASE_IMAGE_REPO if self.private_only else self.DEST_RELEASE_IMAGE_REPO
-        dest_image_pullspec = f"{destination_repo}:{dest_image_tag}"
+        dest_image_pullspec = f"{self.DEST_RELEASE_IMAGE_REPO}:{dest_image_tag}"
         self._logger.info("Checking if multi/heterogeneous payload %s exists...", dest_image_pullspec)
         dest_image_digest = await self.get_multi_image_digest(dest_image_pullspec)
         if dest_image_digest:  # already promoted
@@ -2382,19 +2258,8 @@ class PromotePipeline:
             # Each entry in the manifest-list is an arch-specific heterogeneous payload.
             # We need to fetch that manifest-list and recreate all arch-specific heterogeneous payloads first,
             # then recreate the top-level manifest-list.
-            if self.private_only:
-                multi_namespace, multi_is_name = payload_imagestream_namespace_and_name(
-                    default_imagestream_namespace_base_name(),
-                    assembly_imagestream_base_name_generic(
-                        f"{major}.{minor}", self.assembly, assembly_type, build_system="konflux"
-                    ),
-                    "multi",
-                    private=True,
-                )
-            else:
-                multi_namespace = "ocp-multi"
-                multi_is_name = f"{major}.{minor}-art-assembly-{self.assembly}-multi"
-            multi_is = await self.get_image_stream(multi_namespace, multi_is_name)
+            multi_is_name = f"{major}.{minor}-art-assembly-{self.assembly}-multi"
+            multi_is = await self.get_image_stream("ocp-multi", multi_is_name)
             if not multi_is:
                 raise ValueError(f"Image stream {multi_is_name} is not found. Did you run build-sync?")
             if len(multi_is["spec"]["tags"]) != 1:
@@ -2402,12 +2267,7 @@ class PromotePipeline:
                     f"Image stream {multi_is_name} should only contain a single tag; Found {len(multi_is['spec']['tags'])} tags"
                 )
             multi_ist = multi_is["spec"]["tags"][0]
-            source_pullspec = multi_ist["from"]["name"]
-            if self.private_only and not source_pullspec.startswith(f"{PRIVATE_RELEASE_IMAGE_REPO}@sha256:"):
-                raise ValueError(
-                    "The private multi ImageStream must reference a digest in the private payload repository"
-                )
-            source_manifest_list = await self.get_image_info(source_pullspec, raise_if_not_found=True)
+            source_manifest_list = await self.get_image_info(multi_ist["from"]["name"], raise_if_not_found=True)
             if source_manifest_list["mediaType"] != "application/vnd.docker.distribution.manifest.list.v2+json":
                 raise ValueError(f'Pullspec {multi_ist["from"]["name"]} doesn\'t point to a valid manifest list.')
             source_repo = (
@@ -2483,8 +2343,6 @@ class PromotePipeline:
         dest_image_info["metadata"] = {
             "version": release_name,
         }
-        if self.private_only:
-            return dest_image_info
         if not tag_stable:
             self._logger.info("Release image %s will not appear on the release controller.", dest_image_pullspec)
             return dest_image_info
@@ -2567,7 +2425,7 @@ class PromotePipeline:
     ):
         if bool(source_image_pullspec) + bool(source_image_stream) != 1:
             raise ValueError("Specify one of source_image_pullspec or source_image_stream")
-        go_arch_suffix = go_suffix_for_arch(arch, is_private=self.private_only)
+        go_arch_suffix = go_suffix_for_arch(arch, is_private=False)
         cmd = [
             "oc",
             "adm",
@@ -3358,8 +3216,6 @@ class PromotePipeline:
     help="The group of components on which to operate. e.g. openshift-4.9",
 )
 @click.option("--assembly", metavar="ASSEMBLY_NAME", required=True, help="The name of an assembly. e.g. 4.9.1")
-@click.option("--data-path", envvar="PROMOTE_DATA_PATH", help="Build-data repository to use for the assembly.")
-@click.option("--data-gitref", envvar="PROMOTE_DATA_GITREF", help="Build-data Git branch, tag, or commit.")
 @click.option(
     "--skip-blocker-bug-check",
     is_flag=True,
@@ -3412,8 +3268,6 @@ async def promote(
     use_multi_hack: bool,
     signing_env: Optional[str],
     signing_transport: str,
-    data_path: Optional[str],
-    data_gitref: Optional[str],
 ):
     pipeline = await PromotePipeline.create(
         runtime,
@@ -3434,7 +3288,5 @@ async def promote(
         use_multi_hack,
         signing_env,
         signing_transport,
-        data_path=data_path,
-        data_gitref=data_gitref,
     )
     await pipeline.run()
