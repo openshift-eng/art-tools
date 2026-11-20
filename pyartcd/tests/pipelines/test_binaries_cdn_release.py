@@ -184,9 +184,9 @@ class TestCollectAndBuild(IsolatedAsyncioTestCase):
         get_release_image_info.side_effect = lambda pullspec, **_: self._release_info(pullspec.rsplit("-", 1)[1])
         get_image_info.return_value = [{"listDigest": "sha256:multilist"}]
         with tempfile.TemporaryDirectory() as tmp:
-            build_args, parents = await _pipeline(tmp).collect_release_values(list(ARCHES), True)
+            release_values, parents = await _pipeline(tmp).collect_release_values(list(ARCHES), True)
         self.assertEqual(
-            build_args,
+            release_values,
             [
                 "RELEASE_VERSION=4.22.18",
                 "DIGEST_X86_64=sha256:x86_64release",
@@ -230,7 +230,7 @@ class TestCollectAndBuild(IsolatedAsyncioTestCase):
                 await pipeline.binary_configured()
 
     @patch("pyartcd.pipelines.binaries_cdn_release.exectools.cmd_assert_async", new_callable=AsyncMock)
-    async def test_build_binary_passes_build_args_and_reads_record_log(self, cmd_assert_async):
+    async def test_build_binary_rebases_with_release_values_and_reads_record_log(self, cmd_assert_async):
         with tempfile.TemporaryDirectory() as tmp:
             pipeline = _pipeline(tmp)
             os.makedirs(pipeline.runtime.doozer_working)
@@ -244,7 +244,10 @@ class TestCollectAndBuild(IsolatedAsyncioTestCase):
                 entry = await pipeline.build_binary(["RELEASE_VERSION=4.22.18", "DIGEST_MULTI=sha256:m"])
         rebase_cmd, build_cmd = [c.args[0] for c in cmd_assert_async.await_args_list]
         self.assertIn("beta:binaries:konflux:rebase", rebase_cmd)
-        self.assertIn("--push", rebase_cmd)
+        self.assertEqual(
+            rebase_cmd[rebase_cmd.index("--build-arg") :],
+            ["--build-arg", "RELEASE_VERSION=4.22.18", "--build-arg", "DIGEST_MULTI=sha256:m", "--push"],
+        )
         for cmd in (rebase_cmd, build_cmd):
             self.assertIn("--latest-parent-version", cmd)
             self.assertIn("--binaries=openshift-install", cmd)
@@ -257,10 +260,6 @@ class TestCollectAndBuild(IsolatedAsyncioTestCase):
                 "--konflux-namespace=ocp-art-tenant",
                 "--konflux-kubeconfig",
                 "/kc",
-                "--build-arg",
-                "RELEASE_VERSION=4.22.18",
-                "--build-arg",
-                "DIGEST_MULTI=sha256:m",
             ],
         )
         self.assertEqual(entry["nvrs"], "openshift-install-binaries-container-v4.22.0-1.p2.assembly.4.22.18.el9")
