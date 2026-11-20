@@ -86,6 +86,11 @@ class Gateway:
             "GET", f"/apis/tekton.dev/v1/namespaces/{quote(namespace)}/pipelineruns/{quote(name)}"
         )
 
+    async def cronjob(self, namespace: str, name: str) -> dict:
+        return await self.kube_json(
+            "GET", f"/apis/batch/v1/namespaces/{quote(namespace)}/cronjobs/{quote(name, safe='')}"
+        )
+
     async def pod(self, namespace: str, name: str) -> dict:
         return await self.kube_json("GET", f"/api/v1/namespaces/{quote(namespace)}/pods/{quote(name)}")
 
@@ -102,7 +107,9 @@ class Gateway:
             if not token:
                 return
 
-    async def list_kube(self, namespace: str, resource: str, *, label_selector: str | None = None):
+    async def list_kube(
+        self, namespace: str, resource: str, *, api_group: str = "tekton.dev/v1", label_selector: str | None = None
+    ):
         token = ""
         while True:
             params = {"limit": 500}
@@ -111,7 +118,7 @@ class Gateway:
             if label_selector:
                 params["labelSelector"] = label_selector
             data = await self.kube_json(
-                "GET", f"/apis/tekton.dev/v1/namespaces/{quote(namespace)}/{resource}", params=params
+                "GET", f"/apis/{api_group}/namespaces/{quote(namespace)}/{resource}", params=params
             )
             for item in data.get("items", []):
                 yield item

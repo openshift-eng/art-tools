@@ -89,6 +89,11 @@ class TestStartPipelineRunLineage:
         assert metadata['labels']['art.openshift.io/parent-pipelinerun'] == 'new-scan'
         assert metadata['labels']['art.openshift.io/parent-pipeline'] == 'layered-products-scan'
 
+    def test_scheduler_job_is_recorded_as_provenance(self):
+        metadata = self.create(scheduler_job='art-test-tenant/scheduler-12345')
+        assert metadata['annotations']['art.openshift.io/scheduler-job'] == 'art-test-tenant/scheduler-12345'
+        assert 'ownerReferences' not in metadata
+
     def test_recovery_uses_original_parent_and_retry_uid(self):
         parent = {
             'metadata': {'name': 'original-bundle', 'namespace': 'art-test-tenant'},

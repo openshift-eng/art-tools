@@ -58,6 +58,7 @@ async def run_for(
 
         # Use the same name if Kubernetes runs the scheduler Job's pod again.
         job_name = os.getenv('K8S_JOB_NAME')
+        job_namespace = os.getenv('POD_NAMESPACE')
         run_name = f'{job_name}-{version.replace(".", "-")}' if job_name else None
         if run_name and len(run_name) > 63:
             # Tekton uses the PipelineRun name as a label value on child resources.
@@ -69,6 +70,7 @@ async def run_for(
             {'version': version},
             namespace=tekton_namespace,
             run_name=run_name,
+            scheduler_job=f'{job_namespace}/{job_name}' if job_namespace and job_name else None,
         )
         span.set_attribute("triggered", True)
         return
