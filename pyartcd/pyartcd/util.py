@@ -681,7 +681,7 @@ def default_release_suffix():
 def build_history_link_url(
     group: str,
     assembly: str,
-    days: int = 2,
+    days_ahead: int = 2,
     job_url: str = '',
     outcomes: Optional[List[str]] = None,
 ) -> str:
@@ -692,7 +692,9 @@ def build_history_link_url(
     Arg(s):
         group (str): Group name (e.g., 'openshift-4.17' or 'okd-5.0')
         assembly (str): Assembly name (e.g., 'stream')
-        days (int): Number of days to look back for build history (default: 2)
+        days_ahead (int): Number of days ahead of today to extend the date range
+            (default: 2). Long-running jobs produce builds after this URL is
+            generated, so the end date must reach forward to avoid an empty dashboard.
         job_url (str): Jenkins BUILD_URL to filter builds (default: '')
         outcomes (Optional[List[str]]): List of outcome filters to include
             (e.g., ['Success', 'Failure', 'Pending']). Defaults to ['Success', 'Failure'].
@@ -703,8 +705,9 @@ def build_history_link_url(
     if outcomes is None:
         outcomes = ['Success', 'Failure']
 
-    start_date = (datetime.now(timezone.utc) - timedelta(days=days)).strftime('%Y-%m-%d')
-    end_date = (datetime.now(timezone.utc)).strftime('%Y-%m-%d')
+    now = datetime.now(timezone.utc)
+    start_date = now.strftime('%Y-%m-%d')
+    end_date = (now + timedelta(days=days_ahead)).strftime('%Y-%m-%d')
 
     outcome_params = ''.join(f'&outcome={o}' for o in outcomes)
 

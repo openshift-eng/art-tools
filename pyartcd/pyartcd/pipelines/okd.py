@@ -117,7 +117,7 @@ class KonfluxOkdPipeline:
         build_history_url = build_history_link_url(
             group=f'okd-{self.version}',
             assembly=self.assembly,
-            days=2,
+            days_ahead=2,
             job_url=job_url,
             outcomes=['Pending', 'Success', 'Failure'],
         )
@@ -869,12 +869,6 @@ class KonfluxOkdPipeline:
             raise ValueError(f'Invalid build strategy: {build_strategy}')
 
     def finalize(self):
-        # Add link to art-build-history at the end of the job
-        # OKD uses okd-X.Y for the group name in art-build-history
-        okd_group = f'okd-{self.version}'
-        job_url = os.getenv('BUILD_URL', '')
-        build_history_url = build_history_link_url(group=okd_group, assembly=self.assembly, days=2, job_url=job_url)
-        jenkins.update_description(f'<a href="{build_history_url}">View build history</a><br/>')
 
         state = self.load_state_yaml()
         if state.get('status') != STATE_PASS:

@@ -986,7 +986,7 @@ class KonfluxOcpPipeline:
         build_history_url = build_history_link_url(
             group=f'openshift-{self.version}',
             assembly=self.assembly,
-            days=2,
+            days_ahead=2,
             job_url=job_url,
             outcomes=['Pending', 'Success', 'Failure'],
         )
