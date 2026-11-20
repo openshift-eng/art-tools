@@ -192,6 +192,7 @@ class PromotePipeline:
         self._multi_enabled = False
         self._binaries_cdn_enabled = False
         self.private_only = False
+        self._private_signature_store: Optional[str] = None
         if signing_transport not in ("umb", "direct"):
             raise ValueError("signing_transport must be either 'umb' or 'direct'")
         self.signing_transport = signing_transport
@@ -232,12 +233,20 @@ class PromotePipeline:
 
         self._registry_config: Optional[str] = None
 
+    @property
+    def _uses_legacy_signing(self) -> bool:
+        return not self.skip_signing and (
+            not self.private_only or bool(os.environ.get("PRIVATE_RELEASE_SIGNATURE_S3_URI"))
+        )
+
     def check_environment_variables(self):
         logger = self.runtime.logger
 
         required_vars = [] if self.private_only else ["JIRA_TOKEN", "QUAY_PASSWORD"]
-        if not self.private_only and not self.skip_signing:
-            if not self.skip_mirror_binaries:
+        if self._uses_legacy_signing:
+            if self.private_only:
+                required_vars += ["AWS_SHARED_CREDENTIALS_FILE"]
+            elif not self.skip_mirror_binaries:
                 required_vars += ["AWS_SHARED_CREDENTIALS_FILE", "CLOUDFLARE_ENDPOINT"]
             required_vars += ["REDIS_SERVER_PASSWORD"]
             if self.signing_transport == "umb":
@@ -821,6 +830,11 @@ class PromotePipeline:
             os.environ.get("COSIGN_REPOSITORY") or SigstoreSignatory.ENV.get("COSIGN_REPOSITORY")
         ):
             raise ValueError("Unset COSIGN_REPOSITORY before signing private payloads")
+        if self._uses_legacy_signing:
+            await self._configure_private_signature_store()
+            if self.signing_transport == "direct" and not self.runtime.dry_run:
+                get_direct_signing_credentials()
+
         assembly_type = AssemblyTypes.CUSTOM
         target_arches = [] if self.multi_only else list(arches)
         if self._multi_enabled and not self.no_multi:
@@ -858,6 +872,17 @@ class PromotePipeline:
                 self._logger.info("[DRY RUN] Would sign private release payloads with Sigstore")
             else:
                 await self.sigstore_sign(release_name, release_infos)
+        if self._private_signature_store:
+            if self.runtime.dry_run:
+                self._logger.info("[DRY RUN] Would sign private release payloads with OpenPGP")
+            else:
+                lock = Lock.SIGNING
+                await locks.run_with_lock(
+                    coro=self.sign_artifacts(release_name, "ocp-dev-preview", release_infos, []),
+                    lock=lock,
+                    lock_name=lock.value.format(signing_env=self.signing_env),
+                    lock_id=jenkins.get_build_path_or_random(),
+                )
 
         content = {}
         for arch, info in release_infos.items():
@@ -885,6 +910,30 @@ class PromotePipeline:
             },
             sys.stdout,
         )
+
+    async def _configure_private_signature_store(self) -> None:
+        """Require a dedicated S3 bucket with public access blocked for OpenPGP signatures."""
+        uri = os.environ.get("PRIVATE_RELEASE_SIGNATURE_S3_URI", "")
+        parsed = urlparse(uri)
+        if (
+            parsed.scheme != "s3"
+            or not re.fullmatch(r"[a-z0-9][a-z0-9.-]+", parsed.netloc)
+            or parsed.netloc == "art-srv-enterprise"
+            or parsed.query
+            or parsed.fragment
+        ):
+            raise ValueError("Set PRIVATE_RELEASE_SIGNATURE_S3_URI to a private S3 bucket or prefix")
+        if not self.runtime.dry_run:
+            _, stdout, _ = await exectools.cmd_gather_async(
+                ["aws", "s3api", "get-public-access-block", "--bucket", parsed.netloc, "--output", "json"]
+            )
+            settings = json.loads(stdout)["PublicAccessBlockConfiguration"]
+            if not all(
+                settings.get(key) is True
+                for key in ("BlockPublicAcls", "IgnorePublicAcls", "BlockPublicPolicy", "RestrictPublicBuckets")
+            ):
+                raise ValueError("The private signature bucket must block all S3 public access")
+        self._private_signature_store = uri.rstrip("/")
 
     async def _trigger_installer_build(self, release_infos: Dict) -> None:
         """Submit the x86_64 ISO build once, without waiting for it or retrying it.
@@ -1047,9 +1096,9 @@ class PromotePipeline:
     async def sign_artifacts(
         self, release_name: str, client_type: str, release_infos: Dict, message_digests: List[str]
     ):
-        """Sign artifacts and publish their legacy signatures."""
-        if self.private_only:
-            raise ValueError("The public legacy signature store cannot be used for private assemblies")
+        """Sign artifacts and publish signatures to the release's signature store."""
+        if self.private_only and (message_digests or not self._private_signature_store):
+            raise ValueError("Private signing requires a private signature store and payload digests only")
         if self.signing_transport == "direct" and self.runtime.dry_run:
             self._logger.info("[DRY RUN] Skipping direct signing")
             return
@@ -1059,7 +1108,7 @@ class PromotePipeline:
         key_file = os.environ.get("SIGNING_KEY")
         sig_keyname = _get_signing_key_for_client(client_type)
         self._logger.info("About to sign artifacts with key %s", sig_keyname)
-        json_digest_sig_dir = self._working_dir / "json_digests"
+        json_digest_sig_dir = self._working_dir / ("private-json-digests" if self.private_only else "json_digests")
         message_digest_sig_dir = self._working_dir / "message_digests"
         base_to_mirror_dir = self._working_dir / "to_mirror/openshift-v4"
 
@@ -1086,6 +1135,11 @@ class PromotePipeline:
                         )
                     json_digests.append((version, pullspec, manifest["digest"]))
 
+            if self.private_only:
+                if any(not re.fullmatch(r"sha256:[0-9a-f]{64}", digest) for _, _, digest in json_digests):
+                    raise ValueError("Private signing requires valid payload SHA-256 digests")
+                # A child manifest in a multi payload can share a digest with another entry.
+                json_digests = list({entry[2]: entry for entry in json_digests}.values())
             for version, pullspec, digest in json_digests:
                 sig_file = json_digest_sig_dir / f"{digest.replace(':', '=')}" / "signature-1"
                 tasks.append(self._sign_json_digest(signatory, version, pullspec, digest, sig_file))
@@ -1103,13 +1157,34 @@ class PromotePipeline:
             self._logger.info("Publishing signatures...")
             tasks = []
             if json_digests:
-                tasks.append(self._publish_json_digest_signatures(json_digest_sig_dir))
+                if self.private_only:
+                    tasks.extend(
+                        self._publish_private_json_digest_signature(json_digest_sig_dir, digest)
+                        for _, _, digest in json_digests
+                    )
+                else:
+                    tasks.append(self._publish_json_digest_signatures(json_digest_sig_dir))
             if message_digests:
                 tasks.append(self._publish_message_digest_signatures(message_digest_sig_dir))
             await asyncio.gather(*tasks)
             self._logger.info("All signatures have been published.")
         else:
             self._logger.warning("[DRY RUN] Would have published signatures.")
+
+    async def _publish_private_json_digest_signature(self, local_dir: Path, digest: str) -> None:
+        path = f"{digest.replace(':', '=')}/signature-1"
+        await exectools.cmd_assert_async(
+            [
+                "aws",
+                "s3",
+                "cp",
+                "--no-progress",
+                "--",
+                str(local_dir / path),
+                f"{self._private_signature_store}/{path}",
+            ],
+            stdout=sys.stderr,
+        )
 
     async def _sign_json_digest(
         self, signatory: Signatory, release_name: str, pullspec: str, digest: str, sig_path: Path
@@ -2356,7 +2431,8 @@ class PromotePipeline:
             self._logger.warning(
                 "Multi/heterogeneous payload %s already exists; digest: %s", dest_image_pullspec, dest_image_digest
             )
-            dest_manifest_list = await self.get_image_info(dest_image_pullspec, raise_if_not_found=True)
+            manifest_pullspec = f"{destination_repo}@{dest_image_digest}" if self.private_only else dest_image_pullspec
+            dest_manifest_list = await self.get_image_info(manifest_pullspec, raise_if_not_found=True)
 
         if self.use_multi_hack:
             # Add '-multi' to heterogeneous payload name.
@@ -2475,7 +2551,10 @@ class PromotePipeline:
                 dest_manifest_list = dest_manifest_list.copy()
             else:
                 dest_image_digest = await self.get_multi_image_digest(dest_image_pullspec, raise_if_not_found=True)
-                dest_manifest_list = await self.get_image_info(dest_image_pullspec, raise_if_not_found=True)
+                manifest_pullspec = (
+                    f"{destination_repo}@{dest_image_digest}" if self.private_only else dest_image_pullspec
+                )
+                dest_manifest_list = await self.get_image_info(manifest_pullspec, raise_if_not_found=True)
 
         dest_image_info = dest_manifest_list.copy()
         dest_image_info["image"] = dest_image_pullspec
