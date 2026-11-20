@@ -184,9 +184,11 @@ class Gateway:
         taskruns.sort(key=lambda task: task.get("metadata", {}).get("creationTimestamp", ""))
         sections = []
         truncated = False
+        missing = False
         for taskrun in taskruns:
             pod = taskrun.get("status", {}).get("podName")
             if not pod:
+                missing = True
                 continue
             for step in taskrun.get("status", {}).get("steps", []):
                 container = step.get("container") or f"step-{step.get('name', '')}"
@@ -198,11 +200,12 @@ class Gateway:
                     )
                 except UpstreamError as error:
                     if error.status in (400, 404):
+                        missing = True
                         continue
                     raise
                 sections.append(f"## {taskrun['metadata']['name']} / {step.get('name', container)}\n{contents}")
                 truncated = truncated or clipped
-        return "\n\n".join(sections), truncated
+        return "\n\n".join(sections), truncated, missing
 
     async def follow_step_logs(self, namespace: str, pod: str, container: str):
         path = f"/api/v1/namespaces/{quote(namespace)}/pods/{quote(pod)}/log"

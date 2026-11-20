@@ -90,6 +90,20 @@ test('JSON permission errors do not start login or check the session', async () 
   assert.equal(state.redirects.length, 0);
 });
 
+test('a full log arrives as plain text with whitespace preserved', async () => {
+  const text = 'startup\n  scan-sources results\n';
+  const state = setup(() => new Response(text, { headers: { 'content-type': 'text/plain; charset=utf-8' } }));
+  assert.equal(await state.api.request('/api/runs/tenant/run/logs/full', { responseType: 'text' }), text);
+});
+
+test('a plain text request still propagates a structured permission error', async () => {
+  const state = setup(() => json({ detail: 'Loki access is required' }, 403));
+  await assert.rejects(state.api.request('/api/runs/tenant/run/logs/full', { responseType: 'text' }), {
+    message: 'Loki access is required', status: 403,
+  });
+  assert.equal(state.redirects.length, 0);
+});
+
 test('service outages and failed session checks do not start login', async () => {
   for (const status of [502, 503]) {
     const state = setup(() => json({ detail: 'Unavailable' }, status));
