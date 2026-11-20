@@ -6,6 +6,8 @@ from unittest import IsolatedAsyncioTestCase
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import aiohttp
+import redis.exceptions
+from artcommonlib.redis import RedisError as ArtRedisError
 from artcommonlib.variants import BuildVariant
 from pyartcd.build_strategy import BuildStrategy
 from pyartcd.counter_models import (
@@ -759,6 +761,157 @@ class TestUtil(IsolatedAsyncioTestCase):
         )
 
         mock_reset.assert_awaited_once_with("count:rebase-failure:konflux:openshift-4.18:healthy-image")
+
+    async def test_update_rebase_fail_counters_swallows_redis_error(self):
+        """A Redis error during rebase counter updates is logged, not raised."""
+        mock_reset = AsyncMock(side_effect=redis.exceptions.TimeoutError("Timeout connecting to server"))
+        mock_increment = AsyncMock()
+        mock_logger = MagicMock()
+
+        with patch.object(util, "logger", mock_logger):
+            await util.update_rebase_fail_counters(
+                context=self._rebase_counter_context(
+                    image_build_strategy=BuildStrategy.ALL,
+                    group_images=["successful-image"],
+                    reset_counter=mock_reset,
+                    increment_counter=mock_increment,
+                ),
+            )
+
+        mock_logger.warning.assert_called_once()
+
+    async def test_update_rebase_fail_counters_propagates_non_redis_error(self):
+        """A non-Redis error during rebase counter updates still propagates."""
+        mock_reset = AsyncMock(side_effect=ValueError("boom"))
+        mock_increment = AsyncMock()
+
+        with self.assertRaises(ValueError):
+            await util.update_rebase_fail_counters(
+                context=self._rebase_counter_context(
+                    image_build_strategy=BuildStrategy.ALL,
+                    group_images=["successful-image"],
+                    reset_counter=mock_reset,
+                    increment_counter=mock_increment,
+                ),
+            )
+
+    async def test_update_build_fail_counters_swallows_redis_error(self):
+        """A Redis error during build counter updates is logged, not raised."""
+        mock_reset = AsyncMock(side_effect=redis.exceptions.ConnectionError("Error connecting to server"))
+        mock_increment = AsyncMock()
+        mock_logger = MagicMock()
+
+        with patch.object(util, "logger", mock_logger):
+            await util.update_build_fail_counters(
+                context=BuildFailCounterContext(
+                    group="openshift-4.18",
+                    assembly="stream",
+                    build_variant=BuildVariant.OCP,
+                    jenkins_url="https://jenkins/1",
+                    built_images=["successful-image"],
+                    failed_images=[],
+                    failed_entries={},
+                    reset_counter=mock_reset,
+                    increment_counter=mock_increment,
+                )
+            )
+
+        mock_logger.warning.assert_called_once()
+
+    async def test_update_build_fail_counters_propagates_non_redis_error(self):
+        """A non-Redis error during build counter updates still propagates."""
+        mock_reset = AsyncMock(side_effect=ValueError("boom"))
+        mock_increment = AsyncMock()
+
+        with self.assertRaises(ValueError):
+            await util.update_build_fail_counters(
+                context=BuildFailCounterContext(
+                    group="openshift-4.18",
+                    assembly="stream",
+                    build_variant=BuildVariant.OCP,
+                    jenkins_url="https://jenkins/1",
+                    built_images=["successful-image"],
+                    failed_images=[],
+                    failed_entries={},
+                    reset_counter=mock_reset,
+                    increment_counter=mock_increment,
+                )
+            )
+
+    async def test_update_rebase_fail_counters_swallows_missing_credential_error(self):
+        """The artcommonlib RedisError (missing credential) is logged, not raised."""
+        mock_reset = AsyncMock(side_effect=ArtRedisError("Please define REDIS_SERVER_PASSWORD env var"))
+        mock_increment = AsyncMock()
+        mock_logger = MagicMock()
+
+        with patch.object(util, "logger", mock_logger):
+            await util.update_rebase_fail_counters(
+                context=self._rebase_counter_context(
+                    image_build_strategy=BuildStrategy.ALL,
+                    group_images=["successful-image"],
+                    reset_counter=mock_reset,
+                    increment_counter=mock_increment,
+                ),
+            )
+
+        mock_logger.warning.assert_called_once()
+
+    async def test_update_rebase_fail_counters_increments_despite_reset_redis_error(self):
+        """A Redis error during the reset phase does not skip the increment phase."""
+        mock_reset = AsyncMock(side_effect=redis.exceptions.TimeoutError("Timeout connecting to server"))
+        mock_increment = AsyncMock()
+        mock_logger = MagicMock()
+
+        with patch.object(util, "logger", mock_logger):
+            await util.update_rebase_fail_counters(
+                context=self._rebase_counter_context(
+                    image_build_strategy=BuildStrategy.ALL,
+                    group_images=["successful-image", "failed-image"],
+                    reset_counter=mock_reset,
+                    increment_counter=mock_increment,
+                    failed_images=["failed-image"],
+                ),
+            )
+
+        mock_increment.assert_awaited_once_with(
+            "count:rebase-failure:konflux:openshift-4.18:failed-image",
+            build_variant="ocp",
+            jenkins_url="https://jenkins/1",
+        )
+        mock_logger.warning.assert_called_once()
+
+    async def test_update_build_fail_counters_increments_despite_reset_redis_error(self):
+        """A reset-phase Redis error does not skip build-failure increments."""
+        mock_reset = AsyncMock(side_effect=redis.exceptions.ConnectionError("Error connecting to server"))
+        mock_increment = AsyncMock()
+        mock_logger = MagicMock()
+        failed_entries = {
+            "build-failure": {
+                "task_id": "build-task",
+                "outcome": "build_error",
+                "nvrs": "build-1.0-1",
+                "build_pipeline_url": "https://build/1",
+            },
+        }
+
+        with patch.object(util, "logger", mock_logger):
+            await util.update_build_fail_counters(
+                context=BuildFailCounterContext(
+                    group="openshift-4.18",
+                    assembly="stream",
+                    build_variant=BuildVariant.OCP,
+                    jenkins_url="https://jenkins/1",
+                    built_images=["successful-image"],
+                    failed_images=["build-failure"],
+                    failed_entries=failed_entries,
+                    reset_counter=mock_reset,
+                    increment_counter=mock_increment,
+                )
+            )
+
+        mock_increment.assert_awaited_once()
+        self.assertEqual(mock_increment.await_args.args[0], "count:build-failure:konflux:openshift-4.18:build-failure")
+        mock_logger.warning.assert_called_once()
 
     @patch("artcommonlib.redis.get_value", new_callable=AsyncMock)
     @patch("artcommonlib.redis.get_keys", new_callable=AsyncMock)
