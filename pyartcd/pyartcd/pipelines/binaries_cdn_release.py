@@ -120,8 +120,9 @@ class BinariesCdnReleasePipeline:
     Konflux CDN.
 
     The release values injected into the binaries (release digests per arch and multi, release name) are read
-    from the public release payloads, passed to the Konflux build as build args, and the parent images used by
-    the build are checked against the payload before anything is released.
+    from the public release payloads and written by the rebase as ARG defaults into the committed Dockerfile, so
+    the Konflux build gets no release digests as build args. The parent images used by the build are checked
+    against the payload before anything is released.
 
     There is one CGW product version per MAJOR.MINOR (for example 4.22), like oc-mirror's 2.0. Every z-stream
     publishes into it and CGW replaces the previous release's files in place, so /pub/cgw/<product>/<version>/
@@ -198,9 +199,10 @@ class BinariesCdnReleasePipeline:
 
         :param arches: Brew arches of the group, e.g. ["x86_64", "aarch64"].
         :param multi: True when the group publishes a multi payload.
-        :return: (build_args, expected_parents) where expected_parents is {brew_arch: {payload_tag: digest}}.
+        :return: (release_values, expected_parents) where release_values are KEY=VALUE strings and
+            expected_parents is {brew_arch: {payload_tag: digest}}.
         """
-        build_args = [f"RELEASE_VERSION={self.release_name}"]
+        release_values = [f"RELEASE_VERSION={self.release_name}"]
         expected_parents: Dict[str, Dict[str, str]] = {}
         for arch in arches:
             pullspec = f"{constants.RELEASE_IMAGE_REPO}:{self.release_name}-{arch}"
@@ -210,7 +212,7 @@ class BinariesCdnReleasePipeline:
             version = info.get("metadata", {}).get("version")
             if version != self.release_name:
                 raise ValueError(f"{pullspec} has release version {version!r}, expected {self.release_name!r}")
-            build_args.append(f"DIGEST_{arch.upper()}={info['digest']}")
+            release_values.append(f"DIGEST_{arch.upper()}={info['digest']}")
             tags = {t["name"]: t["from"]["name"] for t in info["references"]["spec"]["tags"]}
             expected_parents[arch] = {}
             for tag in self.profile.payload_parents.values():
@@ -222,20 +224,22 @@ class BinariesCdnReleasePipeline:
             info = await oc.get_image_info(pullspec, raise_if_not_found=True, registry_config=self.registry_config)
             if not isinstance(info, list) or not info or not info[0].get("listDigest"):
                 raise ValueError(f"{pullspec} is not a manifest list")
-            build_args.append(f"DIGEST_MULTI={info[0]['listDigest']}")
-        return build_args, expected_parents
+            release_values.append(f"DIGEST_MULTI={info[0]['listDigest']}")
+        return release_values, expected_parents
 
-    async def build_binary(self, build_args: List[str]) -> dict:
+    async def build_binary(self, release_values: List[str]) -> dict:
         """
-        Rebase and build the binary with the release values as build args; return its record.log entry.
+        Rebase the binary with the release values as Dockerfile ARG defaults, build it; return its record.log entry.
 
-        :param build_args: KEY=VALUE build args for the Konflux build.
+        :param release_values: KEY=VALUE release values for the ARGs of the binary's Dockerfile.
         """
         base = self._doozer_base_command + ["--latest-parent-version", f"--binaries={self.binary}"]
         version = f"v{self.version}.0"
         release = util.default_release_suffix()
         rebase = base + ["beta:binaries:konflux:rebase", f"--version={version}", f"--release={release}"]
         rebase.append(f"--message=Updating Dockerfile version and release {version}-{release} for {self.release_name}")
+        for value in release_values:
+            rebase.extend(["--build-arg", value])
         if not self.dry_run:
             rebase.append("--push")
         await exectools.cmd_assert_async(rebase)
@@ -244,8 +248,6 @@ class BinariesCdnReleasePipeline:
         kubeconfig = os.environ.get("KONFLUX_SA_KUBECONFIG")
         if kubeconfig:
             build.extend(["--konflux-kubeconfig", kubeconfig])
-        for arg in build_args:
-            build.extend(["--build-arg", arg])
         if self.dry_run:
             build.append("--dry-run")
         await exectools.cmd_assert_async(build)
@@ -325,12 +327,12 @@ class BinariesCdnReleasePipeline:
             return
         arches = list(group_config.get("arches", []))
         multi = bool(group_config.get("multi_arch", {}).get("enabled", False))
-        build_args, expected_parents = await self.collect_release_values(arches, multi)
-        LOGGER.info("Release values for %s: %s", self.release_name, build_args)
+        release_values, expected_parents = await self.collect_release_values(arches, multi)
+        LOGGER.info("Release values for %s: %s", self.release_name, release_values)
 
         nvr = self.nvr
         if not nvr:
-            entry = await self.build_binary(build_args)
+            entry = await self.build_binary(release_values)
             if not self.dry_run:
                 self.verify_parents(Path(entry["dockerfile"]).read_text(), expected_parents)
             nvr = entry.get("nvrs", "").split(",")[0]
