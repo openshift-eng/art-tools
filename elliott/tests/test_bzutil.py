@@ -21,6 +21,56 @@ from parameterized import parameterized
 hostname = "bugzilla.redhat.com"
 
 
+class TestCompleteJiraSearch(unittest.TestCase):
+    def test_complete_search_checks_total_and_duplicate_keys(self):
+        tracker = JIRABugTracker.__new__(JIRABugTracker)
+        tracker.project = "OCPBUGS"
+        tracker._client = mock.Mock()
+        tracker._client.deploymentType = "Server"
+        first = {"key": "OCPBUGS-1", "id": "1"}
+        second = {"key": "OCPBUGS-2", "id": "2"}
+        with (
+            mock.patch.object(bzutil, "JIRABug", side_effect=lambda issue: issue),
+            mock.patch.object(bzutil, "Issue", side_effect=lambda _options, _session, raw: raw),
+        ):
+            tracker._client.search_issues.side_effect = [
+                {"issues": [first], "startAt": 0, "total": 2},
+                {"issues": [second], "startAt": 0, "total": 1},
+            ]
+            self.assertEqual(tracker._search_complete("project=OCPBUGS"), [first, second])
+            self.assertIn("id > 1 ORDER BY id ASC", tracker._client.search_issues.call_args.args[0])
+            tracker._client.search_issues.side_effect = None
+            for incomplete in (
+                {"issues": [], "startAt": 0, "total": 2},
+                {"issues": [first, first], "startAt": 0, "total": 2},
+                {"issues": [first], "startAt": 0},
+                None,
+            ):
+                tracker._client.search_issues.return_value = incomplete
+                with self.subTest(results=incomplete), self.assertRaises(ValueError):
+                    tracker._search_complete("project=OCPBUGS")
+
+    def test_cloud_search_checks_page_tokens(self):
+        tracker = JIRABugTracker.__new__(JIRABugTracker)
+        tracker._client = mock.Mock(deploymentType="Cloud")
+        first = {"key": "OCPBUGS-1"}
+        second = {"key": "OCPBUGS-2"}
+        with (
+            mock.patch.object(bzutil, "JIRABug", side_effect=lambda issue: issue),
+            mock.patch.object(bzutil, "Issue", side_effect=lambda _options, _session, raw: raw),
+        ):
+            tracker._client.enhanced_search_issues.side_effect = [
+                {"issues": [], "isLast": False, "nextPageToken": "empty-page"},
+                {"issues": [first], "isLast": False, "nextPageToken": "next"},
+                {"issues": [second], "isLast": True},
+            ]
+            self.assertEqual(tracker._search_complete("query"), [first, second])
+            tracker._client.enhanced_search_issues.side_effect = None
+            tracker._client.enhanced_search_issues.return_value = {"issues": [first], "isLast": False}
+            with self.assertRaises(ValueError):
+                tracker._search_complete("query")
+
+
 class TestBug(unittest.TestCase):
     def test_bug(self):
         bug_obj = flexmock(id=2)

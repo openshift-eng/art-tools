@@ -48,6 +48,7 @@ from elliottlib.cli.find_bugs_golang_cli import find_bugs_golang_cli
 from elliottlib.cli.find_bugs_kernel_cli import find_bugs_kernel_cli
 from elliottlib.cli.find_bugs_kernel_clones_cli import find_bugs_kernel_clones_cli
 from elliottlib.cli.find_bugs_qe_cli import find_bugs_qe_cli
+from elliottlib.cli.find_bugs_rhcos_rpms_cli import find_bugs_rhcos_rpms_cli
 from elliottlib.cli.find_bugs_second_fix_cli import find_bugs_second_fix_cli
 from elliottlib.cli.find_bugs_sweep_cli import find_bugs_sweep_cli
 from elliottlib.cli.find_builds_cli import find_builds_cli
@@ -317,6 +318,7 @@ cli.add_command(attach_cve_flaws_cli)
 cli.add_command(create_textonly_cli)
 cli.add_command(attach_bugs_cli)
 cli.add_command(find_bugs_qe_cli)
+cli.add_command(find_bugs_rhcos_rpms_cli)
 cli.add_command(get_golang_versions_cli)
 cli.add_command(validate_rhsa_cli)
 cli.add_command(rhcos_cli)

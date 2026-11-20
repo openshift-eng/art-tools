@@ -4,6 +4,7 @@ from collections.abc import Callable, Iterable, Mapping
 
 from elliottlib.bug_sweep_plugins.contracts import BugSweepPlugin
 from elliottlib.bug_sweep_plugins.jql_sweep import JQL_SWEEP_PLUGIN_NAME, JqlSweepPlugin
+from elliottlib.bug_sweep_plugins.rhcos_rpm import RHCOS_RPM_PLUGIN_NAME, RHCOSRpmEvidencePlugin
 
 PluginConfiguration = Mapping[str, object]
 
@@ -11,6 +12,7 @@ PluginConfiguration = Mapping[str, object]
 # Add a factory here when implementing a new plugin.
 _PLUGIN_FACTORIES: dict[str, Callable[[PluginConfiguration], BugSweepPlugin]] = {
     JQL_SWEEP_PLUGIN_NAME: JqlSweepPlugin,
+    RHCOS_RPM_PLUGIN_NAME: RHCOSRpmEvidencePlugin,
 }
 
 

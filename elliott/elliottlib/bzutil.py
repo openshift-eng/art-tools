@@ -1085,9 +1085,11 @@ class JIRABugTracker(BugTracker):
         return query
 
     @retry(reraise=True, stop=stop_after_attempt(3), wait=wait_fixed(5))
-    def _search(self, query, verbose=False) -> List[JIRABug]:
+    def _search(self, query, verbose=False, require_complete: bool = False) -> List[JIRABug]:
         if verbose:
             logger.info(query)
+        if require_complete:
+            return self._search_complete(query)
         try:
             # Setting maxResults=0 retrieves all matching issues from the JIRA API.
             results = self._client.search_issues(query, maxResults=0)
@@ -1101,6 +1103,69 @@ class JIRABugTracker(BugTracker):
         if results is None:
             return []
         return [JIRABug(j) for j in results]
+
+    def _search_complete(self, query: str) -> List[JIRABug]:
+        """
+        Fetch and validate every Jira search page before claiming a complete domain.
+        """
+        is_cloud = self._client.deploymentType == "Cloud"
+        raw_issues = []
+        keys = set()
+        expected_total = None
+        token = None
+        seen_tokens = set()
+        last_issue_id = 0
+        if not is_cloud and not query.startswith(f"project={self.project}"):
+            raise ValueError("Complete Jira search requires a project-scoped query")
+        while True:
+            if is_cloud:
+                page = self._client.enhanced_search_issues(query, nextPageToken=token, maxResults=100, json_result=True)
+            else:
+                cursor_query = f"({query}) AND id > {last_issue_id} ORDER BY id ASC"
+                page = self._client.search_issues(cursor_query, startAt=0, maxResults=100, json_result=True)
+            if not isinstance(page, dict) or not isinstance(page.get("issues"), list):
+                raise ValueError("Jira search returned an invalid page")
+            issues = page["issues"]
+            if not is_cloud and page.get("startAt") != 0:
+                raise ValueError("Jira search returned an unexpected page offset")
+            for issue in issues:
+                key = issue.get("key") if isinstance(issue, dict) else None
+                if not isinstance(key, str) or not key or key in keys:
+                    raise ValueError("Jira search returned an invalid or duplicate issue key")
+                keys.add(key)
+                if not is_cloud:
+                    issue_id = issue.get("id")
+                    if not str(issue_id).isdigit() or int(issue_id) <= last_issue_id:
+                        raise ValueError("Jira search returned an invalid or unordered issue ID")
+                    last_issue_id = int(issue_id)
+            raw_issues.extend(issues)
+            if is_cloud:
+                total = page.get("total")
+                if total is not None:
+                    if (
+                        not isinstance(total, int)
+                        or total < 0
+                        or (expected_total is not None and total != expected_total)
+                    ):
+                        raise ValueError("Jira search returned an invalid or changed total")
+                    expected_total = total
+                if page.get("isLast") is True:
+                    if expected_total is not None and len(raw_issues) != expected_total:
+                        raise ValueError("Jira search did not return a complete result set")
+                    break
+                token = page.get("nextPageToken")
+                if not isinstance(token, str) or not token or token in seen_tokens:
+                    raise ValueError("Jira search returned incomplete pagination")
+                seen_tokens.add(token)
+            else:
+                total = page.get("total")
+                if not isinstance(total, int) or total < 0 or len(issues) > total:
+                    raise ValueError("Jira search returned an invalid total")
+                if len(issues) == total:
+                    break
+                if not issues:
+                    raise ValueError("Jira search did not return a complete result set")
+        return [JIRABug(Issue(self._client._options, self._client._session, raw)) for raw in raw_issues]
 
     def search_jql(self, query: str, verbose: bool = False) -> List[JIRABug]:
         """
@@ -1147,6 +1212,7 @@ class JIRABugTracker(BugTracker):
         with_target_release: bool = True,
         custom_query: Optional[str] = None,
         verbose: bool = False,
+        require_complete: bool = False,
     ) -> List[JIRABug]:
         """Search JIRA bugs with optional status, label, and query filters.
 
@@ -1164,6 +1230,9 @@ class JIRABugTracker(BugTracker):
         Returns:
             list[JIRABug]: Matching issues, or an empty list if version filtering
             removes all configured target releases.
+
+        When require_complete is True, an unconstructable query or incomplete
+        search raises an error instead of returning an empty result.
         """
         query = self._query(
             status=status,
@@ -1174,12 +1243,28 @@ class JIRABugTracker(BugTracker):
             custom_query=custom_query,
         )
         if query is None:
+            if require_complete:
+                raise ValueError("Jira search query could not be constructed")
             return []
+        if require_complete:
+            return self._search(query, verbose=verbose, require_complete=True)
         return self._search(query, verbose=verbose)
 
     def create_issue_link(self, link_name: str, inward_issue: str, outward_issue: str):
         """Create a JIRA issue link between two issues."""
         self._client.create_issue_link(link_name, inward_issue, outward_issue)
+
+    def client(self) -> JIRA:
+        """
+        Return the configured Jira client for operations without a tracker wrapper.
+        """
+        return self._client
+
+    def available_target_versions(self) -> list[str]:
+        """
+        Return the Jira target versions available to this project.
+        """
+        return self._get_available_target_versions()
 
     def remove_bugs(self, advisory_obj, bugids: List, noop=False):
         if noop:
