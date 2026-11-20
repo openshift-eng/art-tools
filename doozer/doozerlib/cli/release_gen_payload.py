@@ -3230,8 +3230,7 @@ class PayloadGenerator:
         self, assembly_inspector: AssemblyInspector, arch: str
     ) -> Dict[str, Optional[ImageInspector]]:
         """
-        Each payload tag name used to map exactly to one release imagemeta. With the advent of '-alt' images,
-        we need some logic to determine which images map to which payload tags for a given architecture.
+        Each payload tag name maps to exactly one release imagemeta.
         :return: Returns a map[payload_tag_name] -> ArchiveImageInspector containing an image for the payload.
                  The value may be None if there is no arch specific build for the tag. This does not include RHCOS
                  since that is not a member of the group.
@@ -3257,21 +3256,12 @@ class PayloadGenerator:
                 # Nothing to do for images which are not in the payload
                 continue
 
-            # The tag that will be used in the imagestreams and whether it was explicitly declared.
-            tag_name, explicit = image_meta.get_payload_tag_info()
+            tag_name = image_meta.get_payload_tag_info()
 
             if arch not in image_meta.get_arches():
                 # If this image is not meant for this architecture
                 if tag_name not in members:
                     members[tag_name] = None  # We still need a placeholder in the tag mapping
-                continue
-
-            if members.get(tag_name, None) and not explicit:
-                # If we have already found an entry, there is a precedence we honor for
-                # "-alt" images. Specifically, if a imagemeta declares its payload tag
-                # name explicitly, it will take precedence over any other entries
-                # https://issues.redhat.com/browse/ART-2823
-                # This was tag not explicitly declared, so ignore the duplicate image.
                 continue
 
             try:
