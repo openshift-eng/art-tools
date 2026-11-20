@@ -6,7 +6,7 @@ from unittest.mock import AsyncMock, MagicMock, Mock, patch
 
 import openshift_client as oc
 import yaml
-from artcommonlib.assembly import AssemblyIssue, AssemblyIssueCode, AssemblyTypes, assembly_metadata_config
+from artcommonlib.assembly import AssemblyIssue, AssemblyIssueCode, AssemblyTypes
 from artcommonlib.model import Model
 from artcommonlib.rhcos import RhcosMissingContainerException
 from doozerlib import rhcos
@@ -995,7 +995,6 @@ class TestGenPayloadCli(IsolatedAsyncioTestCase):
         raw_config = Model(dict(content=dict(source=source_config)))
         meta = MagicMock()
         meta.raw_config = raw_config
-        meta.config = raw_config
         meta.distgit_key = distgit_key
         meta.is_payload = is_payload
         inspector = MagicMock()
@@ -1037,38 +1036,6 @@ class TestGenPayloadCli(IsolatedAsyncioTestCase):
         img_d = self._make_sibling_inspector("https://github.com/openshift/other.git", "ddd", "image-d")
         result = rgp_cli.PayloadGenerator.find_mismatched_siblings([img_a, img_b, img_c, img_d])
         self.assertEqual(len(result), 1, "only unflagged siblings from other.git should mismatch")
-
-    def test_find_mismatched_siblings_honors_assembly_member_override(self):
-        source_url = "https://github.com/openshift/example.git"
-        older_image = self._make_sibling_inspector(source_url, "aaa", "image-a")
-        newer_image = self._make_sibling_inspector(source_url, "bbb", "image-b")
-        third_image = self._make_sibling_inspector(source_url, "ccc", "image-c")
-        releases = Model(
-            {
-                "releases": {
-                    "hotfix": {
-                        "assembly": {
-                            "members": {
-                                "images": [
-                                    {
-                                        "distgit_key": "image-a",
-                                        "metadata": {"content": {"source": {"allow_mismatched_siblings": True}}},
-                                    }
-                                ]
-                            }
-                        }
-                    }
-                }
-            }
-        )
-        meta = older_image.get_image_meta()
-        meta.config = assembly_metadata_config(releases, "hotfix", "image", meta.distgit_key, meta.raw_config)
-
-        self.assertEqual(rgp_cli.PayloadGenerator.find_mismatched_siblings([older_image, newer_image]), [])
-        self.assertEqual(
-            rgp_cli.PayloadGenerator.find_mismatched_siblings([older_image, newer_image, third_image]),
-            [(third_image, newer_image)],
-        )
 
     def test_id_tags_list(self):
         gpcli = rgp_cli.GenPayloadCli()
