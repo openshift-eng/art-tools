@@ -345,6 +345,10 @@ async def build_plashets(
         logger.info('Building plashet repo for %s', repo.name)
         assert repo.type == "plashet" and repo.plashet is not None
         config = repo.plashet
+        repo_arches = [arch for arch in arches if not config.arches or arch in config.arches]
+        if not repo_arches:
+            logger.info('Skipping plashet repo %s: no applicable architectures', repo.name)
+            continue
         slug = config.slug or repo.name
         # name = f'{timestamp.year}-{timestamp.month:02}/{revision}'
         variables = {
@@ -371,7 +375,7 @@ async def build_plashets(
             assembly=assembly,
             base_dir=local_base_dir,
             name=plashet_name,
-            arches=arches,
+            arches=repo_arches,
             include_embargoed=config.include_embargoed,
             signing_mode=signing_mode,
             signing_advisory=signing_advisory,

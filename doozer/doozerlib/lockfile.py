@@ -268,11 +268,13 @@ class RpmInfoCollector:
 
         Only repositories not already loaded in `self.loaded_repos` will be fetched.
         Logs a summary of which repos are skipped and which are loaded.
+        Opted-in collections omit unsupported repository/architecture pairs before fetching.
 
         Args:
             requested_repos (set[str]): Set of repository names to load.
             arch (str): Architecture identifier for fetching repodata.
         """
+        requested_repos = self.repos.repos_for_arch(requested_repos, arch)
         not_yet_loaded = {repo for repo in requested_repos if f'{repo}-{arch}' not in self.loaded_repos}
         already_loaded = requested_repos - not_yet_loaded
 
@@ -313,6 +315,8 @@ class RpmInfoCollector:
         dnf behaviour).  For NVR-pinned items the exact requested version is preserved in
         the output so that hermetic builds can install a specific older version.
 
+        Opted-in collections exclude unsupported repos before checking their cached metadata.
+
         When the same EVR exists in multiple repos, the repo iteration order from
         ``sort_repos_for_lockfile_resolution`` acts as tiebreaker (RHEL upstream repos
         are preferred over rhocp plashets).
@@ -332,6 +336,7 @@ class RpmInfoCollector:
         Returns:
             list[RpmInfo]: Resolved RPM package metadata.
         """
+        repo_names = self.repos.repos_for_arch(repo_names, arch)
         nvr_to_name: dict[str, str] = {}
         for item in rpm_names:
             is_nvr, pkg_name = Repodata._detect_nvr_vs_name(item)
@@ -346,6 +351,8 @@ class RpmInfoCollector:
         all_modular_nevras: set[str] = set()
         for repo_key, repodata in self.loaded_repos.items():
             if not repo_key.endswith(f'-{arch}'):
+                continue
+            if not self.repos.repos_for_arch({repo_key.removesuffix(f'-{arch}')}, arch):
                 continue
             for module in repodata.modules:
                 all_modular_nevras.update(module.rpms)
@@ -646,6 +653,7 @@ class RpmInfoCollector:
 
         Finds repositories that contain any of the requested modules and returns one
         ModuleInfo entry per unique repository (not per module).
+        Unsupported repos are omitted only for opted-in collections, as for RPM metadata.
 
         Args:
             module_names: Set of module names to resolve (e.g., {"python36", "nodejs"})
@@ -655,6 +663,7 @@ class RpmInfoCollector:
         Returns:
             list[ModuleInfo]: Repository-based module metadata (one entry per repo with modules)
         """
+        repo_names = self.repos.repos_for_arch(repo_names, arch)
         module_info_list = []
         search_names = {name.split(':')[0] for name in module_names}
         unresolved_search_names = set(search_names)
