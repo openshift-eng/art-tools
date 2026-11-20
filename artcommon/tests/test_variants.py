@@ -29,6 +29,7 @@ class TestProductId(unittest.TestCase):
             "openshift-update-service": ProductId.OSUS,
             "oc-mirror": ProductId.OC_MIRROR,
             "mirror_gui": ProductId.MIRROR_GUI,
+            "mirror-registry": ProductId.MIRROR_REGISTRY,
             "openshift-opentelemetry-operator": ProductId.RHOSDT,
             "zero-trust-workload-identity-manager": ProductId.ZERO_TRUST,
             "supplemental-tools": ProductId.SUPPLEMENTAL_TOOLS,
