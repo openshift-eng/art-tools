@@ -95,5 +95,12 @@
       "$ref": "assembly_issues.schema.json"
     }
   },
+  "dependentSchemas": {
+    "visibility": {
+      "properties": {
+        "type": { "const": "custom" }
+      }
+    }
+  },
   "additionalProperties": false
 }
