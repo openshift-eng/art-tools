@@ -53,12 +53,22 @@ class TestOcpScanScheduler(IsolatedAsyncioTestCase):
                 self.assertEqual(is_permitted.await_count, int(not any(lock_states)))
                 start_run.assert_not_called()
 
+    @patch.object(scheduler.jenkins, 'start_ocp4_scan_konflux')
     @patch.object(scheduler.tekton, 'start_pipeline_run')
     @patch.object(scheduler.util, 'is_build_permitted', return_value=True)
-    async def test_tekton_dry_run_does_not_submit_a_scan(self, _is_permitted, start_run):
+    async def test_dry_run_does_not_submit_a_scan(self, _is_permitted, start_run, start_scan):
         self.runtime.dry_run = True
-        await scheduler.run_for('4.22', self.runtime, self.lock_manager, tekton_namespace=self.namespace)
-        start_run.assert_not_called()
+        for namespace, serial in ((self.namespace, False), (None, False), (None, True)):
+            with self.subTest(namespace=namespace, serial=serial):
+                self.runtime.logger.warning.reset_mock()
+                await scheduler.run_for(
+                    '4.22', self.runtime, self.lock_manager, serial=serial, tekton_namespace=namespace
+                )
+                start_run.assert_not_called()
+                start_scan.assert_not_called()
+                self.runtime.logger.warning.assert_called_once_with(
+                    '[DRY RUN] Would trigger %s job for %s', 'ocp4-scan-konflux', '4.22'
+                )
 
     @patch.object(scheduler.jenkins, 'start_ocp4_scan_konflux')
     @patch.object(scheduler.util, 'is_build_permitted', return_value=True)

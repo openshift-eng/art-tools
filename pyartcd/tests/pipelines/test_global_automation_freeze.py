@@ -8,7 +8,7 @@ class TestGlobalAutomationFreeze(IsolatedAsyncioTestCase):
     @patch('pyartcd.util.get_global_freeze_automation', new_callable=AsyncMock)
     @patch('pyartcd.util.exectools.cmd_gather_async', return_value=(0, 'no', ''))
     async def test_schedulers_respect_master_switch(self, read_group, global_freeze):
-        runtime = MagicMock()
+        runtime = MagicMock(dry_run=False)
         lock_manager = MagicMock(is_locked=AsyncMock(return_value=False))
         for scheduler, trigger in [
             (schedule_ocp4_scan_konflux, 'start_ocp4_scan_konflux'),
@@ -36,7 +36,7 @@ class TestGlobalAutomationFreeze(IsolatedAsyncioTestCase):
     async def test_global_scheduled_is_manual_aware(self, read_group, global_freeze, manual_build):
         # A global 'scheduled' permits manual runs but blocks scheduled (non-manual) runs. The group
         # value is never read because the non-'no' global state takes precedence.
-        runtime = MagicMock()
+        runtime = MagicMock(dry_run=False)
         lock_manager = MagicMock(is_locked=AsyncMock(return_value=False))
         for manual, should_trigger in [(True, True), (False, False)]:
             with self.subTest(manual=manual):
