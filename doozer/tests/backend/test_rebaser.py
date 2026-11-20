@@ -2516,3 +2516,75 @@ class TestFromPlatformPreservation(IsolatedAsyncioTestCase):
         with self.assertRaisesRegex(IOError, "built in this same run"):
             await rebaser._resolve_parents(metadata, dfp)
         rebaser._pin_parent_to_platform.assert_not_awaited()
+
+
+BINARIES_ARG_DOCKERFILE = """FROM --platform=linux/amd64 quay.io/old/art@sha256:aaa AS art_amd64
+ARG RELEASE_VERSION
+FROM art_amd64 AS packer
+ARG RELEASE_VERSION
+ARG RELEASE_REPO=quay.io/openshift-release-dev/ocp-release
+ARG DIGEST_X86_64=sha256:old
+  arg DIGEST_MULTI
+ARG DIGEST_MULTIPLE
+ARG FIPS_BIN=openshift-install-fips
+RUN bash /work/package.sh
+FROM registry.example.com/rhel9:latest
+COPY --from=packer /releases/ /releases/
+"""
+
+
+class TestSetArgDefaults(IsolatedAsyncioTestCase):
+    def setUp(self):
+        self.directory = TemporaryDirectory()
+        self.addCleanup(self.directory.cleanup)
+        self.df_path = Path(self.directory.name, "Dockerfile")
+        self.df_path.write_text(BINARIES_ARG_DOCKERFILE)
+
+    def test_sets_defaults_in_every_stage(self):
+        KonfluxRebaser._set_arg_defaults(
+            self.df_path,
+            {"RELEASE_VERSION": "4.22.22", "DIGEST_X86_64": "sha256:new", "DIGEST_MULTI": "sha256:multi"},
+        )
+        self.assertEqual(
+            self.df_path.read_text(),
+            BINARIES_ARG_DOCKERFILE.replace("ARG RELEASE_VERSION\n", "ARG RELEASE_VERSION=4.22.22\n")
+            .replace("ARG DIGEST_X86_64=sha256:old", "ARG DIGEST_X86_64=sha256:new")
+            .replace("  arg DIGEST_MULTI\n", "  arg DIGEST_MULTI=sha256:multi\n"),
+        )
+        self.assertEqual(self.df_path.read_text().count("ARG RELEASE_VERSION=4.22.22\n"), 2)
+
+    def test_fails_when_no_arg_line_declares_a_name(self):
+        with self.assertRaisesRegex(ValueError, "no ARG line for build arg\\(s\\): DIGEST_S390X, NOPE"):
+            KonfluxRebaser._set_arg_defaults(
+                self.df_path, {"RELEASE_VERSION": "4.22.22", "NOPE": "x", "DIGEST_S390X": "sha256:s"}
+            )
+        self.assertEqual(self.df_path.read_text(), BINARIES_ARG_DOCKERFILE)
+
+    async def test_update_dockerfile_commits_arg_defaults(self):
+        runtime = MagicMock()
+        runtime.group = "openshift-4.22"
+        runtime.group_config = Model({"vars": {}, "product": "openshift"})
+        metadata = MagicMock()
+        metadata.distgit_key = "openshift-install"
+        metadata.image_name_short = "openshift-install"
+        metadata.get_jira_info.return_value = ("PROJECT", "component")
+        metadata.get_component_name.return_value = "openshift-install-binaries-container"
+        metadata.get_lockfile_backend.return_value = None
+        metadata.config = Model({"name": "openshift/openshift-install-binaries-rhel9"})
+        rebaser = KonfluxRebaser(
+            runtime,
+            Path(self.directory.name),
+            MagicMock(),
+            "unsigned",
+            build_args={"RELEASE_VERSION": "4.22.22", "DIGEST_MULTI": "sha256:multi"},
+        )
+        rebaser.source_labels = {"old": {}, "now": {}}
+        with patch.object(rebaser, "_add_build_repos"), patch.object(rebaser, "_modify_cachito_commands"):
+            await rebaser._update_dockerfile(
+                metadata, None, self.df_path, "v4.22.0", "1.p2.el9", None, False, Path(self.directory.name)
+            )
+        lines = self.df_path.read_text().splitlines()
+        self.assertEqual(lines.count("ARG RELEASE_VERSION=4.22.22"), 2)
+        self.assertIn("  arg DIGEST_MULTI=sha256:multi", lines)
+        self.assertIn("ARG DIGEST_X86_64=sha256:old", lines)
+        self.assertNotIn("ARG RELEASE_VERSION", lines)

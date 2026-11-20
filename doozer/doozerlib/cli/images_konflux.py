@@ -77,6 +77,22 @@ def _validate_version(ctx, param, version):
     return validate_semver_major_minor_patch(ctx, param, version)
 
 
+def _parse_build_args(build_args: Sequence[str]) -> Dict[str, str]:
+    """
+    Parse repeated --build-arg KEY=VALUE options into a dict.
+
+    :param build_args: KEY=VALUE strings.
+    """
+    parsed = {}
+    for arg in build_args:
+        key, separator, value = arg.partition('=')
+        key = key.strip()
+        if not separator or not key:
+            raise click.BadParameter('Expected KEY=VALUE', param_hint='--build-arg')
+        parsed[key] = value
+    return parsed
+
+
 def _filter_okd_excluded_metas(runtime: Runtime, metas: Sequence[ImageMetadata]) -> list[ImageMetadata]:
     """
     Filter explicitly excluded images after metadata dependency expansion.
@@ -108,6 +124,7 @@ class KonfluxRebaseCli:
         push: bool,
         extra_labels: Optional[dict[str, str]] = None,
         kind: str = "image",
+        build_args: tuple[str, ...] = (),
     ):
         self.runtime = runtime
         self.kind = kind
@@ -122,6 +139,7 @@ class KonfluxRebaseCli:
         self.message = message
         self.push = push
         self.extra_labels = extra_labels or {}
+        self.build_args = _parse_build_args(build_args)
         self.upcycle = runtime.upcycle
 
     @start_as_current_span_async(TRACER, "beta:images:konflux:rebase")
@@ -149,6 +167,7 @@ class KonfluxRebaseCli:
             force_private_bit=self.embargoed,
             image_repo=self.image_repo,
             extra_labels=self.extra_labels,
+            build_args=self.build_args,
         )
 
         art_internal_metas = [
@@ -323,13 +342,7 @@ class KonfluxBuildCli:
         self.registry_auth_file = registry_auth_file
         self.skip_checks = skip_checks
         self.skip_tasks = skip_tasks
-        self.build_args = {}
-        for arg in build_args:
-            key, separator, value = arg.partition('=')
-            key = key.strip()
-            if not separator or not key:
-                raise click.BadParameter('Expected KEY=VALUE', param_hint='--build-arg')
-            self.build_args[key] = value
+        self.build_args = _parse_build_args(build_args)
         self.dry_run = dry_run
         self.plr_template = plr_template
         self.build_priority = build_priority
