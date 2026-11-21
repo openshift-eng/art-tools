@@ -62,6 +62,14 @@ def test_repair_records_multiple_sources_without_inventing_a_single_parent():
     assert plans[0]['unmatched_nvrs'] == []
 
 
+def test_repair_retains_verified_attempts_triggered_directly_by_a_scan():
+    runs = history()
+    runs[0]['spec']['pipelineRef']['name'] = 'layered-products-scan'
+    plans, unresolved = plan_lineage_repairs(runs)
+    assert not unresolved
+    assert plans[0]['sources'] == ['bundle']
+
+
 @pytest.mark.parametrize('field', ['scan', 'parent', 'namespace', 'group', 'time', 'dry-run', 'target', 'active'])
 def test_repair_rejects_missing_or_mismatched_evidence(field):
     runs = history()
