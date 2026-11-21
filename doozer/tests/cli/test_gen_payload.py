@@ -1,5 +1,6 @@
 import io
 import os
+from pathlib import Path
 from unittest import IsolatedAsyncioTestCase
 from unittest.mock import AsyncMock, MagicMock, Mock, patch
 
@@ -1169,6 +1170,135 @@ class TestGenPayloadCli(IsolatedAsyncioTestCase):
         self.assertEqual(
             payload_entries, (dict(ppc64le=dict(tag1=test_payload_entry)), dict(ppc64le=dict(tag1=test_payload_entry)))
         )
+
+    def private_assembly_cli(self, **kwargs):
+        assembly = "art1"
+        runtime = MagicMock(
+            assembly=assembly,
+            assembly_type=AssemblyTypes.CUSTOM,
+            build_system="konflux",
+            group_config=Model({"vars": {"MAJOR": 4}, "konflux": {"arches": ["x86_64"]}}),
+            releases_config=Model({"releases": {assembly: {"assembly": {"type": "custom", "visibility": "private"}}}}),
+            images=[],
+            exclude=[],
+        )
+        return rgp_cli.GenPayloadCli(
+            runtime=runtime,
+            is_namespace="ocp",
+            is_name=f"4.22-art-assembly-{assembly}",
+            organization="openshift-release-dev",
+            repository="ocp-v4.0-art-dev",
+            private_repository="ocp-v4.0-art-dev-priv",
+            exclude_arch=[],
+            **kwargs,
+        )
+
+    @patch("doozerlib.cli.release_gen_payload.asyncio.sleep", new_callable=AsyncMock)
+    @patch("doozerlib.cli.release_gen_payload.exectools.cmd_assert_async", new_callable=AsyncMock)
+    @patch("doozerlib.cli.release_gen_payload.aiofiles.open")
+    async def test_private_assembly_syncs_only_private_entries(self, open_mirror_file, execute, _sleep):
+        gpcli = self.private_assembly_cli(apply=True)
+        gpcli.validate_parameters()
+        inspector = Mock(AssemblyInspector)
+        private_repo = "quay.io/openshift-release-dev/ocp-v4.0-art-dev-priv"
+        source = "quay.io/redhat-user-workloads/ocp-art-tenant/art-images@sha256:pinned"
+        embargoed_entry = rgp_cli.PayloadEntry(
+            build_record_inspector=Mock(is_under_embargo=Mock(return_value=True)),
+            image_inspector=Mock(get_pullspec=Mock(return_value=source)),
+            dest_pullspec=f"{private_repo}:sha256-pinned",
+            issues=[],
+        )
+        entries = {"hyperkube": embargoed_entry}
+        gpcli.payload_generator.find_payload_entries = Mock(return_value=(entries, []))
+        gpcli.output_path = Path("/unused")
+        gpcli.write_imagestream_artifact_file = AsyncMock()
+        gpcli.apply_arch_imagestream = AsyncMock()
+        mirror_file = open_mirror_file.return_value.__aenter__.return_value
+        mirror_file.write = AsyncMock()
+
+        gpcli.payload_entries_for_arch, gpcli.private_payload_entries_for_arch = await gpcli.generate_payload_entries(
+            inspector
+        )
+        await gpcli.sync_payloads()
+
+        self.assertEqual(gpcli.privacy_modes, [True])
+        self.assertEqual(gpcli.payload_entries_for_arch, {})
+        self.assertEqual(gpcli.assembly_issues, [])
+        gpcli.payload_generator.find_payload_entries.assert_called_once_with(
+            inspector, "x86_64", private_repo, registry_config=gpcli.runtime.registry_config
+        )
+        mirror_path = gpcli.output_path / "src_dest.x86_64-private-0.txt"
+        open_mirror_file.assert_called_once_with(mirror_path, mode="w+", encoding="utf-8")
+        mirror_file.write.assert_awaited_once_with(f"{source}={embargoed_entry.dest_pullspec}\n")
+        mirror_commands = [
+            call.args[0] for call in execute.await_args_list if call.args[0][:3] == ["oc", "image", "mirror"]
+        ]
+        self.assertEqual(len(mirror_commands), 1)
+        self.assertIn(f"--filename={mirror_path}", mirror_commands[0])
+        gpcli.apply_arch_imagestream.assert_awaited_once()
+        namespace, name, tags, *_ = gpcli.apply_arch_imagestream.await_args.args
+        self.assertEqual((namespace, name), ("ocp-priv", "4.22-art-assembly-art1-priv"))
+        self.assertEqual(tags[0]["from"]["name"], embargoed_entry.dest_pullspec)
+
+    async def test_private_assembly_rhcos_inconsistency_blocks_sync(self):
+        gpcli = self.private_assembly_cli(apply=True)
+        gpcli.validate_parameters()
+        rhcos_build = Mock()
+        gpcli.private_payload_entries_for_arch = {
+            "x86_64": {
+                "machine-os-content": rgp_cli.PayloadEntry(
+                    rhcos_build=rhcos_build, dest_pullspec="quay.io/example/rhcos@sha256:abc", issues=[]
+                )
+            }
+        }
+        inspector = Mock(AssemblyInspector)
+        inspector.check_rhcos_issues = AsyncMock(
+            return_value=[
+                AssemblyIssue(
+                    "RHCOS RPM mismatch", component="rhcos", code=AssemblyIssueCode.CONFLICTING_GROUP_RPM_INSTALLED
+                )
+            ]
+        )
+        inspector.does_permit.return_value = False
+        gpcli.payload_generator.find_rhcos_build_rpm_inconsistencies = Mock(return_value={})
+        gpcli.payload_generator.find_rhcos_build_kernel_inconsistencies = Mock(return_value={})
+
+        await gpcli.detect_extend_payload_entry_issues(inspector)
+        gpcli.payload_permitted, _ = gpcli.summarize_issue_permits(inspector)
+        gpcli.assess_assembly_viability()
+
+        inspector.check_rhcos_issues.assert_awaited_once_with(rhcos_build)
+        gpcli.payload_generator.find_rhcos_build_rpm_inconsistencies.assert_called_once_with([rhcos_build])
+        self.assertFalse(gpcli.apply)
+
+    def test_private_assembly_rejects_public_embargo_ack(self):
+        with self.assertRaises(DoozerFatalError):
+            self.private_assembly_cli(embargo_permit_ack=True).validate_parameters()
+
+    @patch("doozerlib.cli.release_gen_payload.oc.project")
+    async def test_private_assembly_stages_multi_payload_in_private_repo(self, project):
+        gpcli = self.private_assembly_cli(apply_multi_arch=True)
+        gpcli.runtime.get_minor_version.return_value = "4.22"
+        gpcli.validate_parameters()
+        repo = "quay.io/openshift-release-dev/ocp-release-priv"
+        digest_pullspec = f"{repo}@sha256:pinned"
+        gpcli.create_multi_release_image = AsyncMock(return_value=digest_pullspec)
+        gpcli.apply_multi_imagestream_update = AsyncMock()
+
+        await gpcli.sync_heterogeneous_payloads({True: {}, False: {}})
+
+        stream, _, destination, tag, _, private_mode = gpcli.create_multi_release_image.await_args.args
+        self.assertTrue(private_mode)
+        self.assertEqual(stream, "4.22-art-assembly-art1-multi-priv")
+        self.assertEqual(destination, f"{repo}:{tag}")
+        project.assert_called_once_with("ocp-multi-priv")
+        gpcli.apply_multi_imagestream_update.assert_awaited_once_with(digest_pullspec, stream, tag)
+
+    def test_private_assembly_requires_private_destination(self):
+        gpcli = self.private_assembly_cli()
+        gpcli.private_component_repo = gpcli.component_repo
+        with self.assertRaisesRegex(DoozerFatalError, "must mirror to"):
+            gpcli.validate_parameters()
 
     async def test_detect_extend_payload_entry_issues(self):
         runtime = MagicMock(group_config=Model())

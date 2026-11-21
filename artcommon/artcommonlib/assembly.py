@@ -133,6 +133,21 @@ def assembly_type(releases_config: Model, assembly: typing.Optional[str]) -> Ass
     raise ValueError(f'Unknown assembly type: {str_type}')
 
 
+def assembly_is_private(releases_config: Model, assembly: typing.Optional[str]) -> bool:
+    """Resolve the assembly's private visibility through its basis chain."""
+    if not isinstance(releases_config, Model):
+        return False
+
+    visibility = assembly_field(releases_config.primitive(), assembly, "visibility", Missing)
+    if visibility is Missing:
+        return False
+    if visibility != "private":
+        raise ValueError(f"Invalid visibility {visibility!r} for assembly {assembly!r}; expected 'private'")
+    if assembly in ("stream", "test") or assembly_type(releases_config, assembly) is not AssemblyTypes.CUSTOM:
+        raise ValueError("visibility: private is only supported for named custom assemblies")
+    return True
+
+
 def assembly_config_struct(releases_config: Model, assembly: typing.Optional[str], key: str, default):
     """
     If a key is directly under the 'assembly' (e.g. rhcos), then this method will

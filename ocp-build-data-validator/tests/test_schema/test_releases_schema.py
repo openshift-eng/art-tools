@@ -4,6 +4,13 @@ from validator.schema import releases_schema
 
 
 class TestReleasesSchema(unittest.TestCase):
+    def test_validate_assembly_visibility(self):
+        assembly = {"type": "custom", "visibility": "private"}
+        data = {"releases": {"art1": {"assembly": assembly}}}
+        self.assertIsNone(releases_schema.validate("releases.yml", data))
+        assembly["visibility"] = "public"
+        self.assertIsNotNone(releases_schema.validate("releases.yml", data))
+
     def test_validate_with_valid_use_source_fallback_branch_in_assembly_group_override(self):
         for value in ("yes", "always", "never"):
             with self.subTest(value=value):
