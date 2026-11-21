@@ -1,4 +1,5 @@
 import asyncio
+import os
 import unittest
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -69,6 +70,22 @@ class TestRhcosNodeImagePostBuild(unittest.IsolatedAsyncioTestCase):
             await callback.run(self.extensions, _pullspec('b'))
 
         self.assertEqual(start_build.call_count, 1)
+
+    @patch.dict(os.environ, {'TASKRUN_NAME': 'build-run-task', 'TEKTON_PIPELINERUN_NAME': 'build-run'}, clear=True)
+    @patch('doozerlib.backend.konflux_post_build.jenkins.update_description')
+    @patch('doozerlib.backend.konflux_post_build.jenkins.start_build')
+    async def test_tekton_logs_successful_jenkins_post_build_url(self, start_build, update_description):
+        url = 'https://jenkins.example/post-build/4'
+        start_build.return_value = ('SUCCESS', url)
+        self.runtime.konflux_db.get_latest_build.return_value = SimpleNamespace(image_pullspec=_pullspec('b'))
+        callback = RhcosNodeImagePostBuild(self.runtime, {self.node.distgit_key})
+
+        with self.assertLogs('pyartcd.build_status') as logs:
+            self.assertEqual(await callback.run(self.node, _pullspec('a')), url)
+
+        self.assertIn(url, logs.output[0])
+        self.assertTrue(start_build.call_args.kwargs['block_until_complete'])
+        update_description.assert_not_called()
 
     async def test_failed_partner_build_fails_the_owner(self):
         callback = RhcosNodeImagePostBuild(self.runtime, {self.node.distgit_key, self.extensions.distgit_key})

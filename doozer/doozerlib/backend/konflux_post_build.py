@@ -59,7 +59,7 @@ from artcommonlib.util import product_version_from_group_name
 from doozerlib.image import ImageMetadata
 from doozerlib.runtime import Runtime
 
-from pyartcd import jenkins
+from pyartcd import build_status, jenkins
 
 LOGGER = logging.getLogger(__name__)
 
@@ -247,7 +247,7 @@ class RhcosNodeImagePostBuild:
         if result != 'SUCCESS':
             raise RuntimeError(f'RHCOS {label} post-build job failed (result={result}): {url}')
         try:
-            jenkins.update_description(f'<br/>RHCOS {label} post-build: <a href="{url}">job</a><br/>')
+            build_status.update_description(f'<br/>RHCOS {label} post-build: <a href="{url}">job</a><br/>')
         except Exception:
             LOGGER.warning('Could not add RHCOS post-build link to parent job', exc_info=True)
         return url
