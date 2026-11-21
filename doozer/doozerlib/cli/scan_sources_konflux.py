@@ -121,6 +121,10 @@ class ConfigScanSources:
         self.changing_rpm_names = set()
         self.rhcos_status = []
         self.current_task_bundles: Dict[str, str] = {}
+        self._source_ref_semaphore = asyncio.Semaphore(SCAN_SOURCES_CONCURRENCY_LIMIT)
+        # Share in-flight and completed reads across image definitions, scoped to
+        # this scan. Source reconciliation finishes before these reads begin.
+        self._resolve_source_branch = alru_cache(maxsize=None)(self._resolve_source_branch)
 
     def _is_okd_enabled(self, image_meta: ImageMetadata) -> bool:
         """
@@ -797,7 +801,17 @@ class ConfigScanSources:
         self.add_image_meta_change(image_meta, rebuild_hint)
         return True
 
-    def find_upstream_commit_hash(self, meta: Metadata):
+    async def _resolve_source_branch(
+        self, url: str, target: str, stage_branch: Optional[str], fallback: Optional[str], stage: bool, strategy: str
+    ) -> str:
+        source_git = {'url': url, 'branch': {'target': target, 'stage': stage_branch, 'fallback': fallback}}
+        async with self._source_ref_semaphore:
+            _, commit = await exectools.to_thread(
+                SourceResolver.detect_remote_source_branch, source_git, stage, strategy
+            )
+        return commit
+
+    async def find_upstream_commit_hash(self, meta: Metadata):
         """
         Get the upstream latest commit hash using git ls-remote
         """
@@ -808,10 +822,18 @@ class ConfigScanSources:
                 f'(possibly lost during Konflux config merge); cannot check upstream commits'
             )
         use_source_fallback_branch = cast(str, self.runtime.group_config.use_source_fallback_branch or "yes")
-        _, upstream_commit_hash = SourceResolver.detect_remote_source_branch(
-            source_git, self.runtime.stage, use_source_fallback_branch
+        branches = source_git['branch']
+        # Match SourceResolver's pull URL preference and normalize equivalent SSH
+        # and HTTPS URLs so image variants can share the same resolution.
+        url = artcommonlib.util.ensure_github_https_url(source_git.get('url_pull', source_git['url']))
+        return await self._resolve_source_branch(
+            url,
+            branches.get('target'),
+            branches.get('stage'),
+            branches.get('fallback'),
+            self.runtime.stage,
+            use_source_fallback_branch,
         )
-        return upstream_commit_hash
 
     @skip_check_if_changing
     async def scan_arch_changes(self, image_meta: ImageMetadata):
@@ -870,7 +892,7 @@ class ConfigScanSources:
         # TODO use_source_fallback_branch isn't defined anywhere in ocp-build-data, maybe it can be pruned?
 
         # Scan for any build in this assembly which includes the git commit.
-        upstream_commit_hash = self.find_upstream_commit_hash(image_meta)
+        upstream_commit_hash = await self.find_upstream_commit_hash(image_meta)
         el_target = self._get_image_el_target(image_meta)
         upstream_commit_build_record = await image_meta.get_latest_build(
             engine=Engine.KONFLUX.value,
