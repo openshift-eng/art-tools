@@ -5,7 +5,7 @@ from typing import List, Optional
 
 import openshift_client as octool
 from artcommonlib import exectools
-from tenacity import retry, stop_after_attempt
+from tenacity import retry, stop_after_attempt, wait_exponential
 
 logger = logging.getLogger(__name__)
 
@@ -106,7 +106,11 @@ async def qci_registry_login(to_file: str | None = None):
         raise
 
 
-@retry(reraise=True, stop=stop_after_attempt(3))
+@retry(
+    reraise=True,
+    stop=stop_after_attempt(3),
+    wait=wait_exponential(multiplier=10, min=10, max=120),
+)
 def common_oc_wrapper(
     cmd_result_name: str,
     cli_verb: str,
@@ -165,6 +169,11 @@ def get_release_image_pullspec(release_pullspec: str, image: str, registry_confi
     return common_oc_wrapper("image_info_in_release", "adm", cmd_args, True, True)
 
 
+@retry(
+    reraise=True,
+    stop=stop_after_attempt(3),
+    wait=wait_exponential(multiplier=30, min=30, max=300),
+)
 def extract_release_client_tools(
     release_pullspec: str, path_arg: str, single_arch: Optional[str] = None, registry_config: Optional[str] = None
 ) -> (int, str):
