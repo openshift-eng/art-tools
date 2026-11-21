@@ -237,6 +237,9 @@ class KonfluxImageInspector(ImageInspector):
         self._image_info = Model(image_info)
         assert self._image_info['name'] == build_record_inspector.get_build_obj().image_pullspec
 
+        # Validate SCOS tag safety
+        self._validate_scos_tag()
+
     def get_build_inspector(self):
         return self.build_record_inspector
 
@@ -256,6 +259,50 @@ class KonfluxImageInspector(ImageInspector):
 
     def get_manifest_list_digest(self):
         return self._image_info.listDigest
+
+    def get_image_envs(self) -> Dict[str, Optional[str]]:
+        """
+        :return: Returns a dictionary of environment variables set for this image.
+        """
+        env_list: List[str] = self._image_info['config']['config']['Env']
+        envs_dict: Dict[str, Optional[str]] = dict()
+        for env_entry in env_list:
+            if '=' in env_entry:
+                components = env_entry.split('=', 1)
+                envs_dict[components[0]] = components[1]
+            else:
+                # Something odd about entry, so include it but don't try to parse
+                envs_dict[env_entry] = None
+        return envs_dict
+
+    def get_image_labels(self) -> Dict[str, str]:
+        """
+        :return: Returns a dictionary of labels set for this image.
+        """
+        return dict(self._image_info['config']['config']['Labels'])
+
+    def _validate_scos_tag(self):
+        """
+        Validates that if TAGS=scos environment variable is set, the image must be built on a CentOS base.
+        This prevents accidentally releasing SCOS-tagged images if they are built for OCP.
+        Defends against https://issues.redhat.com/browse/COS-3765 incident.
+
+        :raises ValueError: If TAGS=scos is set but org.label-schema.vendor label is not CentOS
+        """
+        envs = self.get_image_envs()
+        labels = self.get_image_labels()
+
+        # Check if TAGS environment variable contains 'scos'
+        tags_env = envs.get('TAGS', '')
+        if tags_env and 'scos' in tags_env:
+            # Assert that the vendor label indicates CentOS
+            vendor_label = labels.get('org.label-schema.vendor', '')
+            if vendor_label != 'CentOS':
+                raise ValueError(
+                    f"SCOS tag safety check failed for image {self.get_pullspec()}: "
+                    f"Image has TAGS=scos environment variable but org.label-schema.vendor label is '{vendor_label}' (expected 'CentOS'). "
+                    f"This indicates the image is not built on a CentOS base image and should not be tagged as SCOS."
+                )
 
 
 class BuildRecordInspector(ABC):
