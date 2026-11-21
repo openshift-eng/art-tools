@@ -44,6 +44,7 @@ def _make_pipeline(runtime, versions="4.22", public_channel="", image_list="", a
 
 def _make_runtime():
     runtime = MagicMock()
+    runtime.dry_run = False
     runtime.working_dir = MagicMock()
     runtime.logger = MagicMock()
     mock_slack_client = MagicMock()
