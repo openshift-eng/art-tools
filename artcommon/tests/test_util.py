@@ -1951,6 +1951,7 @@ class TestResolveKonfluxFbcStageReleasePlan(unittest.TestCase):
             ("mta", 8, 2): "mta-advisory-stage-auto-8-2",
             ("mta", 8, 3): "mta-advisory-stage-auto-8-3",
             ("rhmtc", 1, 8): "mtc-advisory-stage-auto-1-8",
+            ("openshift-update-service", 5, 0): "osus-advisory-stage-auto-5-0",
         }
 
         for (product, major, minor), expected_plan in expected_plans.items():
