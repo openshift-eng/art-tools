@@ -1,8 +1,11 @@
 import asyncio
 import glob
 import json
+import lzma
 import os
 import re
+import tarfile
+from pathlib import Path
 
 import click
 import yaml
@@ -347,16 +350,22 @@ class BuildSyncPipeline:
 
         # Create tar archive
         self.logger.info('Creating backup archives')
-        await exectools.cmd_assert_async("lzma -9 " + " ".join(glob.glob('*.backup.yaml')))
-        cmd = ['tar', 'cvf', 'app.ci-backup.tgz', '--lzma']
-        cmd.extend(glob.glob('*.backup.yaml.lzma'))
-        await exectools.cmd_assert_async(cmd)
+        backup_files = sorted(glob.glob('*.backup.yaml'))
+        # Compress the YAML once, at a fast setting. Keep the existing artifact name
+        # and outer LZMA format; members can now be restored directly as YAML.
+        await exectools.to_thread(self._create_backup_archive, backup_files)
 
         # Remove *.yaml
         self.logger.debug('Removing yaml files')
-        cmd = ['rm']
-        cmd.extend(glob.glob('*.backup.yaml.lzma'))
-        await exectools.cmd_assert_async(cmd)
+        for filename in backup_files:
+            Path(filename).unlink()
+
+    @staticmethod
+    def _create_backup_archive(backup_files: list[str]):
+        with lzma.open('app.ci-backup.tgz', 'wb', format=lzma.FORMAT_ALONE, preset=1) as compressed:
+            with tarfile.open(fileobj=compressed, mode='w|') as archive:
+                for filename in backup_files:
+                    archive.add(filename, recursive=False)
 
     @start_as_current_span_async(TRACER, "build-sync.tag-into-ci-imagestream")
     @limit_concurrency(500)
