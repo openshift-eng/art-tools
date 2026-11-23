@@ -1,3 +1,4 @@
+import asyncio
 from unittest import IsolatedAsyncioTestCase
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -97,3 +98,48 @@ class TestBuildSync(IsolatedAsyncioTestCase):
         for option in ('publish', 'retrigger_current_nightly', 'embargo_permit_ack'):
             with self.subTest(option=option), self.assertRaisesRegex(ValueError, "visibility: private is incompatible"):
                 await BuildSyncPipeline.create(**self.pipeline_args(assembly='art1', **{option: True}))
+
+    async def test_compresses_backups_concurrently_before_archiving(self):
+        pipeline = BuildSyncPipeline(**self.pipeline_args())
+        backup_files = [f'namespace-{i}.backup.yaml' for i in range(5)]
+        backup_sizes = dict(zip(backup_files, (30, 10, 50, 40, 20)))
+        expected_order = [backup_files[i] for i in (2, 3, 0, 4, 1)]
+        started = []
+        four_started = asyncio.Event()
+        release = asyncio.Event()
+        commands = []
+
+        async def run_command(cmd):
+            if cmd[0] == 'lzma':
+                started.append(cmd)
+                if len(started) == 4:
+                    four_started.set()
+                await release.wait()
+            else:
+                commands.append(cmd)
+
+        with (
+            patch('pyartcd.pipelines.build_sync.glob.glob', return_value=backup_files) as glob_mock,
+            patch('pyartcd.pipelines.build_sync.os.path.getsize', side_effect=backup_sizes.__getitem__),
+            patch('pyartcd.pipelines.build_sync.exectools.cmd_assert_async', side_effect=run_command),
+        ):
+            task = asyncio.create_task(pipeline._create_backup_archive())
+            try:
+                await asyncio.wait_for(four_started.wait(), timeout=2)
+                await asyncio.sleep(0)
+                self.assertEqual(len(started), 4)
+                self.assertEqual(commands, [])
+            finally:
+                release.set()
+                await task
+
+        self.assertEqual(started, [['lzma', '-6', path] for path in expected_order])
+        compressed_files = [f'{path}.lzma' for path in expected_order]
+        self.assertEqual(
+            commands,
+            [
+                ['tar', 'cvf', 'app.ci-backup.tgz', '--gzip', *compressed_files],
+                ['rm', *compressed_files],
+            ],
+        )
+        glob_mock.assert_called_once_with('*.backup.yaml')
