@@ -4,6 +4,7 @@ import json
 import os
 import threading
 import time
+from copy import deepcopy
 from typing import Dict, List, Optional, Union, cast
 
 import requests
@@ -354,12 +355,32 @@ class Repo(object):
             repodata = self._repodatas.get(arch)
             if repodata:
                 return repodata
-            LOGGER.info('Queueing metadata load for %s-%s', self.name, arch)
-            repodata = await self._load_repodata(arch)
+            canonical_arch = self._canonical_repodata_arch(arch)
+            if canonical_arch == arch:
+                LOGGER.info('Queueing metadata load for %s-%s', self.name, arch)
+                repodata = await self._load_repodata(arch)
+            else:
+                LOGGER.info('Reusing metadata for %s-%s from %s-%s', self.name, arch, self.name, canonical_arch)
+                repodata = deepcopy(await self.get_repodata(canonical_arch))
+                repodata.name = f'{self.name}-{arch}'
             self._repodatas[arch] = repodata
             return repodata
         finally:
             lock.release()
+
+    def _canonical_repodata_arch(self, arch: str) -> str:
+        """Use the first configured arch that points to the same metadata URL."""
+        repourl = self.baseurl('unsigned', arch)
+        for candidate in self._valid_arches:
+            if candidate == arch:
+                return arch
+            try:
+                if self.baseurl('unsigned', candidate) == repourl:
+                    return candidate
+            except ValueError:
+                # Some repos do not provide metadata for every valid arch.
+                continue
+        return arch
 
     @limit_concurrency(limit=8)
     async def _load_repodata(self, arch: str):

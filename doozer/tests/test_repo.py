@@ -10,6 +10,7 @@ from unittest.mock import Mock, patch
 from artcommonlib.config.plashet import PlashetConfig
 from artcommonlib.config.repo import ContentSet, PlashetRepo, RepoSync
 from artcommonlib.config.repo import Repo as RepoConf
+from doozerlib.repodata import Repodata, Rpm
 from doozerlib.repos import Repo
 
 EXPECTED_BASIC_REPO = """[rhaos-4.4-rhel-8-build]
@@ -299,6 +300,56 @@ class TestRepo(unittest.IsolatedAsyncioTestCase):
         with patch('doozerlib.repos.RepodataLoader.load', side_effect=load) as loader:
             await asyncio.wait_for(asyncio.gather(repo.get_repodata('x86_64'), repo.get_repodata('s390x')), 1)
             self.assertEqual(loader.await_count, 2)
+
+    async def test_reuses_metadata_for_arches_with_same_baseurl(self):
+        arches = ['x86_64', 'aarch64', 's390x', 'ppc64le']
+        url = 'https://example.invalid/x86_64/rt/os/'
+        repo = Repo(
+            'shared',
+            {
+                'conf': {'baseurl': {arch: url for arch in arches}},
+                'content_set': {'default': 'shared-content-set'},
+            },
+            arches,
+        )
+        started = asyncio.Event()
+        release = asyncio.Event()
+
+        async def load(name, *args, **kwargs):
+            started.set()
+            await release.wait()
+            return Repodata(
+                name=name,
+                primary_rpms=[
+                    Rpm(
+                        name='kernel-rt',
+                        epoch=0,
+                        version='1',
+                        release='1',
+                        arch='x86_64',
+                        checksum='sha256:example',
+                        size=1,
+                        location='kernel-rt.rpm',
+                        sourcerpm='kernel-rt.src.rpm',
+                    )
+                ],
+            )
+
+        requested_arches = ['aarch64', 'x86_64', 'ppc64le', 's390x']
+        with patch('doozerlib.repos.RepodataLoader.load', side_effect=load) as loader:
+            tasks = [asyncio.create_task(repo.get_repodata(arch)) for arch in requested_arches]
+            try:
+                await asyncio.wait_for(started.wait(), 1)
+                self.assertEqual(loader.await_count, 1)
+            finally:
+                release.set()
+            results = await asyncio.wait_for(asyncio.gather(*tasks), 1)
+            loader.assert_awaited_once_with('shared-x86_64', url, optional=False)
+
+        self.assertEqual([result.name for result in results], [f'shared-{arch}' for arch in requested_arches])
+        self.assertEqual(len({id(result) for result in results}), len(requested_arches))
+        results[0].primary_rpms[0].name = 'changed'
+        self.assertEqual(results[1].primary_rpms[0].name, 'kernel-rt')
 
     async def test_limits_concurrent_repodata_loads(self):
         repos = [Repo(f'example-{i}', self.repo_config, self.arches) for i in range(9)]
