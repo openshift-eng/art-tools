@@ -9,7 +9,7 @@ import click
 import yaml
 from artcommonlib import exectools
 from artcommonlib.build_priority import load_build_priority_policy
-from artcommonlib.build_visibility import is_nvr_embargoed
+from artcommonlib.build_visibility import get_konflux_nvr_visibility, is_nvr_embargoed
 from artcommonlib.pipeline_report import get_reporter
 from artcommonlib.product_catalog import get_kubeconfig_env_vars
 from artcommonlib.util import (
@@ -32,6 +32,7 @@ from pyartcd.util import (
     default_release_suffix,
     increment_fail_counter,
     load_group_config,
+    private_fixes_git_repo,
     reset_fail_counter,
     resolve_build_version,
     update_build_fail_counters,
@@ -82,6 +83,7 @@ class BuildLayeredProductsPipeline:
         # Operator NVRs that were dropped from the bundle build trigger because they are embargoed.
         # The caller uses this to mark the Jenkins job UNSTABLE instead of a plain SUCCESS.
         self.embargoed_operators_skipped: List[str] = []
+        self.private_fixes_enabled = False
 
         if self.image_build_strategy == BuildStrategy.ALL and self.image_list:
             raise ValueError("image_list must be empty when image_build_strategy is 'all'")
@@ -126,9 +128,13 @@ class BuildLayeredProductsPipeline:
             # Embargoed operators should not have a public bundle built for them. Drop them from
             # the trigger; the previous public bundle remains the latest until a public rebuild
             # happens. The caller marks the Jenkins job UNSTABLE when this list is non-empty.
-            non_embargoed_nvrs = []
+            eligible_nvrs = []
             for nvr in operator_nvrs:
                 try:
+                    if self.private_fixes_enabled:
+                        get_konflux_nvr_visibility(nvr)
+                        eligible_nvrs.append(nvr)
+                        continue
                     embargoed = is_nvr_embargoed(nvr)
                 except ValueError:
                     # is_nvr_embargoed() raises when the NVR's embargo status is ambiguous
@@ -148,8 +154,8 @@ class BuildLayeredProductsPipeline:
                     )
                     self.embargoed_operators_skipped.append(nvr)
                 else:
-                    non_embargoed_nvrs.append(nvr)
-            operator_nvrs = non_embargoed_nvrs
+                    eligible_nvrs.append(nvr)
+            operator_nvrs = eligible_nvrs
 
             if operator_nvrs:
                 if tekton.is_tekton_context():
@@ -204,6 +210,7 @@ class BuildLayeredProductsPipeline:
             doozer_data_gitref=self.data_gitref,
         )
 
+        self.private_fixes_enabled = bool(private_fixes_git_repo(self.group, self.assembly, group_config))
         product = group_config.get('product') or 'ocp'
         if product == 'openshift_agent_installer':
             if not self.payload:

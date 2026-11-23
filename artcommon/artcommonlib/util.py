@@ -1,5 +1,6 @@
 import asyncio
 import base64
+import hashlib
 import inspect
 import json
 import logging
@@ -1714,6 +1715,15 @@ def normalize_k8s_dns_label(name: str, max_length: int = K8S_DNS_LABEL_MAX_LENGT
     normalized = re.sub(r'[^a-z0-9-]', '-', name.lower())
     normalized = re.sub(r'-+', '-', normalized).strip('-')
     return normalized[:max_length].rstrip('-')
+
+
+def private_fix_resource_name(name: str) -> str:
+    """Name a private build resource without sharing its standard application or component."""
+    private_name = f"private-{name}"
+    if len(private_name) <= K8S_DNS_LABEL_MAX_LENGTH:
+        return private_name
+    suffix = hashlib.sha256(name.encode()).hexdigest()[:10]
+    return f"{normalize_k8s_dns_label(private_name, max_length=52)}-{suffix}"
 
 
 def validate_k8s_dns_label(name: str, field_name: str = "Name") -> str:

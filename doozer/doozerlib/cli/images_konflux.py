@@ -9,9 +9,12 @@ from pathlib import Path
 from typing import Dict, List, Optional, Sequence, Tuple
 
 import click
+from artcommonlib import exectools
 from artcommonlib.build_priority import load_build_priority_policy
+from artcommonlib.build_visibility import BuildVisibility, get_konflux_nvr_visibility, is_private_fix_pullspec
 from artcommonlib.conforma import resolve_stage_policy
-from artcommonlib.constants import KONFLUX_DEFAULT_NAMESPACE
+from artcommonlib.constants import KONFLUX_DEFAULT_NAMESPACE, KONFLUX_PRIVATE_FBC_REPO
+from artcommonlib.github_auth import require_private_github_repository
 from artcommonlib.konflux.konflux_build_record import (
     KonfluxBuildOutcome,
     KonfluxBuildRecord,
@@ -43,7 +46,7 @@ from doozerlib.backend.konflux_client import (
 )
 from doozerlib.backend.konflux_fbc import get_referenced_images
 from doozerlib.backend.konflux_image_builder import KonfluxImageBuilder, KonfluxImageBuilderConfig
-from doozerlib.backend.konflux_olm_bundler import KonfluxOlmBundleBuilder, KonfluxOlmBundleRebaser
+from doozerlib.backend.konflux_olm_bundler import KonfluxOlmBundleBuilder, KonfluxOlmBundleRebaser, NoPrivateFixes
 from doozerlib.backend.konflux_post_build import build_post_build_callbacks
 from doozerlib.backend.rebaser import KonfluxRebaser
 from doozerlib.cli import (
@@ -808,8 +811,12 @@ class KonfluxBundleCli:
         plr_template: str,
         output: str,
         skip_tasks: tuple[str, ...] = (),
+        stream_visibility: BuildVisibility | None = None,
+        private_source_repo: str | None = None,
     ):
         self.runtime = runtime
+        self.stream_visibility = stream_visibility
+        self.private_source_repo = private_source_repo
         self.operator_nvrs = list(operator_nvrs)
         self.force = force
         self.dry_run = dry_run
@@ -911,7 +918,10 @@ class KonfluxBundleCli:
         image_meta: ImageMetadata,
         operator_build: KonfluxBuildRecord,
         git_auth_secret: Optional[str] = None,
-    ) -> str:
+    ) -> str | None:
+        if self.stream_visibility is not None:
+            return await self._build_stream_bundle(rebaser, builder, image_meta, git_auth_secret)
+
         logger = LOGGER.getChild(f"[{image_meta.distgit_key}]")
         report = get_reporter().component('bundle', image_meta.distgit_key, dry_run=self.dry_run)
         async with report.preparing():
@@ -949,6 +959,65 @@ class KonfluxBundleCli:
             logger.info("Bundle build complete")
             return nvr
 
+    async def _build_stream_bundle(self, rebaser, builder, image_meta, git_auth_secret) -> str | None:
+        private = self.stream_visibility is BuildVisibility.PRIVATE
+        query = {"assembly": "stream", "honor_is": False, "exclude_large_columns": True}
+        if not private:
+            query["embargoed"] = False
+        operator = await image_meta.get_latest_konflux_build(**query)
+        if not operator or operator.assembly != "stream":
+            raise DoozerFatalError(f"No eligible stream operator build for {image_meta.distgit_key}")
+        if not private and get_konflux_nvr_visibility(operator.nvr) is not BuildVisibility.PUBLIC:
+            raise DoozerFatalError(f"No eligible public operator build for {image_meta.distgit_key}")
+        get_konflux_nvr_visibility(operator.nvr)
+
+        release = self.release if self.force else None
+        if not release:
+            release = await self._next_bundle_release(image_meta, operator)
+        reused = False
+
+        async def find_existing(operands: set[str]) -> str | None:
+            nonlocal reused
+            where = {
+                "name": image_meta.get_olm_bundle_short_name(),
+                "group": self.runtime.group,
+                "assembly": "stream",
+                "operator_nvr": operator.nvr,
+                "outcome": str(KonfluxBuildOutcome.SUCCESS),
+            }
+            async for bundle in self._db_for_bundles.search_builds_by_fields(where=where):
+                if (
+                    set(bundle.operand_nvrs) == operands
+                    and bool(bundle.image_pullspec)
+                    and is_private_fix_pullspec(bundle.image_pullspec) == private
+                ):
+                    try:
+                        if get_konflux_nvr_visibility(bundle.nvr) is not self.stream_visibility:
+                            continue
+                    except ValueError:
+                        continue
+                    reused = True
+                    return bundle.nvr
+            return None
+
+        try:
+            nvr = await rebaser.rebase(
+                image_meta, operator, release, find_existing=None if self.force else find_existing
+            )
+        except NoPrivateFixes:
+            return None
+        if not reused:
+            if await self._get_bundle_build_by_nvr(nvr):
+                raise DoozerFatalError(f"Successful bundle {nvr} already exists")
+            await builder.build(image_meta, git_auth_secret=git_auth_secret)
+        if self.runtime.record_logger:
+            self.runtime.record_logger.add_record(
+                "build_stream_bundle",
+                operator_nvr=operator.nvr,
+                bundle_nvr=nvr,
+            )
+        return nvr
+
     async def _next_bundle_release(self, image_meta: ImageMetadata, operator_build: KonfluxBuildRecord) -> str:
         """Allocate after all successful releases of this operator, across assemblies."""
         where = {
@@ -957,6 +1026,12 @@ class KonfluxBundleCli:
             "operator_nvr": operator_build.nvr,
             "outcome": str(KonfluxBuildOutcome.SUCCESS),
         }
+        if self.stream_visibility is not None:
+            version = f"{operator_build.version}.{operator_build.release}"
+            if self.stream_visibility is BuildVisibility.PRIVATE:
+                version = re.sub(r"\.p2(?=\.|$)", ".p3", version)
+            del where["operator_nvr"]
+            where["version"] = version
         releases = [int(build.release) async for build in self._db_for_bundles.search_builds_by_fields(where=where)]
         return str(max(releases, default=0) + 1)
 
@@ -974,6 +1049,19 @@ class KonfluxBundleCli:
         konflux_db = runtime.konflux_db
         konflux_db.bind(KonfluxBuildRecord)
 
+        if self.stream_visibility is not None and (
+            assembly != "stream" or runtime.group.startswith(("openshift-", "okd-"))
+        ):
+            raise ValueError("Stream visibility is only supported for layered product stream bundles")
+        git_auth_options = {}
+        if self.stream_visibility is BuildVisibility.PRIVATE:
+            if not self.private_source_repo:
+                raise ValueError("The private bundle flow requires a private source Git repository")
+            org = await exectools.to_thread(require_private_github_repository, self.private_source_repo)
+            git_auth_options["org"] = org
+        elif self.private_source_repo:
+            raise ValueError("A private source repository requires private stream visibility")
+
         dgk_records = await self.get_operator_builds()
 
         assert runtime.source_resolver is not None, "source_resolver is not initialized. Doozer bug?"
@@ -990,6 +1078,8 @@ class KonfluxBundleCli:
             image_repo=self.image_repo,
             dry_run=self.dry_run,
             record_logger=runtime.record_logger,
+            stream_visibility=self.stream_visibility,
+            private_source_repo=self.private_source_repo,
         )
 
         builder = KonfluxOlmBundleBuilder(
@@ -1001,7 +1091,9 @@ class KonfluxBundleCli:
             konflux_namespace=self.konflux_namespace,
             konflux_kubeconfig=self.konflux_kubeconfig,
             konflux_context=self.konflux_context,
-            image_repo=self.image_repo,
+            image_repo=KONFLUX_PRIVATE_FBC_REPO
+            if self.stream_visibility is BuildVisibility.PRIVATE
+            else self.image_repo,
             skip_checks=self.skip_checks,
             skip_tasks=self.skip_tasks,
             pipelinerun_template_url=self.plr_template,
@@ -1013,8 +1105,11 @@ class KonfluxBundleCli:
         # Mint a per-invocation GitHub App token for git-clone auth
         git_auth_secret = await builder._konflux_client.ensure_git_auth_secret(
             namespace=self.konflux_namespace,
+            **git_auth_options,
         )
-        refresh_task = asyncio.create_task(builder._konflux_client.token_refresh_loop(namespace=self.konflux_namespace))
+        refresh_task = asyncio.create_task(
+            builder._konflux_client.token_refresh_loop(namespace=self.konflux_namespace, **git_auth_options)
+        )
 
         tasks = []
         for dgk, record in dgk_records.items():
@@ -1044,7 +1139,7 @@ class KonfluxBundleCli:
                         }
                     )
                     LOGGER.error(f"Failed to rebase/build OLM bundle for {dgk}: {result}; {stack_trace}")
-                else:
+                elif result is not None:
                     successful_nvrs.append(result)
         finally:
             refresh_task.cancel()
@@ -1117,6 +1212,10 @@ class KonfluxBundleCli:
 )
 @click.option("--release", metavar='RELEASE', help="Release string to populate in bundle's Dockerfiles.")
 @click.option(
+    "--stream-visibility", type=click.Choice(["public", "private"]), help="Select layered product stream bundle inputs."
+)
+@click.option("--private-source-repo", help="Private Git repository for generated private fixes bundle source.")
+@click.option(
     '--plr-template',
     required=False,
     default=constants.KONFLUX_DEFAULT_BUNDLE_BUILD_PLR_TEMPLATE_URL,
@@ -1145,6 +1244,8 @@ async def images_konflux_bundle(
     release: Optional[str],
     plr_template: str,
     output: str,
+    stream_visibility: str | None,
+    private_source_repo: str | None,
 ):
     cli = KonfluxBundleCli(
         runtime=runtime,
@@ -1160,6 +1261,8 @@ async def images_konflux_bundle(
         release=release,
         plr_template=plr_template,
         output=output,
+        stream_visibility=BuildVisibility[stream_visibility.upper()] if stream_visibility else None,
+        private_source_repo=private_source_repo,
     )
     await cli.run()
 
@@ -1182,9 +1285,11 @@ class BundleStageReleaseRelatedImagesCli:
         konflux_context: Optional[str],
         konflux_namespace: str,
         dry_run: bool,
+        bundle_nvrs: tuple[str, ...] = (),
     ):
         self.runtime = runtime
         self.operator_nvrs = operator_nvrs
+        self.exact_bundle_nvrs = dict(zip(operator_nvrs, bundle_nvrs, strict=True)) if bundle_nvrs else {}
         self.stage_release_plan = stage_release_plan
         self.konflux_kubeconfig = konflux_kubeconfig
         self.konflux_context = konflux_context
@@ -1345,9 +1450,22 @@ class BundleStageReleaseRelatedImagesCli:
             "operator_nvr": record.nvr,
             "outcome": str(KonfluxBuildOutcome.SUCCESS),
         }
-        bundle_build = await anext(self._db_for_bundles.search_builds_by_fields(where=where, limit=1), None)
+        if bundle_nvr := self.exact_bundle_nvrs.get(record.nvr):
+            where.update(nvr=bundle_nvr, assembly=assembly)
+        bundle_build = await anext(
+            (
+                build
+                async for build in self._db_for_bundles.search_builds_by_fields(where=where)
+                if not is_private_fix_pullspec(build.image_pullspec)
+            ),
+            None,
+        )
         if not bundle_build:
-            raise DoozerFatalError(f"Bundle build not found for operator {operator_name} ({record.nvr})")
+            raise DoozerFatalError(f"No standard bundle build found for operator {operator_name} ({record.nvr})")
+        if bundle_nvr:
+            for nvr in (bundle_build.nvr, record.nvr, *bundle_build.operand_nvrs):
+                if nvr != "external" and get_konflux_nvr_visibility(nvr) is not BuildVisibility.PUBLIC:
+                    raise DoozerFatalError(f"Standard stage release cannot use private build {nvr}")
 
         # Dedup by component name within this operator: an operator can list itself among its operands.
         components: Dict[str, dict] = {}
@@ -1537,6 +1655,9 @@ class BundleStageReleaseRelatedImagesCli:
     '--dry-run', default=False, is_flag=True, help='Do not create Snapshots/Releases, only print what would be done.'
 )
 @click.argument('operator_nvrs', nargs=-1, required=True)
+@click.option(
+    '--bundle-nvr', 'bundle_nvrs', multiple=True, help='Exact bundle NVR for each operator, in the same order.'
+)
 @pass_runtime
 @click_coroutine
 async def bundle_stage_release_related_images(
@@ -1547,6 +1668,7 @@ async def bundle_stage_release_related_images(
     stage_release_plan: Optional[str],
     dry_run: bool,
     operator_nvrs: Tuple[str, ...],
+    bundle_nvrs: tuple[str, ...] = (),
 ):
     """Stage-release operator and operand images to the advisory before FBC builds.
 
@@ -1570,5 +1692,6 @@ async def bundle_stage_release_related_images(
         konflux_context=konflux_context,
         konflux_namespace=konflux_namespace,
         dry_run=dry_run,
+        bundle_nvrs=bundle_nvrs,
     )
     await stage_cli.run()

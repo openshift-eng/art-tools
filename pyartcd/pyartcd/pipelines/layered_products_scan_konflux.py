@@ -8,6 +8,8 @@ from typing import Dict, List, Optional, Set
 import click
 import yaml
 from artcommonlib import exectools
+from artcommonlib.build_visibility import BuildVisibility, get_konflux_nvr_visibility
+from artcommonlib.constants import KONFLUX_DEFAULT_FBC_REPO, KONFLUX_PRIVATE_FBC_REPO
 from artcommonlib.konflux.konflux_build_record import (
     KonfluxBuildOutcome,
     KonfluxBuildRecord,
@@ -23,7 +25,7 @@ from pyartcd.locks import Lock
 from pyartcd.lp_recovery import RecoveryPlanner
 from pyartcd.runtime import Runtime
 from pyartcd.stage_registry import check_bundle_in_stage_registry, resolve_stage_release_plan
-from pyartcd.util import load_group_config, resolve_build_version
+from pyartcd.util import load_group_config, private_fixes_git_repo, resolve_build_version
 
 
 class LayeredProductsScanPipeline:
@@ -62,6 +64,7 @@ class LayeredProductsScanPipeline:
         # Resolved in _init_stage_release_check(): True when assembly is 'stream'
         # and the product has an FBC advisory-stage ReleasePlan for this version.
         self._check_stage_release = False
+        self.private_fixes_enabled = False
 
         # OCP target versions for FBC builds (loaded from group config)
         self.ocp_target_versions: List[str] = []
@@ -256,7 +259,12 @@ class LayeredProductsScanPipeline:
 
         # Check each operator for missing bundles/FBCs
         results = await asyncio.gather(
-            *[self.check_operator(bundle_db, fbc_db, op) for op in operator_builds],
+            *(
+                self.check_stream_operator(operator_db, bundle_db, fbc_db, op)
+                if self.private_fixes_enabled
+                else self.check_operator(bundle_db, fbc_db, op)
+                for op in operator_builds
+            ),
             return_exceptions=True,
         )
 
@@ -362,6 +370,7 @@ class LayeredProductsScanPipeline:
                 doozer_data_gitref=self.data_gitref,
             )
 
+            self.private_fixes_enabled = bool(private_fixes_git_repo(self.group, self.assembly, group_config))
             cfg_version = group_config.get('version')
             if cfg_version:
                 self.version = resolve_build_version(self.group, str(cfg_version))
@@ -417,6 +426,106 @@ class LayeredProductsScanPipeline:
         builds = await asyncio.gather(*tasks)
         return [build for build in builds if build]
 
+    async def _latest_stream_build(self, operator_db, build, public_only=False):
+        return await operator_db.get_latest_build(
+            name=build.name,
+            group=build.group,
+            assembly=self.assembly,
+            el_target=build.el_target or None,
+            engine=build.engine,
+            embargoed=False if public_only else None,
+            exclude_large_columns=True,
+        )
+
+    async def _latest_stream_operands(self, operator_db, operator, bundle, public_only=False):
+        """Use the last bundle's operand provenance to spot builds of the same components."""
+        operand_nvrs = {nvr for nvr in bundle.operand_nvrs if nvr != "external"}
+        if not operand_nvrs:
+            return set(bundle.operand_nvrs)
+        operands = await operator_db.get_build_records_by_nvrs(
+            sorted(operand_nvrs), group=self.group, exclude_large_columns=True
+        )
+        latest = await asyncio.gather(
+            *(
+                asyncio.sleep(0, result=operator)
+                if build.name == operator.name
+                else self._latest_stream_build(operator_db, build, public_only=public_only)
+                for build in operands
+            )
+        )
+        if not all(latest):
+            if public_only:
+                self.logger.warning("No eligible public operand for %s; retaining the standard catalog", operator.nvr)
+                return None
+            raise ValueError(f"No eligible stream operand for {operator.nvr}")
+        nvrs = {build.nvr for build in latest}
+        for nvr in nvrs:
+            visibility = get_konflux_nvr_visibility(nvr)
+            if public_only and visibility is not BuildVisibility.PUBLIC:
+                raise ValueError(f"Expected a public stream operand, got {nvr}")
+        return nvrs | ({"external"} & set(bundle.operand_nvrs))
+
+    async def check_stream_operator(self, operator_db, bundle_db, fbc_db, latest):
+        if latest.name in self.rebuilding_images:
+            return
+        operator_is_private = get_konflux_nvr_visibility(latest.nvr) is BuildVisibility.PRIVATE
+        public_operator = (
+            await self._latest_stream_build(operator_db, latest, public_only=True) if operator_is_private else latest
+        )
+        public_bundle = (
+            await self.check_bundle_exists(bundle_db, public_operator, visibility=BuildVisibility.PUBLIC)
+            if public_operator
+            else None
+        )
+        if public_operator and await self._standard_stream_needs_recovery(
+            operator_db, fbc_db, public_operator, public_bundle
+        ):
+            self.operators_without_bundles.append(latest)
+            return
+        if not public_operator:
+            self.logger.warning("No eligible public operator build for %s; retaining the standard catalog", latest.name)
+
+        private_bundle = await self.check_bundle_exists(bundle_db, latest, visibility=BuildVisibility.PRIVATE)
+        if private_bundle and private_bundle.outcome == KonfluxBuildOutcome.PENDING:
+            return
+        baseline = private_bundle or public_bundle
+        if baseline:
+            private_inputs = await self._latest_stream_operands(operator_db, latest, baseline)
+        else:
+            private_inputs = set()
+        if not operator_is_private and not any(
+            get_konflux_nvr_visibility(nvr) is BuildVisibility.PRIVATE for nvr in private_inputs if nvr != "external"
+        ):
+            return
+        if (
+            private_bundle is None
+            or private_bundle.outcome.is_failure()
+            or private_inputs != set(private_bundle.operand_nvrs)
+        ):
+            self.operators_without_bundles.append(latest)
+            return
+        fbc = await self.check_fbc_exists(fbc_db, latest, private_bundle)
+        if fbc is None or fbc.outcome.is_failure():
+            self.operators_without_bundles.append(latest)
+
+    async def _standard_stream_needs_recovery(self, operator_db, fbc_db, operator, bundle) -> bool:
+        if bundle is None or bundle.outcome.is_failure():
+            return True
+        if bundle.outcome != KonfluxBuildOutcome.SUCCESS:
+            return False
+
+        public_inputs = await self._latest_stream_operands(operator_db, operator, bundle, public_only=True)
+        if public_inputs is None:
+            return False
+        if public_inputs != set(bundle.operand_nvrs):
+            return True
+        if self._check_stage_release:
+            staged = await self.check_stage_registry(operator, bundle)
+            if staged is not True:
+                return staged is False
+        fbc = await self.check_fbc_exists(fbc_db, operator, bundle)
+        return fbc is None or fbc.outcome.is_failure()
+
     async def check_operator(self, bundle_db: KonfluxDb, fbc_db: KonfluxDb, operator: KonfluxBuildRecord):
         """Check one operator for missing bundle/FBC builds.
 
@@ -468,19 +577,29 @@ class LayeredProductsScanPipeline:
         )
 
     async def check_bundle_exists(
-        self, bundle_db: KonfluxDb, operator: KonfluxBuildRecord
+        self,
+        bundle_db: KonfluxDb,
+        operator: KonfluxBuildRecord,
+        visibility: BuildVisibility | None = None,
     ) -> Optional[KonfluxBundleBuildRecord]:
         """Check if bundle build exists for operator."""
 
         bundle_name = self.get_bundle_name(operator.name)
+        patterns = {'operator_nvr': operator.nvr}
+        if visibility is not None:
+            suffix = "p3" if visibility is BuildVisibility.PRIVATE else "p2"
+            patterns = {"operator_nvr": f"^{re.escape(operator.nvr)}$", "version": rf"\.{suffix}(?:\.|$)"}
 
+        success_patterns = dict(patterns)
+        if visibility is BuildVisibility.PRIVATE:
+            success_patterns["image_pullspec"] = rf"^{re.escape(KONFLUX_PRIVATE_FBC_REPO)}[:@]"
         # Check for successful bundle
         bundle = await bundle_db.get_latest_build(
             name=bundle_name,
             group=self.group,
             outcome=KonfluxBuildOutcome.SUCCESS,
             assembly=self.assembly,
-            extra_patterns={'operator_nvr': operator.nvr},
+            extra_patterns=success_patterns,
         )
 
         if bundle:
@@ -493,7 +612,7 @@ class LayeredProductsScanPipeline:
             group=self.group,
             outcome=KonfluxBuildOutcome.PENDING,
             assembly=self.assembly,
-            extra_patterns={'operator_nvr': operator.nvr},
+            extra_patterns=patterns,
         )
 
         if pending:
@@ -526,8 +645,18 @@ class LayeredProductsScanPipeline:
         """
 
         fbc_name = self.get_fbc_name(operator.name)
+        repository_pattern = {}
+        if self.private_fixes_enabled:
+            repo = (
+                KONFLUX_PRIVATE_FBC_REPO
+                if get_konflux_nvr_visibility(bundle.nvr) is BuildVisibility.PRIVATE
+                else KONFLUX_DEFAULT_FBC_REPO
+            )
+            repository_pattern["image_pullspec"] = rf"^{re.escape(repo)}[:@]"
 
         if self.ocp_target_versions:
+            if repository_pattern:
+                return await self._check_fbc_per_version(fbc_db, fbc_name, operator, bundle, repository_pattern)
             return await self._check_fbc_per_version(fbc_db, fbc_name, operator, bundle)
 
         # No target versions configured – original single-check behaviour
@@ -540,6 +669,7 @@ class LayeredProductsScanPipeline:
                 'assembly': self.assembly,
             },
             array_contains={'bundle_nvrs': bundle.nvr},
+            **({"extra_patterns": repository_pattern} if repository_pattern else {}),
             limit=1,
             order_by='start_time',
             sorting='DESC',
@@ -582,6 +712,7 @@ class LayeredProductsScanPipeline:
         fbc_name: str,
         operator: KonfluxBuildRecord,
         bundle: KonfluxBundleBuildRecord,
+        repository_pattern: dict[str, str] | None = None,
     ) -> Optional[KonfluxFbcBuildRecord]:
         """Check FBC existence for each OCP target version.
 
@@ -610,7 +741,7 @@ class LayeredProductsScanPipeline:
                     'assembly': self.assembly,
                 },
                 array_contains={'bundle_nvrs': bundle.nvr},
-                extra_patterns={'nvr': version_pattern},
+                extra_patterns={'nvr': version_pattern, **(repository_pattern or {})},
                 limit=1,
                 order_by='start_time',
                 sorting='DESC',

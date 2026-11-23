@@ -67,6 +67,26 @@ class TestBuildFbcPipeline(unittest.IsolatedAsyncioTestCase):
         check.assert_not_called()
         build.assert_awaited_once()
 
+    async def test_exact_private_bundle_is_passed_with_private_source(self):
+        self.pipeline.group = "demo-1.0"
+        self.pipeline.kubeconfig = "/tmp/kubeconfig"
+        operator = "demo-operator-1.0.0-1.p2"
+        bundle = "demo-operator-bundle-1.0.0.1.p3-1"
+        private_repo = "https://github.com/example/private-catalogs.git"
+        self.pipeline.operator_nvrs = f"{operator}={bundle}"
+
+        with (
+            patch.object(self.pipeline, "_run_doozer", new=AsyncMock()) as run_doozer,
+            patch.object(self.pipeline, "_parse_record_log", new=AsyncMock(return_value=([], []))),
+        ):
+            await self.pipeline._rebase_and_build(
+                "release", "message", {"konflux": {"private_fixes_git_repo": private_repo}}
+            )
+        command = run_doozer.await_args.args[0]
+        self.assertIn("--private-fixes", command)
+        self.assertEqual(command[command.index("--fbc-repo") + 1], private_repo)
+        self.assertEqual(command[-4:], ["--bundle-nvr", bundle, "--", operator])
+
     async def test_skip_rebase_is_forwarded_only_when_enabled(self):
         self.pipeline.kubeconfig = "/tmp/kubeconfig"
         self.assertFalse(self.pipeline.skip_rebase)

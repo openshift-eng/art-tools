@@ -5,6 +5,7 @@ from artcommonlib.build_visibility import (
     find_all_pflags_in_release,
     get_all_visibility_suffixes,
     get_build_system,
+    get_konflux_nvr_visibility,
     get_visibility_suffix,
     is_nvr_embargoed,
     is_release_embargoed,
@@ -13,6 +14,13 @@ from artcommonlib.build_visibility import (
 
 
 class TestBuildVisibility(TestCase):
+    def test_stream_visibility_is_explicit_in_bundle_versions_and_image_releases(self):
+        self.assertIs(get_konflux_nvr_visibility("demo-bundle-1.0.7.p3-1"), BuildVisibility.PRIVATE)
+        self.assertIs(get_konflux_nvr_visibility("demo-image-1.0-7.p2"), BuildVisibility.PUBLIC)
+        for nvr in ("demo-1.0-1", "demo-1.0.p2-1.p3", "demo-1.0-1.p2.p3", "demo-1.0-1.p?"):
+            with self.subTest(nvr=nvr), self.assertRaises(ValueError):
+                get_konflux_nvr_visibility(nvr)
+
     def test_get_build_system(self):
         self.assertEqual(get_build_system('p0'), 'brew')
         self.assertEqual(get_build_system('p1'), 'brew')

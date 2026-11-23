@@ -18,6 +18,7 @@ import truststore
 from artcommonlib import exectools, git_helper
 from artcommonlib import util as artlib_util
 from artcommonlib.assembly import AssemblyTypes, assembly_config_struct, assembly_type
+from artcommonlib.build_visibility import is_private_fix_pullspec
 from artcommonlib.constants import KONFLUX_RELEASE_BUILD_PRIORITY
 from artcommonlib.konflux.konflux_build_record import (
     Engine,
@@ -796,6 +797,7 @@ class KonfluxFbcRebaser:
         ocp_version_override: Optional[Tuple[int, int]] = None,
         insert_missing_entry: bool = False,
         record_logger: Optional[RecordLogger] = None,
+        private_fixes: bool = False,
         logger: Optional[logging.Logger] = None,
     ) -> None:
         self.base_dir = Path(base_dir)
@@ -809,6 +811,7 @@ class KonfluxFbcRebaser:
         self.upcycle = upcycle
         self.ocp_version_override = ocp_version_override
         self._record_logger = record_logger
+        self.private_fixes = private_fixes
         self._logger = logger or LOGGER.getChild(self.__class__.__name__)
         self.insert_missing_entry = insert_missing_entry
 
@@ -1368,8 +1371,7 @@ class KonfluxFbcRebaser:
             )
 
         # Get assembly bundle info from the latest named assembly's shipment
-        assembly_csv_info: Optional[AssemblyBundleCsvInfo] = None
-        assembly_csv_info = await self._get_assembly_bundle_csv_info(metadata)
+        assembly_csv_info = None if self.private_fixes else await self._get_assembly_bundle_csv_info(metadata)
         logger.info(f"Get assembly csv info: {assembly_csv_info}")
 
         # Update the catalog
@@ -1583,9 +1585,13 @@ class KonfluxFbcRebaser:
                 logger.info("Setting default channel to %s", resolved_default)
                 package_blob["defaultChannel"] = resolved_default
 
-        # Replace pullspecs to use the prod registry
+        # Standard bundles use their delivery pullspec. Private bundles are pulled directly.
         digest = bundle_build.image_pullspec.split('@', 1)[-1]
-        bundle_prod_pullspec = f"{constants.DELIVERY_IMAGE_REGISTRY}/{delivery_repo_name}@{digest}"
+        bundle_prod_pullspec = (
+            bundle_build.image_pullspec
+            if self.private_fixes
+            else f"{constants.DELIVERY_IMAGE_REGISTRY}/{delivery_repo_name}@{digest}"
+        )
         olm_bundle_blob["image"] = bundle_prod_pullspec
         related_images = olm_bundle_blob.get("relatedImages", [])
         if related_images:
@@ -2215,12 +2221,15 @@ class KonfluxFbcBuilder:
 
         # Ensure the Application resource exists
         app_name = self.get_application_name(self.group)
+        component_name = self.get_component_name(self.group, metadata.distgit_key)
+        if is_private_fix_pullspec(output_image):
+            app_name = artlib_util.private_fix_resource_name(app_name)
+            component_name = artlib_util.private_fix_resource_name(component_name)
         logger.info(f"Using Konflux application: {app_name}")
         konflux_client = self._konflux_client
         await konflux_client.ensure_application(name=app_name, display_name=app_name)
         logger.info(f"Konflux application {app_name} created")
         # Ensure the Component resource exists
-        component_name = self.get_component_name(self.group, metadata.distgit_key)
         logger.info(f"Creating Konflux component: {component_name}")
         dest_image_repo = output_image.split(":")[0]
         # For FBC builds, multiple OCP target versions share the same Component

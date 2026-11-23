@@ -15,7 +15,7 @@ from urllib.parse import urlparse
 import click
 import yaml as stdlib_yaml
 from artcommonlib import exectools
-from artcommonlib.build_visibility import is_nvr_embargoed
+from artcommonlib.build_visibility import is_nvr_embargoed, is_private_fix_pullspec
 from artcommonlib.constants import SHIPMENT_DATA_URL_TEMPLATE
 from artcommonlib.gitdata import SafeFormatter
 from artcommonlib.github_auth import build_git_auth_env, get_github_client_for_org
@@ -1457,6 +1457,8 @@ class ReleaseFromFbcPipeline:
         In OCP optional mode (--ocp-optional), produces extras + fbc
         shipments for OCP optional operators that were excluded from the main release.
         """
+        if any(is_private_fix_pullspec(pullspec) for pullspec in self.fbc_pullspecs):
+            raise ValueError("Private fixes FBCs cannot be used in a release")
         self.logger.info(f"Starting FBC-based release workflow for {self.assembly}")
         if self.ocp_optional:
             self.logger.info("OCP optional-operator mode enabled (extras/fbc)")

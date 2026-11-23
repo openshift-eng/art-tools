@@ -135,6 +135,7 @@ class TestFbcRebaseAndBuildCli(unittest.IsolatedAsyncioTestCase):
         build.name = name
         build.nvr = nvr
         build.operator_nvr = operator_nvr
+        build.image_pullspec = f"quay.io/example/bundles:{nvr}"
         return build
 
     @mock.patch("doozerlib.cli.fbc.KonfluxFbcImporter")
@@ -462,6 +463,40 @@ class TestFbcRebaseAndBuildCli(unittest.IsolatedAsyncioTestCase):
         result = await self.fbc_cli.get_bundle_build_for(operator_build)
 
         self.assertEqual(result, bundle_build)
+
+    async def test_standard_lookup_ignores_private_bundle_for_same_operator(self):
+        from artcommonlib.constants import KONFLUX_PRIVATE_FBC_REPO
+
+        operator = self._create_mock_operator_build("test-operator", "test-operator-1.0.0-1.p2")
+        public = self._create_mock_bundle_build(
+            "test-operator-bundle", "test-operator-bundle-1.0.0.1.p2-1", operator.nvr
+        )
+        private = self._create_mock_bundle_build(
+            "test-operator-bundle", "test-operator-bundle-1.0.0.1.p3-1", operator.nvr
+        )
+        private.image_pullspec = f"{KONFLUX_PRIVATE_FBC_REPO}@sha256:private"
+        self._setup_database_mocks(bundle_builds=[private, public], fbc_builds=[])
+
+        self.assertIs(await self.fbc_cli.get_bundle_build_for(operator), public)
+
+    async def test_private_exact_lookup_requires_private_inputs(self):
+        from artcommonlib.constants import KONFLUX_PRIVATE_FBC_REPO
+
+        operator = self._create_mock_operator_build("test-operator", "test-operator-1.0.0-1.p2")
+        private = self._create_mock_bundle_build(
+            "test-operator-bundle", "test-operator-bundle-1.0.0.1.p3-1", operator.nvr
+        )
+        private.image_pullspec = f"{KONFLUX_PRIVATE_FBC_REPO}@sha256:private"
+        self.fbc_cli.private_fixes = True
+        self.fbc_cli.bundle_nvrs = {operator.nvr: private.nvr}
+        private.operand_nvrs = ["test-agent-1.0.0-1.p3"]
+        self._setup_database_mocks(bundle_builds=[private], fbc_builds=[])
+
+        self.assertIs(await self.fbc_cli.get_bundle_build_for(operator), private)
+
+        private.operand_nvrs = ["test-agent-1.0.0-1.p2"]
+        with self.assertRaisesRegex(ValueError, "different build visibility"):
+            await self.fbc_cli.get_bundle_build_for(operator)
 
     async def test_get_bundle_build_for_not_found_strict(self):
         operator_build = self._create_mock_operator_build("test-operator", "test-operator-1.0.0-1")

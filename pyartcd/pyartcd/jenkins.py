@@ -963,6 +963,8 @@ def start_build_fbc(
     group: Optional[str] = None,
     ocp_target_version: Optional[str] = None,
     propagate_params: Optional[dict] = None,
+    doozer_data_path: str | None = None,
+    doozer_data_gitref: str | None = None,
     **kwargs,
 ) -> Optional[str]:
     params = {
@@ -977,6 +979,10 @@ def start_build_fbc(
         params['OCP_TARGET_VERSION'] = ocp_target_version
     if force_build:
         params["FORCE_BUILD"] = force_build
+    if doozer_data_path:
+        params["DOOZER_DATA_PATH"] = doozer_data_path
+    if doozer_data_gitref:
+        params["DOOZER_DATA_GITREF"] = doozer_data_gitref
 
     # Automatically propagate parameters if provided
     # Note: params.update() will override existing parameter values if keys match

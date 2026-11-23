@@ -6,6 +6,7 @@ from typing import List, Optional
 
 import click
 from artcommonlib import exectools
+from artcommonlib.build_visibility import BuildVisibility, get_konflux_nvr_visibility
 from artcommonlib.pipeline_report import get_reporter
 from artcommonlib.product_catalog import get_kubeconfig_env_vars
 from artcommonlib.util import resolve_konflux_kubeconfig_by_product, resolve_konflux_namespace_by_product
@@ -18,7 +19,7 @@ from pyartcd.locks import Lock
 from pyartcd.record import parse_record_log
 from pyartcd.runtime import Runtime
 from pyartcd.slack import SlackClient
-from pyartcd.util import load_group_config
+from pyartcd.util import load_group_config, private_fixes_git_repo
 
 
 class BuildFbcPipeline:
@@ -227,8 +228,25 @@ class BuildFbcPipeline:
             doozer_opts.extend(['--major-minor', self.major_minor])
         if self.insert_missing_entry:
             doozer_opts.append('--insert-missing-entry')
-        if self.operator_nvrs:
-            doozer_opts.extend([nvr for nvr in self.operator_nvrs.split(',')])
+        selectors = self.operator_nvrs.split(',') if self.operator_nvrs else []
+        if any('=' in selector for selector in selectors):
+            if not all(selector.count('=') == 1 for selector in selectors):
+                raise ValueError("Every exact bundle selection must be OPERATOR_NVR=BUNDLE_NVR")
+            operators, bundles = zip(*(selector.split('=', 1) for selector in selectors), strict=True)
+            visibilities = {get_konflux_nvr_visibility(bundle) for bundle in bundles}
+            if visibilities == {BuildVisibility.PRIVATE}:
+                group = self.group or f"openshift-{self.version}"
+                private_repo = private_fixes_git_repo(group, self.assembly, group_config)
+                if not private_repo:
+                    raise ValueError("Private fixes require a configured private Git repository")
+                doozer_opts.extend(['--private-fixes', '--fbc-repo', private_repo])
+            elif visibilities != {BuildVisibility.PUBLIC}:
+                raise ValueError("An FBC build requires bundles with the same visibility")
+            for bundle in bundles:
+                doozer_opts.extend(['--bundle-nvr', bundle])
+            doozer_opts.extend(['--', *operators])
+        else:
+            doozer_opts.extend(selectors)
         try:
             await self._run_doozer(doozer_opts, only=self.only, exclude=self.exclude, build_variant=build_variant)
         finally:

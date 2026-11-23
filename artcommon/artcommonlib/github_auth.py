@@ -434,3 +434,15 @@ if __name__ == "__main__":
     except (EnvironmentError, ValueError) as e:
         print(f"Error: {e}", file=sys.stderr)
         sys.exit(1)
+
+
+def require_private_github_repository(url: str) -> str:
+    """Check the Git destination before publishing generated private content."""
+    match = re.fullmatch(r"https://github\.com/([\w-]+)/([\w.-]+?)(?:\.git)?/?", url)
+    if not match:
+        raise ValueError("The private fixes source must be an HTTPS GitHub repository")
+    org, name = match.groups()
+    repo = get_github_client_for_org(org).get_repo(f"{org}/{name}")
+    if repo.visibility != "private":
+        raise ValueError(f"Private fixes require a private Git repository: {url}")
+    return org
