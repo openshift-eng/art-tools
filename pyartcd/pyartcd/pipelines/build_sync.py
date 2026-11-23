@@ -369,18 +369,26 @@ class BuildSyncPipeline:
             tasks.append(backup_namespace(namespace))
         await asyncio.gather(*tasks)
 
-        # Create tar archive
-        self.logger.info('Creating backup archives')
-        await exectools.cmd_assert_async("lzma -9 " + " ".join(glob.glob('*.backup.yaml')))
-        cmd = ['tar', 'cvf', 'app.ci-backup.tgz', '--lzma']
-        cmd.extend(glob.glob('*.backup.yaml.lzma'))
-        await exectools.cmd_assert_async(cmd)
+        await self._create_backup_archive()
 
-        # Remove *.yaml
-        self.logger.debug('Removing yaml files')
-        cmd = ['rm']
-        cmd.extend(glob.glob('*.backup.yaml.lzma'))
-        await exectools.cmd_assert_async(cmd)
+    async def _create_backup_archive(self):
+        self.logger.info('Creating backup archives')
+        backup_files = sorted(glob.glob('*.backup.yaml'), key=os.path.getsize, reverse=True)
+        if not backup_files:
+            raise RuntimeError('No imagestream backup YAML files found')
+
+        @limit_concurrency(4)
+        async def compress_backup(path):
+            await exectools.cmd_assert_async(['lzma', '-6', path])
+
+        await asyncio.gather(*(compress_backup(path) for path in backup_files))
+
+        compressed_files = [f'{path}.lzma' for path in backup_files]
+        # Keep the Jenkins artifact name while using its .tgz gzip format.
+        await exectools.cmd_assert_async(['tar', 'cvf', 'app.ci-backup.tgz', '--gzip', *compressed_files])
+
+        self.logger.debug('Removing compressed backup files')
+        await exectools.cmd_assert_async(['rm', *compressed_files])
 
     @start_as_current_span_async(TRACER, "build-sync.tag-into-ci-imagestream")
     @limit_concurrency(500)
