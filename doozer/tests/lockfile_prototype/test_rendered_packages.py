@@ -155,3 +155,102 @@ def test_wildcard_copy_includes_common_and_arch_specific_templates(tmp_path: Pat
             arch_specific={"x86_64": ["syslinux"], "aarch64": ["aarch64-package"]},
         )
     }
+
+
+def test_copies_are_resolved_at_each_run_and_local_copy_options_are_supported(tmp_path: Path):
+    (tmp_path / "Dockerfile").write_text(
+        "FROM example.com/base\nCOPY --chown=0:0 first /tmp/packages\n"
+        "RUN render_package_list /tmp/packages /tmp/out\n"
+        "COPY --chmod=0644 second /tmp/packages\n"
+        "RUN render_package_list /tmp/packages /tmp/out\n"
+    )
+    for name in ("first", "second", "third"):
+        (tmp_path / name).write_text(f"{name}-package\n")
+
+    result = asyncio.run(
+        resolve_rendered_packages(
+            tmp_path, DockerfileParser(str(tmp_path / "Dockerfile")).structure, ["example.com/base"], AsyncMock()
+        )
+    )
+    assert result == {0: DynamicPackageSet(common=["first-package", "second-package"], arch_specific={})}
+
+
+def test_named_stage_inherits_json_copy_and_renamed_destination(tmp_path: Path):
+    (tmp_path / "Dockerfile").write_text(
+        'FROM example.com/base AS build\nENV PKGS_LIST=selected\nCOPY ["packages", "/tmp/selected"]\n'
+        'FROM build\nRUN render_package_list "/tmp/${PKGS_LIST}" /tmp/out\n'
+        'FROM example.com/other\nRUN render_package_list /tmp/selected /tmp/out\n'
+    )
+    (tmp_path / "packages").write_text("curl\n")
+
+    result = asyncio.run(
+        resolve_rendered_packages(
+            tmp_path,
+            DockerfileParser(str(tmp_path / "Dockerfile")).structure,
+            ["example.com/base", "build", "other"],
+            AsyncMock(),
+            skipped_stages={0},
+        )
+    )
+    assert result == {1: DynamicPackageSet(common=["curl"], arch_specific={})}
+
+
+def test_copy_from_invalidates_overwritten_file(tmp_path: Path):
+    (tmp_path / "Dockerfile").write_text(
+        "FROM example.com/base\nCOPY packages /tmp/packages\nCOPY keep /tmp/keep\n"
+        "COPY --from=other /packages /tmp/packages\nRUN render_package_list /tmp/keep /tmp/out\n"
+    )
+    (tmp_path / "packages").write_text("old\n")
+    (tmp_path / "keep").write_text("curl\n")
+    container = AsyncMock()
+    entries = DockerfileParser(str(tmp_path / "Dockerfile")).structure
+    assert asyncio.run(resolve_rendered_packages(tmp_path, entries, ["example.com/base"], container)) == {
+        0: DynamicPackageSet(common=["curl"], arch_specific={})
+    }
+
+    (tmp_path / "Dockerfile").write_text(
+        "FROM example.com/base\nCOPY packages /tmp/packages\n"
+        "COPY --from=other /packages /tmp/packages\nRUN render_package_list /tmp/packages /tmp/out\n"
+    )
+    entries = DockerfileParser(str(tmp_path / "Dockerfile")).structure
+    with pytest.raises(RuntimeError, match="copied from another stage"):
+        asyncio.run(resolve_rendered_packages(tmp_path, entries, ["example.com/base"], container))
+
+
+def test_skipped_stage_and_alias_repository_fallback(tmp_path: Path):
+    (tmp_path / "Dockerfile").write_text(
+        "FROM example.com/base AS build\nCOPY packages /tmp/\n"
+        "RUN render_package_list /tmp/packages /tmp/out\n"
+        "FROM build\nCOPY packages /tmp/\nCOPY python-config.sh /bin/\n"
+        "RUN render_package_list /tmp/packages /tmp/out\n"
+    )
+    (tmp_path / "packages").write_text("@PYTHON_PACKAGE_PREFIX@-six\n")
+    (tmp_path / "python-config.sh").write_text("case $RHEL_MAJOR in\n9)\nPYTHON_VERSION=3.12\n;;\nesac\n")
+    container = AsyncMock()
+    repos = [RepoEntry(repoid="rhel-9-baseos-rpms", baseurl="https://example.com")]
+
+    result = asyncio.run(
+        resolve_rendered_packages(
+            tmp_path,
+            DockerfileParser(str(tmp_path / "Dockerfile")).structure,
+            ["example.com/base", "build"],
+            container,
+            repos,
+            skipped_stages={0},
+        )
+    )
+    assert result == {1: DynamicPackageSet(common=["python3.12-six"], arch_specific={})}
+    container.read_file_from_image.assert_not_awaited()
+
+    repos.append(RepoEntry(repoid="rhel-10-baseos-rpms", baseurl="https://example.com"))
+    with pytest.raises(RuntimeError, match="Cannot determine Python package prefix"):
+        asyncio.run(
+            resolve_rendered_packages(
+                tmp_path,
+                DockerfileParser(str(tmp_path / "Dockerfile")).structure,
+                ["example.com/base", "build"],
+                container,
+                repos,
+                skipped_stages={0},
+            )
+        )

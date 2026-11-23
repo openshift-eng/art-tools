@@ -473,6 +473,50 @@ class TestRpmLockfilePrototypeGenerator(unittest.TestCase):
         self.assertIn("/usr/sbin/udevadm", config.packages)
         self.assertIn(ArchSpecificPackage(name="syslinux", arches={"only": "x86_64"}), config.packages)
 
+    def test_rendered_installed_packages_are_pinned_per_architecture(self):
+        meta = self._make_mock_image_meta()
+        generator = self._make_generator()
+        generator.downstream_parents = ["quay.io/test/base@sha256:abc123"]
+        generator._container.get_installed_packages = AsyncMock(return_value=["common", "x86-only"])
+        generator._pin_missing_dockerfile_packages = AsyncMock(side_effect=lambda result, *args: result)
+
+        with TemporaryDirectory() as tmpdir:
+            dest_dir = Path(tmpdir)
+            (dest_dir / "Dockerfile").write_text(
+                "FROM quay.io/test/base:latest\nENV PKGS_LIST=packages\nCOPY ${PKGS_LIST}* /tmp/\n"
+                "COPY prepare-image.sh /bin/\nRUN prepare-image.sh\n"
+            )
+            (dest_dir / "packages").write_text("common >= 1.0\n/usr/sbin/udevadm\n")
+            (dest_dir / "packages-x86_64").write_text("x86-only >= 2.0\n")
+            (dest_dir / "prepare-image.sh").write_text(
+                'package_list="/tmp/${PKGS_LIST}"\nrender_package_list "${package_list}" output\n'
+                'arch_package_list="${package_list}-$(arch)"\nrender_package_list "${arch_package_list}" output\n'
+            )
+            asyncio.run(generator.generate_lockfile(meta, dest_dir))
+
+        calls = generator._pin_missing_dockerfile_packages.await_args_list
+        candidates = {call.args[3][0]: set(call.args[1]) for call in calls}
+        self.assertEqual(candidates["x86_64"], {"common", "x86-only", "/usr/sbin/udevadm"})
+        self.assertEqual(candidates["ppc64le"], {"common", "/usr/sbin/udevadm"})
+
+    def test_no_rpms_stage_is_not_rendered(self):
+        meta = self._make_mock_image_meta()
+        meta.config.get.return_value = {"builder": [{"no_rpms": True}]}
+        generator = self._make_generator()
+        generator.downstream_parents = ["quay.io/test/base:latest"] * 2
+
+        with TemporaryDirectory() as tmpdir:
+            dest_dir = Path(tmpdir)
+            (dest_dir / "Dockerfile").write_text(
+                "FROM quay.io/test/base:latest\nCOPY packages /tmp/\n"
+                "RUN render_package_list /tmp/packages /tmp/out\n"
+                "FROM quay.io/test/base:latest\nRUN dnf install -y curl\n"
+            )
+            (dest_dir / "packages").write_text("@PYTHON_PACKAGE_PREFIX@-six\n")
+            asyncio.run(generator.generate_lockfile(meta, dest_dir))
+
+        self.assertEqual(generator._resolver.resolve.await_count, 1)
+
     def test_dynamic_packages_are_passed_to_resolver(self):
         """Configured dynamic packages are included in the stage input config."""
         meta = self._make_mock_image_meta()
