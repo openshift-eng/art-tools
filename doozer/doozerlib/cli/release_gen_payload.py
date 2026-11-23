@@ -19,9 +19,17 @@ import openshift_client as oc
 import yaml
 from artcommonlib import exectools, rhcos
 from artcommonlib.arch_util import brew_arch_for_go_arch, go_arch_for_brew_arch, go_suffix_for_arch
-from artcommonlib.assembly import AssemblyIssue, AssemblyIssueCode, AssemblyTypes, assembly_basis, assembly_basis_event
+from artcommonlib.assembly import (
+    AssemblyIssue,
+    AssemblyIssueCode,
+    AssemblyTypes,
+    assembly_basis,
+    assembly_basis_event,
+    assembly_is_private,
+)
 from artcommonlib.constants import (
     COREOS_RHEL10_STREAMS,
+    PRIVATE_RELEASE_IMAGE_REPO,
 )
 from artcommonlib.exectools import manifest_tool
 from artcommonlib.format_util import red_print
@@ -487,7 +495,7 @@ class GenPayloadCli:
         self.private_payload_entries_for_arch: Dict[str, Dict[str, PayloadEntry]] = {}
         # for gathering issues that are found while evaluating the payload:
         self.assembly_issues: List[AssemblyIssue] = list()
-        # private releases (only nightlies) can reference private component builds
+        self.private_only = False
         self.privacy_modes: List[bool] = [False]
         # do we proceed with this payload after weighing issues against permits?
         self.payload_permitted = False
@@ -787,8 +795,19 @@ class GenPayloadCli:
         if rt.assembly and rt.assembly != "stream" and "art-latest" in self.base_imagestream[1]:
             raise ValueError('"art-latest" imagestreams should only be used for the "stream" assembly')
 
-        if rt.assembly_type is AssemblyTypes.STREAM:
-            # Only nightlies have the concept of private and public payloads
+        self.private_only = assembly_is_private(rt.releases_config, rt.assembly)
+        if self.private_only:
+            if rt.build_system != "konflux":
+                raise DoozerFatalError("Private assembly mirroring requires Konflux")
+            if self.embargo_permit_ack:
+                raise DoozerFatalError("--embargo-permit-ack is incompatible with visibility: private")
+            private_repo = get_art_prod_image_repo_for_version(int(rt.group_config.vars["MAJOR"]), "dev-priv")
+            if self.full_component_repo(RepositoryType.PRIVATE) != private_repo:
+                raise DoozerFatalError(f"A private assembly must mirror to {private_repo}")
+            if self.base_imagestream[0] != default_imagestream_namespace_base_name():
+                raise DoozerFatalError("A private assembly must use the default base ImageStream namespace")
+            self.privacy_modes = [True]
+        elif rt.assembly_type is AssemblyTypes.STREAM:
             self.privacy_modes = [False, True]
 
         if rt.assembly_type is not AssemblyTypes.STREAM and self.emergency_ignore_issues:
@@ -1198,7 +1217,16 @@ class GenPayloadCli:
             if arch in self.exclude_arch:
                 self.logger.info(f"Excluding payload files architecture: {arch}")
                 continue
-            # No adjustment for private or public; the assembly's canonical payload content is the same.
+            private_entries, private_payload_issues = self.payload_generator.find_payload_entries(
+                assembly_inspector,
+                arch,
+                self.full_component_repo(repo_type=RepositoryType.PRIVATE),
+                registry_config=registry_config,
+            )
+            private_entries_for_arch[arch] = private_entries
+            if self.private_only:
+                self.assembly_issues.extend(private_payload_issues)
+                continue
 
             entries: Dict[str, PayloadEntry]  # Key of this dict is release payload tag name
             payload_issues: List[AssemblyIssue]
@@ -1265,14 +1293,6 @@ class GenPayloadCli:
             embargo_issues = self.payload_generator.embargo_issues_for_payload(public_entries, arch)
             self.assembly_issues.extend(embargo_issues)
 
-            private_entries, private_payload_issues = self.payload_generator.find_payload_entries(
-                assembly_inspector,
-                arch,
-                self.full_component_repo(repo_type=RepositoryType.PRIVATE),
-                registry_config=registry_config,
-            )
-            private_entries_for_arch[arch] = private_entries
-
             # Check to see if there are private only issues, and add them to the list of assembly issues
             private_only_issues = set(private_payload_issues) - set(payload_issues)
 
@@ -1297,7 +1317,8 @@ class GenPayloadCli:
             False: [],
             True: [],
         }  # privacy mode: list of BuildInspector
-        for arch, entries in self.payload_entries_for_arch.items():
+        entries_for_arch = self.private_payload_entries_for_arch if self.private_only else self.payload_entries_for_arch
+        for entries in entries_for_arch.values():
             for tag, payload_entry in entries.items():
                 if payload_entry.image_meta:
                     # Record the issues previously found for this image in corresponding payload_entry
@@ -1310,8 +1331,7 @@ class GenPayloadCli:
 
                     await self.detect_rhcos_issues(payload_entry, assembly_inspector)
                     # Record the build to enable later consistency checks between all RHCOS builds.
-                    # There are presently no private RHCOS builds, so add only to private_mode=False.
-                    targeted_rhcos_builds[False].append(payload_entry.rhcos_build)
+                    targeted_rhcos_builds[self.private_only].append(payload_entry.rhcos_build)
 
                     if cross_payload_requirements:
                         consistency_issues = self.payload_generator.find_rhcos_payload_rpm_inconsistencies(
@@ -1793,7 +1813,7 @@ class GenPayloadCli:
         self, arch: str, payload_entries: Dict[str, PayloadEntry], dest_repo: str, private: bool = False
     ):
         """
-        Ensure an arch's payload entries are synced out for the public to access.
+        Mirror an architecture's payload entries to the selected component repository.
         """
 
         # Prevents writing the same destination twice (not supported by oc if in the same mirroring file):
@@ -1917,7 +1937,7 @@ class GenPayloadCli:
             if (
                 payload_entry.image_meta
                 and payload_entry.image_meta.distgit_key in self.mismatched_siblings
-                and self.runtime.assembly_type == AssemblyTypes.STREAM
+                and (self.runtime.assembly_type == AssemblyTypes.STREAM or self.private_only)
             ):
                 self.logger.warning(
                     f"Skipping imagestream tag for {payload_entry.image_meta.distgit_key} "
@@ -2230,8 +2250,8 @@ class GenPayloadCli:
            single-arch assemblies, but written to a file rather than applied to the cluster.
         2. For each arch, a payload image based on its CVO, built with references to the (multi-arch)
            components in this imagestream and stored in
-           * quay.io/openshift-release-dev/ocp-release-nightly for nightlies or
-           * quay.io/openshift-release-dev/ocp-release for standard/custom releases.
+           * the selected public payload repository for public payloads or
+           * quay.io/openshift-release-dev/ocp-release-priv for private custom assemblies.
         3. A multi payload image, which is a manifest list built from the arch-specific release
            payload images and stored in the same quay.io repos as above.
         4. A _release_ imagestream per assembly to record tag(s) for multi-arch payload image(s)
@@ -2240,15 +2260,8 @@ class GenPayloadCli:
         """
 
         for private_mode in self.privacy_modes:
-            if private_mode:
-                # The CI image registry does not support manifest lists. Thus, we need to publish
-                # our nightly release payloads to quay.io. As of this writing, we don't have a
-                # private quay repository into which we could push embargoed release heterogeneous
-                # release payloads.
-                red_print(
-                    "PRIVATE MODE MULTI PAYLOADS ARE CURRENTLY DISABLED. "
-                    "WE NEED A PRIVATE QUAY REPO FOR PRIVATE MULTI RELEASE PAYLOADS"
-                )
+            if private_mode and not self.private_only:
+                self.logger.info("Multi-arch staging for private nightlies is disabled")
                 continue
 
             imagestream_namespace, imagestream_name = payload_imagestream_namespace_and_name(
@@ -2276,7 +2289,8 @@ class GenPayloadCli:
 
             # We will then stitch those arch specific payload images together into a release payload
             # manifest list.
-            multi_release_dest: str = f"quay.io/{'/'.join(self.release_repo)}:{multi_release_manifest_list_tag}"
+            release_repo = PRIVATE_RELEASE_IMAGE_REPO if private_mode else f"quay.io/{'/'.join(self.release_repo)}"
+            multi_release_dest = f"{release_repo}:{multi_release_manifest_list_tag}"
             final_multi_pullspec: str = await self.create_multi_release_image(
                 imagestream_name, multi_release_is, multi_release_dest, multi_release_istag, multi_specs, private_mode
             )
@@ -2410,7 +2424,8 @@ class GenPayloadCli:
         # We need a unique tag for the manifest list image so that it does not get garbage collected.
         # To calculate a tag that will vary depending on the individual manifests being added,
         # we've calculated a sha256 of all the manifests being added.
-        output_pullspec: str = f"{self.full_component_repo()}:sha256-{manifest_list_hash.hexdigest()}"
+        repository_type = RepositoryType.PRIVATE if self.private_only else RepositoryType.PUBLIC
+        output_pullspec = f"{self.full_component_repo(repository_type)}:sha256-{manifest_list_hash.hexdigest()}"
 
         # write the manifest list to a file and push it to the registry.
         async with aiofiles.open(component_manifest_path, mode="w+") as ml:

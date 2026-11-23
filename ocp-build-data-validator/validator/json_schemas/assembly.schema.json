@@ -16,6 +16,10 @@
         "preview"
       ]
     },
+    "visibility": {
+      "description": "For a named custom assembly, mirror components and update ImageStreams in private destinations only. Inherited by derived assemblies.",
+      "const": "private"
+    },
     "basis": {
       "description": "Basis of the assembly",
       "$ref": "assembly_basis.schema.json"
@@ -89,6 +93,13 @@
     "issues": {
       "description": "Bugs and JIRA issues to included or exclude for advisories",
       "$ref": "assembly_issues.schema.json"
+    }
+  },
+  "dependentSchemas": {
+    "visibility": {
+      "properties": {
+        "type": { "const": "custom" }
+      }
     }
   },
   "additionalProperties": false
