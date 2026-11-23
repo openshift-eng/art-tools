@@ -8,7 +8,7 @@ import shlex
 from pathlib import Path
 
 from doozerlib.lockfile_prototype.container_utils import ContainerImageHelper
-from doozerlib.lockfile_prototype.dynamic_packages import DynamicPackageResolver
+from doozerlib.lockfile_prototype.dynamic_packages import DynamicPackageResolver, DynamicPackageSet
 from doozerlib.lockfile_prototype.models import RepoEntry
 
 
@@ -19,7 +19,8 @@ async def resolve_rendered_packages(
     container: ContainerImageHelper,
     repos: list[RepoEntry] | None = None,
     logger: logging.Logger | None = None,
-) -> dict[int, list[str]]:
+    arches: list[str] | None = None,
+) -> dict[int, DynamicPackageSet]:
     """
     Resolve copied package templates in the stages that render them.
 
@@ -34,7 +35,7 @@ async def resolve_rendered_packages(
         elif stages:
             stages[-1].append(entry)
 
-    result: dict[int, list[str]] = {}
+    result: dict[int, DynamicPackageSet] = {}
     for stage, instructions in enumerate(stages):
         variables: dict[str, str] = {}
         copied: dict[str, Path] = {}
@@ -54,8 +55,12 @@ async def resolve_rendered_packages(
                     continue
                 for token in tokens[:-1]:
                     token = re.sub(r"\$\{(\w+)\}|\$(\w+)", lambda m: variables.get(m.group(1) or m.group(2), ""), token)
-                    path = (source_dir / token).resolve()
-                    if token and path.is_relative_to(source_dir.resolve()) and path.is_file():
+                    if not token or token.startswith("/") or ".." in Path(token).parts:
+                        continue
+                    for candidate in source_dir.glob(token):
+                        path = candidate.resolve()
+                        if not path.is_relative_to(source_dir.resolve()) or not path.is_file():
+                            continue
                         destination = tokens[-1]
                         copied[
                             (destination.rstrip("/") + "/" + path.name) if destination.endswith("/") else destination
@@ -75,6 +80,7 @@ async def resolve_rendered_packages(
             continue
 
         templates: list[Path] = []
+        arch_templates: dict[str, list[Path]] = {}
         for destination, path in copied.items():
             if path.suffix == ".sh":
                 continue
@@ -84,11 +90,16 @@ async def resolve_rendered_packages(
             )
             if referenced:
                 templates.append(path)
-        if not templates:
+            elif "$(arch)" in commands:
+                for arch in arches or []:
+                    if any(value and path.name == f"{value}-{arch}" for value in variables.values()):
+                        arch_templates.setdefault(arch, []).append(path)
+        if not templates and not arch_templates:
             continue
 
         prefix = ""
-        if any("@PYTHON_PACKAGE_PREFIX@" in path.read_text() for path in templates):
+        all_templates = templates + [path for paths in arch_templates.values() for path in paths]
+        if any("@PYTHON_PACKAGE_PREFIX@" in path.read_text() for path in all_templates):
             image = parents[stage] if stage < len(parents) else ""
             if not image or "/" not in image:
                 raise RuntimeError(f"Cannot determine base image for rendered package lists in stage {stage}")
@@ -124,11 +135,17 @@ async def resolve_rendered_packages(
                 raise RuntimeError(f"Unsupported Python package prefix for OS version {version} in stage {stage}")
             prefix = "python" + match.group(1)
 
-        packages: set[str] = set()
-        for path in templates:
-            for line in path.read_text().splitlines():
-                line = line.strip()
-                if line and not line.startswith("#"):
-                    packages.add(line.replace("@PYTHON_PACKAGE_PREFIX@", prefix))
-        result[stage] = sorted(packages)
+        def read_packages(paths: list[Path]) -> list[str]:
+            packages: set[str] = set()
+            for path in paths:
+                for line in path.read_text().splitlines():
+                    line = line.strip()
+                    if line and not line.startswith("#"):
+                        packages.add(line.replace("@PYTHON_PACKAGE_PREFIX@", prefix))
+            return sorted(packages)
+
+        result[stage] = DynamicPackageSet(
+            common=read_packages(templates),
+            arch_specific={arch: read_packages(paths) for arch, paths in arch_templates.items()},
+        )
     return result

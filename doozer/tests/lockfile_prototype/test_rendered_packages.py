@@ -9,6 +9,7 @@ from unittest.mock import AsyncMock
 
 import pytest
 from dockerfile_parse import DockerfileParser
+from doozerlib.lockfile_prototype.dynamic_packages import DynamicPackageSet
 from doozerlib.lockfile_prototype.models import RepoEntry
 from doozerlib.lockfile_prototype.rendered_packages import resolve_rendered_packages
 
@@ -49,8 +50,8 @@ esac
     )
 
     assert result == {
-        0: ["gcc", f"python{python}-devel"],
-        1: ["httpd", f"python{python}-flask >= 1:2.2.5"],
+        0: DynamicPackageSet(common=["gcc", f"python{python}-devel"], arch_specific={}),
+        1: DynamicPackageSet(common=["httpd", f"python{python}-flask >= 1:2.2.5"], arch_specific={}),
     }
 
 
@@ -88,7 +89,7 @@ def test_reads_usr_lib_os_release_if_etc_is_unavailable(tmp_path: Path):
         )
     )
 
-    assert result == {0: ["python3.14-devel"]}
+    assert result == {0: DynamicPackageSet(common=["python3.14-devel"], arch_specific={})}
     assert container.read_file_from_image.await_count == 2
 
 
@@ -115,7 +116,42 @@ def test_infers_os_version_only_from_unambiguous_repos(tmp_path: Path, majors: l
         )
 
     if expected:
-        assert asyncio.run(resolve()) == {0: [expected]}
+        assert asyncio.run(resolve()) == {0: DynamicPackageSet(common=[expected], arch_specific={})}
     else:
         with pytest.raises(RuntimeError, match="Cannot determine Python package prefix"):
             asyncio.run(resolve())
+
+
+def test_wildcard_copy_includes_common_and_arch_specific_templates(tmp_path: Path):
+    (tmp_path / "Dockerfile").write_text(
+        "FROM example.com/base\nENV PKGS_LIST=packages-list.ocp\nARG EXTRA_PKGS_LIST\n"
+        "COPY ${PKGS_LIST}* ${EXTRA_PKGS_LIST:-$PKGS_LIST} /tmp/\n"
+        "COPY prepare-image.sh python-config.sh /bin/\nRUN prepare-image.sh\n"
+    )
+    (tmp_path / "prepare-image.sh").write_text(
+        'package_list="/tmp/${PKGS_LIST}"\nrender_package_list "${package_list}" output\n'
+        'arch_package_list="${package_list}-$(arch)"\nrender_package_list "${arch_package_list}" output\n'
+    )
+    (tmp_path / "python-config.sh").write_text("case $RHEL_MAJOR in\n9)\nPYTHON_VERSION=3.12\n;;\nesac\n")
+    (tmp_path / "packages-list.ocp").write_text("/usr/sbin/udevadm\n@PYTHON_PACKAGE_PREFIX@-six\n")
+    (tmp_path / "packages-list.ocp-x86_64").write_text("syslinux\n")
+    (tmp_path / "packages-list.ocp-aarch64").write_text("aarch64-package\n")
+    container = AsyncMock()
+    container.read_file_from_image.return_value = 'VERSION_ID="9.8"\n'
+
+    result = asyncio.run(
+        resolve_rendered_packages(
+            tmp_path,
+            DockerfileParser(str(tmp_path / "Dockerfile")).structure,
+            ["example.com/base"],
+            container,
+            arches=["x86_64", "aarch64"],
+        )
+    )
+
+    assert result == {
+        0: DynamicPackageSet(
+            common=["/usr/sbin/udevadm", "python3.12-six"],
+            arch_specific={"x86_64": ["syslinux"], "aarch64": ["aarch64-package"]},
+        )
+    }

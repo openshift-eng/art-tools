@@ -386,10 +386,8 @@ class RpmLockfilePrototypeGenerator:
         entries = DockerfileParser(str(dockerfile_path)).structure
         cat_packages = await self._resolve_cat_packages(entries, self.downstream_parents)
         rendered_packages = await resolve_rendered_packages(
-            dest_dir, entries, self.downstream_parents, self._container, repo_list, self.logger
+            dest_dir, entries, self.downstream_parents, self._container, repo_list, self.logger, arches
         )
-        for stage, packages in rendered_packages.items():
-            cat_packages.setdefault(stage, []).extend(packages)
         dynamic_packages: dict[int, DynamicPackageSet] = {}
         detected_script = discover_dynamic_package_script(dest_dir, entries)
         if detected_script:
@@ -405,6 +403,11 @@ class RpmLockfilePrototypeGenerator:
                 entries,
                 repo_list,
             )
+        for stage, rendered in rendered_packages.items():
+            dynamic = dynamic_packages.setdefault(stage, DynamicPackageSet(common=[], arch_specific={}))
+            dynamic.common.extend(rendered.common)
+            for arch, packages in rendered.arch_specific.items():
+                dynamic.arch_specific.setdefault(arch, []).extend(packages)
 
         # Count stages and track which ones have RUN commands.
         # Stages without RUN (and no $(cat ...) extra packages) can't

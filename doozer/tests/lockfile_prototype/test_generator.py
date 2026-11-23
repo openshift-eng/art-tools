@@ -456,15 +456,22 @@ class TestRpmLockfilePrototypeGenerator(unittest.TestCase):
         with TemporaryDirectory() as tmpdir:
             dest_dir = Path(tmpdir)
             (dest_dir / "Dockerfile").write_text(
-                "FROM quay.io/test/base:latest\nCOPY packages /tmp/\nCOPY python-config.sh /bin/\n"
-                "RUN render_package_list /tmp/packages /tmp/packages.rendered\n"
+                "FROM quay.io/test/base:latest\nENV PKGS_LIST=packages\nCOPY ${PKGS_LIST}* /tmp/\n"
+                "COPY python-config.sh prepare-image.sh /bin/\nRUN prepare-image.sh\n"
             )
-            (dest_dir / "packages").write_text("@PYTHON_PACKAGE_PREFIX@-flask >= 1:2.2.5\n")
+            (dest_dir / "packages").write_text("/usr/sbin/udevadm\n@PYTHON_PACKAGE_PREFIX@-flask >= 1:2.2.5\n")
+            (dest_dir / "packages-x86_64").write_text("syslinux\n")
+            (dest_dir / "prepare-image.sh").write_text(
+                'package_list="/tmp/${PKGS_LIST}"\nrender_package_list "${package_list}" output\n'
+                'arch_package_list="${package_list}-$(arch)"\nrender_package_list "${arch_package_list}" output\n'
+            )
             (dest_dir / "python-config.sh").write_text("case $RHEL_MAJOR in\n9)\nPYTHON_VERSION=3.12\n;;\nesac\n")
             asyncio.run(generator.generate_lockfile(meta, dest_dir))
 
         config = generator._resolver.resolve.call_args.args[0]
         self.assertIn("python3.12-flask >= 1:2.2.5", config.packages)
+        self.assertIn("/usr/sbin/udevadm", config.packages)
+        self.assertIn(ArchSpecificPackage(name="syslinux", arches={"only": "x86_64"}), config.packages)
 
     def test_dynamic_packages_are_passed_to_resolver(self):
         """Configured dynamic packages are included in the stage input config."""
