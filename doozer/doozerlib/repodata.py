@@ -464,7 +464,9 @@ class RepodataLoader:
             else:
                 raise IOError(f'Unknown compression for: {url}')
             with uncompressed:
-                return RepodataLoader._parse_primary(uncompressed)
+                # Parsing large primary metadata is synchronous; keep the event loop
+                # available to drain other repository downloads.
+                return await asyncio.to_thread(RepodataLoader._parse_primary, uncompressed)
 
     @staticmethod
     async def _fetch_remote_compressed(session: aiohttp.ClientSession, url: Optional[str]):

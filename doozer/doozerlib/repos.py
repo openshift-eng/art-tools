@@ -360,7 +360,8 @@ class Repo(object):
         finally:
             lock.release()
 
-    @limit_concurrency(limit=8)
+    # Primary metadata can exceed 100 MB per repo; keep large transfers from overwhelming the server.
+    @limit_concurrency(limit=4)
     async def _load_repodata(self, arch: str):
         name = f"{self.name}-{arch}"
         repourl = cast(str, self.baseurl("unsigned", arch))
