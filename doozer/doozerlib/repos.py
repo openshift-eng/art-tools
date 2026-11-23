@@ -354,16 +354,18 @@ class Repo(object):
             repodata = self._repodatas.get(arch)
             if repodata:
                 return repodata
+            LOGGER.info('Queueing metadata load for %s-%s', self.name, arch)
             repodata = await self._load_repodata(arch)
             self._repodatas[arch] = repodata
             return repodata
         finally:
             lock.release()
 
-    # Primary metadata can exceed 100 MB per repo; keep large transfers from overwhelming the server.
-    @limit_concurrency(limit=4)
+    @limit_concurrency(limit=8)
     async def _load_repodata(self, arch: str):
         name = f"{self.name}-{arch}"
+        start = time.monotonic()
+        LOGGER.info('Loading metadata for %s', name)
         repourl = cast(str, self.baseurl("unsigned", arch))
         repodata = await RepodataLoader().load(name, repourl, optional=self.cs_optional)
 
@@ -397,6 +399,7 @@ class Repo(object):
                         break
             repodata.primary_rpms = filtered_rpms
 
+        LOGGER.info('Loaded metadata for %s in %.1f seconds', name, time.monotonic() - start)
         return repodata
 
     async def get_repodata_threadsafe(self, arch: str):

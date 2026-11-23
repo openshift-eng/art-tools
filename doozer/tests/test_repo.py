@@ -301,29 +301,29 @@ class TestRepo(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(loader.await_count, 2)
 
     async def test_limits_concurrent_repodata_loads(self):
-        repos = [Repo(f'example-{i}', self.repo_config, self.arches) for i in range(5)]
+        repos = [Repo(f'example-{i}', self.repo_config, self.arches) for i in range(9)]
         started = []
-        four_started = asyncio.Event()
+        eight_started = asyncio.Event()
         release = asyncio.Event()
 
         async def load(name, *args, **kwargs):
             started.append(name)
-            if len(started) == 4:
-                four_started.set()
+            if len(started) == 8:
+                eight_started.set()
             await release.wait()
             return Mock(primary_rpms=[])
 
         with patch('doozerlib.repos.RepodataLoader.load', side_effect=load):
             tasks = [asyncio.create_task(repo.get_repodata('x86_64')) for repo in repos]
             try:
-                await asyncio.wait_for(four_started.wait(), 2)
+                await asyncio.wait_for(eight_started.wait(), 2)
                 await asyncio.sleep(0)
-                self.assertEqual(len(started), 4)
+                self.assertEqual(len(started), 8)
             finally:
                 release.set()
                 await asyncio.gather(*tasks)
 
-        self.assertEqual(len(started), 5)
+        self.assertEqual(len(started), 9)
 
     def test_init_with_new_style_config(self):
         """Test that Repo.__init__ accepts new-style RepoConf (Pydantic model)"""

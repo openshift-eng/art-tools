@@ -1197,13 +1197,14 @@ data:
             raise ValueError("url")
 
         _fetch_remote_compressed.side_effect = _fake_fetch_remote_compressed
-        _fetch_primary_rpms.side_effect = lambda session, url: RepodataLoader._parse_primary(
+        _fetch_primary_rpms.side_effect = lambda session, url, name: RepodataLoader._parse_primary(
             BytesIO(_fake_fetch_remote_compressed(session, url))
         )
         repodata = await loader.load(repo_name, repo_url)
         _fetch_primary_rpms.assert_awaited_once_with(
             ANY,
             "https://example.com/repos/test/x86_64/os/repodata/06ed3172b751202671416050ea432945e54a36ee1ab8ef2cc71307234343f1ef-primary.xml.gz",
+            repo_name,
         )
         _fetch_remote_compressed.assert_any_await(
             ANY,
