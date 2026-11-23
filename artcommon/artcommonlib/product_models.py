@@ -58,8 +58,8 @@ class ProductConfig:
         conforma_stage_policies: Image and optional FBC Conforma stage policies.
         fbc_stage_release_plans: Product-version to FBC ReleasePlan mapping.
         cpe_product_name: Product name used in generated CPE labels.
-        build_data_group_prefix: Optional build-data group prefix; assembly resolution
-            uses the product name when omitted.
+        build_data_group_prefix: Optional prefix for build-data groups and unified FBC
+            output names; both use the product name when omitted.
     """
 
     product_id: ProductId

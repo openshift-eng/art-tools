@@ -520,19 +520,62 @@ class TestLayeredFbcMerger(unittest.IsolatedAsyncioTestCase):
                 )
 
     def test_names_come_from_product_and_target(self):
-        for product in ('quay', 'logging'):
+        for product, prefix in (
+            ('quay', 'quay'),
+            ('mta', 'mta'),
+            ('cluster-observability-operator', 'coo'),
+            ('rhacm2', 'acm'),
+            ('multicluster-engine', 'mce'),
+            ('external-secrets-operator', 'external-secrets'),
+            ('openshift-logging', 'logging'),
+            ('openshift-update-service', 'osus'),
+            ('rhmtc', 'mtc'),
+            ('mirror_gui', 'mirror-gui'),
+            ('openshift-opentelemetry-operator', 'rhosdt'),
+            ('zero-trust-workload-identity-manager', 'zero-trust'),
+            ('logging', 'logging'),
+            ('unknown-product', 'unknown-product'),
+        ):
             for target in ('4.15', '4.22'):
                 with self.subTest(product=product, target=target):
                     self.merger.product = product
                     self.merger.target_version = self.merger.version = target
                     self.merger._set_product_identity()
-                    application = f'{product}-fbc-unified'
+                    application = f'{prefix}-fbc-unified'
                     component = f'{application}-{target.replace(".", "-")}'
                     self.assertEqual(self.merger.get_application_name('quay-3.16'), application)
                     self.assertEqual(self.merger.get_component_name('quay-3.16'), component)
                     self.assertEqual(self.merger.fbc_git_branch, f'art-{component}')
                     self.assertEqual(self.merger.working_dir.name, component)
                     self.assertEqual(self.merger.nvr, f'{application}-{target}-{self.merger.release}')
+                    self.assertEqual(self.merger.product, product)
+
+    def test_group_prefix_keeps_custom_unified_source_branch(self):
+        """Use the short output identity without replacing an explicit source branch."""
+        self.merger.product = 'cluster-observability-operator'
+        self.merger.fbc_branch = 'codex/coo-manual-catalog'
+        self.merger._set_product_identity()
+        self.assertEqual(self.merger.get_application_name('coo-1.5'), 'coo-fbc-unified')
+        self.assertEqual(self.merger.fbc_git_branch, 'codex/coo-manual-catalog')
+
+    async def test_group_prefix_preserves_canonical_product_in_source_metadata(self):
+        """Short output names must not replace canonical provenance or the execution group."""
+        product = 'cluster-observability-operator'
+        namespace = self.merger.konflux_namespace
+        self.merger.product = self.runtime.product = product
+        self.merger.group = self.runtime.group = 'coo-1.5'
+        self.merger._set_product_identity()
+        self.merger.provenance = {'product': product, 'execution_group': 'coo-1.5'}
+        directory = Path(self.temp.name)
+        (directory / 'catalog').mkdir()
+        (directory / 'catalog.Dockerfile').write_text('FROM scratch\n')
+        await self.merger._prepare_source(SimpleNamespace(local_dir=directory))
+        dfp = DockerfileParser(str(directory / 'catalog.Dockerfile'))
+        self.assertEqual(dfp.labels['com.redhat.art.name'], 'coo-fbc-unified')
+        self.assertEqual(dfp.envs['__doozer_group'], 'coo-1.5')
+        self.assertEqual(json.loads((directory / 'unified-provenance.json').read_text()), self.merger.provenance)
+        self.assertEqual(self.runtime.product, product)
+        self.assertEqual(self.merger.konflux_namespace, namespace)
 
     async def test_submission_and_records_use_target_architectures(self):
         client = self.merger._konflux_client

@@ -21,6 +21,7 @@ from artcommonlib.konflux.konflux_build_record import (
     KonfluxFbcBuildRecord,
 )
 from artcommonlib.konflux.konflux_db import KonfluxDb
+from artcommonlib.product_catalog import find_product_config
 from artcommonlib.util import extract_ocp_version_from_fbc_nvr
 from artcommonlib.variants import get_build_variant_for_product
 from dockerfile_parse import DockerfileParser
@@ -198,7 +199,10 @@ class LayeredFbcMerger(KonfluxFbcFragmentMerger):
         return self._build_arches
 
     def _set_product_identity(self):
-        self.name = f'{self.product}-fbc-unified'
+        """Name unified outputs using the configured group prefix or product name."""
+        product_config = find_product_config(self.product)
+        prefix = (product_config.build_data_group_prefix if product_config else None) or self.product
+        self.name = f'{prefix}-fbc-unified'
         self.identity = f'{self.name}-{self.target_version}'.replace('.', '-').replace('_', '-')
         self.nvr = f'{self.name}-{self.version}-{self.release}'
         self.working_dir = Path(self.runtime.working_dir) / 'konflux-fbc-sources' / self.identity
