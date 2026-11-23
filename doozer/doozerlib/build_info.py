@@ -6,6 +6,7 @@ from datetime import datetime
 from typing import Awaitable, Dict, List, Optional, Tuple, Union, cast
 
 from artcommonlib.arch_util import brew_arch_for_go_arch, go_arch_for_brew_arch
+from artcommonlib.exectools import limit_concurrency
 from artcommonlib.konflux.konflux_build_record import KonfluxBuildRecord
 from artcommonlib.konflux.package_rpm_finder import PackageRpmFinder
 from artcommonlib.model import Model
@@ -716,6 +717,7 @@ class KonfluxBuildRecordInspector(BuildRecordInspector):
     def get_source_git_commit(self):
         return self._build_record.commitish
 
+    @limit_concurrency(limit=4)
     async def find_non_latest_rpms(self, package_rpm_finder: PackageRpmFinder):
         meta = self.get_image_meta()
         logger = meta.logger or self.runtime.logger
@@ -738,8 +740,6 @@ class KonfluxBuildRecordInspector(BuildRecordInspector):
         # Get latest RPM nvrs across build arches from repos enabled in current image
         logger.info('Checking whether any of the installed rpms is outdated in %s', meta.distgit_key)
         group_repos = self.runtime.repos
-        non_latest_rpms_for_arch = {}
-
         # Get enabled repos
         # Use get_enabled_repos() which applies AND logic (globally enabled AND in image config)
         enabled_repos = meta.get_enabled_repos()
@@ -752,7 +752,7 @@ class KonfluxBuildRecordInspector(BuildRecordInspector):
             )
             return {}
 
-        for arch in self._build_record.arches:
+        async def check_arch(arch: str):
             repodatas = await asyncio.gather(
                 *(group_repos[repo_name].get_repodata(arch) for repo_name in enabled_repos)
             )
@@ -766,11 +766,12 @@ class KonfluxBuildRecordInspector(BuildRecordInspector):
             )
             if non_latest_rpms:
                 logger.warning('Found outdated RPMs in %s for arch %s', self._build_record.nvr, arch)
-                non_latest_rpms_for_arch[arch] = non_latest_rpms
             else:
                 logger.info('All RPMs up-to-date in %s for arch %s', self._build_record.nvr, arch)
+            return arch, non_latest_rpms
 
-        return non_latest_rpms_for_arch
+        results = await asyncio.gather(*(check_arch(arch) for arch in self._build_record.arches))
+        return {arch: non_latest_rpms for arch, non_latest_rpms in results if non_latest_rpms}
 
     def get_rhel_base_version(self) -> Optional[int]:
         return isolate_el_version_in_release(self._build_record.el_target)

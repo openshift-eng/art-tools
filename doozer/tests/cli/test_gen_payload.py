@@ -1,3 +1,4 @@
+import asyncio
 import io
 import os
 from unittest import IsolatedAsyncioTestCase
@@ -10,7 +11,7 @@ from artcommonlib.model import Model
 from artcommonlib.rhcos import RhcosMissingContainerException
 from doozerlib import rhcos
 from doozerlib.assembly_inspector import AssemblyInspector
-from doozerlib.build_info import BrewBuildRecordInspector
+from doozerlib.build_info import BrewBuildRecordInspector, KonfluxBuildRecordInspector
 from doozerlib.cli import release_gen_payload as rgp_cli
 from doozerlib.exceptions import DoozerFatalError
 from doozerlib.image import ImageMetadata
@@ -1092,6 +1093,40 @@ class TestGenPayloadCli(IsolatedAsyncioTestCase):
         bbii.find_non_latest_rpms.return_value = {"x86_64": [], "s390x": []}
         await gpcli.detect_non_latest_rpms(ai)
         self.assertEqual(gpcli.assembly_issues, [])
+
+    async def test_detect_non_latest_rpms_checks_konflux_images_concurrently(self):
+        gpcli = rgp_cli.GenPayloadCli(runtime=MagicMock(build_system='konflux'))
+        started = []
+        both_started = asyncio.Event()
+        images = {}
+
+        for index in range(2):
+            inspector = AsyncMock(spec=KonfluxBuildRecordInspector)
+            inspector.get_image_meta.return_value.is_rpm_exempt.return_value = (False, None)
+            inspector.get_nvr.return_value = f'image-{index}-1.0-1'
+
+            async def check_image(_package_rpm_finder, image_index=index):
+                started.append(image_index)
+                if len(started) == 2:
+                    both_started.set()
+                await both_started.wait()
+                return {
+                    'x86_64': [
+                        ('foo-0:1.0-1.el9.x86_64', 'foo-0:1.1-1.el9.x86_64', 'repo_name'),
+                    ],
+                }
+
+            inspector.find_non_latest_rpms.side_effect = check_image
+            images[f'image-{index}'] = inspector
+
+        ai = MagicMock(spec=AssemblyInspector)
+        ai.get_group_release_images.return_value = {'missing': None, **images}
+        await asyncio.wait_for(gpcli.detect_non_latest_rpms(ai), timeout=2)
+
+        self.assertEqual(len(started), 2)
+        self.assertEqual([issue.component for issue in gpcli.assembly_issues], list(images))
+        for inspector in images.values():
+            inspector.find_non_latest_rpms.assert_awaited_once_with(gpcli.package_rpm_finder)
 
     async def test_detect_inconsistent_images(self):
         """Payload detection awaits consistency inspection before recording issues."""

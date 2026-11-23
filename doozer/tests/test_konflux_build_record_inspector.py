@@ -1,3 +1,4 @@
+import asyncio
 import logging
 from unittest import IsolatedAsyncioTestCase
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -59,6 +60,62 @@ class TestKonfluxFindNonLatestRpms(IsolatedAsyncioTestCase):
             'release': release,
             'arch': arch,
         }
+
+    async def test_repodata_loads_for_build_arches_concurrently(self):
+        self.package_rpm_finder.get_brew_rpms_from_build_record.return_value = [
+            self._make_rpm('filesystem', 0, '3.16', '2.el9', 'noarch'),
+        ]
+        started = set()
+        both_started = asyncio.Event()
+
+        async def get_repodata(arch):
+            started.add(arch)
+            if len(started) == len(self.build_record.arches):
+                both_started.set()
+            await both_started.wait()
+            return self.mock_repodata
+
+        self.mock_repo.get_repodata.side_effect = get_repodata
+        inspector = KonfluxBuildRecordInspector(self.runtime, self.build_record)
+
+        with patch.object(OutdatedRPMFinder, 'find_non_latest_rpms', return_value=[]):
+            result = await asyncio.wait_for(inspector.find_non_latest_rpms(self.package_rpm_finder), timeout=2)
+
+        self.assertEqual(result, {})
+        self.assertEqual(started, set(self.build_record.arches))
+
+    async def test_limits_concurrent_image_rpm_checks(self):
+        self.build_record.arches = ['x86_64']
+        self.package_rpm_finder.get_brew_rpms_from_build_record.return_value = [
+            self._make_rpm('filesystem', 0, '3.16', '2.el9', 'noarch'),
+        ]
+        started = []
+        four_started = asyncio.Event()
+        release = asyncio.Event()
+
+        async def get_repodata(arch):
+            started.append(arch)
+            if len(started) == 4:
+                four_started.set()
+            await release.wait()
+            return self.mock_repodata
+
+        self.mock_repo.get_repodata.side_effect = get_repodata
+        inspectors = [KonfluxBuildRecordInspector(self.runtime, self.build_record) for _ in range(5)]
+
+        with patch.object(OutdatedRPMFinder, 'find_non_latest_rpms', return_value=[]):
+            tasks = [
+                asyncio.create_task(inspector.find_non_latest_rpms(self.package_rpm_finder)) for inspector in inspectors
+            ]
+            try:
+                await asyncio.wait_for(four_started.wait(), timeout=2)
+                await asyncio.sleep(0)
+                self.assertEqual(len(started), 4)
+            finally:
+                release.set()
+                await asyncio.gather(*tasks)
+
+        self.assertEqual(len(started), 5)
 
     async def test_noarch_rpms_included_in_each_build_arch(self):
         """Verify that noarch RPMs (e.g. ca-certificates, tzdata) are merged
