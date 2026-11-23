@@ -286,6 +286,10 @@ PRODUCT_CATALOG: tuple[ProductConfig, ...] = (
         product_id=ProductId.OC_MIRROR,
         namespace="art-oc-mirror-tenant",
         kubeconfig_env="OC_MIRROR_KONFLUX_SA_KUBECONFIG",
+        base_image_release=ReleaseTarget(
+            release_plan="oc-mirror-images-base-silent",
+            application="oc-mirror-images-base",
+        ),
         conforma_stage_policies=ConformaPolicies(
             image_policy="rhtap-releng-tenant/registry-standard",
         ),

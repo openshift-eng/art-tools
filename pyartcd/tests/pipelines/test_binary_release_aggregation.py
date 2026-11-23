@@ -19,7 +19,15 @@ AGGREGATE_NVR = "oc-mirror-aggregate-binaries-container-2.0.0-202611121300.p2.as
 IMAGE_REPO = "quay.io/example/oc-mirror-builds"
 RECIPE_SOURCE_URL = "git@github.com:openshift-priv/ocp-build-data.git"
 ARCHES = ("amd64", "arm64", "ppc64le", "s390x")
-PARENTS = {arch: f"{IMAGE_REPO}@sha256:{i:064x}" for i, arch in enumerate(ARCHES, 1)}
+BASE_REPO = "registry.redhat.io/openshift/art-images-base"
+PARENTS = {arch: f"{BASE_REPO}@sha256:{i:064x}" for i, arch in enumerate(ARCHES, 1)}
+
+
+def _published_manifests():
+    return [
+        {"digest": pullspec.split("@")[1], "config": {"os": "linux", "architecture": arch}}
+        for arch, pullspec in PARENTS.items()
+    ]
 
 
 def _snapshot(aggregate=False):
@@ -109,6 +117,9 @@ class TestBuildAggregate(IsolatedAsyncioTestCase):
             "digest": PARENTS[go_arch.split("/")[1]].split("@")[1],
             "config": {"os": "linux", "architecture": go_arch.split("/")[1]},
         }
+        self.published_info = self.enterContext(
+            patch.object(release, "oc_image_info_show_multiarch", side_effect=lambda *a, **kw: _published_manifests())
+        )
         self.repo_cls = self.enterContext(patch.object(release, "GitRepository"))
         self.repo_cls.side_effect = self.data_repo
         self.enterContext(
@@ -192,6 +203,39 @@ class TestBuildAggregate(IsolatedAsyncioTestCase):
         )
         for invocation in self.image_info.await_args_list:
             self.assertEqual(invocation.args[0], self.source.spec.components[0].containerImage)
+        self.published_info.assert_called_once_with(
+            f"{BASE_REPO}:{SOURCE_NVR}", registry_config="/test/registry-auth", strict=False
+        )
+
+    async def test_publishes_the_selected_source_on_demand(self):
+        self.published_info.side_effect = [None, _published_manifests()]
+        with patch.object(release.exectools, "cmd_assert_async", new_callable=AsyncMock) as publish:
+            self.assertEqual(
+                await self.pipeline.resolve_aggregate_parents(self.source, publish_missing=True),
+                PARENTS,
+            )
+        publish.assert_awaited_once()
+        command = publish.await_args.args[0]
+        self.assertIn("images:release-to-base-repo", command)
+        self.assertIn(f"--nvr={SOURCE_NVR}", command)
+        self.assertIn(f"--expected-pullspec={self.source.spec.components[0].containerImage}", command)
+
+    async def test_build_only_requires_prepublished_source(self):
+        self.pipeline.build_only = True
+        self.published_info.side_effect = None
+        self.published_info.return_value = None
+        with self.assertRaisesRegex(ValueError, "silent base-image ReleasePlan"):
+            await self.pipeline.build_aggregate(self.source)
+        self.commands.assert_not_awaited()
+
+    async def test_published_digests_must_match_the_source(self):
+        published = _published_manifests()
+        published[0]["digest"] = "sha256:" + "f" * 64
+        self.published_info.side_effect = None
+        self.published_info.return_value = published
+        with self.assertRaisesRegex(ValueError, "does not contain the selected source digests"):
+            await self.pipeline.build_aggregate(self.source)
+        self.commands.assert_not_awaited()
 
     async def test_recipe_alias_fetches_public_upstream_for_the_private_fix_check(self):
         branch = self.pipeline.group
@@ -528,6 +572,7 @@ class TestAggregationRun(IsolatedAsyncioTestCase):
         with (
             patch.dict(os.environ, {"DOOZER_DATA_PATH": "https://github.com/openshift-eng/ocp-build-data"}),
             patch.object(release, "oc_image_info_for_arch_async", new_callable=AsyncMock) as image_info,
+            patch.object(release, "oc_image_info_show_multiarch", return_value=_published_manifests()),
         ):
             image_info.side_effect = lambda image, go_arch, **kwargs: {
                 "digest": PARENTS[go_arch.split("/")[1]].split("@")[1],

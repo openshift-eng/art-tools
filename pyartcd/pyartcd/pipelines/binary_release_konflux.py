@@ -25,10 +25,12 @@ from artcommonlib.rpm_utils import parse_nvr
 from artcommonlib.util import (
     new_roundtrip_yaml_handler,
     oc_image_info_for_arch_async,
+    oc_image_info_show_multiarch,
     resolve_konflux_kubeconfig_by_product,
     resolve_konflux_namespace_by_product,
 )
 from doozerlib.source_resolver import SourceResolver
+from doozerlib.util import rh_art_images_base_pullspec
 from elliottlib.shipment_model import (
     Environments,
     Metadata,
@@ -656,8 +658,10 @@ class BinaryReleaseKonfluxPipeline:
             )
         return data_path
 
-    async def resolve_aggregate_parents(self, source_snapshot: Snapshot) -> Dict[str, str]:
-        """Resolve and validate the selected source image's four Linux architecture digests."""
+    async def resolve_aggregate_parents(
+        self, source_snapshot: Snapshot, *, publish_missing: bool = False
+    ) -> Dict[str, str]:
+        """Pin the four source manifests to their signed copies in art-images-base."""
         profile = self.aggregation_profile
         components = source_snapshot.spec.components
         if source_snapshot.spec.application != profile.application or len(components) != 1:
@@ -667,11 +671,11 @@ class BinaryReleaseKonfluxPipeline:
         source_image = components[0].containerImage
         if not re.fullmatch(r".+@sha256:[0-9a-f]{64}", source_image):
             raise ValueError("Source NVR must resolve to a digest-pinned image")
-        image_repo = source_image.split("@", 1)[0]
-        if ":" in image_repo.rsplit("/", 1)[-1]:
-            image_repo = image_repo.rsplit(":", 1)[0]
+        (nvr,) = source_snapshot.nvrs
+        if is_nvr_embargoed(nvr):
+            raise ValueError(f"Cannot use an embargoed oc-mirror source build: {nvr}")
         registry_config = os.environ.get("QUAY_AUTH_FILE")
-        parents = {}
+        source_digests = {}
         for arch in profile.arches:
             info = await oc_image_info_for_arch_async(
                 source_image, go_arch=f"linux/{arch}", registry_config=registry_config
@@ -682,8 +686,48 @@ class BinaryReleaseKonfluxPipeline:
             image_config = info.get("config") or {}
             if image_config.get("os") != "linux" or image_config.get("architecture") != arch:
                 raise ValueError(f"{source_image} does not provide a linux/{arch} image")
-            parents[arch] = f"{image_repo}@{digest}"
-        self.logger.info("Aggregate source image: %s; parents: %s", source_image, parents)
+            source_digests[arch] = digest
+
+        published_pullspec = rh_art_images_base_pullspec(nvr)
+        published = await asyncio.to_thread(
+            oc_image_info_show_multiarch, published_pullspec, registry_config=registry_config, strict=False
+        )
+        if published is None and publish_missing:
+            await exectools.cmd_assert_async(
+                [
+                    "doozer",
+                    f"--group={self.group}",
+                    f"--assembly={self.assembly}",
+                    f"--data-path={self._aggregate_data_path()}",
+                    f"--working-dir={self.doozer_working_dir}",
+                    "--build-system=konflux",
+                    "images:release-to-base-repo",
+                    f"--nvr={nvr}",
+                    f"--expected-pullspec={source_image}",
+                ]
+            )
+            published = await asyncio.to_thread(
+                oc_image_info_show_multiarch, published_pullspec, registry_config=registry_config
+            )
+        if published is None:
+            raise ValueError(f"Publish {nvr} through the oc-mirror silent base-image ReleasePlan before building")
+
+        if not isinstance(published, list):
+            raise ValueError(f"{published_pullspec} does not contain a multi-architecture image")
+        published_digests = {}
+        for image in published:
+            config = image.get("config") or {}
+            arch = config.get("architecture")
+            if config.get("os") == "linux" and arch in source_digests:
+                if arch in published_digests:
+                    raise ValueError(f"{published_pullspec} contains multiple linux/{arch} manifests")
+                published_digests[arch] = image.get("digest")
+        if published_digests != source_digests:
+            raise ValueError(f"{published_pullspec} does not contain the selected source digests for {nvr}")
+
+        published_repo = published_pullspec.rsplit(":", 1)[0]
+        parents = {arch: f"{published_repo}@{digest}" for arch, digest in source_digests.items()}
+        self.logger.info("Aggregate source image: %s; signed parents: %s", source_image, parents)
         return parents
 
     @staticmethod
@@ -713,7 +757,9 @@ class BinaryReleaseKonfluxPipeline:
         """Build one transport image from the selected oc-mirror NVR's four architecture images."""
         profile = self.aggregation_profile
         data_path = self._aggregate_data_path()
-        parents = await self.resolve_aggregate_parents(source_snapshot)
+        parents = await self.resolve_aggregate_parents(
+            source_snapshot, publish_missing=not self.dry_run and not self.build_only
+        )
         image_repo = source_snapshot.spec.components[0].containerImage.split("@", 1)[0]
         if ":" in image_repo.rsplit("/", 1)[-1]:
             image_repo = image_repo.rsplit(":", 1)[0]
@@ -978,7 +1024,8 @@ async def binary_release_konflux(
     and binaries shipment files in one MR. To reuse a successful build, pass both
     the source and aggregate NVRs without --aggregate.
     An image-only or binaries-only oc-mirror release requires --shipment-kind image or binaries.
-    Add --build-only to stop after building and verifying that image.
+    Add --build-only to use an already-published source image and stop after
+    building and verifying the aggregate.
     """
     nvrs_list = [nvr.strip() for nvr in nvrs.split(',') if nvr.strip()]
     if not nvrs_list:

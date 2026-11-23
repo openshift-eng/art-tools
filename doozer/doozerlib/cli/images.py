@@ -16,6 +16,7 @@ import click
 import koji
 import yaml
 from artcommonlib import exectools, logutil
+from artcommonlib.build_visibility import is_nvr_embargoed
 from artcommonlib.constants import GOLANG_BUILDER_IMAGE_NAME
 from artcommonlib.format_util import color_print, green_print, yellow_print
 from artcommonlib.konflux.konflux_build_record import KonfluxBuildOutcome, KonfluxBuildRecord
@@ -1504,9 +1505,10 @@ def query_rpm_version(runtime, repo_type):
     required=True,
     help='Image build NVR',
 )
+@click.option('--expected-pullspec', help='Require this exact image pullspec in the selected build record.')
 @click_coroutine
 @pass_runtime
-async def release_to_base_repo(runtime, nvr):
+async def release_to_base_repo(runtime, nvr, expected_pullspec=None):
     """Latest SUCCESS Konflux image row → snapshot/release, then INSERT follow-up with ``release_pipeline`` / ``released_pullspec``.
 
     Raises DoozerFatalError (non-zero exit) if ``released_pullspec`` is empty after release.
@@ -1532,6 +1534,22 @@ async def release_to_base_repo(runtime, nvr):
     if not source_row:
         raise DoozerFatalError(f"No SUCCESS Konflux image row for {image_nvr}")
 
+    if expected_pullspec is not None and source_row.image_pullspec != expected_pullspec:
+        raise DoozerFatalError(f"The Konflux build record for {image_nvr} no longer matches the selected image")
+
+    # The oc-mirror CDN job requests this release for a selected public build.
+    # Routine oc-mirror builds do not trigger silent publication.
+    on_demand = runtime.product == "oc-mirror"
+    if on_demand:
+        if runtime.group != source_row.group or source_row.name != "oc-mirror":
+            raise DoozerFatalError(f"{image_nvr} is not an oc-mirror source build in {runtime.group}")
+        try:
+            embargoed = source_row.embargoed or is_nvr_embargoed(image_nvr)
+        except ValueError as exc:
+            raise DoozerFatalError(f"Cannot determine the visibility of {image_nvr}: {exc}") from exc
+        if embargoed:
+            raise DoozerFatalError(f"Cannot publish embargoed oc-mirror build {image_nvr}")
+
     metadata = runtime.image_map.get(source_row.name)
     is_golang_builder = metadata.is_golang_builder() if metadata else GOLANG_BUILDER_IMAGE_NAME in image_nvr
 
@@ -1545,7 +1563,7 @@ async def release_to_base_repo(runtime, nvr):
     )
 
     handler = BaseImageHandler(runtime, dry_run=False)
-    result = await handler.snapshot_release(snapshot_input)
+    result = await handler.snapshot_release(snapshot_input, on_demand=on_demand)
 
     if not result:
         raise DoozerFatalError("snapshot_release returned no result")

@@ -221,7 +221,8 @@ class TestReleaseToBaseRepo(unittest.TestCase):
 
         with patch("doozerlib.cli.images.BaseImageHandler") as bh_cls:
 
-            async def snap_release(inp):
+            async def snap_release(inp, *, on_demand):
+                self.assertFalse(on_demand)
                 self.assertFalse(inp.is_golang_builder)
                 self.assertEqual(inp.distgit_key, source.name)
                 self.assertEqual(inp.container_image, source.image_pullspec)
@@ -241,6 +242,40 @@ class TestReleaseToBaseRepo(unittest.TestCase):
         self.assertEqual(followup.release_pipeline, release_out.release_pipeline)
         self.assertEqual(followup.released_pullspec, release_out.released_pullspec)
         self.assertNotEqual(followup.record_id, "prior-id")
+
+    def test_oc_mirror_only_publishes_public_source_builds_on_demand(self):
+        runtime = self._runtime_with_base_image()
+        runtime.group = "oc-mirror-2.0"
+        runtime.product = "oc-mirror"
+        runtime.image_map = {"oc-mirror": MagicMock()}
+        runtime.konflux_db.add_builds = AsyncMock()
+        nvr = "oc-mirror-container-2.0-202611182001.p2.assembly.stream.el9"
+        row = KonfluxBuildRecord(
+            name="oc-mirror",
+            group=runtime.group,
+            nvr=nvr,
+            image_pullspec="quay.io/art/builds@sha256:abc",
+            build_variant=BuildVariant.OCP,
+        )
+        runtime.konflux_db.get_build_record_by_nvr = AsyncMock(return_value=row)
+        release_result = BaseImageReleaseResult(
+            release_name="release",
+            snapshot_name="snapshot",
+            nvr=nvr,
+            release_pipeline="https://example.com/release",
+            released_pullspec=f"registry.redhat.io/openshift/art-images-base:{nvr}",
+        )
+        with patch("doozerlib.cli.images.BaseImageHandler") as handler:
+            publish = AsyncMock(return_value=release_result)
+            handler.return_value.snapshot_release = publish
+
+            with self.assertRaisesRegex(DoozerFatalError, "Cannot publish embargoed"):
+                _invoke_release_to_base_repo_inner(runtime, nvr.replace(".p2.", ".p3."))
+            publish.assert_not_awaited()
+
+            _invoke_release_to_base_repo_inner(runtime, nvr)
+            publish.assert_awaited_once()
+            self.assertTrue(publish.await_args.kwargs["on_demand"])
 
     def test_legacy_followup_uses_group_product_variant(self):
         runtime = self._runtime_with_base_image()
@@ -374,7 +409,8 @@ class TestReleaseToBaseRepo(unittest.TestCase):
 
         with patch("doozerlib.cli.images.BaseImageHandler") as bh_cls:
 
-            async def snap_release(inp):
+            async def snap_release(inp, *, on_demand):
+                self.assertFalse(on_demand)
                 self.assertTrue(inp.is_golang_builder)
                 return release_out
 
