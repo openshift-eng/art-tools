@@ -33,6 +33,28 @@ is rejected because Doozer reads local working-tree contents without checking
 out that ref. For a local checkout, select the revision yourself and unset
 `DOOZER_DATA_GITREF`; alternatively, use a remote Git URL with the requested ref.
 
+## Private fixes in layered product stream catalogs
+
+Set `konflux.private_fixes_git_repo` in the LP group's `group.yml`
+to the HTTPS URL of a private GitHub repo accessible to the ART GitHub App.
+The bundle and FBC jobs verify that the repo is private before writing build
+source. Existing Jenkins and Tekton jobs carry exact selections as
+`OPERATOR_NVR=BUNDLE_NVR` in the operator NVR list.
+
+The standard catalog uses a bundle built from eligible `p2` images and is
+published to `art-fbc`. If the latest operator or an operand contains a
+private fix, a separate `p3` bundle and its FBCs are published to
+`quay.io/redhat-user-workloads/ocp-art-tenant/art-fbc-priv`. For example,
+an operand-only fix uses the same `p2` operator in both bundles and selects
+the latest eligible public or private operand for each. FBC NVRs keep the
+same format.
+
+Before enabling the flow, grant the Konflux build identities push access to
+the private repository and the bundle and FBC jobs pull access to their
+inputs. Give approved teams temporary pull access to the catalog and every
+image its bundle needs. When the fix clears, use the standard build flow and
+revoke temporary access.
+
 ## Preparing inputs for unified layered-product catalogs
 
 Run `artcd prepare-release-lp -g quay-3.18 --assembly=3.18.5 --create-mr

@@ -7,6 +7,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import yaml
 from artcommonlib.assembly import AssemblyTypes
+from artcommonlib.build_visibility import BuildVisibility
 from artcommonlib.konflux.konflux_build_record import KonfluxBuildOutcome, KonfluxBundleBuildRecord
 from artcommonlib.konflux.konflux_db import Engine
 from artcommonlib.model import Model
@@ -1222,6 +1223,41 @@ spec:
         self.assertEqual(new_pullspec, "registry.redhat.io/oadp/oadp-velero-rhel9@sha256:oadpvelerodigest111")
         self.assertNotIn("konveyor", new_pullspec)
         self.assertEqual(nvr, "oadp-velero-container-1.5.8-202507160000.p0.g1234567.assembly.stream.el9")
+
+    @patch("doozerlib.util.oc_image_info_for_arch_async")
+    async def test_private_stream_operand_uses_build_registry_digest(self, image_info):
+        operator_meta = MagicMock(distgit_key="demo-operator")
+        operator_meta.runtime.group = "demo-1.0"
+        operand_meta = MagicMock(distgit_key="demo-agent", image_name_short="demo-agent")
+        operand_meta.config = {}
+        operand_meta.get_latest_konflux_build = AsyncMock(
+            return_value=MagicMock(
+                assembly="stream",
+                nvr="demo-agent-1.0.0-7.p3",
+                image_pullspec="quay.io/example/build-images@sha256:private",
+            )
+        )
+        operator_meta.runtime.name_in_bundle_map = {"demo-agent": "demo-agent"}
+        operator_meta.runtime.image_map = {"demo-agent": operand_meta}
+        image_info.return_value = {
+            "config": {
+                "config": {"Labels": {"com.redhat.component": "demo-agent", "version": "1.0.0", "release": "7.p3"}}
+            },
+            "listDigest": "sha256:private",
+        }
+        self.rebaser.assembly = "stream"
+        self.rebaser.stream_visibility = BuildVisibility.PRIVATE
+        self.rebaser._group_config.operator_image_ref_mode = "manifest-list"
+        self.rebaser._group_config.vars = {"MAJOR": 4}
+        self.rebaser._group_config.get.return_value = "demo"
+        references = [{"name": "demo-agent", "from": {"name": "quay.io/example/demo-agent:latest"}}]
+
+        resolved = await self.rebaser._resolve_operands_from_db(operator_meta, references, {}, {})
+
+        self.assertEqual(
+            resolved["demo-agent"][1:], ("quay.io/example/build-images@sha256:private", "demo-agent-1.0.0-7.p3")
+        )
+        self.assertNotIn("embargoed", operand_meta.get_latest_konflux_build.await_args.kwargs)
 
     @patch("doozerlib.backend.konflux_olm_bundler.is_nvr_embargoed")
     @patch("doozerlib.util.oc_image_info_for_arch_async")

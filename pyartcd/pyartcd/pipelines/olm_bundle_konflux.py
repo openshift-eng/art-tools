@@ -1,6 +1,7 @@
 import asyncio
 import sys
 from pathlib import Path
+from tempfile import mkdtemp
 
 import click
 from artcommonlib import exectools
@@ -19,7 +20,7 @@ from pyartcd.cli import cli, click_coroutine, pass_runtime
 from pyartcd.locks import Lock
 from pyartcd.record import parse_record_log
 from pyartcd.runtime import Runtime
-from pyartcd.util import load_group_config
+from pyartcd.util import load_group_config, private_fixes_git_repo
 
 
 async def _stage_release_related_images(
@@ -28,6 +29,7 @@ async def _stage_release_related_images(
     namespace: str,
     final_kubeconfig: str,
     operator_nvrs: list,
+    bundle_nvrs: tuple[str, ...] = (),
 ) -> list:
     """Run doozer beta:bundle:stage-release-related-images for the given operator NVRs.
 
@@ -46,6 +48,8 @@ async def _stage_release_related_images(
     ]
     if runtime.dry_run:
         cmd.append('--dry-run')
+    for bundle_nvr in bundle_nvrs:
+        cmd.extend(['--bundle-nvr', bundle_nvr])
     cmd.append('--')
     cmd.extend(operator_nvrs)
 
@@ -81,6 +85,37 @@ def _parse_failed_stage_releases(runtime: Runtime) -> list:
             failed_nvrs.append(nvr)
             runtime.logger.error(f'Stage release failed for {nvr}: {record.get("message", "")}')
     return failed_nvrs
+
+
+async def _build_stream_bundles(runtime, cmd, requested_nvrs, private_repo, force_release):
+    """Run independent public and private bundle builds and preserve partial results."""
+    cmd = [arg for arg in cmd if not arg.startswith('--working-dir=')]
+    cmd_index = cmd.index('beta:images:konflux:bundle')
+    results = {}
+    failures = []
+    visibilities = ('public',) if force_release else ('public', 'private')
+    for visibility in visibilities:
+        workdir = mkdtemp(prefix=f'doozer-bundles-{visibility}-', dir=runtime.working_dir)
+        flow_cmd = [
+            *cmd[:cmd_index],
+            f'--working-dir={workdir}',
+            *cmd[cmd_index:],
+            '--stream-visibility',
+            visibility,
+        ]
+        if visibility == 'private':
+            flow_cmd.extend(['--private-source-repo', private_repo])
+        try:
+            await exectools.cmd_assert_async([*flow_cmd, '--', *requested_nvrs])
+        except ChildProcessError as error:
+            runtime.logger.error('Failed building %s bundles: %s', visibility, error)
+            failures.append(visibility)
+        records = Path(workdir, 'record.log')
+        results[visibility] = []
+        if records.is_file():
+            with records.open() as stream:
+                results[visibility] = parse_record_log(stream).get('build_stream_bundle', [])
+    return results, failures
 
 
 @cli.command('olm-bundle-konflux')
@@ -221,13 +256,81 @@ async def olm_bundle_konflux(
         cmd.extend(['--plr-template', plr_template_url])
     if runtime.dry_run:
         cmd.append('--dry-run')
-    if nvrs:
-        cmd.append('--')
-        cmd.extend(nvrs.split(','))
+    requested_nvrs = [nvr.strip() for nvr in nvrs.split(',') if nvr.strip()] if nvrs else []
 
     lock = Lock.OLM_BUNDLE_KONFLUX
     lock_name = lock.value.format(version=version)
     lock_identifier = jenkins.get_build_path_or_random()
+
+    if private_repo := private_fixes_git_repo(group, assembly, group_config):
+        bundles, failures = await locks.run_with_lock(
+            coro=_build_stream_bundles(runtime, cmd, requested_nvrs, private_repo, force_release),
+            lock=lock,
+            lock_name=lock_name,
+            lock_id=lock_identifier,
+        )
+        public_bundles = bundles['public']
+        if public_bundles and has_stage_release_plan:
+            # On recovery, restage the exact bundle before re-attempting its FBC.
+            try:
+                failed_nvrs = await _stage_release_related_images(
+                    runtime,
+                    doozer_base_cmd,
+                    namespace,
+                    final_kubeconfig,
+                    [record['operator_nvr'] for record in public_bundles],
+                    tuple(record['bundle_nvr'] for record in public_bundles),
+                )
+            except ChildProcessError:
+                failed_nvrs = [record['operator_nvr'] for record in public_bundles]
+            if failed_nvrs:
+                failures.append('stage')
+                bundles['public'] = [r for r in public_bundles if r['operator_nvr'] not in failed_nvrs]
+
+        target_versions = group_config.get("OCP_TARGET_VERSIONS") or [None]
+        if isinstance(target_versions, str):
+            target_versions = [target_versions]
+        for visibility, records in bundles.items():
+            if not records:
+                continue
+            selections = [f"{r['operator_nvr']}={r['bundle_nvr']}" for r in records]
+            for target_version in target_versions:
+                if tekton.is_tekton_context():
+                    params = {
+                        "version": version,
+                        "group": group,
+                        "assembly": assembly,
+                        "operator-nvrs": ",".join(selections),
+                        "data-path": data_path,
+                        "data-gitref": data_gitref or "",
+                        "dry-run": str(runtime.dry_run).lower(),
+                    }
+                    if target_version:
+                        params["ocp-target-version"] = target_version
+                    if created_name := tekton.start_pipeline_run(pipeline_name="build-fbc", params=params):
+                        suffix = f"{visibility}-{target_version or 'default'}"
+                        tekton.annotate_current_pipelinerun(
+                            {f"art.openshift.io/triggered-build-fbc-{suffix}": created_name}
+                        )
+                else:
+                    jenkins.start_build_fbc(
+                        version=version,
+                        group=group,
+                        assembly=assembly,
+                        operator_nvrs=selections,
+                        dry_run=runtime.dry_run,
+                        ocp_target_version=target_version,
+                        doozer_data_path=data_path,
+                        doozer_data_gitref=data_gitref,
+                        propagate_params=jenkins.get_propagatable_params(),
+                    )
+        if failures:
+            runtime.logger.error("Stream bundle reconciliation failed for: %s", ", ".join(failures))
+            sys.exit(2 if any(bundles.values()) else 1)
+        return
+
+    if requested_nvrs:
+        cmd.extend(['--', *requested_nvrs])
 
     # Track whether doozer command succeeded
     doozer_error = None
@@ -248,7 +351,7 @@ async def olm_bundle_konflux(
 
     # Explicitly-requested operator NVRs. Only used if record.log turns up empty, which means
     # every requested bundle already existed and doozer skipped it.
-    fallback_nvrs = [n.strip() for n in nvrs.split(',') if n.strip()] if nvrs else []
+    fallback_nvrs = requested_nvrs
 
     # Parse doozer record.log to determine actual build results
     # This runs regardless of whether doozer succeeded or failed

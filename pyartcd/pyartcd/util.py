@@ -136,6 +136,16 @@ def resolve_build_version(group: str, version: str) -> str:
     return f'{major}.{minor}.0'
 
 
+def private_fixes_git_repo(group: str, assembly: str, group_config: dict) -> str | None:
+    """Return the configured private source for layered product stream builds."""
+    if assembly != "stream" or group.startswith(("openshift-", "okd-")):
+        return None
+    repo = (group_config.get("konflux") or {}).get("private_fixes_git_repo")
+    if repo is not None and (not isinstance(repo, str) or not repo.strip()):
+        raise ValueError("konflux.private_fixes_git_repo must be a private GitHub repository URL")
+    return repo
+
+
 async def load_group_config(
     group: str,
     assembly: str,

@@ -5,6 +5,7 @@ import os
 import re
 import shutil
 import string
+from collections.abc import Awaitable, Callable
 from datetime import datetime, timezone
 from functools import cached_property, lru_cache
 from pathlib import Path
@@ -15,7 +16,12 @@ import yaml
 from artcommonlib import exectools
 from artcommonlib import util as artlib_util
 from artcommonlib.assembly import AssemblyTypes, assembly_image_pins, assembly_type
-from artcommonlib.build_visibility import is_nvr_embargoed
+from artcommonlib.build_visibility import (
+    BuildVisibility,
+    get_konflux_nvr_visibility,
+    is_nvr_embargoed,
+    is_private_fix_pullspec,
+)
 from artcommonlib.conforma import resolve_stage_policy
 from artcommonlib.konflux.konflux_build_record import (
     KonfluxBuildOutcome,
@@ -111,6 +117,10 @@ class KonfluxOlmBundleRebaseError(Exception):
     pass
 
 
+class NoPrivateFixes(Exception):
+    """The operator and its operands have no private fixes to build."""
+
+
 class KonfluxOlmBundleRebaser:
     def __init__(
         self,
@@ -125,6 +135,8 @@ class KonfluxOlmBundleRebaser:
         dry_run: bool = False,
         logger: logging.Logger = _LOGGER,
         record_logger=None,
+        stream_visibility: BuildVisibility | None = None,
+        private_source_repo: str | None = None,
     ):
         self.base_dir = base_dir
         self.group = group
@@ -138,8 +150,16 @@ class KonfluxOlmBundleRebaser:
         self.dry_run = dry_run
         self._logger = logger
         self._record_logger = record_logger
+        self.stream_visibility = stream_visibility
+        self.private_source_repo = private_source_repo
 
-    async def rebase(self, metadata: ImageMetadata, operator_build: KonfluxBuildRecord, input_release: str) -> str:
+    async def rebase(
+        self,
+        metadata: ImageMetadata,
+        operator_build: KonfluxBuildRecord,
+        input_release: str,
+        find_existing: Callable[[set[str]], Awaitable[str | None]] | None = None,
+    ) -> str:
         """Rebase an operator with Konflux.
 
         :param metadata: The metadata of the operator to rebase.
@@ -200,8 +220,13 @@ class KonfluxOlmBundleRebaser:
                     "distgit_key": metadata.distgit_key,
                 }
             )
+            if self.private_source_repo:
+                bundle_build_branch += "-private-fixes"
             bundle_build_repo = BuildRepo(
-                url=source.url, branch=bundle_build_branch, local_dir=bundle_dir, logger=self._logger
+                url=self.private_source_repo or source.url,
+                branch=bundle_build_branch,
+                local_dir=bundle_dir,
+                logger=self._logger,
             )
             await bundle_build_repo.ensure_source(upcycle=self.upcycle)
             logger.info("Bundle repository cloned to %s", bundle_dir)
@@ -212,6 +237,11 @@ class KonfluxOlmBundleRebaser:
             nvr = await self._rebase_dir(metadata, operator_dir, bundle_dir, operator_build, input_release)
 
             record['bundle_nvr'] = nvr
+            if find_existing:
+                bundle_info = yaml.safe_load((bundle_dir / ".oit" / "olm_bundle_info.yaml").read_text())
+                operands = {operand["nvr"] for operand in bundle_info["operands"].values()}
+                if existing_nvr := await find_existing(operands):
+                    return existing_nvr
 
             # commit and push the changes
             logger.info("Committing and pushing bundle content...")
@@ -221,6 +251,8 @@ class KonfluxOlmBundleRebaser:
 
             # Rebase succeeded - don't write record, builder will handle it
             return nvr
+        except NoPrivateFixes:
+            raise
         except Exception as e:
             # Record rebase failure
             record['message'] = f"Rebase failed: {str(e)}"
@@ -359,6 +391,7 @@ class KonfluxOlmBundleRebaser:
                 delivery_override_map,
                 delivery_namespace_map,
                 external_image_names,
+                operator_build=operator_build,
             )
 
         # Copy the operator's manifests to the bundle directory, replacing image
@@ -422,7 +455,7 @@ class KonfluxOlmBundleRebaser:
             else:
                 # Brew engine: use tag-based regex resolution (legacy path)
                 content, found_images = await self._replace_image_references(
-                    str(csv_config["registry"]), content, operator_build.engine, metadata
+                    str(csv_config["registry"]), content, operator_build.engine, metadata, operator_build
                 )
 
             for _, (old_pullspec, new_pullspec, operand_nvr) in found_images.items():
@@ -493,6 +526,17 @@ class KonfluxOlmBundleRebaser:
                     dest_properties_path = bundle_metadata_dir / "properties.yaml"
                     shutil.copy2(candidate, dest_properties_path)
                     break
+
+        if self.stream_visibility is not None:
+            visibilities = {
+                get_konflux_nvr_visibility(nvr)
+                for nvr in {operator_build.nvr, *(operand[2] for operand in all_found_operands.values())}
+                if nvr != "external"
+            }
+            if self.stream_visibility is BuildVisibility.PRIVATE and BuildVisibility.PRIVATE not in visibilities:
+                raise NoPrivateFixes
+            if self.stream_visibility is BuildVisibility.PUBLIC and BuildVisibility.PRIVATE in visibilities:
+                raise KonfluxOlmBundleRebaseError("A standard bundle cannot reference private fixes")
 
         # Generate bundle's Dockerfile
         nvr = await asyncio.to_thread(
@@ -783,6 +827,7 @@ class KonfluxOlmBundleRebaser:
         delivery_override_map: dict[str, str],
         delivery_namespace_map: dict[str, str],
         external_image_names: set[str] = frozenset(),
+        operator_build: KonfluxBuildRecord | None = None,
     ) -> dict[str, tuple[str, str, str]]:
         """
         Resolve ART-built operand images from Konflux DB instead of relying
@@ -841,7 +886,11 @@ class KonfluxOlmBundleRebaser:
             entries_meta.append((name, spec, meta))
             el_target = f"el{meta.branch_el_target()}"
             pin = pins.get(meta.get_component_name())
-            if pin:
+            if self.stream_visibility is not None and operator_build and meta.distgit_key == metadata.distgit_key:
+                build_coros.append(asyncio.sleep(0, result=operator_build))
+            elif self.stream_visibility is not None:
+                build_coros.append(self._get_stream_operand_build(meta))
+            elif pin:
                 build_coros.append(
                     self._konflux_db.get_build_record_by_nvr(pin, strict=True, exclude_large_columns=True)
                 )
@@ -858,7 +907,7 @@ class KonfluxOlmBundleRebaser:
         # Phase 1b: Fetch all builds concurrently, then check embargo status
         builds = await asyncio.gather(*build_coros)
 
-        operand_entries: list[tuple[str, str, Optional[str], ImageMetadata]] = []
+        operand_entries: list[tuple[str, str | None, ImageMetadata, str]] = []
         image_info_coros = []
         for (name, spec, meta), build in zip(entries_meta, builds, strict=True):
             if not build:
@@ -876,7 +925,7 @@ class KonfluxOlmBundleRebaser:
 
             # An explicit release pin takes precedence over automatic public selection.
             try:
-                embargoed = not pin and is_nvr_embargoed(build.nvr)
+                embargoed = self.stream_visibility is None and not pin and is_nvr_embargoed(build.nvr)
             except ValueError as e:
                 raise KonfluxOlmBundleRebaseError(
                     f"Unable to determine embargo status for operand {build.nvr} referenced "
@@ -915,12 +964,13 @@ class KonfluxOlmBundleRebaser:
 
             build_pullspec = (
                 build.image_pullspec
-                if pin
+                if pin or self.stream_visibility is not None
                 else f"{self.image_repo}:{meta.image_name_short}-{build.version}-{build.release}"
             )
             logger.info(f"Resolved {name} -> {build.nvr} (pullspec: {build_pullspec})")
 
-            operand_entries.append((name, spec, build.nvr if pin else None, meta))
+            expected_nvr = build.nvr if pin or self.stream_visibility is not None else None
+            operand_entries.append((spec, expected_nvr, meta, build_pullspec))
             image_info_coros.append(
                 util.oc_image_info_for_arch_async(
                     build_pullspec,
@@ -932,7 +982,7 @@ class KonfluxOlmBundleRebaser:
         image_infos = await asyncio.gather(*image_info_coros)
 
         resolved: dict[str, tuple[str, str, str]] = {}
-        for (_name, spec, pinned_nvr, meta), image_info in zip(operand_entries, image_infos, strict=True):
+        for (spec, pinned_nvr, meta, build_pullspec), image_info in zip(operand_entries, image_infos, strict=True):
             image_labels = image_info["config"]["config"]["Labels"]
             image_nvr = f"{image_labels['com.redhat.component']}-{image_labels['version']}-{image_labels['release']}"
             if pinned_nvr and image_nvr != pinned_nvr:
@@ -966,6 +1016,8 @@ class KonfluxOlmBundleRebaser:
                 delivery_override_map,
                 delivery_namespace_map,
             )
+            if self.stream_visibility is BuildVisibility.PRIVATE:
+                new_pullspec = f"{build_pullspec.split('@', 1)[0]}@{image_sha}"
             if delivery_short_name not in resolved:
                 resolved[delivery_short_name] = (spec, new_pullspec, image_nvr)
             else:
@@ -974,7 +1026,25 @@ class KonfluxOlmBundleRebaser:
 
         return resolved
 
-    async def _replace_image_references(self, old_registry: str, content: str, engine: Engine, metadata):
+    async def _get_stream_operand_build(self, meta: ImageMetadata) -> KonfluxBuildRecord:
+        query = {
+            "assembly": "stream",
+            "honor_is": False,
+            "exclude_large_columns": True,
+        }
+        if self.stream_visibility is BuildVisibility.PUBLIC:
+            query["embargoed"] = False
+        build = await meta.get_latest_konflux_build(**query)
+        if not build or build.assembly != "stream":
+            raise KonfluxOlmBundleRebaseError(f"No eligible stream build for {meta.distgit_key}")
+        visibility = get_konflux_nvr_visibility(build.nvr)
+        if self.stream_visibility is BuildVisibility.PUBLIC and visibility is not BuildVisibility.PUBLIC:
+            raise KonfluxOlmBundleRebaseError(f"No eligible public stream build for {meta.distgit_key}")
+        return build
+
+    async def _replace_image_references(
+        self, old_registry: str, content: str, engine: Engine, metadata, operator_build=None
+    ):
         """
         Replace image references in the content by their corresponding SHA.
 
@@ -1032,7 +1102,26 @@ class KonfluxOlmBundleRebaser:
             image_component_name = image_labels['com.redhat.component']
             image_nvr = f"{image_component_name}-{image_labels['version']}-{image_labels['release']}"
             pin = pins_by_name.get(image_component_name)
-            if pin and image_nvr != pin:
+            stream_pullspec = None
+            if self.stream_visibility is not None:
+                if _component_to_meta is None:
+                    _component_to_meta = self._build_component_to_meta_map(metadata.runtime)
+                operand_meta = _component_to_meta.get(image_component_name)
+                if operand_meta is None:
+                    raise KonfluxOlmBundleRebaseError(f"No image metadata for stream operand {image_nvr}")
+                if operator_build and operand_meta.distgit_key == metadata.distgit_key:
+                    build = operator_build
+                else:
+                    build = await self._get_stream_operand_build(operand_meta)
+                stream_pullspec = build.image_pullspec
+                image_info = await util.oc_image_info_for_arch_async(
+                    stream_pullspec, registry_config=os.getenv("QUAY_AUTH_FILE")
+                )
+                labels = image_info["config"]["config"]["Labels"]
+                image_nvr = f"{labels['com.redhat.component']}-{labels['version']}-{labels['release']}"
+                if image_nvr != build.nvr:
+                    raise KonfluxOlmBundleRebaseError(f"Expected operand {build.nvr}, inspected {image_nvr}")
+            elif pin and image_nvr != pin:
                 build = await self._konflux_db.get_build_record_by_nvr(pin, strict=True, exclude_large_columns=True)
                 if build.nvr != pin:
                     raise KonfluxOlmBundleRebaseError(f"Expected assembly pin {pin}, resolved {build.nvr}")
@@ -1048,7 +1137,12 @@ class KonfluxOlmBundleRebaser:
 
             # Preserve explicit release pins. Otherwise retain public-build substitution.
             try:
-                operand_is_embargoed = engine is Engine.KONFLUX and not pin and is_nvr_embargoed(image_nvr)
+                operand_is_embargoed = (
+                    self.stream_visibility is None
+                    and engine is Engine.KONFLUX
+                    and not pin
+                    and is_nvr_embargoed(image_nvr)
+                )
             except ValueError as e:
                 raise KonfluxOlmBundleRebaseError(
                     f"Unable to determine embargo status for operand image {image_nvr} referenced "
@@ -1102,6 +1196,8 @@ class KonfluxOlmBundleRebaser:
                 delivery_override_map,
                 delivery_namespace_map,
             )
+            if stream_pullspec and self.stream_visibility is BuildVisibility.PRIVATE:
+                new_pullspec = f"{stream_pullspec.split('@', 1)[0]}@{image_sha}"
             new_content = new_content.replace(pullspec, new_pullspec)
             found_images[delivery_short_name] = (pullspec, new_pullspec, image_nvr)
 
@@ -1248,6 +1344,8 @@ class KonfluxOlmBundleRebaser:
 
         component_name = metadata.get_olm_bundle_brew_component_name()
         bundle_version = f'{operator_df.labels["version"]}.{operator_df.labels["release"]}'
+        if self.stream_visibility is BuildVisibility.PRIVATE:
+            bundle_version = re.sub(r"\.p2(?=\.|$)", ".p3", bundle_version)
         bundle_name = metadata.get_olm_bundle_delivery_repo_name()
 
         # Copy the operator's Dockerfile labels to the bundle's Dockerfile
@@ -1582,11 +1680,14 @@ class KonfluxOlmBundleBuilder:
         logger = self._logger.getChild(f"[{metadata.distgit_key}]")
         # Ensure the Application resource exists
         app_name = util.konflux_application_name(metadata.runtime.group)
+        component_name = metadata.get_konflux_bundle_component_name(app_name)
+        if is_private_fix_pullspec(output_image):
+            app_name = artlib_util.private_fix_resource_name(app_name)
+            component_name = artlib_util.private_fix_resource_name(component_name)
         logger.info(f"Using Konflux application: {app_name}")
         await konflux_client.ensure_application(name=app_name, display_name=app_name)
         logger.info(f"Konflux application {app_name} created")
         # Ensure the Component resource exists
-        component_name = metadata.get_konflux_bundle_component_name(app_name)
         logger.info(f"Creating Konflux component: {component_name}")
         dest_image_repo = output_image.split(":")[0]
         await konflux_client.ensure_component(

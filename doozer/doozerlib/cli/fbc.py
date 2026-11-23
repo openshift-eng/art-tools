@@ -10,7 +10,9 @@ from typing import Dict, List, Optional, Sequence, Tuple
 
 import click
 from artcommonlib import exectools
-from artcommonlib.constants import KONFLUX_DEFAULT_NAMESPACE
+from artcommonlib.build_visibility import BuildVisibility, get_konflux_nvr_visibility, is_private_fix_pullspec
+from artcommonlib.constants import KONFLUX_DEFAULT_NAMESPACE, KONFLUX_PRIVATE_FBC_REPO
+from artcommonlib.github_auth import require_private_github_repository
 from artcommonlib.konflux.konflux_build_record import (
     KonfluxBuildOutcome,
     KonfluxBuildRecord,
@@ -279,6 +281,8 @@ class FbcMergeCli:
         fbc_git_password = os.environ.get("FBC_GIT_PASSWORD")
 
         fragments = self.fragments
+        if any(is_private_fix_pullspec(fragment) for fragment in fragments):
+            raise ValueError("Private fixes FBCs cannot be merged into a shared catalog")
         if not fragments:
             # No explicit fragments provided, list all tags in the stage repo and use matching ones
             tags = await self._list_tags()
@@ -513,7 +517,11 @@ class FbcRebaseAndBuildCli:
         skip_tasks: tuple[str, ...] = (),
         build_priority: str = FBC_BUILD_PRIORITY,
         skip_rebase: bool = False,
+        bundle_nvrs: tuple[str, ...] = (),
+        private_fixes: bool = False,
     ):
+        self.bundle_nvrs = dict(zip(operator_nvrs, bundle_nvrs, strict=True)) if bundle_nvrs else {}
+        self.private_fixes = private_fixes
         self.runtime = runtime
         self.version = version
         self.release = release
@@ -523,7 +531,7 @@ class FbcRebaseAndBuildCli:
         self.konflux_kubeconfig = konflux_kubeconfig
         self.konflux_context = konflux_context
         self.konflux_namespace = konflux_namespace
-        self.image_repo = image_repo
+        self.image_repo = KONFLUX_PRIVATE_FBC_REPO if private_fixes else image_repo
         self.skip_checks = skip_checks
         self.skip_tasks = skip_tasks
         self.plr_template = plr_template
@@ -602,12 +610,31 @@ class FbcRebaseAndBuildCli:
             "operator_nvr": operator_build.nvr,
             "outcome": str(KonfluxBuildOutcome.SUCCESS),
         }
-        bundle_build = await anext(self._db_for_bundles.search_builds_by_fields(where=where, limit=1), None)
+        exact_nvr = self.bundle_nvrs.get(operator_build.nvr)
+        if exact_nvr:
+            where.update(nvr=exact_nvr, assembly=self.runtime.assembly)
+        bundle_build = await anext(
+            (
+                build
+                async for build in self._db_for_bundles.search_builds_by_fields(where=where)
+                if is_private_fix_pullspec(build.image_pullspec) == self.private_fixes
+            ),
+            None,
+        )
         if not bundle_build:
-            if strict:
+            if strict or exact_nvr:
                 raise IOError(f"Bundle build not found for {operator_build.name}. Please build the bundle first.")
             return None
         assert isinstance(bundle_build, KonfluxBundleBuildRecord)
+        if exact_nvr:
+            expected_visibility = BuildVisibility.PRIVATE if self.private_fixes else BuildVisibility.PUBLIC
+            if get_konflux_nvr_visibility(bundle_build.nvr) is not expected_visibility:
+                raise ValueError(f"Bundle {bundle_build.nvr} has the wrong visibility")
+            inputs = [bundle_build.operator_nvr, *(nvr for nvr in bundle_build.operand_nvrs if nvr != "external")]
+            input_visibilities = {get_konflux_nvr_visibility(nvr) for nvr in inputs}
+            has_private_input = BuildVisibility.PRIVATE in input_visibilities
+            if has_private_input != self.private_fixes:
+                raise ValueError(f"Bundle {bundle_build.nvr} references images for a different build visibility")
         return bundle_build
 
     async def get_bundle_builds(
@@ -651,6 +678,8 @@ class FbcRebaseAndBuildCli:
         }
 
         extra_patterns = {}
+        if self.bundle_nvrs:
+            extra_patterns["image_pullspec"] = rf"^{re.escape(self.image_repo)}[:@]"
         if self.major_minor:
             # Filter before limit=1 so another target cannot hide a matching build.
             extra_patterns["release"] = rf"\.ocp{re.escape(self.major_minor)}$"
@@ -712,7 +741,10 @@ class FbcRebaseAndBuildCli:
                     operator_meta.distgit_key,
                     'catalog.Dockerfile',
                 )
-                nvr = DockerfileParser(str(dockerfile)).labels.get('com.redhat.art.nvr')
+                labels = DockerfileParser(str(dockerfile)).labels
+                if is_private_fix_pullspec(labels.get("com.redhat.art.bundle.pullspec")):
+                    raise ValueError("Cannot build private fixes source for a standard catalog")
+                nvr = labels.get('com.redhat.art.nvr')
                 if not nvr:
                     raise ValueError("FBC NVR not found in the catalog.Dockerfile. Did you rebase?")
                 existing_fbc_build = await self._get_successful_fbc_build_by_nvr(nvr)
@@ -744,6 +776,8 @@ class FbcRebaseAndBuildCli:
 
                 self._logger.info(f"Rebasing fbc for {operator_meta.name}...")
                 nvr = await rebaser.rebase(operator_meta, bundle_build, self.version, self.release)
+                if self.bundle_nvrs and await self._get_successful_fbc_build_by_nvr(nvr):
+                    raise ValueError(f"Successful FBC {nvr} already exists; retry with a new release timestamp")
             self._logger.info(f"Building fbc for {operator_meta.name}...")
             _, pipelinerun_dict = await builder.build(
                 operator_meta,
@@ -770,6 +804,19 @@ class FbcRebaseAndBuildCli:
         assert runtime.konflux_db is not None, "konflux_db is not initialized. Doozer bug?"
         konflux_db = runtime.konflux_db
         konflux_db.bind(KonfluxBuildRecord)
+
+        if self.skip_rebase and self.bundle_nvrs:
+            raise ValueError("Exact bundle NVRs require rebasing")
+        git_auth_options = {}
+        if self.private_fixes:
+            if assembly != "stream" or runtime.group.startswith(("openshift-", "okd-")):
+                raise ValueError("Private fixes FBCs are only supported for layered product stream")
+            if not self.bundle_nvrs or not self.reset_to_prod:
+                raise ValueError("Private fixes FBCs require exact bundle NVRs and a production catalog baseline")
+            org = await exectools.to_thread(require_private_github_repository, self.fbc_repo)
+            git_auth_options["org"] = org
+        elif self.image_repo == KONFLUX_PRIVATE_FBC_REPO:
+            raise ValueError("The private fixes registry requires a private fixes build")
 
         # Get operator builds. Existing FBC source already records its bundle provenance,
         # so skip-rebase builds do not need a bundle for the selected operator.
@@ -835,6 +882,7 @@ class FbcRebaseAndBuildCli:
             ocp_version_override=ocp_version if self.major_minor else None,
             insert_missing_entry=self.insert_missing_entry,
             record_logger=runtime.record_logger,
+            private_fixes=self.private_fixes,
         )
 
         builder = KonfluxFbcBuilder(
@@ -860,8 +908,11 @@ class FbcRebaseAndBuildCli:
         # Mint a per-invocation GitHub App token for git-clone auth
         git_auth_secret = await builder._konflux_client.ensure_git_auth_secret(
             namespace=self.konflux_namespace,
+            **git_auth_options,
         )
-        refresh_task = asyncio.create_task(builder._konflux_client.token_refresh_loop(namespace=self.konflux_namespace))
+        refresh_task = asyncio.create_task(
+            builder._konflux_client.token_refresh_loop(namespace=self.konflux_namespace, **git_auth_options)
+        )
 
         tasks = [
             self._rebase_and_build(
@@ -1024,6 +1075,12 @@ class FbcRebaseAndBuildCli:
     help='Kueue build priority, from 1 (highest) to 10 (lowest).',
 )
 @click.argument('operator_nvrs', nargs=-1, required=False)
+@click.option(
+    '--bundle-nvr', 'bundle_nvrs', multiple=True, help='Exact bundle NVR for each operator, in the same order.'
+)
+@click.option(
+    '--private-fixes', is_flag=True, help='Build an FBC for private fixes in the dedicated private repository.'
+)
 @pass_runtime
 @click_coroutine
 async def fbc_rebase_and_build(
@@ -1049,6 +1106,8 @@ async def fbc_rebase_and_build(
     operator_nvrs: Tuple[str, ...],
     build_priority: str,
     skip_rebase: bool,
+    bundle_nvrs: tuple[str, ...] = (),
+    private_fixes: bool = False,
 ):
     """
     Rebase FBC source content and then build it
@@ -1091,5 +1150,7 @@ async def fbc_rebase_and_build(
         major_minor=major_minor,
         insert_missing_entry=insert_missing_entry,
         skip_rebase=skip_rebase,
+        bundle_nvrs=bundle_nvrs,
+        private_fixes=private_fixes,
     )
     await cli.run()

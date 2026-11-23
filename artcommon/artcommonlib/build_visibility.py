@@ -2,6 +2,8 @@ import re
 from enum import Enum
 from typing import List, Optional
 
+from artcommonlib.constants import KONFLUX_PRIVATE_FBC_REPO
+
 # from doozerlib.util import isolate_pflag_in_release
 
 
@@ -99,7 +101,7 @@ def find_all_pflags_in_release(release: str) -> List[str]:
     """
     suffixes = get_all_visibility_suffixes() + ['p?']
     suffix_pattern = '|'.join(re.escape(suffix) for suffix in suffixes)
-    pattern = rf'\.({suffix_pattern})(?:\.|$)'
+    pattern = rf'\.({suffix_pattern})(?=\.|$)'
     return re.findall(pattern, release)
 
 
@@ -111,3 +113,23 @@ def isolate_pflag_in_release(release: str) -> Optional[str]:
     """
     pflags = find_all_pflags_in_release(release)
     return pflags[0] if pflags else None
+
+
+def get_konflux_nvr_visibility(nvr: str) -> BuildVisibility:
+    """Require one explicit Konflux visibility marker in the version or release."""
+    _name, version, release = nvr.rsplit("-", 2)
+    flags = find_all_pflags_in_release(f"{version}.{release}")
+    for visibility, flag in VISIBILITY_SUFFIX["konflux"].items():
+        if flags == [flag]:
+            return visibility
+    raise ValueError(f"Cannot determine Konflux visibility for {nvr!r}: found {flags!r}")
+
+
+def is_private_fix_pullspec(pullspec: str | None) -> bool:
+    """Recognize artifacts in the dedicated private bundle and FBC image repository."""
+    return bool(
+        pullspec
+        and pullspec.removeprefix("docker://").startswith(
+            (f"{KONFLUX_PRIVATE_FBC_REPO}:", f"{KONFLUX_PRIVATE_FBC_REPO}@")
+        )
+    )

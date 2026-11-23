@@ -4,6 +4,7 @@ import unittest
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import yaml
+from artcommonlib.build_visibility import BuildVisibility
 from artcommonlib.konflux.konflux_build_record import (
     KonfluxBuildOutcome,
     KonfluxBuildRecord,
@@ -308,6 +309,27 @@ class TestScanForMissingBundlesFbcs(unittest.IsolatedAsyncioTestCase):
             image_list='',
         )
         return pipeline
+
+    async def test_stream_reconciles_private_operand_with_existing_public_catalog(self):
+        pipeline = self._make_pipeline()
+        pipeline.private_fixes_enabled = True
+        operator = KonfluxBuildRecord(name="oadp-operator", nvr="oadp-operator-1.5-1.p2")
+        public_bundle = KonfluxBundleBuildRecord(
+            nvr="oadp-operator-bundle-1.5.1.p2-1",
+            operator_nvr=operator.nvr,
+            operand_nvrs=["oadp-agent-1.5-1.p2"],
+        )
+        pipeline.check_bundle_exists = AsyncMock(side_effect=[public_bundle, None])
+        pipeline.check_fbc_exists = AsyncMock(return_value=KonfluxFbcBuildRecord())
+        pipeline._latest_stream_operands = AsyncMock(side_effect=[{"oadp-agent-1.5-1.p2"}, {"oadp-agent-1.5-2.p3"}])
+
+        await pipeline.check_stream_operator(MagicMock(), MagicMock(), MagicMock(), operator)
+
+        self.assertEqual(pipeline.operators_without_bundles, [operator])
+        self.assertEqual(
+            [call.kwargs["visibility"] for call in pipeline.check_bundle_exists.await_args_list],
+            [BuildVisibility.PUBLIC, BuildVisibility.PRIVATE],
+        )
 
     async def test_no_operators_found(self):
         """When no operators are found, the scan should return without triggering builds."""
