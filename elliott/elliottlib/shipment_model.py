@@ -16,16 +16,64 @@ class StrictBaseModel(BaseModel):
 class Metadata(StrictBaseModel):
     """Defines shipment metadata for a product release"""
 
+    model_config = ConfigDict(
+        json_schema_extra={
+            'allOf': [
+                {
+                    'if': {'properties': {'unified': {'const': True}}, 'required': ['unified']},
+                    'then': {
+                        'properties': {'fbc': {'const': True}},
+                        'required': ['fbc'],
+                        'not': {'anyOf': [{'required': ['group']}, {'required': ['assembly']}]},
+                    },
+                    'else': {
+                        'required': ['group', 'assembly'],
+                        'properties': {
+                            'group': {'type': 'string', 'minLength': 1},
+                            'assembly': {'type': 'string', 'minLength': 1},
+                        },
+                    },
+                }
+            ],
+        }
+    )
+
     product: str  # product associated with shipment - see group.yml `product` field
     application: str  # Konflux application to release for
-    group: str  # associated build-data group for component metadata
-    assembly: str  # associated build-data assembly
+    group: Optional[str] = None  # required for ordinary shipments
+    assembly: Optional[str] = None  # required for ordinary shipments
+    unified: bool = False
     fbc: Optional[bool] = False  # indicates if shipment is for an FBC release
     advisory_required: Optional[bool] = True  # when False, shipment-ci skips advisory URL check (registry-push-only)
     docs_approval_required: Optional[bool] = (
         True  # when False, elliott verify-docs-approval skips all docs cross-reference / payload SHA checks
     )
     release_notes_in_rpa: Optional[bool] = False  # when True, releaseNotes come from the ReleasePlanAdmission (CDN)
+
+    @model_validator(mode='after')
+    def validate_execution_context(self) -> Self:
+        """Require one execution context only for ordinary shipments."""
+        if self.unified:
+            if not self.fbc or self.group is not None or self.assembly is not None:
+                raise ValueError('Unified shipments require fbc: true and no group/assembly')
+        elif not self.group or not self.assembly:
+            raise ValueError('Ordinary shipments require group and assembly')
+        return self
+
+
+class UnifiedAssembly(StrictBaseModel):
+    """An assembly and image shipment associated with one unified target."""
+
+    group: str
+    assembly: str
+    revision: str = Field(pattern=r'^[0-9a-f]{40}$')
+    imageShipmentMR: str = Field(pattern=r'^https://[^/]+/.+/merge_requests/[0-9]+$')
+
+
+class Unified(StrictBaseModel):
+    """Contributors; provenance is at the snapshot source commit's standard path."""
+
+    assemblies: List[UnifiedAssembly] = Field(min_length=1)
 
 
 class GitSource(StrictBaseModel):
@@ -189,10 +237,31 @@ class Shipment(StrictBaseModel):
     """Config to ship a Konflux release for a product"""
 
     metadata: Metadata
+    unified: Optional[Unified] = None
     tools: Optional[Tools] = None
     environments: Environments
     snapshot: Optional[Snapshot] = None
     data: Optional[Data] = None
+
+    @model_validator(mode='after')
+    def validate_unified(self) -> Self:
+        """Keep the unified variant complete and separate from ordinary releases."""
+        if self.metadata.unified != (self.unified is not None):
+            raise ValueError('Unified metadata and contributor list must be supplied together')
+        if self.metadata.unified:
+            if not self.snapshot or len(self.snapshot.spec.components) != 1:
+                raise ValueError('Unified shipments require exactly one snapshot component')
+            if len(self.snapshot.nvrs) != 1:
+                raise ValueError('Unified shipments require exactly one catalog NVR')
+            component = self.snapshot.spec.components[0]
+            if not re.fullmatch(r'[^@\s]+@sha256:[0-9a-f]{64}', component.containerImage):
+                raise ValueError('Unified catalog image must be digest-pinned')
+            if not re.fullmatch(r'[0-9a-f]{40}', component.source.git.revision):
+                raise ValueError('Unified catalog source must be commit-pinned')
+            identities = [(a.group, a.assembly) for a in self.unified.assemblies]
+            if len(identities) != len(set(identities)):
+                raise ValueError('Duplicate unified assembly contributors')
+        return self
 
     @model_validator(mode='after')
     def make_sure_data_is_present_unless_fbc(self) -> Self:
