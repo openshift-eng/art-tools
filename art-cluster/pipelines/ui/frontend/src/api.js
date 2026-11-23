@@ -38,24 +38,28 @@ export function createApi({ fetch = globalThis.fetch, browser = window } = {}) {
     throw authenticationError;
   }
 
-  async function fetchJson(path, options = {}) {
+  async function fetchBody(path, { responseType = 'json', ...options } = {}) {
     const response = await fetch(path, { credentials: 'same-origin', ...options });
     const contentType = response.headers.get('content-type') || '';
-    const body = await response.json().catch(() => ({}));
     if (!response.ok) {
+      const body = await response.json().catch(() => ({}));
       const error = new Error(body.detail || `Request failed (${response.status})`);
       error.status = response.status;
       error.proxyLogin = response.status === 403 && contentType.includes('text/html');
       throw error;
     }
+    if (responseType === 'text') {
+      if (!contentType.includes('text/plain')) throw new Error('Unexpected response from the server');
+      return response.text();
+    }
     if (!contentType.includes('application/json')) throw new Error('Unexpected response from the server');
-    return body;
+    return response.json().catch(() => ({}));
   }
 
   function checkSession() {
     if (authenticationError) return Promise.reject(authenticationError);
     if (!sessionCheck) {
-      sessionCheck = fetchJson('/api/session', { cache: 'no-store' })
+      sessionCheck = fetchBody('/api/session', { cache: 'no-store' })
         .then((identity) => {
           if (!authenticationError) markRecovery(false);
           return identity;
@@ -73,7 +77,7 @@ export function createApi({ fetch = globalThis.fetch, browser = window } = {}) {
     if (authenticationError) throw authenticationError;
     if (path === '/api/session') return checkSession();
     try {
-      return await fetchJson(path, options);
+      return await fetchBody(path, options);
     } catch (error) {
       if (options.signal?.aborted) throw error;
       if (error.proxyLogin) recover();

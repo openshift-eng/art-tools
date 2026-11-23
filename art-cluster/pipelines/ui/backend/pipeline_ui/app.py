@@ -8,8 +8,9 @@ import re
 import secrets
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from tempfile import TemporaryFile
 from typing import Literal
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 import httpx
 from fastapi import FastAPI, HTTPException, Query, Request, Response
@@ -17,6 +18,7 @@ from fastapi.responses import JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import AnyHttpUrl, BaseModel, Field, ValidationError, field_validator, model_validator
 
+from . import loki
 from .cluster import Gateway, UpstreamError
 from .components import component_details
 from .gitlab_read import GitLabReader, GitLabReadError, service_token
@@ -875,27 +877,59 @@ async def run_logs(request: Request, namespace: str, name: str, uid: str | None 
     async with Gateway(user_token(request)) as gateway:
         run, source, record_name = await find_run(gateway, namespace, name, uid)
         if source == "live":
-            logs, truncated = await gateway.live_logs(namespace, name)
+            logs, truncated, missing = await gateway.live_logs(namespace, name)
             if logs:
-                return {"source": "live", "text": logs, "truncated": truncated}
+                return {"source": "live", "text": logs, "truncated": truncated, "missing": missing}
             if not run.get("status", {}).get("completionTime"):
-                return {"source": "live", "text": "Logs are not available yet.", "truncated": False}
+                return {"source": "live", "text": "Logs are not available yet.", "truncated": False, "available": False}
             try:
                 record, _ = await gateway.archived_run(namespace, name, run["metadata"]["uid"])
                 record_name = record["name"]
             except UpstreamError as error:
                 if error.status == 404:
-                    return {"source": "live", "text": "Logs are not available.", "truncated": False}
+                    return {"source": "live", "text": "Logs are not available.", "truncated": False, "available": False}
                 raise
         if not run.get("status", {}).get("completionTime"):
-            return {"source": "archive", "text": "Logs are not available yet.", "truncated": False}
+            return {"source": "archive", "text": "Logs are not available yet.", "truncated": False, "available": False}
         try:
             logs, truncated = await gateway.archived_logs(record_name)
         except UpstreamError as error:
             if error.status in (404, 500):
-                return {"source": "archive", "text": "Logs are not available.", "truncated": False}
+                return {"source": "archive", "text": "Logs are not available.", "truncated": False, "available": False}
             raise
     return {"source": "archive", "text": logs, "truncated": truncated}
+
+
+@app.get("/api/runs/{namespace}/{name}/logs/full")
+async def full_console(request: Request, namespace: str, name: str, uid: UUID):
+    allowed_namespace(namespace)
+    token = user_token(request)
+    async with Gateway(token) as gateway:
+        run, _, _ = await find_run(gateway, namespace, name, str(uid))
+    # Finish paging before sending a response the Logs tab could mistake for complete.
+    output = TemporaryFile()
+    try:
+        await loki.write_console(token, namespace, uid, run, output)
+        size = output.tell()
+        output.seek(0)
+    except BaseException:
+        output.close()
+        raise
+
+    async def read_output():
+        with output:
+            while chunk := output.read(65536):
+                yield chunk
+
+    return StreamingResponse(
+        read_output(),
+        media_type="text/plain",
+        headers={
+            "Cache-Control": "no-store",
+            "Content-Length": str(size),
+            "X-Content-Type-Options": "nosniff",
+        },
+    )
 
 
 @app.get("/api/runs/{namespace}/{name}/logs/stream")

@@ -384,6 +384,9 @@ function RunDetail({ view, csrfToken }) {
   const [childrenError, setChildrenError] = useState('');
   const [logs, setLogs] = useState(null);
   const [logsError, setLogsError] = useState('');
+  const [fullLogs, setFullLogs] = useState(null);
+  const [fullLogsError, setFullLogsError] = useState('');
+  const [loadingFullLogs, setLoadingFullLogs] = useState(false);
   const [streamKey, setStreamKey] = useState(0);
   const [events, setEvents] = useState(null);
   const [eventsError, setEventsError] = useState('');
@@ -400,6 +403,14 @@ function RunDetail({ view, csrfToken }) {
   const eventsUrl = `/api/runs/${view.namespace}/${view.name}/events?uid=${encodeURIComponent(view.uid || '')}`;
   const selectedRun = run?.namespace === view.namespace && run?.name === view.name && (!view.uid || run.uid === view.uid);
   const liveRun = selectedRun && run.source === 'live' && !run.completed && !run.componentReporting?.terminal;
+  const fullLogsUrl = selectedRun && run.uid && run.started && run.completed
+    ? `/api/runs/${encodeURIComponent(run.namespace)}/${encodeURIComponent(run.name)}/logs/full?uid=${encodeURIComponent(run.uid)}`
+    : null;
+  const tryFullLogs = Boolean(fullLogsUrl && activeTab === 'logs' &&
+    (logs?.source === 'archive' || logs?.truncated || logs?.missing || logs?.available === false || logsError));
+  const fullLogText = fullLogs?.url === fullLogsUrl ? fullLogs.text : null;
+  const displayedLog = selectedRun ? (fullLogText ?? logs?.text ?? '') : '';
+  const logPlaceholder = (logsError || fullLogsError) && !loadingFullLogs ? 'Logs are not available.' : 'Loading logs…';
   useLayoutEffect(() => {
     currentRun.current = runKey;
     return () => {
@@ -440,6 +451,18 @@ function RunDetail({ view, csrfToken }) {
     load('logs', logsUrl, setLogs, (cause) => setLogsError(cause.message));
     return undefined;
   }, [selectedRun, liveRun, logsUrl, load]);
+  useEffect(() => {
+    setFullLogs(null);
+    setFullLogsError('');
+    setLoadingFullLogs(tryFullLogs);
+    if (!tryFullLogs) return undefined;
+    const controller = new AbortController();
+    request(fullLogsUrl, { signal: controller.signal, responseType: 'text' })
+      .then((text) => { if (!controller.signal.aborted) setFullLogs({ url: fullLogsUrl, text }); })
+      .catch((cause) => { if (!controller.signal.aborted) setFullLogsError(cause.message); })
+      .finally(() => { if (!controller.signal.aborted) setLoadingFullLogs(false); });
+    return () => controller.abort();
+  }, [tryFullLogs, fullLogsUrl, logs]);
   useEffect(() => {
     if (!liveRun) return undefined;
     let sections = new Map();
@@ -521,7 +544,18 @@ function RunDetail({ view, csrfToken }) {
       {children?.errors?.length > 0 && <Alert variant="warning" title="Some child PipelineRuns could not be loaded" className="notice" />}
       <DetailTabs view={view} tabs={runTabs} labels={{ details: 'Details', components: `Components (${run.components?.length || 0})`, logs: 'Logs', events: 'Events', parameters: `Parameters (${run.parameters.length})`, tasks: `Task runs (${run.tasks.length})` }} activeTab={activeTab} onSelect={setActiveTab} ariaLabel="PipelineRun views" />
       {activeTab === 'details' && <RunDetails run={run} filterNamespace={view.filterNamespace} />}
-      {activeTab === 'logs' && <section className="panel logs-panel" role="tabpanel"><div className="section-heading"><h2>Logs</h2></div>{logsError && <Alert variant="warning" title={logsError} className="notice" />}{logs?.truncated && <Alert variant="warning" title="Log display is limited to the first 8 MB per step" className="notice" />}<LogText text={logs?.text || 'Loading logs…'} streaming={liveRun} /></section>}
+      {activeTab === 'logs' && <section className="panel logs-panel" role="tabpanel">
+        <div className="section-heading">
+          <h2>Logs</h2>
+        </div>
+        {loadingFullLogs && <p role="status" className="muted">Loading full console from Loki…</p>}
+        {fullLogsError && <Alert variant="warning" title="Could not load the full console from Loki" className="notice">{fullLogsError}</Alert>}
+        {fullLogText === null && logsError && <Alert variant="warning" title={logsError} className="notice" />}
+        {fullLogText === null && logs?.truncated && <Alert variant="warning" title="Log preview is limited to 8 MB per step or archive" className="notice" />}
+        {fullLogText === null && logs?.available !== false && (logs?.source === 'archive' || logs?.missing) &&
+          <p className="muted">The displayed log may be incomplete.</p>}
+        <LogText text={displayedLog || logPlaceholder} streaming={liveRun} />
+      </section>}
       {activeTab === 'events' && <section className="panel events-panel" role="tabpanel"><div className="section-heading"><h2>Events</h2></div><p className="muted">Updates every 10 seconds while the run is active.</p>{eventsError && <Alert variant="danger" title={eventsError} className="notice" />}{!events && !eventsError ? <div className="loading"><Spinner size="lg" /></div> : events?.items.length ? <div className="table-wrap"><table className="data-table events-table"><thead><tr><th>Last seen</th><th>Type</th><th>Resource</th><th>Reason</th><th>Message</th><th>Count</th></tr></thead><tbody>{events.items.map((event) => <tr key={event.uid}><td>{formatDate(event.lastSeen)}</td><td><Label color={event.type === 'Warning' ? 'red' : 'grey'}>{event.type}</Label></td><td><strong>{event.kind}</strong><small>{event.object}</small></td><td>{event.reason || '—'}</td><td className="event-message">{event.message || '—'}</td><td>{event.count}</td></tr>)}</tbody></table></div> : !eventsError && <p className="muted">No events are available for this run.</p>}</section>}
       {activeTab === 'components' && <Components run={run} Status={Status} />}
       {activeTab === 'parameters' && <section className="panel" role="tabpanel"><h2>Parameters <span className="muted">{run.parameters.length}</span></h2>{run.parameters.length ? <div className="value-list">{run.parameters.map((param) => <div key={param.name}><span>{param.name}</span><code>{typeof param.value === 'string' ? param.value : JSON.stringify(param.value)}</code></div>)}</div> : <p className="muted">This run did not specify parameters.</p>}</section>}
