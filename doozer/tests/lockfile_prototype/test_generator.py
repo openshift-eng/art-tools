@@ -447,6 +447,25 @@ class TestRpmLockfilePrototypeGenerator(unittest.TestCase):
         self.assertIn("openvswitch3.5-ipsec", pkg_names)
         self.assertIn("ovn25.09-vtep", pkg_names)
 
+    def test_rendered_packages_are_passed_to_resolver(self):
+        meta = self._make_mock_image_meta()
+        generator = self._make_generator()
+        generator.downstream_parents = ["quay.io/test/base:latest"]
+        generator._container.read_file_from_image = AsyncMock(return_value='VERSION_ID="9.6"\n')
+
+        with TemporaryDirectory() as tmpdir:
+            dest_dir = Path(tmpdir)
+            (dest_dir / "Dockerfile").write_text(
+                "FROM quay.io/test/base:latest\nCOPY packages /tmp/\nCOPY python-config.sh /bin/\n"
+                "RUN render_package_list /tmp/packages /tmp/packages.rendered\n"
+            )
+            (dest_dir / "packages").write_text("@PYTHON_PACKAGE_PREFIX@-flask >= 1:2.2.5\n")
+            (dest_dir / "python-config.sh").write_text("case $RHEL_MAJOR in\n9)\nPYTHON_VERSION=3.12\n;;\nesac\n")
+            asyncio.run(generator.generate_lockfile(meta, dest_dir))
+
+        config = generator._resolver.resolve.call_args.args[0]
+        self.assertIn("python3.12-flask >= 1:2.2.5", config.packages)
+
     def test_dynamic_packages_are_passed_to_resolver(self):
         """Configured dynamic packages are included in the stage input config."""
         meta = self._make_mock_image_meta()

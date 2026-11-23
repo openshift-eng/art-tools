@@ -43,6 +43,7 @@ from doozerlib.lockfile_prototype.models import (
     RepoEntry,
     RpmsInConfig,
 )
+from doozerlib.lockfile_prototype.rendered_packages import resolve_rendered_packages
 from doozerlib.lockfile_prototype.resolver import RpmResolver
 from doozerlib.lockfile_prototype.utils import format_version_pin, pick_minimum_evr
 from doozerlib.repos import Repos
@@ -384,6 +385,9 @@ class RpmLockfilePrototypeGenerator:
 
         entries = DockerfileParser(str(dockerfile_path)).structure
         cat_packages = await self._resolve_cat_packages(entries, self.downstream_parents)
+        rendered_packages = await resolve_rendered_packages(dest_dir, entries, self.downstream_parents, self._container)
+        for stage, packages in rendered_packages.items():
+            cat_packages.setdefault(stage, []).extend(packages)
         dynamic_packages: dict[int, DynamicPackageSet] = {}
         detected_script = discover_dynamic_package_script(dest_dir, entries)
         if detected_script:
