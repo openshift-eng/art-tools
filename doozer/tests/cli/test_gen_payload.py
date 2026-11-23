@@ -826,6 +826,125 @@ class TestGenPayloadCli(IsolatedAsyncioTestCase):
         self.assertEqual(1, len(result))
         self.assertEqual("some-image", result[0].component)
 
+    # --- aarch64 kernel-64k consistency exclusion tests ---
+
+    def _make_bri_for_kernel_consistency(self, build_id=12345):
+        """Build a mock BuildRecordInspector for a driver-toolkit image that installs a single
+        kernel build (5.14.0-427.116.1.el9_4). On aarch64 the kernel SRPM produces both the base
+        kernel-* RPMs and the kernel-64k-* 64k-page variants, so get_rpms_in_pkg_build returns both.
+        """
+        bri = MagicMock(spec=BrewBuildRecordInspector)
+        bri.runtime = MagicMock()
+        bri.get_nvr.return_value = "driver-toolkit-container-v4.17.0-1234"
+
+        # Only the base 'kernel' RPM has name == pkg ('kernel'), so duplicate detection sees one build.
+        bri.get_all_installed_rpm_dicts.return_value = [
+            {"nvr": "kernel-5.14.0-427.116.1.el9_4.aarch64"},
+            {"nvr": "kernel-core-5.14.0-427.116.1.el9_4.aarch64"},
+            {"nvr": "kernel-64k-core-5.14.0-427.116.1.el9_4.aarch64"},
+        ]
+
+        build = {
+            "name": "kernel",
+            "version": "5.14.0",
+            "release": "427.116.1.el9_4",
+            "build_id": build_id,
+            "nvr": "kernel-5.14.0-427.116.1.el9_4",
+        }
+        bri.get_all_installed_package_build_dicts.return_value = {"kernel": build}
+
+        # The kernel SRPM produces base kernel RPMs plus the aarch64 64k-page variants.
+        bri.get_rpms_in_pkg_build.return_value = [
+            {"name": "kernel"},
+            {"name": "kernel-core"},
+            {"name": "kernel-modules-core"},
+            {"name": "kernel-64k"},
+            {"name": "kernel-64k-core"},
+            {"name": "kernel-64k-modules-core"},
+        ]
+        return bri
+
+    def test_validate_pkg_consistency_req_ignores_kernel_64k_mismatch(self):
+        """A kernel-64k-* mismatch in RHCOS must be IGNORED: RHCOS may ship the aarch64 64k-page
+        kernel variants from a different build than the base kernel, and a single DTK cannot satisfy
+        both, so comparing them would be a spurious consistency failure."""
+        runtime = MagicMock()
+        runtime.build_system = 'brew'
+        pg = rgp_cli.PayloadGenerator(runtime=runtime, package_rpm_finder=MagicMock())
+
+        bri = self._make_bri_for_kernel_consistency()
+
+        # Base kernel RPMs match the DTK build; only the 64k variant differs.
+        rhcos_rpm_vrs = {
+            "kernel": "5.14.0-427.116.1.el9_4",
+            "kernel-core": "5.14.0-427.116.1.el9_4",
+            "kernel-64k-core": "5.14.0-427.50.1.el9_4",  # mismatch, must be skipped
+        }
+
+        issue = pg.validate_pkg_consistency_req(
+            payload_tag="driver-toolkit",
+            pkg="kernel",
+            bri=bri,
+            rhcos_rpm_vrs=rhcos_rpm_vrs,
+            rhcos_build_id="rhcos-build-id",
+        )
+        self.assertIsNone(issue)
+
+    def test_validate_pkg_consistency_req_reports_base_kernel_mismatch(self):
+        """A base kernel-core mismatch in RHCOS must still be reported as a consistency failure."""
+        runtime = MagicMock()
+        runtime.build_system = 'brew'
+        pg = rgp_cli.PayloadGenerator(runtime=runtime, package_rpm_finder=MagicMock())
+
+        bri = self._make_bri_for_kernel_consistency()
+
+        # The base kernel-core differs from the DTK build -> real inconsistency.
+        rhcos_rpm_vrs = {
+            "kernel-core": "5.14.0-427.50.1.el9_4",  # mismatch, must be reported
+            "kernel-64k-core": "5.14.0-427.50.1.el9_4",
+        }
+
+        issue = pg.validate_pkg_consistency_req(
+            payload_tag="driver-toolkit",
+            pkg="kernel",
+            bri=bri,
+            rhcos_rpm_vrs=rhcos_rpm_vrs,
+            rhcos_build_id="rhcos-build-id",
+        )
+        self.assertIsNotNone(issue)
+        self.assertEqual(AssemblyIssueCode.FAILED_CONSISTENCY_REQUIREMENT, issue.code)
+        self.assertEqual("driver-toolkit", issue.component)
+        self.assertIn("kernel-core", issue.msg)
+
+    def test_validate_pkg_consistency_req_skip_keys_off_name_not_version(self):
+        """The 64k skip must key off the RPM NAME (the "-64k-" infix), not its version-release.
+        A base kernel RPM whose name lacks "-64k-" (e.g. kernel-core) must still be reported as a
+        mismatch even when its RHCOS version-release string happens to contain "64k"."""
+        runtime = MagicMock()
+        runtime.build_system = 'brew'
+        pg = rgp_cli.PayloadGenerator(runtime=runtime, package_rpm_finder=MagicMock())
+
+        bri = self._make_bri_for_kernel_consistency()
+
+        # kernel-core's name has no "-64k-", so it must NOT be skipped. Its RHCOS VR literally
+        # contains "-64k-" and differs from the DTK build's required_vr (5.14.0-427.116.1.el9_4):
+        # the "64k" in the VR must not trigger a skip.
+        rhcos_rpm_vrs = {
+            "kernel-core": "5.14.0-64k.1",  # name lacks -64k-, VR differs -> must be reported
+        }
+
+        issue = pg.validate_pkg_consistency_req(
+            payload_tag="driver-toolkit",
+            pkg="kernel",
+            bri=bri,
+            rhcos_rpm_vrs=rhcos_rpm_vrs,
+            rhcos_build_id="rhcos-build-id",
+        )
+        self.assertIsNotNone(issue)
+        self.assertEqual(AssemblyIssueCode.FAILED_CONSISTENCY_REQUIREMENT, issue.code)
+        self.assertEqual("driver-toolkit", issue.component)
+        self.assertIn("kernel-core", issue.msg)
+
     # test parameter validation
     def test_parameter_validation(self):
         # test when assembly is not valid
