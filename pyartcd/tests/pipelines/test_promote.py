@@ -1,3 +1,5 @@
+import hashlib
+import json
 import os
 import tempfile
 from pathlib import Path
@@ -156,6 +158,76 @@ class TestPromotePipeline(IsolatedAsyncioTestCase):
                 os.environ.pop(key, None)
             else:
                 os.environ[key] = value
+
+    @patch("pyartcd.pipelines.promote.exectools.cmd_assert_async")
+    @patch("pyartcd.pipelines.promote.exectools.cmd_gather_async", return_value=(0, "{}", ""))
+    async def test_elliott_validation_uses_selected_build_data_ref(self, gather, execute):
+        for gitref, expected_group in [(None, "openshift-4.22"), ("private-ref", "openshift-4.22@private-ref")]:
+            with self.subTest(gitref=gitref):
+                pipeline = PromotePipeline(
+                    MagicMock(config={}, working_dir=Path("/path/to/working"), dry_run=False),
+                    group="openshift-4.22",
+                    assembly="art1",
+                    signing_env="prod",
+                    data_path="https://example.com/build-data",
+                    data_gitref=gitref,
+                )
+                await pipeline.verify_attached_bugs([123], no_verify_blocking_bugs=False)
+                await pipeline.verify_payload(AssemblyTypes.CUSTOM, ["aarch64"])
+
+                self.assertIn(f"--group={expected_group}", execute.await_args.args[0])
+                self.assertIn(f"--group={expected_group}", gather.await_args.args[0])
+                self.assertIn("verify-attached-bugs", execute.await_args.args[0])
+                self.assertIn("verify-payload", gather.await_args.args[0])
+
+    @patch("pyartcd.pipelines.promote.exectools.cmd_gather_async")
+    async def test_private_multi_promotion_reads_arm64_only_manifest_digest(self, gather):
+        pipeline = PromotePipeline(
+            MagicMock(config={}, working_dir=Path("/path/to/working"), dry_run=False),
+            group="openshift-4.22",
+            assembly="art1",
+            signing_env="prod",
+        )
+        pipeline.private_only = True
+        pipeline._registry_config = "/path/to/registry-auth.json"
+        release_name = "4.22.1-assembly.art1"
+        repo = "quay.io/openshift-release-dev/ocp-release-priv"
+        source = f"{repo}@sha256:{'a' * 64}"
+        destination = f"{repo}:{release_name}-multi"
+        manifest_list = {
+            "mediaType": "application/vnd.docker.distribution.manifest.list.v2+json",
+            "manifests": [{"digest": f"sha256:{'b' * 64}", "platform": {"architecture": "arm64", "os": "linux"}}],
+        }
+        raw_manifest = json.dumps(manifest_list, indent=2) + "\n"
+        gather.side_effect = [ChildProcessError("manifest unknown"), (0, raw_manifest, "")]
+        pipeline.get_image_stream = AsyncMock(return_value={"spec": {"tags": [{"from": {"name": source}}]}})
+        pipeline.get_image_info = AsyncMock(return_value=manifest_list)
+        pipeline.build_release_image = AsyncMock()
+        pipeline.push_manifest_list = AsyncMock()
+
+        result = await pipeline._promote_heterogeneous_payload(
+            AssemblyTypes.CUSTOM, release_name, ["aarch64"], [], [], {}, tag_stable=False
+        )
+
+        self.assertEqual(result["digest"], f"sha256:{hashlib.sha256(raw_manifest.encode()).hexdigest()}")
+        self.assertEqual(result["manifests"], manifest_list["manifests"])
+        pipeline.build_release_image.assert_awaited_once()
+        pipeline.push_manifest_list.assert_awaited_once()
+        self.assertEqual(gather.await_count, 2)
+        for call in gather.await_args_list:
+            self.assertEqual(
+                call.args[0],
+                [
+                    "skopeo",
+                    "inspect",
+                    "--raw",
+                    "--retry-times=2",
+                    "--retry-delay=10s",
+                    "--authfile",
+                    "/path/to/registry-auth.json",
+                    f"docker://{destination}",
+                ],
+            )
 
     @patch("pyartcd.jira_client.JIRAClient.from_url", return_value=None)
     async def test_private_multi_promotion_requires_private_staging(self, _jira):

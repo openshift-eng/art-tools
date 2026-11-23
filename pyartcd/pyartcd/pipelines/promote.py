@@ -228,6 +228,10 @@ class PromotePipeline:
 
         self._registry_config: Optional[str] = None
 
+    @property
+    def _group_with_data_ref(self) -> str:
+        return f"{self.group}@{self.data_gitref}" if self.data_gitref else self.group
+
     def check_environment_variables(self):
         logger = self.runtime.logger
 
@@ -295,7 +299,7 @@ class PromotePipeline:
         logger.info("Loading build data...")
         group_config = self.group_runtime.group_config
         releases_config = await util.load_releases_config(
-            group=f"{self.group}@{self.data_gitref}" if self.data_gitref else self.group,
+            group=self._group_with_data_ref,
             data_path=self.data_path,
         )
         if releases_config.get("releases", {}).get(self.assembly) is None:
@@ -2050,7 +2054,7 @@ class PromotePipeline:
         cmd = [
             "elliott",
             f"--assembly={self.assembly}",
-            f"--group={self.group}",
+            f"--group={self._group_with_data_ref}",
             "verify-attached-bugs",
         ]
         if verify_flaws:
@@ -2074,7 +2078,7 @@ class PromotePipeline:
             self._logger.info("Verifying payload against imagestream %s", imagestream)
             cmd = [
                 "elliott",
-                f"--group={self.group}",
+                f"--group={self._group_with_data_ref}",
                 f"--assembly={self.assembly}",
                 "--build-system=konflux",
             ]
@@ -2707,21 +2711,28 @@ class PromotePipeline:
 
         return manifests
 
-    async def get_multi_image_digest(self, pullspec: str, raise_if_not_found: bool = False):
+    async def get_multi_image_digest(self, pullspec: str, raise_if_not_found: bool = False) -> Optional[str]:
+        """Read the registry's top-level manifest list without selecting a platform."""
+        cmd = ["skopeo", "inspect", "--raw", "--retry-times=2", "--retry-delay=10s"]
+        if self._registry_config:
+            cmd.extend(["--authfile", self._registry_config])
+        cmd.append(f"docker://{pullspec}")
+
         try:
-            stdout = await oc_image_info__cached_async(
-                pullspec, '--filter-by-os=linux/amd64', registry_config=self._registry_config
-            )
+            _, raw_manifest, _ = await exectools.cmd_gather_async(cmd)
         except ChildProcessError as e:
-            err_msg = str(e)
+            err_msg = str(e).lower()
             if "manifest unknown" in err_msg or "was deleted or has expired" in err_msg:
-                # image doesn't exist
                 if raise_if_not_found:
-                    raise IOError(f"Image {pullspec} is not found.")
+                    raise IOError(f"Image {pullspec} is not found.") from e
                 return None
             raise
 
-        return json.loads(stdout)['listDigest']
+        manifest_list = json.loads(raw_manifest)
+        if not isinstance(manifest_list, dict) or not isinstance(manifest_list.get("manifests"), list):
+            raise ValueError(f"Image {pullspec} is not a manifest list.")
+        # The manifest digest covers the registry's exact bytes, including whitespace.
+        return f"sha256:{hashlib.sha256(raw_manifest.encode('utf-8')).hexdigest()}"
 
     @staticmethod
     async def get_image_stream_tag(namespace: str, image_stream_tag: str):
