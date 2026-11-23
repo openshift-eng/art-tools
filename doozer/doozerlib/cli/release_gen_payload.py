@@ -2994,6 +2994,15 @@ class PayloadGenerator:
         required_vr = "-".join([build["version"], build["release"]])
         logger.debug(f"{payload_tag_nvr} {pkg} has RPMs {rpm_names} at version {required_vr}")
         for name in rpm_names:
+            # Skip the aarch64 64k-page kernel subpackages (kernel-64k-core, kernel-64k-modules,
+            # kernel-64k-devel, ...). On aarch64 the kernel SRPM also produces these kernel-64k-*
+            # subpackages, and RHCOS may ship them from a DIFFERENT kernel build than the base
+            # kernel-* RPMs. A single DTK build cannot satisfy both the base kernel and the 64k
+            # kernel, so comparing them here would flag a spurious consistency failure that the
+            # DTK-swap resolver cannot resolve. Match the "-64k-" infix (not a bare "64") so the
+            # check keys off the RPM name only and is not confused by "64k" appearing elsewhere.
+            if name.startswith("kernel") and "-64k-" in name:
+                continue
             vr = rhcos_rpm_vrs.get(name)
             if vr:
                 logger.debug(f"RHCOS RPM {name} version is {vr}")
