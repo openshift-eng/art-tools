@@ -75,6 +75,10 @@ class TestCheckBundleInStageRegistry(unittest.IsolatedAsyncioTestCase):
 
 
 class TestResolveStageReleasePlan(unittest.TestCase):
+    def test_osus_uses_product_version_instead_of_ocp_version(self):
+        config = {'product': 'openshift-update-service', 'version': '5.0.5', 'vars': {'MAJOR': 4, 'MINOR': 22}}
+        self.assertEqual(resolve_stage_release_plan('osus-5.0', config), 'osus-advisory-stage-auto-5-0')
+
     def test_acm_group_resolves_plan(self):
         self.assertEqual(resolve_stage_release_plan('acm-5.0', {'product': 'rhacm2'}), 'acm-advisory-stage-auto-5-0')
 
