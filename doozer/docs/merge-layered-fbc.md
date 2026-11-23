@@ -108,7 +108,14 @@ from the actual bundle image, rather than the database's `bundle_csv_name`, whic
 can come from an outdated package YAML. That CSV must exist as an `olm.bundle`
 for that package and appear in every declared channel. Its name is saved in provenance.
 
-The output application is derived from the product: `quay-fbc-unified` for Quay.
+The output application uses the product's configured `build_data_group_prefix`,
+falling back to the product name when no override exists: `coo-fbc-unified` for
+`cluster-observability-operator`, and unchanged `quay-fbc-unified` and
+`mta-fbc-unified` names for Quay and MTA. The same prefix names the unified NVR,
+components, and default source branches. Canonical product identity in validation,
+provenance, tenant resolution, and locks remains unchanged. Per-stream FBC naming
+is unaffected. Existing sources using a former long unified name do not
+automatically migrate; skip-rebase metadata must match the current output name.
 All OCP targets share this application, with a separate component per target,
 such as `quay-fbc-unified-4-15`. This naming also applies to single-operator inputs.
 The OCP 4.22 source branch is `art-quay-fbc-unified-4-22`. Successful builds receive a
