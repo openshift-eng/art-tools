@@ -4,6 +4,34 @@ from validator.schema import releases_schema
 
 
 class TestReleasesSchema(unittest.TestCase):
+    def test_validate_assembly_visibility(self):
+        assembly = {"type": "custom", "visibility": "private"}
+        data = {"releases": {"art1": {"assembly": assembly}}}
+        self.assertIsNone(releases_schema.validate("releases.yml", data))
+        assembly["visibility"] = "public"
+        self.assertIsNotNone(releases_schema.validate("releases.yml", data))
+
+    def test_private_visibility_rejects_non_custom_assembly_types(self):
+        for assembly_type in ("stream", "standard", "candidate", "preview"):
+            with self.subTest(assembly_type=assembly_type):
+                assembly = {"type": assembly_type}
+                data = {"releases": {"art1": {"assembly": assembly}}}
+                self.assertIsNone(releases_schema.validate("releases.yml", data))
+
+                assembly["visibility"] = "private"
+                error = releases_schema.validate("releases.yml", data)
+                self.assertIsNotNone(error)
+                self.assertIn("$.releases.art1.assembly.type", error)
+
+    def test_private_visibility_allows_inherited_custom_assembly_type(self):
+        data = {
+            "releases": {
+                "art1": {"assembly": {"type": "custom"}},
+                "art2": {"assembly": {"basis": {"assembly": "art1"}, "visibility": "private"}},
+            }
+        }
+        self.assertIsNone(releases_schema.validate("releases.yml", data))
+
     def test_validate_with_valid_use_source_fallback_branch_in_assembly_group_override(self):
         for value in ("yes", "always", "never"):
             with self.subTest(value=value):

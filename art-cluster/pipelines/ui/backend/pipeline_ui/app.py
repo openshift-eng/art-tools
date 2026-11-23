@@ -4,11 +4,13 @@ import asyncio
 import json
 import logging
 import os
+import re
 import secrets
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from tempfile import TemporaryFile
 from typing import Literal
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 import httpx
 from fastapi import FastAPI, HTTPException, Query, Request, Response
@@ -16,6 +18,7 @@ from fastapi.responses import JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import AnyHttpUrl, BaseModel, Field, ValidationError, field_validator, model_validator
 
+from . import loki
 from .cluster import Gateway, UpstreamError
 from .components import component_details
 from .gitlab_read import GitLabReader, GitLabReadError, service_token
@@ -50,6 +53,8 @@ PIPELINE_ORDER = (
     ("trigger-prod-release",),
 )
 PIPELINE_PRIORITY = {name: priority for priority, names in enumerate(PIPELINE_ORDER) for name in names}
+SCHEDULER_JOB_ANNOTATION = "art.openshift.io/scheduler-job"
+SCHEDULER_JOB_REF = re.compile(r"([a-z0-9](?:[-a-z0-9]*[a-z0-9])?)/([a-z0-9](?:[-.a-z0-9]*[a-z0-9])?)")
 CSRF_COOKIE = "__Host-art-pipelines-csrf"
 INCIDENTS_FILE = Path(os.getenv("INCIDENTS_FILE", "/etc/incidents/incidents.json"))
 MAX_INCIDENTS = 20
@@ -218,6 +223,45 @@ def pipeline_summary(pipeline: dict) -> dict:
         "name": metadata.get("name"),
         "description": pipeline.get("spec", {}).get("description", ""),
         "parameterCount": len(pipeline.get("spec", {}).get("params", [])),
+    }
+
+
+def cronjob_summary(cronjob: dict) -> dict:
+    metadata, spec = cronjob["metadata"], cronjob["spec"]
+    status = cronjob.get("status") or {}
+    return {
+        "namespace": metadata["namespace"],
+        "name": metadata["name"],
+        "schedule": spec["schedule"],
+        "timeZone": spec.get("timeZone"),
+        "suspended": spec.get("suspend", False),
+        "activeJobs": len(status.get("active") or []),
+        "lastScheduled": status.get("lastScheduleTime"),
+        "lastSuccessful": status.get("lastSuccessfulTime"),
+    }
+
+
+def job_summary(job: dict) -> dict:
+    metadata = job["metadata"]
+    status = job.get("status") or {}
+    conditions = {item["type"]: item for item in status.get("conditions") or [] if item.get("status") == "True"}
+    result = "Pending"
+    completed = status.get("completionTime")
+    if "Failed" in conditions:
+        result = "Failed"
+        completed = conditions["Failed"].get("lastTransitionTime")
+    elif "Complete" in conditions:
+        result = "Succeeded"
+    elif job.get("spec", {}).get("suspend"):
+        result = "Suspended"
+    elif status.get("active"):
+        result = "Running"
+    return {
+        "name": metadata["name"],
+        "status": result,
+        "created": metadata.get("creationTimestamp"),
+        "started": status.get("startTime"),
+        "completed": completed,
     }
 
 
@@ -626,6 +670,52 @@ async def pipelines(request: Request, namespace: str | None = None, q: str = "")
     return {"items": sorted(items, key=pipeline_sort_key)}
 
 
+@app.get("/api/cronjobs")
+async def cronjobs(request: Request, response: Response, namespace: str | None = None):
+    response.headers["Cache-Control"] = "no-store"
+    names = selected_namespaces(namespace)
+    async with Gateway(user_token(request)) as gateway:
+
+        async def read(current: str):
+            try:
+                return [
+                    cronjob_summary(item) async for item in gateway.list_kube(current, "cronjobs", api_group="batch/v1")
+                ]
+            except UpstreamError as error:
+                if error.status == 403 and namespace is None:
+                    return []
+                raise
+
+        groups = await asyncio.gather(*(read(name) for name in names))
+    items = [item for group in groups for item in group]
+    return {"items": sorted(items, key=lambda item: (item["namespace"], item["name"]))}
+
+
+@app.get("/api/cronjobs/{namespace}/{name}")
+async def cronjob_detail(request: Request, response: Response, namespace: str, name: str):
+    response.headers["Cache-Control"] = "no-store"
+    allowed_namespace(namespace)
+    async with Gateway(user_token(request)) as gateway:
+        cronjob = await gateway.cronjob(namespace, name)
+        uid = cronjob["metadata"]["uid"]
+        jobs = []
+        try:
+            async for job in gateway.list_kube(namespace, "jobs", api_group="batch/v1"):
+                if any(
+                    owner.get("kind") == "CronJob" and owner.get("uid") == uid
+                    for owner in job["metadata"].get("ownerReferences") or []
+                ):
+                    jobs.append(job_summary(job))
+        except UpstreamError as error:
+            if error.status != 403:
+                raise
+            jobs = None
+
+    if jobs is not None:
+        jobs.sort(key=lambda job: (job["created"] or "", job["name"]), reverse=True)
+    return {**cronjob_summary(cronjob), "jobs": jobs}
+
+
 @app.get("/api/pipelines/latest-runs")
 async def latest_pipeline_runs(request: Request, namespace: str | None = None):
     names = selected_namespaces(namespace)
@@ -725,12 +815,14 @@ async def run_detail(request: Request, namespace: str, name: str, uid: str | Non
     annotations = metadata.get("annotations") or {}
     rebuilt_from_name = annotations.get(REBUILT_FROM_NAME_ANNOTATION)
     rebuilt_from_uid = annotations.get(REBUILT_FROM_ANNOTATION)
+    scheduler_job = SCHEDULER_JOB_REF.fullmatch(annotations.get(SCHEDULER_JOB_ANNOTATION) or "")
     return {
         **run_summary(run, source),
         **component_details(run),
         "labels": labels,
         "annotations": annotations,
         "parentPipelineRun": labels.get("art.openshift.io/parent-pipelinerun"),
+        "schedulerJob": {"namespace": scheduler_job[1], "name": scheduler_job[2]} if scheduler_job else None,
         "rebuiltFrom": (
             {"name": rebuilt_from_name, "uid": rebuilt_from_uid} if rebuilt_from_name and rebuilt_from_uid else None
         ),
@@ -785,27 +877,59 @@ async def run_logs(request: Request, namespace: str, name: str, uid: str | None 
     async with Gateway(user_token(request)) as gateway:
         run, source, record_name = await find_run(gateway, namespace, name, uid)
         if source == "live":
-            logs, truncated = await gateway.live_logs(namespace, name)
+            logs, truncated, missing = await gateway.live_logs(namespace, name)
             if logs:
-                return {"source": "live", "text": logs, "truncated": truncated}
+                return {"source": "live", "text": logs, "truncated": truncated, "missing": missing}
             if not run.get("status", {}).get("completionTime"):
-                return {"source": "live", "text": "Logs are not available yet.", "truncated": False}
+                return {"source": "live", "text": "Logs are not available yet.", "truncated": False, "available": False}
             try:
                 record, _ = await gateway.archived_run(namespace, name, run["metadata"]["uid"])
                 record_name = record["name"]
             except UpstreamError as error:
                 if error.status == 404:
-                    return {"source": "live", "text": "Logs are not available.", "truncated": False}
+                    return {"source": "live", "text": "Logs are not available.", "truncated": False, "available": False}
                 raise
         if not run.get("status", {}).get("completionTime"):
-            return {"source": "archive", "text": "Logs are not available yet.", "truncated": False}
+            return {"source": "archive", "text": "Logs are not available yet.", "truncated": False, "available": False}
         try:
             logs, truncated = await gateway.archived_logs(record_name)
         except UpstreamError as error:
             if error.status in (404, 500):
-                return {"source": "archive", "text": "Logs are not available.", "truncated": False}
+                return {"source": "archive", "text": "Logs are not available.", "truncated": False, "available": False}
             raise
     return {"source": "archive", "text": logs, "truncated": truncated}
+
+
+@app.get("/api/runs/{namespace}/{name}/logs/full")
+async def full_console(request: Request, namespace: str, name: str, uid: UUID):
+    allowed_namespace(namespace)
+    token = user_token(request)
+    async with Gateway(token) as gateway:
+        run, _, _ = await find_run(gateway, namespace, name, str(uid))
+    # Finish paging before sending a response the Logs tab could mistake for complete.
+    output = TemporaryFile()
+    try:
+        await loki.write_console(token, namespace, uid, run, output)
+        size = output.tell()
+        output.seek(0)
+    except BaseException:
+        output.close()
+        raise
+
+    async def read_output():
+        with output:
+            while chunk := output.read(65536):
+                yield chunk
+
+    return StreamingResponse(
+        read_output(),
+        media_type="text/plain",
+        headers={
+            "Cache-Control": "no-store",
+            "Content-Length": str(size),
+            "X-Content-Type-Options": "nosniff",
+        },
+    )
 
 
 @app.get("/api/runs/{namespace}/{name}/logs/stream")

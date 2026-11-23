@@ -608,6 +608,24 @@ class TestGetKonfluxBuildPriority(unittest.TestCase):
         metadata.config.konflux.get.return_value = None
         self.assertEqual(util.get_konflux_build_priority(metadata, 'openshift-4.20', policy), '8')
 
+    def test_okd_policy_overrides_group_priority_when_enabled(self):
+        metadata = self._make_metadata(children=self.is_leaf, group_config_priority=8)
+        metadata.runtime.product = 'okd'
+        policy = BuildPriorityPolicy.model_validate(
+            {
+                'enabled': True,
+                'rules': [
+                    {'product': 'ocp', 'versions': ['5.0'], 'priority': 2},
+                    {'product': 'okd', 'priority': 9},
+                ],
+                'default_priority': 3,
+            }
+        )
+
+        self.assertEqual(util.get_konflux_build_priority(metadata, 'okd-5.0', policy), '9')
+        policy.enabled = False
+        self.assertEqual(util.get_konflux_build_priority(metadata, 'okd-5.0', policy), '8')
+
     def test_priority_never_goes_below_1(self):
         metadata = self._make_metadata(children=self.is_parent, phase="pre-release")
         self.assertGreaterEqual(int(util.get_konflux_build_priority(metadata, "openshift-4.19")), 1)

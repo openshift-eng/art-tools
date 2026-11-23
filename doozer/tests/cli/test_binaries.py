@@ -6,6 +6,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
+import click
 from artcommonlib.model import Model
 from artcommonlib.variants import BuildVariant
 from click.testing import CliRunner
@@ -173,12 +174,33 @@ class TestKindAwareClis(unittest.IsolatedAsyncioTestCase):
             message="m",
             push=False,
             kind="binary",
+            build_args=("RELEASE_VERSION=4.22.18", "DIGEST_MULTI=sha256:m=x"),
         ).run()
         runtime.initialize.assert_called_once_with(mode="binaries", clone_distgits=False, build_system="konflux")
         runtime.ordered_image_metas.assert_not_called()
         rebaser_cls.return_value.rebase_to.assert_awaited_once()
         self.assertIs(rebaser_cls.return_value.rebase_to.await_args.args[0], meta)
+        self.assertEqual(
+            rebaser_cls.call_args.kwargs["build_args"],
+            {"RELEASE_VERSION": "4.22.18", "DIGEST_MULTI": "sha256:m=x"},
+        )
         self.assertEqual(runtime.state["images:konflux:rebase"]["images"], {"openshift-install": {"status": "success"}})
+
+    def test_rebase_rejects_build_arg_without_value(self):
+        with self.assertRaises(click.BadParameter):
+            KonfluxRebaseCli(
+                runtime=self._runtime(MagicMock()),
+                version="v4.22.0",
+                release="1",
+                embargoed=False,
+                force_yum_updates=False,
+                repo_type="unsigned",
+                image_repo="repo",
+                message="m",
+                push=False,
+                kind="binary",
+                build_args=("RELEASE_VERSION",),
+            )
 
     @patch("doozerlib.cli.images_konflux.trace.get_current_span")
     @patch("doozerlib.cli.images_konflux.KonfluxImageBuilder")
@@ -223,8 +245,8 @@ class TestBinariesCommands(unittest.TestCase):
     def test_commands_registered(self):
         for name in ("binaries:list", "beta:binaries:konflux:rebase", "beta:binaries:konflux:build"):
             self.assertIn(name, cli.commands)
-        build_params = {p.name for p in cli.commands["beta:binaries:konflux:build"].params}
-        self.assertIn("build_args", build_params)
+        for name in ("beta:binaries:konflux:rebase", "beta:binaries:konflux:build"):
+            self.assertIn("build_args", {p.name for p in cli.commands[name].params})
         self.assertIn("binaries", {p.name for p in cli.params})
 
 

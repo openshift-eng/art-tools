@@ -17,6 +17,29 @@ from artcommonlib.variants import ProductId
 
 
 class TestProductCatalog(unittest.TestCase):
+    def test_build_data_group_prefix_is_optional(self):
+        """Map differing branch prefixes without changing canonical product identities."""
+        prefixes = {
+            "rhacm2": "acm",
+            "cluster-observability-operator": "coo",
+            "external-secrets-operator": "external-secrets",
+            "openshift-logging": "logging",
+            "multicluster-engine": "mce",
+            "mirror_gui": "mirror-gui",
+            "rhmtc": "mtc",
+            "openshift-update-service": "osus",
+            "openshift-opentelemetry-operator": "rhosdt",
+            "zero-trust-workload-identity-manager": "zero-trust",
+        }
+        for product, prefix in prefixes.items():
+            with self.subTest(product=product):
+                config = get_product_config(product)
+                self.assertEqual(config.build_data_group_prefix, prefix)
+                self.assertEqual(config.product_name, product)
+        for product in ("quay", "mta", "cert-manager", "kueue", "oadp", "oc-mirror", "openshift_agent_installer"):
+            with self.subTest(product=product):
+                self.assertIsNone(get_product_config(product).build_data_group_prefix)
+
     def test_kueue_canonical_product_preserves_cpe_and_release_configuration(self):
         """Resolve canonical and legacy Kueue names without changing CPE or release configuration."""
         config = get_product_config("kueue")

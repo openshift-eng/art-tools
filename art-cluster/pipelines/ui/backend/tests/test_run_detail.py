@@ -42,6 +42,8 @@ class RunDetailTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.json()["rebuiltFrom"], {"name": "source-run", "uid": "source-uid"})
+        self.assertIsNone(response.json()["schedulerJob"])
+        self.gateway.list_kube.assert_not_called()
 
     async def test_uid_only_older_rebuild_has_no_source_link_target(self):
         self.run["metadata"]["annotations"] = {"art.openshift.io/rebuilt-from": "source-uid"}
@@ -50,6 +52,17 @@ class RunDetailTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(response.status_code, 200)
         self.assertIsNone(response.json()["rebuiltFrom"])
+
+    async def test_scheduler_job_annotation_survives_archival(self):
+        self.run["metadata"]["annotations"]["art.openshift.io/scheduler-job"] = "art-scheduler-tenant/scheduler-12345"
+        with patch.object(api, "find_run", new=AsyncMock(return_value=(self.run, "archive", None))):
+            response = await self.client.get(f"/api/runs/{NAMESPACE}/rebuilt-run")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(
+            response.json()["schedulerJob"], {"namespace": "art-scheduler-tenant", "name": "scheduler-12345"}
+        )
+        self.gateway.list_kube.assert_not_called()
 
     async def test_components_available_for_live_and_archived_details(self):
         self.run["metadata"]["annotations"].update(

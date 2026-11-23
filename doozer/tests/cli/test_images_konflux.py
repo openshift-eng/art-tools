@@ -98,17 +98,17 @@ class TestKonfluxBuildStagePolicies(unittest.IsolatedAsyncioTestCase):
 
 
 class TestOkdBuildPriority(unittest.IsolatedAsyncioTestCase):
-    @mock.patch("doozerlib.cli.images_konflux.load_build_priority_policy")
+    @mock.patch("doozerlib.cli.images_konflux.load_build_priority_policy", new_callable=mock.AsyncMock)
     @mock.patch("doozerlib.cli.images_konflux.KonfluxImageBuilder")
-    async def test_okd_always_uses_priority_eight(self, builder_cls, policy_loader):
+    async def test_okd_auto_uses_policy_and_explicit_priority_bypasses_it(self, builder_cls, policy_loader):
         runtime = mock.MagicMock(spec=Runtime)
         runtime.working_dir = "/tmp"
-        runtime.group = "openshift-4.22"
+        runtime.group = "openshift-5.0"
         runtime.assembly = "stream"
-        runtime.product = "ocp"
+        runtime.product = "okd"
         runtime.variant = BuildVariant.OKD
-        runtime.get_major_minor_fields.return_value = (4, 22)
-        runtime.group_config = Model({"konflux": {"build_priority": 8}})
+        runtime.get_major_minor_fields.return_value = (5, 0)
+        runtime.group_config = Model({"product": "okd", "konflux": {"build_priority": 8}})
         runtime.ordered_image_metas.return_value = []
         runtime.exclude = ()
         runtime.source_resolver = mock.Mock()
@@ -116,16 +116,20 @@ class TestOkdBuildPriority(unittest.IsolatedAsyncioTestCase):
         runtime.record_logger = mock.Mock()
         builder_cls.return_value.validate_custom_integration_test_scenarios = mock.AsyncMock()
         builder_cls.return_value._konflux_client = mock.AsyncMock()
+        policy = BuildPriorityPolicy.model_validate({"enabled": True, "rules": [{"product": "okd", "priority": 9}]})
+        policy_loader.return_value = policy
 
-        for requested_priority in ("auto", "1"):
+        for requested_priority, expected_policy in (("auto", policy), ("1", None)):
             with self.subTest(requested_priority=requested_priority):
                 cli = KonfluxBuildCli(runtime, None, None, "test", "test", None, False, True, None, requested_priority)
                 await cli.run()
 
                 config = builder_cls.call_args.kwargs["config"]
-                self.assertEqual(config.build_priority, "8")
-                self.assertIsNone(config.build_priority_policy)
-        policy_loader.assert_not_awaited()
+                self.assertEqual(config.group_name, "okd-5.0")
+                self.assertEqual(config.build_priority, requested_priority)
+                self.assertIs(config.build_priority_policy, expected_policy)
+
+        policy_loader.assert_awaited_once()
 
 
 class TestKonfluxBundleCli(unittest.IsolatedAsyncioTestCase):

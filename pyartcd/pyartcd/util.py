@@ -45,7 +45,7 @@ from doozerlib.constants import ART_BUILD_HISTORY_URL
 from errata_tool import ErrataConnector
 from tenacity import before_sleep_log, retry, retry_if_exception_type, stop_after_attempt, wait_fixed
 
-from pyartcd import constants, record
+from pyartcd import constants, jenkins, record, tekton
 from pyartcd.build_strategy import BuildStrategy
 from pyartcd.counter_models import (
     BuildFailCounterContext,
@@ -58,6 +58,27 @@ from pyartcd.jenkins import start_build_sync
 from pyartcd.mail import MailService
 
 logger = logging.getLogger(__name__)
+
+
+def update_run_title(title: str, *, annotation_key: str | None = None) -> None:
+    """Update the Jenkins title or log and optionally annotate a Tekton run."""
+    if tekton.is_tekton_context():
+        status = title.strip()
+        logger.info('Run status: %s', status)
+        if annotation_key is not None:
+            tekton.annotate_current_pipelinerun({annotation_key: status})
+    else:
+        jenkins.update_title(title)
+
+
+def update_run_description(description: str) -> str | None:
+    """Append to the Jenkins description or log and return the Tekton text."""
+    if tekton.is_tekton_context():
+        message = description.replace('<br/>', '\n').strip()
+        logger.info('%s', message)
+        return message
+    jenkins.update_description(description)
+    return None
 
 
 def isolate_el_version_in_release(release: str) -> Optional[int]:
@@ -660,7 +681,7 @@ def default_release_suffix():
 def build_history_link_url(
     group: str,
     assembly: str,
-    days: int = 2,
+    days_ahead: int = 2,
     job_url: str = '',
     outcomes: Optional[List[str]] = None,
 ) -> str:
@@ -671,7 +692,9 @@ def build_history_link_url(
     Arg(s):
         group (str): Group name (e.g., 'openshift-4.17' or 'okd-5.0')
         assembly (str): Assembly name (e.g., 'stream')
-        days (int): Number of days to look back for build history (default: 2)
+        days_ahead (int): Number of days ahead of today to extend the date range
+            (default: 2). Long-running jobs produce builds after this URL is
+            generated, so the end date must reach forward to avoid an empty dashboard.
         job_url (str): Jenkins BUILD_URL to filter builds (default: '')
         outcomes (Optional[List[str]]): List of outcome filters to include
             (e.g., ['Success', 'Failure', 'Pending']). Defaults to ['Success', 'Failure'].
@@ -682,8 +705,9 @@ def build_history_link_url(
     if outcomes is None:
         outcomes = ['Success', 'Failure']
 
-    start_date = (datetime.now(timezone.utc) - timedelta(days=days)).strftime('%Y-%m-%d')
-    end_date = (datetime.now(timezone.utc)).strftime('%Y-%m-%d')
+    now = datetime.now(timezone.utc)
+    start_date = now.strftime('%Y-%m-%d')
+    end_date = (now + timedelta(days=days_ahead)).strftime('%Y-%m-%d')
 
     outcome_params = ''.join(f'&outcome={o}' for o in outcomes)
 

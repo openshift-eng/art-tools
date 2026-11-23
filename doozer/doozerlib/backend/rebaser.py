@@ -102,6 +102,7 @@ class KonfluxRebaser:
         variant: BuildVariant = BuildVariant.OCP,
         image_repo: str = constants.KONFLUX_DEFAULT_IMAGE_REPO,
         extra_labels: Optional[Dict[str, str]] = None,
+        build_args: Optional[Dict[str, str]] = None,
     ) -> None:
         self._runtime = runtime
         self._base_dir = base_dir
@@ -120,6 +121,7 @@ class KonfluxRebaser:
         self.uuid_tag = ''
         self.variant = variant
         self.extra_labels = extra_labels or {}
+        self.build_args = build_args or {}
         self._rebased_nvr_info: Dict[str, Tuple[str, str]] = {}
 
         self.konflux_db = self._runtime.konflux_db
@@ -1556,7 +1558,35 @@ class KonfluxRebaser:
         if self.variant is BuildVariant.OKD:
             self._apply_okd_labels(dfp)
 
+        if self.build_args:
+            self._set_arg_defaults(df_path, self.build_args)
+
         await self._reflow_labels(df_path)
+
+    @staticmethod
+    def _set_arg_defaults(df_path: Path, build_args: Dict[str, str]):
+        """
+        Rewrite every "ARG NAME" and "ARG NAME=old" line of the Dockerfile, in all stages, to "ARG NAME=value".
+
+        The values become part of the committed build source instead of build pipeline parameters.
+        DockerfileParser.args is not used because it only manages the last stage.
+
+        :param df_path: Dockerfile to rewrite in place.
+        :param build_args: {ARG name: default value}.
+        """
+        names = "|".join(re.escape(name) for name in build_args)
+        arg_re = re.compile(rf"^([ \t]*(?i:ARG)[ \t]+)({names})(?:=\S*)?[ \t]*$", re.MULTILINE)
+        found = set()
+
+        def set_default(match: re.Match) -> str:
+            found.add(match.group(2))
+            return f"{match.group(1)}{match.group(2)}={build_args[match.group(2)]}"
+
+        content = arg_re.sub(set_default, df_path.read_text(encoding="utf-8"))
+        missing = sorted(set(build_args) - found)
+        if missing:
+            raise ValueError(f"{df_path} has no ARG line for build arg(s): {', '.join(missing)}")
+        df_path.write_text(content, encoding="utf-8")
 
     def _apply_okd_labels(self, dfp):
         """

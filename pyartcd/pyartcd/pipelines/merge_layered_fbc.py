@@ -14,6 +14,7 @@ from artcommonlib.git_helper import validate_git_branch, validate_git_group_name
 from artcommonlib.github_auth import get_github_client_for_org
 from artcommonlib.konflux.konflux_build_record import KonfluxBuildOutcome, KonfluxFbcBuildRecord
 from artcommonlib.konflux.konflux_db import KonfluxDb
+from artcommonlib.product_catalog import find_product_config
 from artcommonlib.util import (
     extract_ocp_version_from_fbc_nvr,
     oc_image_info_for_arch_async,
@@ -98,11 +99,13 @@ class MergeLayeredFbcPipeline:
             raise ValueError('--assembly cannot be combined with --fbc-build, --fbc-branch, or --skip-rebase')
         if not self.product or self.product == 'ocp':
             raise ValueError('Assembly inputs require a layered-product identity')
+        product_config = find_product_config(self.product)
+        group_prefix = (product_config.build_data_group_prefix if product_config else None) or self.product
         selections = {}
         for assembly in self.assemblies:
             if not re.fullmatch(r'[0-9]+\.[0-9]+\.[0-9]+', assembly):
                 raise ValueError(f'Assembly {assembly} must have MAJOR.MINOR.PATCH format')
-            group = self.product + '-' + '.'.join(assembly.split('.')[:2])
+            group = group_prefix + '-' + '.'.join(assembly.split('.')[:2])
             validate_git_group_name(group)
             if group in selections:
                 raise ValueError(f'Multiple assemblies supplied for {group}')
@@ -143,7 +146,9 @@ class MergeLayeredFbcPipeline:
             for target in sorted(set(targets), key=lambda value: tuple(map(int, value.split('.')))):
                 if self.target and target != self.target:
                     continue
-                entries = recorded_assembly_fbcs(releases, assembly, target)
+                entries = recorded_assembly_fbcs(
+                    releases, assembly, target, ignore_patch_version=config.get('ignore_patch_version') is True
+                )
                 inputs = inputs_by_target.setdefault(target, {})
                 for operator, record in sorted(entries.items()):
                     if record['nvr'] in inputs:

@@ -72,6 +72,7 @@ OTEL_EXPORTER_OTLP_ENDPOINT = (
 
 # Registry paths for authentication and image operations
 REGISTRY_QUAY_OCP_RELEASE_DEV = "quay.io/openshift-release-dev"
+PRIVATE_RELEASE_IMAGE_REPO = f"{REGISTRY_QUAY_OCP_RELEASE_DEV}/ocp-release-priv"
 REGISTRY_QUAY_OPENSHIFT = "quay.io/openshift"
 REGISTRY_QUAY_CI = "quay.io/openshift/ci"
 REGISTRY_QUAY_PROXY_CI = "quay-proxy.ci.openshift.org/openshift/ci"
@@ -80,6 +81,7 @@ REGISTRY_REDHAT_IO = "registry.redhat.io"
 REGISTRY_BREW = "brew.registry.redhat.io"
 KONFLUX_DEFAULT_IMAGE_REPO = "quay.io/redhat-user-workloads/ocp-art-tenant/art-images"
 KONFLUX_IMAGE_TEST_REPO = "quay.io/redhat-user-workloads/ocp-art-tenant/art-images-test"
+SD_HANDOFF_REPO = "quay.io/redhat-user-workloads/ocp-art-tenant/sd-handoff"
 RHCOS_IMAGE_REPO = "quay.io/redhat-user-workloads/ocp-art-tenant/art-rhcos-images"
 KONFLUX_DEFAULT_FBC_REPO = "quay.io/redhat-user-workloads/ocp-art-tenant/art-fbc"
 

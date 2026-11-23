@@ -42,6 +42,14 @@ def binaries_list(runtime: Runtime, is_json: bool):
     help="Repo group type to use (e.g. signed, unsigned).",
 )
 @click.option('--image-repo', default=constants.KONFLUX_DEFAULT_IMAGE_REPO, help='Image repo for base images')
+@click.option(
+    '--build-arg',
+    'build_args',
+    multiple=True,
+    metavar='KEY=VALUE',
+    help='Write VALUE as the default of every "ARG KEY" in the rebased Dockerfile, in all stages. Repeatable; '
+    'fails if the Dockerfile has no ARG KEY.',
+)
 @option_commit_message
 @option_push
 @pass_runtime
@@ -53,6 +61,7 @@ async def binaries_konflux_rebase(
     embargoed: bool,
     repo_type: str,
     image_repo: str,
+    build_args: tuple,
     message: str,
     push: bool,
 ):
@@ -61,7 +70,8 @@ async def binaries_konflux_rebase(
 
     \b
     $ doozer -g openshift-4.22 --assembly 4.22.18 --latest-parent-version --binaries openshift-install \\
-        beta:binaries:konflux:rebase --version v4.22.0 --release 202610210000.p2 --message "..." --push
+        beta:binaries:konflux:rebase --version v4.22.0 --release 202610210000.p2 \\
+        --build-arg RELEASE_VERSION=4.22.18 --message "..." --push
     """
     await KonfluxRebaseCli(
         runtime=runtime,
@@ -74,6 +84,7 @@ async def binaries_konflux_rebase(
         message=message,
         push=push,
         kind="binary",
+        build_args=build_args,
     ).run()
 
 
@@ -125,7 +136,7 @@ async def binaries_konflux_build(
 
     \b
     $ doozer -g openshift-4.22 --assembly 4.22.18 --binaries openshift-install \\
-        beta:binaries:konflux:build --konflux-namespace ocp-art-tenant --build-arg RELEASE_VERSION=4.22.18
+        beta:binaries:konflux:build --konflux-namespace ocp-art-tenant
     """
     await KonfluxBuildCli(
         runtime=runtime,

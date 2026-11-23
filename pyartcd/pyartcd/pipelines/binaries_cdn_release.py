@@ -1,10 +1,8 @@
-import asyncio
 import json
 import logging
 import os
 import re
 from dataclasses import dataclass
-from datetime import datetime, timezone
 from pathlib import Path
 from typing import Dict, List, Optional
 
@@ -29,14 +27,13 @@ KRD_PROJECT = "releng/konflux-release-data"
 KRD_RPA_DIR = "config/kflux-ocp-p01.7ayg.p1/product/ReleasePlanAdmission/ocp-art"
 KRD_CGW_DIR = "data/external/developer-portal"
 FROM_LINE_RE = re.compile(r"^FROM\s+--platform=linux/(\S+)\s+\S+@(sha256:[0-9a-f]{64})\s+AS\s+([a-z]+)_(\S+)\s*$")
-PRODUCT_VERSION_RE = re.compile(r'^([ \t]*productVersionName:[ \t]*)"([^"]*)"[ \t]*$', re.MULTILINE)
+PRODUCT_VERSION_RE = re.compile(r'^[ \t]*productVersionName:[ \t]*"([^"]*)"[ \t]*$', re.MULTILINE)
 
 
 @dataclass(frozen=True)
 class ClientTypeConfig:
     shipment_kind: str
     rpa_prefix: str
-    ga: bool
 
 
 @dataclass(frozen=True)
@@ -61,9 +58,9 @@ BINARIES = {
 
 
 CLIENT_TYPES = {
-    "ocp": ClientTypeConfig(shipment_kind="binaries", rpa_prefix="ocp-art-binaries", ga=True),
+    "ocp": ClientTypeConfig(shipment_kind="binaries", rpa_prefix="ocp-art-binaries"),
     "ocp-dev-preview": ClientTypeConfig(
-        shipment_kind="binaries-dev-preview", rpa_prefix="ocp-art-binaries-dev-preview", ga=False
+        shipment_kind="binaries-dev-preview", rpa_prefix="ocp-art-binaries-dev-preview"
     ),
 }
 
@@ -77,46 +74,25 @@ def binaries_cdn_enabled(group_config: dict) -> bool:
     return bool(((group_config.get("binaries") or {}).get("cdn") or {}).get("enabled", False))
 
 
-def cgw_version_file_content(release_name: str, ga: bool, release_date: str) -> str:
+def cgw_version_name(version: str, client_type: str) -> str:
     """
-    Return the developer-portal product version file for one release.
+    Return the CGW product version that every release of version and client_type publishes into.
 
-    :param release_name: Release name, e.g. 4.22.18; becomes the CGW versionName.
-    :param ga: True for GA (ocp) releases, False for dev-preview releases.
-    :param release_date: Date in YYYY-MM-DD format.
+    Dev-preview shares MAJOR.MINOR with GA because the dev-preview RPAs on konflux-release-data say MAJOR.MINOR too.
+
+    :param version: OCP MAJOR.MINOR, e.g. 4.22.
+    :param client_type: ocp or ocp-dev-preview.
     """
-    return (
-        "---\n"
-        f'versionName: "{release_name}"\n'
-        f"ga: {'true' if ga else 'false'}\n"
-        'termsAndConditions: "Anonymous Download"\n'
-        "hidden: false\n"
-        "invisible: false\n"
-        f'releaseDate: "{release_date}"\n'
-    )
+    return version
 
 
-def rpa_product_version_name(rpa_text: str) -> str:
+def rpa_product_version_names(rpa_text: str) -> List[str]:
     """
-    Return the single quoted productVersionName value of an RPA.
+    Return every quoted productVersionName value of an RPA.
 
     :param rpa_text: ReleasePlanAdmission YAML text.
     """
-    matches = PRODUCT_VERSION_RE.findall(rpa_text)
-    if len(matches) != 1:
-        raise ValueError(f"Expected exactly one quoted productVersionName in the RPA, found {len(matches)}")
-    return matches[0][1]
-
-
-def set_rpa_product_version_name(rpa_text: str, release_name: str) -> str:
-    """
-    Return rpa_text with its single productVersionName set to release_name.
-
-    :param rpa_text: ReleasePlanAdmission YAML text.
-    :param release_name: New productVersionName value.
-    """
-    rpa_product_version_name(rpa_text)
-    return PRODUCT_VERSION_RE.sub(lambda m: f'{m.group(1)}"{release_name}"', rpa_text)
+    return PRODUCT_VERSION_RE.findall(rpa_text)
 
 
 def parse_binary_dockerfile_parents(dockerfile_text: str, payload_parents: Dict[str, str]) -> Dict[str, Dict[str, str]]:
@@ -144,8 +120,15 @@ class BinariesCdnReleasePipeline:
     Konflux CDN.
 
     The release values injected into the binaries (release digests per arch and multi, release name) are read
-    from the public release payloads, passed to the Konflux build as build args, and the parent images used by
-    the build are checked against the payload before anything is released.
+    from the public release payloads and written by the rebase as ARG defaults into the committed Dockerfile, so
+    the Konflux build gets no release digests as build args. The parent images used by the build are checked
+    against the payload before anything is released.
+
+    There is one CGW product version per MAJOR.MINOR (for example 4.22), like oc-mirror's 2.0. Every z-stream
+    publishes into it and CGW replaces the previous release's files in place, so /pub/cgw/<product>/<version>/
+    always holds the latest release (mirror.openshift.com keeps the history). The version file and the RPAs that
+    point at it are added to konflux-release-data by hand once per MAJOR.MINOR; this job only checks that they are
+    on main before it ships.
     """
 
     def __init__(
@@ -159,9 +142,6 @@ class BinariesCdnReleasePipeline:
         data_path: str = constants.OCP_BUILD_DATA_URL,
         data_gitref: str = "",
         nvr: Optional[str] = None,
-        skip_cgw_mr: bool = False,
-        cgw_mr_timeout_hours: float = 24.0,
-        poll_seconds: int = 300,
         build_only: bool = False,
     ):
         if binary not in BINARIES:
@@ -185,16 +165,14 @@ class BinariesCdnReleasePipeline:
         self.data_path = data_path
         self.data_gitref = data_gitref
         self.nvr = nvr
-        self.skip_cgw_mr = skip_cgw_mr
         self.build_only = build_only
-        self.cgw_mr_timeout_seconds = int(cgw_mr_timeout_hours * 3600)
-        self.poll_seconds = poll_seconds
         self.dry_run = runtime.dry_run
         self.registry_config = os.environ.get("QUAY_AUTH_FILE")
         self.release_plan_key = f"openshift-{self.major}-{self.minor}-{self.client_config.shipment_kind}"
         self.rpa_names = [
             f"{self.client_config.rpa_prefix}-{env}-{self.major}-{self.minor}" for env in ("stage", "prod")
         ]
+        self.cgw_version = cgw_version_name(version, client_type)
         group_param = f"--group={self.group}" + (f"@{data_gitref}" if data_gitref else "")
         self._doozer_base_command = [
             "doozer",
@@ -221,9 +199,10 @@ class BinariesCdnReleasePipeline:
 
         :param arches: Brew arches of the group, e.g. ["x86_64", "aarch64"].
         :param multi: True when the group publishes a multi payload.
-        :return: (build_args, expected_parents) where expected_parents is {brew_arch: {payload_tag: digest}}.
+        :return: (release_values, expected_parents) where release_values are KEY=VALUE strings and
+            expected_parents is {brew_arch: {payload_tag: digest}}.
         """
-        build_args = [f"RELEASE_VERSION={self.release_name}"]
+        release_values = [f"RELEASE_VERSION={self.release_name}"]
         expected_parents: Dict[str, Dict[str, str]] = {}
         for arch in arches:
             pullspec = f"{constants.RELEASE_IMAGE_REPO}:{self.release_name}-{arch}"
@@ -233,7 +212,7 @@ class BinariesCdnReleasePipeline:
             version = info.get("metadata", {}).get("version")
             if version != self.release_name:
                 raise ValueError(f"{pullspec} has release version {version!r}, expected {self.release_name!r}")
-            build_args.append(f"DIGEST_{arch.upper()}={info['digest']}")
+            release_values.append(f"DIGEST_{arch.upper()}={info['digest']}")
             tags = {t["name"]: t["from"]["name"] for t in info["references"]["spec"]["tags"]}
             expected_parents[arch] = {}
             for tag in self.profile.payload_parents.values():
@@ -245,20 +224,22 @@ class BinariesCdnReleasePipeline:
             info = await oc.get_image_info(pullspec, raise_if_not_found=True, registry_config=self.registry_config)
             if not isinstance(info, list) or not info or not info[0].get("listDigest"):
                 raise ValueError(f"{pullspec} is not a manifest list")
-            build_args.append(f"DIGEST_MULTI={info[0]['listDigest']}")
-        return build_args, expected_parents
+            release_values.append(f"DIGEST_MULTI={info[0]['listDigest']}")
+        return release_values, expected_parents
 
-    async def build_binary(self, build_args: List[str]) -> dict:
+    async def build_binary(self, release_values: List[str]) -> dict:
         """
-        Rebase and build the binary with the release values as build args; return its record.log entry.
+        Rebase the binary with the release values as Dockerfile ARG defaults, build it; return its record.log entry.
 
-        :param build_args: KEY=VALUE build args for the Konflux build.
+        :param release_values: KEY=VALUE release values for the ARGs of the binary's Dockerfile.
         """
         base = self._doozer_base_command + ["--latest-parent-version", f"--binaries={self.binary}"]
         version = f"v{self.version}.0"
         release = util.default_release_suffix()
         rebase = base + ["beta:binaries:konflux:rebase", f"--version={version}", f"--release={release}"]
         rebase.append(f"--message=Updating Dockerfile version and release {version}-{release} for {self.release_name}")
+        for value in release_values:
+            rebase.extend(["--build-arg", value])
         if not self.dry_run:
             rebase.append("--push")
         await exectools.cmd_assert_async(rebase)
@@ -267,8 +248,6 @@ class BinariesCdnReleasePipeline:
         kubeconfig = os.environ.get("KONFLUX_SA_KUBECONFIG")
         if kubeconfig:
             build.extend(["--konflux-kubeconfig", kubeconfig])
-        for arg in build_args:
-            build.extend(["--build-arg", arg])
         if self.dry_run:
             build.append("--dry-run")
         await exectools.cmd_assert_async(build)
@@ -307,114 +286,29 @@ class BinariesCdnReleasePipeline:
                 return None
             raise
 
-    async def ensure_cgw_version(self):
-        gitlab_client = self._gitlab()
-        project = gitlab_client.get_project(KRD_PROJECT)
-        version_path = f"{KRD_CGW_DIR}/{self.profile.cgw_product}/{self.release_name}.yaml"
-        rpa_paths = [f"{KRD_RPA_DIR}/{name}.yaml" for name in self.rpa_names]
-        rpa_texts = {path: self._read_file(project, path) for path in rpa_paths}
-        missing = [path for path, text in rpa_texts.items() if text is None]
-        if missing:
-            raise RuntimeError(f"{self.group} is not onboarded: missing {', '.join(missing)} in {KRD_PROJECT}")
-        version_text = self._read_file(project, version_path)
-        if version_text is not None and all(
-            rpa_product_version_name(text) == self.release_name for text in rpa_texts.values()
-        ):
-            LOGGER.info("CGW version %s and RPAs %s are already on main", self.release_name, self.rpa_names)
-            return
-
-        branch_prefix = f"binaries-cdn-{self.major}-{self.minor}/{self.binary}/{self.client_type}/"
-        branch = f"{branch_prefix}{self.release_name}"
-        open_mrs = gitlab_client.list_merge_requests(KRD_PROJECT, state="opened", project=project, target_branch="main")
-        ours = [mr for mr in open_mrs if mr.source_branch.startswith(branch_prefix)]
-        others = [mr.web_url for mr in ours if mr.source_branch != branch]
-        if others:
+    def verify_cgw_onboarding(self):
+        project = self._gitlab().get_project(KRD_PROJECT)
+        problems = []
+        for name in self.rpa_names:
+            path = f"{KRD_RPA_DIR}/{name}.yaml"
+            text = self._read_file(project, path)
+            if text is None:
+                problems.append(f"missing {path}")
+                continue
+            names = rpa_product_version_names(text)
+            if names != [self.cgw_version]:
+                problems.append(f'{path} has productVersionName {names}, expected exactly one "{self.cgw_version}"')
+        version_path = f"{KRD_CGW_DIR}/{self.profile.cgw_product}/{self.cgw_version}.yaml"
+        if self._read_file(project, version_path) is None:
+            problems.append(f"missing {version_path}")
+        if problems:
             raise RuntimeError(
-                f"Another {self.binary} {self.client_type} CGW MR for {self.version} is still open: "
-                f"{', '.join(others)}. Merge or close it (and let its CDN release finish) before {self.release_name}."
+                f"{self.group} is not onboarded for {self.binary} {self.client_type} CDN releases: "
+                f"{'; '.join(problems)} in {KRD_PROJECT} main. Every {self.version} {self.client_type} release "
+                f"publishes into CGW version {self.cgw_version}; add or fix these there by hand, then re-run with "
+                "the NVR logged above (--nvr) to skip the build."
             )
-        existing = [mr for mr in ours if mr.source_branch == branch]
-        if existing:
-            mr = existing[0]
-            LOGGER.info("Reusing open MR %s", mr.web_url)
-        else:
-            actions = []
-            if version_text is None:
-                release_date = datetime.now(timezone.utc).strftime("%Y-%m-%d")
-                actions.append(
-                    {
-                        "action": "create",
-                        "file_path": version_path,
-                        "content": cgw_version_file_content(self.release_name, self.client_config.ga, release_date),
-                    }
-                )
-            for path, text in rpa_texts.items():
-                if rpa_product_version_name(text) != self.release_name:
-                    actions.append(
-                        {
-                            "action": "update",
-                            "file_path": path,
-                            "content": set_rpa_product_version_name(text, self.release_name),
-                        }
-                    )
-            title = f"{self.binary} {self.release_name}: CGW version and {self.client_config.rpa_prefix} RPAs"
-            if self.dry_run:
-                LOGGER.info("[DRY-RUN] Would create branch %s and MR %r with actions %s", branch, title, actions)
-                return
-            project.commits.create(
-                {
-                    "branch": branch,
-                    "start_branch": "main",
-                    "commit_message": f"{title}\n\nCreated by {os.environ.get('BUILD_URL', 'binaries-cdn-release')}",
-                    "actions": actions,
-                }
-            )
-            mr = project.mergerequests.create(
-                {
-                    "source_branch": branch,
-                    "target_branch": "main",
-                    "title": title,
-                    "description": (
-                        f"Adds CGW product version `{self.release_name}` for `{self.profile.cgw_product}` and points "
-                        f"{', '.join(self.rpa_names)} at it, so the Konflux CDN release of {self.release_name} "
-                        "publishes to its own version directory. Created by the binaries-cdn-release job: "
-                        f"{os.environ.get('BUILD_URL', 'n/a')}"
-                    ),
-                    "remove_source_branch": True,
-                }
-            )
-            LOGGER.info("Created MR %s", mr.web_url)
-        await self._wait_for_merge_and_sync(project, mr)
-
-    async def _wait_for_merge_and_sync(self, project, mr):
-        waited = 0
-        sha = None
-        while waited <= self.cgw_mr_timeout_seconds:
-            mr = project.mergerequests.get(mr.iid)
-            if mr.state == "closed":
-                raise RuntimeError(f"MR {mr.web_url} was closed without merging")
-            if mr.state == "merged":
-                sha = mr.merge_commit_sha or mr.squash_commit_sha or mr.sha
-                break
-            LOGGER.info("Waiting for %s to be merged (state: %s)", mr.web_url, mr.state)
-            await asyncio.sleep(self.poll_seconds)
-            waited += self.poll_seconds
-        if not sha:
-            raise TimeoutError(f"MR {mr.web_url} was not merged within {self.cgw_mr_timeout_seconds}s; re-run later")
-        while waited <= self.cgw_mr_timeout_seconds:
-            for pipeline in project.pipelines.list(ref="main", sha=sha, get_all=True):
-                for job in pipeline.jobs.list(get_all=True):
-                    if job.name != "sync_cgw":
-                        continue
-                    if job.status == "success":
-                        LOGGER.info("sync_cgw succeeded for %s", sha)
-                        return
-                    if job.status in ("failed", "canceled"):
-                        raise RuntimeError(f"sync_cgw {job.status} for {sha}: {job.web_url}")
-            LOGGER.info("Waiting for sync_cgw on main at %s", sha)
-            await asyncio.sleep(self.poll_seconds)
-            waited += self.poll_seconds
-        raise TimeoutError(f"sync_cgw did not succeed for {sha} within {self.cgw_mr_timeout_seconds}s")
+        LOGGER.info("CGW version %s and RPAs %s are on %s main", self.cgw_version, self.rpa_names, KRD_PROJECT)
 
     async def run(self):
         if not await self.binary_configured():
@@ -433,21 +327,22 @@ class BinariesCdnReleasePipeline:
             return
         arches = list(group_config.get("arches", []))
         multi = bool(group_config.get("multi_arch", {}).get("enabled", False))
-        build_args, expected_parents = await self.collect_release_values(arches, multi)
-        LOGGER.info("Release values for %s: %s", self.release_name, build_args)
+        release_values, expected_parents = await self.collect_release_values(arches, multi)
+        LOGGER.info("Release values for %s: %s", self.release_name, release_values)
 
         nvr = self.nvr
         if not nvr:
-            entry = await self.build_binary(build_args)
+            entry = await self.build_binary(release_values)
             if not self.dry_run:
                 self.verify_parents(Path(entry["dockerfile"]).read_text(), expected_parents)
             nvr = entry.get("nvrs", "").split(",")[0]
-            if self.dry_run and (not nvr or nvr == "n/a"):
-                LOGGER.info("[DRY-RUN] No NVR built; stopping before the release steps")
-                return
         LOGGER.info("binaries/%s NVR: %s", self.binary, nvr)
         if self.build_only:
             LOGGER.info("--build-only: not releasing %s", nvr)
+            return
+        if self.dry_run and (not nvr or nvr == "n/a"):
+            self.verify_cgw_onboarding()
+            LOGGER.info("[DRY-RUN] No NVR built; stopping before the release steps")
             return
 
         if is_nvr_embargoed(nvr):
@@ -456,8 +351,7 @@ class BinariesCdnReleasePipeline:
             )
             return
 
-        if not self.skip_cgw_mr:
-            await self.ensure_cgw_version()
+        self.verify_cgw_onboarding()
 
         pipeline = BinaryReleaseKonfluxPipeline(
             runtime=self.runtime,
@@ -485,8 +379,6 @@ class BinariesCdnReleasePipeline:
 @click.option("--data-path", default=constants.OCP_BUILD_DATA_URL, help="ocp-build-data repo to use")
 @click.option("--data-gitref", default="", help="Git ref of ocp-build-data to use")
 @click.option("--nvr", default=None, help="Release this binaries build NVR instead of building a new one")
-@click.option("--skip-cgw-mr", is_flag=True, help="Do not create or wait for the konflux-release-data MR")
-@click.option("--cgw-mr-timeout-hours", type=float, default=24.0, help="How long to wait for the MR and sync_cgw")
 @click.option(
     "--build-only", is_flag=True, help="Build and verify the binaries image, then stop before any release step"
 )
@@ -502,12 +394,14 @@ async def binaries_cdn_release(
     data_path: str,
     data_gitref: str,
     nvr: Optional[str],
-    skip_cgw_mr: bool,
-    cgw_mr_timeout_hours: float,
     build_only: bool,
 ):
     """
     Build a binaries/ member for a promoted release and ship it through Konflux push-artifacts-to-cdn.
+
+    Every release of a MAJOR.MINOR publishes into the same CGW product version (MAJOR.MINOR) and replaces the
+    previous release's files. The RPAs and the CGW version file are added to konflux-release-data by hand once
+    per MAJOR.MINOR; the job only checks that they are on main and fails if they are not.
 
     \b
     $ artcd binaries-cdn-release --binary openshift-install --version 4.22 --assembly 4.22.18 \\
@@ -523,8 +417,6 @@ async def binaries_cdn_release(
         data_path=data_path,
         data_gitref=data_gitref,
         nvr=nvr,
-        skip_cgw_mr=skip_cgw_mr,
-        cgw_mr_timeout_hours=cgw_mr_timeout_hours,
         build_only=build_only,
     )
     await pipeline.run()

@@ -14,6 +14,7 @@ from artcommonlib import exectools
 from artcommonlib.arch_util import go_arch_for_brew_arch, go_suffix_for_arch
 from artcommonlib.util import oc_image_info_for_arch_async
 from artcommonlib.variants import BuildVariant
+from async_lru import alru_cache
 from doozerlib.cli.images_okd import OKD_DEFAULT_IMAGE_REPO
 from doozerlib.state import STATE_PASS
 
@@ -37,6 +38,10 @@ from pyartcd.util import (
 )
 
 OKD_ARCHES = ('x86_64', 'aarch64')
+
+# Payload tag/distgit key used as a stand-in when a component has no image for a given arch.
+# Mirrors the 'pod' substitution doozer's release:gen-payload does for OCP payloads.
+POD_PLACEHOLDER_TAG = 'pod'
 
 
 class BuildPlan:
@@ -112,7 +117,7 @@ class KonfluxOkdPipeline:
         build_history_url = build_history_link_url(
             group=f'okd-{self.version}',
             assembly=self.assembly,
-            days=2,
+            days_ahead=2,
             job_url=job_url,
             outcomes=['Pending', 'Success', 'Failure'],
         )
@@ -597,6 +602,31 @@ class KonfluxOkdPipeline:
             self.logger.warning('Failed to resolve %s pullspec from %s: %s', go_arch, manifest_list_pullspec, e)
             return None
 
+    @alru_cache
+    async def _get_current_pod_pullspec(self, namespace: str, is_name: str) -> Optional[str]:
+        """
+        Look up the pullspec currently tagged as 'pod' in an imagestream. Used to find
+        the last-known-good 'pod' image to serve as a placeholder when a component has
+        no image for a given arch.
+
+        Cached per pipeline instance: every missing-arch image in a run would
+        otherwise trigger the same 'oc get istag' call.
+        """
+        cmd = [
+            'oc',
+            'get',
+            'istag',
+            '-n',
+            namespace,
+            f'{is_name}:{POD_PLACEHOLDER_TAG}',
+            '-o',
+            'jsonpath={.image.dockerImageReference}',
+        ]
+        rc, out, _ = await exectools.cmd_gather_async(cmd, check=False)
+        if rc != 0 or not out.strip():
+            return None
+        return out.strip()
+
     async def update_imagestreams(self):
         """
         Update static OKD imagestreams with successfully built images:
@@ -708,6 +738,18 @@ class KonfluxOkdPipeline:
             # Tag arch-specific pullspecs into per-arch imagestreams
             for arch, info in arch_imagestreams.items():
                 arch_pullspec = await self._get_arch_pullspec(image_pullspec, info['go_arch'])
+                if not arch_pullspec and payload_tag != POD_PLACEHOLDER_TAG:
+                    # No image for this arch (e.g. not built for it): fall back to whatever
+                    # 'pod' image is already tagged here, so the imagestream still carries
+                    # a complete set of tags for this arch.
+                    arch_pullspec = await self._get_current_pod_pullspec(info['namespace'], info['is_name'])
+                    if arch_pullspec:
+                        self.logger.warning(
+                            'No %s image for %s; using existing pod placeholder for this tag',
+                            info['go_arch'],
+                            image_name,
+                        )
+
                 if arch_pullspec:
                     arch_target = f'{info["namespace"]}/{info["is_name"]}:{payload_tag}'
                     try:
@@ -718,7 +760,7 @@ class KonfluxOkdPipeline:
                         self.logger.warning('Failed to tag %s %s into imagestream: %s', image_name, info['go_arch'], e)
                 else:
                     self.logger.warning(
-                        'Skipping %s imagestream tag for %s: could not resolve %s pullspec',
+                        'Skipping %s imagestream tag for %s: could not resolve %s pullspec and no pod placeholder available',
                         info['go_arch'],
                         image_name,
                         info['go_arch'],
@@ -827,12 +869,6 @@ class KonfluxOkdPipeline:
             raise ValueError(f'Invalid build strategy: {build_strategy}')
 
     def finalize(self):
-        # Add link to art-build-history at the end of the job
-        # OKD uses okd-X.Y for the group name in art-build-history
-        okd_group = f'okd-{self.version}'
-        job_url = os.getenv('BUILD_URL', '')
-        build_history_url = build_history_link_url(group=okd_group, assembly=self.assembly, days=2, job_url=job_url)
-        jenkins.update_description(f'<a href="{build_history_url}">View build history</a><br/>')
 
         state = self.load_state_yaml()
         if state.get('status') != STATE_PASS:

@@ -43,6 +43,7 @@ from doozerlib.lockfile_prototype.models import (
     RepoEntry,
     RpmsInConfig,
 )
+from doozerlib.lockfile_prototype.rendered_packages import resolve_rendered_packages
 from doozerlib.lockfile_prototype.resolver import RpmResolver
 from doozerlib.lockfile_prototype.utils import format_version_pin, pick_minimum_evr
 from doozerlib.repos import Repos
@@ -383,7 +384,16 @@ class RpmLockfilePrototypeGenerator:
         repo_list = self._build_repo_list(enabled_repos, arches)
 
         entries = DockerfileParser(str(dockerfile_path)).structure
+        no_rpms_stages: set[int] = set()
+        builders = image_meta.config.get('from', {}).get('builder', [])
+        if isinstance(builders, list):
+            for i, builder_entry in enumerate(builders):
+                if isinstance(builder_entry, dict) and builder_entry.get('no_rpms', False):
+                    no_rpms_stages.add(i)
         cat_packages = await self._resolve_cat_packages(entries, self.downstream_parents)
+        rendered_packages = await resolve_rendered_packages(
+            dest_dir, entries, self.downstream_parents, self._container, repo_list, self.logger, arches, no_rpms_stages
+        )
         dynamic_packages: dict[int, DynamicPackageSet] = {}
         detected_script = discover_dynamic_package_script(dest_dir, entries)
         if detected_script:
@@ -399,6 +409,11 @@ class RpmLockfilePrototypeGenerator:
                 entries,
                 repo_list,
             )
+        for stage, rendered in rendered_packages.items():
+            dynamic = dynamic_packages.setdefault(stage, DynamicPackageSet(common=[], arch_specific={}))
+            dynamic.common.extend(rendered.common)
+            for arch, packages in rendered.arch_specific.items():
+                dynamic.arch_specific.setdefault(arch, []).extend(packages)
 
         # Count stages and track which ones have RUN commands.
         # Stages without RUN (and no $(cat ...) extra packages) can't
@@ -415,13 +430,6 @@ class RpmLockfilePrototypeGenerator:
                 stages_with_runs.add(stage_idx)
 
         stages_with_bare_updates = _detect_stages_with_bare_updates(entries)
-
-        no_rpms_stages: set[int] = set()
-        builders = image_meta.config.get('from', {}).get('builder', [])
-        if isinstance(builders, list):
-            for i, builder_entry in enumerate(builders):
-                if isinstance(builder_entry, dict) and builder_entry.get('no_rpms', False):
-                    no_rpms_stages.add(i)
 
         out_file_path = dest_dir / filename
         if total_stages == 0:
@@ -674,25 +682,31 @@ class RpmLockfilePrototypeGenerator:
             # upgrade captures them, but cachi2 needs them in the lockfile.
             # Runs for every image-backed stage, not just final/bare-update.
             if image_pullspec and not bare_context:
-                if dockerfile_install_pkgs:
+                if dockerfile_install_pkgs or dynamic_package_set:
                     if upgrade_pkgs:
-                        base_pkg_set = {_package_name(package) for package in upgrade_pkgs}
+                        stage_base_pkgs = upgrade_pkgs
                     else:
                         stage_base_pkgs = await self._get_base_image_packages(
                             stage_num, image_pullspec, distgit_key, arches
                         )
-                        base_pkg_set = {_package_name(package) for package in stage_base_pkgs}
-                    pin_candidates = sorted(dockerfile_install_pkgs & base_pkg_set)
-                    if pin_candidates:
-                        result = await self._pin_missing_dockerfile_packages(
-                            result,
-                            pin_candidates,
-                            repo_list,
-                            arches,
-                            image_pullspec,
-                            distgit_key,
-                            stage_num,
+                    for arch in arches:
+                        base_pkg_set = {
+                            _package_name(package)
+                            for package in stage_base_pkgs
+                            if isinstance(package, str) or package.arches.get("only") == arch
+                        }
+                        specs = list(dynamic_package_set.common) if dynamic_package_set else []
+                        if dynamic_package_set:
+                            specs.extend(dynamic_package_set.arch_specific.get(arch, []))
+                        names = {re.split(r"\s*(?:>=|<=|==|=|>|<)\s*", spec, maxsplit=1)[0] for spec in specs}
+                        pin_candidates = sorted(
+                            (dockerfile_install_pkgs | names) & base_pkg_set
+                            | {name for name in names if name.startswith("/") and not _is_local_rpm(name)}
                         )
+                        if pin_candidates:
+                            result = await self._pin_missing_dockerfile_packages(
+                                result, pin_candidates, repo_list, [arch], image_pullspec, distgit_key, stage_num
+                            )
 
             if result:
                 stage_lockfiles.append(result)

@@ -77,6 +77,22 @@ def _validate_version(ctx, param, version):
     return validate_semver_major_minor_patch(ctx, param, version)
 
 
+def _parse_build_args(build_args: Sequence[str]) -> Dict[str, str]:
+    """
+    Parse repeated --build-arg KEY=VALUE options into a dict.
+
+    :param build_args: KEY=VALUE strings.
+    """
+    parsed = {}
+    for arg in build_args:
+        key, separator, value = arg.partition('=')
+        key = key.strip()
+        if not separator or not key:
+            raise click.BadParameter('Expected KEY=VALUE', param_hint='--build-arg')
+        parsed[key] = value
+    return parsed
+
+
 def _filter_okd_excluded_metas(runtime: Runtime, metas: Sequence[ImageMetadata]) -> list[ImageMetadata]:
     """
     Filter explicitly excluded images after metadata dependency expansion.
@@ -108,6 +124,7 @@ class KonfluxRebaseCli:
         push: bool,
         extra_labels: Optional[dict[str, str]] = None,
         kind: str = "image",
+        build_args: tuple[str, ...] = (),
     ):
         self.runtime = runtime
         self.kind = kind
@@ -122,6 +139,7 @@ class KonfluxRebaseCli:
         self.message = message
         self.push = push
         self.extra_labels = extra_labels or {}
+        self.build_args = _parse_build_args(build_args)
         self.upcycle = runtime.upcycle
 
     @start_as_current_span_async(TRACER, "beta:images:konflux:rebase")
@@ -149,6 +167,7 @@ class KonfluxRebaseCli:
             force_private_bit=self.embargoed,
             image_repo=self.image_repo,
             extra_labels=self.extra_labels,
+            build_args=self.build_args,
         )
 
         art_internal_metas = [
@@ -323,13 +342,7 @@ class KonfluxBuildCli:
         self.registry_auth_file = registry_auth_file
         self.skip_checks = skip_checks
         self.skip_tasks = skip_tasks
-        self.build_args = {}
-        for arg in build_args:
-            key, separator, value = arg.partition('=')
-            key = key.strip()
-            if not separator or not key:
-                raise click.BadParameter('Expected KEY=VALUE', param_hint='--build-arg')
-            self.build_args[key] = value
+        self.build_args = _parse_build_args(build_args)
         self.dry_run = dry_run
         self.plr_template = plr_template
         self.build_priority = build_priority
@@ -367,10 +380,8 @@ class KonfluxBuildCli:
         if self.runtime.variant is BuildVariant.OKD:
             major, minor = runtime.get_major_minor_fields()
             group = f'okd-{major}.{minor}'
-            build_priority = '8'
         else:
             group = runtime.group
-            build_priority = self.build_priority
 
         lifecycle = runtime.group_config.get("software_lifecycle")
         ec_policy = resolve_stage_policy(
@@ -419,7 +430,7 @@ class KonfluxBuildCli:
         # Freeze one policy snapshot for the batch before submitting any builds.
         # Golang builders use their fixed default without depending on the policy service.
         priority_policy = None
-        if build_priority == 'auto' and 'golang' not in group:
+        if self.build_priority == 'auto' and 'golang' not in group:
             priority_policy = await load_build_priority_policy()
         config = KonfluxImageBuilderConfig(
             base_dir=Path(runtime.working_dir, constants.WORKING_SUBDIR_KONFLUX_BUILD_SOURCES),
@@ -433,7 +444,7 @@ class KonfluxBuildCli:
             skip_tasks=self.skip_tasks,
             dry_run=self.dry_run,
             plr_template=self.plr_template,
-            build_priority=build_priority,
+            build_priority=self.build_priority,
             build_priority_policy=priority_policy,
             ec_policy_configuration=ec_policy,
             skip_ec_verify=self.skip_ec_verify,
@@ -711,7 +722,7 @@ class KonfluxBuildCli:
     metavar='PRIORITY',
     default='auto',
     required=True,
-    help='Kueue build priority. Use "auto" for automatic resolution or specify a number 1-10 (where 1 is highest priority). OKD builds always use priority 8.',
+    help='Kueue build priority. Use "auto" for the central policy when enabled, then image/group config; or specify a number 1-10 (where 1 is highest priority).',
 )
 @click.option(
     '--network-mode',

@@ -67,8 +67,8 @@ class TestOcp4ScanKonfluxPipeline(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(pipeline.changes, {'images': ['test-image']})
 
     @patch.dict(os.environ, {'KUBECONFIG': '/path/to/kubeconfig'})
-    @patch('pyartcd.pipelines.ocp4_scan_konflux.jenkins')
-    async def test_run_marks_job_unstable_when_changes_and_issues_found(self, mock_jenkins):
+    @patch('pyartcd.jenkins.update_description')
+    async def test_run_marks_job_unstable_when_changes_and_issues_found(self, update_description):
         pipeline = self._make_pipeline()
 
         async def fake_get_changes():
@@ -92,11 +92,11 @@ class TestOcp4ScanKonfluxPipeline(unittest.IsolatedAsyncioTestCase):
         pipeline.handle_source_changes.assert_called_once()
         pipeline.handle_rhcos_changes.assert_awaited_once()
         pipeline._handle_scan_issues.assert_awaited_once()
-        mock_jenkins.update_description.assert_called_with('Scan failures: test-image<br/>')
+        update_description.assert_called_with('Scan failures: test-image<br/>')
 
     @patch.dict(os.environ, {'KUBECONFIG': '/path/to/kubeconfig'})
-    @patch('pyartcd.pipelines.ocp4_scan_konflux.jenkins')
-    async def test_run_fails_when_issues_found_without_changes(self, mock_jenkins):
+    @patch('pyartcd.jenkins.update_description')
+    async def test_run_fails_when_issues_found_without_changes(self, update_description):
         pipeline = self._make_pipeline()
 
         async def fake_get_changes():
@@ -120,11 +120,11 @@ class TestOcp4ScanKonfluxPipeline(unittest.IsolatedAsyncioTestCase):
         pipeline.handle_source_changes.assert_called_once()
         pipeline.handle_rhcos_changes.assert_awaited_once()
         pipeline._handle_scan_issues.assert_awaited_once()
-        mock_jenkins.update_description.assert_called_with('Scan failures: test-image<br/>')
+        update_description.assert_called_with('Scan failures: test-image<br/>')
 
     @patch.dict(os.environ, {'KUBECONFIG': '/path/to/kubeconfig'})
-    @patch('pyartcd.pipelines.ocp4_scan_konflux.jenkins')
-    async def test_run_fails_when_scan_command_failed(self, mock_jenkins):
+    @patch('pyartcd.jenkins.update_description')
+    async def test_run_fails_when_scan_command_failed(self, update_description):
         pipeline = self._make_pipeline()
 
         async def fake_get_changes():
@@ -150,7 +150,7 @@ class TestOcp4ScanKonfluxPipeline(unittest.IsolatedAsyncioTestCase):
         pipeline.handle_source_changes.assert_called_once()
         pipeline.handle_rhcos_changes.assert_awaited_once()
         pipeline._handle_scan_issues.assert_awaited_once()
-        mock_jenkins.update_description.assert_called_with('Scan failures: test-image<br/>')
+        update_description.assert_called_with('Scan failures: test-image<br/>')
 
     async def test_handle_scan_issues_posts_slack_warning(self):
         pipeline = self._make_pipeline()
@@ -283,6 +283,257 @@ class TestBridgeBugMirroring(unittest.IsolatedAsyncioTestCase):
 
         slack_client.bind_channel.assert_called_once_with("openshift-4.23")
         slack_client.say.assert_awaited_once_with("Bridge bug mirroring failed for 4.23. Please investigate")
+
+
+class TestTektonScanner(unittest.IsolatedAsyncioTestCase):
+    @patch.dict(os.environ, {'TASKRUN_NAME': 'task', 'TEKTON_PIPELINERUN_NAME': 'scan'})
+    @patch('pyartcd.pipelines.ocp4_scan_konflux.tekton.annotate_current_pipelinerun')
+    @patch('pyartcd.pipelines.ocp4_scan_konflux.jenkins')
+    @patch('pyartcd.jenkins.update_title')
+    @patch('pyartcd.jenkins.update_description')
+    async def test_source_changes_still_trigger_jenkins_from_tekton(
+        self, update_description, update_title, jenkins, annotate
+    ):
+        runtime = MagicMock(spec=Runtime)
+        runtime.dry_run = False
+        runtime.working_dir = Path('/tmp')
+        pipeline = Ocp4ScanPipeline(runtime, '5.1', '', 'stream', '', '', False)
+        pipeline.changes = {'images': ['operator'], 'rpms': ['rpm']}
+        pipeline.report = {'images': [{'name': 'operator', 'changed': True}]}
+        pipeline.handle_source_changes()
+        update_title.assert_not_called()
+        update_description.assert_not_called()
+        jenkins.start_ocp4_konflux.assert_called_once_with(
+            build_version='5.1', assembly='stream', image_list=['operator'], rpm_list=['rpm']
+        )
+        annotate.assert_any_call({'art.openshift.io/scan-status': '[SOURCE CHANGES]'})
+        annotate.assert_called_with({'art.openshift.io/scan-summary': 'Changed 1 RPMs; Changed 1 OCP images'})
+
+    @patch.dict(os.environ, {'KUBECONFIG': '/wrong-cluster'})
+    @patch('pyartcd.pipelines.ocp4_scan_konflux.exectools.cmd_gather_async', new_callable=AsyncMock)
+    async def test_explicit_ci_credentials_do_not_change_local_cluster_context(self, cmd):
+        runtime = MagicMock(spec=Runtime)
+        runtime.dry_run = True
+        runtime.working_dir = Path('/tmp')
+        pipeline = Ocp4ScanPipeline(runtime, '5.1', '', 'stream', '', '', False, ci_kubeconfig='/ci-creds')
+        cmd.return_value = (0, '{}', '')
+        await pipeline.get_changes()
+        self.assertIn('--ci-kubeconfig=/ci-creds', cmd.call_args.args[0])
+        self.assertIn('--dry-run', cmd.call_args.args[0])
+        self.assertEqual(os.environ['KUBECONFIG'], '/wrong-cluster')
+
+    @patch.dict(os.environ, {'TASKRUN_NAME': 'task', 'TEKTON_PIPELINERUN_NAME': 'scan'})
+    @patch('pyartcd.pipelines.ocp4_scan_konflux.tekton.annotate_current_pipelinerun')
+    @patch('pyartcd.pipelines.ocp4_scan_konflux.jenkins')
+    async def test_dry_run_reports_changes_without_triggering_jenkins(self, jenkins, annotate):
+        runtime = MagicMock(spec=Runtime)
+        runtime.dry_run = True
+        runtime.working_dir = Path('/tmp')
+        pipeline = Ocp4ScanPipeline(runtime, '4.22', '', 'stream', '', '', False)
+        pipeline.changes = {'images': ['operator'], 'rpms': ['rpm']}
+        pipeline.report = {'images': [{'name': 'operator', 'changed': True}]}
+        pipeline.handle_source_changes()
+        pipeline.rhcos_outdated = True
+        await pipeline.handle_rhcos_changes()
+        pipeline.rhcos_outdated = False
+        pipeline.rhcos_updated = True
+        await pipeline.handle_rhcos_changes()
+        pipeline.issues = [{'name': 'operator', 'issue': 'Scan failed'}]
+        pipeline._report_issues()
+        jenkins.start_ocp4_konflux.assert_not_called()
+        jenkins.start_rhcos.assert_not_called()
+        jenkins.start_build_sync.assert_not_called()
+        status_updates = [
+            call.args[0]['art.openshift.io/scan-status']
+            for call in annotate.call_args_list
+            if 'art.openshift.io/scan-status' in call.args[0]
+        ]
+        self.assertEqual(status_updates, ['[SOURCE CHANGES]', '[SOURCE CHANGES] [RHCOS CHANGES]'])
+        annotate.assert_called_with(
+            {
+                'art.openshift.io/scan-summary': (
+                    'Changed 1 RPMs; Changed 1 OCP images; RHCOS outdated; Scan failures: operator'
+                )
+            }
+        )
+
+
+class TestTektonScannerLocks(unittest.IsolatedAsyncioTestCase):
+    def setUp(self):
+        import inspect
+
+        from pyartcd.pipelines.ocp4_scan_konflux import ocp4_scan
+
+        self.scan = inspect.unwrap(ocp4_scan.callback)
+        self.runtime = MagicMock(spec=Runtime)
+        self.runtime.dry_run = False
+        self.runtime.working_dir = Path('/tmp')
+        self.pipeline = MagicMock()
+        self.pipeline.skipped = True
+        self.scan_key = 'lock:scan-konflux:4.22'
+        self.build_key = 'lock:build-konflux:4.22:stream'
+        self.held = set()
+        self.events = []
+        self.managers = []
+        self.failure = None
+
+        async def scan():
+            self.assertEqual(self.held, {self.scan_key, self.build_key})
+            self.events.append(('scan',))
+            self.pipeline.skipped = False
+            if self.failure:
+                raise self.failure
+
+        self.pipeline.run = AsyncMock(side_effect=scan)
+        self.env = patch.dict(
+            os.environ,
+            {
+                'TASKRUN_NAME': 'scan-task',
+                'TEKTON_PIPELINERUN_NAME': 'scan-123',
+                'TASKRUN_NAMESPACE': 'art-openshift-tenant',
+                # Lock ownership must not depend on a UI link's format.
+                'BUILD_URL': 'https://pipelines.example/#/run/other-tenant/other-run',
+            },
+        )
+        self.env.start()
+        self.addCleanup(self.env.stop)
+
+    def make_lock_manager(self, _lock):
+        from contextlib import asynccontextmanager
+
+        manager = MagicMock()
+        manager.is_locked = AsyncMock(side_effect=lambda name: name in self.held)
+        manager.get_lock_id = AsyncMock(return_value='job/another-build/123')
+        manager.destroy = AsyncMock()
+
+        @asynccontextmanager
+        async def acquired(resource, lock_identifier):
+            self.held.add(resource)
+            self.events.append(('acquire', resource, lock_identifier))
+            try:
+                yield
+            finally:
+                self.held.remove(resource)
+                self.events.append(('release', resource))
+
+        async def lock(**kwargs):
+            return acquired(**kwargs)
+
+        manager.lock = AsyncMock(side_effect=lock)
+        self.managers.append(manager)
+        return manager
+
+    async def invoke(self):
+        with (
+            patch('pyartcd.pipelines.ocp4_scan_konflux.Ocp4ScanPipeline', return_value=self.pipeline),
+            patch('pyartcd.pipelines.ocp4_scan_konflux.jenkins.init_jenkins') as init_jenkins,
+            patch('pyartcd.tekton.annotate_current_pipelinerun') as annotate,
+            patch('pyartcd.locks.LockManager.from_lock', side_effect=self.make_lock_manager),
+        ):
+            try:
+                await self.scan(
+                    runtime=self.runtime,
+                    version='4.22',
+                    assembly='stream',
+                    data_path='https://github.com/openshift-eng/ocp-build-data',
+                    data_gitref='',
+                    image_list='',
+                    skip_rpms=False,
+                    ci_kubeconfig='/ci-creds',
+                    rebuild_before=None,
+                )
+            finally:
+                init_jenkins.assert_called_once()
+                for manager in self.managers:
+                    manager.destroy.assert_awaited_once()
+        return annotate
+
+    async def test_live_scan_acquires_both_locks_with_tekton_owner_then_release(self):
+        from pyartcd.tekton_locks import parse_k8s_lock_path
+
+        await self.invoke()
+        self.pipeline.run.assert_awaited_once()
+        self.assertEqual([event[1] for event in self.events if event[0] == 'acquire'], [self.scan_key, self.build_key])
+        for event in self.events:
+            if event[0] == 'acquire':
+                self.assertEqual(parse_k8s_lock_path(event[2]), ('art-openshift-tenant', 'scan-123', 'PipelineRun'))
+                self.assertEqual(event[2], 'k8s/ns/art-openshift-tenant/tekton.dev~v1~PipelineRun/scan-123')
+        self.assertEqual(self.events[-2:], [('release', self.build_key), ('release', self.scan_key)])
+        self.assertFalse(self.held)
+
+    async def test_live_scan_skips_when_either_jenkins_lock_is_held(self):
+        for key in (self.scan_key, self.build_key):
+            with self.subTest(key=key):
+                self.held = {key}
+                self.events.clear()
+                self.managers.clear()
+                self.pipeline.run.reset_mock()
+                annotate = await self.invoke()
+                self.pipeline.run.assert_not_awaited()
+                self.assertEqual(self.held, {key})
+                annotate.assert_called_once_with({'art.openshift.io/scan-status': '[SKIPPED][LOCKED]'})
+
+    async def test_existing_scan_lock_skips_scanning(self):
+        self.held.add(self.scan_key)
+        annotate = await self.invoke()
+        self.pipeline.run.assert_not_awaited()
+        self.assertEqual(self.events, [])
+        self.assertEqual(self.held, {self.scan_key})
+        annotate.assert_called_once_with({'art.openshift.io/scan-status': '[SKIPPED][LOCKED]'})
+
+    async def test_existing_build_lock_skips_scanning_and_releases_scan_lock(self):
+        self.held.add(self.build_key)
+        annotate = await self.invoke()
+        self.pipeline.run.assert_not_awaited()
+        self.assertEqual(self.events[-1], ('release', self.scan_key))
+        self.assertEqual(self.held, {self.build_key})
+        annotate.assert_called_once_with({'art.openshift.io/scan-status': '[SKIPPED][LOCKED]'})
+
+    async def test_scan_failure_releases_both_locks(self):
+        self.failure = RuntimeError('scan failed')
+        with self.assertRaisesRegex(RuntimeError, 'scan failed'):
+            await self.invoke()
+        self.assertFalse(self.held)
+        self.assertEqual(self.events[-2:], [('release', self.build_key), ('release', self.scan_key)])
+
+    async def test_dry_runs_skip_locks_on_both_platforms(self):
+        self.runtime.dry_run = True
+        self.held = {self.scan_key, self.build_key}
+
+        async def scan():
+            self.pipeline.skipped = False
+
+        self.pipeline.run = AsyncMock(side_effect=scan)
+        for is_tekton in (False, True):
+            with (
+                self.subTest(is_tekton=is_tekton),
+                patch('pyartcd.pipelines.ocp4_scan_konflux.tekton.is_tekton_context', return_value=is_tekton),
+                patch('pyartcd.pipelines.ocp4_scan_konflux.Ocp4ScanPipeline', return_value=self.pipeline),
+                patch('pyartcd.pipelines.ocp4_scan_konflux.jenkins') as jenkins,
+                patch('pyartcd.util.update_run_title') as title,
+                patch('pyartcd.locks.LockManager.from_lock') as locks,
+            ):
+                self.pipeline.skipped = True
+                self.pipeline.run.reset_mock()
+                await self.scan(
+                    runtime=self.runtime,
+                    version='4.22',
+                    assembly='stream',
+                    data_path='https://github.com/openshift-eng/ocp-build-data',
+                    data_gitref='',
+                    image_list='',
+                    skip_rpms=False,
+                    ci_kubeconfig='/ci-creds',
+                    rebuild_before=None,
+                )
+                locks.assert_not_called()
+                self.pipeline.run.assert_awaited_once()
+                title.assert_not_called()
+                self.assertEqual(self.held, {self.scan_key, self.build_key})
+                if is_tekton:
+                    jenkins.init_jenkins.assert_not_called()
+                else:
+                    jenkins.init_jenkins.assert_called_once()
 
 
 if __name__ == '__main__':
