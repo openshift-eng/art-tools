@@ -94,7 +94,7 @@ async def resolve_rendered_packages(
                     continue
                 for token in tokens[:-1]:
                     token = re.sub(r"\$\{(\w+)\}|\$(\w+)", lambda m: variables.get(m.group(1) or m.group(2), ""), token)
-                    if not token or token.startswith("/") or ".." in Path(token).parts:
+                    if not Path(token).parts or token.startswith("/") or ".." in Path(token).parts:
                         continue
                     for candidate in source_dir.glob(token):
                         path = candidate.resolve()

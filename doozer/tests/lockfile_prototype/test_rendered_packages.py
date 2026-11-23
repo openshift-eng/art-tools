@@ -175,6 +175,23 @@ def test_copies_are_resolved_at_each_run_and_local_copy_options_are_supported(tm
     assert result == {0: DynamicPackageSet(common=["first-package", "second-package"], arch_specific={})}
 
 
+@pytest.mark.parametrize("source", [".", "./", "././", "${CONTEXT}"])
+def test_copy_context_directory_does_not_break_package_resolution(tmp_path: Path, source: str):
+    (tmp_path / "Dockerfile").write_text(
+        f"FROM example.com/base\nARG CONTEXT=.\nCOPY {source} /src/\n"
+        "COPY packages /tmp/\nRUN render_package_list /tmp/packages /tmp/out\n"
+    )
+    (tmp_path / "packages").write_text("curl\n")
+
+    result = asyncio.run(
+        resolve_rendered_packages(
+            tmp_path, DockerfileParser(str(tmp_path / "Dockerfile")).structure, ["example.com/base"], AsyncMock()
+        )
+    )
+
+    assert result == {0: DynamicPackageSet(common=["curl"], arch_specific={})}
+
+
 def test_named_stage_inherits_json_copy_and_renamed_destination(tmp_path: Path):
     (tmp_path / "Dockerfile").write_text(
         'FROM example.com/base AS build\nENV PKGS_LIST=selected\nCOPY ["packages", "/tmp/selected"]\n'
