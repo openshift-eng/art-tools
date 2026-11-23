@@ -385,7 +385,9 @@ class RpmLockfilePrototypeGenerator:
 
         entries = DockerfileParser(str(dockerfile_path)).structure
         cat_packages = await self._resolve_cat_packages(entries, self.downstream_parents)
-        rendered_packages = await resolve_rendered_packages(dest_dir, entries, self.downstream_parents, self._container)
+        rendered_packages = await resolve_rendered_packages(
+            dest_dir, entries, self.downstream_parents, self._container, repo_list, self.logger
+        )
         for stage, packages in rendered_packages.items():
             cat_packages.setdefault(stage, []).extend(packages)
         dynamic_packages: dict[int, DynamicPackageSet] = {}

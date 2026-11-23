@@ -2,12 +2,14 @@
 Resolve package lists rendered by image build scripts before DNF installs them.
 """
 
+import logging
 import re
 import shlex
 from pathlib import Path
 
 from doozerlib.lockfile_prototype.container_utils import ContainerImageHelper
 from doozerlib.lockfile_prototype.dynamic_packages import DynamicPackageResolver
+from doozerlib.lockfile_prototype.models import RepoEntry
 
 
 async def resolve_rendered_packages(
@@ -15,6 +17,8 @@ async def resolve_rendered_packages(
     entries: list[dict],
     parents: list[str],
     container: ContainerImageHelper,
+    repos: list[RepoEntry] | None = None,
+    logger: logging.Logger | None = None,
 ) -> dict[int, list[str]]:
     """
     Resolve copied package templates in the stages that render them.
@@ -88,8 +92,27 @@ async def resolve_rendered_packages(
             image = parents[stage] if stage < len(parents) else ""
             if not image or "/" not in image:
                 raise RuntimeError(f"Cannot determine base image for rendered package lists in stage {stage}")
-            os_release = await container.read_file_from_image(image, "/etc/os-release")
-            version = DynamicPackageResolver._parse_os_release(os_release).get("VERSION_ID", "")
+            version = ""
+            for os_release_path in ("/etc/os-release", "/usr/lib/os-release"):
+                os_release = await container.read_file_from_image(image, os_release_path)
+                version = DynamicPackageResolver._parse_os_release(os_release).get("VERSION_ID", "")
+                if version:
+                    break
+            if not version:
+                repo_majors = {
+                    match.group(1)
+                    for repo in repos or []
+                    for match in re.finditer(r"\brhel-(\d+)(?:\b|_)", repo.repoid, re.IGNORECASE)
+                }
+                if len(repo_majors) == 1:
+                    version = repo_majors.pop()
+                    if logger:
+                        logger.warning(
+                            "Cannot read OS release from %s; inferring RHEL %s from repository IDs for stage %s",
+                            image,
+                            version,
+                            stage,
+                        )
             major = version.split(".", 1)[0]
             config = next((path for path in copied.values() if path.name == "python-config.sh"), None)
             if not major or config is None:
