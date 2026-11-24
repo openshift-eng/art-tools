@@ -206,7 +206,8 @@ def validate_image_production(shipment, provenance: dict, gitlab_client) -> None
     """Require successful production watch jobs for the exact contributing image content.
 
     Approval, merge, stage success and prod labels alone are not delivery proof.
-    The successful job's parent revision must contain the current image snapshot.
+    The successful job's parent revision must contain the current image snapshot,
+    including all digests pinned from build records at catalog build time.
     """
 
     for contributor in shipment.unified.assemblies:
@@ -249,6 +250,20 @@ def validate_image_production(shipment, provenance: dict, gitlab_client) -> None
                     pending.remove(path)
         if pending:
             raise RuntimeError(f'Image production incomplete for {contributor.imageShipmentMR}: {sorted(pending)}')
+
+        expected = provenance.get('image_digests', {}).get(contributor.group, {})
+        if set(expected) != required or any(not re.fullmatch(r'sha256:[0-9a-f]{64}', d) for d in expected.values()):
+            raise RuntimeError(f'Missing build digest provenance for {contributor.group}/{contributor.assembly}')
+        shipped_digests = {
+            component['containerImage'].rpartition('@')[2]
+            for image in images.values()
+            for component in image['snapshot']['spec']['components']
+        }
+        mismatches = sorted(nvr for nvr, digest in expected.items() if digest not in shipped_digests)
+        if mismatches:
+            raise RuntimeError(
+                f'{contributor.imageShipmentMR} production snapshot is missing pinned digests: {mismatches}'
+            )
 
 
 def validate_production_freeze(shipment, config_path: str, gitlab_client, mr_url: str) -> None:

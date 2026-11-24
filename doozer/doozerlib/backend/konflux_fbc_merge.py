@@ -16,7 +16,9 @@ from artcommonlib.git_helper import validate_git_branch, validate_git_group_name
 from artcommonlib.gitdata import GitData
 from artcommonlib.github_auth import get_github_client_for_org
 from artcommonlib.konflux.konflux_build_record import (
+    Engine,
     KonfluxBuildOutcome,
+    KonfluxBuildRecord,
     KonfluxBundleBuildRecord,
     KonfluxFbcBuildRecord,
 )
@@ -400,6 +402,46 @@ class LayeredFbcMerger(KonfluxFbcFragmentMerger):
                 selected = assembly_inputs[source['nvr']]
                 source['assembly'] = selected['assembly']
                 source['assembly_group_revision'] = selected['group_revision']
+            if any('operand_nvrs' in selected for selected in assembly_inputs.values()):
+                self.provenance['image_digests'] = await self._resolve_shipment_image_digests(assembly_inputs)
+
+    async def _resolve_shipment_image_digests(self, assembly_inputs: dict) -> dict:
+        """Map each contributing group's pinned build NVRs to their Konflux image digests.
+
+        Args:
+            assembly_inputs: Selected FBC builds with their assembly's effective operand pins.
+
+        Returns:
+            Image and bundle digests grouped by their contributing build-data group.
+
+        Raises:
+            ValueError: If a required build record lacks a digest or pins disagree.
+        """
+        operand_nvrs = {}
+        records_by_group = {}
+        for source in self.inputs:
+            group = source.record.group
+            pins = set(assembly_inputs[source.record.nvr].get('operand_nvrs', []))
+            if not pins or operand_nvrs.setdefault(group, pins) != pins:
+                raise ValueError(f'{group}: missing or inconsistent operand pins for unified shipment')
+            records_by_group.setdefault(group, {})[source.bundle.nvr] = source.bundle
+
+        image_db = KonfluxDb()
+        image_db.bind(KonfluxBuildRecord)
+        digests = {}
+        for group, pins in operand_nvrs.items():
+            records = records_by_group[group]
+            for record in await image_db.get_build_records_by_nvrs(
+                sorted(pins), where={'group': group, 'engine': Engine.KONFLUX.value}, exclude_large_columns=True
+            ):
+                records[record.nvr] = record
+            digests[group] = {}
+            for nvr, record in sorted(records.items()):
+                _, _, digest = (record.image_pullspec or '').rpartition('@')
+                if not re.fullmatch(r'sha256:[0-9a-f]{64}', digest):
+                    raise ValueError(f'{group}: no immutable image digest recorded for {nvr}')
+                digests[group][nvr] = digest
+        return digests
 
     async def _render_catalog(self, fragments):
         return self.catalog

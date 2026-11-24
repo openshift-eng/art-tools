@@ -225,8 +225,11 @@ loads the pinned provenance and compares original/current effective image pins
 coverage. Input changes require reconciliation and regeneration; unrelated
 build-data changes do not invalidate the selection. Staging can precede image
 production. Production additionally requires successful production watch jobs
-for matching contributing image snapshots. Approval, merge and stage success
-alone are insufficient. Unified production is still a manual `prod-pipeline`
+for matching contributing image snapshots. Those snapshots must include the
+image and bundle digests resolved from the pinned build records and recorded in
+the catalog provenance. A digest swap under the same NVR blocks production.
+Approval, merge and stage success alone are insufficient.
+Unified production is still a manual `prod-pipeline`
 action and must be last. Existing prod-pipeline owns failed delivery retries.
 After any production attempt, changes to the unified shipment set (other than
 release-result/advisory bookkeeping) require a new MR.

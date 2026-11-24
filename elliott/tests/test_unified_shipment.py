@@ -239,9 +239,16 @@ def test_production_freeze_preserves_content_allows_results(shipment, mode):
 
 
 @pytest.mark.parametrize(
-    'status,historic_matches', [('success', True), ('failed', True), ('pending', True), ('success', False)]
+    'status,historic_matches,swap_digest',
+    [
+        ('success', True, False),
+        ('failed', True, False),
+        ('pending', True, False),
+        ('success', False, False),
+        ('success', True, True),
+    ],
 )
-def test_image_prod_requires_successful_matching_watch_job(shipment, status, historic_matches):
+def test_image_prod_requires_successful_matching_watch_job(shipment, status, historic_matches, swap_digest):
     import json
     from types import SimpleNamespace
     from unittest.mock import Mock, patch
@@ -250,6 +257,9 @@ def test_image_prod_requires_successful_matching_watch_job(shipment, status, his
 
     config = ShipmentConfig.model_validate(shipment).shipment
     pin, bundle = 'operator-container-8.2.3-1', 'operator-bundle-8.2.3-1'
+    image_digest = 'sha256:' + 'a' * 64
+    bundle_digest = 'sha256:' + 'b' * 64
+    shipped_image_digest = 'sha256:' + 'c' * 64 if swap_digest else image_digest
     records = {
         'releases': {
             '8.2.3': {
@@ -272,7 +282,15 @@ def test_image_prod_requires_successful_matching_watch_job(shipment, status, his
     }
     image = {
         'metadata': {'product': 'mta', 'group': 'mta-8.2', 'assembly': '8.2.3', 'fbc': False},
-        'snapshot': {'nvrs': [pin, bundle]},
+        'snapshot': {
+            'nvrs': [pin, bundle],
+            'spec': {
+                'components': [
+                    {'containerImage': f'quay.io/example/image@{shipped_image_digest}'},
+                    {'containerImage': f'quay.io/example/bundle@{bundle_digest}'},
+                ],
+            },
+        },
     }
     historic = deepcopy(image)
     if not historic_matches:
@@ -282,7 +300,10 @@ def test_image_prod_requires_successful_matching_watch_job(shipment, status, his
     client.get_mr_from_url.return_value = SimpleNamespace(sha='current')
     child = Mock()
     child.jobs.list.return_value = [SimpleNamespace(name='image-watch-prod', status=status)]
-    provenance = {'inputs': [{'group': 'mta-8.2', 'assembly': '8.2.3', 'bundle_nvr': bundle}]}
+    provenance = {
+        'inputs': [{'group': 'mta-8.2', 'assembly': '8.2.3', 'bundle_nvr': bundle}],
+        'image_digests': {'mta-8.2': {pin: image_digest, bundle: bundle_digest}},
+    }
     with (
         patch('elliottlib.unified_shipment.get_github_client_for_org') as github,
         patch('elliottlib.unified_shipment.production_pipelines', return_value=[(SimpleNamespace(sha='old'), child)]),
@@ -294,7 +315,10 @@ def test_image_prod_requires_successful_matching_watch_job(shipment, status, his
         github.return_value.get_repo.return_value.get_contents.return_value.decoded_content = json.dumps(
             records
         ).encode()
-        if status == 'success' and historic_matches:
+        if swap_digest:
+            with pytest.raises(RuntimeError, match=f'production snapshot is missing pinned digests:.*{pin}'):
+                validate_image_production(config, provenance, client)
+        elif status == 'success' and historic_matches:
             validate_image_production(config, provenance, client)
         else:
             with pytest.raises(RuntimeError, match='production incomplete'):

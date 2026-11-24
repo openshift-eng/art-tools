@@ -164,6 +164,8 @@ class MergeLayeredFbcPipeline:
                         'operator': operator,
                         'pullspec': record['pullspec'],
                     }
+                    if self.create_mr:
+                        inputs[record['nvr']]['operand_nvrs'] = record['operand_nvrs']
         if not inputs_by_target:
             raise ValueError(f'No selected assembly supports OCP {self.target}')
         return [
