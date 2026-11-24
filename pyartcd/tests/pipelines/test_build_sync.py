@@ -1,6 +1,7 @@
 import asyncio
+import json
 from unittest import IsolatedAsyncioTestCase
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, call, patch
 
 from click.testing import CliRunner
 from pyartcd.pipelines.build_sync import BuildSyncPipeline, build_sync
@@ -39,6 +40,25 @@ class TestBuildSync(IsolatedAsyncioTestCase):
                 pipeline = BuildSyncPipeline(**self.pipeline_args())
                 self.assertEqual(pipeline.is_base_name, expected)
                 self.assertEqual(pipeline.fail_count_name, 'count:build-sync-failure:konflux:stream:4.22')
+
+    @patch.dict('os.environ', {'KUBECONFIG': '/path/to/kubeconfig'})
+    @patch('pyartcd.pipelines.build_sync.exectools.cmd_gather_async')
+    async def test_tags_coreos_into_versioned_private_ci_stream(self, execute):
+        pipeline = BuildSyncPipeline(**self.pipeline_args(version='5.0'))
+        pullspec = 'quay.io/openshift-release-dev/ocp-v4.0-art-dev@sha256:' + 'a' * 64
+        execute.return_value = (0, json.dumps({'tag': {'from': {'name': pullspec}}}), '')
+        tag = 'rhel-coreos-10'
+
+        await pipeline._tag_into_ci_imagestream('', tag)
+
+        oc = 'oc --kubeconfig /path/to/kubeconfig'
+        execute.assert_has_awaits(
+            [
+                call(f'{oc} -n ocp get istag/{pipeline.is_base_name}:{tag} -o=json'),
+                call(f'{oc} -n ocp tag {pullspec} 5.0:{tag} --import-mode=PreserveOriginal'),
+                call(f'{oc} -n ocp-priv tag {pullspec} 5.0:{tag} --import-mode=PreserveOriginal'),
+            ]
+        )
 
     @patch('pyartcd.pipelines.build_sync.jenkins.init_jenkins')
     def test_cli_rejects_brew_before_connecting_to_jenkins(self, init_jenkins):

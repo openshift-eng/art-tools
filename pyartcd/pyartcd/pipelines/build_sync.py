@@ -421,10 +421,11 @@ class BuildSyncPipeline:
 
         if not arch_suffix:
             # Tag the image into the imagestream for private CI from openshift-priv.
-            self.logger.info('Tagging ocp-priv/%s-priv:%s with %s', self.version, tag, tag_pullspec)
+            private_stream_tag = f'{self.version}:{tag}'
+            self.logger.info('Tagging ocp-priv/%s with %s', private_stream_tag, tag_pullspec)
             cmd = (
                 f'oc --kubeconfig {os.environ["KUBECONFIG"]} -n ocp-priv '
-                f'tag {tag_pullspec} {self.version}-priv:{tag} --import-mode=PreserveOriginal'
+                f'tag {tag_pullspec} {private_stream_tag} --import-mode=PreserveOriginal'
             )
 
             if self.runtime.dry_run:
@@ -435,7 +436,7 @@ class BuildSyncPipeline:
                 except ChildProcessError:
                     # Concurrent oc tag calls may race to create the imagestream;
                     # retry once so the second attempt tags into the now-existing imagestream.
-                    self.logger.warning('Retrying ocp-priv tag for %s-priv:%s after initial failure', self.version, tag)
+                    self.logger.warning('Retrying ocp-priv tag for %s after initial failure', private_stream_tag)
                     await exectools.cmd_gather_async(cmd)
 
     @start_as_current_span_async(TRACER, "build-sync.populate-ci-imagestreams")
