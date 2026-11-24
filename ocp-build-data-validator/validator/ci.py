@@ -224,7 +224,7 @@ def validate(
                 if not semantic_errors:
                     valid_images[relative.stem] = data
             elif relative.parts[0] == 'rpms':
-                file_errors.extend(checks.validate_enabled_repo_targets(data, group))
+                file_errors.extend(checks.validate_enabled_repo_targets(data, group, rpm=True))
             if not schema_only and relative.parts[0] in {'images', 'rpms'}:
                 file_errors.extend(checks.validate_sources(data, group, client, image=relative.parts[0] == 'images'))
         except (ValueError, KeyError, TypeError, OSError, YAMLError) as error:

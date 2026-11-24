@@ -780,3 +780,40 @@ def test_enabled_repos_match_component_target(group, image, expected):
     assert bool(errors) == expected
     if expected:
         assert 'enabled_repos' in errors[0]
+
+
+@pytest.mark.parametrize(
+    'group,rpm,expected',
+    [
+        (
+            {'branch': 'rhaos-4.9-rhel-8'},
+            {'targets': ['rhaos-4.9-rhel-9-candidate'], 'enabled_repos': ['rhel-9-baseos-rpms']},
+            False,
+        ),
+        (
+            {'branch': 'rhaos-4.9-rhel-8'},
+            {'targets': ['rhaos-4.9-rhel-9-candidate'], 'enabled_repos': ['rhel-8-baseos-rpms']},
+            True,
+        ),
+        (
+            {
+                'branch': 'rhaos-4.9-rhel-8',
+                'default_rpm_build_profile': 'default',
+                'build_profiles': {'rpm': {'default': {'targets': ['rhaos-4.9-rhel-9-candidate']}}},
+            },
+            {'enabled_repos': ['rhel-9-baseos-rpms']},
+            False,
+        ),
+        (
+            {'branch': 'rhaos-4.9-rhel-8'},
+            {
+                'targets': ['rhaos-4.9-rhel-8-candidate', 'rhaos-4.9-rhel-9-candidate'],
+                'enabled_repos': ['rhel-9-baseos-rpms'],
+            },
+            False,
+        ),
+        ({'branch': 'rhaos-4.9-rhel-8'}, {'enabled_repos': ['rhel-8-baseos-rpms']}, False),
+    ],
+)
+def test_rpm_enabled_repos_use_effective_build_targets(group, rpm, expected):
+    assert bool(checks.validate_enabled_repo_targets(rpm, group, rpm=True)) == expected
