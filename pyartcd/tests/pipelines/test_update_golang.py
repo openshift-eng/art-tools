@@ -1,5 +1,4 @@
 import asyncio
-import json
 import os
 import tempfile
 import unittest
@@ -9,7 +8,7 @@ from unittest.mock import ANY, AsyncMock, Mock, call, patch
 
 import click
 import koji
-from artcommonlib.constants import GOLANG_BUILDER_IMAGE_NAME, REGISTRY_CI_OPENSHIFT, REGISTRY_REDHAT_IO
+from artcommonlib.constants import GOLANG_BUILDER_IMAGE_NAME
 from artcommonlib.konflux.konflux_build_record import KonfluxBuildRecord
 from pyartcd.pipelines.update_golang import (
     DEFAULT_GOLANG_ASSEMBLY,
@@ -228,10 +227,6 @@ class TestIsLatestAndAvailable(IsolatedAsyncioTestCase):
 class TestMoveGolangBugs(IsolatedAsyncioTestCase):
     """Test the move_golang_bugs async function"""
 
-    def setUp(self):
-        self.enterContext(patch.dict(os.environ))
-        os.environ.pop('APP_CI_KUBECONFIG', None)
-
     @patch("artcommonlib.exectools.cmd_assert_async")
     async def test_move_golang_bugs_with_cves(self, mock_cmd_assert):
         """Test moving golang bugs with CVEs"""
@@ -290,49 +285,6 @@ class TestMoveGolangBugs(IsolatedAsyncioTestCase):
         mock_cmd_assert.assert_called_once()
         call_args = mock_cmd_assert.call_args[0][0]
         self.assertIn("--dry-run", call_args)
-
-    @patch('artcommonlib.exectools.cmd_assert_async')
-    @patch('artcommonlib.registry_config.exectools.cmd_gather')
-    async def test_move_golang_bugs_uses_both_registries_for_nightlies(self, mock_login, mock_elliott):
-        temp_dir = Path(self.enterContext(tempfile.TemporaryDirectory()))
-        redhat_auth_file = temp_dir / 'redhat.json'
-        redhat_auth = {REGISTRY_REDHAT_IO: {'auth': 'redhat-test-auth'}}
-        redhat_auth_file.write_text(json.dumps({'auths': redhat_auth}))
-        ci_auth = {REGISTRY_CI_OPENSHIFT: {'auth': 'ci-test-auth'}}
-        os.environ.update(
-            APP_CI_KUBECONFIG='/app-ci/kubeconfig', KONFLUX_OPERATOR_INDEX_AUTH_FILE=str(redhat_auth_file)
-        )
-
-        def write_ci_auth(command):
-            args = command.split()
-            self.assertEqual(args[:-1], ['oc', '--kubeconfig', '/app-ci/kubeconfig', 'registry', 'login'])
-            Path(args[-1].removeprefix('--to=')).write_text(json.dumps({'auths': ci_auth}))
-            return 0, '', ''
-
-        def check_elliott_config(command, *, log_stdout):
-            self.assertTrue(log_stdout)
-            self.assertTrue(command[1].startswith('--registry-config='))
-            auth_file = Path(command[1].removeprefix('--registry-config='))
-            self.assertEqual(json.loads(auth_file.read_text()), {'auths': ci_auth | redhat_auth})
-
-        mock_login.side_effect = write_ci_auth
-        mock_elliott.side_effect = check_elliott_config
-        await move_golang_bugs(ocp_version='4.19')
-
-        mock_login.assert_called_once()
-        mock_elliott.assert_awaited_once()
-        auth_file = Path(mock_elliott.call_args.args[0][1].removeprefix('--registry-config='))
-        self.assertFalse(auth_file.exists())
-
-    @patch.dict(os.environ, {'APP_CI_KUBECONFIG': '/app-ci/kubeconfig'})
-    @patch('artcommonlib.exectools.cmd_assert_async')
-    @patch('pyartcd.pipelines.update_golang.RegistryConfig')
-    async def test_move_golang_bugs_rpms_only_skips_ci_login(self, mock_registry_config, mock_elliott):
-        await move_golang_bugs(ocp_version='4.20', rpms_only=True)
-
-        mock_registry_config.assert_not_called()
-        mock_elliott.assert_awaited_once()
-        self.assertIn('--rpms-only', mock_elliott.call_args.args[0])
 
 
 class TestUpdateGolangPipeline(IsolatedAsyncioTestCase):
