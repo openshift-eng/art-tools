@@ -10,6 +10,7 @@ from artcommonlib.util import extract_ocp_version_from_fbc_nvr, new_roundtrip_ya
 
 from pyartcd.fbc_util import validate_layered_product_fbc_nvrs
 from pyartcd.git import GitRepository
+from pyartcd.lp_assembly import merge_assembly_pr
 
 
 def assembly_fbc_records(
@@ -95,25 +96,43 @@ def recorded_assembly_fbcs(releases: dict, assembly: str, target: str, *, ignore
     return assembly_fbc_records(assembly, nvrs, pullspecs, pins, ignore_patch_version=ignore_patch_version)[target]
 
 
-async def update_assembly_fbcs(repo: GitRepository, group: str, assembly: str, records: dict, expected: dict) -> bool:
-    """Refetch before editing and preserve unrelated changes; fail on concurrent pin or FBC changes."""
+async def update_assembly_fbcs(
+    repo: GitRepository, group: str, assembly: str, records: dict, expected: dict, *, repo_url: str
+) -> bool:
+    """Publish FBC records through a PR, guarding against changes to pins or records."""
     await repo.fetch_switch_branch(group, remote='origin')
     yaml = new_roundtrip_yaml_handler()
     releases = yaml.load(await repo.read_file('releases.yml')) or {}
-    current = releases.get('releases', {}).get(assembly)
     previous = expected.get('releases', {}).get(assembly)
-    if current is None or previous is None:
+    if previous is None:
         raise ValueError(f'Assembly {assembly} must already exist before recording FBCs')
-    if assembly_image_pins(Model(releases), assembly) != assembly_image_pins(Model(expected), assembly):
-        raise RuntimeError(f'Assembly {assembly} operand pins changed while building FBCs; rerun preparation')
-    old_records = previous.get('assembly', {}).get('group', {}).get('fbc_builds')
-    config = current.setdefault('assembly', {}).setdefault('group', {})
+    expected_pins = assembly_image_pins(Model(expected), assembly)
+    expected_records = previous.get('assembly', {}).get('group', {}).get('fbc_builds')
+
+    def validate_base(base: dict) -> None:
+        current = base.get('releases', {}).get(assembly)
+        if current is None:
+            raise ValueError(f'Assembly {assembly} must already exist before recording FBCs')
+        if assembly_image_pins(Model(base), assembly) != expected_pins:
+            raise RuntimeError(f'Assembly {assembly} operand pins changed while building FBCs; rerun preparation')
+        current_records = current.get('assembly', {}).get('group', {}).get('fbc_builds')
+        if current_records not in (expected_records, records):
+            raise RuntimeError(f'Assembly {assembly} FBC records changed concurrently; rerun preparation')
+
+    validate_base(releases)
+    config = releases['releases'][assembly].setdefault('assembly', {}).setdefault('group', {})
     if config.get('fbc_builds') == records:
         return False
-    if config.get('fbc_builds') != old_records:
-        raise RuntimeError(f'Assembly {assembly} FBC records changed concurrently; rerun preparation')
     config['fbc_builds'] = records
     output = StringIO()
     yaml.dump(releases, output)
     await repo.write_file('releases.yml', output.getvalue())
-    return await repo.commit_push(f'Record FBC builds for {group} assembly {assembly}', safe=True)
+    return await merge_assembly_pr(
+        repo,
+        group,
+        assembly,
+        repo_url=repo_url,
+        title=f'Record FBC builds for {group} assembly {assembly}',
+        details='Record validated FBC builds and their operand pins for unified catalogs.',
+        validate_base=validate_base,
+    )

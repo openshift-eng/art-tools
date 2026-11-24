@@ -10,6 +10,8 @@ from artcommonlib.model import Model
 from artcommonlib.util import new_roundtrip_yaml_handler
 from github import GithubException
 from pyartcd.lp_assembly import direct_release_assembly, persist_direct_assembly
+from pyartcd.lp_fbc import update_assembly_fbcs
+from pyartcd.lp_shipment import update_shipment_mr_url
 
 YAML = new_roundtrip_yaml_handler()
 ASSEMBLY = '1.5.8'
@@ -60,17 +62,16 @@ def test_inheritance_keeps_absent_parent_members_and_exclusions():
     assert original == before
 
 
-@pytest.mark.parametrize('existing_pr', [False, True])
-def test_persistence_is_atomic_preserves_comments_and_is_idempotent(tmp_path, monkeypatch, existing_pr):
-    path = tmp_path / 'releases.yml'
-    base_content = b'# release history\nreleases: {}\n'
-    path.write_bytes(base_content)
+def mock_assembly_pr(path, monkeypatch, *, existing_pr=False):
+    base_content = path.read_bytes()
     repo = MagicMock(
-        _directory=tmp_path,
+        _directory=path.parent,
         fetch_switch_branch=AsyncMock(),
         commit_push=AsyncMock(return_value=True),
         create_branch=AsyncMock(),
         does_branch_exist_on_remote=AsyncMock(return_value=existing_pr),
+        read_file=AsyncMock(side_effect=lambda _: path.read_text()),
+        write_file=AsyncMock(side_effect=lambda _, value: path.write_text(value)),
     )
     gh_repo = MagicMock()
     monkeypatch.setattr(
@@ -80,6 +81,7 @@ def test_persistence_is_atomic_preserves_comments_and_is_idempotent(tmp_path, mo
     pr = gh_repo.get_pull.return_value
     pr.head.sha = gh_repo.get_branch.return_value.commit.sha = 'head-sha'
     pr.base.ref = 'oadp-1.5'
+    pr.html_url = 'https://github.com/openshift-eng/ocp-build-data/pull/42'
     pr.state = 'open'
     pr.merged = False
     pr.merge.side_effect = [
@@ -91,6 +93,14 @@ def test_persistence_is_atomic_preserves_comments_and_is_idempotent(tmp_path, mo
     gh_repo.get_contents.side_effect = lambda _, ref: MagicMock(
         decoded_content=path.read_bytes() if ref == 'head-sha' else base_content
     )
+    return repo, gh_repo, pr
+
+
+@pytest.mark.parametrize('existing_pr', [False, True])
+def test_persistence_is_atomic_preserves_comments_and_is_idempotent(tmp_path, monkeypatch, existing_pr):
+    path = tmp_path / 'releases.yml'
+    path.write_bytes(b'# release history\nreleases: {}\n')
+    repo, gh_repo, pr = mock_assembly_pr(path, monkeypatch, existing_pr=existing_pr)
     definition = direct_release_assembly({}, ASSEMBLY, {'operator': PIN}, {})
     assert asyncio.run(persist_direct_assembly(repo, 'oadp-1.5', ASSEMBLY, definition, {}, 'new-mr', repo_url=REPO_URL))
     saved = YAML.load(path)
@@ -102,6 +112,7 @@ def test_persistence_is_atomic_preserves_comments_and_is_idempotent(tmp_path, mo
     assert gh_repo.create_pull.call_count == int(not existing_pr)
     if not existing_pr:
         branch = repo.create_branch.await_args.args[0]
+        repo.create_branch.assert_awaited_once_with(branch, reset=True)
         assert gh_repo.create_pull.call_args.kwargs['head'] == f'openshift-eng:{branch}'
         assert gh_repo.create_pull.call_args.kwargs['base'] == 'oadp-1.5'
         assert branch != 'oadp-1.5'
@@ -109,6 +120,64 @@ def test_persistence_is_atomic_preserves_comments_and_is_idempotent(tmp_path, mo
         persist_direct_assembly(repo, 'oadp-1.5', ASSEMBLY, definition, saved, 'new-mr', repo_url=REPO_URL)
     )
     assert repo.commit_push.await_count == int(not existing_pr)
+
+
+@pytest.mark.parametrize('write', ['shipment', 'fbcs'])
+@pytest.mark.parametrize('outcome', ['merged', 'timeout', 'concurrent edit'])
+def test_prepare_release_writes_use_the_same_pr_merge_flow(tmp_path, monkeypatch, write, outcome):
+    path = tmp_path / 'releases.yml'
+    previous = releases(direct_release_assembly({}, ASSEMBLY, {'operator': PIN}, {}))
+    YAML.dump(previous, path)
+    repo, gh_repo, pr = mock_assembly_pr(path, monkeypatch)
+    previous_content = path.read_bytes()
+    if write == 'shipment':
+        publish = update_shipment_mr_url(
+            repo, 'oadp-1.5', ASSEMBLY, 'new-mr', None, create_as_stream=False, repo_url=REPO_URL
+        )
+        changed_group = {'shipment': {'mr': 'competing-mr'}}
+    else:
+        records = {'4.22': {'operator': {'operand_nvrs': [PIN]}}}
+        publish = update_assembly_fbcs(repo, 'oadp-1.5', ASSEMBLY, records, previous, repo_url=REPO_URL)
+        changed_group = {'fbc_builds': {'competing': {}}}
+
+    if outcome == 'timeout':
+        monkeypatch.setattr('pyartcd.lp_assembly._MERGE_TIMEOUT', 0)
+        with pytest.raises(TimeoutError, match=pr.html_url):
+            asyncio.run(publish)
+        assert pr.merge.call_count == 1
+    elif outcome == 'concurrent edit':
+        changed = deepcopy(previous)
+        changed['releases'][ASSEMBLY]['assembly']['group'].update(changed_group)
+        changed_path = tmp_path / 'concurrent.yml'
+        YAML.dump(changed, changed_path)
+        base_revisions = iter((previous_content, changed_path.read_bytes()))
+        gh_repo.get_contents.side_effect = lambda _, ref: MagicMock(
+            decoded_content=path.read_bytes() if ref == 'head-sha' else next(base_revisions)
+        )
+        with pytest.raises(RuntimeError, match='changed concurrently.*pull/42'):
+            asyncio.run(publish)
+        assert pr.merge.call_count == 1
+    else:
+        assert asyncio.run(publish)
+        assert pr.merge.call_count == 2
+    branch = repo.create_branch.await_args.args[0]
+    assert branch.startswith('update-assembly-oadp-1.5-')
+    assert gh_repo.create_pull.call_args.kwargs['base'] == 'oadp-1.5'
+    assert gh_repo.create_pull.call_args.kwargs['head'] == f'openshift-eng:{branch}'
+    pr.merge.assert_called_with(sha='head-sha')
+
+
+def test_accepts_pr_merged_while_reading_the_base(tmp_path, monkeypatch):
+    path = tmp_path / 'releases.yml'
+    path.write_text('releases: {}\n')
+    repo, gh_repo, pr = mock_assembly_pr(path, monkeypatch)
+    merged_pr = MagicMock(head=pr.head, base=pr.base, merged=True, html_url=pr.html_url)
+    gh_repo.get_pull.side_effect = [pr, merged_pr, merged_pr]
+    gh_repo.get_contents.side_effect = lambda *_args, **_kwargs: MagicMock(decoded_content=path.read_bytes())
+    definition = direct_release_assembly({}, ASSEMBLY, {'operator': PIN}, {})
+
+    assert asyncio.run(persist_direct_assembly(repo, 'oadp-1.5', ASSEMBLY, definition, {}, 'new-mr', repo_url=REPO_URL))
+    pr.merge.assert_not_called()
 
 
 def test_reincluded_child_drops_stale_override_when_input_matches_parent():

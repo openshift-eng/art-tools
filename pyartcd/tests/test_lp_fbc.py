@@ -8,6 +8,7 @@ from artcommonlib.util import new_roundtrip_yaml_handler
 from pyartcd.lp_fbc import assembly_fbc_records, recorded_assembly_fbcs, update_assembly_fbcs
 
 ASSEMBLY = '3.18.5'
+REPO_URL = 'https://github.com/openshift-eng/ocp-build-data'
 NVR = 'quay-operator-fbc-3.18.5-20261106190000.ocp4.22'
 PULLSPEC = 'quay.io/test/fbc@sha256:' + 'a' * 64
 PIN = 'quay-operator-container-3.18.5-1'
@@ -104,7 +105,7 @@ def test_record_metadata_must_match_its_operator_and_target():
         recorded_assembly_fbcs(config, ASSEMBLY, '4.22')
 
 
-def test_update_refetches_preserves_unrelated_changes_and_is_idempotent():
+def test_update_refetches_preserves_unrelated_changes_and_is_idempotent(monkeypatch):
     config = releases()
     repo = MagicMock()
     repo.fetch_switch_branch = AsyncMock()
@@ -116,16 +117,18 @@ def test_update_refetches_preserves_unrelated_changes_and_is_idempotent():
     YAML.dump(current, out)
     repo.read_file.return_value = out.getvalue()
     repo.write_file = AsyncMock()
-    repo.commit_push = AsyncMock(return_value=True)
-    assert asyncio.run(update_assembly_fbcs(repo, 'quay-3.18', ASSEMBLY, records(), config))
+    merge_pr = AsyncMock(return_value=True)
+    monkeypatch.setattr('pyartcd.lp_fbc.merge_assembly_pr', merge_pr)
+    assert asyncio.run(update_assembly_fbcs(repo, 'quay-3.18', ASSEMBLY, records(), config, repo_url=REPO_URL))
     saved = YAML.load(repo.write_file.call_args.args[1])
     assert saved['releases'][ASSEMBLY]['assembly']['group']['shipment']['mr'] == 'newer-mr'
     repo.fetch_switch_branch.assert_awaited_once_with('quay-3.18', remote='origin')
-    repo.commit_push.assert_awaited_once_with('Record FBC builds for quay-3.18 assembly 3.18.5', safe=True)
+    merge_pr.assert_awaited_once()
     repo.read_file.return_value = repo.write_file.call_args.args[1]
     repo.write_file.reset_mock()
-    assert not asyncio.run(update_assembly_fbcs(repo, 'quay-3.18', ASSEMBLY, records(), config))
+    assert not asyncio.run(update_assembly_fbcs(repo, 'quay-3.18', ASSEMBLY, records(), config, repo_url=REPO_URL))
     repo.write_file.assert_not_awaited()
+    merge_pr.assert_awaited_once()
 
 
 @pytest.mark.parametrize('change', ['pins', 'records', 'deleted'])
@@ -144,5 +147,5 @@ def test_update_rejects_concurrent_release_changes(change):
         fetch_switch_branch=AsyncMock(), read_file=AsyncMock(return_value=out.getvalue()), write_file=AsyncMock()
     )
     with pytest.raises((ValueError, RuntimeError), match='changed|already exist'):
-        asyncio.run(update_assembly_fbcs(repo, 'quay-3.18', ASSEMBLY, records(), original))
+        asyncio.run(update_assembly_fbcs(repo, 'quay-3.18', ASSEMBLY, records(), original, repo_url=REPO_URL))
     repo.write_file.assert_not_awaited()

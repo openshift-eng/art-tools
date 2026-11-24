@@ -28,6 +28,7 @@ from gitlab.exceptions import GitlabCreateError
 
 from pyartcd.fbc_util import extract_ocp_version_from_nvr
 from pyartcd.git import GitRepository
+from pyartcd.lp_assembly import merge_assembly_pr
 
 LOGGER = logging.getLogger(__name__)
 YAML = new_roundtrip_yaml_handler()
@@ -340,12 +341,11 @@ async def update_shipment_mr_url(
     expected_mr_url: str | None,
     *,
     create_as_stream: bool,
+    repo_url: str,
 ) -> bool:
-    """Persist a layered-product shipment MR pointer safely.
+    """Publish a layered-product shipment MR pointer through a build-data PR.
 
-    The group branch is fetched immediately before editing. The write proceeds
-    only when the current pointer still equals ``expected_mr_url`` so that a
-    concurrent release cannot be overwritten.
+    Check the pointer both before editing and before attempting to merge.
 
     Args:
         repo: Initialized ocp-build-data Git repository.
@@ -355,9 +355,10 @@ async def update_shipment_mr_url(
         expected_mr_url: Pointer value observed before the shipment work began.
         create_as_stream: Create a missing assembly as an explicit stream
             assembly. When false, the assembly must already exist.
+        repo_url: GitHub URL of the build-data push repository.
 
     Returns:
-        Whether the commit was created and pushed.
+        Whether a PR merged.
 
     Raises:
         RuntimeError: If the pointer changed concurrently or a required assembly
@@ -368,16 +369,20 @@ async def update_shipment_mr_url(
     releases_config = YAML.load(releases_path) if releases_path.exists() else None
     releases_config = releases_config or {}
 
-    current_mr_url = get_shipment_mr_url(releases_config, assembly)
-    if current_mr_url != expected_mr_url:
-        raise RuntimeError(
-            f"Shipment MR pointer changed concurrently from {expected_mr_url!r} to {current_mr_url!r}; "
-            "refusing to overwrite it"
-        )
+    def validate_base(base: dict) -> None:
+        current_mr_url = get_shipment_mr_url(base, assembly)
+        if current_mr_url != expected_mr_url:
+            raise RuntimeError(
+                f"Shipment MR pointer changed concurrently from {expected_mr_url!r} to {current_mr_url!r}; "
+                "refusing to overwrite it"
+            )
+        if not create_as_stream and assembly not in base.get('releases', {}):
+            raise RuntimeError(f"Assembly {assembly} disappeared before the shipment MR pointer could be stored")
 
+    validate_base(releases_config)
+    if mr_url == expected_mr_url:
+        return False
     releases = releases_config.setdefault('releases', {})
-    if not create_as_stream and assembly not in releases:
-        raise RuntimeError(f"Assembly {assembly} disappeared before the shipment MR pointer could be stored")
     assembly_entry = releases.setdefault(assembly, {})
     assembly_def = assembly_entry.setdefault('assembly', {})
     if create_as_stream and not assembly_def:
@@ -385,7 +390,15 @@ async def update_shipment_mr_url(
     shipment = assembly_def.setdefault('group', {}).setdefault('shipment', {})
     shipment['mr'] = mr_url
     YAML.dump(releases_config, releases_path)
-    return await repo.commit_push(f"Update assembly {assembly}: add shipment MR URL", safe=True)
+    return await merge_assembly_pr(
+        repo,
+        group,
+        assembly,
+        repo_url=repo_url,
+        title=f"Update assembly {assembly}: add shipment MR URL",
+        details=f"Shipment MR: {mr_url}",
+        validate_base=validate_base,
+    )
 
 
 async def verify_shipment_mr_url(repo: GitRepository, group: str, assembly: str, expected_mr_url: str) -> None:

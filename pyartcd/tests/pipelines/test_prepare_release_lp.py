@@ -973,8 +973,8 @@ class TestPrepareReleaseLPRun(unittest.TestCase):
             self.assertIn("merge_requests/43", comment_body)
             self.assertIn("prepare-release-lp run", comment_body)
 
-    def test_new_shipment_mr_is_marked_ready(self):
-        """A first run still makes its new MR ready and starts CI."""
+    def test_new_shipment_mr_waits_for_assembly_publication_before_starting_ci(self):
+        """A blocked assembly PR leaves the new shipment MR in draft."""
         import tempfile
 
         with tempfile.TemporaryDirectory() as tmp_dir:
@@ -999,6 +999,15 @@ class TestPrepareReleaseLPRun(unittest.TestCase):
             mr = MagicMock()
             pipeline._gitlab.set_mr_ready = AsyncMock(return_value=mr)
             pipeline._gitlab.trigger_ci_pipeline = AsyncMock(return_value="https://gitlab.example/pipelines/42")
+
+            with patch.object(
+                pipeline, '_update_assembly_with_shipment_url', side_effect=TimeoutError('build-data PR timed out')
+            ):
+                with self.assertRaisesRegex(TimeoutError, 'build-data PR'):
+                    asyncio.run(pipeline.run())
+            pipeline._gitlab.set_mr_ready.assert_not_awaited()
+            pipeline._gitlab.trigger_ci_pipeline.assert_not_awaited()
+            pipeline._create_shipment_mr.reset_mock()
 
             with patch('pyartcd.pipelines.prepare_release_lp.asyncio.sleep', new_callable=AsyncMock):
                 asyncio.run(pipeline.run())

@@ -118,11 +118,11 @@ class GitRepository:
         env = self._local_env()
         await exectools.cmd_assert_async(["git", "-C", str(self._directory), "--no-pager", "diff", ref], env=env)
 
-    async def create_branch(self, branch: str):
-        """Create a new branch in the git repository."""
+    async def create_branch(self, branch: str, *, reset: bool = False):
+        """Create a branch at HEAD, optionally resetting an existing local branch."""
         env = self._local_env()
         repo_dir = str(self._directory)
-        await exectools.cmd_assert_async(["git", "-C", repo_dir, "checkout", "-b", branch], env=env)
+        await exectools.cmd_assert_async(["git", "-C", repo_dir, "checkout", "-B" if reset else "-b", branch], env=env)
 
     @retry(stop=stop_after_attempt(3), wait=wait_fixed(5), retry=retry_if_exception_type(ChildProcessError))
     async def does_branch_exist_on_remote(self, branch: str, remote: str) -> bool:

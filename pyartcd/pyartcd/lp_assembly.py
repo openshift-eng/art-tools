@@ -1,7 +1,8 @@
-"""Generate and persist assemblies for direct layered-product releases."""
+"""Generate layered-product assemblies and publish build-data updates."""
 
 import asyncio
 import logging
+from collections.abc import Callable
 from copy import deepcopy
 from hashlib import sha256
 
@@ -142,8 +143,13 @@ async def persist_direct_assembly(
     yaml = new_roundtrip_yaml_handler()
     path = repo._directory / 'releases.yml'
     current = yaml.load(path) or {}
-    if _release_inputs(current, assembly) != _release_inputs(expected, assembly):
-        raise RuntimeError(f'Assembly {assembly} changed concurrently; rerun release preparation')
+    expected_inputs = _release_inputs(expected, assembly)
+
+    def validate_base(releases: dict) -> None:
+        if _release_inputs(releases, assembly) != expected_inputs:
+            raise RuntimeError(f'Assembly {assembly} changed concurrently; rerun release preparation')
+
+    validate_base(current)
     entry = current.setdefault('releases', {}).setdefault(assembly, {})
     desired = deepcopy(entry.get('assembly', {}))
     for key in ('type', 'basis', 'members'):
@@ -159,18 +165,44 @@ async def persist_direct_assembly(
         return False
     entry['assembly'] = desired
     yaml.dump(current, path)
-    content = path.read_bytes()
+    return await merge_assembly_pr(
+        repo,
+        group,
+        assembly,
+        repo_url=repo_url,
+        title=f'Update assembly {assembly} and shipment MR',
+        details=f'Shipment MR: {mr_url}',
+        validate_base=validate_base,
+    )
+
+
+async def merge_assembly_pr(
+    repo: GitRepository,
+    group: str,
+    assembly: str,
+    *,
+    repo_url: str,
+    title: str,
+    details: str,
+    validate_base: Callable[[dict], None],
+) -> bool:
+    """Publish a prepared releases.yml change and wait for GitHub to merge it.
+
+    The caller prepares releases.yml on the group branch and supplies the
+    checks to repeat against the target branch before merging.
+    """
+    content = (repo._directory / 'releases.yml').read_bytes()
     # Reuse the branch and its CI results when retrying the same update.
     digest = sha256(content).hexdigest()[:16]
     branch = f'update-assembly-{group}-{assembly}-{digest}'
-    title = f'Update assembly {assembly} and shipment MR'
     _, owner, name = split_git_url(repo_url)
     gh_repo = get_github_client_for_org(owner).get_repo(f'{owner}/{name}')
     head = f'{owner}:{branch}'
 
     if not await repo.does_branch_exist_on_remote(branch, remote='origin'):
-        await repo.create_branch(branch)
-        await repo.commit_push(title, safe=True)
+        await repo.create_branch(branch, reset=True)
+        if not await repo.commit_push(title, safe=True):
+            return False
     head_sha = gh_repo.get_branch(branch).commit.sha
     if gh_repo.get_contents('releases.yml', ref=head_sha).decoded_content != content:
         raise RuntimeError(f'Build-data PR branch {branch} changed concurrently')
@@ -179,11 +211,12 @@ async def persist_direct_assembly(
     if pr is None:
         pr = gh_repo.create_pull(
             title=title,
-            body=f'Update `releases.yml` for {group} assembly {assembly}.\n\nShipment MR: {mr_url}',
+            body=f'Update `releases.yml` for {group} assembly {assembly}.\n\n{details}',
             head=head,
             base=group,
         )
     LOGGER.info('Waiting for build-data PR to merge: %s', pr.html_url)
+    yaml = new_roundtrip_yaml_handler()
     loop = asyncio.get_running_loop()
     deadline = loop.time() + _MERGE_TIMEOUT
     while True:
@@ -196,8 +229,13 @@ async def persist_direct_assembly(
             raise RuntimeError(f'Build-data PR was closed without merging: {pr.html_url}')
 
         latest = yaml.load(gh_repo.get_contents('releases.yml', ref=group).decoded_content) or {}
-        if _release_inputs(latest, assembly) != _release_inputs(expected, assembly):
-            raise RuntimeError(f'Assembly {assembly} changed concurrently; rerun release preparation: {pr.html_url}')
+        try:
+            validate_base(latest)
+        except (RuntimeError, ValueError) as exc:
+            # A manual merge may have changed the base since we fetched the PR.
+            if gh_repo.get_pull(pr.number).merged:
+                continue
+            raise RuntimeError(f'{exc} (build-data PR {pr.html_url})') from exc
 
         try:
             result = pr.merge(sha=head_sha)
