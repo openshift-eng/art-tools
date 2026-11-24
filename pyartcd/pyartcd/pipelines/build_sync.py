@@ -390,6 +390,55 @@ class BuildSyncPipeline:
         self.logger.debug('Removing compressed backup files')
         await exectools.cmd_assert_async(['rm', *compressed_files])
 
+    @start_as_current_span_async(TRACER, "build-sync.tag-into-ci-imagestream")
+    @limit_concurrency(500)
+    async def _tag_into_ci_imagestream(self, arch_suffix, tag):
+        current_span = trace.get_current_span()
+        current_span.set_attribute("build-sync.arch_suffix", arch_suffix)
+        current_span.set_attribute("build-sync.tag", tag)
+        current_span.set_attribute("build-sync.version", self.version)
+
+        # isolate the pullspec trom the ART imagestream tag
+        # (e.g. quay.io/openshift-release-dev/ocp-v4.0-art-dev@sha256:<sha>)
+        cmd = (
+            f'oc --kubeconfig {os.environ["KUBECONFIG"]} -n ocp{arch_suffix} '
+            f'get istag/{self.is_base_name}{arch_suffix}:{tag} -o=json'
+        )
+        _, out, _ = await exectools.cmd_gather_async(cmd)
+        tag_pullspec = json.loads(out)['tag']['from']['name']
+
+        # tag the pull spec into the CI imagestream (is/4.x) with the same tag name.
+        self.logger.info('Tagging ocp%s/%s:%s with %s', arch_suffix, self.version, tag, tag_pullspec)
+        cmd = (
+            f'oc --kubeconfig {os.environ["KUBECONFIG"]} -n ocp{arch_suffix} '
+            f'tag {tag_pullspec} {self.version}:{tag} --import-mode=PreserveOriginal'
+        )
+
+        if self.runtime.dry_run:
+            self.logger.info('Would have executed: "%s"', cmd)
+        else:
+            await exectools.cmd_gather_async(cmd)
+
+        if not arch_suffix:
+            # Tag the image into the imagestream for private CI from openshift-priv.
+            private_stream_tag = f'{self.version}:{tag}'
+            self.logger.info('Tagging ocp-priv/%s with %s', private_stream_tag, tag_pullspec)
+            cmd = (
+                f'oc --kubeconfig {os.environ["KUBECONFIG"]} -n ocp-priv '
+                f'tag {tag_pullspec} {private_stream_tag} --import-mode=PreserveOriginal'
+            )
+
+            if self.runtime.dry_run:
+                self.logger.info('Would have executed: "%s"', cmd)
+            else:
+                try:
+                    await exectools.cmd_gather_async(cmd)
+                except ChildProcessError:
+                    # Concurrent oc tag calls may race to create the imagestream;
+                    # retry once so the second attempt tags into the now-existing imagestream.
+                    self.logger.warning('Retrying ocp-priv tag for %s after initial failure', private_stream_tag)
+                    await exectools.cmd_gather_async(cmd)
+
     @start_as_current_span_async(TRACER, "build-sync.populate-ci-imagestreams")
     async def _update_ci_rhcos_tags(self):
         """Refresh the RHCOS tags in the versioned public and private CI ImageStreams.
@@ -410,55 +459,6 @@ class BuildSyncPipeline:
         if not self.assembly == 'stream' or self.doozer_data_gitref:
             return
 
-        @start_as_current_span_async(TRACER, "build-sync.tag-into-ci-imagestream")
-        @limit_concurrency(500)
-        async def tag_into_ci_imagestream(arch_suffix, tag):
-            current_span = trace.get_current_span()
-            current_span.set_attribute("build-sync.arch_suffix", arch_suffix)
-            current_span.set_attribute("build-sync.tag", tag)
-            current_span.set_attribute("build-sync.version", self.version)
-
-            # isolate the pullspec from the ART imagestream tag
-            # (e.g. quay.io/openshift-release-dev/ocp-v4.0-art-dev@sha256:<sha>)
-            cmd = (
-                f'oc --kubeconfig {os.environ["KUBECONFIG"]} -n ocp{arch_suffix} '
-                f'get istag/{self.is_base_name}{arch_suffix}:{tag} -o=json'
-            )
-            _, out, _ = await exectools.cmd_gather_async(cmd)
-            tag_pullspec = json.loads(out)['tag']['from']['name']
-
-            # tag the pull spec into the CI imagestream (is/4.x) with the same tag name.
-            self.logger.info('Tagging ocp%s/%s:%s with %s', arch_suffix, self.version, tag, tag_pullspec)
-            cmd = (
-                f'oc --kubeconfig {os.environ["KUBECONFIG"]} -n ocp{arch_suffix} '
-                f'tag {tag_pullspec} {self.version}:{tag} --import-mode=PreserveOriginal'
-            )
-
-            if self.runtime.dry_run:
-                self.logger.info('Would have executed: "%s"', cmd)
-            else:
-                await exectools.cmd_gather_async(cmd)
-
-            if not arch_suffix:
-                # Tag the image into the imagestream for private CI from openshift-priv.
-                private_stream_tag = f'{self.version}:{tag}'
-                self.logger.info('Tagging ocp-priv/%s with %s', private_stream_tag, tag_pullspec)
-                cmd = (
-                    f'oc --kubeconfig {os.environ["KUBECONFIG"]} -n ocp-priv '
-                    f'tag {tag_pullspec} {private_stream_tag} --import-mode=PreserveOriginal'
-                )
-
-                if self.runtime.dry_run:
-                    self.logger.info('Would have executed: "%s"', cmd)
-                else:
-                    try:
-                        await exectools.cmd_gather_async(cmd)
-                    except ChildProcessError:
-                        # Concurrent oc tag calls may race to create the imagestream;
-                        # retry once so the second attempt tags into the now-existing imagestream.
-                        self.logger.warning('Retrying ocp-priv tag for %s after initial failure', private_stream_tag)
-                        await exectools.cmd_gather_async(cmd)
-
         try:
             tags_to_transfer: list = rhcos.get_container_names(self.group_runtime)
 
@@ -466,7 +466,7 @@ class BuildSyncPipeline:
             for arch in self.supported_arches:
                 arch_suffix = go_suffix_for_arch(arch)
                 for tag in tags_to_transfer:
-                    tasks.append(tag_into_ci_imagestream(arch_suffix, tag))
+                    tasks.append(self._tag_into_ci_imagestream(arch_suffix, tag))
             await asyncio.gather(*tasks)
 
         except (ChildProcessError, KeyError) as e:
