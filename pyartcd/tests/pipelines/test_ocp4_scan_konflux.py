@@ -28,6 +28,45 @@ class TestOcp4ScanKonfluxPipeline(unittest.IsolatedAsyncioTestCase):
             skip_rpms=False,
         )
 
+    @patch('pyartcd.jenkins.start_ocp4_konflux')
+    @patch('pyartcd.jenkins.supports_ocp4_public_rebuild', return_value=True)
+    @patch('pyartcd.jenkins.is_ocp4_public_rebuild_queued', return_value=False)
+    @patch('pyartcd.pipelines.ocp4_scan_konflux.redis.call', new_callable=AsyncMock)
+    async def test_public_rebuild_uses_separate_queue_and_retry_window(self, reserve, queued, supported, enqueue):
+        pipeline = self._make_pipeline()
+        pipeline.report = {
+            'public_rebuild': {'images': ['installer', 'machine-os-images'], 'retry_interval_seconds': 6 * 3600}
+        }
+        await pipeline.handle_public_rebuilds()
+        supported.assert_not_called()
+        reserve.assert_not_awaited()
+        enqueue.assert_not_called()
+
+        self.runtime.dry_run = False
+        supported.return_value = False
+        await pipeline.handle_public_rebuilds()
+        reserve.assert_not_awaited()
+        enqueue.assert_not_called()
+
+        supported.return_value = True
+        queued.return_value = True
+        await pipeline.handle_public_rebuilds()
+        reserve.assert_not_awaited()
+        enqueue.assert_not_called()
+
+        queued.return_value = False
+        reserve.side_effect = [True, None]
+        await pipeline.handle_public_rebuilds()
+        await pipeline.handle_public_rebuilds()
+        reserve.assert_awaited_with('set', 'public-rebuild:openshift-4.21:stream', 'requested', nx=True, ex=6 * 3600)
+        enqueue.assert_called_once_with(
+            build_version='4.21',
+            assembly='stream',
+            image_list=['installer', 'machine-os-images'],
+            public_rebuild=True,
+            block_until_building=False,
+        )
+
     @patch.dict(os.environ, {'KUBECONFIG': '/path/to/kubeconfig'})
     @patch('pyartcd.pipelines.ocp4_scan_konflux.exectools.cmd_gather_async')
     async def test_get_changes_passes_cutoff_override_or_uses_doozer_default(self, mock_cmd_gather):

@@ -1,8 +1,9 @@
 import logging
 import os
 import shutil
+import tempfile
 import urllib.parse
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Dict, Optional, Tuple, cast
@@ -316,6 +317,41 @@ class SourceResolver:
             self.register_source_alias(alias, source_dir)
 
             return self.source_resolutions[alias]
+
+    def resolve_public_source(self, meta: 'Metadata') -> SourceResolution:
+        """Check out the public branch while retaining the configured build repository."""
+        source = meta.config.content.source
+        git = source.get('git') or self._group_config.sources.get(source.get('alias'), {})
+        if self.local or meta.commitish or not git or git.get('url_pull'):
+            raise IOError(f'{meta.distgit_key}: public rebuild requires configured Git source without overrides')
+
+        build_url = git['url']
+        source_url, mapped_branch, _ = self.get_public_upstream(build_url, self._group_config.public_upstreams)
+        source_branch = mapped_branch or git['branch']['target']
+        host, org, repo = art_util.split_git_url(source_url)
+        if host != 'github.com' or not source_branch or self.is_branch_commit_hash(source_branch):
+            raise IOError(f'{meta.distgit_key}: expected a named public GitHub branch')
+        if get_github_client_for_org(org).get_repo(f'{org}/{repo}').visibility != 'public':
+            raise IOError(f'{meta.distgit_key}: {source_url} is not public')
+
+        branch_details = {'url': source_url, 'branch': {'target': source_branch}}
+        self.detect_remote_source_branch(branch_details, stage=False, use_source_fallback_branch='never')
+        self.sources_base_dir.mkdir(parents=True, exist_ok=True)
+        source_dir = tempfile.mkdtemp(prefix=f'public-{meta.distgit_key}-', dir=self.sources_base_dir)
+        git_clone(
+            source_url,
+            source_dir,
+            gitargs=['--single-branch', '--branch', source_branch, '--filter=blob:none'],
+            set_env=constants.GIT_NO_PROMPTS,
+            git_cache_dir=self.cache_dir,
+            recurse_submodules=False,
+        )
+        if Path(source_dir, '.gitmodules').exists():
+            raise IOError(f'{meta.distgit_key}: public rebuild cannot verify Git submodule visibility')
+        public_source = self.register_source_alias(f'public-{meta.distgit_key}', source_dir)
+        meta.public_upstream_url = source_url
+        meta.public_upstream_branch = source_branch
+        return replace(public_source, url=build_url, has_public_upstream=False)
 
     @staticmethod
     def detect_remote_source_branch(

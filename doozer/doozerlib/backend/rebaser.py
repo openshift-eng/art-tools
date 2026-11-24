@@ -103,6 +103,7 @@ class KonfluxRebaser:
         image_repo: str = constants.KONFLUX_DEFAULT_IMAGE_REPO,
         extra_labels: Optional[Dict[str, str]] = None,
         build_args: Optional[Dict[str, str]] = None,
+        public_rebuild: bool = False,
     ) -> None:
         self._runtime = runtime
         self._base_dir = base_dir
@@ -110,6 +111,7 @@ class KonfluxRebaser:
         self.repo_type = repo_type
         self.upcycle = upcycle
         self.force_private_bit = force_private_bit
+        self.public_rebuild = public_rebuild
         self._record_logger = record_logger
         self._source_modifier_factory = source_modifier_factory
         self._logger = logger or LOGGER
@@ -187,9 +189,12 @@ class KonfluxRebaser:
             # If this image has an upstream source, resolve it
             if metadata.has_source():
                 self._logger.info(f"Resolving source for {metadata.qualified_key}")
-                source = cast(
-                    SourceResolution, await exectools.to_thread(self._source_resolver.resolve_source, metadata)
+                resolve_source = (
+                    self._source_resolver.resolve_public_source
+                    if self.public_rebuild
+                    else self._source_resolver.resolve_source
                 )
+                source = cast(SourceResolution, await exectools.to_thread(resolve_source, metadata))
             else:
                 raise IOError(
                     f"Image {metadata.qualified_key} doesn't have upstream source. This is no longer supported."
@@ -348,6 +353,8 @@ class KonfluxRebaser:
                 for image in downstream_parents
             ]
 
+        if self.public_rebuild and private_fix:
+            raise IOError(f'{metadata.distgit_key}: public rebuild resolved an embargoed input')
         if private_fix:
             self._logger.warning("The source of image %s contains private fixes.", metadata.distgit_key)
         else:
@@ -618,7 +625,10 @@ class KonfluxRebaser:
                         )
                     downstream_parents[i] = await self._pin_parent_to_platform(downstream_parents[i], platform)
 
-        private_fix = any(private_fix for _, private_fix in mapped_images)
+        private_fix = any(
+            private_fix or (self.public_rebuild and is_release_embargoed(pullspec, 'konflux', default=False))
+            for pullspec, private_fix in mapped_images
+        )
         return downstream_parents, private_fix
 
     async def _registry_pullspec_status(self, pullspec: str) -> tuple[bool, str]:
@@ -656,20 +666,26 @@ class KonfluxRebaser:
 
         private_fix = False
         if not parent_loaded:
-            if not self._runtime.ignore_missing_base:
+            if not self._runtime.ignore_missing_base and not self.public_rebuild:
                 raise IOError(f"Parent image {member} is not loaded.")
-            if self._runtime.latest_parent_version or self._runtime.assembly_basis_event:
+            if self.public_rebuild or self._runtime.latest_parent_version or self._runtime.assembly_basis_event:
                 parent_metadata = self._runtime.late_resolve_image(member)
                 if not parent_metadata:
                     raise IOError(f"Metadata config for parent image {member} is not found.")
 
+                visibility = {'embargoed': False} if self.public_rebuild else {}
                 build = await parent_metadata.get_latest_build(
                     el_target=self._get_el_target_string(parent_metadata.branch_el_target()),
                     engine=Engine.KONFLUX,
                     group=self.derived_group,
                     exclude_large_columns=True,
+                    **visibility,
                 )
 
+                if self.public_rebuild and (
+                    not build or build.embargoed or is_release_embargoed(build.release, 'konflux')
+                ):
+                    raise IOError(f'No eligible public build for parent {member}')
                 if not build:
                     raise IOError(f"A build of parent image {member} is not found.")
                 if parent_metadata.should_trigger_base_image_release():

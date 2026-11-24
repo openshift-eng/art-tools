@@ -125,12 +125,16 @@ class KonfluxRebaseCli:
         extra_labels: Optional[dict[str, str]] = None,
         kind: str = "image",
         build_args: tuple[str, ...] = (),
+        public_rebuild: bool = False,
     ):
         self.runtime = runtime
         self.kind = kind
         self.version = version
         self.release = release
         self.embargoed = embargoed
+        self.public_rebuild = public_rebuild
+        if public_rebuild and embargoed:
+            raise click.BadParameter('--public-rebuild and --embargoed are mutually exclusive')
         self.force_yum_updates = force_yum_updates
         if repo_type not in ['signed', 'unsigned']:
             raise click.BadParameter(f"repo_type must be one of 'signed' or 'unsigned'. Got: {repo_type}")
@@ -168,6 +172,7 @@ class KonfluxRebaseCli:
             image_repo=self.image_repo,
             extra_labels=self.extra_labels,
             build_args=self.build_args,
+            public_rebuild=self.public_rebuild,
         )
 
         art_internal_metas = [
@@ -236,6 +241,7 @@ class KonfluxRebaseCli:
     help="Version string to populate in Dockerfiles.",
 )
 @click.option("--release", metavar='RELEASE', required=True, help="Release string to populate in Dockerfiles.")
+@click.option('--public-rebuild', is_flag=True, help='Rebase public source and use public image parents.')
 @click.option(
     "--embargoed",
     is_flag=True,
@@ -282,6 +288,7 @@ async def images_konflux_rebase(
     extra_label: tuple,
     message: str,
     push: bool,
+    public_rebuild: bool = False,
 ):
     """
     Refresh a group's konflux content from source content.
@@ -308,6 +315,7 @@ async def images_konflux_rebase(
         message=message,
         push=push,
         extra_labels=extra_labels,
+        public_rebuild=public_rebuild,
     )
     await cli.run()
 

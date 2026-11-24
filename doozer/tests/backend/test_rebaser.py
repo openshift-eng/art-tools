@@ -1519,6 +1519,26 @@ class TestRebaserResolveMemberParentRegistryRedhat(IsolatedAsyncioTestCase):
         self.addCleanup(self.directory.cleanup)
         self.base_dir = Path(self.directory.name)
 
+    async def test_public_rebuild_uses_public_member_and_rejects_embargoed_pin(self):
+        parent = MagicMock()
+        parent.branch_el_target.return_value = 9
+        parent.should_trigger_base_image_release.return_value = False
+        public = MagicMock(
+            embargoed=False, release='202611211200.p2.g1234567.el9', image_pullspec='quay.io/public@sha256:abc'
+        )
+        parent.get_latest_build = AsyncMock(return_value=public)
+        runtime = MagicMock(group='openshift-4.22')
+        runtime.resolve_image.return_value = None
+        runtime.late_resolve_image.return_value = parent
+        rebaser = KonfluxRebaser(runtime, self.base_dir, MagicMock(), 'unsigned', public_rebuild=True)
+
+        self.assertEqual(await rebaser._resolve_member_parent('parent', 'unused'), (public.image_pullspec, False))
+        self.assertIs(parent.get_latest_build.await_args.kwargs['embargoed'], False)
+
+        public.release = '202611211200.p3.g1234567.el9'
+        with self.assertRaisesRegex(IOError, 'No eligible public build for parent parent'):
+            await rebaser._resolve_member_parent('parent', 'unused')
+
     async def test_resolve_member_parent_uses_rh_when_art_base_and_labels_present(self):
         parent = MagicMock()
         parent.distgit_key = "golang-builder"

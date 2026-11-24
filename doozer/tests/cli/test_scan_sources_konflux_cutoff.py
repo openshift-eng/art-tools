@@ -172,7 +172,7 @@ class TestBuildCutoff(IsolatedAsyncioTestCase):
         self.assertEqual(self.scanner.assessment_code['containers/test-image+True'], RebuildHintCode.CONFIG_CHANGE)
         self.image.get_latest_build.assert_not_awaited()
 
-    async def test_embargoed_rebuild_reports_stale_public_build_without_scheduling(self):
+    async def test_embargoed_rebuild_reports_stale_build_and_plans_public_parents(self):
         private = build_record(CUTOFF + timedelta(days=5))
         private.nvr = 'test-component-1.0-2.p3.el9'
         private.embargoed = True
@@ -181,6 +181,14 @@ class TestBuildCutoff(IsolatedAsyncioTestCase):
         public.embargoed = False
         self.image.is_payload = True
         self.image.for_release = True
+        parent = MagicMock(spec=ImageMetadata)
+        parent.distgit_key = 'public-parent'
+        parent.enabled = True
+        parent.config = Model({})
+        parent.branch_el_target.return_value = 9
+        parent.get_latest_konflux_build.return_value = None
+        self.image.get_parent_members.return_value = {'public-parent': None}
+        self.runtime.late_resolve_image.return_value = parent
         self.runtime.image_map = {'test-image': self.image}
         self.runtime.image_tree = {'test-image': {}}
         self.scanner.all_image_metas = {self.image}
@@ -200,6 +208,8 @@ class TestBuildCutoff(IsolatedAsyncioTestCase):
         self.assertEqual(self.scanner.issues, [])
         report = yaml.safe_load(echo.call_args.args[0])
         self.assertEqual(report['images'], [])
+        self.assertEqual(report['public_rebuild']['images'], ['public-parent', 'test-image'])
+        parent.get_latest_konflux_build.assert_awaited_once_with(el_target=9, embargoed=False)
         finding = report['public_build_cutoff'][0]
         self.assertEqual(finding['name'], 'test-image')
         self.assertEqual(finding['latest_nvr'], private.nvr)

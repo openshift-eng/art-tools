@@ -1,5 +1,6 @@
 from datetime import datetime, timezone
 from pathlib import Path
+from tempfile import TemporaryDirectory
 from unittest import TestCase
 from unittest.mock import Mock, patch
 
@@ -75,6 +76,51 @@ class SourceResolverTestCase(TestCase):
         self.assertEqual(
             Path("/path/to/sources/foo/subdir"), SourceResolver.get_source_dir(source, metadata, check=False)
         )
+
+    def test_public_source_checkout_keeps_the_configured_build_repository(self):
+        build_url = 'https://github.com/openshift-priv/installer'
+        public_url = 'https://github.com/openshift/installer'
+        meta = Mock(
+            distgit_key='installer',
+            commitish=None,
+            config=Model({'content': {'source': {'git': {'url': build_url, 'branch': {'target': 'release-4.22'}}}}}),
+        )
+        config = Model({'public_upstreams': [{'private': build_url, 'public': public_url}]})
+        source = SourceResolution(
+            source_path='/tmp/public-checkout',
+            url=public_url,
+            branch='release-4.22',
+            https_url=public_url,
+            commit_hash='abcdef0',
+            committer_date=datetime.fromtimestamp(0, timezone.utc),
+            latest_tag='v1',
+            has_public_upstream=False,
+            public_upstream_url=public_url,
+            public_upstream_branch='release-4.22',
+        )
+        with (
+            TemporaryDirectory() as directory,
+            patch('doozerlib.source_resolver.git_clone') as clone,
+            patch('doozerlib.source_resolver.get_github_client_for_org') as github,
+            patch.object(SourceResolver, 'detect_remote_source_branch') as check_branch,
+            patch.object(SourceResolver, 'register_source_alias', return_value=source),
+        ):
+            resolver = SourceResolver(directory, None, config)
+            repo = github.return_value.get_repo.return_value
+            repo.visibility = 'public'
+            checkout = resolver.resolve_public_source(meta)
+            self.assertEqual(checkout.url, build_url)
+            self.assertEqual(checkout.https_url, public_url)
+            self.assertEqual(clone.call_args.args[0], public_url)
+            self.assertIn('release-4.22', clone.call_args.kwargs['gitargs'])
+            self.assertFalse(clone.call_args.kwargs['recurse_submodules'])
+            self.assertEqual(check_branch.call_args.kwargs['use_source_fallback_branch'], 'never')
+
+            clone.reset_mock()
+            repo.visibility = 'private'
+            with self.assertRaisesRegex(IOError, 'is not public'):
+                resolver.resolve_public_source(meta)
+            clone.assert_not_called()
 
     # SourceResolution tests
     def test_source_resolution_with_pull_url(self):
