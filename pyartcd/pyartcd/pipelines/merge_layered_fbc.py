@@ -421,7 +421,12 @@ class MergeLayeredFbcPipeline:
 @click.option('--skip-checks', is_flag=True)
 @click.option('--skip-rebase', is_flag=True, help='Build the existing unified FBC source branch without rebasing.')
 @click.option('--skip-task', 'skip_tasks', multiple=True)
-@click.option('--create-mr', is_flag=True, help='Create one complete assembly-based unified shipment MR.')
+@click.option(
+    '--create-mr/--no-create-mr',
+    default=True,
+    show_default=True,
+    help='Create a complete assembly-based unified shipment MR; disable for build-only runs.',
+)
 @click.option('--output-file', type=click.Path(dir_okay=False))
 @pass_runtime
 @click_coroutine

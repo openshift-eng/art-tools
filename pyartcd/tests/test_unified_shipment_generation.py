@@ -37,7 +37,8 @@ def test_disjoint_target_and_other_product_do_not_block():
     )
 
 
-def test_active_delivery_for_closed_mr_blocks():
+@pytest.mark.parametrize('child_only', [False, True])
+def test_active_delivery_for_closed_mr_blocks(child_only):
     client, project = Mock(), Mock(path_with_namespace='art/shipments')
     client.list_merge_requests.return_value = []
     mr = SimpleNamespace(
@@ -121,7 +122,7 @@ def test_missing_build_metadata_prevents_mr_creation(tmp_path):
     repo.commit_push.assert_not_called()
 
 
-@pytest.mark.parametrize('failure', [None, 'provenance', 'rpa', 'overlap'])
+@pytest.mark.parametrize('failure', [None, 'provenance', 'rpa', 'overlap', 'escape'])
 def test_complete_publication_is_validated_and_locked(tmp_path, failure):
     revision = 'b' * 40
     pullspec = 'quay.io/example/fbc@sha256:' + 'a' * 64
@@ -159,6 +160,11 @@ def test_complete_publication_is_validated_and_locked(tmp_path, failure):
         options={'--registry-auth': None},
     )
     repo = Mock(_directory=tmp_path)
+    if failure == 'escape':
+        outside = tmp_path.parent / 'outside-checkout'
+        outside.mkdir(exist_ok=True)
+        (tmp_path / 'shipment').symlink_to(outside, target_is_directory=True)
+
     for name in ('setup', 'fetch_switch_branch', 'create_branch', 'commit_push'):
         setattr(repo, name, AsyncMock())
     client = Mock()
@@ -223,3 +229,24 @@ def test_complete_publication_is_validated_and_locked(tmp_path, failure):
             assert mr.await_args.args[1]['title'].startswith('Draft:')
             assert len(list((tmp_path / 'shipment').rglob('*.yaml'))) == 1
             assert trace == ['locked', 'unlocked']
+
+
+def test_cli_defaults_to_generation_and_supports_build_only():
+    from click.testing import CliRunner
+    from pyartcd.pipelines.merge_layered_fbc import merge_layered_fbc
+    from pyartcd.runtime import Runtime
+
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+    try:
+        for flags, expected in [([], True), (['--no-create-mr'], False)]:
+            with patch('pyartcd.pipelines.merge_layered_fbc.MergeLayeredFbcPipeline') as factory:
+                factory.return_value.run = AsyncMock(return_value={})
+                result = CliRunner().invoke(
+                    merge_layered_fbc, ['--product=mta', '--assembly=8.2.3'] + flags, obj=Mock(spec=Runtime)
+                )
+                assert result.exit_code == 0, result.output
+                assert factory.call_args.kwargs['create_mr'] is expected
+    finally:
+        loop.close()
+        asyncio.set_event_loop(None)

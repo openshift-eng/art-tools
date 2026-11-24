@@ -221,7 +221,7 @@ def test_production_freeze_preserves_content_allows_results(shipment, mode):
     with (
         patch('elliottlib.unified_shipment.production_pipelines', return_value=[(SimpleNamespace(sha='old'), None)]),
         patch(
-            'elliottlib.unified_shipment.shipment_files',
+            'elliottlib.unified_shipment.revision_shipment_files',
             side_effect=lambda project, mr, ref: [
                 ('shipment/test.yaml', old if ref == 'old' else shipment['shipment'])
             ],
@@ -361,3 +361,74 @@ def test_malformed_unified_json_schema_is_rejected(shipment):
     shipment['shipment'].pop('unified')
     with pytest.raises(SchemaValidationError):
         Draft202012Validator(ShipmentConfig.model_json_schema()).validate(shipment)
+
+
+@pytest.mark.parametrize('change', ['no_components', 'two_components', 'no_nvrs', 'two_nvrs', 'tag', 'branch'])
+def test_generated_schema_matches_unified_snapshot_constraints(shipment, change):
+    from jsonschema import Draft202012Validator
+    from jsonschema.exceptions import ValidationError as SchemaValidationError
+
+    snapshot = shipment['shipment']['snapshot']
+    if change == 'no_components':
+        snapshot['spec']['components'] = []
+    elif change == 'two_components':
+        snapshot['spec']['components'] *= 2
+    elif change == 'no_nvrs':
+        snapshot['nvrs'] = []
+    elif change == 'two_nvrs':
+        snapshot['nvrs'] *= 2
+    elif change == 'tag':
+        snapshot['spec']['components'][0]['containerImage'] = 'quay.io/example/fbc:latest'
+    else:
+        snapshot['spec']['components'][0]['source']['git']['revision'] = 'main'
+    with pytest.raises(SchemaValidationError):
+        Draft202012Validator(ShipmentConfig.model_json_schema()).validate(shipment)
+    with pytest.raises(ValidationError):
+        ShipmentConfig.model_validate(shipment)
+
+
+def test_schema_allows_null_unified_only_for_ordinary_shipments(shipment):
+    from jsonschema import Draft202012Validator
+    from jsonschema.exceptions import ValidationError as SchemaValidationError
+
+    validator = Draft202012Validator(ShipmentConfig.model_json_schema())
+    ordinary = deepcopy(shipment)
+    ordinary['shipment']['metadata'].update(unified=False, group='mta-8.2', assembly='8.2.3')
+    ordinary['shipment']['unified'] = None
+    validator.validate(ordinary)
+    ShipmentConfig.model_validate(ordinary)
+    ordinary['shipment']['unified'] = shipment['shipment']['unified']
+    with pytest.raises(SchemaValidationError):
+        validator.validate(ordinary)
+    shipment['shipment']['unified'] = None
+    with pytest.raises(SchemaValidationError):
+        validator.validate(shipment)
+
+
+def test_production_freeze_detects_removed_file_missing_from_current_mr_diff(shipment):
+    import json
+    from types import SimpleNamespace
+    from unittest.mock import Mock, patch
+
+    from elliottlib.unified_shipment import validate_production_freeze
+
+    project, client = Mock(), Mock()
+    client._parse_mr_url.return_value = ('art/shipments', '1')
+    client.get_project.return_value = project
+    mr = Mock(sha='current', diff_refs={'base_sha': 'base'}, web_url='MR1')
+    mr.changes.return_value = {'changes': [{'new_path': 'shipment/A.yaml'}]}
+    client.get_mr_from_url.return_value = mr
+    project.repository_compare.side_effect = lambda base, ref, straight: {
+        'diffs': [{'new_path': 'shipment/A.yaml'}] + ([{'new_path': 'shipment/B.yaml'}] if ref == 'old' else [])
+    }
+    project.files.get.return_value.decode.return_value = json.dumps(shipment).encode()
+    with patch('elliottlib.unified_shipment.production_pipelines', return_value=[(SimpleNamespace(sha='old'), None)]):
+        with pytest.raises(RuntimeError, match='content changed after production'):
+            validate_production_freeze(
+                ShipmentConfig.model_validate(shipment).shipment,
+                'shipment/A.yaml',
+                client,
+                'https://gitlab.example/art/shipments/-/merge_requests/1',
+            )
+    assert project.repository_compare.call_count == 2
+    mr.changes.assert_not_called()

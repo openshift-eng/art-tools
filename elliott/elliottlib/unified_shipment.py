@@ -167,6 +167,24 @@ def shipment_files(project, mr, ref):
         yield path, data['shipment']
 
 
+def revision_shipment_files(project, mr, revision):
+    """Read revision-specific MR membership, including files removed from today's diff.
+
+    GitLab computes the merge base against the MR base so unrelated earlier
+    target-branch files are excluded. Compare results must be complete.
+    """
+    comparison = project.repository_compare(mr.diff_refs['base_sha'], revision, straight=False)
+    if comparison.get('compare_timeout') or comparison.get('overflow'):
+        raise RuntimeError(f'Cannot inspect complete historical shipment membership for {mr.web_url}')
+    for change in comparison['diffs']:
+        if change.get('too_large') or change.get('collapsed'):
+            raise RuntimeError(f'Historical shipment diff is incomplete for {mr.web_url}')
+        path = change['new_path']
+        if change.get('deleted_file') or not path.startswith('shipment/') or not path.endswith(('.yaml', '.yml')):
+            continue
+        yield path, safe_load(project.files.get(file_path=path, ref=revision).decode())['shipment']
+
+
 def production_pipelines(project, mr):
     """Yield attempted production parent/child pipelines using existing CI state rules."""
 
@@ -250,7 +268,7 @@ def validate_production_freeze(shipment, config_path: str, gitlab_client, mr_url
     def shipment_set(revision):
         return {
             path: content(Shipment.model_validate(data).model_dump(exclude_none=True, exclude_unset=True))
-            for path, data in shipment_files(project, mr, revision)
+            for path, data in revision_shipment_files(project, mr, revision)
             if data.get('metadata', {}).get('unified')
         }
 

@@ -70,22 +70,27 @@ def check_overlap(client, project, product: str, targets: set[str]) -> None:
         if summary.source_branch.startswith(prefix):
             inspect(project.mergerequests.get(summary.iid))
     # Only active pipelines in this project, not historical pipelines across GitLab.
+    seen_pipelines = set()
     for status in ('created', 'waiting_for_resource', 'preparing', 'pending', 'running', 'scheduled'):
-        for summary in project.pipelines.list(status=status, get_all=True, per_page=100):
-            ref = summary.ref
-            if not (ref.startswith(prefix) or ref.startswith('refs/merge-requests/')):
-                continue
-            match = re.fullmatch(r'refs/merge-requests/([0-9]+)/(?:head|merge)', ref)
-            if match:
-                candidates = [project.mergerequests.get(int(match.group(1)))]
-            else:
-                candidates = project.mergerequests.list(
-                    state='all', source_branch=ref, target_branch='main', get_all=True
-                )
-            for candidate in candidates:
-                mr = project.mergerequests.get(candidate.iid)
-                if UNIFIED_LABEL in (mr.labels or []):
-                    inspect(mr, summary.web_url, summary.sha)
+        for source_filter in ({}, {'source': 'parent_pipeline'}):
+            for summary in project.pipelines.list(status=status, get_all=True, per_page=100, **source_filter):
+                if summary.id in seen_pipelines:
+                    continue
+                seen_pipelines.add(summary.id)
+                ref = summary.ref
+                if not (ref.startswith(prefix) or ref.startswith('refs/merge-requests/')):
+                    continue
+                match = re.fullmatch(r'refs/merge-requests/([0-9]+)/(?:head|merge)', ref)
+                if match:
+                    candidates = [project.mergerequests.get(int(match.group(1)))]
+                else:
+                    candidates = project.mergerequests.list(
+                        state='all', source_branch=ref, target_branch='main', get_all=True
+                    )
+                for candidate in candidates:
+                    mr = project.mergerequests.get(candidate.iid)
+                    if UNIFIED_LABEL in (mr.labels or []):
+                        inspect(mr, summary.web_url, summary.sha)
 
 
 async def create_unified_shipment(pipeline, plans: list, outcomes: list[dict]) -> str:
@@ -187,9 +192,12 @@ async def create_unified_shipment(pipeline, plans: list, outcomes: list[dict]) -
         for target, config in configs:
             application = config.shipment.metadata.application
             path = repo._directory / 'shipment' / pipeline.product / 'unified' / application / 'prod'
-            path.mkdir(parents=True, exist_ok=True)
             name = f'{pipeline.product}.fbc.ocp{target}.{stamp}.yaml'
-            (path / name).write_text(safe_dump(config.model_dump(exclude_none=True), sort_keys=False))
+            destination = (path / name).resolve()
+            if not destination.is_relative_to(repo._directory.resolve()):
+                raise ValueError('Unified shipment destination escapes the checkout')
+            destination.parent.mkdir(parents=True, exist_ok=True)
+            destination.write_text(safe_dump(config.model_dump(exclude_none=True), sort_keys=False))
         await repo.commit_push(f'Add unified FBC shipment for {pipeline.product}')
         links = sorted({a.imageShipmentMR for _, c in configs for a in c.shipment.unified.assemblies})
         mr = await create_shipment_mr_with_retry(

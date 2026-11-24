@@ -196,8 +196,8 @@ Brew assembly definitions can be generated with `gen-assembly`, but cannot use
 `artcd lp-unified-fbc --product=mta --assembly=8.2.3 --assembly=8.3.3
 --ocp-target-version=4.18 --create-mr` builds every selected target and creates
 one **draft**, FBC-only shipment MR after all builds and shipment validations
-succeed. Omit `--create-mr` for the existing build-only behavior. Explicit
-`--fbc-build` inputs remain build-only; shipment generation requires assemblies
+succeed. MR generation is enabled by default; use `--no-create-mr` for build-only runs. Explicit
+`--fbc-build` inputs require `--no-create-mr` and remain build-only; shipment generation requires assemblies
 and normal rebase. `--dry-run` does not create an MR. This command never starts
 stage or production. Review the generated MR before marking it ready for stage.
 
@@ -241,6 +241,6 @@ are preserved and no extra production-index rendering gate is introduced here.
 
 Deploy the compatible art-tools image and shipment-ci consumer changes before
 enabling `create-mr=true` in ARTC. The art-config companion exposes this optional
-parameter for MTA, COO and Quay, defaulting to false. Its Task needs the existing
+parameter for MTA, COO and Quay, defaulting to true; set `create-mr=false` for build-only runs. Its Task needs the existing
 `gitlab-token` secret in addition to the build credentials. No KRD resources are
 provisioned automatically.

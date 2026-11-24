@@ -1,5 +1,5 @@
 {
-  "$comment": "Schema generated on 2026-11-23 23:56 UTC from elliottlib.shipment_model",
+  "$comment": "Schema generated on 2026-11-24 00:35 UTC from elliottlib.shipment_model",
   "$defs": {
     "ComponentSource": {
       "additionalProperties": false,
@@ -472,10 +472,10 @@
       "allOf": [
         {
           "else": {
-            "not": {
-              "required": [
-                "unified"
-              ]
+            "properties": {
+              "unified": {
+                "type": "null"
+              }
             }
           },
           "if": {
@@ -501,6 +501,38 @@
                 "type": "object"
               },
               "snapshot": {
+                "properties": {
+                  "nvrs": {
+                    "maxItems": 1,
+                    "minItems": 1
+                  },
+                  "spec": {
+                    "properties": {
+                      "components": {
+                        "items": {
+                          "properties": {
+                            "containerImage": {
+                              "pattern": "^[^@\\s]+@sha256:[0-9a-f]{64}$"
+                            },
+                            "source": {
+                              "properties": {
+                                "git": {
+                                  "properties": {
+                                    "revision": {
+                                      "pattern": "^[0-9a-f]{40}$"
+                                    }
+                                  }
+                                }
+                              }
+                            }
+                          }
+                        },
+                        "maxItems": 1,
+                        "minItems": 1
+                      }
+                    }
+                  }
+                },
                 "type": "object"
               }
             },

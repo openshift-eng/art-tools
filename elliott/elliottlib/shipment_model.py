@@ -250,10 +250,37 @@ class Shipment(StrictBaseModel):
                         'required': ['unified', 'snapshot'],
                         'properties': {
                             'unified': {'type': 'object'},
-                            'snapshot': {'type': 'object'},
+                            'snapshot': {
+                                'type': 'object',
+                                'properties': {
+                                    'nvrs': {'minItems': 1, 'maxItems': 1},
+                                    'spec': {
+                                        'properties': {
+                                            'components': {
+                                                'minItems': 1,
+                                                'maxItems': 1,
+                                                'items': {
+                                                    'properties': {
+                                                        'containerImage': {'pattern': r'^[^@\s]+@sha256:[0-9a-f]{64}$'},
+                                                        'source': {
+                                                            'properties': {
+                                                                'git': {
+                                                                    'properties': {
+                                                                        'revision': {'pattern': r'^[0-9a-f]{40}$'}
+                                                                    }
+                                                                }
+                                                            }
+                                                        },
+                                                    }
+                                                },
+                                            }
+                                        }
+                                    },
+                                },
+                            },
                         },
                     },
-                    'else': {'not': {'required': ['unified']}},
+                    'else': {'properties': {'unified': {'type': 'null'}}},
                 }
             ],
         }
