@@ -112,6 +112,7 @@ class WatchReleaseCli:
     help='Time to wait, in hours. Set 0 to report and exit.',
 )
 @click.option('--dry-run', is_flag=True, help='Init and exit')
+@click.option('--product', help='Product for a unified release without a single group.')
 @click.option('--dump', is_flag=True, help='Dump the release object to stdout in YAML format')
 @click.pass_obj
 @click_coroutine
@@ -124,6 +125,7 @@ async def watch_release_cli(
     timeout: int,
     dry_run: bool,
     dump: bool,
+    product: str = None,
 ):
     """
     Watch the given Konflux Release and report on its status
@@ -132,7 +134,11 @@ async def watch_release_cli(
     $ elliott release watch ose-4-18-stage-202503131819 --konflux-namespace ocp-art-tenant
     """
     # Initialize runtime to populate runtime.product before using resolver functions
-    runtime.initialize(build_system='konflux')
+    runtime.initialize(no_group=bool(product), build_system='konflux')
+    if product:
+        from artcommonlib.product_catalog import get_product_config
+
+        runtime.product = get_product_config(product).product_name
 
     # Resolve kubeconfig and namespace using product-based utility functions
     resolved_kubeconfig = resolve_konflux_kubeconfig_by_product(runtime.product, konflux_kubeconfig)

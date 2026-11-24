@@ -359,6 +359,28 @@ class TestLayeredFbcMerger(unittest.IsolatedAsyncioTestCase):
                 await self.merger.merge('quay.io/test/fbc', skip_rebase=True)
         build.assert_not_awaited()
 
+    async def test_merge_exposes_snapshot_identity(self):
+        self.merger.build_source = SimpleNamespace(
+            https_url='https://github.com/openshift-priv/art-fbc', commit_hash='a' * 40
+        )
+        plr = Mock()
+        plr.to_dict.return_value = {
+            'status': {
+                'results': [
+                    {'name': 'IMAGE_URL', 'value': 'quay.io/test/fbc:tag'},
+                    {'name': 'IMAGE_DIGEST', 'value': 'sha256:' + 'd' * 64},
+                ]
+            }
+        }
+        self.merger._prepare_existing_source = AsyncMock()
+        self.merger._build = AsyncMock(return_value=plr)
+        result = await self.merger.merge('quay.io/test/fbc', skip_rebase=True)
+        self.assertEqual(result['application'], 'quay-fbc-unified')
+        self.assertEqual(result['component'], 'quay-fbc-unified-4-20')
+        self.assertEqual(result['source_repo'], 'https://github.com/openshift-priv/art-fbc')
+        self.assertEqual(result['source_commit'], 'a' * 40)
+        self.assertEqual(result['pullspec'], 'quay.io/test/fbc@sha256:' + 'd' * 64)
+
     async def test_skip_rebase_builds_and_records_existing_revision_and_metadata(self):
         repo = self._existing_source()
         bundle_nvrs = [self.merger.inputs[0].bundle.nvr]
@@ -387,6 +409,10 @@ class TestLayeredFbcMerger(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(record.arches, ['x86_64'])
         self.assertEqual(result['provenance_url'], f'{repo.https_url}/blob/{repo.commit_hash}/unified-provenance.json')
         self.assertEqual(result['pullspec'], 'quay.io/test/fbc@sha256:' + 'd' * 64)
+        self.assertEqual(result['application'], 'quay-fbc-unified')
+        self.assertEqual(result['component'], 'quay-fbc-unified-4-20')
+        self.assertEqual(result['source_repo'], repo.https_url)
+        self.assertEqual(result['source_commit'], repo.commit_hash)
         repo.commit.assert_not_awaited()
         repo.push.assert_not_awaited()
 

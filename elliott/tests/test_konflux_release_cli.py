@@ -648,7 +648,7 @@ class TestCreateReleaseCli(IsolatedAsyncioTestCase):
             await cli.run()
 
         self.assertIn(
-            "1 validation error for ShipmentConfig\nshipment.metadata.assembly\n  Field required",
+            "Ordinary shipments require group and assembly",
             str(context.exception),
         )
 

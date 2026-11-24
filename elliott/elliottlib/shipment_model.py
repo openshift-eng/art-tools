@@ -236,6 +236,29 @@ class Tools(StrictBaseModel):
 class Shipment(StrictBaseModel):
     """Config to ship a Konflux release for a product"""
 
+    model_config = ConfigDict(
+        json_schema_extra={
+            'allOf': [
+                {
+                    'if': {
+                        'properties': {
+                            'metadata': {'properties': {'unified': {'const': True}}, 'required': ['unified']}
+                        },
+                        'required': ['metadata'],
+                    },
+                    'then': {
+                        'required': ['unified', 'snapshot'],
+                        'properties': {
+                            'unified': {'type': 'object'},
+                            'snapshot': {'type': 'object'},
+                        },
+                    },
+                    'else': {'not': {'required': ['unified']}},
+                }
+            ],
+        }
+    )
+
     metadata: Metadata
     unified: Optional[Unified] = None
     tools: Optional[Tools] = None

@@ -1,5 +1,5 @@
 {
-  "$comment": "Schema generated on 2026-11-23 23:40 UTC from elliottlib.shipment_model",
+  "$comment": "Schema generated on 2026-11-23 23:56 UTC from elliottlib.shipment_model",
   "$defs": {
     "ComponentSource": {
       "additionalProperties": false,
@@ -469,6 +469,48 @@
     },
     "Shipment": {
       "additionalProperties": false,
+      "allOf": [
+        {
+          "else": {
+            "not": {
+              "required": [
+                "unified"
+              ]
+            }
+          },
+          "if": {
+            "properties": {
+              "metadata": {
+                "properties": {
+                  "unified": {
+                    "const": true
+                  }
+                },
+                "required": [
+                  "unified"
+                ]
+              }
+            },
+            "required": [
+              "metadata"
+            ]
+          },
+          "then": {
+            "properties": {
+              "unified": {
+                "type": "object"
+              },
+              "snapshot": {
+                "type": "object"
+              }
+            },
+            "required": [
+              "unified",
+              "snapshot"
+            ]
+          }
+        }
+      ],
       "description": "Config to ship a Konflux release for a product",
       "properties": {
         "metadata": {

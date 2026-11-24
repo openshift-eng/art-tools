@@ -66,6 +66,7 @@ class Lock(enum.Enum):
     SYNC_CI_BUILDCONFIGS = 'lock:sync-ci-buildconfigs:{version}'
     OPEN_RECONCILIATION_PRS = 'lock:open-reconciliation-prs:{version}'
     OPEN_RECONCILIATION_PRS_LAYERED = 'lock:open-reconciliation-prs-layered:{group}'
+    UNIFIED_SHIPMENT = 'lock:unified-shipment:{product}'
     LAYERED_PRODUCT_SHIPMENT = 'lock:layered-product-shipment:{group}:{assembly}'
 
 
@@ -212,6 +213,11 @@ LOCK_POLICY = {
         'lock_timeout': DEFAULT_LOCK_TIMEOUT,
     },
     Lock.LAYERED_PRODUCT_SHIPMENT: {
+        'retry_count': 36000,
+        'retry_delay_min': 0.1,
+        'lock_timeout': DEFAULT_LOCK_TIMEOUT,
+    },
+    Lock.UNIFIED_SHIPMENT: {
         'retry_count': 36000,
         'retry_delay_min': 0.1,
         'lock_timeout': DEFAULT_LOCK_TIMEOUT,

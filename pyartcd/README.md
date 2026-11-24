@@ -190,3 +190,57 @@ non-manual runs on weekends; and a global `yes`/`true` blocks everything.
 `artcd build-sync` syncs Konflux payloads and defaults to `--build-system=konflux`.
 Brew assembly definitions can be generated with `gen-assembly`, but cannot use
 `--auto-trigger-build-sync`.
+
+### Unified FBC shipment generation (ART-26524)
+
+`artcd lp-unified-fbc --product=mta --assembly=8.2.3 --assembly=8.3.3
+--ocp-target-version=4.18 --create-mr` builds every selected target and creates
+one **draft**, FBC-only shipment MR after all builds and shipment validations
+succeed. Omit `--create-mr` for the existing build-only behavior. Explicit
+`--fbc-build` inputs remain build-only; shipment generation requires assemblies
+and normal rebase. `--dry-run` does not create an MR. This command never starts
+stage or production. Review the generated MR before marking it ready for stage.
+
+The snapshot uses the successful build's actual application, target component,
+immutable image digest, source repository/commit, and NVR. Its source commit
+contains `unified-provenance.json` at the standard path. The shipment has
+`metadata.unified: true` and `fbc: true`, a `unified.assemblies` contributor list,
+and no single metadata group or assembly. Contributor entries contain `group`,
+`assembly`, `revision` (the pinned build-data commit), and `imageShipmentMR`.
+There are no shipment generation/fingerprint fields or provenance-path option.
+The contributing assemblies' image shipment pointers are never overwritten.
+
+Before MR creation, the generator checks only the configured shipment-data
+project for open unified MRs and active pipelines. Generated MRs carry label
+`unified-fbc-shipment` and branch prefix `unified-fbc-<product-prefix>-`.
+Candidate shipment files determine product/OCP overlap, independently of the
+MR title. Active deliveries use their pipeline revision. The final check and
+MR creation run under one per-product Redis lock. A conflict stops with links;
+there is no MR update, supersession, build reuse or resume. Manual/legacy MRs
+must use this label/branch convention to participate in discovery.
+
+Before stage and immediately before each production release creation, Elliott
+loads the pinned provenance and compares original/current effective image pins
+(including inheritance), target FBC selections and supported target/product
+coverage. Input changes require reconciliation and regeneration; unrelated
+build-data changes do not invalidate the selection. Staging can precede image
+production. Production additionally requires successful production watch jobs
+for matching contributing image snapshots. Approval, merge and stage success
+alone are insufficient. Unified production is still a manual `prod-pipeline`
+action and must be last. Existing prod-pipeline owns failed delivery retries.
+After any production attempt, changes to the unified shipment set (other than
+release-result/advisory bookkeeping) require a new MR.
+
+Shipment CI supplies `SHIPMENT_MR_URL` to group-less `elliott release new` jobs;
+this is required for actual unified release creation. `elliott release watch
+--product=mta` selects the tenant without inventing a source execution assembly.
+Configured stage/prod plans, admissions, applications, components and package
+allowances must exist; unresolved mappings or invalid metadata fail the run.
+Catalog freshness work in ART-23826 remains separate; existing builder checks
+are preserved and no extra production-index rendering gate is introduced here.
+
+Deploy the compatible art-tools image and shipment-ci consumer changes before
+enabling `create-mr=true` in ARTC. The art-config companion exposes this optional
+parameter for MTA, COO and Quay, defaulting to false. Its Task needs the existing
+`gitlab-token` secret in addition to the build credentials. No KRD resources are
+provisioned automatically.

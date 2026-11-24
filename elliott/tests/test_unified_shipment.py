@@ -200,3 +200,164 @@ def test_json_schema_preserves_ordinary_context_requirement(shipment):
         validator.validate(ordinary)
     ordinary['shipment']['metadata'].update(group='mta-8.2', assembly='8.2.3')
     validator.validate(ordinary)
+
+
+@pytest.mark.parametrize('mode', ['unchanged', 'bookkeeping', 'catalog_changed'])
+def test_production_freeze_preserves_content_allows_results(shipment, mode):
+    from types import SimpleNamespace
+    from unittest.mock import Mock, patch
+
+    from elliottlib.unified_shipment import validate_production_freeze
+
+    config = ShipmentConfig.model_validate(shipment).shipment
+    old = deepcopy(shipment['shipment'])
+    if mode == 'bookkeeping':
+        old['environments']['stage']['result'] = {'pipeline': 'https://example/old-stage'}
+    if mode == 'catalog_changed':
+        old['snapshot']['spec']['components'][0]['containerImage'] = 'quay.io/example/fbc@sha256:' + 'd' * 64
+    client = Mock()
+    client._parse_mr_url.return_value = ('art/shipments', '1')
+    client.get_mr_from_url.return_value = SimpleNamespace(sha='current')
+    with (
+        patch('elliottlib.unified_shipment.production_pipelines', return_value=[(SimpleNamespace(sha='old'), None)]),
+        patch(
+            'elliottlib.unified_shipment.shipment_files',
+            side_effect=lambda project, mr, ref: [
+                ('shipment/test.yaml', old if ref == 'old' else shipment['shipment'])
+            ],
+        ),
+    ):
+        if mode == 'catalog_changed':
+            with pytest.raises(RuntimeError, match='content changed after production'):
+                validate_production_freeze(
+                    config, 'shipment/test.yaml', client, 'https://gitlab.example/art/shipments/-/merge_requests/1'
+                )
+        else:
+            validate_production_freeze(
+                config, 'shipment/test.yaml', client, 'https://gitlab.example/art/shipments/-/merge_requests/1'
+            )
+
+
+@pytest.mark.parametrize(
+    'status,historic_matches', [('success', True), ('failed', True), ('pending', True), ('success', False)]
+)
+def test_image_prod_requires_successful_matching_watch_job(shipment, status, historic_matches):
+    import json
+    from types import SimpleNamespace
+    from unittest.mock import Mock, patch
+
+    from elliottlib.unified_shipment import validate_image_production
+
+    config = ShipmentConfig.model_validate(shipment).shipment
+    pin, bundle = 'operator-container-8.2.3-1', 'operator-bundle-8.2.3-1'
+    records = {
+        'releases': {
+            '8.2.3': {
+                'assembly': {
+                    'members': {'images': [{'distgit_key': 'operator', 'metadata': {'is': {'nvr': pin}}}]},
+                    'group': {
+                        'fbc_builds': {
+                            '4.18': {
+                                'operator': {
+                                    'nvr': 'operator-fbc-8.2.3-1.ocp4.18',
+                                    'pullspec': 'quay.io/example/fbc@sha256:' + 'a' * 64,
+                                    'operand_nvrs': [pin],
+                                }
+                            }
+                        }
+                    },
+                }
+            }
+        }
+    }
+    image = {
+        'metadata': {'product': 'mta', 'group': 'mta-8.2', 'assembly': '8.2.3', 'fbc': False},
+        'snapshot': {'nvrs': [pin, bundle]},
+    }
+    historic = deepcopy(image)
+    if not historic_matches:
+        historic['snapshot']['nvrs'] = ['different-content']
+    client = Mock()
+    client._parse_mr_url.return_value = ('art/shipments', '1')
+    client.get_mr_from_url.return_value = SimpleNamespace(sha='current')
+    child = Mock()
+    child.jobs.list.return_value = [SimpleNamespace(name='image-watch-prod', status=status)]
+    provenance = {'inputs': [{'group': 'mta-8.2', 'assembly': '8.2.3', 'bundle_nvr': bundle}]}
+    with (
+        patch('elliottlib.unified_shipment.get_github_client_for_org') as github,
+        patch('elliottlib.unified_shipment.production_pipelines', return_value=[(SimpleNamespace(sha='old'), child)]),
+        patch(
+            'elliottlib.unified_shipment.shipment_files',
+            side_effect=lambda project, mr, ref: [('shipment/image.yaml', historic if ref == 'old' else image)],
+        ),
+    ):
+        github.return_value.get_repo.return_value.get_contents.return_value.decoded_content = json.dumps(
+            records
+        ).encode()
+        if status == 'success' and historic_matches:
+            validate_image_production(config, provenance, client)
+        else:
+            with pytest.raises(RuntimeError, match='production incomplete'):
+                validate_image_production(config, provenance, client)
+
+
+@pytest.mark.parametrize('environment', ['stage', 'prod'])
+def test_stage_can_precede_image_prod_but_prod_checks_readiness(shipment, environment):
+    import asyncio
+    from unittest.mock import AsyncMock, Mock, patch
+
+    from elliottlib.unified_shipment import validate_unified_release
+
+    config = ShipmentConfig.model_validate(shipment).shipment
+    provenance = {'ocp_target_version': '4.18'}
+    labels = {'com.redhat.art.nvr': config.snapshot.nvrs[0], 'org.opencontainers.image.revision': 'b' * 40}
+
+    async def inline(fn, *args, **kwargs):
+        return fn(*args, **kwargs)
+
+    with (
+        patch('elliottlib.unified_shipment.load_pinned_provenance', return_value=provenance),
+        patch('elliottlib.unified_shipment.validate_current_inputs') as current,
+        patch('elliottlib.unified_shipment.validate_image_production') as images,
+        patch('elliottlib.unified_shipment.validate_production_freeze') as freeze,
+        patch('artcommonlib.exectools.to_thread', side_effect=inline),
+        patch(
+            'elliottlib.unified_shipment.oc_image_info_for_arch_async',
+            new_callable=AsyncMock,
+            return_value={'config': {'config': {'Labels': labels}}},
+        ),
+    ):
+        asyncio.run(
+            validate_unified_release(
+                config,
+                environment,
+                gitlab_client=Mock(),
+                mr_url='https://gitlab.example/art/shipments/-/merge_requests/1',
+                config_path='shipment/unified.yaml',
+            )
+        )
+    current.assert_called_once()
+    freeze.assert_called_once()
+    assert images.call_count == (1 if environment == 'prod' else 0)
+
+
+def test_unified_runtime_has_no_single_assembly(shipment):
+    from unittest.mock import Mock
+
+    from elliottlib.cli.konflux_release_cli import initialize_release_runtime
+
+    runtime = Mock(group=None)
+    runtime.shipment_gitdata.load_yaml_file.return_value = shipment
+    initialize_release_runtime(runtime, 'shipment/test.yaml')
+    runtime.initialize.assert_called_once_with(no_group=True, build_system='konflux')
+    assert runtime.product == 'mta'
+    assert runtime.assembly is None
+
+
+def test_malformed_unified_json_schema_is_rejected(shipment):
+    from jsonschema import Draft202012Validator
+    from jsonschema.exceptions import ValidationError as SchemaValidationError
+
+    shipment['shipment'].pop('unified')
+    with pytest.raises(SchemaValidationError):
+        Draft202012Validator(ShipmentConfig.model_json_schema()).validate(shipment)

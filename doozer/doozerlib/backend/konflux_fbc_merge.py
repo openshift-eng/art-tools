@@ -376,6 +376,7 @@ class LayeredFbcMerger(KonfluxFbcFragmentMerger):
         self._set_product_identity()
         self.provenance = {
             'product': self.product,
+            'build_data_repo': self.runtime.data_path,
             'operators': sorted({source.package for source in self.inputs}),
             'ocp_target_version': self.target_version,
             'production_index': baseline,
@@ -586,6 +587,10 @@ class LayeredFbcMerger(KonfluxFbcFragmentMerger):
             )
         result = {
             'nvr': self.nvr,
+            'application': self.get_application_name(self.group),
+            'component': self.get_component_name(self.group),
+            'source_repo': self.build_source.https_url if self.build_source else None,
+            'source_commit': self.build_source.commit_hash if self.build_source else None,
             'pullspec': None,
             'build_url': None,
             'dry_run': self.dry_run,
