@@ -817,3 +817,24 @@ def test_enabled_repos_match_component_target(group, image, expected):
 )
 def test_rpm_enabled_repos_use_effective_build_targets(group, rpm, expected):
     assert bool(checks.validate_enabled_repo_targets(rpm, group, rpm=True)) == expected
+
+
+@pytest.mark.parametrize('rpm', [False, True])
+@pytest.mark.parametrize('component_branch', [False, True])
+def test_enabled_repos_resolve_templated_branch(rpm, component_branch):
+    branch = 'rhaos-4.18-rhel-{EL}'
+    group = {'vars': {'EL': 9}, 'branch': 'rhaos-4.18-rhel-8' if component_branch else branch}
+    data = {'enabled_repos': ['rhel-8-baseos-rpms']}
+    if component_branch:
+        data['distgit'] = {'branch': branch}
+    errors = checks.validate_enabled_repo_targets(data, group, rpm=rpm)
+    assert any('RHEL 9' in error for error in errors)
+
+
+def test_enabled_repos_skip_unresolved_branch_target():
+    assert (
+        checks.validate_enabled_repo_targets(
+            {'enabled_repos': ['rhel-8-baseos-rpms']}, {'branch': 'rhaos-4.18-rhel-{UNKNOWN}'}, rpm=True
+        )
+        == []
+    )

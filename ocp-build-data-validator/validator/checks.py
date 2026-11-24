@@ -118,6 +118,12 @@ def validate_enabled_repo_targets(data: dict, group: dict, *, rpm: bool = False)
         target = data.get('el_target', group.get('el_target')) if not rpm else None
         if target is None:
             branch = data.get('distgit', {}).get('branch') or group.get('branch', '')
+            variables = group.get('vars') or {}
+            if variables and isinstance(branch, str):
+                try:
+                    branch = SafeFormatter().format(branch, **variables)
+                except (TypeError, ValueError, KeyError, AttributeError, IndexError):
+                    return []
             match = re.match(r'.*-rhel-(\d+)(?:-|$)', str(branch))
             target = match.group(1) if match else None
         versions = {str(target)} if target is not None else set()
