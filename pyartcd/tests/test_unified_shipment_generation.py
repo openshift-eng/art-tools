@@ -108,7 +108,8 @@ def test_successful_targets_are_all_passed_to_generator(tmp_path):
     assert generate.await_args.args[2][0]['status'] == 'Succeeded'
 
 
-def test_missing_build_metadata_prevents_mr_creation(tmp_path):
+def test_missing_build_metadata_prevents_mr_creation(tmp_path, monkeypatch):
+    monkeypatch.setenv('GITLAB_TOKEN', 'test-token')
     runtime = Mock(working_dir=tmp_path, config={}, dry_run=False)
     pipeline = SimpleNamespace(runtime=runtime, product='mta')
     repo = Mock(_directory=tmp_path)
@@ -124,7 +125,8 @@ def test_missing_build_metadata_prevents_mr_creation(tmp_path):
 
 
 @pytest.mark.parametrize('failure', [None, 'provenance', 'rpa', 'overlap', 'escape'])
-def test_complete_publication_is_validated_and_locked(tmp_path, failure):
+def test_complete_publication_is_validated_and_locked(tmp_path, failure, monkeypatch):
+    monkeypatch.setenv('GITLAB_TOKEN', 'test-token')
     revision = 'b' * 40
     pullspec = 'quay.io/example/fbc@sha256:' + 'a' * 64
     provenance = {
@@ -199,7 +201,7 @@ def test_complete_publication_is_validated_and_locked(tmp_path, failure):
 
     with (
         patch('pyartcd.unified_shipment.GitRepository', return_value=repo),
-        patch('pyartcd.unified_shipment.GitLabClient.from_url', return_value=client),
+        patch('pyartcd.unified_shipment.GitLabClient.from_url', return_value=client) as gitlab,
         patch('pyartcd.unified_shipment.resolve_shipment_release_plans', return_value=('stage-plan', 'prod-plan')),
         patch('artcommonlib.github_auth.get_github_client_for_org') as github,
         patch(
@@ -225,6 +227,11 @@ def test_complete_publication_is_validated_and_locked(tmp_path, failure):
             repo.commit_push.assert_not_awaited()
         else:
             assert asyncio.run(create_unified_shipment(pipeline, [plan], [outcome])) == 'newMR'
+            gitlab.assert_called_once_with(repo.setup.await_args.args[0], gitlab_token='test-token')
+            auth = repo.setup.await_args.kwargs['remote_auth_envs']['origin']
+            assert auth['GIT_USERNAME'] == 'oauth2'
+            assert auth['GIT_PASSWORD'] == 'test-token'
+            assert auth['GIT_ASKPASS']
             repo.commit_push.assert_awaited_once()
             assert mr.await_args.args[1]['labels'] == ['unified-fbc']
             assert mr.await_args.args[1]['title'].startswith('Draft:')

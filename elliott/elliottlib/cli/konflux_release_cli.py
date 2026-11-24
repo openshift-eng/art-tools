@@ -2,6 +2,7 @@ import os
 import re
 import sys
 from dataclasses import dataclass
+from pathlib import Path
 from time import perf_counter
 from typing import Optional
 
@@ -357,8 +358,6 @@ class CreateReleaseCli:
             )
 
         if meta.unified:
-            import os
-
             from artcommonlib.gitlab import GitLabClient
 
             from elliottlib.unified_shipment import catalog_target, validate_unified_release
@@ -368,13 +367,15 @@ class CreateReleaseCli:
             if not mr_url and not self.dry_run:
                 raise ValueError('Unified release creation requires SHIPMENT_MR_URL')
             client = GitLabClient.from_url(mr_url) if mr_url else None
+            checkout = Path(self.runtime.shipment_gitdata.data_dir).resolve()
+            config_path = (checkout / self.config_path).resolve().relative_to(checkout).as_posix()
             await validate_unified_release(
                 config.shipment,
                 self.release_env,
                 self.image_repo_pull_secret,
                 gitlab_client=client,
                 mr_url=mr_url,
-                config_path=self.config_path,
+                config_path=config_path,
             )
 
         # Validate release notes for openshift- groups

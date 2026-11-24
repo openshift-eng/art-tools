@@ -248,7 +248,10 @@ def test_production_freeze_preserves_content_allows_results(shipment, mode):
         ('success', True, True),
     ],
 )
-def test_image_prod_requires_successful_matching_watch_job(shipment, status, historic_matches, swap_digest):
+@pytest.mark.parametrize('older_attempt', [False, True])
+def test_image_prod_requires_successful_matching_watch_job(
+    shipment, status, historic_matches, swap_digest, older_attempt
+):
     import json
     from types import SimpleNamespace
     from unittest.mock import Mock, patch
@@ -304,13 +307,22 @@ def test_image_prod_requires_successful_matching_watch_job(shipment, status, his
         'inputs': [{'group': 'mta-8.2', 'assembly': '8.2.3', 'bundle_nvr': bundle}],
         'image_digests': {'mta-8.2': {pin: image_digest, bundle: bundle_digest}},
     }
+    attempts = [(SimpleNamespace(sha='shipped'), child)]
+    older = SimpleNamespace(sha='before-file')
+    if older_attempt:
+        attempts += [(older, child)]
+
     with (
         patch('elliottlib.unified_shipment.get_github_client_for_org') as github,
-        patch('elliottlib.unified_shipment.production_pipelines', return_value=[(SimpleNamespace(sha='old'), child)]),
+        patch('elliottlib.unified_shipment.production_pipelines', return_value=attempts),
         patch(
             'elliottlib.unified_shipment.shipment_files',
-            side_effect=lambda project, mr, ref: [('shipment/image.yaml', historic if ref == 'old' else image)],
-        ),
+            return_value=[('shipment/image.yaml', image)],
+        ) as current_files,
+        patch(
+            'elliottlib.unified_shipment.revision_shipment_files',
+            side_effect=lambda project, mr, ref: [('shipment/image.yaml', historic)] if ref == 'shipped' else [],
+        ) as historical_files,
     ):
         github.return_value.get_repo.return_value.get_contents.return_value.decoded_content = json.dumps(
             records
@@ -323,6 +335,9 @@ def test_image_prod_requires_successful_matching_watch_job(shipment, status, his
         else:
             with pytest.raises(RuntimeError, match='production incomplete'):
                 validate_image_production(config, provenance, client)
+        assert current_files.call_count == 1
+        if status == 'success' and historic_matches:
+            assert [call.args[2] for call in historical_files.call_args_list] == ['shipped']
 
 
 @pytest.mark.parametrize('environment', ['stage', 'prod'])
@@ -363,6 +378,44 @@ def test_stage_can_precede_image_prod_but_prod_checks_readiness(shipment, enviro
     current.assert_called_once()
     freeze.assert_called_once()
     assert images.call_count == (1 if environment == 'prod' else 0)
+
+
+@pytest.mark.parametrize('absolute', [True, False])
+def test_unified_release_checks_freeze_with_checkout_relative_path(shipment, tmp_path, monkeypatch, absolute):
+    import asyncio
+    from types import SimpleNamespace
+    from unittest.mock import AsyncMock, Mock, patch
+
+    from elliottlib.cli.konflux_release_cli import CreateReleaseCli
+
+    monkeypatch.delenv('SHIPMENT_MR_URL', raising=False)
+    path = 'shipment/mta/unified/mta-fbc-unified/prod/mta.fbc.ocp4.18.test.yaml'
+    checkout = tmp_path / 'shipment-data'
+    runtime = SimpleNamespace(
+        initialized=True,
+        product='mta',
+        shipment_gitdata=SimpleNamespace(data_dir=checkout, load_yaml_file=Mock(return_value=shipment)),
+    )
+    with (
+        patch('elliottlib.cli.konflux_release_cli.KonfluxClient.from_kubeconfig'),
+        patch(
+            'elliottlib.unified_shipment.validate_unified_release',
+            new_callable=AsyncMock,
+            side_effect=RuntimeError('stop after validation'),
+        ) as validate,
+    ):
+        cli = CreateReleaseCli(
+            runtime,
+            str(checkout / path) if absolute else path,
+            'prod',
+            {'namespace': 'art-mta-tenant', 'context': None, 'kubeconfig': None},
+            None,
+            True,
+            'fbc',
+        )
+        with pytest.raises(RuntimeError, match='stop after validation'):
+            asyncio.run(cli.run())
+    assert validate.await_args.kwargs['config_path'] == path
 
 
 def test_unified_runtime_has_no_single_assembly(shipment):

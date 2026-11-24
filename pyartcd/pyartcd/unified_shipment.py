@@ -1,5 +1,6 @@
 """Generate fresh complete unified shipment MRs; never reuse MRs or build artifacts."""
 
+import os
 import re
 from datetime import datetime, timezone
 from pathlib import Path
@@ -7,6 +8,7 @@ from urllib.parse import urlparse
 
 from artcommonlib import exectools
 from artcommonlib.constants import SHIPMENT_DATA_URL_TEMPLATE
+from artcommonlib.github_auth import build_git_auth_env
 from artcommonlib.gitlab import GitLabClient
 from artcommonlib.product_catalog import get_product_config
 from elliottlib.cli.konflux_release_cli import validate_snapshot_against_rpa
@@ -114,11 +116,19 @@ async def create_unified_shipment(pipeline, plans: list, outcomes: list[dict]) -
     settings = runtime.config.get('shipment_config', {})
     pull = settings.get('shipment_data_url', SHIPMENT_DATA_URL_TEMPLATE)
     push = settings.get('shipment_data_push_url', pull)
-    client = GitLabClient.from_url(pull)
-    project = client.get_project(urlparse(pull).path.removesuffix('.git').strip('/'))
-    source = client.get_project(urlparse(push).path.removesuffix('.git').strip('/'))
+    pull_url, push_url = urlparse(pull), urlparse(push)
+    if pull_url.scheme != 'https' or push_url.scheme != 'https' or push_url.netloc != pull_url.netloc:
+        raise ValueError('Shipment push URL must use HTTPS on the configured shipment GitLab host')
+    token = os.environ.get('GITLAB_TOKEN')
+    if not token:
+        raise ValueError('GITLAB_TOKEN is required to create a unified shipment MR')
+    client = GitLabClient.from_url(pull, gitlab_token=token)
+    project = client.get_project(pull_url.path.removesuffix('.git').strip('/'))
+    source = client.get_project(push_url.path.removesuffix('.git').strip('/'))
     repo = GitRepository(Path(runtime.working_dir) / 'shipment-data')
-    await repo.setup(push, upstream_remote_url=pull)
+    await repo.setup(
+        push, upstream_remote_url=pull, remote_auth_envs={'origin': build_git_auth_env(token, username='oauth2')}
+    )
     await repo.fetch_switch_branch('main', remote='upstream')
     configs = []
     for plan, outcome in zip(plans, outcomes):

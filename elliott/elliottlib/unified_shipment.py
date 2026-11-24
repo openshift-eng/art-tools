@@ -243,11 +243,15 @@ def validate_image_production(shipment, provenance: dict, gitlab_client) -> None
             if child is None:
                 continue
             successful = {j.name for j in child.jobs.list(get_all=True) if j.status == 'success'}
-            historic = dict(shipment_files(project, mr, parent.sha))
+            if not any(f'{PurePosixPath(path).stem}-watch-prod' in successful for path in pending):
+                continue
+            historic = dict(revision_shipment_files(project, mr, parent.sha))
             for path in list(pending):
                 job = f'{PurePosixPath(path).stem}-watch-prod'
                 if job in successful and historic.get(path, {}).get('snapshot') == images[path]['snapshot']:
                     pending.remove(path)
+            if not pending:
+                break
         if pending:
             raise RuntimeError(f'Image production incomplete for {contributor.imageShipmentMR}: {sorted(pending)}')
 
