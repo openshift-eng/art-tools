@@ -14,7 +14,6 @@ from artcommonlib.constants import (
     BREW_HUB,
     GOLANG_BUILDER_IMAGE_NAME,
     GOLANG_NVR_LABEL,
-    REGISTRY_CI_OPENSHIFT,
     REGISTRY_QUAY_OCP_RELEASE_DEV,
     REGISTRY_REDHAT_IO,
 )
@@ -245,22 +244,19 @@ async def move_golang_bugs(
     if dry_run:
         cmd.append('--dry-run')
 
-    app_ci_kubeconfig = os.getenv('APP_CI_KUBECONFIG')
-    if rpms_only or not app_ci_kubeconfig:
+    quay_auth_file = os.getenv('QUAY_AUTH_FILE')
+    if rpms_only or not quay_auth_file:
         await exectools.cmd_assert_async(cmd, log_stdout=True)
         return
 
-    # The sweep reads CI nightlies, their Quay component images, and floating Red Hat builder tags.
-    source_files = []
-    registries = [REGISTRY_CI_OPENSHIFT]
+    # Public nightly references come from the Release Controller. Registry auth is for the images.
+    source_files = [quay_auth_file]
+    registries = [REGISTRY_QUAY_OCP_RELEASE_DEV]
     if redhat_auth_file := os.getenv('KONFLUX_OPERATOR_INDEX_AUTH_FILE'):
-        source_files.append(redhat_auth_file)
+        source_files.insert(0, redhat_auth_file)
         registries.append(REGISTRY_REDHAT_IO)
-    if quay_auth_file := os.getenv('QUAY_AUTH_FILE'):
-        source_files.append(quay_auth_file)
-        registries.append(REGISTRY_QUAY_OCP_RELEASE_DEV)
 
-    with RegistryConfig(kubeconfig=app_ci_kubeconfig, source_files=source_files, registries=registries) as auth_file:
+    with RegistryConfig(source_files=source_files, registries=registries) as auth_file:
         cmd.insert(1, f'--registry-config={auth_file}')
         await exectools.cmd_assert_async(cmd, log_stdout=True)
 

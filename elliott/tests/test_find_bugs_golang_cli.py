@@ -1,3 +1,4 @@
+import json
 from unittest import IsolatedAsyncioTestCase, TestCase
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -83,6 +84,37 @@ def _make_bug(bug_id="OCPBUGS-99999", component="openshift-golang-builder-contai
 
 
 class TestNightlyVerification(IsolatedAsyncioTestCase):
+    async def test_default_nightly_inspects_controller_references_with_registry_auth(self):
+        cli = _make_cli(pullspec=None)
+        cli._runtime.registry_config = '/quay/config.json'
+        name = '4.19.0-0.nightly-2026-11-24-144702'
+        nightly = {'name': name, 'pullSpec': f'registry.ci.openshift.org/ocp/release:{name}'}
+        image = 'quay.io/example/images@sha256:' + 'a' * 64
+        labels = {'com.redhat.component': 'openshift-clients', 'version': '4.19.0', 'release': '123'}
+        with (
+            patch('elliottlib.cli.find_bugs_golang_cli.find_rc_nightlies', return_value={'x86_64': [nightly]}),
+            patch('elliottlib.cli.find_bugs_golang_cli.get_container_configs', return_value=[]),
+            patch(
+                'elliottlib.cli.find_bugs_golang_cli.get_public_nightly_image_references',
+                return_value=[{'name': 'cli', 'from': {'name': image}}],
+            ) as references,
+            patch('elliottlib.cli.find_bugs_golang_cli.get_nvrs_from_release') as read_payload,
+            patch(
+                'elliottlib.util.oc_image_info__cached_async',
+                return_value=json.dumps({'config': {'config': {'Labels': labels}}}),
+            ) as inspect_image,
+            patch('elliottlib.cli.find_bugs_golang_cli.get_golang_container_nvrs', return_value={}) as resolve_go,
+            patch.object(cli, '_is_fixed', return_value=(False, '', [], [])),
+        ):
+            await cli.is_fixed_golang_builder(_make_bug(), set())
+            await cli.is_fixed_golang_builder(_make_bug(), set())
+
+        self.assertEqual(cli.pullspec, nightly['pullSpec'])
+        references.assert_awaited_once_with(name, 'x86_64')
+        read_payload.assert_not_called()
+        inspect_image.assert_awaited_once_with(image, registry_config='/quay/config.json')
+        resolve_go.assert_called_once_with([('openshift-clients', '4.19.0', '123')], cli._logger, exact=True)
+
     @patch('elliottlib.cli.find_bugs_golang_cli.golang_report_for_version', return_value=[])
     @patch('elliottlib.cli.find_bugs_golang_cli.get_cve_from_go_db', return_value='GO-2026-1234')
     @patch('elliottlib.cli.find_bugs_golang_cli.get_fixed_in_version_go_db', return_value={Version.parse('1.26.1')})
