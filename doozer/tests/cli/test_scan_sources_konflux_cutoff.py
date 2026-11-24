@@ -172,6 +172,59 @@ class TestBuildCutoff(IsolatedAsyncioTestCase):
         self.assertEqual(self.scanner.assessment_code['containers/test-image+True'], RebuildHintCode.CONFIG_CHANGE)
         self.image.get_latest_build.assert_not_awaited()
 
+    async def test_embargoed_rebuild_reports_stale_public_build_without_scheduling(self):
+        private = build_record(CUTOFF + timedelta(days=5))
+        private.nvr = 'test-component-1.0-2.p3.el9'
+        private.embargoed = True
+        public = build_record(CUTOFF - timedelta(days=3))
+        public.nvr = 'test-component-1.0-1.p2.el9'
+        public.embargoed = False
+        self.image.is_payload = True
+        self.image.for_release = True
+        self.runtime.image_map = {'test-image': self.image}
+        self.runtime.image_tree = {'test-image': {}}
+        self.scanner.all_image_metas = {self.image}
+        self.scanner.skip_rpms = True
+        self.image.get_latest_build.return_value = private
+        self.image.get_latest_konflux_build.return_value = public
+
+        with (
+            patch.object(self.scanner, 'get_current_task_bundle_shas', AsyncMock(return_value={})),
+            patch.object(self.scanner, 'scan_image', AsyncMock()),
+            patch('doozerlib.cli.scan_sources_konflux.click.echo') as echo,
+        ):
+            await self.scanner.run()
+
+        self.image.get_latest_konflux_build.assert_awaited_once_with(default=None, el_target=9, embargoed=False)
+        self.assertEqual(self.scanner.changing_image_names, set())
+        self.assertEqual(self.scanner.issues, [])
+        report = yaml.safe_load(echo.call_args.args[0])
+        self.assertEqual(report['images'], [])
+        finding = report['public_build_cutoff'][0]
+        self.assertEqual(finding['name'], 'test-image')
+        self.assertEqual(finding['latest_nvr'], private.nvr)
+        self.assertEqual(finding['public_nvr'], public.nvr)
+        self.assertIn(public.start_time.isoformat(), finding['reason'])
+        self.assertIn(CUTOFF.isoformat(), finding['reason'])
+
+    async def test_embargoed_rebuild_with_fresh_or_missing_public_build(self):
+        private = build_record(CUTOFF + timedelta(days=5))
+        private.embargoed = True
+        self.scanner.latest_image_build_records_map['test-image'] = private
+        public = build_record(CUTOFF)
+        public.embargoed = False
+        self.image.get_latest_konflux_build.return_value = public
+        await self.scanner.check_public_build_cutoff(self.image)
+        self.assertEqual(self.scanner.public_build_cutoff, [])
+
+        for missing_or_private in (None, private):
+            with self.subTest(public=missing_or_private):
+                self.image.get_latest_konflux_build.return_value = missing_or_private
+                await self.scanner.check_public_build_cutoff(self.image)
+                finding = self.scanner.public_build_cutoff.pop()
+                self.assertIsNone(finding['public_nvr'])
+                self.assertIn('No eligible public build', finding['reason'])
+
     async def test_successful_rebuild_satisfies_cutoff(self):
         self.scanner.latest_image_build_records_map['test-image'] = build_record(CUTOFF)
         self.assertFalse(await self.scanner.scan_build_cutoff_changes(self.image))

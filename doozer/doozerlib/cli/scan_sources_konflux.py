@@ -113,6 +113,7 @@ class ConfigScanSources:
         self.assessment_reason = dict()  # maps metadata qualified_key => message describing change
         self.assessment_code = dict()  # maps metadata qualified_key => RebuildHintCode
         self.issues = list()  # tracks issues that arose during the scan, which did not interrupt the job
+        self.public_build_cutoff: list[dict[str, str | None]] = []
 
         self.package_rpm_finder = PackageRpmFinder(runtime)
         self.latest_image_build_records_map: Dict[str, KonfluxBuildRecord] = {}
@@ -281,6 +282,20 @@ class ConfigScanSources:
         span.set_attribute("tree_depth", len(self.image_tree))
         for level in sorted(self.image_tree.keys()):
             await self.scan_images(self.image_tree[level])
+
+        if (
+            self.rebuild_before is not None
+            and self.variant == BuildVariant.OCP
+            and self.runtime.group.startswith('openshift-')
+            and self.runtime.assembly == 'stream'
+        ):
+            await asyncio.gather(
+                *(
+                    self.check_public_build_cutoff(meta)
+                    for meta in self.all_image_metas
+                    if self._is_image_enabled(meta) and meta.is_payload and meta.for_release
+                )
+            )
 
         # Check RHCOS status if the kubeconfig is provided and group is openshift-*
         if self.ci_kubeconfig and self.runtime.group.startswith("openshift-") and self.variant != BuildVariant.OKD:
@@ -752,6 +767,40 @@ class ConfigScanSources:
                 f'before rebuild cutoff {self.rebuild_before.isoformat()}'
             )
         return RebuildHint(RebuildHintCode.BUILD_BEFORE_CUTOFF, reason)
+
+    @exectools.limit_concurrency(SCAN_SOURCES_CONCURRENCY_LIMIT)
+    async def check_public_build_cutoff(self, image_meta: ImageMetadata):
+        """Report stale public payload builds hidden by an embargoed stream build."""
+        name = image_meta.distgit_key
+        try:
+            el_target = image_meta.branch_el_target()
+            # Images already marked for rebuild can be skipped by the regular scan.
+            if name in self.latest_image_build_records_map:
+                latest = self.latest_image_build_records_map[name]
+            else:
+                latest = await image_meta.get_latest_konflux_build(default=None, el_target=el_target)
+            if latest is None or not latest.embargoed:
+                return
+
+            public = await image_meta.get_latest_konflux_build(default=None, el_target=el_target, embargoed=False)
+            if public is None or public.embargoed:
+                reason = f'No eligible public build for rebuild cutoff {self.rebuild_before.isoformat()}'
+                public_nvr = None
+            else:
+                hint = self.get_build_cutoff_hint(public)
+                if hint is None:
+                    return
+                reason = hint.reason
+                public_nvr = public.nvr
+        except Exception as exc:
+            self.logger.exception('Failed checking public rebuild cutoff for %s', name)
+            self.issues.append({'name': name, 'issue': f'Failed checking public rebuild cutoff: {exc}'})
+            return
+
+        self.logger.warning('%s: %s; latest build %s is embargoed', name, reason, latest.nvr)
+        self.public_build_cutoff.append(
+            {'name': name, 'latest_nvr': latest.nvr, 'public_nvr': public_nvr, 'reason': reason}
+        )
 
     @skip_check_if_changing
     async def scan_build_cutoff_changes(self, image_meta: ImageMetadata) -> bool:
@@ -2339,6 +2388,8 @@ class ConfigScanSources:
         if self.as_yaml:
             click.echo('---')
             results['issues'] = self.issues
+            if self.public_build_cutoff:
+                results['public_build_cutoff'] = sorted(self.public_build_cutoff, key=lambda item: item['name'])
             click.echo(yaml.dump(results, indent=4, Dumper=util.NoAliasSafeDumper))
         else:
             # Log change results
@@ -2354,6 +2405,10 @@ class ConfigScanSources:
                         )
                         + code_str
                     )
+            if self.public_build_cutoff:
+                click.echo('PUBLIC BUILD CUTOFF:')
+                for finding in sorted(self.public_build_cutoff, key=lambda item: item['name']):
+                    click.echo(f"   {finding['name']}: {finding['reason']}; latest build {finding['latest_nvr']}")
             # Log issues
             click.echo("ISSUES:")
             for item in self.issues:
