@@ -1,10 +1,11 @@
 from unittest import IsolatedAsyncioTestCase, TestCase
-from unittest.mock import MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 from artcommonlib.release_util import get_patch_from_release
 from artcommonlib.rpm_utils import parse_nvr
 from elliottlib import constants
 from elliottlib.cli.find_bugs_golang_cli import FindBugsGolangCli
+from elliottlib.exceptions import ElliottFatalError
 from semver.version import Version
 
 
@@ -79,6 +80,77 @@ def _make_bug(bug_id="OCPBUGS-99999", component="openshift-golang-builder-contai
     bug.whiteboard_component = component
     bug.corresponding_flaw_bug_ids = [123456]
     return bug
+
+
+class TestGoTrackerSweep(IsolatedAsyncioTestCase):
+    def setUp(self):
+        module = 'elliottlib.cli.find_bugs_golang_cli'
+        self.report = self.enterContext(patch(f'{module}.golang_report_for_version', return_value=[]))
+        self.enterContext(patch(f'{module}.get_cve_from_go_db', return_value='GO-2026-1234'))
+        self.enterContext(patch(f'{module}.get_fixed_in_version_go_db', return_value={Version.parse('1.26.1')}))
+        self.enterContext(patch(f'{module}.get_cve_from_prodsec_db', return_value=None))
+
+    def make_sweep(self, **overrides):
+        cli = _make_cli(
+            cve_ids=('CVE-2026-1234',),
+            fixed_in_nvrs=('golang-1.22.12-11.el9',),
+            update_tracker=True,
+            dry_run=False,
+            **overrides,
+        )
+        cli._runtime.get_major_minor.return_value = (4, 17)
+        cli.jira_tracker.target_release.return_value = ('4.17.z',)
+        cli.move_bug_and_comment = MagicMock()
+        return cli
+
+    @patch('elliottlib.cli.find_bugs_golang_cli.get_container_configs', return_value=[])
+    @patch('elliottlib.cli.find_bugs_golang_cli.get_nvrs_from_release', side_effect=RuntimeError('unauthorized'))
+    async def test_unreadable_nightly_prevents_all_tracker_updates(self, read_release, _rhcos):
+        cli = self.make_sweep(force_update_tracker=True)
+        rpm_bug = _make_bug('OCPBUGS-1', component='some-rpm')
+        builder_bug = _make_bug('OCPBUGS-2')
+        rpm_bug.cve_id = 'CVE-2026-2345'
+        builder_bug.cve_id = 'CVE-2026-1234'
+        cli.jira_tracker._search.return_value = [rpm_bug, builder_bug]
+        cli.is_fixed_rpm = AsyncMock(return_value=(True, 'RPM rebuilt', [], []))
+
+        with self.assertRaisesRegex(ElliottFatalError, 'Could not read release payload.*unauthorized'):
+            await cli.run()
+
+        cli.is_fixed_rpm.assert_awaited_once()
+        read_release.assert_awaited_once_with(cli.pullspec, set(), registry_config=cli._runtime.registry_config)
+        cli.move_bug_and_comment.assert_not_called()
+
+    async def test_targeted_backport_uses_supplied_nvr_and_cve(self):
+        cli = self.make_sweep(only_specified_cves=True)
+        wanted = _make_bug('OCPBUGS-1')
+        other = _make_bug('OCPBUGS-2')
+        wanted.cve_id = 'CVE-2026-1234'
+        other.cve_id = 'CVE-2026-2345'
+        cli.jira_tracker._search.return_value = [other, wanted]
+        cli.is_fixed_golang_builder = AsyncMock(return_value=(True, 'Payload rebuilt with the backport', [], []))
+
+        await cli.run()
+
+        self.report.assert_not_called()
+        cli.is_fixed_golang_builder.assert_awaited_once_with(
+            wanted, tracker_fixed_in={Version.parse('1.26.1'), Version.parse('1.22.12-11')}
+        )
+        cli.move_bug_and_comment.assert_called_once_with(wanted, 'Payload rebuilt with the backport ')
+
+    async def test_force_only_applies_to_explicit_cves(self):
+        cli = self.make_sweep(force_update_tracker=True)
+        wanted = _make_bug('OCPBUGS-1')
+        other = _make_bug('OCPBUGS-2')
+        wanted.cve_id = 'CVE-2026-1234'
+        other.cve_id = 'CVE-2026-2345'
+        cli.jira_tracker._search.return_value = [other, wanted]
+        cli.is_fixed_golang_builder = AsyncMock(return_value=(False, '', [], []))
+
+        await cli.run()
+
+        self.assertEqual(cli.is_fixed_golang_builder.await_count, 2)
+        cli.move_bug_and_comment.assert_called_once_with(wanted, '')
 
 
 @patch("elliottlib.cli.find_bugs_golang_cli.errata")

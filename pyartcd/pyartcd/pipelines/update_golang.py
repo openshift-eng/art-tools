@@ -3,6 +3,7 @@ import io
 import logging
 import os
 import re
+import shlex
 from pathlib import Path
 from typing import List, cast
 
@@ -206,7 +207,7 @@ def extract_major_minor(version: str, label: str = "version") -> str:
     return f"{match[1]}.{match[2]}"
 
 
-async def move_golang_bugs(
+def _golang_bug_sweep_command(
     ocp_version: str,
     cves: list[str] | None = None,
     nvrs: list[str] | None = None,
@@ -214,7 +215,7 @@ async def move_golang_bugs(
     force_update_tracker: bool = False,
     rpms_only: bool = False,
     dry_run: bool = False,
-):
+) -> list[str]:
     cmd = [
         'elliott',
         '--group',
@@ -240,6 +241,27 @@ async def move_golang_bugs(
         cmd.append('--rpms-only')
     if dry_run:
         cmd.append('--dry-run')
+    return cmd
+
+
+async def move_golang_bugs(
+    ocp_version: str,
+    cves: list[str] | None = None,
+    nvrs: list[str] | None = None,
+    components: list[str] | None = None,
+    force_update_tracker: bool = False,
+    rpms_only: bool = False,
+    dry_run: bool = False,
+):
+    cmd = _golang_bug_sweep_command(
+        ocp_version,
+        cves=cves,
+        nvrs=nvrs,
+        components=components,
+        force_update_tracker=force_update_tracker,
+        rpms_only=rpms_only,
+        dry_run=dry_run,
+    )
     await exectools.cmd_assert_async(cmd, log_stdout=True)
 
 
@@ -618,17 +640,23 @@ class UpdateGolangPipeline:
             else:
                 _LOGGER.info("No Konflux golang builder images found; streams.yml will not be updated.")
 
-        if self.is_production_assembly:
-            await move_golang_bugs(
+        if self.is_production_assembly and self.cves:
+            cmd = _golang_bug_sweep_command(
                 ocp_version=self.ocp_version,
                 cves=self.cves,
-                nvrs=self.go_nvrs if self.cves else None,
+                nvrs=self.go_nvrs,
                 components=[GOLANG_BUILDER_CVE_COMPONENT],
                 force_update_tracker=self.force_update_tracker,
-                dry_run=self.dry_run,
+                dry_run=True,
             )
-        else:
-            _LOGGER.info("Skipping Golang bug updates for the test assembly")
+            cmd.extend(['--only-specified-cves', '--art-jira', self.art_jira])
+            _LOGGER.info(
+                'When a rebuilt nightly is available, set NIGHTLY_PULLSPEC to its pullspec and '
+                'REGISTRY_CONFIG to a pull-only auth file for the nightly and its component images. '
+                'Review the dry-run results before applying tracker updates.\n'
+                'elliott --registry-config "$REGISTRY_CONFIG" %s --pullspec "$NIGHTLY_PULLSPEC"',
+                shlex.join(cmd[1:]),
+            )
         await self._slack_client.say_in_thread(
             f":white_check_mark: Updating golang for {self.ocp_version} assembly {self.assembly} complete."
         )
@@ -1375,15 +1403,13 @@ class UpdateGolangPipeline:
 @click.option('--art-jira', required=True, help='Related ART Jira ticket e.g. ART-1234')
 @click.option(
     '--cves',
-    help='CVEs that are confirmed to be fixed in all given golang nvrs (comma separated). '
-    'This will be used to fetch relevant Tracker bugs and move them to ON_QA state if '
-    'determined to be fixed (nightly is found containing fixed builds). e.g. CVE-2024-1234',
+    help='Comma-separated CVEs fixed in the supplied Go NVRs. Prints a targeted tracker verification command.',
 )
 @click.option(
     '--force-update-tracker',
     is_flag=True,
     default=False,
-    help='Force update found tracker bugs for the given CVEs, even if the latest nightly is not found containing fixed builds',
+    help='Include the force-update option in the printed dry-run verification command. Requires --cves.',
 )
 @click.option('--confirm', is_flag=True, default=False, help='Confirm to proceed with rebase and build')
 @click.option(
