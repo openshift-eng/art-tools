@@ -7,6 +7,7 @@ import yaml
 from artcommonlib.konflux.konflux_build_record import Engine, KonfluxBuildOutcome, KonfluxBuildRecord
 from artcommonlib.model import Model
 from artcommonlib.variants import BuildVariant
+from click import ClickException
 from click.testing import CliRunner
 from doozerlib.cli.scan_sources_konflux import (
     ConfigScanSources,
@@ -274,6 +275,36 @@ class TestBuildCutoff(IsolatedAsyncioTestCase):
                 finding = self.scanner.public_build_cutoff.pop()
                 self.assertIsNone(finding['public_nvr'])
                 self.assertIn('No eligible public build', finding['reason'])
+
+    async def test_public_parent_lookup_failure_fails_scan_and_keeps_report(self):
+        private = build_record(CUTOFF + timedelta(days=5))
+        private.embargoed = True
+        self.image.is_payload = True
+        self.image.for_release = True
+        self.image.get_latest_konflux_build.return_value = None
+        self.image.get_parent_members.return_value = {'public-parent': None}
+        self.runtime.late_resolve_image.side_effect = RuntimeError('metadata unavailable')
+        self.runtime.image_map = {'test-image': self.image}
+        self.runtime.image_tree = {}
+        self.scanner.all_image_metas = {self.image}
+        self.scanner.skip_rpms = True
+        self.scanner.latest_image_build_records_map['test-image'] = private
+        self.scanner.ci_kubeconfig = '/ci-kubeconfig'
+        self.scanner.detect_rhcos_status = AsyncMock()
+
+        issue = 'Failed planning a public rebuild for parent public-parent: metadata unavailable'
+        with (
+            patch.object(self.scanner, 'get_current_task_bundle_shas', AsyncMock(return_value={})),
+            patch('doozerlib.cli.scan_sources_konflux.click.echo') as echo,
+            self.assertRaisesRegex(ClickException, issue),
+        ):
+            await self.scanner.run()
+
+        self.scanner.detect_rhcos_status.assert_awaited_once()
+        report = yaml.safe_load(echo.call_args.args[0])
+        self.assertEqual(report['public_build_cutoff'][0]['name'], 'test-image')
+        self.assertEqual(report['issues'], [{'name': 'public-parent', 'issue': issue}])
+        self.assertNotIn('public_rebuild', report)
 
     async def test_successful_rebuild_satisfies_cutoff(self):
         self.scanner.latest_image_build_records_map['test-image'] = build_record(CUTOFF)

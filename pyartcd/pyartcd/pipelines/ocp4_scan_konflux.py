@@ -107,9 +107,11 @@ class Ocp4ScanPipeline:
 
         # Handle image source changes
         self.handle_source_changes()
+        dispatch_error = None
         try:
             await self.handle_public_rebuilds()
-        except Exception:
+        except Exception as exc:
+            dispatch_error = exc
             self.logger.exception('Failed to dispatch public rebuilds for %s', self.version)
             self.issues.append({'name': f'openshift-{self.version}', 'issue': 'Failed to dispatch public rebuilds'})
 
@@ -118,6 +120,8 @@ class Ocp4ScanPipeline:
 
         self._report_issues()
         await self._handle_scan_issues()
+        if dispatch_error is not None:
+            raise dispatch_error
         self._finalize()
 
     def check_params(self):
@@ -329,9 +333,6 @@ class Ocp4ScanPipeline:
         images = request['images']
         if self.runtime.dry_run:
             self.logger.info('Would queue public rebuild for %s', ', '.join(images))
-            return
-        if not jenkins.supports_ocp4_public_rebuild():
-            self.logger.warning('Public rebuild is due, but ocp4-konflux has no PUBLIC_REBUILD parameter yet')
             return
         if jenkins.is_ocp4_public_rebuild_queued(self.version, self.assembly):
             self.logger.info('A public rebuild is already queued for %s', self.version)

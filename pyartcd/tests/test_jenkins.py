@@ -1,7 +1,9 @@
+import json
 import os
 import unittest
 from unittest import mock
 
+from jenkinsapi.custom_exceptions import JenkinsAPIException
 from pyartcd.jenkins import Jobs
 
 from pyartcd import jenkins
@@ -37,6 +39,43 @@ class TestJenkinsStartBuild(unittest.TestCase):
         self.assertEqual(params['IMAGE_BUILD_STRATEGY'], 'only')
         self.assertEqual(params['RPM_BUILD_STRATEGY'], 'none')
         self.assertTrue(params['SKIP_PLASHETS'])
+        self.assertTrue(start_build.call_args.kwargs['strict_parameters'])
+
+    @mock.patch('pyartcd.jenkins.QueueItem')
+    @mock.patch('pyartcd.jenkins.init_jenkins')
+    @mock.patch('pyartcd.jenkins.jenkins_client')
+    def test_public_rebuild_submits_a_validated_jenkins_form(self, client, _init, queue_item):
+        job = client.get_job.return_value
+        job.baseurl = 'https://jenkins/job/ocp4-konflux'
+        post = client.requester.post_and_confirm_status
+        post.return_value.headers = {'location': '/queue/item/42/'}
+
+        jenkins.start_ocp4_konflux('4.22', 'stream', ['installer'], public_rebuild=True, block_until_building=False)
+
+        job.invoke.assert_not_called()
+        post.assert_called_once()
+        self.assertEqual(post.call_args.args[0], 'https://jenkins/job/ocp4-konflux/build')
+        self.assertEqual(post.call_args.kwargs['valid'], [201])
+        self.assertFalse(post.call_args.kwargs['allow_redirects'])
+        form = json.loads(post.call_args.kwargs['data']['json'])
+        params = {entry['name']: entry['value'] for entry in form['parameter']}
+        self.assertIs(params['PUBLIC_REBUILD'], True)
+        self.assertEqual(params['IMAGE_LIST'], 'installer')
+        queue_item.assert_called_once_with('https://jenkins/queue/item/42/', client)
+
+    @mock.patch('pyartcd.jenkins.init_jenkins')
+    @mock.patch('pyartcd.jenkins.jenkins_client')
+    def test_public_rebuild_propagates_parameter_rejection(self, client, _init):
+        job = client.get_job.return_value
+        job.baseurl = 'https://jenkins/job/ocp4-konflux'
+        client.requester.post_and_confirm_status.side_effect = JenkinsAPIException(
+            'No such parameter definition: PUBLIC_REBUILD'
+        )
+
+        with self.assertRaisesRegex(JenkinsAPIException, 'No such parameter definition: PUBLIC_REBUILD'):
+            jenkins.start_ocp4_konflux('4.22', 'stream', ['installer'], public_rebuild=True, block_until_building=False)
+
+        job.invoke.assert_not_called()
 
     @mock.patch('pyartcd.jenkins.init_jenkins')
     @mock.patch('pyartcd.jenkins.jenkins_client')

@@ -29,26 +29,19 @@ class TestOcp4ScanKonfluxPipeline(unittest.IsolatedAsyncioTestCase):
         )
 
     @patch('pyartcd.jenkins.start_ocp4_konflux')
-    @patch('pyartcd.jenkins.supports_ocp4_public_rebuild', return_value=True)
     @patch('pyartcd.jenkins.is_ocp4_public_rebuild_queued', return_value=False)
     @patch('pyartcd.pipelines.ocp4_scan_konflux.redis.call', new_callable=AsyncMock)
-    async def test_public_rebuild_uses_separate_queue_and_retry_window(self, reserve, queued, supported, enqueue):
+    async def test_public_rebuild_uses_separate_queue_and_retry_window(self, reserve, queued, enqueue):
         pipeline = self._make_pipeline()
         pipeline.report = {
             'public_rebuild': {'images': ['installer', 'machine-os-images'], 'retry_interval_seconds': 6 * 3600}
         }
         await pipeline.handle_public_rebuilds()
-        supported.assert_not_called()
+        queued.assert_not_called()
         reserve.assert_not_awaited()
         enqueue.assert_not_called()
 
         self.runtime.dry_run = False
-        supported.return_value = False
-        await pipeline.handle_public_rebuilds()
-        reserve.assert_not_awaited()
-        enqueue.assert_not_called()
-
-        supported.return_value = True
         queued.return_value = True
         await pipeline.handle_public_rebuilds()
         reserve.assert_not_awaited()
@@ -78,7 +71,10 @@ class TestOcp4ScanKonfluxPipeline(unittest.IsolatedAsyncioTestCase):
         pipeline.handle_rhcos_changes = AsyncMock()
         pipeline._handle_scan_issues = AsyncMock()
 
-        with self.assertLogs(pipeline.logger, level='ERROR') as logs:
+        with (
+            self.assertLogs(pipeline.logger, level='ERROR') as logs,
+            self.assertRaisesRegex(RuntimeError, 'Jenkins unavailable'),
+        ):
             await pipeline.run()
 
         self.assertIn('Failed to dispatch public rebuilds for 4.21', logs.output[0])

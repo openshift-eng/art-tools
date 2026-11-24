@@ -305,14 +305,17 @@ class ConfigScanSources:
                     and meta.for_release
                 )
             )
-            self.public_rebuild_images = await self.plan_public_rebuilds()
 
         # Check RHCOS status if the kubeconfig is provided and group is openshift-*
         if self.ci_kubeconfig and self.runtime.group.startswith("openshift-") and self.variant != BuildVariant.OKD:
             await self.detect_rhcos_status()
 
-        # Print the output report
-        self.generate_report()
+        try:
+            if self.public_build_cutoff:
+                self.public_rebuild_images = await self.plan_public_rebuilds()
+        finally:
+            # Preserve completed scan results and planning diagnostics when planning fails.
+            self.generate_report()
 
     def _try_reconciliation(
         self, metadata: Metadata, repo_name: str, pub_branch_name: str, priv_branch_name: str, priv_url: str = ""
@@ -840,9 +843,10 @@ class ConfigScanSources:
                     if build and not build.embargoed and not is_release_embargoed(build.release, 'konflux'):
                         continue
                 except Exception as exc:
-                    self.logger.exception('Failed planning a public build for parent %s', name)
-                    self.issues.append({'name': name, 'issue': f'Failed planning a public parent rebuild: {exc}'})
-                    return []
+                    issue = f'Failed planning a public rebuild for parent {name}: {exc}'
+                    self.logger.exception(issue)
+                    self.issues.append({'name': name, 'issue': issue})
+                    raise click.ClickException(issue) from exc
                 selected.add(name)
                 pending.append(parent)
         return sorted(selected)
