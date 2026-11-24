@@ -44,7 +44,7 @@ class TestBuildSync(IsolatedAsyncioTestCase):
 
     @patch.dict('os.environ', {'KUBECONFIG': '/path/to/kubeconfig'})
     @patch('pyartcd.pipelines.build_sync.exectools.cmd_gather_async')
-    async def test_tags_coreos_into_versioned_private_ci_stream(self, execute):
+    async def test_tags_coreos_into_both_private_ci_streams(self, execute):
         pipeline = BuildSyncPipeline(**self.pipeline_args(version='5.0'))
         pullspec = 'quay.io/openshift-release-dev/ocp-v4.0-art-dev@sha256:' + 'a' * 64
         execute.return_value = (0, json.dumps({'tag': {'from': {'name': pullspec}}}), '')
@@ -60,6 +60,7 @@ class TestBuildSync(IsolatedAsyncioTestCase):
             [
                 call(f'{oc} -n ocp get istag/{pipeline.is_base_name}:{tag} -o=json'),
                 call(f'{oc} -n ocp tag {pullspec} 5.0:{tag} --import-mode=PreserveOriginal'),
+                call(f'{oc} -n ocp-priv tag {pullspec} 5.0-priv:{tag} --import-mode=PreserveOriginal'),
                 call(f'{oc} -n ocp-priv tag {pullspec} 5.0:{tag} --import-mode=PreserveOriginal'),
             ],
         )

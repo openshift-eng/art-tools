@@ -419,9 +419,13 @@ class BuildSyncPipeline:
         else:
             await exectools.cmd_gather_async(cmd)
 
-        if not arch_suffix:
-            # Tag the image into the imagestream for private CI from openshift-priv.
-            private_stream_tag = f'{self.version}:{tag}'
+        if arch_suffix:
+            return
+
+        # Tag the image into the imagestream for private CI from openshift-priv.
+        # Keep the legacy stream current before updating the versioned CI stream.
+        for private_stream in (f'{self.version}-priv', self.version):
+            private_stream_tag = f'{private_stream}:{tag}'
             self.logger.info('Tagging ocp-priv/%s with %s', private_stream_tag, tag_pullspec)
             cmd = (
                 f'oc --kubeconfig {os.environ["KUBECONFIG"]} -n ocp-priv '
