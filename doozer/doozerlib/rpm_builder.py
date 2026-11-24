@@ -12,7 +12,7 @@ from typing import Dict, List, Optional
 import aiofiles
 import aiofiles.os
 from artcommonlib import exectools
-from artcommonlib.build_visibility import BuildVisibility, get_visibility_suffix
+from artcommonlib.build_visibility import BuildVisibility, get_visibility_suffix, is_release_embargoed
 from artcommonlib.model import Missing
 from artcommonlib.release_util import isolate_assembly_in_release
 
@@ -232,7 +232,7 @@ class RPMBuilder:
             # Assemblies should follow its naming convention
             raise ValueError(f"RPM {rpm.name} is not rebased with assembly '{self._runtime.assembly}'.")
         if rpm.private_fix is None:
-            rpm.private_fix = ".p1" in rpm.release
+            rpm.private_fix = is_release_embargoed(rpm.release, self._runtime.build_system)
         if rpm.private_fix:
             logger.warning("This rpm build contains embargoed fixes.")
 

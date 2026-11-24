@@ -241,6 +241,29 @@ class TestRPMBuilder(IsolatedAsyncioTestCase):
             ["brew", "download-logs", "--recurse", "-d", mock.ANY, "10002"], check=False
         )
 
+    async def test_build_recovers_embargo_status_from_release(self):
+        for build_system, release, expected in (
+            ("brew", "1.p0.g1234567", False),
+            ("brew", "1.p1.g1234567", True),
+            ("konflux", "1.p2.g1234567", False),
+            ("konflux", "1.p3.g1234567", True),
+            ("konflux", "1.g1234567", True),
+        ):
+            with self.subTest(build_system=build_system, release=release):
+                runtime = self._make_runtime()
+                rpm = self._make_rpm_meta(runtime, "a" * 40, "b" * 40)
+                runtime.build_system = build_system
+                rpm.private_fix = None
+                rpm.set_nvr("1.2.3", release)
+                rpm.targets = ["rhaos-4.4-rhel-8-candidate"]
+                builder = RPMBuilder(runtime)
+                builder._build_target_async = mock.AsyncMock(side_effect=RuntimeError("stop before submission"))
+
+                with self.assertRaisesRegex(RuntimeError, "stop before submission"):
+                    await builder.build(rpm)
+
+                self.assertIs(rpm.private_fix, expected)
+
     @mock.patch("asyncio.sleep")
     @mock.patch("artcommonlib.exectools.cmd_gather_async")
     async def test_build_failure(self, mocked_cmd_gather_async: mock.Mock, mocked_sleep: mock.Mock):
