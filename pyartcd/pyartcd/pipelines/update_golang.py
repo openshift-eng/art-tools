@@ -14,10 +14,14 @@ from artcommonlib.constants import (
     BREW_HUB,
     GOLANG_BUILDER_IMAGE_NAME,
     GOLANG_NVR_LABEL,
+    REGISTRY_CI_OPENSHIFT,
+    REGISTRY_QUAY_OCP_RELEASE_DEV,
+    REGISTRY_REDHAT_IO,
 )
 from artcommonlib.github_auth import get_github_client_for_org
 from artcommonlib.konflux.konflux_build_record import ArtifactType, Engine, KonfluxBuildOutcome, KonfluxBuildRecord
 from artcommonlib.konflux.konflux_db import KonfluxDb
+from artcommonlib.registry_config import RegistryConfig
 from artcommonlib.release_util import isolate_assembly_in_release, isolate_el_version_in_release
 from artcommonlib.rpm_utils import parse_nvr
 from artcommonlib.util import new_roundtrip_yaml_handler, resolve_konflux_namespace_by_product
@@ -240,7 +244,25 @@ async def move_golang_bugs(
         cmd.append('--rpms-only')
     if dry_run:
         cmd.append('--dry-run')
-    await exectools.cmd_assert_async(cmd, log_stdout=True)
+
+    app_ci_kubeconfig = os.getenv('APP_CI_KUBECONFIG')
+    if rpms_only or not app_ci_kubeconfig:
+        await exectools.cmd_assert_async(cmd, log_stdout=True)
+        return
+
+    # The sweep reads CI nightlies, their Quay component images, and floating Red Hat builder tags.
+    source_files = []
+    registries = [REGISTRY_CI_OPENSHIFT]
+    if redhat_auth_file := os.getenv('KONFLUX_OPERATOR_INDEX_AUTH_FILE'):
+        source_files.append(redhat_auth_file)
+        registries.append(REGISTRY_REDHAT_IO)
+    if quay_auth_file := os.getenv('QUAY_AUTH_FILE'):
+        source_files.append(quay_auth_file)
+        registries.append(REGISTRY_QUAY_OCP_RELEASE_DEV)
+
+    with RegistryConfig(kubeconfig=app_ci_kubeconfig, source_files=source_files, registries=registries) as auth_file:
+        cmd.insert(1, f'--registry-config={auth_file}')
+        await exectools.cmd_assert_async(cmd, log_stdout=True)
 
 
 class UpdateGolangPipeline:
@@ -618,7 +640,7 @@ class UpdateGolangPipeline:
             else:
                 _LOGGER.info("No Konflux golang builder images found; streams.yml will not be updated.")
 
-        if self.is_production_assembly and self.cves:
+        if self.is_production_assembly:
             await move_golang_bugs(
                 ocp_version=self.ocp_version,
                 cves=self.cves,
@@ -627,7 +649,7 @@ class UpdateGolangPipeline:
                 force_update_tracker=self.force_update_tracker,
                 dry_run=self.dry_run,
             )
-        elif not self.is_production_assembly:
+        else:
             _LOGGER.info("Skipping Golang bug updates for the test assembly")
         await self._slack_client.say_in_thread(
             f":white_check_mark: Updating golang for {self.ocp_version} assembly {self.assembly} complete."
