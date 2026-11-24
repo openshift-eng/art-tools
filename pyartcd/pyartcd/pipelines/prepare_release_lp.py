@@ -571,7 +571,7 @@ class PrepareReleaseLPPipeline:
             raise ValueError('build_config.ocp_build_data_repo_push_url is required to record assembly FBCs')
         repo = GitRepository(self._working_dir / 'ocp-build-data-fbcs', dry_run=False)
         await repo.setup(push_url)
-        await update_assembly_fbcs(repo, self.group, self.assembly, records, self._releases_config)
+        await update_assembly_fbcs(repo, self.group, self.assembly, records, self._releases_config, repo_url=push_url)
 
     async def _validate_fbc_pins(self, fbc_nvrs: List[str], bundle_nvrs: List[str], operand_nvrs: List[str]) -> None:
         """Validate selected bundle provenance without rejecting historical catalog entries."""
@@ -889,8 +889,7 @@ class PrepareReleaseLPPipeline:
     async def _update_assembly_with_shipment_url(self, shipment_mr_url: str) -> None:
         """Update the assembly in releases.yml with the shipment MR URL.
 
-        Pushes a commit to ocp-build-data to record the shipment MR URL
-        in the assembly's ``group.shipment.mr`` field.
+        Wait for the build-data PR to merge the assembly's ``group.shipment.mr`` update.
 
         Args:
             shipment_mr_url: Shipment merge request URL to persist.
@@ -898,8 +897,6 @@ class PrepareReleaseLPPipeline:
         Raises:
             RuntimeError: If the assembly pointer changed concurrently.
         """
-        ocp_build_data_repo_push_url = self.runtime.config["build_config"]["ocp_build_data_repo_push_url"]
-
         if self.dry_run:
             self._logger.warning(
                 "[DRY RUN] Would update assembly %s with shipment MR URL: %s",
@@ -908,17 +905,19 @@ class PrepareReleaseLPPipeline:
             )
             return
 
+        push_url = self.runtime.config["build_config"]["ocp_build_data_repo_push_url"]
         build_data = GitRepository(self._working_dir / "ocp-build-data-push", dry_run=self.dry_run)
-        await build_data.setup(ocp_build_data_repo_push_url)
-        pushed = await update_shipment_mr_url(
+        await build_data.setup(push_url)
+        updated = await update_shipment_mr_url(
             build_data,
             self.group,
             self.assembly,
             shipment_mr_url,
             self._configured_shipment_mr_url,
             create_as_stream=False,
+            repo_url=push_url,
         )
-        if pushed:
+        if updated:
             self._logger.info("Updated releases.yml with shipment MR URL: %s", shipment_mr_url)
         else:
             self._logger.warning("No changes to commit when updating shipment MR URL")

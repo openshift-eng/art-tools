@@ -373,4 +373,5 @@ def test_actual_persistence_honors_dry_run_and_passes_complete_definition(tmp_pa
             release._assembly_definition,
             release._releases_config,
             'new-mr',
+            repo_url=repo.return_value.setup.await_args.args[0],
         )

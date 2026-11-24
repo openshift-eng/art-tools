@@ -874,12 +874,12 @@ def test_validate_shipment_mr_reuse_state_rejects_wrong_product():
         assert '--force' in message
 
 
-def test_update_shipment_mr_url_creates_explicit_stream_assembly():
+@patch('pyartcd.lp_shipment.merge_assembly_pr', new_callable=AsyncMock)
+def test_update_shipment_mr_url_creates_explicit_stream_assembly(merge_pr):
     """Create a minimal explicit-stream assembly for a direct release."""
     with TemporaryDirectory() as directory:
         repo = GitRepository(directory)
         repo.fetch_switch_branch = AsyncMock()
-        repo.commit_push = AsyncMock(return_value=True)
         Path(directory, 'releases.yml').write_text('releases: {}\n')
 
         asyncio.run(
@@ -890,6 +890,7 @@ def test_update_shipment_mr_url_creates_explicit_stream_assembly():
                 'https://gitlab.example/mr/42',
                 None,
                 create_as_stream=True,
+                repo_url='https://github.com/openshift-eng/ocp-build-data',
             )
         )
 
@@ -897,15 +898,15 @@ def test_update_shipment_mr_url_creates_explicit_stream_assembly():
         assembly = result['releases']['6.5.2']['assembly']
         assert assembly['type'] == 'stream'
         assert assembly['group']['shipment']['mr'] == 'https://gitlab.example/mr/42'
-        repo.commit_push.assert_awaited_once()
+        merge_pr.assert_awaited_once()
 
 
-def test_update_shipment_mr_url_preserves_full_standard_assembly():
+@patch('pyartcd.lp_shipment.merge_assembly_pr', new_callable=AsyncMock)
+def test_update_shipment_mr_url_preserves_full_standard_assembly(merge_pr):
     """Add the MR pointer without replacing standard assembly fields."""
     with TemporaryDirectory() as directory:
         repo = GitRepository(directory)
         repo.fetch_switch_branch = AsyncMock()
-        repo.commit_push = AsyncMock(return_value=True)
         Path(directory, 'releases.yml').write_text(
             "releases:\n"
             "  2.17.3:\n"
@@ -925,6 +926,7 @@ def test_update_shipment_mr_url_preserves_full_standard_assembly():
                 'https://gitlab.example/mr/42',
                 None,
                 create_as_stream=False,
+                repo_url='https://github.com/openshift-eng/ocp-build-data',
             )
         )
 
@@ -933,14 +935,26 @@ def test_update_shipment_mr_url_preserves_full_standard_assembly():
         assert assembly['basis']['fbc_pullspecs'] == 'quay.io/example/fbc'
         assert assembly['members']['images'] == []
         assert assembly['group']['shipment']['mr'] == 'https://gitlab.example/mr/42'
+        assert not asyncio.run(
+            update_shipment_mr_url(
+                repo,
+                'acm-2.17',
+                '2.17.3',
+                'https://gitlab.example/mr/42',
+                'https://gitlab.example/mr/42',
+                create_as_stream=False,
+                repo_url='https://github.com/openshift-eng/ocp-build-data',
+            )
+        )
+        merge_pr.assert_awaited_once()
 
 
-def test_update_shipment_mr_url_rejects_concurrent_pointer_change():
+@patch('pyartcd.lp_shipment.merge_assembly_pr', new_callable=AsyncMock)
+def test_update_shipment_mr_url_rejects_concurrent_pointer_change(merge_pr):
     """Refuse to overwrite a pointer changed by another release run."""
     with TemporaryDirectory() as directory:
         repo = GitRepository(directory)
         repo.fetch_switch_branch = AsyncMock()
-        repo.commit_push = AsyncMock(return_value=True)
         Path(directory, 'releases.yml').write_text(
             "releases:\n"
             "  6.5.2:\n"
@@ -959,13 +973,14 @@ def test_update_shipment_mr_url_rejects_concurrent_pointer_change():
                     'https://gitlab.example/mr/new',
                     'https://gitlab.example/mr/old',
                     create_as_stream=True,
+                    repo_url='https://github.com/openshift-eng/ocp-build-data',
                 )
             )
         except RuntimeError as exc:
             assert 'changed concurrently' in str(exc)
         else:
             raise AssertionError("Expected a concurrent pointer update to be rejected")
-        repo.commit_push.assert_not_awaited()
+        merge_pr.assert_not_awaited()
 
 
 def test_reconcile_recreates_existing_fbc_from_scratch():

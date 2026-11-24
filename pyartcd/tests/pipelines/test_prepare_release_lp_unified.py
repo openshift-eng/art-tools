@@ -57,3 +57,11 @@ def test_dry_run_never_writes_fbc_metadata(tmp_path):
     with patch('pyartcd.pipelines.prepare_release_lp.GitRepository') as repo:
         asyncio.run(pipeline._record_assembly_fbcs([], [], []))
     repo.assert_not_called()
+
+
+def test_dry_run_never_publishes_the_shipment_pointer(tmp_path):
+    runtime = MagicMock(dry_run=True, working_dir=tmp_path, config={})
+    pipeline = PrepareReleaseLPPipeline(runtime, 'quay-3.18', '3.18.5', create_mr=True)
+    with patch('pyartcd.pipelines.prepare_release_lp.GitRepository') as repo:
+        asyncio.run(pipeline._update_assembly_with_shipment_url('https://gitlab.example/mr/42'))
+    repo.assert_not_called()
