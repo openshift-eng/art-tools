@@ -20,6 +20,7 @@ def assembly_fbc_records(
     operand_nvrs: list[str],
     *,
     ignore_patch_version: bool = False,
+    skip_nvr_version_check: bool = False,
 ) -> dict:
     """Index a complete, validated build result by OCP target and operator.
 
@@ -29,6 +30,7 @@ def assembly_fbc_records(
         pullspecs: Corresponding immutable catalog pullspecs.
         operand_nvrs: Effective assembly image pins.
         ignore_patch_version: Group policy allowing different patches on the same release train.
+        skip_nvr_version_check: Whether the group uses automatic build versions.
 
     Returns:
         FBC records grouped by OCP target and operator.
@@ -38,7 +40,8 @@ def assembly_fbc_records(
     """
     if not nvrs or len(nvrs) != len(pullspecs) or not operand_nvrs:
         raise ValueError('Recording FBCs requires complete NVRs, pullspecs, and operand pins')
-    validate_layered_product_fbc_nvrs(assembly, nvrs, ignore_patch_version=ignore_patch_version)
+    if not skip_nvr_version_check:
+        validate_layered_product_fbc_nvrs(assembly, nvrs, ignore_patch_version=ignore_patch_version)
     records = {}
     for nvr, pullspec in zip(nvrs, pullspecs):
         target = extract_ocp_version_from_fbc_nvr(nvr)
@@ -57,7 +60,14 @@ def assembly_fbc_records(
     return records
 
 
-def recorded_assembly_fbcs(releases: dict, assembly: str, target: str, *, ignore_patch_version: bool = False) -> dict:
+def recorded_assembly_fbcs(
+    releases: dict,
+    assembly: str,
+    target: str,
+    *,
+    ignore_patch_version: bool = False,
+    skip_nvr_version_check: bool = False,
+) -> dict:
     """Read this assembly's FBC records and validate them against its current pins.
 
     Args:
@@ -65,6 +75,7 @@ def recorded_assembly_fbcs(releases: dict, assembly: str, target: str, *, ignore
         assembly: Layered-product release version.
         target: Requested OCP major/minor version.
         ignore_patch_version: Version policy from the effective group configuration.
+        skip_nvr_version_check: Whether the group uses automatic build versions.
 
     Returns:
         Validated FBC records keyed by operator.
@@ -93,7 +104,14 @@ def recorded_assembly_fbcs(releases: dict, assembly: str, target: str, *, ignore
             raise ValueError(f'Assembly {assembly} has an FBC for the wrong operator or target: {nvr}')
         nvrs.append(nvr)
         pullspecs.append(pullspec)
-    return assembly_fbc_records(assembly, nvrs, pullspecs, pins, ignore_patch_version=ignore_patch_version)[target]
+    return assembly_fbc_records(
+        assembly,
+        nvrs,
+        pullspecs,
+        pins,
+        ignore_patch_version=ignore_patch_version,
+        skip_nvr_version_check=skip_nvr_version_check,
+    )[target]
 
 
 async def update_assembly_fbcs(

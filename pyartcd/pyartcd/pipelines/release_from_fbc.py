@@ -209,6 +209,7 @@ class ReleaseFromFbcPipeline:
         self._assembly_definition: dict | None = None
         self.dry_run = self.runtime.dry_run
         self.ocp_optional = ocp_optional
+        self._auto_build_version = False
         self._ignore_patch_version = False
         self._component_doozer_keys: Optional[dict[str, str]] = None
         self._group_components: Optional[set[str]] = None
@@ -398,7 +399,12 @@ class ReleaseFromFbcPipeline:
         effective_pins = list(assembly_image_pins(Model(releases), self.assembly).values())
         if self.unified_fbc:
             self._assembly_definition['group']['fbc_builds'] = assembly_fbc_records(
-                self.assembly, nvrs, pullspecs, effective_pins, ignore_patch_version=self._ignore_patch_version
+                self.assembly,
+                nvrs,
+                pullspecs,
+                effective_pins,
+                ignore_patch_version=self._ignore_patch_version,
+                skip_nvr_version_check=self._auto_build_version,
             )
         else:
             # Records from a previous unified run no longer describe this preparation.
@@ -634,7 +640,7 @@ class ReleaseFromFbcPipeline:
         return data_path, data_gitref
 
     async def _load_product_from_group_config(self) -> str:
-        """Load the product from the effective assembly group config."""
+        """Load the product and FBC version policy from the effective assembly group config."""
         data_path, data_gitref = self._build_data_source()
         group_config = await load_group_config(
             group=self.group,
@@ -642,6 +648,7 @@ class ReleaseFromFbcPipeline:
             doozer_data_path=data_path,
             doozer_data_gitref=data_gitref,
         )
+        self._auto_build_version = not self.ocp_optional and group_config.get('version') == 'auto'
         if group_config.get('product'):
             return group_config['product']
         # Fallback: extract product from group name (e.g., "oadp-1.3" -> "oadp")
@@ -1365,7 +1372,7 @@ class ReleaseFromFbcPipeline:
             related_nvrs_by_fbc_out=related_nvrs_by_fbc,
             assembly=self.assembly if version_scoped else None,
             version_scoped=version_scoped,
-            ignore_patch_version=self._ignore_patch_version if version_scoped else False,
+            ignore_patch_version=version_scoped and (self._auto_build_version or self._ignore_patch_version),
             image_components=self._group_components if version_scoped else None,
         )
         self._fbc_operator_keys = sorted(operator_groups.keys())
@@ -1657,7 +1664,9 @@ class ReleaseFromFbcPipeline:
                     continue
                 fbc_nvrs.append(nvr)
 
-            if not self.ocp_optional:
+            if self._auto_build_version:
+                self.logger.info("Using recorded FBC bundles for %s because version is auto", self.assembly)
+            elif not self.ocp_optional:
                 self._ignore_patch_version = await self._load_ignore_patch_version_from_group_config()
                 # This group.yml flag permits patch-version differences while still checking major and minor.
                 validate_layered_product_fbc_nvrs(
@@ -1690,11 +1699,12 @@ class ReleaseFromFbcPipeline:
                                 "No shipment data was changed."
                             )
                         fbc_nvrs.append(nvr)
-                    validate_layered_product_fbc_nvrs(
-                        self.assembly,
-                        fbc_nvrs,
-                        ignore_patch_version=self._ignore_patch_version,
-                    )
+                    if not self._auto_build_version:
+                        validate_layered_product_fbc_nvrs(
+                            self.assembly,
+                            fbc_nvrs,
+                            ignore_patch_version=self._ignore_patch_version,
+                        )
                     related_nvrs = await self.validate_fbc_related_images(self.fbc_pullspecs)
 
         # Combine related images with FBC NVRs
