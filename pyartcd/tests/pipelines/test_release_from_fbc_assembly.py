@@ -166,15 +166,21 @@ def test_local_outputs_and_unified_consumer_contract(tmp_path, unified):
     release.create_shipment_mr.assert_not_awaited()
 
 
-def test_unified_records_honor_the_loaded_patch_policy(tmp_path):
-    """Generate usable unified records for a cross-patch FBC explicitly allowed by the group."""
+@pytest.mark.parametrize('auto_version', [False, True])
+def test_unified_records_honor_the_loaded_version_policy(tmp_path, auto_version):
+    """Generate usable unified records when the group allows FBC NVRs to differ from the assembly."""
     release = pipeline(tmp_path, unified_fbc=True)
-    release.extract_fbc_nvr.return_value = FBC.replace('1.5.8', '1.5.7')
-    release._load_ignore_patch_version_from_group_config.return_value = True
+    version = '1.5.0' if auto_version else '1.5.7'
+    nvr = FBC.replace('1.5.8', version)
+    release.extract_fbc_nvr.return_value = nvr
+    release._auto_build_version = auto_version
+    release._load_ignore_patch_version_from_group_config.return_value = not auto_version
     asyncio.run(release.run())
     config = YAML.load(tmp_path / 'assembly.yml')
-    records = recorded_assembly_fbcs(config, '1.5.8', '4.22', ignore_patch_version=True)
-    assert records['oadp-operator']['nvr'] == FBC.replace('1.5.8', '1.5.7')
+    records = recorded_assembly_fbcs(
+        config, '1.5.8', '4.22', ignore_patch_version=not auto_version, skip_nvr_version_check=auto_version
+    )
+    assert records['oadp-operator']['nvr'] == nvr
     assert records['oadp-operator']['operand_nvrs'] == [PIN]
 
 

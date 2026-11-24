@@ -2392,13 +2392,14 @@ class TestOcpOptionalMode(unittest.TestCase):
         pipeline.setup_shipment_repo.assert_not_awaited()
         pipeline.validate_fbc_related_images.assert_not_awaited()
 
-    def test_mismatched_layered_product_fbc_fails_before_snapshot(self):
+    @patch('pyartcd.pipelines.release_from_fbc.load_group_config', new_callable=AsyncMock)
+    def test_mismatched_layered_product_fbc_fails_before_snapshot(self, load_config):
         """Reject an FBC from another assembly before extracting related images."""
+        load_config.return_value = {'product': 'openshift-logging', 'version': '6.2.13'}
         pipeline = self._make_pipeline(ocp_optional=False, group="logging-6.2", assembly="6.2.13")
         pipeline.create_mr = False
         pipeline.check_env_vars = MagicMock()
         pipeline.setup_working_dir = MagicMock()
-        pipeline._load_product_from_group_config = AsyncMock(return_value="openshift-logging")
         pipeline.validate_fbc_related_images = AsyncMock(return_value=["external-container-v4.18.0-1"])
         pipeline.extract_fbc_nvr = MagicMock(return_value="cluster-logging-operator-fbc-6.2.12-20260910151430.ocp4.16")
         pipeline.create_snapshot = AsyncMock()
@@ -2408,6 +2409,52 @@ class TestOcpOptionalMode(unittest.TestCase):
 
         pipeline.validate_fbc_related_images.assert_not_awaited()
         pipeline.create_snapshot.assert_not_awaited()
+
+    @patch('pyartcd.pipelines.release_from_fbc.load_group_config', new_callable=AsyncMock)
+    @patch('pyartcd.pipelines.release_from_fbc._validate_fbc_related_images', new_callable=AsyncMock)
+    @patch('pyartcd.pipelines.release_from_fbc.validate_layered_product_fbc_nvrs')
+    def test_auto_version_releases_using_recorded_bundles(self, validate_nvrs, validate_related, load_config):
+        load_config.return_value = {'product': 'rhacm2', 'version': 'auto'}
+        validate_related.return_value = []
+        pullspecs = ['quay.io/test/fbc@sha256:' + digit * 64 for digit in ('a', 'b')]
+        refreshed = ['quay.io/test/fbc@sha256:' + digit * 64 for digit in ('c', 'd')]
+        for refresh in (False, True):
+            with self.subTest(refresh=refresh):
+                validate_related.reset_mock()
+                pipeline = self._make_pipeline(group='acm-5.0', assembly='5.0.1')
+                pipeline.fbc_pullspecs = pullspecs
+                pipeline.refresh_fbcs = refresh
+                pipeline.check_env_vars = MagicMock()
+                pipeline.setup_working_dir = MagicMock()
+                pipeline._load_component_doozer_keys = AsyncMock()
+                pipeline.extract_fbc_nvr = MagicMock(
+                    side_effect=[
+                        'multiclusterhub-operator-fbc-5.0.0-1.ocp4.22',
+                        'multiclusterhub-operator-fbc-5.0.0-1.ocp5.0',
+                        'multiclusterhub-operator-fbc-5.0.0-2.ocp4.22',
+                        'multiclusterhub-operator-fbc-5.0.0-2.ocp5.0',
+                    ]
+                )
+                pipeline._refresh_fbc_pullspecs = AsyncMock(return_value=refreshed)
+                pipeline.create_snapshot = AsyncMock(return_value=_make_snapshot(app='acm-5-0'))
+                pipeline._load_release_notes_template = MagicMock(return_value=None)
+                pipeline.write_shipment_files_locally = AsyncMock()
+
+                asyncio.run(pipeline.run())
+
+                pipeline._load_ignore_patch_version_from_group_config.assert_not_awaited()
+                self.assertEqual(
+                    [call.args[0] for call in validate_related.await_args_list],
+                    [pullspecs, refreshed] if refresh else [pullspecs],
+                )
+                for call in validate_related.await_args_list:
+                    self.assertTrue(call.kwargs['ignore_patch_version'])
+                    self.assertTrue(call.kwargs['version_scoped'])
+                    self.assertEqual(call.kwargs['assembly'], '5.0.1')
+                shipments = pipeline.write_shipment_files_locally.await_args.args[0]
+                self.assertEqual(set(shipments), {'fbc01', 'fbc02'})
+                self.assertTrue(all(config.shipment.metadata.assembly == '5.0.1' for config in shipments.values()))
+        validate_nvrs.assert_not_called()
 
     def test_patch_mismatched_fbc_is_accepted_when_group_flag_is_true(self):
         """The group flag lets a same-train FBC reach related-image validation."""

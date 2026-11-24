@@ -147,7 +147,11 @@ class MergeLayeredFbcPipeline:
                 if self.target and target != self.target:
                     continue
                 entries = recorded_assembly_fbcs(
-                    releases, assembly, target, ignore_patch_version=config.get('ignore_patch_version') is True
+                    releases,
+                    assembly,
+                    target,
+                    ignore_patch_version=config.get('ignore_patch_version') is True,
+                    skip_nvr_version_check=config.get('version') == 'auto',
                 )
                 inputs = inputs_by_target.setdefault(target, {})
                 for operator, record in sorted(entries.items()):
