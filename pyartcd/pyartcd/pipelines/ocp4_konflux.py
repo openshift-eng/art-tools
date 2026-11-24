@@ -136,6 +136,7 @@ class KonfluxOcpPipeline:
         self.network_mode = network_mode
         self.ignore_automation_freeze = ignore_automation_freeze
         self.public_rebuild = public_rebuild
+        self.public_builds_succeeded = False
 
         # If build plan includes more than half or excludes less than half or rebuilds everything, it's a mass rebuild
         self.mass_rebuild = False
@@ -371,7 +372,7 @@ class KonfluxOcpPipeline:
         LOGGER.info("All builds completed successfully")
 
     async def sync_images(self):
-        if not self.building_images():
+        if not self.building_images() and not self.public_builds_succeeded:
             LOGGER.warning('No images will be synced')
             return
 
@@ -382,9 +383,10 @@ class KonfluxOcpPipeline:
         LOGGER.info('Syncing images...')
 
         record_log = self.parse_record_log()
-        if not record_log:
+        if not record_log and not self.public_builds_succeeded:
             LOGGER.error('record.log not found!')
             return
+        record_log = record_log or {}
 
         built_images = [
             entry['name'] for entry in record_log.get('image_build_konflux', []) if not int(entry['status'])
@@ -440,7 +442,7 @@ class KonfluxOcpPipeline:
                 )
             )
 
-        if not built_images:
+        if not built_images and not self.public_builds_succeeded:
             # Nothing to do, skipping build-sync
             LOGGER.info('All image builds failed, nothing to sync')
             return
@@ -809,6 +811,90 @@ class KonfluxOcpPipeline:
         if self.mass_rebuild:
             await self.slack_client.say(f':done_it_is: Mass rebuild for {self.version} complete :done_it_is:')
 
+    async def rebuild_stale_public_images(self):
+        """Recheck the requested stream images and refresh any outstanding public builds."""
+        if (
+            self.assembly != 'stream'
+            or self.skip_rebase
+            or self.build_plan.image_build_strategy != BuildStrategy.ONLY
+            or not self.image_list
+            or self.data_path != constants.OCP_BUILD_DATA_URL
+            or self.data_gitref
+        ):
+            return
+
+        retry_key = util.public_rebuild_retry_key(self.version, self.assembly)
+        if not self.runtime.dry_run and await redis.get_value(retry_key):
+            LOGGER.info('A public rebuild was recently attempted for %s', self.version)
+            return
+
+        record_log = self.parse_record_log() or {}
+        built_public = {
+            entry['name']
+            for entry in record_log.get('image_build_konflux', [])
+            if not int(entry['status']) and entry.get('nvrs') and not is_nvr_embargoed(entry['nvrs'].split(',')[0])
+        }
+        requested = [name for name in self.image_list if name not in built_public]
+        if not requested:
+            return
+
+        # Keep public rebase state and build records separate from the regular build.
+        with tempfile.TemporaryDirectory(prefix='public-rebuild-', dir=self.runtime.working_dir) as directory:
+            runtime = Runtime(self.runtime.config, Path(directory), self.runtime.dry_run)
+            cmd = [arg for arg in self._doozer_base_command if not arg.startswith('--working-dir=')]
+            cmd.extend(
+                [
+                    f'--working-dir={runtime.doozer_working}',
+                    f'--images={",".join(requested)}',
+                    'beta:config:konflux:scan-sources',
+                    '--yaml',
+                    '--public-rebuilds-only',
+                ]
+            )
+            _, out, _ = await exectools.cmd_gather_async(cmd, stderr=None)
+            request = (yaml.safe_load(out) or {}).get('public_rebuild')
+            if not request or not request['images']:
+                return
+            images = request['images']
+            if self.runtime.dry_run:
+                LOGGER.info('Would rebuild public images: %s', ', '.join(images))
+                return
+            if not await redis.call('set', retry_key, 'attempted', nx=True, ex=request['retry_interval_seconds']):
+                return
+
+            LOGGER.info('Rebuilding public images: %s', ', '.join(images))
+            public = KonfluxOcpPipeline(
+                runtime=runtime,
+                assembly=self.assembly,
+                data_path=self.data_path,
+                version=self.version,
+                image_build_strategy='only',
+                image_list=','.join(images),
+                rpm_build_strategy='none',
+                kubeconfig=self.kubeconfig,
+                arches=self.arches,
+                plr_template=self.plr_template,
+                build_priority=self.build_priority,
+                network_mode=self.network_mode,
+                skip_ec_verify=self.skip_ec_verify,
+                skip_post_build=self.skip_post_build,
+                skip_bundle_build=self.skip_bundle_build,
+                public_rebuild=True,
+            )
+            public.build_plan.images_included = images
+            try:
+                await public.rebase_images(f'v{self.version}.0', public.release)
+                await public.build_images()
+            finally:
+                record_log = public.parse_record_log() or {}
+                self.public_builds_succeeded = any(
+                    not int(entry['status']) for entry in record_log.get('image_build_konflux', [])
+                )
+                if self.public_builds_succeeded:
+                    public.trigger_bundle_build()
+            if public.rebase_failures or public.rebase_skipped_due_to_parent:
+                raise RuntimeError('Some public images could not be rebased. See the public rebase log.')
+
     async def mirror_test_builds_to_quay(self):
         """
         For TEST builds only, sync non-RHCOS, non-embargoed built images to the
@@ -1032,6 +1118,7 @@ class KonfluxOcpPipeline:
             # Track critical failures while ensuring problematic operations attempt to run
             critical_failures = []
 
+            await run_safe(self.rebuild_stale_public_images, critical_failures)
             await self.sync_images()
 
             if uses_konflux_imagestream_override(self.version):
@@ -1153,7 +1240,6 @@ class KonfluxOcpPipeline:
     help='Ignore global and group freeze_automation policy for this run; build locks still apply',
 )
 @click.option("--skip-rebase", is_flag=True, help="(For testing) Skip the rebase step")
-@click.option('--public-rebuild', is_flag=True, help='Build stream images from public source and public parents.')
 @click.option("--skip-bundle-build", is_flag=True, help="(For testing) Skip the bundle build step")
 @click.option("--skip-build-sync-konflux", is_flag=True, help="(For testing) Skip the build-sync-konflux step")
 @click.option(
@@ -1227,7 +1313,6 @@ async def ocp4(
     build_priority: Optional[str],
     use_mass_rebuild_locks: bool,
     network_mode: Optional[str],
-    public_rebuild: bool = False,
 ):
     if not kubeconfig:
         kubeconfig = os.environ.get('KONFLUX_SA_KUBECONFIG')
@@ -1258,7 +1343,6 @@ async def ocp4(
         use_mass_rebuild_locks=use_mass_rebuild_locks,
         network_mode=network_mode,
         ignore_automation_freeze=ignore_automation_freeze,
-        public_rebuild=public_rebuild,
     )
 
     if ignore_locks:

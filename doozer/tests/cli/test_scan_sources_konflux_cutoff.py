@@ -208,14 +208,28 @@ class TestBuildCutoff(IsolatedAsyncioTestCase):
         self.assertEqual(self.scanner.issues, [])
         report = yaml.safe_load(echo.call_args.args[0])
         self.assertEqual(report['images'], [])
-        self.assertEqual(report['public_rebuild']['images'], ['public-parent', 'test-image'])
-        parent.get_latest_konflux_build.assert_awaited_once_with(el_target=9, embargoed=False)
+        self.assertEqual(report['public_rebuild']['images'], ['test-image'])
+        parent.get_latest_konflux_build.assert_not_awaited()
         finding = report['public_build_cutoff'][0]
         self.assertEqual(finding['name'], 'test-image')
         self.assertEqual(finding['latest_nvr'], private.nvr)
         self.assertEqual(finding['public_nvr'], public.nvr)
         self.assertIn(public.start_time.isoformat(), finding['reason'])
         self.assertIn(CUTOFF.isoformat(), finding['reason'])
+
+        self.scanner.public_rebuilds_only = True
+        self.scanner.public_build_cutoff.clear()
+        self.scanner.latest_image_build_records_map.clear()
+        self.image.get_latest_konflux_build.side_effect = [private, public]
+        with (
+            patch.object(self.scanner, 'get_current_task_bundle_shas', AsyncMock()) as task_bundles,
+            patch('doozerlib.cli.scan_sources_konflux.click.echo') as echo,
+        ):
+            await self.scanner.run()
+        task_bundles.assert_not_awaited()
+        report = yaml.safe_load(echo.call_args.args[0])
+        self.assertEqual(report['public_rebuild']['images'], ['public-parent', 'test-image'])
+        parent.get_latest_konflux_build.assert_awaited_once_with(el_target=9, embargoed=False)
 
     async def test_embargoed_rebuild_with_fresh_or_missing_public_build(self):
         private = build_record(CUTOFF + timedelta(days=5))

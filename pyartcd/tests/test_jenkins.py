@@ -27,34 +27,6 @@ class TestJenkinsStartBuild(unittest.TestCase):
         jenkins.current_build_url = None
         jenkins.current_job_name = None
 
-    @mock.patch('pyartcd.jenkins.start_build')
-    def test_public_build_parameter_is_forwarded_for_image_only_build(self, start_build):
-        jenkins.start_ocp4_konflux(
-            build_version='4.22', assembly='stream', image_list=['installer'], public_rebuild=True
-        )
-        params = start_build.call_args.kwargs['params']
-        self.assertTrue(params['PUBLIC_REBUILD'])
-        self.assertEqual(params['IMAGE_BUILD_STRATEGY'], 'only')
-        self.assertEqual(params['RPM_BUILD_STRATEGY'], 'none')
-        self.assertTrue(params['SKIP_PLASHETS'])
-
-    @mock.patch('pyartcd.jenkins.init_jenkins')
-    @mock.patch('pyartcd.jenkins.jenkins_client')
-    def test_public_queue_check_ignores_unparameterized_and_private_items(self, client, _init):
-        queue = client.get_queue.return_value
-        empty = mock.Mock()
-        empty.get_parameters.return_value = []
-        build = mock.Mock()
-        build.get_parameters.return_value = {
-            'PUBLIC_REBUILD': False,
-            'BUILD_VERSION': '4.22',
-            'ASSEMBLY': 'stream',
-        }
-        queue.get_queue_items_for_job.return_value = [empty, build]
-        self.assertFalse(jenkins.is_ocp4_public_rebuild_queued('4.22', 'stream'))
-        build.get_parameters.return_value['PUBLIC_REBUILD'] = True
-        self.assertTrue(jenkins.is_ocp4_public_rebuild_queued('4.22', 'stream'))
-
     @mock.patch("pyartcd.jenkins.init_jenkins")
     @mock.patch("pyartcd.jenkins.jenkins_client")
     def test_start_build_dont_block(self, mock_client, mock_init_jenkins):

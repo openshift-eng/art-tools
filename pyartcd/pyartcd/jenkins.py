@@ -445,7 +445,6 @@ def start_ocp4_konflux(
     rpm_list: list = None,
     limit_arches: list = None,
     dry_run: bool = False,
-    public_rebuild: bool = False,
     **kwargs,
 ) -> Optional[str]:
     params = {
@@ -466,12 +465,8 @@ def start_ocp4_konflux(
     if limit_arches:
         params['LIMIT_ARCHES'] = ','.join(limit_arches)
 
-    # Public image-only refreshes use the existing stream plashets.
-    params['SKIP_PLASHETS'] = public_rebuild
-    if public_rebuild:
-        params['PUBLIC_REBUILD'] = True
-        params['IMAGE_BUILD_STRATEGY'] = 'only'
-        params['RPM_BUILD_STRATEGY'] = 'none'
+    # SKIP_PLASHETS defaults to True for manual builds, setting to False for scheduled
+    params['SKIP_PLASHETS'] = False
 
     params['DRY_RUN'] = dry_run
 
@@ -480,25 +475,6 @@ def start_ocp4_konflux(
         params=params,
         **kwargs,
     )
-
-
-def supports_ocp4_public_rebuild() -> bool:
-    init_jenkins()
-    return 'PUBLIC_REBUILD' in jenkins_client.get_job(Jobs.OCP4_KONFLUX.value).get_params_list()
-
-
-def is_ocp4_public_rebuild_queued(version: str, assembly: str) -> bool:
-    init_jenkins()
-    job = jenkins_client.get_job(Jobs.OCP4_KONFLUX.value)
-    for queued in jenkins_client.get_queue().get_queue_items_for_job(job.name):
-        params = queued.get_parameters() or {}
-        if (
-            str(params.get('PUBLIC_REBUILD')).lower() == 'true'
-            and params.get('BUILD_VERSION') == version
-            and params.get('ASSEMBLY') == assembly
-        ):
-            return True
-    return False
 
 
 def start_ocp4_scan_konflux(version: str, **kwargs) -> Optional[str]:

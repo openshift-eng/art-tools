@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 
 import asyncio
+import json
 import os
 import tempfile
 import unittest
@@ -15,6 +16,8 @@ from pyartcd.pipelines.ocp4_konflux import KonfluxOcpPipeline, ocp4
 from pyartcd.runtime import Runtime
 from pyartcd.util import update_build_fail_counters
 
+from pyartcd import constants
+
 
 class TestGlobalAutomationFreeze(unittest.IsolatedAsyncioTestCase):
     @staticmethod
@@ -28,6 +31,51 @@ class TestGlobalAutomationFreeze(unittest.IsolatedAsyncioTestCase):
             build_priority='auto',
             **kwargs,
         )
+
+    async def test_build_job_rechecks_and_runs_public_pass_with_current_dependencies(self):
+        pipeline = self.make_pipeline('stream', data_path=constants.OCP_BUILD_DATA_URL, image_list='installer')
+        pipeline.runtime.dry_run = False
+        pipeline.runtime.config = {}
+        pipeline.parse_record_log = MagicMock(
+            return_value={
+                'image_build_konflux': [
+                    {'name': 'installer', 'nvrs': 'ose-installer-4.22.0-202611250521.p2.g1234567.el9', 'status': '0'}
+                ]
+            }
+        )
+        public = MagicMock(rebase_failures=[], rebase_skipped_due_to_parent=[])
+        public.rebase_images = AsyncMock()
+        public.build_images = AsyncMock()
+        public.parse_record_log.return_value = {'image_build_konflux': [{'status': '0'}]}
+        request = {'public_rebuild': {'images': ['hyperkube', 'installer'], 'retry_interval_seconds': 21600}}
+        with (
+            tempfile.TemporaryDirectory() as directory,
+            patch('pyartcd.pipelines.ocp4_konflux.exectools.cmd_gather_async', new_callable=AsyncMock) as detect,
+            patch('pyartcd.pipelines.ocp4_konflux.redis.get_value', AsyncMock(return_value=None)),
+            patch('pyartcd.pipelines.ocp4_konflux.redis.call', AsyncMock(return_value=True)) as reserve,
+            patch('pyartcd.pipelines.ocp4_konflux.KonfluxOcpPipeline', return_value=public) as build,
+        ):
+            pipeline.runtime.working_dir = Path(directory)
+            detect.return_value = (0, json.dumps(request), '')
+
+            # A normal build that already produced a fresh public image needs no second pass.
+            await pipeline.rebuild_stale_public_images()
+            detect.assert_not_awaited()
+            build.assert_not_called()
+            reserve.assert_not_awaited()
+
+            pipeline.parse_record_log.return_value = None
+            await pipeline.rebuild_stale_public_images()
+
+        command = detect.await_args.args[0]
+        self.assertIn('--images=installer', command)
+        self.assertIn('--public-rebuilds-only', command)
+        self.assertEqual(build.call_args.kwargs['image_list'], 'hyperkube,installer')
+        self.assertTrue(build.call_args.kwargs['public_rebuild'])
+        public.rebase_images.assert_awaited_once()
+        public.build_images.assert_awaited_once()
+        self.assertTrue(pipeline.public_builds_succeeded)
+        self.assertFalse(pipeline.public_rebuild)
 
     @patch('pyartcd.pipelines.ocp4_konflux.util.is_build_permitted', new_callable=AsyncMock, return_value=False)
     @patch('pyartcd.pipelines.ocp4_konflux.RegistryConfig')
