@@ -225,7 +225,7 @@ def test_complete_publication_is_validated_and_locked(tmp_path, failure):
         else:
             assert asyncio.run(create_unified_shipment(pipeline, [plan], [outcome])) == 'newMR'
             repo.commit_push.assert_awaited_once()
-            assert mr.await_args.args[1]['labels'] == [UNIFIED_LABEL]
+            assert mr.await_args.args[1]['labels'] == ['unified-fbc']
             assert mr.await_args.args[1]['title'].startswith('Draft:')
             assert len(list((tmp_path / 'shipment').rglob('*.yaml'))) == 1
             assert trace == ['locked', 'unlocked']

@@ -17,7 +17,7 @@ from yaml import safe_dump, safe_load
 from pyartcd.git import GitRepository
 from pyartcd.lp_shipment import create_shipment_mr_with_retry, resolve_shipment_release_plans
 
-UNIFIED_LABEL = 'unified-fbc-shipment'
+UNIFIED_LABEL = 'unified-fbc'
 
 
 def branch_prefix(product: str) -> str:

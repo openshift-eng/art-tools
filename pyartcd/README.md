@@ -212,7 +212,7 @@ The contributing assemblies' image shipment pointers are never overwritten.
 
 Before MR creation, the generator checks only the configured shipment-data
 project for open unified MRs and active pipelines. Generated MRs carry label
-`unified-fbc-shipment` and branch prefix `unified-fbc-<product-prefix>-`.
+`unified-fbc` and branch prefix `unified-fbc-<product-prefix>-`.
 Candidate shipment files determine product/OCP overlap, independently of the
 MR title. Active deliveries use their pipeline revision. The final check and
 MR creation run under one per-product Redis lock. A conflict stops with links;
