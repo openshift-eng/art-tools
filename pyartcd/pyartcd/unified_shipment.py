@@ -197,7 +197,8 @@ async def create_unified_shipment(pipeline, plans: list, outcomes: list[dict]) -
             if not destination.is_relative_to(repo._directory.resolve()):
                 raise ValueError('Unified shipment destination escapes the checkout')
             destination.parent.mkdir(parents=True, exist_ok=True)
-            destination.write_text(safe_dump(config.model_dump(exclude_none=True), sort_keys=False))
+            shipment_data = config.model_dump(exclude_unset=True, exclude_none=True)
+            destination.write_text(safe_dump(shipment_data, sort_keys=False))
         await repo.commit_push(f'Add unified FBC shipment for {pipeline.product}')
         links = sorted({a.imageShipmentMR for _, c in configs for a in c.shipment.unified.assemblies})
         mr = await create_shipment_mr_with_retry(

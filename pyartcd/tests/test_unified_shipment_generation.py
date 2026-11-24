@@ -7,6 +7,7 @@ from unittest.mock import AsyncMock, Mock, patch
 import pytest
 from pyartcd.pipelines.merge_layered_fbc import FbcTargetPlan, MergeLayeredFbcPipeline
 from pyartcd.unified_shipment import UNIFIED_LABEL, check_overlap, create_unified_shipment
+from yaml import safe_load
 
 
 def test_open_overlap_stops_without_scanning_pipeline_history():
@@ -227,7 +228,15 @@ def test_complete_publication_is_validated_and_locked(tmp_path, failure):
             repo.commit_push.assert_awaited_once()
             assert mr.await_args.args[1]['labels'] == ['unified-fbc']
             assert mr.await_args.args[1]['title'].startswith('Draft:')
-            assert len(list((tmp_path / 'shipment').rglob('*.yaml'))) == 1
+            files = list((tmp_path / 'shipment').rglob('*.yaml'))
+            assert len(files) == 1
+            shipment = safe_load(files[0].read_text())['shipment']
+            assert shipment['metadata'] == {
+                'product': 'mta',
+                'application': 'mta-fbc-unified',
+                'unified': True,
+                'fbc': True,
+            }
             assert trace == ['locked', 'unlocked']
 
 
