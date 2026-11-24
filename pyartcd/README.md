@@ -237,7 +237,9 @@ this is required for actual unified release creation. `elliott release watch
 Configured stage/prod plans, admissions, applications, components and package
 allowances must exist; unresolved mappings or invalid metadata fail the run.
 Catalog freshness work in ART-23826 remains separate; existing builder checks
-are preserved and no extra production-index rendering gate is introduced here.
+are preserved. Unified and ordinary FBC shipments both use `validate-lp-prod`
+when its global switch is enabled. That switch remains disabled because of the
+current resource issue; unified shipments have no permanent exemption.
 
 Deploy the compatible art-tools image and shipment-ci consumer changes before
 enabling `create-mr=true` in ARTC. The art-config companion exposes this optional
