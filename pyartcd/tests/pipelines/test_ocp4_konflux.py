@@ -29,6 +29,15 @@ class TestGlobalAutomationFreeze(unittest.IsolatedAsyncioTestCase):
             **kwargs,
         )
 
+    def test_public_rebuild_requires_nonempty_image_names(self):
+        for image_list in ('', ' ', ', , '):
+            with self.subTest(image_list=image_list):
+                with self.assertRaisesRegex(ValueError, 'requires a stream image list'):
+                    self.make_pipeline('stream', public_rebuild=True, image_list=image_list)
+
+        pipeline = self.make_pipeline('stream', public_rebuild=True, image_list=' installer , ')
+        self.assertEqual(pipeline.image_list, ['installer'])
+
     @patch('pyartcd.pipelines.ocp4_konflux.util.is_build_permitted', new_callable=AsyncMock, return_value=False)
     @patch('pyartcd.pipelines.ocp4_konflux.RegistryConfig')
     @patch.dict(os.environ, {'XDG_RUNTIME_DIR': '/tmp/keep-runtime-dir'}, clear=True)

@@ -525,12 +525,58 @@ class KonfluxRebaser:
         digest = info.get("digest")
         if not digest:
             raise IOError(f"Could not resolve the {platform} digest of parent image {pullspec}")
+        return self._parent_by_digest(pullspec, digest)
+
+    @staticmethod
+    def _parent_by_digest(pullspec: str, digest: str) -> str:
         repo = pullspec.split("@", 1)[0]
         name_start = repo.rfind("/") + 1
         tag_sep = repo.rfind(":")
         if tag_sep >= name_start:
             repo = repo[:tag_sep]
         return f"{repo}@{digest}"
+
+    async def _resolve_public_direct_parent(self, pullspec: str) -> str:
+        """Require anonymous access and pin the exact manifest verified by the registry."""
+        if pullspec == 'scratch':
+            return pullspec
+        named_ref, _, requested_digest = pullspec.partition('@')
+        if is_release_embargoed(named_ref, 'konflux', default=False):
+            raise IOError(f'Direct parent {pullspec} is embargoed')
+
+        # The shared image info cache can return results from an authenticated lookup.
+        with TemporaryDirectory() as temp_dir:
+            auth_file = Path(temp_dir) / 'auth.json'
+            auth_file.write_text('{"auths": {}}', encoding='utf-8')
+            try:
+                _, output, _ = await exectools.cmd_gather_async(
+                    [
+                        'oc',
+                        'image',
+                        'info',
+                        '--show-multiarch',
+                        '-o',
+                        'json',
+                        f'--registry-config={auth_file}',
+                        '--',
+                        pullspec,
+                    ],
+                    timeout=60,
+                )
+            except (ChildProcessError, TimeoutError) as exc:
+                raise IOError(f'Could not verify anonymous access to direct parent {pullspec}') from exc
+
+        info = json.loads(output)
+        manifests = info if isinstance(info, list) else [info]
+        digests = {manifest.get('listDigest') or manifest.get('digest') for manifest in manifests}
+        if len(digests) != 1 or not (digest := digests.pop()) or (requested_digest and digest != requested_digest):
+            raise IOError(f'Could not verify the manifest digest for direct parent {pullspec}')
+
+        for manifest in manifests:
+            labels = manifest.get('config', {}).get('config', {}).get('Labels') or {}
+            if is_release_embargoed(labels.get('release') or '', 'konflux', default=False):
+                raise IOError(f'Direct parent {pullspec} is embargoed')
+        return self._parent_by_digest(pullspec, digest)
 
     @staticmethod
     def _apply_downstream_parents(metadata: ImageMetadata, dfp: DockerfileParser, parents: List[str]):
@@ -589,7 +635,10 @@ class KonfluxRebaser:
             if "member" in parent:
                 mapped_images.append(await self._resolve_member_parent(parent["member"], original_parent))
             elif "image" in parent:
-                mapped_images.append((parent["image"], False))
+                pullspec = parent["image"]
+                if self.public_rebuild:
+                    pullspec = await self._resolve_public_direct_parent(pullspec)
+                mapped_images.append((pullspec, False))
             elif "stream" in parent:
                 mapped_images.append(
                     (await self._resolve_stream_parent(metadata, parent['stream'], original_parent, dfp), False)
@@ -914,7 +963,7 @@ class KonfluxRebaser:
         # update_distgit_dir makes a distinction between None and {}
         env_vars_from_source = {}
         with exectools.Dir(source_dir):
-            env_vars_from_source.update(metadata.extract_kube_env_vars())
+            env_vars_from_source.update(metadata.extract_kube_env_vars(source.source_path))
 
             # See if the config is telling us a file other than "Dockerfile" defines the
             # distgit image content.
@@ -1088,9 +1137,7 @@ class KonfluxRebaser:
                 source_dockerfile_subpath = dockerfile_name
             else:
                 source_dockerfile_subpath = "{}/{}".format(sub_path, dockerfile_name)
-            # there ought to be a better way to determine the source alias that was registered:
-            source_root = self._source_resolver.resolve_source(metadata).source_path
-            source_alias = metadata.config.content.source.get('alias', os.path.basename(source_root))
+            source_alias = metadata.config.content.source.get('alias', Path(source.source_path).name)
 
             if self._record_logger:
                 self._record_logger.add_record(
@@ -2679,7 +2726,7 @@ class KonfluxRebaser:
 
         if do_set_build_variables:
             all_envs_to_remove.update(build_update_envs)
-            env_vars_from_source = metadata.extract_kube_env_vars()
+            env_vars_from_source = metadata.extract_kube_env_vars(source.source_path if source else None)
             all_envs_to_remove.update(env_vars_from_source)
 
         while True:

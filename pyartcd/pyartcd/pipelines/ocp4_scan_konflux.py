@@ -107,7 +107,11 @@ class Ocp4ScanPipeline:
 
         # Handle image source changes
         self.handle_source_changes()
-        await self.handle_public_rebuilds()
+        try:
+            await self.handle_public_rebuilds()
+        except Exception:
+            self.logger.exception('Failed to dispatch public rebuilds for %s', self.version)
+            self.issues.append({'name': f'openshift-{self.version}', 'issue': 'Failed to dispatch public rebuilds'})
 
         # Handle RHCOS changes or inconsistencies
         await self.handle_rhcos_changes()

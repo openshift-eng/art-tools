@@ -67,6 +67,26 @@ class TestOcp4ScanKonfluxPipeline(unittest.IsolatedAsyncioTestCase):
             block_until_building=False,
         )
 
+    @patch('pyartcd.jenkins.update_description')
+    async def test_public_dispatch_failure_preserves_rhcos_and_issue_reporting(self, update_description):
+        pipeline = self._make_pipeline()
+        pipeline.get_changes = AsyncMock()
+        pipeline.get_rhcos_inconsistencies = AsyncMock()
+        pipeline.handle_bridge_bug_mirroring = AsyncMock()
+        pipeline.handle_source_changes = Mock()
+        pipeline.handle_public_rebuilds = AsyncMock(side_effect=RuntimeError('Jenkins unavailable'))
+        pipeline.handle_rhcos_changes = AsyncMock()
+        pipeline._handle_scan_issues = AsyncMock()
+
+        with self.assertLogs(pipeline.logger, level='ERROR') as logs:
+            await pipeline.run()
+
+        self.assertIn('Failed to dispatch public rebuilds for 4.21', logs.output[0])
+        self.assertEqual(pipeline.issues, [{'name': 'openshift-4.21', 'issue': 'Failed to dispatch public rebuilds'}])
+        pipeline.handle_rhcos_changes.assert_awaited_once()
+        pipeline._handle_scan_issues.assert_awaited_once()
+        update_description.assert_called_once_with('Scan failures: openshift-4.21<br/>')
+
     @patch.dict(os.environ, {'KUBECONFIG': '/path/to/kubeconfig'})
     @patch('pyartcd.pipelines.ocp4_scan_konflux.exectools.cmd_gather_async')
     async def test_get_changes_passes_cutoff_override_or_uses_doozer_default(self, mock_cmd_gather):

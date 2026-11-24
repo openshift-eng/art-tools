@@ -157,6 +157,8 @@ class KonfluxOcpPipeline:
         self.build_plan = BuildPlan(BuildStrategy(image_build_strategy), BuildStrategy(rpm_build_strategy))
         self.image_list = [image.strip() for image in image_list.split(',')] if image_list else []
         self.rpm_list = [rpm.strip() for rpm in rpm_list.split(',')] if rpm_list else []
+        if public_rebuild:
+            self.image_list = [image for image in self.image_list if image]
         if public_rebuild and (
             assembly != 'stream'
             or skip_rebase
