@@ -174,6 +174,10 @@ class ConfigScanSources:
             # For OCP, only process generally enabled images (not OKD-only images)
             return image_meta.enabled
 
+    @staticmethod
+    def _is_konflux_mode_enabled(image_meta: ImageMetadata) -> bool:
+        return image_meta.config.konflux.mode not in ('disabled', 'wip')
+
     def _is_image_enabled_for_scan(self, image_meta: ImageMetadata) -> bool:
         """
         Determine if an image should be included in scan-sources.
@@ -295,7 +299,10 @@ class ConfigScanSources:
                 *(
                     self.check_public_build_cutoff(meta)
                     for meta in self.all_image_metas
-                    if self._is_image_enabled(meta) and meta.is_payload and meta.for_release
+                    if self._is_image_enabled(meta)
+                    and self._is_konflux_mode_enabled(meta)
+                    and meta.is_payload
+                    and meta.for_release
                 )
             )
             self.public_rebuild_images = await self.plan_public_rebuilds()
@@ -822,7 +829,12 @@ class ConfigScanSources:
                 visited.add(name)
                 try:
                     parent = parent or self.runtime.late_resolve_image(name, required=False)
-                    if not parent or not parent.enabled or parent.config['is']:
+                    if (
+                        not parent
+                        or not parent.enabled
+                        or not self._is_konflux_mode_enabled(parent)
+                        or parent.config['is']
+                    ):
                         continue
                     build = await parent.get_latest_konflux_build(el_target=parent.branch_el_target(), embargoed=False)
                     if build and not build.embargoed and not is_release_embargoed(build.release, 'konflux'):
@@ -2177,9 +2189,7 @@ class ConfigScanSources:
         self.add_assessment_reason(meta, rebuild_hint)
 
     def is_image_enabled(self, image_name: str) -> bool:
-        image_meta = self.runtime.image_map[image_name]
-        mode = image_meta.config.konflux.mode
-        enabled = mode != 'disabled' and mode != 'wip'
+        enabled = self._is_konflux_mode_enabled(self.runtime.image_map[image_name])
         if not enabled:
             self.logger.warning('Excluding image %s from the report as it is not enabled in Konflux', image_name)
         return enabled

@@ -217,6 +217,46 @@ class TestBuildCutoff(IsolatedAsyncioTestCase):
         self.assertIn(public.start_time.isoformat(), finding['reason'])
         self.assertIn(CUTOFF.isoformat(), finding['reason'])
 
+    async def test_public_rebuild_excludes_konflux_disabled_and_wip_images_and_parents(self):
+        private = build_record(CUTOFF + timedelta(days=5))
+        private.embargoed = True
+        self.image.is_payload = True
+        self.image.for_release = True
+        self.image.get_latest_konflux_build.return_value = None
+
+        ineligible = {
+            f'{mode}-image': MagicMock(
+                spec=ImageMetadata,
+                distgit_key=f'{mode}-image',
+                enabled=True,
+                is_payload=True,
+                for_release=True,
+                config=Model({'konflux': {'mode': mode}}),
+            )
+            for mode in ('disabled', 'wip')
+        }
+        for image in ineligible.values():
+            image.get_latest_konflux_build.return_value = None
+
+        self.image.get_parent_members.return_value = ineligible
+        self.runtime.image_map = {'test-image': self.image, **ineligible}
+        self.runtime.image_tree = {}
+        self.scanner.all_image_metas = set(self.runtime.image_map.values())
+        self.scanner.skip_rpms = True
+        self.scanner.latest_image_build_records_map = {name: private for name in self.runtime.image_map}
+
+        with (
+            patch.object(self.scanner, 'get_current_task_bundle_shas', AsyncMock(return_value={})),
+            patch('doozerlib.cli.scan_sources_konflux.click.echo') as echo,
+        ):
+            await self.scanner.run()
+
+        report = yaml.safe_load(echo.call_args.args[0])
+        self.assertEqual([finding['name'] for finding in report['public_build_cutoff']], ['test-image'])
+        self.assertEqual(report['public_rebuild']['images'], ['test-image'])
+        for image in ineligible.values():
+            image.get_latest_konflux_build.assert_not_awaited()
+
     async def test_embargoed_rebuild_with_fresh_or_missing_public_build(self):
         private = build_record(CUTOFF + timedelta(days=5))
         private.embargoed = True
