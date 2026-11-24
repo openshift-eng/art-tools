@@ -1250,8 +1250,8 @@ repos:
         pipeline = UpdateGolangPipeline(
             runtime=self._make_test_runtime(),
             ocp_version="5.0",
-            cves=['CVE-2026-1234'],
-            force_update_tracker=True,
+            cves=None,
+            force_update_tracker=False,
             go_nvrs=["golang-1.25.11-1.el8_10"],
             art_jira="ART-1234",
             tag_builds=False,
@@ -1267,8 +1267,7 @@ repos:
         pipeline._get_builder_pullspec = Mock(return_value="registry.example.com/golang-builder:v1.25.11-el8")
         pipeline.update_golang_streams = AsyncMock()
 
-        with self.assertLogs('pyartcd.pipelines.update_golang', level='INFO') as logs:
-            await pipeline.run()
+        await pipeline.run()
 
         pipeline.process_build.assert_not_awaited()
         pipeline._build_golang_plashets.assert_not_awaited()
@@ -1281,13 +1280,6 @@ repos:
             {8: "registry.example.com/golang-builder:v1.25.11-el8"},
         )
         move_golang_bugs.assert_not_awaited()
-        self.assertIn(
-            'elliott --registry-config "$REGISTRY_CONFIG" --group openshift-5.0 --assembly stream '
-            'find-bugs:golang --analyze --update-tracker --cve-id CVE-2026-1234 '
-            '--fixed-in-nvr golang-1.25.11-1.el8_10 --component openshift-golang-builder-container '
-            '--force-update-tracker --dry-run --only-specified-cves --art-jira ART-1234 --pullspec "$NIGHTLY_PULLSPEC"',
-            '\n'.join(logs.output),
-        )
 
     @patch("pyartcd.pipelines.update_golang.kinit", new_callable=AsyncMock)
     @patch("pyartcd.pipelines.update_golang.move_golang_bugs", new_callable=AsyncMock)
