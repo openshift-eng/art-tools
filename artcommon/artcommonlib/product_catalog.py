@@ -290,6 +290,7 @@ PRODUCT_CATALOG: tuple[ProductConfig, ...] = (
         conforma_stage_policies=ConformaPolicies(
             image_policy="rhtap-releng-tenant/registry-standard",
         ),
+        cpe_product_name="oc_mirror",
     ),
     ProductConfig(
         product_id=ProductId.MIRROR_GUI,

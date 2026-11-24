@@ -25,6 +25,7 @@ class TestRebaser(TestCase):
     def test_cpe_product_name_uses_registry_mapping(self):
         """Resolve known CPE product names through the shared registry."""
         self.assertEqual(_get_cpe_product_name("rhacm2"), "acm")
+        self.assertEqual(_get_cpe_product_name("oc-mirror"), "oc_mirror")
 
     def test_cpe_product_name_rhosdt(self):
         """RHOSDT uses explicit cpe_product_name for distributed tracing."""
