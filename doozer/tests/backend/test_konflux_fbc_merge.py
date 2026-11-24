@@ -359,6 +359,28 @@ class TestLayeredFbcMerger(unittest.IsolatedAsyncioTestCase):
                 await self.merger.merge('quay.io/test/fbc', skip_rebase=True)
         build.assert_not_awaited()
 
+    async def test_merge_exposes_snapshot_identity(self):
+        self.merger.build_source = SimpleNamespace(
+            https_url='https://github.com/openshift-priv/art-fbc', commit_hash='a' * 40
+        )
+        plr = Mock()
+        plr.to_dict.return_value = {
+            'status': {
+                'results': [
+                    {'name': 'IMAGE_URL', 'value': 'quay.io/test/fbc:tag'},
+                    {'name': 'IMAGE_DIGEST', 'value': 'sha256:' + 'd' * 64},
+                ]
+            }
+        }
+        self.merger._prepare_existing_source = AsyncMock()
+        self.merger._build = AsyncMock(return_value=plr)
+        result = await self.merger.merge('quay.io/test/fbc', skip_rebase=True)
+        self.assertEqual(result['application'], 'quay-fbc-unified')
+        self.assertEqual(result['component'], 'quay-fbc-unified-4-20')
+        self.assertEqual(result['source_repo'], 'https://github.com/openshift-priv/art-fbc')
+        self.assertEqual(result['source_commit'], 'a' * 40)
+        self.assertEqual(result['pullspec'], 'quay.io/test/fbc@sha256:' + 'd' * 64)
+
     async def test_skip_rebase_builds_and_records_existing_revision_and_metadata(self):
         repo = self._existing_source()
         bundle_nvrs = [self.merger.inputs[0].bundle.nvr]
@@ -387,6 +409,10 @@ class TestLayeredFbcMerger(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(record.arches, ['x86_64'])
         self.assertEqual(result['provenance_url'], f'{repo.https_url}/blob/{repo.commit_hash}/unified-provenance.json')
         self.assertEqual(result['pullspec'], 'quay.io/test/fbc@sha256:' + 'd' * 64)
+        self.assertEqual(result['application'], 'quay-fbc-unified')
+        self.assertEqual(result['component'], 'quay-fbc-unified-4-20')
+        self.assertEqual(result['source_repo'], repo.https_url)
+        self.assertEqual(result['source_commit'], repo.commit_hash)
         repo.commit.assert_not_awaited()
         repo.push.assert_not_awaited()
 
@@ -861,6 +887,8 @@ class TestLayeredFbcMerger(unittest.IsolatedAsyncioTestCase):
             'operators.operatorframework.io.bundle.package.v1': 'quay',
             'operators.operatorframework.io.bundle.channels.v1': 'stable-3.18',
         }
+        operand_nvr = 'quay-container-3.18.1-1'
+        operand_digest = 'sha256:' + 'e' * 64
         provenance = {
             selected.record.nvr: {
                 'assembly': '3.18.1',
@@ -868,8 +896,13 @@ class TestLayeredFbcMerger(unittest.IsolatedAsyncioTestCase):
                 'operator': 'quay-operator',
                 'group_revision': 'd' * 40,
                 'pullspec': selected.record.image_pullspec,
+                'operand_nvrs': [operand_nvr],
             }
         }
+
+        async def load_group_inline(func, *args, **kwargs):
+            return func(*args, **kwargs)
+
         for wrong_group in (False, True):
             with self.subTest(wrong_group=wrong_group):
                 self.merger._pin_image = AsyncMock(
@@ -881,6 +914,8 @@ class TestLayeredFbcMerger(unittest.IsolatedAsyncioTestCase):
                 if wrong_group:
                     provenance[selected.record.nvr]['group'] = 'quay-3.17'
                 with (
+                    patch('doozerlib.backend.konflux_fbc_merge.KonfluxDb') as image_db,
+                    patch('doozerlib.backend.konflux_fbc_merge.asyncio.to_thread', side_effect=load_group_inline),
                     patch(
                         'doozerlib.backend.konflux_fbc_merge.util.oc_image_info_for_arch_async',
                         new=AsyncMock(return_value={'config': {'config': {'Labels': labels}}}),
@@ -890,6 +925,12 @@ class TestLayeredFbcMerger(unittest.IsolatedAsyncioTestCase):
                         new=AsyncMock(side_effect=[[bundle(selected.csv_name)], selected.catalog]),
                     ),
                 ):
+                    lookup = AsyncMock(
+                        return_value=[
+                            SimpleNamespace(nvr=operand_nvr, image_pullspec=f'quay.io/test/quay@{operand_digest}')
+                        ]
+                    )
+                    image_db.return_value.get_build_records_by_nvrs = lookup
                     if wrong_group:
                         with self.assertRaisesRegex(ValueError, 'Invalid assembly provenance'):
                             await self.merger.prepare((selected.record.nvr,), assembly_inputs=provenance)
@@ -898,6 +939,10 @@ class TestLayeredFbcMerger(unittest.IsolatedAsyncioTestCase):
                         source = self.merger.provenance['inputs'][0]
                         self.assertEqual(source['assembly'], '3.18.1')
                         self.assertEqual(source['assembly_group_revision'], 'd' * 40)
+                        self.assertEqual(
+                            self.merger.provenance['image_digests'],
+                            {selected.record.group: {operand_nvr: operand_digest, selected.bundle.nvr: BUNDLE_DIGEST}},
+                        )
                         self.merger._load_group.assert_called_once_with(
                             selected.record.group,
                             revision='d' * 40,

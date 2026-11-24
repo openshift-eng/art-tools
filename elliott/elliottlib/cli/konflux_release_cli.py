@@ -2,6 +2,7 @@ import os
 import re
 import sys
 from dataclasses import dataclass
+from pathlib import Path
 from time import perf_counter
 from typing import Optional
 
@@ -146,6 +147,13 @@ async def validate_snapshot_against_rpa(
             dry_run=True,
         )
 
+    if shipment.metadata.unified:
+        await konflux_client._get(API_VERSION, KIND_APPLICATION, shipment.metadata.application)
+        for component in shipment.snapshot.spec.components:
+            actual = (await konflux_client._get(API_VERSION, 'Component', component.name)).to_dict()
+            if actual.get('spec', {}).get('application') != shipment.metadata.application:
+                raise ValueError(f'Unified Component {component.name} does not belong to the shipment application')
+
     snapshot_names = {component.name for component in shipment.snapshot.spec.components}
     envs_to_check = [env] + [other for other in environments if other != env]
     for check_env in envs_to_check:
@@ -180,6 +188,8 @@ async def validate_snapshot_against_rpa(
         rpa_spec = rpa.get("spec", {})
         applications = rpa_spec.get("applications")
         if not isinstance(applications, list) or shipment.metadata.application not in applications:
+            if shipment.metadata.unified:
+                raise ValueError(f'Unified application is not admitted by {check_env} RPA {target}/{rpa_name}')
             LOGGER.warning(
                 "%s RPA %s/%s spec.applications does not include shipment application %r; "
                 "continuing with the RPA explicitly referenced by ReleasePlan %r",
@@ -253,6 +263,20 @@ class ReleaseConfig:
     data: str = None
 
 
+def initialize_release_runtime(runtime: Runtime, config_path: str) -> None:
+    """Initialize a release from a normal group or an explicitly unified shipment."""
+    if runtime.group is not None:
+        runtime.initialize(build_system='konflux', with_shipment=True)
+        return
+    runtime.initialize(no_group=True, build_system='konflux')
+    runtime.resolve_shipment_metadata(strict=True)
+    config = ShipmentConfig.model_validate(runtime.shipment_gitdata.load_yaml_file(config_path))
+    if not config.shipment.metadata.unified:
+        raise ValueError('Ordinary shipments require --group and --assembly')
+    runtime.product = config.shipment.metadata.product
+    runtime.assembly = None
+
+
 class CreateReleaseCli:
     def __init__(
         self,
@@ -282,6 +306,7 @@ class CreateReleaseCli:
         self.release_env = release_env
         self.force = force
         self.kind = kind
+        self.unified_target = None
 
     @staticmethod
     def _validate_release_notes_for_openshift(group: str, release_notes):
@@ -303,7 +328,7 @@ class CreateReleaseCli:
     async def run(self) -> Optional[ResourceInstance]:
         # Initialize runtime if not already initialized (for direct class usage in tests)
         if not getattr(self.runtime, 'initialized', False):
-            self.runtime.initialize(build_system='konflux', with_shipment=True)
+            initialize_release_runtime(self.runtime, self.config_path)
 
         LOGGER.info(f"Loading {self.config_path}...")
         config_raw = self.runtime.shipment_gitdata.load_yaml_file(self.config_path)
@@ -322,14 +347,35 @@ class CreateReleaseCli:
                 f"shipment.metadata.product={meta.product} is expected to be the "
                 f"same as runtime.product={self.runtime.product}"
             )
-        elif meta.group != self.runtime.group:
+        elif not meta.unified and meta.group != self.runtime.group:
             raise ValueError(
                 f"shipment.metadata.group={meta.group} is expected to be the same as runtime.group={self.runtime.group}"
             )
-        elif meta.assembly != self.runtime.assembly:
+        elif not meta.unified and meta.assembly != self.runtime.assembly:
             raise ValueError(
                 f"shipment.metadata.assembly={meta.assembly} is expected to be the "
                 f"same as runtime.assembly={self.runtime.assembly}"
+            )
+
+        if meta.unified:
+            from artcommonlib.gitlab import GitLabClient
+
+            from elliottlib.unified_shipment import catalog_target, validate_unified_release
+
+            self.unified_target = catalog_target(config.shipment)
+            mr_url = os.environ.get('SHIPMENT_MR_URL')
+            if not mr_url and not self.dry_run:
+                raise ValueError('Unified release creation requires SHIPMENT_MR_URL')
+            client = GitLabClient.from_url(mr_url) if mr_url else None
+            checkout = Path(self.runtime.shipment_gitdata.data_dir).resolve()
+            config_path = (checkout / self.config_path).resolve().relative_to(checkout).as_posix()
+            await validate_unified_release(
+                config.shipment,
+                self.release_env,
+                self.image_repo_pull_secret,
+                gitlab_client=client,
+                mr_url=mr_url,
+                config_path=config_path,
             )
 
         # Validate release notes for openshift- groups
@@ -411,7 +457,8 @@ class CreateReleaseCli:
 
     def get_object_name(self) -> str:
         timestamp = get_utc_now_formatted_str()
-        raw_prefix = f"{self.runtime.product}-{self.release_env}-{self.runtime.assembly}-{self.kind}"
+        identity = f"unified-{self.unified_target}" if self.unified_target else self.runtime.assembly
+        raw_prefix = f"{self.runtime.product}-{self.release_env}-{identity}-{self.kind}"
         prefix = normalize_k8s_dns_label(raw_prefix, max_length=63 - len(timestamp) - 1)
         if not prefix:
             raise ValueError(f"Release object name prefix {raw_prefix!r} cannot be normalized to a Kubernetes name")
@@ -528,6 +575,10 @@ class CreateReleaseCli:
             "art.redhat.com/env": self.release_env,
             "art.redhat.com/kind": self.kind,
         }
+        if self.unified_target:
+            annotations.pop('art.redhat.com/assembly')
+            annotations['art.redhat.com/unified'] = 'true'
+            annotations['art.redhat.com/ocp-target'] = self.unified_target
         if self.job_url:
             annotations["art.redhat.com/job-url"] = self.job_url
         return annotations
@@ -613,7 +664,7 @@ async def new_release_cli(
     release new --env stage --config shipment/ocp/openshift-4.18/openshift-4-18/4.18.2.202503210000.yml
     """
     # Initialize runtime to populate runtime.product before using resolver functions
-    runtime.initialize(build_system='konflux', with_shipment=True)
+    initialize_release_runtime(runtime, config)
 
     # Resolve kubeconfig and namespace using utility functions
     resolved_kubeconfig = resolve_konflux_kubeconfig_by_product(runtime.product, konflux_kubeconfig)
@@ -683,7 +734,7 @@ async def validate_rpa_cli(runtime: Runtime, config, env, kind):
         release validate-rpa --config shipment/ocp/openshift-4.18/openshift-4-18/4.18.2.yml \\
         --env prod --kind image
     """
-    runtime.initialize(build_system='konflux', with_shipment=True)
+    initialize_release_runtime(runtime, config)
 
     LOGGER.info("Loading %s...", config)
     config_raw = runtime.shipment_gitdata.load_yaml_file(config)

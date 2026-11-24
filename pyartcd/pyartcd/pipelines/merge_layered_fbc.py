@@ -1,4 +1,4 @@
-"""Orchestrate a unified layered-product FBC build without creating a shipment."""
+"""Orchestrate a unified layered-product FBC build with optional complete shipment generation."""
 
 import asyncio
 import copy
@@ -56,9 +56,13 @@ class MergeLayeredFbcPipeline:
         skip_tasks: tuple[str, ...] = (),
         output_file: str | None = None,
         max_concurrent_targets: int = 1,
+        create_mr: bool = False,
     ):
         if max_concurrent_targets < 1:
             raise ValueError('max_concurrent_targets must be at least 1')
+        self.create_mr = create_mr
+        if create_mr and (not assemblies or fbc_builds or fbc_branch or skip_rebase):
+            raise ValueError("Shipment generation requires named assemblies and normal catalog preparation")
         self.max_concurrent_targets = max_concurrent_targets
         validate_git_branch(fbc_branch)
         validate_git_remote_url(data_path)
@@ -164,6 +168,8 @@ class MergeLayeredFbcPipeline:
                         'operator': operator,
                         'pullspec': record['pullspec'],
                     }
+                    if self.create_mr:
+                        inputs[record['nvr']]['operand_nvrs'] = record['operand_nvrs']
         if not inputs_by_target:
             raise ValueError(f'No selected assembly supports OCP {self.target}')
         return [
@@ -230,6 +236,16 @@ class MergeLayeredFbcPipeline:
             raise RuntimeError(
                 f'Unified FBC builds failed for OCP {result["failed_targets"]}; results: {self.output_file}'
             )
+        if self.create_mr and not self.runtime.dry_run:
+            from pyartcd.unified_shipment import create_unified_shipment
+
+            try:
+                result['shipment_mr'] = await create_unified_shipment(self, plans, outcomes)
+            except Exception as exc:
+                result['shipment_error'] = str(exc)
+                self.output_file.write_text(json.dumps(result, indent=2) + '\n')
+                raise
+            self.output_file.write_text(json.dumps(result, indent=2) + '\n')
         return result
 
     async def _resolve_groups(self) -> list[str]:
@@ -411,6 +427,12 @@ class MergeLayeredFbcPipeline:
 @click.option('--skip-checks', is_flag=True)
 @click.option('--skip-rebase', is_flag=True, help='Build the existing unified FBC source branch without rebasing.')
 @click.option('--skip-task', 'skip_tasks', multiple=True)
+@click.option(
+    '--create-mr/--no-create-mr',
+    default=True,
+    show_default=True,
+    help='Create a complete assembly-based unified shipment MR; disable for build-only runs.',
+)
 @click.option('--output-file', type=click.Path(dir_okay=False))
 @pass_runtime
 @click_coroutine

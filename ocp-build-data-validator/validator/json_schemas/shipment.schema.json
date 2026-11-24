@@ -1,5 +1,5 @@
 {
-  "$comment": "Schema generated on 2026-11-12 06:24 UTC from elliottlib.shipment_model",
+  "$comment": "Schema generated on 2026-11-24 00:35 UTC from elliottlib.shipment_model",
   "$defs": {
     "ComponentSource": {
       "additionalProperties": false,
@@ -232,6 +232,60 @@
     },
     "Metadata": {
       "additionalProperties": false,
+      "allOf": [
+        {
+          "else": {
+            "properties": {
+              "group": {
+                "minLength": 1,
+                "type": "string"
+              },
+              "assembly": {
+                "minLength": 1,
+                "type": "string"
+              }
+            },
+            "required": [
+              "group",
+              "assembly"
+            ]
+          },
+          "if": {
+            "properties": {
+              "unified": {
+                "const": true
+              }
+            },
+            "required": [
+              "unified"
+            ]
+          },
+          "then": {
+            "not": {
+              "anyOf": [
+                {
+                  "required": [
+                    "group"
+                  ]
+                },
+                {
+                  "required": [
+                    "assembly"
+                  ]
+                }
+              ]
+            },
+            "properties": {
+              "fbc": {
+                "const": true
+              }
+            },
+            "required": [
+              "fbc"
+            ]
+          }
+        }
+      ],
       "description": "Defines shipment metadata for a product release",
       "properties": {
         "product": {
@@ -243,12 +297,33 @@
           "type": "string"
         },
         "group": {
-          "title": "Group",
-          "type": "string"
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Group"
         },
         "assembly": {
-          "title": "Assembly",
-          "type": "string"
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Assembly"
+        },
+        "unified": {
+          "default": false,
+          "title": "Unified",
+          "type": "boolean"
         },
         "fbc": {
           "anyOf": [
@@ -301,9 +376,7 @@
       },
       "required": [
         "product",
-        "application",
-        "group",
-        "assembly"
+        "application"
       ],
       "title": "Metadata",
       "type": "object"
@@ -396,10 +469,95 @@
     },
     "Shipment": {
       "additionalProperties": false,
+      "allOf": [
+        {
+          "else": {
+            "properties": {
+              "unified": {
+                "type": "null"
+              }
+            }
+          },
+          "if": {
+            "properties": {
+              "metadata": {
+                "properties": {
+                  "unified": {
+                    "const": true
+                  }
+                },
+                "required": [
+                  "unified"
+                ]
+              }
+            },
+            "required": [
+              "metadata"
+            ]
+          },
+          "then": {
+            "properties": {
+              "unified": {
+                "type": "object"
+              },
+              "snapshot": {
+                "properties": {
+                  "nvrs": {
+                    "maxItems": 1,
+                    "minItems": 1
+                  },
+                  "spec": {
+                    "properties": {
+                      "components": {
+                        "items": {
+                          "properties": {
+                            "containerImage": {
+                              "pattern": "^[^@\\s]+@sha256:[0-9a-f]{64}$"
+                            },
+                            "source": {
+                              "properties": {
+                                "git": {
+                                  "properties": {
+                                    "revision": {
+                                      "pattern": "^[0-9a-f]{40}$"
+                                    }
+                                  }
+                                }
+                              }
+                            }
+                          }
+                        },
+                        "maxItems": 1,
+                        "minItems": 1
+                      }
+                    }
+                  }
+                },
+                "type": "object"
+              }
+            },
+            "required": [
+              "unified",
+              "snapshot"
+            ]
+          }
+        }
+      ],
       "description": "Config to ship a Konflux release for a product",
       "properties": {
         "metadata": {
           "$ref": "#/$defs/Metadata"
+        },
+        "unified": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Unified"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
         },
         "tools": {
           "anyOf": [
@@ -583,6 +741,57 @@
         }
       },
       "title": "Tools",
+      "type": "object"
+    },
+    "Unified": {
+      "additionalProperties": false,
+      "description": "Contributors; provenance is at the snapshot source commit's standard path.",
+      "properties": {
+        "assemblies": {
+          "items": {
+            "$ref": "#/$defs/UnifiedAssembly"
+          },
+          "minItems": 1,
+          "title": "Assemblies",
+          "type": "array"
+        }
+      },
+      "required": [
+        "assemblies"
+      ],
+      "title": "Unified",
+      "type": "object"
+    },
+    "UnifiedAssembly": {
+      "additionalProperties": false,
+      "description": "An assembly and image shipment associated with one unified target.",
+      "properties": {
+        "group": {
+          "title": "Group",
+          "type": "string"
+        },
+        "assembly": {
+          "title": "Assembly",
+          "type": "string"
+        },
+        "revision": {
+          "pattern": "^[0-9a-f]{40}$",
+          "title": "Revision",
+          "type": "string"
+        },
+        "imageShipmentMR": {
+          "pattern": "^https://[^/]+/.+/merge_requests/[0-9]+$",
+          "title": "Imageshipmentmr",
+          "type": "string"
+        }
+      },
+      "required": [
+        "group",
+        "assembly",
+        "revision",
+        "imageShipmentMR"
+      ],
+      "title": "UnifiedAssembly",
       "type": "object"
     }
   },
