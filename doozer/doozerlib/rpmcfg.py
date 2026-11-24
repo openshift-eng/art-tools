@@ -51,7 +51,10 @@ class RPMMetadata(Metadata):
             self.clone_source()
 
     def clone_source(self):
-        self.source_path = self.runtime.source_resolver.resolve_source(self).source_path
+        source_resolution = self.runtime.source_resolver.resolve_source(self)
+        self.source_path = source_resolution.source_path
+        self.public_upstream_url = source_resolution.public_upstream_url
+        self.public_upstream_branch = source_resolution.public_upstream_branch
         with Dir(self.source_path):
             # gather source repo short sha for audit trail
             out, _ = exectools.cmd_assert(["git", "rev-parse", "HEAD"])
@@ -59,14 +62,14 @@ class RPMMetadata(Metadata):
 
             # Determine if the source contains private fixes by checking if the private org branch commit exists in the public org
             if self.private_fix is None:
-                if self.public_upstream_branch and not SourceResolver.is_branch_commit_hash(
-                    self.public_upstream_branch
-                ):
-                    self.private_fix = not util.is_commit_in_public_upstream(
-                        source_full_sha, self.public_upstream_branch, self.source_path
+                self.private_fix = (
+                    source_resolution.has_public_upstream
+                    and not source_resolution.is_fork_build
+                    and not SourceResolver.is_branch_commit_hash(source_resolution.public_upstream_branch)
+                    and not util.is_commit_in_public_upstream(
+                        source_full_sha, source_resolution.public_upstream_branch, self.source_path
                     )
-                else:
-                    self.private_fix = False
+                )
 
             self.extra_os_git_vars.update(self.extract_kube_env_vars())
 

@@ -1,10 +1,12 @@
 import unittest
+from datetime import datetime, timezone
 from unittest import mock
 from unittest.mock import MagicMock
 
 import yaml
 from doozerlib.exceptions import DoozerFatalError
 from doozerlib.rpmcfg import RPMMetadata
+from doozerlib.source_resolver import SourceResolution
 
 
 class TestRPMMetadata(unittest.TestCase):
@@ -25,6 +27,46 @@ targets:
 - rhaos-4.7-rhel-7-candidate
 - rhaos-4.7-rhel-8-candidate
     """
+
+    def test_clone_source_detects_private_fix_from_fresh_resolution(self):
+        runtime = mock.MagicMock(build_system="konflux", assembly_basis_event=None)
+        data_obj = mock.MagicMock(
+            key="foo",
+            filename="foo.yml",
+            path="/path/to/ocp-build-data/rpms/foo.yml",
+            data=yaml.safe_load(self.FOO_RPM_CONFIG),
+        )
+        metadata = RPMMetadata(runtime, data_obj, clone_source=False)
+        self.assertIsNone(metadata.public_upstream_branch)
+
+        source_commit = "a" * 40
+        source_resolution = SourceResolution(
+            source_path="/path/to/sources/foo",
+            url="git@github.com:openshift-priv/foo.git",
+            branch="release-4.7",
+            https_url="https://github.com/openshift-priv/foo",
+            commit_hash=source_commit,
+            committer_date=datetime.fromtimestamp(0, timezone.utc),
+            latest_tag="v4.7.0",
+            has_public_upstream=True,
+            public_upstream_url="https://github.com/openshift/foo",
+            public_upstream_branch="release-4.7",
+        )
+        runtime.source_resolver.resolve_source.return_value = source_resolution
+
+        with (
+            mock.patch("doozerlib.rpmcfg.Dir"),
+            mock.patch("doozerlib.rpmcfg.exectools.cmd_assert", return_value=(source_commit, "")),
+            mock.patch("doozerlib.rpmcfg.os.path.isfile", return_value=True),
+            mock.patch.object(metadata, "extract_kube_env_vars", return_value={}),
+            mock.patch("doozerlib.rpmcfg.util.is_commit_in_public_upstream", return_value=False) as is_public,
+        ):
+            metadata.clone_source()
+
+        self.assertTrue(metadata.private_fix)
+        self.assertEqual(metadata.public_upstream_url, source_resolution.public_upstream_url)
+        self.assertEqual(metadata.public_upstream_branch, source_resolution.public_upstream_branch)
+        is_public.assert_called_once_with(source_commit, "release-4.7", source_resolution.source_path)
 
     @mock.patch("artcommonlib.logutil.EntityLoggingAdapter")
     @mock.patch("doozerlib.rpmcfg.Dir")
