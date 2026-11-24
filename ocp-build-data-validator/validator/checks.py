@@ -95,6 +95,25 @@ def validate_registry_pullspecs(data: dict, variables: dict | None = None) -> li
     return errors
 
 
+def validate_enabled_repo_targets(data: dict, group: dict) -> list[str]:
+    """Check RHEL repository names against the component's configured build target."""
+    target = data.get('el_target', group.get('el_target'))
+    if target is None:
+        branch = data.get('distgit', {}).get('branch') or group.get('branch', '')
+        match = re.match(r'.*-rhel-(\d+)(?:-|$)', str(branch))
+        target = match.group(1) if match else None
+    if target is None:
+        return []
+    errors = []
+    for repo in data.get('enabled_repos', []):
+        if not isinstance(repo, str):
+            continue
+        match = re.match(r'^rhel-(10|[789])(?:[0-9])?(?:-|$)', repo)
+        if match and match.group(1) != str(target):
+            errors.append(f'enabled_repos: {repo} targets RHEL {match.group(1)}, but this build targets RHEL {target}')
+    return errors
+
+
 def validate_image(data: dict) -> list[str]:
     """Validate ownership, release delivery names and source paths for an enabled image."""
     errors = []

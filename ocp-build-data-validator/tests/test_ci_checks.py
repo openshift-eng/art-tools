@@ -759,3 +759,24 @@ def test_rpa_binds_image_and_bundle_repositories_to_their_components(tmp_path, o
         assert all('missing delivery repository' in error for error in errors)
     else:
         assert errors == []
+
+
+@pytest.mark.parametrize(
+    'group,image,expected',
+    [
+        ({'branch': 'rhaos-4.18-rhel-9'}, {'enabled_repos': ['rhel-8-baseos-rpms']}, True),
+        ({'branch': 'rhaos-4.18-rhel-9'}, {'enabled_repos': ['rhel-98-baseos-rpms']}, False),
+        ({'el_target': 9}, {'el_target': 8, 'enabled_repos': ['rhel-8-baseos-rpms']}, False),
+        (
+            {'branch': 'rhaos-4.18-rhel-9'},
+            {'distgit': {'branch': 'rhaos-4.18-rhel-8'}, 'enabled_repos': ['rhel-9-baseos-rpms']},
+            True,
+        ),
+        ({'branch': 'rhaos-4.18-rhel-9'}, {'enabled_repos': ['custom-repo']}, False),
+    ],
+)
+def test_enabled_repos_match_component_target(group, image, expected):
+    errors = checks.validate_enabled_repo_targets(image, group)
+    assert bool(errors) == expected
+    if expected:
+        assert 'enabled_repos' in errors[0]
