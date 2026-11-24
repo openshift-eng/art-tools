@@ -8,6 +8,7 @@ from pathlib import Path
 from unittest import IsolatedAsyncioTestCase
 from unittest.mock import AsyncMock, Mock, patch
 
+from artcommonlib.assembly import AssemblyTypes
 from pyartcd.pipelines.build_microshift import BuildMicroShiftPipeline
 from pyartcd.runtime import Runtime
 from pyartcd.slack import SlackClient
@@ -334,6 +335,52 @@ class TestBuildMicroShiftPipeline(IsolatedAsyncioTestCase):
         # No RPMs should be pinned
         self.assertIsNone(result)
         self.assertNotIn("members", releases_config["releases"][self.assembly].get("assembly", {}))
+
+    def _make_stream_pipeline(self, assembly: str) -> BuildMicroShiftPipeline:
+        pipeline = BuildMicroShiftPipeline(
+            runtime=self.runtime,
+            group=self.group,
+            assembly=assembly,
+            payloads=("4.17.0-0.nightly-x86", "4.17.0-0.nightly-arm"),
+            no_rebase=False,
+            force=False,
+            skip_prepare_advisory=False,
+            data_path="https://github.com/openshift-eng/ocp-build-data",
+            slack_client=self.mock_slack_client,
+        )
+        pipeline.assembly_type = AssemblyTypes.STREAM
+        pipeline.parse_release_payloads = AsyncMock(
+            return_value={
+                "x86_64": {"version": "4.17.1", "arch": "amd64", "pullspec": "x86-pullspec", "digest": "sha256:x86"},
+                "aarch64": {"version": "4.17.1", "arch": "arm64", "pullspec": "arm-pullspec", "digest": "sha256:arm"},
+            }
+        )
+        pipeline._notify_microshift_alerts = AsyncMock()
+        return pipeline
+
+    async def test_rebase_and_build_for_stream_test_assembly_skips_alert(self):
+        """A build failure for the "test" assembly must re-raise without alerting #microshift-alerts."""
+        pipeline = self._make_stream_pipeline(assembly="test")
+        build_err = RuntimeError("build failed")
+        pipeline._rebase_and_build_rpm = AsyncMock(side_effect=build_err)
+
+        with self.assertRaises(RuntimeError):
+            await pipeline._rebase_and_build_for_stream()
+
+        pipeline._rebase_and_build_rpm.assert_awaited_once()
+        pipeline._notify_microshift_alerts.assert_not_called()
+
+    async def test_rebase_and_build_for_stream_non_test_assembly_alerts(self):
+        """A build failure for a non-test stream assembly must re-raise and alert #microshift-alerts."""
+        pipeline = self._make_stream_pipeline(assembly="stream")
+        build_err = RuntimeError("build failed")
+        pipeline._rebase_and_build_rpm = AsyncMock(side_effect=build_err)
+
+        with self.assertRaises(RuntimeError):
+            await pipeline._rebase_and_build_for_stream()
+
+        pipeline._rebase_and_build_rpm.assert_awaited_once()
+        pipeline._notify_microshift_alerts.assert_awaited_once()
 
 
 class TestCreateMicroshiftAdvisoryPackageOwner(IsolatedAsyncioTestCase):

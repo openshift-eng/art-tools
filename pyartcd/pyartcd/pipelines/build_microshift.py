@@ -300,8 +300,11 @@ class BuildMicroShiftPipeline:
             await self._rebase_and_build_rpm(version, release, custom_payloads)
         except Exception as build_err:
             self._logger.error(build_err)
-            # Send a message to #microshift-alerts for STREAM failures
-            await self._notify_microshift_alerts(f"{version}-{release}")
+            # Send a message to #microshift-alerts for STREAM failures, but skip the "test"
+            # assembly: it resolves to a STREAM build and is only used for testing, so its
+            # failures should not alert the #microshift-alerts channel.
+            if self.assembly != "test":
+                await self._notify_microshift_alerts(f"{version}-{release}")
             raise
 
     async def _rebase_and_build_for_named_assembly(self):
