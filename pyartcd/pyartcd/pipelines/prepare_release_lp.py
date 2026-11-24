@@ -166,6 +166,7 @@ class PrepareReleaseLPPipeline:
         self.job_url: Optional[str] = None
 
         self.product: Optional[str] = None
+        self._auto_build_version = False
         self._releases_config: Optional[Dict] = None
         self._fbc_refresh_records: list[FbcRefreshRecord] = []
 
@@ -225,10 +226,11 @@ class PrepareReleaseLPPipeline:
         return self._gitlab.get_project(project_path)
 
     async def _load_product_from_group_config(self) -> str:
-        """Load the product from the effective assembly group config."""
+        """Load the product and FBC version policy from the effective assembly group config."""
         group_config = await load_group_config(
             group=self.group, assembly=self.assembly, doozer_data_path=self.build_data_repo_url
         )
+        self._auto_build_version = group_config.get('version') == 'auto'
         if group_config.get('product'):
             return group_config['product']
         product = self.group.split('-')[0]
@@ -565,7 +567,9 @@ class PrepareReleaseLPPipeline:
         if self.dry_run:
             self._logger.info('[DRY-RUN] Would record FBC builds in %s assembly %s', self.group, self.assembly)
             return
-        records = assembly_fbc_records(self.assembly, nvrs, pullspecs, operand_nvrs)
+        records = assembly_fbc_records(
+            self.assembly, nvrs, pullspecs, operand_nvrs, skip_nvr_version_check=self._auto_build_version
+        )
         push_url = self.runtime.config.get('build_config', {}).get('ocp_build_data_repo_push_url')
         if not push_url:
             raise ValueError('build_config.ocp_build_data_repo_push_url is required to record assembly FBCs')
@@ -1010,7 +1014,8 @@ class PrepareReleaseLPPipeline:
                 f"Cannot match {len(fbc_pullspecs)} generated FBC pullspecs to {len(fbc_nvrs)} FBC NVRs. "
                 "Refusing to create shipment data."
             )
-        validate_layered_product_fbc_nvrs(self.assembly, fbc_nvrs)
+        if not self._auto_build_version:
+            validate_layered_product_fbc_nvrs(self.assembly, fbc_nvrs)
         await self._validate_fbc_pins(fbc_nvrs, bundle_nvrs, operand_nvrs)
 
         if fbc_pullspecs:
