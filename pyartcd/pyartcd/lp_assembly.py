@@ -182,7 +182,7 @@ def _backfill_image_pin_reasons(releases: dict) -> bool:
     changed = False
     for entry in releases.get('releases', {}).values():
         for member in entry.get('assembly', {}).get('members', {}).get('images', []):
-            if 'why' in member or member.get('exclude') is True:
+            if member.get('exclude') is True or any(key in member for key in ('why', 'why!', 'why?', 'why-')):
                 continue
             metadata = member.get('metadata', {})
             for pin_key in ('is', 'is!', 'is?'):

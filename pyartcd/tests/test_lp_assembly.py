@@ -125,9 +125,10 @@ def test_persistence_is_atomic_preserves_comments_and_is_idempotent(tmp_path, mo
     assert repo.commit_push.await_count == int(not existing_pr)
 
 
-def test_published_assembly_repairs_historical_image_pin_reasons(tmp_path, monkeypatch):
+@pytest.mark.parametrize('existing_why_key', ['why', 'why!', 'why?', 'why-'])
+def test_published_assembly_repairs_historical_image_pin_reasons(tmp_path, monkeypatch, existing_why_key):
     path = tmp_path / 'releases.yml'
-    history = """\
+    history = f"""\
 releases:
   1.5.7:
     assembly:
@@ -138,7 +139,7 @@ releases:
               is:
                 nvr: oadp-operator-container-1.5.7-1  # Original release pin
           - distgit_key: operand
-            why: Keep the previously shipped build
+            {existing_why_key}: Keep the previously shipped build
             metadata:
               is:
                 nvr: oadp-operand-container-1.5.7-1
@@ -161,7 +162,7 @@ releases:
     pins = saved['releases']['1.5.7']['assembly']['members']['images']
     assert pins[0]['why'] == 'Pin this image build for the assembly'
     assert pins[0]['metadata']['is']['nvr'] == 'oadp-operator-container-1.5.7-1'
-    assert pins[1]['why'] == 'Keep the previously shipped build'
+    assert pins[1] == expected['releases']['1.5.7']['assembly']['members']['images'][1]
     assert b'# Original release pin' in content
     branch = f'update-assembly-oadp-1.5-{ASSEMBLY}-{sha256(content).hexdigest()[:16]}'
     repo.create_branch.assert_awaited_once_with(branch, reset=True)
