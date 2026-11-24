@@ -15,6 +15,7 @@ from github import GithubException
 from pyartcd.git import GitRepository
 
 LOGGER = logging.getLogger(__name__)
+_IMAGE_PIN_WHY = 'Pin this image build for the assembly'
 _MERGE_TIMEOUT = 30 * 60
 _MERGE_POLL_INTERVAL = 30
 
@@ -32,7 +33,7 @@ def image_pin_members(pins: dict[str, str], parent: dict[str, str] | None = None
     return [
         {
             'distgit_key': key,
-            'why': 'Pin this image build for the assembly',
+            'why': _IMAGE_PIN_WHY,
             'metadata': {'is': {'nvr!' if parent is not None else 'nvr': nvr}},
         }
         for key, nvr in sorted(pins.items())
@@ -176,6 +177,23 @@ async def persist_direct_assembly(
     )
 
 
+def _backfill_image_pin_reasons(releases: dict) -> bool:
+    """Add missing reasons to explicit image pins in every assembly."""
+    changed = False
+    for entry in releases.get('releases', {}).values():
+        for member in entry.get('assembly', {}).get('members', {}).get('images', []):
+            if 'why' in member or member.get('exclude') is True:
+                continue
+            metadata = member.get('metadata', {})
+            for pin_key in ('is', 'is!', 'is?'):
+                pin = metadata.get(pin_key)
+                if isinstance(pin, dict) and any(pin.get(nvr_key) for nvr_key in ('nvr', 'nvr!', 'nvr?')):
+                    member['why'] = _IMAGE_PIN_WHY
+                    changed = True
+                    break
+    return changed
+
+
 async def merge_assembly_pr(
     repo: GitRepository,
     group: str,
@@ -191,7 +209,13 @@ async def merge_assembly_pr(
     The caller prepares releases.yml on the group branch and supplies the
     checks to repeat against the target branch before merging.
     """
-    content = (repo._directory / 'releases.yml').read_bytes()
+    path = repo._directory / 'releases.yml'
+    yaml = new_roundtrip_yaml_handler()
+    releases = yaml.load(path) or {}
+    # Presubmit validates historical assemblies in this file as well as the update.
+    if _backfill_image_pin_reasons(releases):
+        yaml.dump(releases, path)
+    content = path.read_bytes()
     # Reuse the branch and its CI results when retrying the same update.
     digest = sha256(content).hexdigest()[:16]
     branch = f'update-assembly-{group}-{assembly}-{digest}'
@@ -216,7 +240,6 @@ async def merge_assembly_pr(
             base=group,
         )
     LOGGER.info('Waiting for build-data PR to merge: %s', pr.html_url)
-    yaml = new_roundtrip_yaml_handler()
     loop = asyncio.get_running_loop()
     deadline = loop.time() + _MERGE_TIMEOUT
     while True:

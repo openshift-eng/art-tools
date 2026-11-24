@@ -2,6 +2,7 @@
 
 import asyncio
 from copy import deepcopy
+from hashlib import sha256
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -12,6 +13,8 @@ from github import GithubException
 from pyartcd.lp_assembly import direct_release_assembly, persist_direct_assembly
 from pyartcd.lp_fbc import update_assembly_fbcs
 from pyartcd.lp_shipment import update_shipment_mr_url
+from ruamel.yaml import YAML as RuamelYAML
+from validator.schema.releases_schema import validate
 
 YAML = new_roundtrip_yaml_handler()
 ASSEMBLY = '1.5.8'
@@ -120,6 +123,56 @@ def test_persistence_is_atomic_preserves_comments_and_is_idempotent(tmp_path, mo
         persist_direct_assembly(repo, 'oadp-1.5', ASSEMBLY, definition, saved, 'new-mr', repo_url=REPO_URL)
     )
     assert repo.commit_push.await_count == int(not existing_pr)
+
+
+def test_published_assembly_repairs_historical_image_pin_reasons(tmp_path, monkeypatch):
+    path = tmp_path / 'releases.yml'
+    history = """\
+releases:
+  1.5.7:
+    assembly:
+      members:
+        images:
+          - distgit_key: operator
+            metadata:
+              is:
+                nvr: oadp-operator-container-1.5.7-1  # Original release pin
+          - distgit_key: operand
+            why: Keep the previously shipped build
+            metadata:
+              is:
+                nvr: oadp-operand-container-1.5.7-1
+"""
+    path.write_text(history)
+    expected = YAML.load(path)
+    definition = direct_release_assembly(expected, ASSEMBLY, {'operator': PIN}, {})
+    mr_url = 'https://gitlab.example.com/art/shipments/-/merge_requests/42'
+
+    def publish(repo):
+        return asyncio.run(
+            persist_direct_assembly(repo, 'oadp-1.5', ASSEMBLY, definition, expected, mr_url, repo_url=REPO_URL)
+        )
+
+    repo, gh_repo, _ = mock_assembly_pr(path, monkeypatch)
+    assert publish(repo)
+    content = path.read_bytes()
+    saved = YAML.load(content)
+    assert validate(None, RuamelYAML(typ='safe').load(content)) is None
+    pins = saved['releases']['1.5.7']['assembly']['members']['images']
+    assert pins[0]['why'] == 'Pin this image build for the assembly'
+    assert pins[0]['metadata']['is']['nvr'] == 'oadp-operator-container-1.5.7-1'
+    assert pins[1]['why'] == 'Keep the previously shipped build'
+    assert b'# Original release pin' in content
+    branch = f'update-assembly-oadp-1.5-{ASSEMBLY}-{sha256(content).hexdigest()[:16]}'
+    repo.create_branch.assert_awaited_once_with(branch, reset=True)
+    assert gh_repo.create_pull.call_args.kwargs['head'] == f'openshift-eng:{branch}'
+
+    path.write_text(history)
+    repo, gh_repo, _ = mock_assembly_pr(path, monkeypatch, existing_pr=True)
+    assert publish(repo)
+    assert path.read_bytes() == content
+    repo.does_branch_exist_on_remote.assert_awaited_once_with(branch, remote='origin')
+    gh_repo.create_pull.assert_not_called()
 
 
 @pytest.mark.parametrize('write', ['shipment', 'fbcs'])
