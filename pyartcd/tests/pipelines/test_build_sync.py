@@ -3,6 +3,7 @@ import json
 from unittest import IsolatedAsyncioTestCase
 from unittest.mock import AsyncMock, MagicMock, call, patch
 
+from artcommonlib.model import Model
 from click.testing import CliRunner
 from pyartcd.pipelines.build_sync import BuildSyncPipeline, build_sync
 
@@ -48,16 +49,19 @@ class TestBuildSync(IsolatedAsyncioTestCase):
         pullspec = 'quay.io/openshift-release-dev/ocp-v4.0-art-dev@sha256:' + 'a' * 64
         execute.return_value = (0, json.dumps({'tag': {'from': {'name': pullspec}}}), '')
         tag = 'rhel-coreos-10'
+        pipeline.supported_arches = ['x86_64']
+        pipeline.group_runtime = MagicMock(group_config=Model({'rhcos': {'payload_tags': [{'name': tag}]}}))
 
-        await pipeline._tag_into_ci_imagestream('', tag)
+        await pipeline._update_ci_rhcos_tags()
 
         oc = 'oc --kubeconfig /path/to/kubeconfig'
-        execute.assert_has_awaits(
+        self.assertEqual(
+            execute.await_args_list,
             [
                 call(f'{oc} -n ocp get istag/{pipeline.is_base_name}:{tag} -o=json'),
                 call(f'{oc} -n ocp tag {pullspec} 5.0:{tag} --import-mode=PreserveOriginal'),
                 call(f'{oc} -n ocp-priv tag {pullspec} 5.0:{tag} --import-mode=PreserveOriginal'),
-            ]
+            ],
         )
 
     @patch('pyartcd.pipelines.build_sync.jenkins.init_jenkins')
@@ -85,7 +89,7 @@ class TestBuildSync(IsolatedAsyncioTestCase):
         )
         pipeline.comment_on_assembly_pr = AsyncMock()
         pipeline._backup_all_imagestreams = AsyncMock()
-        pipeline._populate_ci_imagestreams = AsyncMock()
+        pipeline._update_ci_rhcos_tags = AsyncMock()
 
         await pipeline._run_pipeline()
         await pipeline.handle_success()
@@ -106,7 +110,7 @@ class TestBuildSync(IsolatedAsyncioTestCase):
         self.assertIn('--apply-multi-arch', command)
         pipeline.comment_on_assembly_pr.assert_not_awaited()
         pipeline._backup_all_imagestreams.assert_not_awaited()
-        pipeline._populate_ci_imagestreams.assert_not_awaited()
+        pipeline._update_ci_rhcos_tags.assert_not_awaited()
         pipeline.slack_client.say.assert_not_called()
 
     @patch('pyartcd.pipelines.build_sync.GroupRuntime.create')
