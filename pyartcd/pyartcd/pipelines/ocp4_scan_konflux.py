@@ -5,7 +5,6 @@ import click
 import yaml
 from artcommonlib import exectools, redis
 from artcommonlib.telemetry import start_as_current_span_async
-from artcommonlib.util import run_safe
 from opentelemetry import trace
 from opentelemetry.trace import StatusCode
 
@@ -47,7 +46,6 @@ class Ocp4ScanPipeline:
         self._elliott_working = self.runtime.working_dir / "elliott_working"
         self.changes = {}
         self.report = {}
-        self.public_rebuild_images: list[str] = []
         self.issues = []
         self._scan_statuses = []
         self._summary_messages = []
@@ -108,8 +106,8 @@ class Ocp4ScanPipeline:
         await self.handle_bridge_bug_mirroring()
 
         # Handle image source changes
-        self.public_rebuild_images = await run_safe(self.get_due_public_rebuilds) or []
         self.handle_source_changes()
+        await self.handle_public_rebuilds()
 
         # Handle RHCOS changes or inconsistencies
         await self.handle_rhcos_changes()
@@ -269,7 +267,7 @@ class Ocp4ScanPipeline:
             span.set_status(StatusCode.ERROR, str(e)[:500])
 
     def handle_source_changes(self):
-        if not self.changes and not self.public_rebuild_images:
+        if not self.changes:
             return
 
         self.logger.info('Detected source changes')
@@ -295,7 +293,6 @@ class Ocp4ScanPipeline:
             for image in self.report.get('images', [])
             if image.get('changed') and not image.get('okd_only')
         ]
-        changed_ocp_images = list(dict.fromkeys([*changed_ocp_images, *self.public_rebuild_images]))
 
         if not changed_ocp_images and not changed_rpm:
             self.logger.info('No OCP images/RPMs to build')
@@ -321,19 +318,33 @@ class Ocp4ScanPipeline:
             rpm_list=changed_rpm,
         )
 
-    async def get_due_public_rebuilds(self) -> list[str]:
+    async def handle_public_rebuilds(self):
         request = self.report.get('public_rebuild')
         if self.command_failed or not request or not request['images']:
-            return []
-        if self.rebuild_before is not None:
-            self.logger.info('Public rebuild scheduling uses the default cutoff. The override applies to this scan.')
-            return []
-        if not self.runtime.dry_run and await redis.get_value(
-            util.public_rebuild_retry_key(self.version, self.assembly)
-        ):
-            self.logger.info('A public rebuild was recently attempted for %s', self.version)
-            return []
-        return request['images']
+            return
+        images = request['images']
+        if self.runtime.dry_run:
+            self.logger.info('Would queue public rebuild for %s', ', '.join(images))
+            return
+        if not jenkins.supports_ocp4_public_rebuild():
+            self.logger.warning('Public rebuild is due, but ocp4-konflux has no PUBLIC_REBUILD parameter yet')
+            return
+        if jenkins.is_ocp4_public_rebuild_queued(self.version, self.assembly):
+            self.logger.info('A public rebuild is already queued for %s', self.version)
+            return
+
+        # Keep retries scoped to public work, even when rebasing fails before a build record exists.
+        retry_key = f'public-rebuild:openshift-{self.version}:{self.assembly}'
+        if not await redis.call('set', retry_key, 'requested', nx=True, ex=request['retry_interval_seconds']):
+            self.logger.info('A public rebuild was recently requested for %s', self.version)
+            return
+        jenkins.start_ocp4_konflux(
+            build_version=self.version,
+            assembly=self.assembly,
+            image_list=images,
+            public_rebuild=True,
+            block_until_building=False,
+        )
 
     @start_as_current_span_async(TRACER, "ocp4-scan-konflux.handle-rhcos-changes")
     async def handle_rhcos_changes(self):

@@ -69,7 +69,6 @@ class ConfigScanSources:
         variant: str = 'ocp',
         skip_rpms: bool = False,
         rebuild_before: Optional[datetime] = None,
-        public_rebuilds_only: bool = False,
     ):
         if runtime.konflux_db is None:
             raise DoozerFatalError('Cannot run scan-sources without a valid Konflux DB connection')
@@ -91,7 +90,6 @@ class ConfigScanSources:
                 rebuild_before = rebuild_before.replace(tzinfo=timezone.utc)
             rebuild_before = rebuild_before.astimezone(timezone.utc)
         self.rebuild_before = rebuild_before
-        self.public_rebuilds_only = public_rebuilds_only
 
         # Ensure runtime.variant matches (should already be set by the command function)
         # This is kept for backward compatibility in case ConfigScanSources is instantiated directly
@@ -249,11 +247,6 @@ class ConfigScanSources:
         span.set_attribute("rebase_priv", self.rebase_priv)
         span.set_attribute("variant", str(self.variant))
 
-        if self.public_rebuilds_only:
-            await self.check_public_rebuilds(include_parents=True)
-            self.generate_report()
-            return
-
         # Try to rebase into openshift-priv to reduce upstream merge -> downstream build time
         if self.rebase_priv:
             if self.runtime.group.startswith("openshift-"):
@@ -292,7 +285,20 @@ class ConfigScanSources:
         for level in sorted(self.image_tree.keys()):
             await self.scan_images(self.image_tree[level])
 
-        await self.check_public_rebuilds()
+        if (
+            self.rebuild_before is not None
+            and self.variant == BuildVariant.OCP
+            and self.runtime.group.startswith('openshift-')
+            and self.runtime.assembly == 'stream'
+        ):
+            await asyncio.gather(
+                *(
+                    self.check_public_build_cutoff(meta)
+                    for meta in self.all_image_metas
+                    if self._is_image_enabled(meta) and meta.is_payload and meta.for_release
+                )
+            )
+            self.public_rebuild_images = await self.plan_public_rebuilds()
 
         # Check RHCOS status if the kubeconfig is provided and group is openshift-*
         if self.ci_kubeconfig and self.runtime.group.startswith("openshift-") and self.variant != BuildVariant.OKD:
@@ -799,32 +805,13 @@ class ConfigScanSources:
             {'name': name, 'latest_nvr': latest.nvr, 'public_nvr': public_nvr, 'reason': reason}
         )
 
-    async def check_public_rebuilds(self, include_parents: bool = False):
-        if (
-            self.rebuild_before is None
-            or self.variant != BuildVariant.OCP
-            or not self.runtime.group.startswith('openshift-')
-            or self.runtime.assembly != 'stream'
-        ):
-            return
-        await asyncio.gather(
-            *(
-                self.check_public_build_cutoff(meta)
-                for meta in self.all_image_metas
-                if self._is_image_enabled(meta) and meta.is_payload and meta.for_release
-            )
-        )
-        self.public_rebuild_images = await self.plan_public_rebuilds(include_parents)
-
-    async def plan_public_rebuilds(self, include_parents: bool) -> list[str]:
+    async def plan_public_rebuilds(self) -> list[str]:
         """Include missing public member builds in the same dependency-ordered job."""
         selected = {
             name
             for finding in self.public_build_cutoff
             if (name := finding['name']) and not self.runtime.image_map[name].config['is']
         }
-        if not include_parents:
-            return sorted(selected)
         pending = [self.runtime.image_map[name] for name in selected]
         visited = set(selected)
         while pending:
@@ -2487,18 +2474,10 @@ class ConfigScanSources:
 @click.option(
     '--skip-rpms', default=False, is_flag=True, help='Skip RPM checks and only scan images (useful for local testing)'
 )
-@click.option('--public-rebuilds-only', is_flag=True, help='Plan public image rebuilds and their missing parents.')
 @click_coroutine
 @pass_runtime
 async def config_scan_source_changes_konflux(
-    runtime: Runtime,
-    ci_kubeconfig,
-    as_yaml,
-    rebase_priv,
-    dry_run,
-    skip_rpms,
-    rebuild_before,
-    public_rebuilds_only=False,
+    runtime: Runtime, ci_kubeconfig, as_yaml, rebase_priv, dry_run, skip_rpms, rebuild_before
 ):
     """
     Determine if any rpms / images need to be rebuilt.
@@ -2528,7 +2507,7 @@ async def config_scan_source_changes_konflux(
     # runtime.variant is already set by the global --variant option (defaults to BuildVariant.OCP)
     # OKD configuration is automatically merged in get_group_config() when variant=okd
     # Determine mode: skip RPMs if --skip-rpms flag is set, OKD variant, or if variant is not OCP
-    if skip_rpms or public_rebuilds_only or runtime.variant == BuildVariant.OKD:
+    if skip_rpms or runtime.variant == BuildVariant.OKD:
         mode = 'images'
     else:
         mode = 'both'
@@ -2542,8 +2521,7 @@ async def config_scan_source_changes_konflux(
             rebase_priv=rebase_priv,
             dry_run=dry_run,
             variant=runtime.variant.value,
-            skip_rpms=skip_rpms or public_rebuilds_only,
+            skip_rpms=skip_rpms,
             session=session,
             rebuild_before=rebuild_before,
-            public_rebuilds_only=public_rebuilds_only,
         ).run()

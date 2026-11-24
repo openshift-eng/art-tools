@@ -410,10 +410,6 @@ async def branch_arches(
         raise ValueError(f'Invalid build system: {build_system}')
 
 
-def public_rebuild_retry_key(version: str, assembly: str) -> str:
-    return f'public-rebuild:openshift-{version}:{assembly}'
-
-
 def get_changes(yaml_data: dict) -> dict:
     """
     Scans data outputted by config:scan-sources yaml and records changed
