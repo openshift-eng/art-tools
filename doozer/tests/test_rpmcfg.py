@@ -68,6 +68,90 @@ targets:
         self.assertEqual(metadata.public_upstream_branch, source_resolution.public_upstream_branch)
         is_public.assert_called_once_with(source_commit, "release-4.7", source_resolution.source_path)
 
+    def test_clone_source_rejects_unchecked_fork_and_detached_source(self):
+        for branch, pull_url, error in (
+            ("release-4.7", "https://github.com/test/fork", "built from a fork"),
+            ("HEAD", None, "without a configured public_branch"),
+        ):
+            with self.subTest(branch=branch, pull_url=pull_url):
+                runtime = mock.MagicMock(build_system="konflux", assembly_basis_event=None)
+                runtime.group_config.public_upstreams = [
+                    {"private": "https://github.com/openshift-priv", "public": "https://github.com/openshift"}
+                ]
+                data_obj = mock.MagicMock(
+                    key="foo",
+                    filename="foo.yml",
+                    path="/path/to/ocp-build-data/rpms/foo.yml",
+                    data=yaml.safe_load(self.FOO_RPM_CONFIG),
+                )
+                metadata = RPMMetadata(runtime, data_obj, clone_source=False)
+                runtime.source_resolver.resolve_source.return_value = SourceResolution(
+                    source_path="/path/to/sources/foo",
+                    url="git@github.com:openshift-priv/foo.git",
+                    branch=branch,
+                    https_url="https://github.com/openshift-priv/foo",
+                    commit_hash="a" * 40,
+                    committer_date=datetime.fromtimestamp(0, timezone.utc),
+                    latest_tag="v4.7.0",
+                    has_public_upstream=branch != "HEAD",
+                    public_upstream_url="https://github.com/openshift/foo",
+                    public_upstream_branch=branch,
+                    pull_url=pull_url,
+                )
+
+                with (
+                    mock.patch("doozerlib.rpmcfg.Dir"),
+                    mock.patch("doozerlib.rpmcfg.exectools.cmd_assert", return_value=("a" * 40, "")),
+                    mock.patch("doozerlib.rpmcfg.util.is_commit_in_public_upstream") as is_public,
+                    self.assertRaisesRegex(DoozerFatalError, error),
+                ):
+                    metadata.clone_source()
+                is_public.assert_not_called()
+
+    def test_clone_source_checks_configured_public_branch_for_detached_source(self):
+        runtime = mock.MagicMock(build_system="konflux", assembly_basis_event=None)
+        runtime.group_config.public_upstreams = [
+            {
+                "private": "https://github.com/openshift-priv",
+                "public": "https://github.com/openshift",
+                "public_branch": "release-4.7",
+            }
+        ]
+        data_obj = mock.MagicMock(
+            key="foo",
+            filename="foo.yml",
+            path="/path/to/ocp-build-data/rpms/foo.yml",
+            data=yaml.safe_load(self.FOO_RPM_CONFIG),
+        )
+        metadata = RPMMetadata(runtime, data_obj, clone_source=False)
+        source_commit = "a" * 40
+        runtime.source_resolver.resolve_source.return_value = SourceResolution(
+            source_path="/path/to/sources/foo",
+            url="git@github.com:openshift-priv/foo.git",
+            branch="HEAD",
+            https_url="https://github.com/openshift-priv/foo",
+            commit_hash=source_commit,
+            committer_date=datetime.fromtimestamp(0, timezone.utc),
+            latest_tag="v4.7.0",
+            has_public_upstream=False,
+            public_upstream_url="https://github.com/openshift-priv/foo",
+            public_upstream_branch="HEAD",
+        )
+
+        with (
+            mock.patch("doozerlib.rpmcfg.Dir"),
+            mock.patch("doozerlib.rpmcfg.exectools.cmd_assert", return_value=(source_commit, "")),
+            mock.patch("doozerlib.rpmcfg.os.path.isfile", return_value=True),
+            mock.patch.object(metadata, "extract_kube_env_vars", return_value={}),
+            mock.patch("doozerlib.rpmcfg.util.is_commit_in_public_upstream", return_value=False) as is_public,
+        ):
+            metadata.clone_source()
+
+        self.assertTrue(metadata.private_fix)
+        self.assertEqual(metadata.public_upstream_url, "https://github.com/openshift/foo")
+        self.assertEqual(metadata.public_upstream_branch, "release-4.7")
+        is_public.assert_called_once_with(source_commit, "release-4.7", "/path/to/sources/foo")
+
     @mock.patch("artcommonlib.logutil.EntityLoggingAdapter")
     @mock.patch("doozerlib.rpmcfg.Dir")
     def test_assert_golang_versions(self, *_):

@@ -62,12 +62,30 @@ class RPMMetadata(Metadata):
 
             # Determine if the source contains private fixes by checking if the private org branch commit exists in the public org
             if self.private_fix is None:
+                if source_resolution.is_fork_build:
+                    raise DoozerFatalError(
+                        "Cannot determine embargo status for an RPM built from a fork; use --embargoed to mark it private."
+                    )
+                if source_resolution.branch == 'HEAD':
+                    public_url, public_branch, has_public_upstream = SourceResolver.get_public_upstream(
+                        source_resolution.url, self.runtime.group_config.public_upstreams
+                    )
+                    if has_public_upstream and not public_branch:
+                        raise DoozerFatalError(
+                            "Cannot determine embargo status for a detached RPM source without a configured public_branch; "
+                            "use --embargoed to mark it private."
+                        )
+                    if has_public_upstream:
+                        self.public_upstream_url = public_url
+                        self.public_upstream_branch = public_branch
+                else:
+                    has_public_upstream = source_resolution.has_public_upstream
+
                 self.private_fix = (
-                    source_resolution.has_public_upstream
-                    and not source_resolution.is_fork_build
-                    and not SourceResolver.is_branch_commit_hash(source_resolution.public_upstream_branch)
+                    has_public_upstream
+                    and not SourceResolver.is_branch_commit_hash(self.public_upstream_branch)
                     and not util.is_commit_in_public_upstream(
-                        source_full_sha, source_resolution.public_upstream_branch, self.source_path
+                        source_full_sha, self.public_upstream_branch, self.source_path
                     )
                 )
 
