@@ -1,12 +1,21 @@
 """Generate and persist assemblies for direct layered-product releases."""
 
+import asyncio
+import logging
 from copy import deepcopy
+from hashlib import sha256
 
 from artcommonlib.assembly import assembly_image_pins
+from artcommonlib.github_auth import get_github_client_for_org
 from artcommonlib.model import Model
-from artcommonlib.util import new_roundtrip_yaml_handler
+from artcommonlib.util import new_roundtrip_yaml_handler, split_git_url
+from github import GithubException
 
 from pyartcd.git import GitRepository
+
+LOGGER = logging.getLogger(__name__)
+_MERGE_TIMEOUT = 30 * 60
+_MERGE_POLL_INTERVAL = 30
 
 
 def image_pin_members(pins: dict[str, str], parent: dict[str, str] | None = None) -> list[dict]:
@@ -110,9 +119,9 @@ def _release_inputs(releases: dict, assembly: str) -> tuple:
 
 
 async def persist_direct_assembly(
-    repo: GitRepository, group: str, assembly: str, definition: dict, expected: dict, mr_url: str
+    repo: GitRepository, group: str, assembly: str, definition: dict, expected: dict, mr_url: str, *, repo_url: str
 ) -> bool:
-    """Publish assembly content and pointer together without overwriting competing inputs.
+    """Merge assembly content and pointer together through a build-data PR.
 
     Args:
         repo: Build-data push checkout.
@@ -121,9 +130,10 @@ async def persist_direct_assembly(
         definition: Desired complete assembly definition.
         expected: Releases mapping read before preparing shipment content.
         mr_url: Authoritative shipment MR for the generated content.
+        repo_url: GitHub URL of the build-data push repository.
 
     Returns:
-        Whether a commit was pushed; identical reruns are successful no-ops.
+        Whether a PR merged; identical reruns are successful no-ops.
 
     Raises:
         RuntimeError: If release inputs or the pointer changed concurrently.
@@ -149,4 +159,59 @@ async def persist_direct_assembly(
         return False
     entry['assembly'] = desired
     yaml.dump(current, path)
-    return await repo.commit_push(f'Update assembly {assembly} and shipment MR', safe=True)
+    content = path.read_bytes()
+    # Reuse the branch and its CI results when retrying the same update.
+    digest = sha256(content).hexdigest()[:16]
+    branch = f'update-assembly-{group}-{assembly}-{digest}'
+    title = f'Update assembly {assembly} and shipment MR'
+    _, owner, name = split_git_url(repo_url)
+    gh_repo = get_github_client_for_org(owner).get_repo(f'{owner}/{name}')
+    head = f'{owner}:{branch}'
+
+    if not await repo.does_branch_exist_on_remote(branch, remote='origin'):
+        await repo.create_branch(branch)
+        await repo.commit_push(title, safe=True)
+    head_sha = gh_repo.get_branch(branch).commit.sha
+    if gh_repo.get_contents('releases.yml', ref=head_sha).decoded_content != content:
+        raise RuntimeError(f'Build-data PR branch {branch} changed concurrently')
+
+    pr = next(iter(gh_repo.get_pulls(state='open', head=head, base=group)), None)
+    if pr is None:
+        pr = gh_repo.create_pull(
+            title=title,
+            body=f'Update `releases.yml` for {group} assembly {assembly}.\n\nShipment MR: {mr_url}',
+            head=head,
+            base=group,
+        )
+    LOGGER.info('Waiting for build-data PR to merge: %s', pr.html_url)
+    loop = asyncio.get_running_loop()
+    deadline = loop.time() + _MERGE_TIMEOUT
+    while True:
+        pr = gh_repo.get_pull(pr.number)
+        if pr.head.sha != head_sha or pr.base.ref != group:
+            raise RuntimeError(f'Build-data PR head or target branch changed concurrently: {pr.html_url}')
+        if pr.merged:
+            break
+        if pr.state == 'closed':
+            raise RuntimeError(f'Build-data PR was closed without merging: {pr.html_url}')
+
+        latest = yaml.load(gh_repo.get_contents('releases.yml', ref=group).decoded_content) or {}
+        if _release_inputs(latest, assembly) != _release_inputs(expected, assembly):
+            raise RuntimeError(f'Assembly {assembly} changed concurrently; rerun release preparation: {pr.html_url}')
+
+        try:
+            result = pr.merge(sha=head_sha)
+            if result.merged:
+                break
+            blocked_by = result.message
+        except GithubException as exc:
+            if exc.status != 405:
+                raise
+            blocked_by = str(exc)
+        remaining = deadline - loop.time()
+        if remaining <= 0:
+            raise TimeoutError(f'Timed out merging build-data PR {pr.html_url}: {blocked_by}')
+        LOGGER.info('Build-data PR %s cannot merge yet: %s', pr.html_url, blocked_by)
+        await asyncio.sleep(min(_MERGE_POLL_INTERVAL, remaining))
+    LOGGER.info('Merged build-data PR: %s', pr.html_url)
+    return True

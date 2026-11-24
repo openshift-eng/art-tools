@@ -347,6 +347,7 @@ class ReleaseFromFbcPipeline:
             self._assembly_definition,
             self._releases_config,
             mr_url,
+            repo_url=push_url,
         )
 
     async def _prepare_assembly(self, image_nvrs: List[str], fbc_snapshots: dict) -> List[str]:
