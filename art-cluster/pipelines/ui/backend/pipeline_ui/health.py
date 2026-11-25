@@ -192,7 +192,11 @@ def build_health(runs: list[dict], incomplete_namespaces: set[str] | None = None
         while pending:
             original = pending.pop()
             related = [item for item in family(original) if before is None or (item["created"] or "") < before]
-            effective = dict(related[0])
+            effective = related[0]
+            if effective["pipeline"] == PIPELINES[0] and effective["status"] == "Succeeded" and not effective["dryRun"]:
+                # Scan-only retries leave downstream work attached to the scan that triggered it.
+                effective = next((scan for scan in related if children[scan["uid"]] or issues[scan["uid"]]), effective)
+            effective = dict(effective)
             if before and (not effective["completed"] or effective["completed"] >= before):
                 effective.update(status="Running", completed=None)
             if effective["uid"] in visited:
