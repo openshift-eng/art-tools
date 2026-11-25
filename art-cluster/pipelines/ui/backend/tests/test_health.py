@@ -261,10 +261,26 @@ class HealthTests(unittest.TestCase):
         self.assertEqual(chain["root"]["name"], "scan")
         self.assertEqual(
             [[item["name"] for item in stage["runs"]] for stage in chain["stages"]],
-            [["scan"], ["images"], ["bundle"], ["fbc-419", "fbc-retry"]],
+            [["scan-retry"], ["images"], ["bundle"], ["fbc-419", "fbc-retry"]],
         )
         self.assertIn("uid-scan-retry", {item["uid"] for item in chain["attempts"]})
         self.assertIn("uid-fbc-420", {item["uid"] for item in chain["attempts"] if item["status"] == "Failed"})
+
+    def test_successful_scan_retry_replaces_failed_scan_result_and_keeps_its_build(self):
+        runs = complete_chain()
+        original_scan = runs[0]
+        original_scan.update(status="Failed", triggered=["images"])
+        scan_retry = run("scan-retry", PIPELINES[0], rebuiltFrom=original_scan["uid"], created="2026-10-08T11:00:00Z")
+
+        result = build_health(runs + [scan_retry])[0]
+        chain = result["currentChain"]
+        self.assertEqual(result["health"], "Succeeded")
+        self.assertEqual(chain["root"], original_scan)
+        self.assertEqual(chain["stages"][0]["runs"], [scan_retry])
+        self.assertEqual(chain["stages"][1]["runs"], [runs[1]])
+        self.assertEqual(chain["completed"], scan_retry["completed"])
+        self.assertEqual(chain["failures"], [])
+        self.assertIn(original_scan, chain["attempts"])
 
     def test_rebuilt_scan_with_a_new_build_follows_the_new_build(self):
         runs = complete_chain()
