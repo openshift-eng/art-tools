@@ -2,6 +2,7 @@ import asyncio
 import os
 import re
 import stat
+from dataclasses import replace
 from datetime import datetime, timezone
 from pathlib import Path
 from tempfile import TemporaryDirectory
@@ -1887,26 +1888,31 @@ class TestPrivateFixDetection(IsolatedAsyncioTestCase):
 
         # This means we fall back to Dockerfile extraction (the else block)
 
-    async def test_dockerfile_extraction_fallback_when_fork_build(self):
-        """Test: is_fork_build=True -> falls back to Dockerfile extraction.
-
-        When building from a fork (pull_url != url), we skip the git check
-        and fall back to Dockerfile extraction.
-        """
+    async def test_marks_a_fork_private_without_trusting_dockerfile(self):
+        rebaser = self._make_rebaser()
         source = self._make_source_resolution(
-            url="git@github.com:openshift-priv/router.git",
-            pull_url="git@github.com:myuser/router-fork.git",  # Different URL = fork build
-            has_public_upstream=True,
+            url='git@github.com:openshift-priv/router.git',
+            pull_url='git@github.com:developer/router-fork.git',
         )
+        with patch.object(util, 'is_commit_in_public_upstream_async', new_callable=AsyncMock) as public_check:
+            self.assertIs(await rebaser._source_contains_private_fixes(source, self.base_dir), True)
+        public_check.assert_not_awaited()
 
-        # Verify is_fork_build is True (should skip the check)
-        self.assertTrue(source.is_fork_build)
-
-        source_dir = Path("/tmp/source")
-
-        # The condition should NOT enter the is_commit_in_public_upstream check
-        should_enter_git_check = source and source_dir and not source.is_fork_build
-        self.assertFalse(should_enter_git_check)
+    async def test_marks_detached_private_source_private_without_public_branch(self):
+        rebaser = self._make_rebaser()
+        rebaser._runtime.group_config = Model(
+            {
+                'public_upstreams': [
+                    {'private': 'https://github.com/openshift-priv', 'public': 'https://github.com/openshift'},
+                ],
+            }
+        )
+        source = self._make_source_resolution(
+            url='git@github.com:openshift-priv/router.git',
+            has_public_upstream=False,
+        )
+        source = replace(source, branch='HEAD')
+        self.assertIs(await rebaser._source_contains_private_fixes(source, self.base_dir), True)
 
     async def test_no_private_fix_when_no_public_upstream(self):
         """Test: has_public_upstream=False -> private_fix=False.
@@ -2181,52 +2187,6 @@ class TestPrivateFixDetectionE2E(IsolatedAsyncioTestCase):
 
             # Verify is_commit_in_public_upstream_async was actually called (the check ran)
             util.is_commit_in_public_upstream_async.assert_called_once()
-        finally:
-            util.is_commit_in_public_upstream_async = original_func
-
-    async def test_e2e_fork_build_skips_embargo_check(self):
-        """E2E: Fork builds (pull_url != url) should skip embargo check.
-
-        Scenario:
-        - Developer tests a fork: url=openshift-priv, pull_url=myuser/router-fork
-        - This is a test build from a personal fork
-        - Expected: Skip embargo check, fall back to Dockerfile extraction
-        """
-        source = self._create_source_resolution(
-            commit_hash=self.PRIVATE_COMMIT,
-            url="git@github.com:openshift-priv/router.git",
-            pull_url="git@github.com:developer/router-fork.git",  # Fork build!
-        )
-
-        # Verify: is_fork_build should be True
-        self.assertTrue(source.is_fork_build, "Fork build (different pull_url) should set is_fork_build=True")
-
-        # The embargo check should NOT run for fork builds
-        original_func = util.is_commit_in_public_upstream_async
-        mock_func = AsyncMock(return_value=False)
-        util.is_commit_in_public_upstream_async = mock_func
-
-        try:
-            private_fix = None
-
-            # The condition should NOT enter the git check block
-            if source and self.source_dir and not source.is_fork_build:
-                # This block should NOT execute for fork builds
-                is_commit_in_public = await util.is_commit_in_public_upstream_async(
-                    source.commit_hash, source.public_upstream_branch, self.source_dir
-                )
-                if (
-                    source.has_public_upstream
-                    and not SourceResolver.is_branch_commit_hash(source.public_upstream_branch)
-                    and not is_commit_in_public
-                ):
-                    private_fix = True
-
-            # Verify: embargo check was NOT called (fork builds skip it)
-            mock_func.assert_not_called()
-
-            # private_fix remains None (would be determined from Dockerfile extraction in real code)
-            self.assertIsNone(private_fix, "Fork builds should skip embargo check (falls back to Dockerfile)")
         finally:
             util.is_commit_in_public_upstream_async = original_func
 
