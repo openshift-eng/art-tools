@@ -763,11 +763,11 @@ class TestBundleStageReleaseRelatedImagesCli(unittest.IsolatedAsyncioTestCase):
         runtime.group_config = Model(gc_data)
         return runtime
 
-    def _make_cli(self, runtime, operator_nvrs=("some-operator-nvr",)):
+    def _make_cli(self, runtime, operator_nvrs=("some-operator-nvr",), *, stage_release_plan=None):
         return BundleStageReleaseRelatedImagesCli(
             runtime=runtime,
             operator_nvrs=operator_nvrs,
-            stage_release_plan=None,
+            stage_release_plan=stage_release_plan,
             konflux_kubeconfig="/path/to/kubeconfig",
             konflux_context=None,
             konflux_namespace="test-namespace",
@@ -924,6 +924,32 @@ class TestBundleStageReleaseRelatedImagesCli(unittest.IsolatedAsyncioTestCase):
         )
         self.assertEqual(release["metadata"]["annotations"]["art.redhat.com/operator-nvr"], "operator-a-1-1")
         client.wait_for_release.assert_awaited_once_with("release-xyz")
+
+    @mock.patch("doozerlib.cli.images_konflux.load_csv_from_bundle")
+    @mock.patch("doozerlib.cli.images_konflux.get_referenced_images")
+    @mock.patch("doozerlib.cli.images_konflux.KonfluxClient")
+    @mock.patch("doozerlib.cli.images_konflux.KonfluxDb")
+    @mock.patch("doozerlib.cli.images_konflux.resolve_konflux_fbc_stage_release_plan")
+    async def test_run_uses_configured_tags_with_release_plan_override(
+        self, mock_resolve, mock_db_class, mock_client_cls, mock_get_refs, mock_load_csv
+    ):
+        client = self._mock_konflux_client({"type": "Released", "status": "True", "reason": "Succeeded"})
+        mock_client_cls.from_kubeconfig.return_value = client
+        runtime = self._make_runtime(product="rhacm2", version_str="2.16.0", major=4, minor=21)
+        [operator] = self._prepare_run(runtime, ["operator-a"])
+        mock_get_refs.return_value = [self._ref("operator-a-component")]
+
+        async def bundle_builds(**kwargs):
+            yield self._ref("bundle-comp")
+
+        cli = self._make_cli(runtime, operator_nvrs=(operator.nvr,), stage_release_plan="custom-stage")
+        cli._db_for_bundles.search_builds_by_fields = bundle_builds
+        await cli.run()
+
+        mock_resolve.assert_not_called()
+        mock_load_csv.assert_not_awaited()
+        release = client._create.call_args_list[1].args[0]
+        self.assertEqual(release["spec"], {"releasePlan": "custom-stage", "snapshot": "snapshot-xyz"})
 
     @mock.patch("doozerlib.cli.images_konflux.KonfluxDb")
     async def test_stage_release_raises_when_release_fails(self, mock_db_class):

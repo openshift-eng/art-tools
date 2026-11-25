@@ -1352,7 +1352,8 @@ class BundleStageReleaseRelatedImagesCli:
             raise DoozerFatalError(f"Bundle build not found for operator {operator_name} ({record.nvr})")
 
         release_data = None
-        if not self.dry_run and not runtime.group.startswith("openshift-"):
+        # An override plan may intentionally exclude the operator from its mapping.
+        if not self.dry_run and not self.stage_release_plan and not runtime.group.startswith("openshift-"):
             try:
                 csv = await load_csv_from_bundle(bundle_build, "manifests/")
                 version = VersionInfo.parse(csv["spec"]["version"])
@@ -1560,7 +1561,7 @@ class BundleStageReleaseRelatedImagesCli:
     "--stage-release-plan",
     metavar="NAME",
     default=None,
-    help="Override the auto-resolved Konflux ReleasePlan name.",
+    help="Override the auto-resolved Konflux ReleasePlan and use its configured tags.",
 )
 @click.option(
     '--dry-run', default=False, is_flag=True, help='Do not create Snapshots/Releases, only print what would be done.'
