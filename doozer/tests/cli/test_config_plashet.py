@@ -1,10 +1,11 @@
+import logging
 import unittest
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 from artcommonlib.rpm_utils import parse_nvr
-from doozerlib.cli.config_plashet import are_signed, compare_nvr_openshift_aware
+from doozerlib.cli.config_plashet import are_signed, compare_nvr_openshift_aware, from_tags
 
 
 class TestCompareNvrOpenshiftAware(unittest.TestCase):
@@ -575,3 +576,90 @@ class TestAreSigned(unittest.TestCase):
 
 if __name__ == '__main__':
     unittest.main()
+
+
+class TestPublicPlashetEmbargo(unittest.TestCase):
+    @staticmethod
+    def build(build_id, release, epoch=None):
+        return {
+            'id': build_id,
+            'name': 'openshift',
+            'package_name': 'openshift',
+            'nvr': f'openshift-4.22.0-{release}',
+            'release': release,
+            'epoch': epoch,
+        }
+
+    def select_builds(self, candidates, released, *, include_previous=False, embargoed=()):
+        config = SimpleNamespace(runtime=MagicMock(), include_package=(), exclude_package=())
+        config.runtime.group = 'openshift-4.22'
+        config.runtime.get_major_minor_fields.return_value = (4, 22)
+        config.runtime.assembly = 'stream'
+        config.runtime.assembly_basis_event = None
+        config.runtime.build_system = 'brew'
+        koji = config.runtime.build_retrying_koji_client.return_value
+        candidate_tag = 'rhaos-4.22-rhel-9-candidate'
+        release_tag = 'rhaos-4.22-rhel-9'
+        embargo_tag = 'rhaos-4.22-rhel-9-embargoed'
+
+        def list_tagged(tag, **kwargs):
+            if tag == release_tag:
+                return released[:1] if kwargs['latest'] else released
+            if tag == embargo_tag:
+                return embargoed
+            self.assertEqual(tag, candidate_tag)
+            return candidates
+
+        koji.listTagged.side_effect = list_tagged
+        module = 'doozerlib.cli.config_plashet'
+        with (
+            patch(f'{module}.logger', logging.getLogger(__name__)),
+            patch(f'{module}.PlashetBuilder') as builder,
+            patch(f'{module}.signed_desired', return_value=False),
+            patch(f'{module}.assemble_repo') as assemble,
+        ):
+            builder.return_value.from_tag.return_value = {'openshift': candidates[0]}
+            builder.return_value.from_pinned_by_is.return_value = {}
+            builder.return_value.from_group_deps.return_value = {}
+            from_tags.callback.__wrapped__(
+                config,
+                brew_tag=((candidate_tag, 'OSE-4.22-RHEL-9'),),
+                embargoed_brew_tag=(embargo_tag,),
+                embargoed_nvr=(),
+                signing_advisory_id=None,
+                signing_advisory_mode='clean',
+                poll_for=0,
+                include_previous_for=(),
+                include_previous=include_previous,
+                include_embargoed=False,
+                inherit=True,
+            )
+        return assemble.call_args.args[1]
+
+    def test_recognizes_both_private_suffixes_in_brew_mode(self):
+        public = self.build(1, '1.p2.assembly.stream.el9')
+        for suffix in ('p1', 'p3'):
+            with self.subTest(suffix=suffix):
+                private = self.build(2, f'2.{suffix}.assembly.stream.el9')
+                self.assertEqual(self.select_builds([private, public], []), {public['nvr']})
+
+    def test_newer_shipped_build_does_not_clear_previous_embargo(self):
+        public = self.build(3, '3.p2.assembly.stream.el9')
+        private = self.build(2, '2.p3.assembly.stream.el9')
+        self.assertEqual(
+            self.select_builds([public, private], [public], include_previous=True),
+            {public['nvr']},
+        )
+
+    def test_exact_shipped_build_can_be_included_as_previous(self):
+        public = self.build(3, '3.p2.assembly.stream.el9')
+        shipped = self.build(2, '2.p3.assembly.stream.el9')
+        self.assertEqual(
+            self.select_builds([public, shipped], [public, shipped], include_previous=True),
+            {public['nvr'], shipped['nvr']},
+        )
+
+    def test_embargo_tag_applies_to_build_with_an_epoch(self):
+        public = self.build(1, '1.p2.assembly.stream.el9')
+        private = self.build(2, '2.p2.assembly.stream.el9', epoch=1)
+        self.assertEqual(self.select_builds([private, public], [], embargoed=[private]), {public['nvr']})
