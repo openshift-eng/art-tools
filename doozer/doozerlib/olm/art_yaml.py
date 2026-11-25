@@ -1,6 +1,6 @@
 from collections.abc import Sequence
 
-import yaml
+from ruamel.yaml import YAML
 
 
 def render_art_yaml(template: str, version: str, release: str, overrides: Sequence[dict]) -> dict:
@@ -25,13 +25,14 @@ def render_art_yaml(template: str, version: str, release: str, overrides: Sequen
         scope = search_overrides if override.get('search_only', False) else variables
         scope[override['name']] = override['value']
 
-    rendered = yaml.full_load(template.format_map(variables))
+    yaml = YAML(typ='safe')
+    rendered = yaml.load(template.format_map(variables))
     if not search_overrides or not isinstance(rendered, dict) or not isinstance(rendered.get('updates'), list):
         return rendered
 
     # Keep the normal render for filenames and replacements, including unquoted
     # placeholders. Read only the search strings from the original YAML.
-    original = yaml.full_load(template)
+    original = yaml.load(template)
     search_variables = variables | search_overrides
 
     # Copy rules and update blocks that YAML aliases may share with other sections.
