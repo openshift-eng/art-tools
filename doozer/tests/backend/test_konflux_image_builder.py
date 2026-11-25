@@ -5,6 +5,7 @@ from pathlib import Path
 from threading import Event
 from unittest.mock import AsyncMock, MagicMock, create_autospec, patch
 
+import koji
 from artcommonlib.conforma import resolve_stage_policy
 from artcommonlib.constants import RHCOS_IMAGE_REPO
 from artcommonlib.konflux.konflux_build_record import (
@@ -630,13 +631,16 @@ class TestKonfluxImageBuilder(unittest.IsolatedAsyncioTestCase):
         build_record = metadata.runtime.konflux_db.add_build.call_args[0][0]
         self.assertEqual(build_record.build_variant, BuildVariant.OKD)
 
-    async def test_update_konflux_db_success_sets_pullspec_and_extracts_packages(self):
-        """SUCCESS path records the digest pullspec/tag and performs RPM/package extraction."""
+    async def test_update_konflux_db_success_records_packages_after_brew_retry(self):
         metadata = self._metadata()
         build_repo = MagicMock()
         build_repo.https_url = "https://example.com/repo.git"
         build_repo.commit_hash = "test-commit-hash"
         build_repo.local_dir = Path(self.temp_dir.name)
+        session = koji.ClientSession(
+            "https://brew.example.com", sinfo={"session-id": "1", "session-key": "test", "header-auth": True}
+        )
+        metadata.runtime.shared_koji_client_session.return_value.__enter__.return_value = session
 
         pipelinerun = PipelineRunInfo(
             {
@@ -665,7 +669,12 @@ class TestKonfluxImageBuilder(unittest.IsolatedAsyncioTestCase):
                 "get_installed_packages",
                 new=AsyncMock(return_value=({"pkg-1.0-1"}, {"srcpkg-1.0-1"})),
             ) as mock_get_installed_packages,
-            patch.object(self.builder, "_resolve_source_package_nvrs", return_value={"srcpkg-1.0-1"}),
+            patch.object(
+                session,
+                "_sendCall",
+                side_effect=[koji.Fault(koji.RetryError.faultCode, "unable to retry call"), [[{"name": "srcpkg"}]]],
+            ) as mock_send_call,
+            patch.object(self.builder._resolve_source_package_nvrs.retry, "sleep") as mock_sleep,
             patch("doozerlib.backend.konflux_image_builder.bigquery.BigQueryClient") as mock_bigquery_client,
         ):
             mock_dockerfile = MagicMock()
@@ -691,6 +700,11 @@ class TestKonfluxImageBuilder(unittest.IsolatedAsyncioTestCase):
             )
 
         mock_get_installed_packages.assert_awaited_once_with("quay.io/test/image@sha256:testdigest", ["x86_64"], None)
+        mock_sleep.assert_called_once_with(5)
+        self.assertEqual(
+            [dict(request.args[1])["Koji-Session-Callnum"] for request in mock_send_call.call_args_list], ["0", "1"]
+        )
+        metadata.runtime.konflux_db.add_build.assert_called_once()
         build_record = metadata.runtime.konflux_db.add_build.call_args[0][0]
         self.assertEqual(build_record.image_pullspec, "quay.io/test/image@sha256:testdigest")
         self.assertEqual(build_record.image_tag, "test-tag")
@@ -3002,6 +3016,22 @@ class TestResolveSourcePackageNvrs(unittest.TestCase):
         runtime = MagicMock()
         result = KonfluxImageBuilder._resolve_source_package_nvrs(set(), runtime)
         self.assertEqual(result, set())
+
+    def test_only_retries_koji_retry_error_up_to_three_attempts(self):
+        resolve = KonfluxImageBuilder._resolve_source_package_nvrs
+        for error, attempts in [(koji.RetryError("unable to retry call"), 3), (ValueError("other error"), 1)]:
+            with self.subTest(error=error):
+                runtime = MagicMock()
+                session = runtime.shared_koji_client_session.return_value.__enter__.return_value
+                session.multicall.return_value.__exit__.side_effect = error
+
+                with patch.object(resolve.retry, "sleep") as mock_sleep:
+                    with self.assertRaises(type(error)) as raised:
+                        resolve({"bash-5.1.8-9.el9"}, runtime)
+
+                self.assertIs(raised.exception, error)
+                self.assertEqual(session.multicall.call_count, attempts)
+                self.assertEqual(mock_sleep.call_count, attempts - 1)
 
     def test_all_valid_build_nvrs(self):
         """NVRs that are already valid Brew builds pass through unchanged."""

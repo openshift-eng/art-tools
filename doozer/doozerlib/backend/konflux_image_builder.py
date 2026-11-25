@@ -10,6 +10,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Dict, List, Optional, Set, Tuple, cast
 
+import koji
 from artcommonlib import bigquery, exectools
 from artcommonlib import constants as artlib_constants
 from artcommonlib import util as artlib_util
@@ -44,7 +45,7 @@ from doozerlib.record_logger import RecordLogger
 from doozerlib.source_resolver import SourceResolution
 from google.cloud.bigquery.retry import DEFAULT_RETRY
 from packageurl import PackageURL
-from tenacity import retry, stop_after_attempt, wait_fixed
+from tenacity import before_sleep_log, retry, retry_if_exception_type, stop_after_attempt, wait_fixed
 
 from pyartcd import constants as pyartcd_constants
 
@@ -1176,6 +1177,13 @@ class KonfluxImageBuilder:
         return all_package_nvrs, all_source_rpms
 
     @staticmethod
+    @retry(
+        retry=retry_if_exception_type(koji.RetryError),
+        stop=stop_after_attempt(3),
+        wait=wait_fixed(5),
+        before_sleep=before_sleep_log(LOGGER, logging.WARNING),
+        reraise=True,
+    )
     def _resolve_source_package_nvrs(source_rpms: set, runtime) -> set:
         """
         Resolve binary RPM NVRs to their source package NVRs via Brew.
@@ -1185,6 +1193,9 @@ class KonfluxImageBuilder:
         names. These don't match actual Brew build NVRs (e.g. kernel). This method
         resolves them by querying Koji: getBuild to identify valid builds, then
         getRPM for those that aren't, to find the actual source package build.
+
+        If Brew rejects a replay with RetryError, retry these read-only lookups
+        with new multicalls and fresh Koji call numbers.
         """
         if not source_rpms:
             return source_rpms
