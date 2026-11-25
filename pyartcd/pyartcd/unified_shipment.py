@@ -210,7 +210,18 @@ async def create_unified_shipment(pipeline, plans: list, outcomes: list[dict]) -
             shipment_data = config.model_dump(exclude_unset=True, exclude_none=True)
             destination.write_text(safe_dump(shipment_data, sort_keys=False))
         await repo.commit_push(f'Add unified FBC shipment for {pipeline.product}')
-        links = sorted({a.imageShipmentMR for _, c in configs for a in c.shipment.unified.assemblies})
+        contributors = sorted(
+            {
+                (a.group, a.assembly, a.revision, a.imageShipmentMR)
+                for _, config in configs
+                for a in config.shipment.unified.assemblies
+            }
+        )
+        links = [
+            f'- {group} / {assembly}: [build-data commit `{revision[:7]}`]({build_data.html_url}/commit/{revision})'
+            f' · [image shipment !{mr_url.rsplit("/", 1)[-1]}]({mr_url})'
+            for group, assembly, revision, mr_url in contributors
+        ]
         mr = await create_shipment_mr_with_retry(
             source,
             {
