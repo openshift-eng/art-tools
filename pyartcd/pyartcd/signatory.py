@@ -278,6 +278,10 @@ class DirectSignatory:
     DEFAULT_TIMEOUT = 10 * 60
     ON_BEHALF_OF = "jupierce@redhat.com"
     SIGNING_PROXY_URL = "http://172.30.59.70:3128"
+    PUBLIC_KEY_PATHS = {
+        PROD_SIGNING_KEY_NAME: "/etc/pki/rpm-gpg/RPM-GPG-KEY-redhat-release",
+        STAGE_SIGNING_KEY_NAME: "/etc/pki/rpm-gpg/RPM-GPG-KEY-redhat-beta",
+    }
 
     def __init__(
         self,
@@ -507,8 +511,23 @@ class DirectSignatory:
             if not os.path.isfile(output_path):
                 raise SignatoryServerError("Direct signing did not produce a signature file")
 
+            verification_command = ["gpg2"]
+            public_key_path = self.PUBLIC_KEY_PATHS.get(self.sig_keyname)
+            if public_key_path:
+                gpg_home = os.path.join(directory, "gnupg")
+                os.mkdir(gpg_home, 0o700)
+                import_rc, _, import_stderr = await self._command_runner(
+                    ["gpg2", "--homedir", gpg_home, "--batch", "--import", public_key_path],
+                    check=False,
+                    env=self._environment,
+                    timeout=self.timeout,
+                )
+                if import_rc != 0:
+                    raise SignatoryServerError(f"Direct signing public key import failed: {import_stderr.strip()}")
+                verification_command.extend(["--homedir", gpg_home])
+
             verification_rc, _, verification_stderr = await self._command_runner(
-                ["gpg2", "-d", output_path],
+                [*verification_command, "-d", output_path],
                 check=False,
                 env=self._environment,
                 timeout=self.timeout,
