@@ -238,7 +238,7 @@ class TestRpmLockfilePrototypeGenerator(unittest.TestCase):
         meta.get_enabled_repos.return_value = {"rhel-9-baseos-rpms", "rhel-9-appstream-rpms"}
         meta.is_lockfile_generation_enabled.return_value = True
         lockfile_config = MagicMock()
-        lockfile_config.get.return_value = ["keyutils"]
+        lockfile_config.get.return_value = []
         meta.config.konflux.cachi2.lockfile = lockfile_config
 
         return meta
@@ -312,6 +312,60 @@ class TestRpmLockfilePrototypeGenerator(unittest.TestCase):
 
             self.assertTrue((dest_dir / "rpms.lock.yaml").exists())
         generator._resolver.resolve.assert_called_once()
+
+    def test_configured_rpms_preserve_nvr_in_every_resolved_stage(self):
+        meta = self._make_mock_image_meta()
+        pin = "libatomic-14.3.1-4.4.el10"
+        meta.config.konflux.cachi2.lockfile.get.return_value = [pin, "keyutils"]
+        generator = self._make_generator()
+        generator.downstream_parents = ["quay.io/test/base@sha256:abc123", "build"]
+
+        with TemporaryDirectory() as tmpdir:
+            dest_dir = Path(tmpdir)
+            (dest_dir / "Dockerfile").write_text(
+                "FROM quay.io/test/base AS build\nRUN dnf install -y openvswitch3.5\nFROM build\nRUN echo metadata\n"
+            )
+            asyncio.run(generator.generate_lockfile(meta, dest_dir))
+
+        calls = generator._resolver.resolve.call_args_list
+        self.assertEqual(len(calls), 2)
+        for call in calls:
+            self.assertIn(pin, call.args[0].packages)
+            self.assertIn("keyutils", call.args[0].packages)
+
+    def test_unavailable_configured_rpm_is_not_silently_excluded(self):
+        pin = "libatomic-14.3.1-4.4.el10"
+        for missing in (pin, "libatomic"):
+            with self.subTest(missing=missing), TemporaryDirectory() as tmpdir:
+                meta = self._make_mock_image_meta()
+                meta.config.konflux.cachi2.lockfile.get.return_value = [pin]
+                generator = self._make_generator()
+                generator.downstream_parents = ["quay.io/test/base@sha256:abc123"]
+                generator._resolver.resolve.side_effect = RuntimeError(f"No match for argument: {missing}")
+                dest_dir = Path(tmpdir)
+                (dest_dir / "Dockerfile").write_text("FROM base\nRUN dnf install -y openvswitch3.5\n")
+
+                with self.assertRaisesRegex(RuntimeError, "configured lockfile RPMs unavailable"):
+                    asyncio.run(generator.generate_lockfile(meta, dest_dir))
+
+                generator._resolver.resolve.assert_called_once()
+                self.assertFalse((dest_dir / "rpms.lock.yaml").exists())
+
+    def test_configured_nvr_is_not_also_automatically_upgraded(self):
+        meta = self._make_mock_image_meta()
+        pin = "libatomic-14.3.1-4.4.el10"
+        meta.config.konflux.cachi2.lockfile.get.return_value = [pin]
+        generator = self._make_generator()
+        generator.downstream_parents = ["quay.io/test/base@sha256:abc123"]
+        generator._container.get_installed_packages.return_value = ["libatomic", "glibc"]
+        with TemporaryDirectory() as tmpdir:
+            dest_dir = Path(tmpdir)
+            (dest_dir / "Dockerfile").write_text("FROM base\nRUN dnf install -y openvswitch3.5\n")
+            asyncio.run(generator.generate_lockfile(meta, dest_dir))
+
+        config = generator._resolver.resolve.call_args.args[0]
+        self.assertIn(pin, config.packages)
+        self.assertEqual([pkg.name for pkg in config.upgradePackages], ["glibc", "glibc"])
 
     def test_generate_lockfile_no_temp_files_in_dest(self):
         meta = self._make_mock_image_meta()
