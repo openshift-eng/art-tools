@@ -2507,7 +2507,11 @@ class ImageDistGitRepo(DistGitRepo):
 
             try:
                 art_yaml_data = render_art_yaml(
-                    art_yaml_str, version, release, csv_config.get('art-yaml-overrides', [])
+                    art_yaml_str,
+                    version,
+                    release,
+                    csv_config.get('art-yaml-overrides', []),
+                    group_config=self.runtime.group_config,
                 )
             except Exception as ex:  # exception is low level, need to pull out the details and rethrow
                 raise DoozerFatalError('Error processing art.yaml!\n{}\n\n{}'.format(str(ex), art_yaml_str))

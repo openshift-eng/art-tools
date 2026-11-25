@@ -4,6 +4,12 @@ from validator.schema import releases_schema
 
 
 class TestReleasesSchema(unittest.TestCase):
+    def test_art_yaml_overrides_switch_is_group_yml_only(self):
+        for key in ('art-yaml-overrides-enabled', 'art-yaml-overrides-enabled!'):
+            with self.subTest(key=key):
+                data = {'releases': {'stream': {'assembly': {'group': {key: True}}}}}
+                self.assertIn('art-yaml-overrides-enabled', releases_schema.validate('releases.yml', data))
+
     def test_validate_assembly_visibility(self):
         assembly = {"type": "custom", "visibility": "private"}
         data = {"releases": {"art1": {"assembly": assembly}}}

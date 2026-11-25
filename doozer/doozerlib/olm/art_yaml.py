@@ -1,11 +1,14 @@
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 
 from ruamel.yaml import YAML
 
 
-def render_art_yaml(template: str, version: str, release: str, overrides: Sequence[dict]) -> dict:
+def render_art_yaml(
+    template: str, version: str, release: str, overrides: Sequence[dict], *, group_config: Mapping[str, object]
+) -> dict:
     """Render art.yaml with per-image overrides to its build-derived template variables.
 
+    Overrides require the group switch to be enabled in openshift-4.23.
     Search-only overrides apply to `updates[].update_list[].search` and take precedence
     over general overrides there. Each variable, including FULL_VER, is independent.
     """
@@ -21,9 +24,11 @@ def render_art_yaml(template: str, version: str, release: str, overrides: Sequen
         'FULL_VER': f'{version}-{date_time}',
     }
     search_overrides = {}
-    for override in overrides:
-        scope = search_overrides if override.get('search_only', False) else variables
-        scope[override['name']] = override['value']
+    # Merged group metadata can include group.ext.yml, which group.yml validation does not cover.
+    if group_config.get('art-yaml-overrides-enabled') is True and group_config.get('name') == 'openshift-4.23':
+        for override in overrides:
+            scope = search_overrides if override.get('search_only', False) else variables
+            scope[override['name']] = override['value']
 
     yaml = YAML(typ='safe')
     rendered = yaml.load(template.format_map(variables))

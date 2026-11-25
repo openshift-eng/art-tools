@@ -2001,27 +2001,32 @@ updates:
                 {'name': 'MAJOR', 'value': 5, 'search_only': True},
                 {'name': 'MINOR', 'value': 0, 'search_only': True},
             ]
+            general_overrides = [{'name': 'MAJOR', 'value': 5}, {'name': 'MINOR', 'value': 0, 'search_only': False}]
             cases = [
-                ('openshift-4.23', 'v4.23.0', search_overrides, '4.23.0-202611250125', '4.23.0'),
-                ('openshift-5.0', 'v5.0.0', None, '5.0.0-202611250125', '5.0.0'),
-                (
-                    'openshift-4.23',
-                    'v4.23.0',
-                    [{'name': 'MAJOR', 'value': 5}, {'name': 'MINOR', 'value': 0, 'search_only': False}],
-                    '4.23.0-202611250125',
-                    '5.0.0',
-                ),
+                (True, 'v4.23.0', '5.0.0', search_overrides, '4.23.0'),
+                (True, 'v4.23.0', '5.0.0', general_overrides, '5.0.0'),
+                (False, 'v4.23.0', '4.23.0', search_overrides, '4.23.0'),
+                (None, 'v4.23.0', '4.23.0', general_overrides, '4.23.0'),
+                (None, 'v5.0.0', '5.0.0', None, '5.0.0'),
+                (True, 'v5.0.0', '5.0.0', [{'name': 'FULL_VER', 'value': 'unexpected-override'}], '5.0.0'),
             ]
-            for group, version, overrides, expected_version, expected_name_version in cases:
-                with self.subTest(group=group, overrides=overrides):
+            for enabled, version, source_version, overrides, expected_name_version in cases:
+                with self.subTest(enabled=enabled, version=version, overrides=overrides):
+                    runtime.group_config['name'] = f'openshift-{version.removeprefix("v").rsplit(".", 1)[0]}'
+                    if enabled is None:
+                        runtime.group_config.pop('art-yaml-overrides-enabled', None)
+                    else:
+                        runtime.group_config['art-yaml-overrides-enabled'] = enabled
                     csv_file.write_text(
-                        'metadata:\n  name: operator.v5.0.0\nspec:\n  version: 5.0.0\n  description: "BUILD_VERSION"\n'
+                        f'metadata:\n  name: operator.v{source_version}\nspec:\n'
+                        f'  version: {source_version}\n  description: "BUILD_VERSION"\n'
                     )
                     csv_config = {'manifests-dir': 'manifests', 'bundle-dir': 'stable'}
                     if overrides is not None:
                         csv_config['art-yaml-overrides'] = overrides
                     metadata = SimpleNamespace(distgit_key='operator', config=Model({'update-csv': csv_config}))
                     await rebaser._update_csv(metadata, dest_dir, version, '202611250125.p2.assembly.stream.el9')
+                    expected_version = f'{version.removeprefix("v")}-202611250125'
                     self.assertEqual(
                         csv_file.read_text(),
                         f'metadata:\n  name: operator.v{expected_name_version}\nspec:\n'

@@ -1100,7 +1100,7 @@
         },
         "image-map-": {},
         "art-yaml-overrides": {
-          "description": "Overrides for art.yaml template variables during operator image rebase",
+          "description": "Overrides for art.yaml template variables during operator image rebase when art-yaml-overrides-enabled is true in group.yml.",
           "type": "array",
           "items": {
             "type": "object",

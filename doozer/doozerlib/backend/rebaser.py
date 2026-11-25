@@ -2898,7 +2898,13 @@ class KonfluxRebaser:
             art_yaml_str = art_file.read()
 
         try:
-            art_yaml_data = render_art_yaml(art_yaml_str, version, release, csv_config.get('art-yaml-overrides', []))
+            art_yaml_data = render_art_yaml(
+                art_yaml_str,
+                version,
+                release,
+                csv_config.get('art-yaml-overrides', []),
+                group_config=self._runtime.group_config,
+            )
         except Exception as ex:  # exception is low level, need to pull out the details and rethrow
             raise IOError('Error processing art.yaml!\n{}\n\n{}'.format(str(ex), art_yaml_str))
 
