@@ -149,9 +149,13 @@ class BaseImageHandler:
         }
         return self.konflux_client.resource_url(resource_dict)
 
-    async def snapshot_release(self, snapshot_input: BaseImageSnapshotInput) -> Optional[BaseImageReleaseResult]:
+    async def snapshot_release(
+        self, snapshot_input: BaseImageSnapshotInput, *, on_demand: bool = False
+    ) -> Optional[BaseImageReleaseResult]:
         """
         Run snapshot→release for exactly one base-image component.
+
+        An on-demand caller must already have checked that the selected image can be published.
 
         Returns:
             :class:`BaseImageReleaseResult` on success, else ``None``.
@@ -169,7 +173,7 @@ class BaseImageHandler:
 
         self.logger = self._scoped_logger(metadata.qualified_key)
 
-        if not metadata.should_trigger_base_image_release():
+        if not on_demand and not metadata.should_trigger_base_image_release():
             self.logger.warning("Does not qualify for base image release workflow")
             return None
 
