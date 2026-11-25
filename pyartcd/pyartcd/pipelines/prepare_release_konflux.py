@@ -1037,8 +1037,9 @@ class PrepareReleaseKonfluxPipeline:
         if not kubeconfig:
             raise ValueError("KONFLUX_SA_KUBECONFIG environment variable is required to build bundle image")
         cmd = self._doozer_base_command + [
-            '--assembly=stream',
+            f'--assembly={self.assembly}',
             "beta:images:konflux:bundle",
+            "--force",
             f'--konflux-kubeconfig={kubeconfig}',
             "--output=json",
         ]
@@ -1310,6 +1311,19 @@ class PrepareReleaseKonfluxPipeline:
             "metadata": out.get("olm_builds", []),
             "olm_builds_not_found": out.get("olm_builds_not_found", []),
         }
+
+        # A bundle for the same operator may have been built with a different
+        # operand set. Rebuild it against this assembly instead of reusing it.
+        image_nvrs = set(kind_to_builds["image"] + kind_to_builds["extras"])
+        for bundle_nvr, detail in out.get("olm_builds_detail", {}).items():
+            if bundle_nvr not in kind_to_builds["metadata"]:
+                continue
+            operator_nvr = detail.get("operator_nvr")
+            if operator_nvr in image_nvrs and set(detail.get("operand_nvrs") or []) - image_nvrs:
+                self.logger.warning("Bundle %s references images outside the assembly; rebuilding", bundle_nvr)
+                kind_to_builds["metadata"].remove(bundle_nvr)
+                if operator_nvr not in kind_to_builds["olm_builds_not_found"]:
+                    kind_to_builds["olm_builds_not_found"].append(operator_nvr)
 
         return kind_to_builds
 

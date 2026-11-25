@@ -972,6 +972,33 @@ class TestPrepareReleaseKonfluxPipeline(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(errors[0]["operator"], "test-operator")
         self.assertEqual(errors[0]["error"], "build failed")
         mock_cmd_gather_async.assert_awaited_once()
+        cmd = mock_cmd_gather_async.await_args.args[0]
+        self.assertIn(f"--assembly={self.assembly}", cmd)
+        self.assertIn("--force", cmd)
+        self.assertNotIn("--assembly=stream", cmd)
+
+    async def test_find_builds_all_rebuilds_bundles_with_incompatible_operands(self):
+        pipeline = PrepareReleaseKonfluxPipeline(
+            slack_client=self.mock_slack_client, runtime=self.runtime, group=self.group, assembly=self.assembly
+        )
+        pipeline.execute_command_with_logging = AsyncMock(
+            return_value=json.dumps(
+                {
+                    "payload": ["operator-a", "operator-b", "shared-old"],
+                    "non_payload": [],
+                    "olm_builds": ["bundle-a", "bundle-b", "bundle-good"],
+                    "olm_builds_not_found": [],
+                    "olm_builds_detail": {
+                        "bundle-a": {"operator_nvr": "operator-a", "operand_nvrs": ["shared-new"]},
+                        "bundle-b": {"operator_nvr": "operator-b", "operand_nvrs": ["shared-new"]},
+                        "bundle-good": {"operator_nvr": "operator-a", "operand_nvrs": ["shared-old"]},
+                    },
+                }
+            )
+        )
+        result = await pipeline.find_builds_all()
+        self.assertEqual(result["metadata"], ["bundle-good"])
+        self.assertEqual(result["olm_builds_not_found"], ["operator-a", "operator-b"])
 
     @patch('pyartcd.pipelines.prepare_release_konflux.exectools.cmd_gather_async', new_callable=AsyncMock)
     @patch.object(PrepareReleaseKonfluxPipeline, 'filter_olm_operators', new_callable=AsyncMock)
