@@ -597,17 +597,21 @@ class KonfluxImageBuilder:
 
                 # Run required callbacks last, after successful ITS and any required release.
                 if outcome is KonfluxBuildOutcome.SUCCESS and callback and definitive_image_pullspec is not None:
-                    try:
-                        if callback.allows_dependents_before_completion(metadata):
-                            metadata.build_status = True
-                            metadata.build_event.set()
-                        record['post_build_pipeline'] = await callback.run(metadata, definitive_image_pullspec)
-                    except Exception as e:
-                        logger.exception('Post-build callback failed for %s', metadata.distgit_key)
-                        record['post_build_error'] = str(e)
-                        outcome = KonfluxBuildOutcome.POST_BUILD_ERROR
-                        metadata.build_status = False
-                        post_build_failed = True
+                    if embargoed_release:
+                        # Fail the public RHCOS pair while allowing the private build to succeed.
+                        callback.build_failed(metadata)
+                    else:
+                        try:
+                            if callback.allows_dependents_before_completion(metadata):
+                                metadata.build_status = True
+                                metadata.build_event.set()
+                            record['post_build_pipeline'] = await callback.run(metadata, definitive_image_pullspec)
+                        except Exception as e:
+                            logger.exception('Post-build callback failed for %s', metadata.distgit_key)
+                            record['post_build_error'] = str(e)
+                            outcome = KonfluxBuildOutcome.POST_BUILD_ERROR
+                            metadata.build_status = False
+                            post_build_failed = True
 
                 if not self._config.dry_run:
                     build_record = await self.update_konflux_db(

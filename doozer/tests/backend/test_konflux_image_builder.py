@@ -1672,13 +1672,16 @@ class TestKonfluxImageBuilder(unittest.IsolatedAsyncioTestCase):
             ('without_its_or_release', False, False, False, None),
             ('release_without_its', False, False, True, None),
             ('embargoed_rpm', True, True, True, 'rpm'),
+            ('embargoed_rhcos', True, True, False, None, True),
             ('ec_failure', True, True, True, 'ec'),
             ('its_failure', True, True, True, 'its'),
             ('release_failure', True, True, True, 'release'),
             ('callback_failure_after_release', True, True, True, 'callback'),
         ]
     )
-    async def test_post_build_callback_runs_last(self, _name, ec_enabled, its_enabled, release_enabled, failing_stage):
+    async def test_post_build_callback_runs_last(
+        self, _name, ec_enabled, its_enabled, release_enabled, failing_stage, embargoed=False
+    ):
         metadata = self._metadata()
         metadata.config.konflux.get.side_effect = lambda key, default=None: (
             'rhcos_node_image' if key == 'post_build' else default
@@ -1789,6 +1792,8 @@ class TestKonfluxImageBuilder(unittest.IsolatedAsyncioTestCase):
                 return_value=KonfluxBuildOutcome.SUCCESS,
             ),
         ):
+            if embargoed:
+                self.builder._parse_dockerfile.return_value = ('test-uuid', 'test-component', '1.0', '1.p3')
             if failing_stage:
                 with self.assertRaises(KonfluxImageBuildError):
                     await self.builder.build(metadata)
@@ -1797,11 +1802,11 @@ class TestKonfluxImageBuilder(unittest.IsolatedAsyncioTestCase):
 
         expected_steps = []
         for stage, enabled in [
-            ('rpm', True),
+            ('rpm', not embargoed),
             ('ec', ec_enabled),
             ('its', its_enabled),
             ('release', release_enabled),
-            ('callback', True),
+            ('callback', not embargoed),
         ]:
             if enabled:
                 expected_steps.append(stage)
@@ -1820,7 +1825,7 @@ class TestKonfluxImageBuilder(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(start_build.await_count, 1)
         self.assertEqual(metadata.build_status, failing_stage is None)
         metadata.build_event.set.assert_called()
-        if failing_stage:
+        if failing_stage or embargoed:
             callback.build_failed.assert_called_once_with(metadata)
         else:
             callback.build_failed.assert_not_called()

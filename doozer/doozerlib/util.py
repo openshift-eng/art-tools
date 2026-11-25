@@ -445,14 +445,19 @@ def get_release_name_for_assembly(group_name: str, releases_config: Model, assem
     return get_release_name(assembly_type, group_name, assembly_name, patch_version)
 
 
-async def oc_image_extract_async(pullspec: str, path_specs: list[str], registry_config: Optional[str] = None):
+async def oc_image_extract_async(
+    pullspec: str, path_specs: list[str], registry_config: Optional[str] = None, *, go_arch: Optional[str] = None
+):
     """
     Extracts the image specified by pullspec to the destination directory.
     :param pullspec: The image pullspec to extract.
     :param path_specs: The specs of paths within the image to extract.
     :param registry_config: The path to the registry config file.
+    :param go_arch: Optional Linux architecture to extract from a multi-arch image.
     """
     cmd = ['oc', 'image', 'extract']
+    if go_arch:
+        cmd.append(f'--filter-by-os=linux/{go_arch}($|/)')
     for path_spec in path_specs:
         cmd.extend(['--path', path_spec])
     if registry_config:

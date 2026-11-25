@@ -1,9 +1,11 @@
 import hashlib
 import json
 import unittest
+from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, call, patch
 
 from artcommonlib.constants import KONFLUX_DEFAULT_IMAGE_REPO, RHCOS_IMAGE_REPO
+from doozerlib.rpm_embargo import EmbargoedRpmError
 from pyartcd.pipelines.rhcos_node_image_post_build import RhcosNodeImagePostBuildPipeline
 
 
@@ -234,6 +236,7 @@ class TestRhcosNodeImagePostBuildPipeline(unittest.IsolatedAsyncioTestCase):
         mock_registry_config.return_value.__enter__.return_value = '/tmp/merged-auth.json'
 
         pipeline = _make_pipeline()
+        pipeline._assert_public_rpms = AsyncMock()
 
         labeled_node_digest_pullspec = f'{KONFLUX_DEFAULT_IMAGE_REPO}@sha256:{"c" * 64}'
         labeled_extensions_digest_pullspec = f'{KONFLUX_DEFAULT_IMAGE_REPO}@sha256:{"d" * 64}'
@@ -391,8 +394,7 @@ class TestRhcosNodeImagePostBuildPipeline(unittest.IsolatedAsyncioTestCase):
         mock_sync,
         mock_registry_config,
     ):
-        """When _extract_timestamp_from_nvr returns None (e.g. older groups without a
-        release label), promotion should still succeed using only floating tags."""
+        """A public release without a recognized timestamp can use floating tags."""
 
         mock_load_group_config.return_value = self.group_config
         mock_client = mock_client_type.return_value
@@ -404,8 +406,9 @@ class TestRhcosNodeImagePostBuildPipeline(unittest.IsolatedAsyncioTestCase):
         mock_registry_config.return_value.__enter__.return_value = '/tmp/merged-auth.json'
 
         pipeline = _make_pipeline()
+        pipeline._assert_public_rpms = AsyncMock()
 
-        # Simulate a missing release label by returning None
+        # Simulate a public release with a timestamp format the tagging step doesn't recognize.
         with (
             patch.object(pipeline, '_extract_timestamp_from_nvr', new_callable=AsyncMock, return_value=None),
             patch.object(pipeline, '_apply_manifest_list_tag_label', new_callable=AsyncMock) as mock_apply_label,
@@ -444,8 +447,12 @@ class TestRhcosNodeImagePostBuildPipeline(unittest.IsolatedAsyncioTestCase):
             'url': 'https://jenkins.example.com/job/build-node-image/46173/',
         }
 
-        with self.assertRaisesRegex(RuntimeError, 'integration test failed'):
-            await _make_pipeline().run()
+        pipeline = _make_pipeline()
+        with (
+            patch.object(pipeline, '_assert_public_rpms', new_callable=AsyncMock),
+            self.assertRaisesRegex(RuntimeError, 'integration test failed'),
+        ):
+            await pipeline.run()
 
         mock_sync.assert_not_awaited()
         mock_init_jenkins.assert_called_once()
@@ -484,3 +491,50 @@ class TestRhcosNodeImagePostBuildPipeline(unittest.IsolatedAsyncioTestCase):
 
 if __name__ == '__main__':
     unittest.main()
+
+    @patch.dict('os.environ', {'RHCOS_QUAY_AUTH_FILE': '/tmp/rhcos-auth.json'})
+    @patch('pyartcd.pipelines.rhcos_node_image_post_build.RhcosJenkinsClient')
+    @patch('pyartcd.pipelines.rhcos_node_image_post_build.koji.ClientSession')
+    @patch('pyartcd.pipelines.rhcos_node_image_post_build.find_embargoed_rpms')
+    @patch('pyartcd.pipelines.rhcos_node_image_post_build.oc_image_info_async', new_callable=AsyncMock)
+    @patch('pyartcd.pipelines.rhcos_node_image_post_build.oc_image_extract_async', new_callable=AsyncMock)
+    async def test_blocks_pair_with_embargoed_extension_on_one_arch(
+        self, extract, image_info, find_embargoed, koji_client, jenkins_client
+    ):
+        image_info.return_value = [
+            {'config': {'architecture': arch, 'os': 'linux', 'config': {'Labels': {'release': '1.p2.el9'}}}}
+            for arch in ('amd64', 'arm64')
+        ]
+        pipeline = _make_pipeline()
+
+        async def write_metadata(pullspec, paths, *, registry_config, go_arch):
+            self.assertEqual(registry_config, '/tmp/rhcos-auth.json')
+            source, target = paths[0].split(':', 1)
+            arch = {'amd64': 'x86_64', 'arm64': 'aarch64'}[go_arch]
+            if pullspec == pipeline.node_image:
+                content = {'rpmdb.pkglist': [['node-rpm', '0', '1.0', '1.el9', arch]]}
+            else:
+                release = '1.p3.el9' if go_arch == 'arm64' else '1.p2.el9'
+                content = {'extension-rpm': f'1.0-{release}.{arch}'}
+            (Path(target) / Path(source).name).write_text(json.dumps(content))
+
+        extract.side_effect = write_metadata
+        private = 'extension-rpm-1.0-1.p3.el9.aarch64'
+        find_embargoed.return_value = {private}
+        with (
+            patch.object(pipeline, '_promote', new_callable=AsyncMock) as promote,
+            self.assertRaisesRegex(EmbargoedRpmError, 'extension-rpm'),
+        ):
+            await pipeline.run()
+
+        jenkins_client.assert_not_called()
+        promote.assert_not_awaited()
+        find_embargoed.assert_called_once_with(
+            koji_client.return_value,
+            rpm_nvras={
+                'node-rpm-1.0-1.el9.x86_64',
+                'node-rpm-1.0-1.el9.aarch64',
+                'extension-rpm-1.0-1.p2.el9.x86_64',
+                private,
+            },
+        )

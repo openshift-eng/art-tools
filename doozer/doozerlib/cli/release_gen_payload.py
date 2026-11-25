@@ -1308,7 +1308,7 @@ class GenPayloadCli:
         return public_entries_for_arch, private_entries_for_arch
 
     def _assert_public_payload_rpms(self, entries_for_arch):
-        """Check ordinary image RPMs in the public payload, including older builds."""
+        """Check all public payload inputs, including older builds and RHCOS."""
         nvras = set()
         source_nvrs = set()
         inspected = set()
@@ -1322,6 +1322,11 @@ class GenPayloadCli:
                     build_nvras, build_sources = rpm_inventory_from_build(build)
                     nvras.update(build_nvras)
                     source_nvrs.update(build_sources)
+                elif entry.rhcos_build:
+                    nvras.update(
+                        f'{name}-{version}-{release}.{arch}'
+                        for name, _, version, release, arch, _ in entry.rhcos_build.get_os_metadata_rpm_list()
+                    )
         with self.runtime.shared_koji_client_session() as session:
             embargoed = find_embargoed_rpms(session, rpm_nvras=nvras, source_nvrs=source_nvrs)
         if embargoed:
