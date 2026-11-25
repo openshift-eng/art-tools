@@ -1,4 +1,7 @@
 import asyncio
+import subprocess
+from pathlib import Path
+from tempfile import TemporaryDirectory
 from unittest import IsolatedAsyncioTestCase
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -7,6 +10,7 @@ from artcommonlib.assembly import AssemblyIssueCode, AssemblyTypes
 from artcommonlib.config.plashet import PlashetConfig
 from artcommonlib.config.repo import ContentSet, PlashetRepo
 from artcommonlib.config.repo import Repo as RepoConf
+from artcommonlib.konflux.konflux_build_record import KonfluxBuildRecord
 from artcommonlib.model import Model
 from doozerlib.assembly_inspector import AssemblyInspector
 from doozerlib.build_info import BrewBuildRecordInspector, KonfluxBuildRecordInspector
@@ -19,6 +23,91 @@ from yarl import URL
 
 
 class TestAssemblyInspector(IsolatedAsyncioTestCase):
+    async def test_check_uses_the_public_build_commit_instead_of_the_current_branch_tip(self):
+        inspector = AssemblyInspector(MagicMock(releases_config=Model({}), group_config=Model({}), assembly='stream'))
+        repo = 'https://github.com/openshift/example'
+        with TemporaryDirectory() as source_dir:
+
+            def git(*args):
+                return subprocess.run(
+                    ['git', '-C', source_dir, *args],
+                    check=True,
+                    capture_output=True,
+                    text=True,
+                    input='',
+                ).stdout.strip()
+
+            git('init', '--bare', '--quiet')
+            git('config', 'user.name', 'Release Tests')
+            git('config', 'user.email', 'tests@example.com')
+            git('config', 'uploadpack.allowFilter', 'true')
+            tree = git('mktree')
+            baseline = git('commit-tree', tree, '-m', 'Baseline')
+            private_fix = git('commit-tree', tree, '-p', baseline, '-m', 'Private fix')
+            old_public = git('commit-tree', tree, '-p', baseline, '-m', 'Public refresh')
+            new_public = git('commit-tree', tree, '-p', old_public, '-p', private_fix, '-m', 'Publicize the fix')
+            git('update-ref', 'refs/heads/release', new_public)
+
+            with patch.dict(
+                'os.environ',
+                {
+                    'GIT_CONFIG_COUNT': '1',
+                    'GIT_CONFIG_KEY_0': f'url.{Path(source_dir).as_uri()}.insteadOf',
+                    'GIT_CONFIG_VALUE_0': repo,
+                },
+            ):
+                self.assertFalse(await inspector._public_source_contains(repo, private_fix, old_public))
+                self.assertTrue(await inspector._public_source_contains(repo, private_fix, new_public))
+
+    async def test_public_build_must_contain_fix_in_embargoed_parent_even_with_unchanged_child_source(self):
+        inspector = AssemblyInspector(MagicMock(releases_config=Model({}), group_config=Model({}), assembly='stream'))
+        repo = 'https://github.com/openshift/example'
+        private_parent = KonfluxBuildRecord(
+            name='parent',
+            version='v4.22.0',
+            release='1.p3.el9',
+            source_repo=repo,
+            commitish='a' * 40,
+            embargoed=True,
+        )
+        public_parent = KonfluxBuildRecord(
+            name='parent',
+            version='v4.22.0',
+            release='2.p2.el9',
+            source_repo=repo,
+            commitish='b' * 40,
+        )
+        private = KonfluxBuildRecord(
+            name='child',
+            version='v4.22.0',
+            release='1.p3.el9',
+            source_repo=repo,
+            commitish='c' * 40,
+            embargoed=True,
+            parent_images=[private_parent.nvr],
+        )
+        public = KonfluxBuildRecord(
+            name='child',
+            version='v4.22.0',
+            release='2.p2.el9',
+            source_repo=repo,
+            commitish=private.commitish,
+            parent_images=[public_parent.nvr],
+        )
+        parent_builds = {private_parent.nvr: private_parent, public_parent.nvr: public_parent}
+
+        with (
+            patch.object(inspector, '_get_parent_build', AsyncMock(side_effect=parent_builds.get)),
+            patch.object(inspector, '_public_source_contains', new_callable=AsyncMock) as contains,
+        ):
+            contains.side_effect = lambda repo, before, after: before == after
+            self.assertFalse(await inspector.public_build_contains_private_fix(private, public))
+            contains.side_effect = None
+            contains.return_value = True
+            self.assertTrue(await inspector.public_build_contains_private_fix(private, public))
+            parent_builds.pop(public_parent.nvr)
+            self.assertFalse(await inspector.public_build_contains_private_fix(private, public))
+
     async def test_check_installed_packages_for_rpm_delivery(self):
         # Test a standard release with a package tagged into my-ship-ok-tag
         rt = MagicMock(

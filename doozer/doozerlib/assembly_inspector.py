@@ -1,8 +1,12 @@
 import asyncio
+import os
+import re
+from tempfile import TemporaryDirectory
 from typing import Any, Dict, List, Optional, cast
 
 import artcommonlib.util as artutil
 from aiohttp import ClientResponseError
+from artcommonlib import exectools
 from artcommonlib.arch_util import brew_arch_for_go_arch
 from artcommonlib.assembly import (
     AssemblyIssue,
@@ -12,9 +16,15 @@ from artcommonlib.assembly import (
     assembly_rhcos_config,
     assembly_type,
 )
+from artcommonlib.build_visibility import isolate_pflag_in_release
+from artcommonlib.constants import GIT_NO_PROMPTS
+from artcommonlib.konflux.konflux_build_record import ArtifactType, Engine, KonfluxBuildOutcome, KonfluxBuildRecord
+from artcommonlib.konflux.konflux_db import LARGE_COLUMNS
 from artcommonlib.konflux.package_rpm_finder import PackageRpmFinder
 from artcommonlib.rhcos import RhcosMissingContainerException, get_container_configs
 from artcommonlib.rpm_utils import compare_nvr, parse_nvr
+from async_lru import alru_cache
+from google.api_core.exceptions import GoogleAPICallError
 from koji import ClientSession
 from tenacity import RetryError
 
@@ -92,6 +102,157 @@ class AssemblyInspector:
                 packages = entry.packages
                 for package in packages:
                     self._rpm_deliveries.setdefault(package, []).append(entry)
+
+    async def find_private_stream_build_overrides(self) -> dict[str, BuildRecordInspector]:
+        """Find embargoed builds to keep in the private stream ahead of newer public builds."""
+        candidates = {}
+        for image in self.runtime.get_for_release_image_metas():
+            inspector = self._release_build_record_inspectors[image.distgit_key]
+            if image.is_payload and not image.config['is'] and inspector and not inspector.is_under_embargo():
+                build = inspector.get_build_obj()
+                if isolate_pflag_in_release(build.release) == 'p2':
+                    candidates[image.distgit_key] = build
+        if not candidates:
+            return {}
+
+        # Query the group together so images with no embargoed build don't repeatedly scan the same history.
+        db = self.runtime.konflux_db
+        db.bind(KonfluxBuildRecord)
+        private_builds = {}
+        async for build in db.search_builds_by_fields(
+            where={
+                'name': sorted(candidates),
+                'group': self.runtime.group,
+                'assembly': 'stream',
+                'artifact_type': ArtifactType.IMAGE,
+                'engine': Engine.KONFLUX,
+                'outcome': KonfluxBuildOutcome.SUCCESS,
+            },
+            extra_patterns={'release': r'\.p3(\.|$)'},
+            exclude_columns=LARGE_COLUMNS,
+        ):
+            if build.embargoed and build.el_target == candidates[build.name].el_target:
+                private_builds.setdefault(build.name, build)
+                if private_builds.keys() == candidates.keys():
+                    break
+
+        overrides = {}
+        for name, private in private_builds.items():
+            public = candidates[name]
+            # Use the complete record for provenance checks and downstream payload inspection.
+            private = await db.get_latest_build(nvr=private.nvr, group=private.group, strict=True)
+            if (
+                private.start_time
+                and public.start_time
+                and private.start_time < public.start_time
+                and await self.public_build_contains_private_fix(private, public)
+            ):
+                continue
+            self.runtime.logger.warning('Keeping %s in the private stream ahead of %s', private.nvr, public.nvr)
+            overrides[name] = BuildRecordInspector.get_build_record_inspector(self.runtime, private)
+        return overrides
+
+    async def public_build_contains_private_fix(
+        self, private: KonfluxBuildRecord, public: KonfluxBuildRecord, seen: frozenset[str] = frozenset()
+    ) -> bool:
+        """Verify a public build contains the embargoed build's recorded source and parent fixes."""
+        if (
+            private.nvr in seen
+            or private.name != public.name
+            or not private.embargoed
+            or public.embargoed
+            or isolate_pflag_in_release(public.release) != 'p2'
+            or not private.source_repo
+            or not public.source_repo
+            or private.parent_images is None
+            or private.installed_rpms is None
+        ):
+            return False
+        # Source ancestry and parent NVRs cannot verify the replacement of an embargoed RPM.
+        if any(
+            isolate_pflag_in_release(rpm) in ('p1', 'p3')
+            for rpm in [*private.installed_rpms, *(private.installed_packages or [])]
+        ):
+            return False
+        public_repo = artutil.convert_remote_git_to_https(public.source_repo)
+        if public_repo != artutil.convert_remote_git_to_https(private.source_repo):
+            return False
+        if not await self._public_source_contains(public_repo, private.commitish, public.commitish):
+            return False
+
+        public_parents = public.parent_images or []
+        for index, parent in enumerate(private.parent_images):
+            is_nvr = '/' not in parent and ':' not in parent and parent.count('-') >= 2
+            pflag = isolate_pflag_in_release(parent.rsplit('-', 1)[-1]) if is_nvr else None
+            if parent == 'scratch' or pflag in ('p0', 'p2'):
+                continue
+            if index >= len(public_parents):
+                return False
+            replacement = public_parents[index]
+            if (
+                pflag == 'p3'
+                and '/' not in replacement
+                and ':' not in replacement
+                and isolate_pflag_in_release(replacement.rsplit('-', 1)[-1]) == 'p2'
+            ):
+                old, new = await asyncio.gather(self._get_parent_build(parent), self._get_parent_build(replacement))
+                if old and new and await self.public_build_contains_private_fix(old, new, seen | {private.nvr}):
+                    continue
+            elif pflag is None and parent == replacement and (is_nvr or '@sha256:' in parent):
+                # An unchanged external NVR or manifest digest identifies the same parent build.
+                continue
+            return False
+        return True
+
+    @alru_cache(maxsize=256)
+    async def _get_parent_build(self, nvr: str) -> KonfluxBuildRecord | None:
+        try:
+            return await self.runtime.konflux_db.get_build_record_by_nvr(nvr, strict=False)
+        except (OSError, GoogleAPICallError) as exc:
+            self.runtime.logger.warning('Could not verify parent build %s: %s', nvr, exc)
+            return None
+
+    @alru_cache(maxsize=128)
+    async def _public_source_contains(self, repo: str, private_commit: str | None, public_commit: str | None) -> bool:
+        if not re.fullmatch(r'https://github\.com/[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+', repo):
+            return False
+        if not all(re.fullmatch(r'[0-9a-f]{40}', commit or '') for commit in (private_commit, public_commit)):
+            return False
+        if private_commit == public_commit:
+            return True
+
+        # Fetch only the public commit's history. Keep the embargoed SHA local even if it is missing.
+        env = {**os.environ, **GIT_NO_PROMPTS, 'GIT_NO_LAZY_FETCH': '1'}
+        try:
+            with TemporaryDirectory() as git_dir:
+                await exectools.cmd_assert_async(['git', 'init', '--bare', git_dir])
+                await exectools.cmd_assert_async(
+                    [
+                        'git',
+                        '-C',
+                        git_dir,
+                        '-c',
+                        'credential.helper=',
+                        'fetch',
+                        '--no-tags',
+                        '--filter=tree:0',
+                        '--',
+                        repo,
+                        public_commit,
+                    ],
+                    env=env,
+                    timeout=60,
+                )
+                rc, _, _ = await exectools.cmd_gather_async(
+                    ['git', '-C', git_dir, 'merge-base', '--is-ancestor', '--', private_commit, 'FETCH_HEAD'],
+                    env=env,
+                    check=False,
+                    timeout=60,
+                )
+                return rc == 0
+        except OSError as exc:
+            self.runtime.logger.warning('Could not check public source history for %s: %s', repo, exc)
+            return False
 
     def get_type(self) -> AssemblyTypes:
         return self.assembly_type

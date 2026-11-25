@@ -1,5 +1,6 @@
 import io
 import os
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from unittest import IsolatedAsyncioTestCase
 from unittest.mock import AsyncMock, MagicMock, Mock, patch
@@ -7,11 +8,13 @@ from unittest.mock import AsyncMock, MagicMock, Mock, patch
 import openshift_client as oc
 import yaml
 from artcommonlib.assembly import AssemblyIssue, AssemblyIssueCode, AssemblyTypes
+from artcommonlib.konflux.konflux_build_record import KonfluxBuildRecord
 from artcommonlib.model import Model
 from artcommonlib.rhcos import RhcosMissingContainerException
+from artcommonlib.variants import BuildVariant
 from doozerlib import rhcos
 from doozerlib.assembly_inspector import AssemblyInspector
-from doozerlib.build_info import BrewBuildRecordInspector
+from doozerlib.build_info import BrewBuildRecordInspector, KonfluxBuildRecordInspector
 from doozerlib.cli import release_gen_payload as rgp_cli
 from doozerlib.exceptions import DoozerFatalError
 from doozerlib.image import ImageMetadata
@@ -260,6 +263,8 @@ class TestGenPayloadCli(IsolatedAsyncioTestCase):
         runtime = MagicMock()
         runtime.assembly_type = AssemblyTypes.STREAM
         runtime.build_system = 'konflux'
+        runtime.variant = BuildVariant.OCP
+        runtime.assembly = 'stream'
         runtime.group_config.vars.MAJOR = 4
         runtime.group_config.vars.MINOR = 17
         # image_map must provide the DTK metadata so el_target can be derived
@@ -294,6 +299,7 @@ class TestGenPayloadCli(IsolatedAsyncioTestCase):
         # The payload build map (mutable dict)
         old_bri = MagicMock()
         old_bri.get_nvr.return_value = "driver-toolkit-container-v4.17.0-1234"
+        old_bri.is_under_embargo.return_value = False
         payload_bri = {"driver-toolkit": old_bri}
         assembly_inspector.get_group_release_images.return_value = payload_bri
 
@@ -321,10 +327,24 @@ class TestGenPayloadCli(IsolatedAsyncioTestCase):
 
         mock_konflux_db.search_builds_by_fields = mock_search
 
+        retained_private = Mock()
+        retained_private.is_under_embargo.return_value = True
+        assembly_inspector.public_build_contains_private_fix = AsyncMock(return_value=False)
+        gpcli.private_stream_build_overrides = {'driver-toolkit': retained_private}
         with (
             patch("artcommonlib.konflux.konflux_db.KonfluxDb", return_value=mock_konflux_db),
             patch.object(gpcli.payload_generator, "find_rhcos_payload_rpm_inconsistencies", return_value=[]),
         ):
+            result = await gpcli._try_resolve_dtk_mismatch(
+                [dtk_issue], rhcos_build, assembly_inspector, cross_payload_requirements
+            )
+            self.assertEqual(result, [dtk_issue])
+            self.assertIs(payload_bri['driver-toolkit'], old_bri)
+            assembly_inspector.public_build_contains_private_fix.assert_awaited_once_with(
+                retained_private.get_build_obj.return_value, matching_record
+            )
+
+            gpcli.private_stream_build_overrides.clear()
             result = await gpcli._try_resolve_dtk_mismatch(
                 [dtk_issue],
                 rhcos_build,
@@ -1104,6 +1124,22 @@ class TestGenPayloadCli(IsolatedAsyncioTestCase):
         fms_mock.assert_called_once_with([])
         self.assertEqual(len(gpcli.assembly_issues), 0)
 
+    def test_retained_private_build_does_not_block_public_siblings(self):
+        gpcli = rgp_cli.GenPayloadCli(runtime=MagicMock(assembly='stream'))
+        repo = 'https://github.com/openshift/example'
+        public = self._make_sibling_inspector(repo, 'public', 'image')
+        sibling = self._make_sibling_inspector(repo, 'public', 'sibling')
+        private = self._make_sibling_inspector(repo, 'private', 'image')
+        inspector = Mock()
+        inspector.get_group_release_images.return_value = {'image': public, 'sibling': sibling}
+        gpcli.private_stream_build_overrides = {'image': private}
+
+        gpcli.detect_mismatched_siblings(inspector)
+
+        self.assertEqual(gpcli.mismatched_siblings, [])
+        self.assertEqual(gpcli.assembly_issues, [])
+        self.assertEqual(gpcli.private_mismatched_siblings, {'image', 'sibling'})
+
     def _make_sibling_inspector(self, source_url, commit, distgit_key, allow_mismatched=False, is_payload=True):
         """Helper to build a mock BuildRecordInspector for sibling tests."""
         source_config = dict(
@@ -1290,6 +1326,89 @@ class TestGenPayloadCli(IsolatedAsyncioTestCase):
             payload_entries, (dict(ppc64le=dict(tag1=test_payload_entry)), dict(ppc64le=dict(tag1=test_payload_entry)))
         )
 
+    async def test_stream_uses_newer_public_build_privately_only_when_it_contains_fix(self):
+        group = 'openshift-4.22'
+        now = datetime.now(timezone.utc)
+        private = KonfluxBuildRecord(
+            name='installer',
+            group=group,
+            el_target='el9',
+            version='v4.22.0',
+            release='1.p3.el9',
+            start_time=now - timedelta(hours=1),
+            embargoed=True,
+            source_repo='https://github.com/openshift/installer',
+            commitish='a' * 40,
+        )
+        public = KonfluxBuildRecord(
+            name='installer',
+            group=group,
+            el_target='el9',
+            version='v4.22.0',
+            release='2.p2.el9',
+            start_time=now,
+            source_repo=private.source_repo,
+            commitish='b' * 40,
+        )
+        runtime = MagicMock(
+            group=group,
+            mode='images',
+            build_system='konflux',
+            assembly='stream',
+            assembly_type=AssemblyTypes.STREAM,
+            releases_config=Model({}),
+            group_config=Model({'konflux': {'arches': ['x86_64']}}),
+        )
+        image = Mock(is_payload=True, distgit_key='installer', config=Model({}))
+        image.get_arches.return_value = ['x86_64']
+        image.get_payload_tag_info.return_value = 'pod'
+        runtime.image_map = {'installer': image}
+        image.get_latest_build = AsyncMock(return_value=public)
+        image.get_latest_konflux_build = AsyncMock(return_value=public)
+        runtime.get_for_release_image_metas.return_value = [image]
+        runtime.konflux_db.get_latest_build = AsyncMock(return_value=private)
+
+        async def search_builds(**_):
+            yield private
+
+        runtime.konflux_db.search_builds_by_fields.side_effect = search_builds
+        cli = rgp_cli.GenPayloadCli(
+            runtime=runtime,
+            organization='example',
+            repository='public',
+            private_repository='private',
+            exclude_arch=[],
+        )
+
+        def image_for_arch(build, _arch):
+            return Mock(
+                get_image_meta=Mock(return_value=image),
+                get_build_inspector=Mock(return_value=build),
+                get_digest=Mock(return_value='sha256:image'),
+                get_manifest_list_digest=Mock(return_value='sha256:list'),
+            )
+
+        for contains_fix in (False, True):
+            with self.subTest(contains_fix=contains_fix):
+                inspector = AssemblyInspector(runtime)
+                await inspector.initialize(lookup_mode='images')
+                with (
+                    patch.object(inspector, '_public_source_contains', AsyncMock(return_value=contains_fix)),
+                    patch.object(cli.payload_generator, '_find_rhcos_payload_entries', return_value=({}, [])),
+                    patch.object(
+                        KonfluxBuildRecordInspector, 'get_image_inspector', autospec=True, side_effect=image_for_arch
+                    ),
+                ):
+                    cli.private_stream_build_overrides = await inspector.find_private_stream_build_overrides()
+                    public_entries, private_entries = await cli.generate_payload_entries(inspector)
+
+                self.assertEqual(inspector.get_group_release_images()['installer'].get_nvr(), public.nvr)
+                self.assertEqual(public_entries['x86_64']['pod'].build_record_inspector.get_nvr(), public.nvr)
+                self.assertEqual(
+                    private_entries['x86_64']['pod'].build_record_inspector.get_nvr(),
+                    public.nvr if contains_fix else private.nvr,
+                )
+
     def private_assembly_cli(self, **kwargs):
         assembly = "art1"
         runtime = MagicMock(
@@ -1344,7 +1463,7 @@ class TestGenPayloadCli(IsolatedAsyncioTestCase):
         self.assertEqual(gpcli.payload_entries_for_arch, {})
         self.assertEqual(gpcli.assembly_issues, [])
         gpcli.payload_generator.find_payload_entries.assert_called_once_with(
-            inspector, "x86_64", private_repo, registry_config=gpcli.runtime.registry_config
+            inspector, "x86_64", private_repo, registry_config=gpcli.runtime.registry_config, build_overrides={}
         )
         mirror_path = gpcli.output_path / "src_dest.x86_64-private-0.txt"
         open_mirror_file.assert_called_once_with(mirror_path, mode="w+", encoding="utf-8")
