@@ -968,7 +968,7 @@
     "multi_arch": {"type": "object"},
     "new_payload_versioning_scheme": {"type": "boolean"},
     "operator_image_ref_mode": {"type": "string"},
-    "art-yaml-overrides-enabled": {
+    "art_yaml_overrides_enabled": {
       "description": "Apply per-image art.yaml template variable overrides during operator image rebases. Defaults to false and can only be enabled in openshift-4.23 group.yml.",
       "type": "boolean",
       "default": false

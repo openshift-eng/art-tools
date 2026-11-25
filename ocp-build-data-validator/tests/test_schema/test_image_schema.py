@@ -308,7 +308,7 @@ class TestImageSchema(unittest.TestCase):
         }
         for suffix in ('', '!', '?', '-'):
             with self.subTest(suffix=suffix):
-                data['update-csv'] = {**csv_config, f'art-yaml-overrides{suffix}': None if suffix == '-' else overrides}
+                data['update-csv'] = {**csv_config, f'art_yaml_overrides{suffix}': None if suffix == '-' else overrides}
                 self.assertIsNone(image_schema.validate('filename', data))
 
         for invalid_overrides in (
@@ -321,10 +321,10 @@ class TestImageSchema(unittest.TestCase):
             [{'name': 'MAJOR', 'value': 5, 'search-only': True}],
         ):
             with self.subTest(invalid_overrides=invalid_overrides):
-                data['update-csv'] = {**csv_config, 'art-yaml-overrides': invalid_overrides}
+                data['update-csv'] = {**csv_config, 'art_yaml_overrides': invalid_overrides}
                 error = image_schema.validate('filename', data)
                 self.assertIsNotNone(error)
-                self.assertIn('art-yaml-overrides', error)
+                self.assertIn('art_yaml_overrides', error)
 
     def test_validate_with_valid_bridge_release_bug_mirroring_override(self):
         data = {

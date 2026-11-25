@@ -79,8 +79,8 @@ def validate(_, data):
     if group_name and "MAJOR" in vars_map and "MINOR" in vars_map:
         group_name = replace_vars(group_name, vars_map)
 
-    if demerged_data.get("art-yaml-overrides-enabled") and group_name != "openshift-4.23":
-        return "art-yaml-overrides-enabled may only be true for openshift-4.23"
+    if demerged_data.get("art_yaml_overrides_enabled") and group_name != "openshift-4.23":
+        return "art_yaml_overrides_enabled may only be true for openshift-4.23"
 
     if basis_group and group_name:
         if "MAJOR" in vars_map and "MINOR" in vars_map:

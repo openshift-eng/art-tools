@@ -1099,8 +1099,8 @@
           "$ref": "#/properties/update-csv/properties/image-map"
         },
         "image-map-": {},
-        "art-yaml-overrides": {
-          "description": "Overrides for art.yaml template variables during operator image rebase when art-yaml-overrides-enabled is true in group.yml.",
+        "art_yaml_overrides": {
+          "description": "Overrides for art.yaml template variables during operator image rebase when art_yaml_overrides_enabled is true in group.yml.",
           "type": "array",
           "items": {
             "type": "object",
@@ -1123,13 +1123,13 @@
             "additionalProperties": false
           }
         },
-        "art-yaml-overrides!": {
-          "$ref": "#/properties/update-csv/properties/art-yaml-overrides"
+        "art_yaml_overrides!": {
+          "$ref": "#/properties/update-csv/properties/art_yaml_overrides"
         },
-        "art-yaml-overrides?": {
-          "$ref": "#/properties/update-csv/properties/art-yaml-overrides"
+        "art_yaml_overrides?": {
+          "$ref": "#/properties/update-csv/properties/art_yaml_overrides"
         },
-        "art-yaml-overrides-": {}
+        "art_yaml_overrides-": {}
       },
       "additionalProperties": false
     },

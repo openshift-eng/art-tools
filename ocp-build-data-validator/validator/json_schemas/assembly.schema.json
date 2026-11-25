@@ -28,7 +28,7 @@
       "description": "Group configuration overrides for the assembly",
       "$ref": "assembly_group_config.schema.json",
       "properties": {
-        "art-yaml-overrides-enabled": false
+        "art_yaml_overrides_enabled": false
       }
     },
     "members": {

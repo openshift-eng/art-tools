@@ -5,7 +5,7 @@ from validator.schema import group_schema
 
 class TestGroupSchema(unittest.TestCase):
     def test_art_yaml_overrides_enabled_only_for_openshift_4_23(self):
-        flag = 'art-yaml-overrides-enabled'
+        flag = 'art_yaml_overrides_enabled'
         for name, variables, enabled, expected_error in (
             ('openshift-4.23', {}, True, ''),
             ('openshift-{MAJOR}.{MINOR}', {'MAJOR': 4, 'MINOR': 23}, True, ''),

@@ -2902,7 +2902,7 @@ class KonfluxRebaser:
                 art_yaml_str,
                 version,
                 release,
-                csv_config.get('art-yaml-overrides', []),
+                csv_config.get('art_yaml_overrides', []),
                 group_config=self._runtime.group_config,
             )
         except Exception as ex:  # exception is low level, need to pull out the details and rethrow

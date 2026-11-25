@@ -34,7 +34,7 @@ class TestImageDistGit(TestDistgit):
             'manifests-dir': 'manifests',
             'bundle-dir': 'stable',
             'registry': 'registry.example',
-            'art-yaml-overrides': [
+            'art_yaml_overrides': [
                 {'name': 'MAJOR', 'value': 5, 'search_only': True},
                 {'name': 'MINOR', 'value': 0, 'search_only': True},
             ],
@@ -58,7 +58,7 @@ class TestImageDistGit(TestDistgit):
             csv_file = bundle / 'operator.clusterserviceversion.yaml'
             for switch, expected_version in (
                 ({}, '5.0.0'),
-                ({'art-yaml-overrides-enabled': True}, '4.23.0-202611250125'),
+                ({'art_yaml_overrides_enabled': True}, '4.23.0-202611250125'),
             ):
                 with self.subTest(switch=switch):
                     runtime.group_config.update(switch)

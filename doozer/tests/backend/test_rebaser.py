@@ -2014,16 +2014,16 @@ updates:
                 with self.subTest(enabled=enabled, version=version, overrides=overrides):
                     runtime.group_config['name'] = f'openshift-{version.removeprefix("v").rsplit(".", 1)[0]}'
                     if enabled is None:
-                        runtime.group_config.pop('art-yaml-overrides-enabled', None)
+                        runtime.group_config.pop('art_yaml_overrides_enabled', None)
                     else:
-                        runtime.group_config['art-yaml-overrides-enabled'] = enabled
+                        runtime.group_config['art_yaml_overrides_enabled'] = enabled
                     csv_file.write_text(
                         f'metadata:\n  name: operator.v{source_version}\nspec:\n'
                         f'  version: {source_version}\n  description: "BUILD_VERSION"\n'
                     )
                     csv_config = {'manifests-dir': 'manifests', 'bundle-dir': 'stable'}
                     if overrides is not None:
-                        csv_config['art-yaml-overrides'] = overrides
+                        csv_config['art_yaml_overrides'] = overrides
                     metadata = SimpleNamespace(distgit_key='operator', config=Model({'update-csv': csv_config}))
                     await rebaser._update_csv(metadata, dest_dir, version, '202611250125.p2.assembly.stream.el9')
                     expected_version = f'{version.removeprefix("v")}-202611250125'

@@ -25,7 +25,7 @@ def render_art_yaml(
     }
     search_overrides = {}
     # Merged group metadata can include group.ext.yml, which group.yml validation does not cover.
-    if group_config.get('art-yaml-overrides-enabled') is True and group_config.get('name') == 'openshift-4.23':
+    if group_config.get('art_yaml_overrides_enabled') is True and group_config.get('name') == 'openshift-4.23':
         for override in overrides:
             scope = search_overrides if override.get('search_only', False) else variables
             scope[override['name']] = override['value']
