@@ -1098,7 +1098,38 @@
         "image-map?": {
           "$ref": "#/properties/update-csv/properties/image-map"
         },
-        "image-map-": {}
+        "image-map-": {},
+        "art-yaml-overrides": {
+          "description": "Overrides for art.yaml template variables during operator image rebase",
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "name": {
+                "description": "Template variable name without braces",
+                "type": "string",
+                "pattern": "^[A-Za-z_][A-Za-z0-9_]*$"
+              },
+              "value": {
+                "type": ["string", "integer"]
+              },
+              "search_only": {
+                "description": "Apply this override only to search strings in art.yaml update rules. When false or omitted, apply it throughout art.yaml.",
+                "type": "boolean",
+                "default": false
+              }
+            },
+            "required": ["name", "value"],
+            "additionalProperties": false
+          }
+        },
+        "art-yaml-overrides!": {
+          "$ref": "#/properties/update-csv/properties/art-yaml-overrides"
+        },
+        "art-yaml-overrides?": {
+          "$ref": "#/properties/update-csv/properties/art-yaml-overrides"
+        },
+        "art-yaml-overrides-": {}
       },
       "additionalProperties": false
     },

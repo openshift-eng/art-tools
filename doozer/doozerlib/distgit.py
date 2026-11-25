@@ -53,6 +53,7 @@ from doozerlib.build_info import BrewBuildRecordInspector
 from doozerlib.comment_on_pr import CommentOnPr
 from doozerlib.dblib import Record
 from doozerlib.exceptions import DoozerFatalError
+from doozerlib.olm.art_yaml import render_art_yaml
 from doozerlib.osbs2_builder import OSBS2Builder, OSBS2BuildError
 from doozerlib.source_modifications import SourceModifierFactory
 from doozerlib.source_resolver import SourceResolver
@@ -2496,21 +2497,6 @@ class ImageDistGitRepo(DistGitRepo):
             )
             self.runtime.logger.warning(message)
 
-        if version.startswith('v'):
-            version = version[1:]  # strip off leading v
-
-        x, y, z = version.split('.')[0:3]
-        date_time = release.split('.')[0]  # Extract datestamp (YYYYMMDDHHMM[SS])
-
-        replace_args = {
-            'MAJOR': x,
-            'MINOR': y,
-            'SUBMINOR': z,
-            'RELEASE': release,
-            'DATE_TIME': date_time,
-            'FULL_VER': '{}-{}'.format(version, date_time),
-        }
-
         manifests_base = os.path.join(self.distgit_dir, csv_config['manifests-dir'])
 
         art_yaml = os.path.join(manifests_base, 'art.yaml')
@@ -2520,8 +2506,9 @@ class ImageDistGitRepo(DistGitRepo):
                 art_yaml_str = art_file.read()
 
             try:
-                art_yaml_str = art_yaml_str.format(**replace_args)
-                art_yaml_data = yaml.full_load(art_yaml_str)
+                art_yaml_data = render_art_yaml(
+                    art_yaml_str, version, release, csv_config.get('art-yaml-overrides', [])
+                )
             except Exception as ex:  # exception is low level, need to pull out the details and rethrow
                 raise DoozerFatalError('Error processing art.yaml!\n{}\n\n{}'.format(str(ex), art_yaml_str))
 

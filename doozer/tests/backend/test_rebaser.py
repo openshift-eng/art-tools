@@ -1,10 +1,12 @@
 import asyncio
+import logging
 import os
 import re
 import stat
 from datetime import datetime, timezone
 from pathlib import Path
 from tempfile import TemporaryDirectory
+from types import SimpleNamespace
 from unittest import IsolatedAsyncioTestCase, TestCase
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -1964,6 +1966,67 @@ class TestPrivateFixDetection(IsolatedAsyncioTestCase):
             child_private_fix = True
 
         self.assertTrue(child_private_fix)
+
+
+class TestRebaserArtYamlOverrides(IsolatedAsyncioTestCase):
+    async def test_update_csv_with_art_yaml_overrides(self):
+        with TemporaryDirectory() as directory:
+            dest_dir = Path(directory)
+            manifests = dest_dir / 'manifests'
+            bundle = manifests / 'stable'
+            bundle.mkdir(parents=True)
+            csv_file = bundle / 'operator.202611250125.clusterserviceversion.yaml'
+            (bundle / 'image-references').write_text(
+                'spec:\n  tags:\n    - name: operator\n      from:\n        name: registry.example/operator:latest\n'
+            )
+            (manifests / 'art.yaml').write_text(
+                '''
+updates:
+  - file: "stable/operator.{DATE_TIME}.clusterserviceversion.yaml"
+    update_list:
+      - search: "version: {MAJOR}.{MINOR}.0"
+        replace: "version: {FULL_VER}"
+      - search: "name: operator.v{MAJOR}.{MINOR}.0"
+        replace: "name: operator.v{MAJOR}.{MINOR}.0"
+      - search: "BUILD_VERSION"
+        replace: {FULL_VER}
+'''
+            )
+            runtime = SimpleNamespace(group_config=Model({'vars': {'MAJOR': 4, 'MINOR': 23}}))
+            rebaser = KonfluxRebaser.__new__(KonfluxRebaser)
+            rebaser._runtime = runtime
+            rebaser._logger = logging.getLogger(__name__)
+
+            search_overrides = [
+                {'name': 'MAJOR', 'value': 5, 'search_only': True},
+                {'name': 'MINOR', 'value': 0, 'search_only': True},
+            ]
+            cases = [
+                ('openshift-4.23', 'v4.23.0', search_overrides, '4.23.0-202611250125', '4.23.0'),
+                ('openshift-5.0', 'v5.0.0', None, '5.0.0-202611250125', '5.0.0'),
+                (
+                    'openshift-4.23',
+                    'v4.23.0',
+                    [{'name': 'MAJOR', 'value': 5}, {'name': 'MINOR', 'value': 0, 'search_only': False}],
+                    '4.23.0-202611250125',
+                    '5.0.0',
+                ),
+            ]
+            for group, version, overrides, expected_version, expected_name_version in cases:
+                with self.subTest(group=group, overrides=overrides):
+                    csv_file.write_text(
+                        'metadata:\n  name: operator.v5.0.0\nspec:\n  version: 5.0.0\n  description: "BUILD_VERSION"\n'
+                    )
+                    csv_config = {'manifests-dir': 'manifests', 'bundle-dir': 'stable'}
+                    if overrides is not None:
+                        csv_config['art-yaml-overrides'] = overrides
+                    metadata = SimpleNamespace(distgit_key='operator', config=Model({'update-csv': csv_config}))
+                    await rebaser._update_csv(metadata, dest_dir, version, '202611250125.p2.assembly.stream.el9')
+                    self.assertEqual(
+                        csv_file.read_text(),
+                        f'metadata:\n  name: operator.v{expected_name_version}\nspec:\n'
+                        f'  version: {expected_version}\n  description: "{expected_version}"\n',
+                    )
 
 
 class TestRebaserExternalImageAuth(IsolatedAsyncioTestCase):
