@@ -321,8 +321,65 @@ class TestDirectSignatory(IsolatedAsyncioTestCase):
         self.assertEqual(command[4], "--gpgsign")
         self.assertEqual(command[5], "--output")
         self.assertEqual(command[7:], ["--onbehalfof", "jupierce@redhat.com"])
-        verification_command = command_runner.await_args_list[1].args[0]
-        self.assertEqual(verification_command[:2], ["gpg2", "-d"])
+        import_command = command_runner.await_args_list[1].args[0]
+        verification_command = command_runner.await_args_list[2].args[0]
+        self.assertEqual(import_command[:2], ["gpg2", "--homedir"])
+        self.assertEqual(import_command[3:], ["--batch", "--import", "/etc/pki/rpm-gpg/RPM-GPG-KEY-redhat-release"])
+        self.assertEqual(verification_command[:3], import_command[:3])
+        self.assertEqual(verification_command[3], "-d")
+
+    async def test_sign_artifact_reports_public_key_import_failure(self):
+        async def run_command(command, **kwargs):
+            if command[0] == "gpg2":
+                return 1, "", "key file unavailable"
+            Path(command[command.index("--output") + 1]).write_bytes(b"signature")
+            return 0, "", ""
+
+        signatory = DirectSignatory(
+            client_command=("rh-signing-client",),
+            sig_keyname="redhatrelease2",
+            command_runner=AsyncMock(side_effect=run_command),
+        )
+        sig_file = BytesIO()
+        with self.assertRaisesRegex(SignatoryServerError, "public key import failed: key file unavailable"):
+            await signatory.sign_message_digest("openshift", "4.19.0", BytesIO(b"data"), sig_file)
+        self.assertEqual(sig_file.getvalue(), b"")
+
+    async def test_stage_signing_imports_beta_key_into_isolated_keyring(self):
+        async def run_command(command, **kwargs):
+            if command[0] != "gpg2":
+                Path(command[command.index("--output") + 1]).write_bytes(b"signature")
+            return 0, "", ""
+
+        runner = AsyncMock(side_effect=run_command)
+        signatory = DirectSignatory(client_command=("rh-signing-client",), sig_keyname="beta2", command_runner=runner)
+        await signatory.sign_message_digest("openshift", "4.19.0", BytesIO(b"data"), BytesIO())
+        self.assertEqual(runner.await_count, 3)
+        import_command = runner.await_args_list[1].args[0]
+        verification_command = runner.await_args_list[2].args[0]
+        self.assertEqual(import_command[:2], ["gpg2", "--homedir"])
+        self.assertEqual(import_command[3:], ["--batch", "--import", "/etc/pki/rpm-gpg/RPM-GPG-KEY-redhat-beta"])
+        self.assertEqual(verification_command[:3], import_command[:3])
+        self.assertEqual(verification_command[3], "-d")
+
+    async def test_sign_artifact_rejects_unverified_signature(self):
+        async def run_command(command, **kwargs):
+            if command[0] != "gpg2":
+                Path(command[command.index("--output") + 1]).write_bytes(b"signature")
+                return 0, "", ""
+            if "--import" in command:
+                return 0, "", ""
+            return 1, "", "No public key"
+
+        signatory = DirectSignatory(
+            client_command=("rh-signing-client",),
+            sig_keyname="redhatrelease2",
+            command_runner=AsyncMock(side_effect=run_command),
+        )
+        sig_file = BytesIO()
+        with self.assertRaisesRegex(SignatoryServerError, "signature verification failed: No public key"):
+            await signatory.sign_message_digest("openshift", "4.19.0", BytesIO(b"data"), sig_file)
+        self.assertEqual(sig_file.getvalue(), b"")
 
     async def test_sign_json_digest_writes_signature_from_client_output(self):
         command_runner = AsyncMock()
