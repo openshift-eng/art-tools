@@ -1,5 +1,6 @@
 import json
 import unittest
+from pathlib import Path
 from types import SimpleNamespace
 from unittest import mock
 
@@ -841,6 +842,7 @@ class TestBundleStageReleaseRelatedImagesCli(unittest.IsolatedAsyncioTestCase):
         record = mock.Mock()
         record.name = name
         record.nvr = f"{name}-1-1"
+        record.get_konflux_component_name.return_value = f"{name}-component"
         return record
 
     @staticmethod
@@ -861,33 +863,65 @@ class TestBundleStageReleaseRelatedImagesCli(unittest.IsolatedAsyncioTestCase):
         runtime.image_map = {name: meta for name in operator_names}
         return operators
 
+    @mock.patch.dict("os.environ", {"QUAY_AUTH_FILE": "/path/to/auth.json"})
+    @mock.patch("doozerlib.backend.konflux_fbc.util.oc_image_extract_async")
+    @mock.patch("doozerlib.cli.images_konflux.get_referenced_images")
     @mock.patch("doozerlib.cli.images_konflux.KonfluxDb")
-    async def test_stage_release_creates_snapshot_and_release_for_one_operator(self, mock_db_class):
-        """A single operator's related images go into one Snapshot and one Release."""
+    async def test_stage_release_creates_snapshot_and_tags_operator_from_bundle_csv(
+        self, mock_db_class, mock_get_refs, mock_extract
+    ):
         client = self._mock_konflux_client({"type": "Released", "status": "True", "reason": "Succeeded"})
-        cli = self._make_cli(self._make_runtime(product="rhacm2", version_str="2.16.0", major=4, minor=21))
+        runtime = self._make_runtime(product="rhacm2", version_str="2.16.0", major=4, minor=21)
+        operator = self._operator_record("operator-a")
+        self._prepare_run(runtime, [operator.name], records=[operator])
+        cli = self._make_cli(runtime)
+        bundle_build = self._ref("bundle-comp")
+        bundle_build.image_pullspec = "quay.io/example/bundle@sha256:abcd"
+        mock_get_refs.return_value = [self._ref("operator-a-component"), self._ref("operand-comp")]
 
-        components = [self._component("comp-a", "img-a"), self._component("comp-b", "img-b")]
-        url = await cli._stage_release(
+        async def bundle_builds(**kwargs):
+            yield bundle_build
+
+        async def extract(pullspec, *, path_specs, registry_config):
+            self.assertEqual(pullspec, bundle_build.image_pullspec)
+            self.assertEqual(registry_config, "/path/to/auth.json")
+            [path_spec] = path_specs
+            manifests_dir, destination = path_spec.split(":", 1)
+            self.assertEqual(manifests_dir, "manifests/")
+            Path(destination, "operator.clusterserviceversion.yaml").write_text(
+                "spec:\n  version: 2.16.7-rc.1+build.9\n"
+            )
+
+        cli._db_for_bundles.search_builds_by_fields = mock.Mock(side_effect=bundle_builds)
+        mock_extract.side_effect = extract
+        url = await cli._stage_release_operator(
             konflux_client=client,
-            components=components,
+            record=operator,
             release_plan_name="acm-advisory-stage-2-16",
-            group="rhacm2-2.16",
             assembly="stream",
-            operator_name="operator-a",
-            operator_nvr="operator-a-1-1",
         )
 
         self.assertEqual(url, "https://konflux/url")
+        self.assertEqual(
+            cli._db_for_bundles.search_builds_by_fields.call_args.kwargs["where"]["operator_nvr"], operator.nvr
+        )
+        mock_extract.assert_awaited_once()
         self.assertEqual([c.args[0]["kind"] for c in client._create.call_args_list], ["Snapshot", "Release"])
         snapshot = client._create.call_args_list[0].args[0]
-        self.assertEqual([c["name"] for c in snapshot["spec"]["components"]], ["comp-a", "comp-b"])
+        self.assertEqual(
+            [c["name"] for c in snapshot["spec"]["components"]],
+            ["bundle-comp", "operand-comp", "operator-a-component"],
+        )
         self.assertEqual(snapshot["metadata"]["labels"]["release.appstudio.openshift.io/auto-release"], "false")
         # Names are generated server-side so two operators cannot collide on a truncated label
         self.assertNotIn("name", snapshot["metadata"])
         self.assertTrue(snapshot["metadata"]["generateName"].startswith("fbc-ri-stage-rhacm2-2-16-operator-a-"))
         release = client._create.call_args_list[1].args[0]
         self.assertEqual(release["spec"]["releasePlan"], "acm-advisory-stage-2-16")
+        self.assertEqual(
+            release["spec"]["data"]["mapping"]["components"],
+            [{"name": "operator-a-component", "componentTags": ["v2.16.7-rc.1_build.9"]}],
+        )
         self.assertEqual(release["metadata"]["annotations"]["art.redhat.com/operator-nvr"], "operator-a-1-1")
         client.wait_for_release.assert_awaited_once_with("release-xyz")
 
@@ -927,21 +961,23 @@ class TestBundleStageReleaseRelatedImagesCli(unittest.IsolatedAsyncioTestCase):
                 operator_nvr="operator-a-1-1",
             )
 
+    @mock.patch("doozerlib.cli.images_konflux.load_csv_from_bundle")
     @mock.patch("doozerlib.cli.images_konflux.get_referenced_images")
     @mock.patch("doozerlib.cli.images_konflux.KonfluxClient")
     @mock.patch("doozerlib.cli.images_konflux.KonfluxDb")
     @mock.patch("doozerlib.cli.images_konflux.resolve_konflux_fbc_stage_release_plan")
     async def test_run_creates_one_release_per_operator(
-        self, mock_resolve, mock_db_class, mock_client_cls, mock_get_refs
+        self, mock_resolve, mock_db_class, mock_client_cls, mock_get_refs, mock_load_csv
     ):
         """Two operators sharing an operand get one Release each; the shared operand is in both."""
         mock_resolve.return_value = "acm-advisory-stage-2-16"
         runtime = self._make_runtime(product="rhacm2", version_str="2.16.0", major=4, minor=21)
         self._prepare_run(runtime, ["operator-a", "operator-b"])
+        mock_load_csv.side_effect = [{"spec": {"version": "2.16.1"}}, {"spec": {"version": "2.16.2"}}]
 
         mock_get_refs.side_effect = [
-            [self._ref("comp-a"), self._ref("comp-shared")],
-            [self._ref("comp-b"), self._ref("comp-shared")],
+            [self._ref("operator-a-component"), self._ref("comp-shared")],
+            [self._ref("operator-b-component"), self._ref("comp-shared")],
         ]
 
         async def _bundle_builds(*args, **kwargs):
@@ -956,55 +992,71 @@ class TestBundleStageReleaseRelatedImagesCli(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(cli._stage_release.await_count, 2)
         first, second = cli._stage_release.await_args_list
         # The bundle build itself is included alongside the operator + operand images
-        self.assertEqual([c["name"] for c in first.kwargs["components"]], ["bundle-comp", "comp-a", "comp-shared"])
+        self.assertEqual(
+            [c["name"] for c in first.kwargs["components"]], ["bundle-comp", "comp-shared", "operator-a-component"]
+        )
         self.assertEqual(first.kwargs["operator_nvr"], "operator-a-1-1")
-        self.assertEqual([c["name"] for c in second.kwargs["components"]], ["bundle-comp", "comp-b", "comp-shared"])
+        self.assertEqual(
+            [c["name"] for c in second.kwargs["components"]], ["bundle-comp", "comp-shared", "operator-b-component"]
+        )
         self.assertEqual(second.kwargs["operator_nvr"], "operator-b-1-1")
+        self.assertEqual(
+            first.kwargs["release_data"]["mapping"]["components"],
+            [{"name": "operator-a-component", "componentTags": ["v2.16.1"]}],
+        )
+        self.assertEqual(
+            second.kwargs["release_data"]["mapping"]["components"],
+            [{"name": "operator-b-component", "componentTags": ["v2.16.2"]}],
+        )
 
         statuses = [call.kwargs["status"] for call in runtime.record_logger.add_record.call_args_list]
         self.assertEqual(statuses, [0, 0])
 
+    @mock.patch("doozerlib.cli.images_konflux.load_csv_from_bundle")
     @mock.patch("doozerlib.cli.images_konflux.get_referenced_images")
     @mock.patch("doozerlib.cli.images_konflux.KonfluxClient")
     @mock.patch("doozerlib.cli.images_konflux.KonfluxDb")
     @mock.patch("doozerlib.cli.images_konflux.resolve_konflux_fbc_stage_release_plan")
-    async def test_run_continues_after_operator_failure(
-        self, mock_resolve, mock_db_class, mock_client_cls, mock_get_refs
+    async def test_run_continues_after_invalid_csv_version(
+        self, mock_resolve, mock_db_class, mock_client_cls, mock_get_refs, mock_load_csv
     ):
-        """A failing operator is recorded and skipped; the next operator is still released."""
         mock_resolve.return_value = "acm-advisory-stage-2-16"
         runtime = self._make_runtime(product="rhacm2", version_str="2.16.0", major=4, minor=21)
         self._prepare_run(runtime, ["operator-a", "operator-b"])
-
-        mock_get_refs.side_effect = [[self._ref("comp-a")], [self._ref("comp-b")]]
+        mock_load_csv.side_effect = [{"spec": {"version": "invalid"}}, {"spec": {"version": "2.16.2"}}]
+        mock_get_refs.return_value = [self._ref("operator-b-component")]
 
         async def _bundle_builds(*args, **kwargs):
-            yield self._ref("bundle-comp")
+            bundle_build = self._ref("bundle-comp")
+            bundle_build.nvr = "bundle-comp-2.16.0-1"
+            yield bundle_build
 
         cli = self._make_cli(runtime, operator_nvrs=("operator-a-1-1", "operator-b-1-1"))
         cli._db_for_bundles.search_builds_by_fields = _bundle_builds
-        cli._stage_release = mock.AsyncMock(side_effect=[RuntimeError("release blew up"), "https://konflux/url"])
+        cli._stage_release = mock.AsyncMock(return_value="https://konflux/url")
 
         with self.assertRaisesRegex(DoozerFatalError, "operator-a-1-1"):
             await cli.run()
 
-        self.assertEqual(cli._stage_release.await_count, 2)
+        cli._stage_release.assert_awaited_once()
+        self.assertEqual(cli._stage_release.await_args.kwargs["operator_nvr"], "operator-b-1-1")
         records = [call.kwargs for call in runtime.record_logger.add_record.call_args_list]
         self.assertEqual(
             [(r["operator_nvr"], r["status"]) for r in records], [("operator-a-1-1", 1), ("operator-b-1-1", 0)]
         )
-        self.assertIn("release blew up", records[0]["message"])
+        self.assertIn("Cannot read CSV version from bundle bundle-comp-2.16.0-1", records[0]["message"])
 
+    @mock.patch("doozerlib.cli.images_konflux.load_csv_from_bundle")
     @mock.patch("doozerlib.cli.images_konflux.get_referenced_images")
     @mock.patch("doozerlib.cli.images_konflux.KonfluxClient")
     @mock.patch("doozerlib.cli.images_konflux.KonfluxDb")
     @mock.patch("doozerlib.cli.images_konflux.resolve_konflux_fbc_stage_release_plan")
     async def test_run_records_operator_with_missing_build_record(
-        self, mock_resolve, mock_db_class, mock_client_cls, mock_get_refs
+        self, mock_resolve, mock_db_class, mock_client_cls, mock_get_refs, mock_load_csv
     ):
         """An NVR with no build record fails only itself; the others are still stage-released."""
-        mock_resolve.return_value = "acm-advisory-stage-2-16"
-        runtime = self._make_runtime(product="rhacm2", version_str="2.16.0", major=4, minor=21)
+        mock_resolve.return_value = "ocp-advisory-stage-5-0"
+        runtime = self._make_runtime(product="ocp", major=5, minor=0, group="openshift-5.0")
         self._prepare_run(runtime, ["operator-b"], records=[None, self._operator_record("operator-b")])
 
         mock_get_refs.side_effect = [[self._ref("comp-b")]]
@@ -1021,8 +1073,10 @@ class TestBundleStageReleaseRelatedImagesCli(unittest.IsolatedAsyncioTestCase):
 
         # strict=False keeps a missing NVR from taking down the whole command
         self.assertFalse(runtime.konflux_db.get_build_records_by_nvrs.await_args.kwargs["strict"])
+        mock_load_csv.assert_not_awaited()
         cli._stage_release.assert_awaited_once()
         self.assertEqual(cli._stage_release.await_args.kwargs["operator_nvr"], "operator-b-1-1")
+        self.assertIsNone(cli._stage_release.await_args.kwargs["release_data"])
         records = [call.kwargs for call in runtime.record_logger.add_record.call_args_list]
         self.assertEqual(
             [(r["operator_nvr"], r["status"]) for r in records], [("operator-a-1-1", 1), ("operator-b-1-1", 0)]
