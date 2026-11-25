@@ -59,6 +59,7 @@ from doozerlib.cli.release_gen_assembly import GenAssemblyCli
 from doozerlib.exceptions import DoozerFatalError
 from doozerlib.image import ImageMetadata
 from doozerlib.rhcos import RHCOSBuildInspector
+from doozerlib.rpm_embargo import EmbargoedRpmError, find_embargoed_rpms, rpm_inventory_from_build
 from doozerlib.runtime import Runtime
 from doozerlib.util import (
     check_nightly_exists,
@@ -1301,7 +1302,30 @@ class GenPayloadCli:
 
             self.assembly_issues.extend(list(private_only_issues))
 
+        if self.runtime.build_system == 'konflux' and public_entries_for_arch:
+            await exectools.to_thread(self._assert_public_payload_rpms, public_entries_for_arch)
+
         return public_entries_for_arch, private_entries_for_arch
+
+    def _assert_public_payload_rpms(self, entries_for_arch):
+        """Check ordinary image RPMs in the public payload, including older builds."""
+        nvras = set()
+        source_nvrs = set()
+        inspected = set()
+        for entries in entries_for_arch.values():
+            for entry in entries.values():
+                if entry.build_record_inspector:
+                    build = entry.build_record_inspector.get_build_obj()
+                    if build.nvr in inspected:
+                        continue
+                    inspected.add(build.nvr)
+                    build_nvras, build_sources = rpm_inventory_from_build(build)
+                    nvras.update(build_nvras)
+                    source_nvrs.update(build_sources)
+        with self.runtime.shared_koji_client_session() as session:
+            embargoed = find_embargoed_rpms(session, rpm_nvras=nvras, source_nvrs=source_nvrs)
+        if embargoed:
+            raise EmbargoedRpmError(f'Public payload contains embargoed RPMs: {", ".join(sorted(embargoed))}')
 
     @start_as_current_span_async(TRACER, "GenPayloadCli.detect_extend_payload_entry_issues")
     async def detect_extend_payload_entry_issues(self, assembly_inspector: AssemblyInspector):

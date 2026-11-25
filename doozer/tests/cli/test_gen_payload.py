@@ -1288,6 +1288,35 @@ class TestGenPayloadCli(IsolatedAsyncioTestCase):
         )
         self.assertEqual(gpcli.assembly_issues, ["issues", "embargo_issues"])
 
+    @patch("doozerlib.cli.release_gen_payload.find_embargoed_rpms")
+    @patch("doozerlib.cli.release_gen_payload.PayloadGenerator.find_payload_entries")
+    async def test_rejects_public_payload_when_an_image_has_embargoed_rpms(self, find_entries, find_embargoed):
+        runtime = MagicMock(build_system='konflux', assembly_type=AssemblyTypes.STREAM)
+        runtime.group_config.konflux.arches = ['aarch64']
+        gpcli = rgp_cli.GenPayloadCli(exclude_arch=[], runtime=runtime)
+        public_build = Mock(
+            nvr='public-image-1.0-1.p2.el9',
+            installed_rpms=['package-1.0-1.p3.el9'],
+            installed_packages=['package-1.0-1.p3.el9'],
+            arches=['aarch64'],
+        )
+        inspector = Mock()
+        inspector.is_under_embargo.return_value = False
+        inspector.get_build_obj.return_value = public_build
+        entry = rgp_cli.PayloadEntry(
+            image_meta=Mock(distgit_key='image'),
+            build_record_inspector=inspector,
+            dest_pullspec='dummy',
+            issues=[],
+        )
+        find_entries.return_value = ({'image': entry}, [])
+        find_embargoed.return_value = {'package-1.0-1.p3.el9.aarch64'}
+
+        with self.assertRaisesRegex(rgp_cli.EmbargoedRpmError, 'package-1.0-1.p3'):
+            await gpcli.generate_payload_entries(Mock(AssemblyInspector))
+
+        self.assertIn('package-1.0-1.p3.el9.aarch64', find_embargoed.call_args.kwargs['rpm_nvras'])
+
     @patch("doozerlib.cli.release_gen_payload.PayloadGenerator.find_payload_entries")
     async def test_generate_payload_entries_rhcos(self, pg_findpe_mock):
         """
