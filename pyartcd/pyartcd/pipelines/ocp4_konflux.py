@@ -544,7 +544,8 @@ class KonfluxOcpPipeline:
         try:
             await exectools.cmd_assert_async(cmd)
 
-        except ChildProcessError:
+        except ChildProcessError as exc:
+            self.runtime.logger.error('Golang bug sweep failed for %s: %s', self.version, exc)
             if self.runtime.dry_run:
                 return
             self.slack_client.bind_channel(f'openshift-{self.version}')

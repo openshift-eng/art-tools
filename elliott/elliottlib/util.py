@@ -748,10 +748,6 @@ async def get_nvrs_from_release(pullspec_or_imagestream, rhcos_images, logger=No
         registry_config (str): Optional path to a Docker config.json for registry auth.
     """
 
-    def log(msg):
-        if logger:
-            logger.info(msg)
-
     # a pullspec looks like this: quay.io/openshift-release-dev/ocp-release:4.17.14-x86_64
     # an imagestream looks like this: 4.17-art-assembly-4.17.14
     if '@' in pullspec_or_imagestream or ':' in pullspec_or_imagestream:
@@ -759,8 +755,8 @@ async def get_nvrs_from_release(pullspec_or_imagestream, rhcos_images, logger=No
     else:
         is_pullspec = False
 
-    all_payload_nvrs = {}
-    log("Fetching release info...")
+    if logger:
+        logger.info("Fetching release info...")
     if is_pullspec:
         registry_config_arg = f'--registry-config={registry_config}' if registry_config else ''
         rc, stdout, stderr = await exectools.cmd_gather_async(
@@ -775,6 +771,17 @@ async def get_nvrs_from_release(pullspec_or_imagestream, rhcos_images, logger=No
         rc, stdout, stderr = await exectools.cmd_gather_async(f'oc -o json -n {name_space} get is/{image_stream}')
         tags = json.loads(stdout)['spec']['tags']
 
+    return await get_nvrs_from_image_references(tags, rhcos_images, logger=logger, registry_config=registry_config)
+
+
+async def get_nvrs_from_image_references(tags, rhcos_images, *, logger=None, registry_config=None):
+    """Read build NVRs from the component images in a release or ImageStream."""
+
+    def log(msg):
+        if logger:
+            logger.info(msg)
+
+    all_payload_nvrs = {}
     log("Looping over payload images...")
     log(f"{len(tags)} images to check")
 

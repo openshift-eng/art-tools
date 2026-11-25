@@ -8,9 +8,10 @@ Scenarios covered:
   (e) golang_report_for_version with exact=True and a floating-tag stream (SC-5 / find-bugs path)
 """
 
+import os
 import unittest.mock
 from unittest import TestCase
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import MagicMock, patch
 
 from elliottlib.cli.get_golang_report_cli import (
     go_version_from_floating_tag,
@@ -109,6 +110,12 @@ class TestGoVersionFromFloatingTag(TestCase):
 
 
 class TestGoVersionFromFloatingTagExact(TestCase):
+    builder_labels = {
+        'com.redhat.component': 'openshift-golang-builder-container',
+        'version': 'v1.22.12',
+        'release': '202608131106.p2.g7d3050a.assembly.stream.el9',
+    }
+
     def test_resolves_via_golang_nvr_label(self):
         """Happy path: io.openshift.build.golang-nvr label present — no DB lookup needed."""
         fake_image_data = {
@@ -132,29 +139,24 @@ class TestGoVersionFromFloatingTagExact(TestCase):
                 'elliottlib.cli.get_golang_report_cli.get_golang_container_nvrs',
             ) as mock_nvrs,
         ):
-            result = go_version_from_floating_tag_exact('registry.redhat.io/openshift/golang-builder:v1.22-rhel9')
+            result = go_version_from_floating_tag_exact(
+                'registry.redhat.io/openshift/golang-builder:v1.22-rhel9', registry_config='/configured/auth.json'
+            )
 
         self.assertEqual(result, 'golang-1.22.12-2.el9')
-        mock_oi.assert_called_once_with('registry.redhat.io/openshift/golang-builder:v1.22-rhel9')
+        mock_oi.assert_called_once_with(
+            'registry.redhat.io/openshift/golang-builder:v1.22-rhel9', registry_config='/configured/auth.json'
+        )
         mock_nvrs.assert_not_called()
 
     def test_falls_back_to_db_when_golang_nvr_label_absent(self):
-        """Fallback path: no io.openshift.build.golang-nvr label — reuse extract_nvr_from_pullspec."""
-        fake_image_data = {'config': {'config': {'Labels': {}}}}
+        """Use the builder NVR labels from the authenticated response for older images."""
+        fake_image_data = {'config': {'config': {'Labels': self.builder_labels}}}
         with (
             patch(
                 'elliottlib.cli.get_golang_report_cli.oc_image_info_for_arch',
                 return_value=fake_image_data,
             ) as mock_oi,
-            patch(
-                'elliottlib.cli.get_golang_report_cli.extract_nvr_from_pullspec',
-                new_callable=AsyncMock,
-                return_value=(
-                    'openshift-golang-builder-container',
-                    'v1.22.12',
-                    '202608131106.p2.g7d3050a.assembly.stream.el9',
-                ),
-            ) as mock_extract,
             patch(
                 'elliottlib.cli.get_golang_report_cli.get_golang_container_nvrs',
                 return_value={
@@ -168,11 +170,14 @@ class TestGoVersionFromFloatingTagExact(TestCase):
                 },
             ) as mock_nvrs,
         ):
-            result = go_version_from_floating_tag_exact('registry.redhat.io/openshift/golang-builder:v1.22-rhel9')
+            result = go_version_from_floating_tag_exact(
+                'registry.redhat.io/openshift/golang-builder:v1.22-rhel9', registry_config='/configured/auth.json'
+            )
 
         self.assertEqual(result, 'golang-1.22.12-1.el9')
-        mock_oi.assert_called_once_with('registry.redhat.io/openshift/golang-builder:v1.22-rhel9')
-        mock_extract.assert_called_once_with('registry.redhat.io/openshift/golang-builder:v1.22-rhel9')
+        mock_oi.assert_called_once_with(
+            'registry.redhat.io/openshift/golang-builder:v1.22-rhel9', registry_config='/configured/auth.json'
+        )
         mock_nvrs.assert_called_once_with(
             [('openshift-golang-builder-container', 'v1.22.12', '202608131106.p2.g7d3050a.assembly.stream.el9')],
             unittest.mock.ANY,
@@ -180,62 +185,37 @@ class TestGoVersionFromFloatingTagExact(TestCase):
         )
 
     def test_raises_on_missing_labels(self):
-        """extract_nvr_from_pullspec IOError is re-raised as ValueError."""
         fake_image_data = {'config': {'config': {'Labels': {}}}}
-        with (
-            patch('elliottlib.cli.get_golang_report_cli.oc_image_info_for_arch', return_value=fake_image_data),
-            patch(
-                'elliottlib.cli.get_golang_report_cli.extract_nvr_from_pullspec',
-                new_callable=AsyncMock,
-                side_effect=IOError("Missing NVR labels"),
-            ),
-        ):
-            with self.assertRaises(ValueError):
+        with patch('elliottlib.cli.get_golang_report_cli.oc_image_info_for_arch', return_value=fake_image_data):
+            with self.assertRaisesRegex(ValueError, 'Missing NVR labels'):
                 go_version_from_floating_tag_exact('registry.redhat.io/openshift/golang-builder:v1.22-rhel9')
 
     def test_raises_when_labels_is_null(self):
         """Labels: null must not cause AttributeError on the fast-path check."""
         fake_image_data = {'config': {'config': {'Labels': None}}}
-        with (
-            patch('elliottlib.cli.get_golang_report_cli.oc_image_info_for_arch', return_value=fake_image_data),
-            patch(
-                'elliottlib.cli.get_golang_report_cli.extract_nvr_from_pullspec',
-                new_callable=AsyncMock,
-                side_effect=IOError("Missing NVR labels"),
-            ),
-        ):
-            with self.assertRaises(ValueError):
+        with patch('elliottlib.cli.get_golang_report_cli.oc_image_info_for_arch', return_value=fake_image_data):
+            with self.assertRaisesRegex(ValueError, 'Missing NVR labels'):
                 go_version_from_floating_tag_exact('registry.redhat.io/openshift/golang-builder:v1.22-rhel9')
 
     def test_raises_on_multiple_nvr_map_entries(self):
-        fake_image_data = {'config': {'config': {'Labels': {}}}}
+        fake_image_data = {'config': {'config': {'Labels': self.builder_labels}}}
         with (
             patch('elliottlib.cli.get_golang_report_cli.oc_image_info_for_arch', return_value=fake_image_data),
-            patch(
-                'elliottlib.cli.get_golang_report_cli.extract_nvr_from_pullspec',
-                new_callable=AsyncMock,
-                return_value=('openshift-golang-builder-container', 'v1.22.12', '202608131106.el9'),
-            ),
             patch(
                 'elliottlib.cli.get_golang_report_cli.get_golang_container_nvrs',
                 return_value={'golang-1.22.12-1.el9': set(), 'golang-1.22.11-1.el9': set()},
             ),
         ):
-            with self.assertRaises(ValueError):
+            with self.assertRaisesRegex(ValueError, 'Expected exactly one golang version'):
                 go_version_from_floating_tag_exact('registry.redhat.io/openshift/golang-builder:v1.22-rhel9')
 
     def test_raises_on_empty_nvr_map(self):
-        fake_image_data = {'config': {'config': {'Labels': {}}}}
+        fake_image_data = {'config': {'config': {'Labels': self.builder_labels}}}
         with (
             patch('elliottlib.cli.get_golang_report_cli.oc_image_info_for_arch', return_value=fake_image_data),
-            patch(
-                'elliottlib.cli.get_golang_report_cli.extract_nvr_from_pullspec',
-                new_callable=AsyncMock,
-                return_value=('openshift-golang-builder-container', 'v1.22.12', '202608131106.el9'),
-            ),
             patch('elliottlib.cli.get_golang_report_cli.get_golang_container_nvrs', return_value={}),
         ):
-            with self.assertRaises(ValueError):
+            with self.assertRaisesRegex(ValueError, 'Could not determine golang package NVR'):
                 go_version_from_floating_tag_exact('registry.redhat.io/openshift/golang-builder:v1.22-rhel9')
 
 
@@ -278,6 +258,7 @@ class TestGoVersionFromNvrString(TestCase):
 class TestGolangReportForVersionFloatingExact(TestCase):
     def _make_runtime(self, stream_image: str):
         runtime = MagicMock()
+        runtime.registry_config = None
         # image_metas must be non-empty to pass the initialization guard.
         # Give the image a builder reference to 'rhel-9-golang' so the stream count becomes 1
         # and the resolved NVR actually appears in the output (needed to verify SC-5).
@@ -321,10 +302,11 @@ class TestGolangReportForVersionFloatingExact(TestCase):
             }
         }
         with (
+            patch.dict(os.environ, {'KONFLUX_OPERATOR_INDEX_AUTH_FILE': '/jenkins/auth.json'}),
             patch(
                 'elliottlib.cli.get_golang_report_cli.oc_image_info_for_arch',
                 return_value=fake_image_data,
-            ),
+            ) as mock_oi,
             patch(
                 'elliottlib.cli.get_golang_report_cli.get_golang_container_nvrs',
                 return_value={
@@ -343,6 +325,7 @@ class TestGolangReportForVersionFloatingExact(TestCase):
         # The image references stream 'rhel-9-golang', so building_image_count=1 and the
         # resolved NVR must appear in the output — verifying SC-5 (find-bugs:golang inherits fix).
         self.assertEqual(result, [{'go_version': 'golang-1.22.12-1.el9', 'building_image_count': 1}])
+        mock_oi.assert_called_once_with(stream_image, registry_config='/jenkins/auth.json')
 
 
 # ---------------------------------------------------------------------------

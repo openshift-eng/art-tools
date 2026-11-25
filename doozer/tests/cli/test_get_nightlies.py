@@ -82,6 +82,47 @@ class TestGetNightlies(IsolatedAsyncioTestCase):
         with self.assertRaises(subject.EmptyArchException):
             await subject.find_rc_nightlies(self.runtime, {"x86_64"}, True, True)
 
+    @patch('aiohttp.client.ClientSession.get')
+    async def test_get_public_nightly_image_references(self, session_get_mock):
+        name = '5.1.0-0.nightly-2026-11-24-142036'
+        tags = [{'name': 'cli', 'from': {'name': 'quay.io/example/images@sha256:' + 'a' * 64}}]
+        response = session_get_mock.return_value.__aenter__.return_value
+        response.raise_for_status = MagicMock()
+        response.json = AsyncMock(
+            return_value={
+                'metadata': {'version': name},
+                'config': {'architecture': 'amd64'},
+                'references': {'spec': {'tags': tags}},
+            }
+        )
+
+        self.assertEqual(await subject.get_public_nightly_image_references(name, 'x86_64'), tags)
+        session_get_mock.assert_called_once_with(f'https://amd64.ocp.releases.ci.openshift.org/releasetag/{name}/json')
+        response.raise_for_status.assert_called_once()
+
+    @patch('aiohttp.client.ClientSession.get')
+    async def test_public_nightly_rejects_mismatched_metadata_and_mutable_references(self, session_get_mock):
+        name = '5.1.0-0.nightly-2026-11-24-142036'
+        pinned_tags = [{'name': 'cli', 'from': {'name': 'quay.io/example/images@sha256:' + 'a' * 64}}]
+        response = session_get_mock.return_value.__aenter__.return_value
+        response.raise_for_status = MagicMock()
+        for version, arch, tags, error in (
+            ('wrong-nightly', 'amd64', pinned_tags, 'does not match'),
+            (name, 'arm64', pinned_tags, 'does not match'),
+            (name, 'amd64', [{'name': 'cli', 'from': {'name': 'quay.io/example/images:latest'}}], 'digest-pinned'),
+            (name, 'amd64', [], 'digest-pinned'),
+        ):
+            with self.subTest(version=version, arch=arch, tags=tags):
+                response.json = AsyncMock(
+                    return_value={
+                        'metadata': {'version': version},
+                        'config': {'architecture': arch},
+                        'references': {'spec': {'tags': tags}},
+                    }
+                )
+                with self.assertRaisesRegex(ValueError, error):
+                    await subject.get_public_nightly_image_references(name, 'amd64')
+
     @staticmethod
     def vanilla_nightly(release_image_info=None, name=None):
         # just give me an instance to test (default supplies "pod" entry)

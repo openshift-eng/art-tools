@@ -1,10 +1,12 @@
+import json
 from unittest import IsolatedAsyncioTestCase, TestCase
-from unittest.mock import MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 from artcommonlib.release_util import get_patch_from_release
 from artcommonlib.rpm_utils import parse_nvr
 from elliottlib import constants
 from elliottlib.cli.find_bugs_golang_cli import FindBugsGolangCli
+from elliottlib.exceptions import ElliottFatalError
 from semver.version import Version
 
 
@@ -79,6 +81,64 @@ def _make_bug(bug_id="OCPBUGS-99999", component="openshift-golang-builder-contai
     bug.whiteboard_component = component
     bug.corresponding_flaw_bug_ids = [123456]
     return bug
+
+
+class TestNightlyVerification(IsolatedAsyncioTestCase):
+    async def test_default_nightly_inspects_controller_references_with_registry_auth(self):
+        cli = _make_cli(pullspec=None)
+        cli._runtime.registry_config = '/quay/config.json'
+        name = '4.19.0-0.nightly-2026-11-24-144702'
+        nightly = {'name': name, 'pullSpec': f'registry.ci.openshift.org/ocp/release:{name}'}
+        image = 'quay.io/example/images@sha256:' + 'a' * 64
+        labels = {'com.redhat.component': 'openshift-clients', 'version': '4.19.0', 'release': '123'}
+        with (
+            patch('elliottlib.cli.find_bugs_golang_cli.find_rc_nightlies', return_value={'x86_64': [nightly]}),
+            patch('elliottlib.cli.find_bugs_golang_cli.get_container_configs', return_value=[]),
+            patch(
+                'elliottlib.cli.find_bugs_golang_cli.get_public_nightly_image_references',
+                return_value=[{'name': 'cli', 'from': {'name': image}}],
+            ) as references,
+            patch('elliottlib.cli.find_bugs_golang_cli.get_nvrs_from_release') as read_payload,
+            patch(
+                'elliottlib.util.oc_image_info__cached_async',
+                return_value=json.dumps({'config': {'config': {'Labels': labels}}}),
+            ) as inspect_image,
+            patch('elliottlib.cli.find_bugs_golang_cli.get_golang_container_nvrs', return_value={}) as resolve_go,
+            patch.object(cli, '_is_fixed', return_value=(False, '', [], [])),
+        ):
+            await cli.is_fixed_golang_builder(_make_bug(), set())
+            await cli.is_fixed_golang_builder(_make_bug(), set())
+
+        self.assertEqual(cli.pullspec, nightly['pullSpec'])
+        references.assert_awaited_once_with(name, 'x86_64')
+        read_payload.assert_not_called()
+        inspect_image.assert_awaited_once_with(image, registry_config='/quay/config.json')
+        resolve_go.assert_called_once_with([('openshift-clients', '4.19.0', '123')], cli._logger, exact=True)
+
+    @patch('elliottlib.cli.find_bugs_golang_cli.golang_report_for_version', return_value=[])
+    @patch('elliottlib.cli.find_bugs_golang_cli.get_cve_from_go_db', return_value='GO-2026-1234')
+    @patch('elliottlib.cli.find_bugs_golang_cli.get_fixed_in_version_go_db', return_value={Version.parse('1.26.1')})
+    @patch('elliottlib.cli.find_bugs_golang_cli.get_cve_from_prodsec_db', return_value=None)
+    @patch('elliottlib.cli.find_bugs_golang_cli.get_container_configs', return_value=[])
+    @patch('elliottlib.cli.find_bugs_golang_cli.get_nvrs_from_release', side_effect=RuntimeError('unauthorized'))
+    async def test_unreadable_nightly_prevents_all_tracker_updates(self, read_release, *_):
+        cli = _make_cli(update_tracker=True, dry_run=False)
+        cli._runtime.get_major_minor.return_value = (4, 17)
+        cli.jira_tracker.target_release.return_value = ('4.17.z',)
+        rpm_bug = _make_bug('OCPBUGS-1', component='some-rpm')
+        builder_bug = _make_bug('OCPBUGS-2')
+        rpm_bug.cve_id = 'CVE-2026-2345'
+        builder_bug.cve_id = 'CVE-2026-1234'
+        cli.jira_tracker._search.return_value = [rpm_bug, builder_bug]
+        cli.is_fixed_rpm = AsyncMock(return_value=(True, 'RPM rebuilt', [], []))
+        cli.move_bug_and_comment = MagicMock()
+
+        with self.assertRaisesRegex(ElliottFatalError, 'Could not read release payload.*unauthorized'):
+            await cli.run()
+
+        cli.is_fixed_rpm.assert_awaited_once()
+        read_release.assert_awaited_once_with(cli.pullspec, set(), registry_config=cli._runtime.registry_config)
+        cli.move_bug_and_comment.assert_not_called()
 
 
 @patch("elliottlib.cli.find_bugs_golang_cli.errata")
