@@ -147,7 +147,7 @@ def test_complete_publication_is_validated_and_locked(tmp_path, failure, monkeyp
         pullspec=pullspec,
         application='mta-fbc-unified',
         component='mta-fbc-unified-4-18',
-        source_repo='https://github.com/openshift-priv/art-fbc',
+        source_repo='https://github.com/openshift-priv/art-fbc.git',
         source_commit='c' * 40,
         build_url='https://konflux.example/build',
         provenance=provenance,
@@ -236,9 +236,14 @@ def test_complete_publication_is_validated_and_locked(tmp_path, failure, monkeyp
             assert mr.await_args.args[1]['labels'] == ['unified-fbc']
             assert mr.await_args.args[1]['title'].startswith('Draft:')
             github.return_value.get_repo.assert_called_once_with('example/ocp-build-data')
-            assert mr.await_args.args[1]['description'].splitlines()[-1] == (
+            assert mr.await_args.args[1]['description'] == (
+                'Assembly-based unified FBC catalogs.\n\n'
+                '### Contributing assemblies and image shipments\n\n'
                 f'- mta-8.2 / 8.2.3: [build-data commit `{revision[:7]}`]({build_data.html_url}/commit/{revision})'
-                ' · [image shipment !1](https://gitlab.example/art/shipments/-/merge_requests/1)'
+                ' · [image shipment !1](https://gitlab.example/art/shipments/-/merge_requests/1)\n\n'
+                '### Catalog provenance\n\n'
+                '- OCP 4.18: [`unified-provenance.json`]'
+                f'(https://github.com/openshift-priv/art-fbc/blob/{outcome["source_commit"]}/unified-provenance.json)'
             )
             files = list((tmp_path / 'shipment').rglob('*.yaml'))
             assert len(files) == 1
