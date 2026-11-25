@@ -193,9 +193,12 @@ def build_health(runs: list[dict], incomplete_namespaces: set[str] | None = None
             original = pending.pop()
             related = [item for item in family(original) if before is None or (item["created"] or "") < before]
             effective = related[0]
+            downstream_parent = effective
             if effective["pipeline"] == PIPELINES[0] and effective["status"] == "Succeeded" and not effective["dryRun"]:
                 # Scan-only retries leave downstream work attached to the scan that triggered it.
-                effective = next((scan for scan in related if children[scan["uid"]] or issues[scan["uid"]]), effective)
+                downstream_parent = next(
+                    (scan for scan in related if children[scan["uid"]] or issues[scan["uid"]]), effective
+                )
             effective = dict(effective)
             if before and (not effective["completed"] or effective["completed"] >= before):
                 effective.update(status="Running", completed=None)
@@ -203,11 +206,13 @@ def build_health(runs: list[dict], incomplete_namespaces: set[str] | None = None
                 continue
             visited.add(effective["uid"])
             attempts.update((item["uid"], item) for item in related)
-            chain_issues.update(issues[effective["uid"]])
+            chain_issues.update(issues[effective["uid"]], issues[downstream_parent["uid"]])
+            if downstream_parent["dryRun"]:
+                chain_issues.add("Dry-run execution does not establish E2E health")
             stages[effective["pipeline"]][effective["uid"]] = effective
             if effective["pipeline"] == PIPELINES[-1]:
                 continue
-            for child in children[effective["uid"]].values():
+            for child in children[downstream_parent["uid"]].values():
                 if before and (child["created"] or "") >= before:
                     continue
                 if effective["pipeline"] == PIPELINES[0] and child["pipeline"] in PIPELINES[1:]:
@@ -222,8 +227,6 @@ def build_health(runs: list[dict], incomplete_namespaces: set[str] | None = None
         active = [run for run in effective_runs if run["status"] == "Running"]
         warnings = [run for run in effective_runs if run["status"] == "Warning"]
         complete = all(stages.values()) and all(run["status"] == "Succeeded" for run in effective_runs)
-        if any(run["dryRun"] for run in effective_runs):
-            chain_issues.add("Dry-run execution does not establish E2E health")
         if failed:
             status = "Failed"
         elif cancelled:
