@@ -68,6 +68,22 @@ async def get_referenced_images(
 LOGGER = logging.getLogger(__name__)
 yaml = opm.yaml
 
+
+async def load_csv_from_bundle(bundle_build: KonfluxBundleBuildRecord, manifests_dir: str) -> dict:
+    """Load the ClusterServiceVersion from the given bundle image's manifests directory."""
+    with TemporaryDirectory(prefix="doozer-") as tmpdir:
+        await util.oc_image_extract_async(
+            bundle_build.image_pullspec,
+            path_specs=[f"{manifests_dir}:{tmpdir}"],
+            registry_config=os.environ.get("QUAY_AUTH_FILE"),
+        )
+        csv_file = next(Path(tmpdir).glob("*.clusterserviceversion.yaml"), None)
+        if not csv_file:
+            raise IOError(f"CSV file not found in bundle {bundle_build.nvr} manifests directory {manifests_dir}")
+        with csv_file.open() as stream:
+            return yaml.load(stream)
+
+
 PRODUCTION_INDEX_PULLSPEC_FORMAT = "registry.redhat.io/redhat/redhat-operator-index:v{major}.{minor}"
 BASE_IMAGE_RHEL9_PULLSPEC_FORMAT = "registry.redhat.io/openshift{major}/ose-operator-registry-rhel9:v{major}.{minor}"
 BASE_IMAGE_RHEL8_PULLSPEC_FORMAT = "registry.redhat.io/openshift{major}/ose-operator-registry:v{major}.{minor}"
@@ -1334,7 +1350,7 @@ class KonfluxFbcRebaser:
         manifests_dir = labels.get("operators.operatorframework.io.bundle.manifests.v1")
         if not manifests_dir:
             raise IOError("Manifests directory not found in bundle image labels")
-        csv = await self._load_csv_from_bundle(bundle_build, manifests_dir)
+        csv = await load_csv_from_bundle(bundle_build, manifests_dir)
         olm_skip_range = csv.get("metadata", {}).get("annotations", {}).get("olm.skipRange", None)
 
         # Load referenced images
@@ -1760,26 +1776,6 @@ class KonfluxFbcRebaser:
             bundle_build.image_pullspec,
             registry_config=os.environ.get("QUAY_AUTH_FILE"),
         )
-
-    async def _load_csv_from_bundle(self, bundle_build: KonfluxBundleBuildRecord, manifests_dir: str):
-        """Load the CSV from the bundle image manifests directory.
-
-        :param bundle_build: The bundle build record.
-        :param manifests_dir: The directory where the manifests are stored in the bundle image.
-        :return: The loaded CSV as a dictionary.
-        """
-        with TemporaryDirectory(prefix="doozer-") as tmpdir:
-            path_specs = [f"{manifests_dir}:{tmpdir}"]
-            await util.oc_image_extract_async(
-                bundle_build.image_pullspec,
-                path_specs=path_specs,
-                registry_config=os.environ.get("QUAY_AUTH_FILE"),
-            )
-            # Find the CSV file in the extracted manifests directory
-            csv_file = next(Path(tmpdir).glob("*.clusterserviceversion.yaml"), None)
-            if not csv_file:
-                raise IOError(f"CSV file not found in bundle image manifests directory {manifests_dir}")
-            return yaml.load(csv_file.open())
 
     async def _fetch_olm_bundle_blob(self, bundle_build: KonfluxBundleBuildRecord, migrate_level: str):
         """Fetch the olm.bundle blob for the given bundle build.
