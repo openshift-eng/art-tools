@@ -5,6 +5,7 @@ import logging
 import lzma
 import re
 import tempfile
+import time
 import xml.etree.ElementTree
 from dataclasses import dataclass, field
 from logging import Logger
@@ -448,14 +449,22 @@ class RepodataLoader:
         return rpms
 
     @staticmethod
-    async def _fetch_primary_rpms(session: aiohttp.ClientSession, url: str) -> List[Rpm]:
+    async def _fetch_primary_rpms(session: aiohttp.ClientSession, url: str, repo_name: str = 'repository') -> List[Rpm]:
         # Spool compressed bytes to disk so neither the download nor the
         # decompressed XML needs to fit in memory.
         with tempfile.TemporaryFile() as compressed:
+            download_start = time.monotonic()
+            LOGGER.info('Downloading primary metadata for %s', repo_name)
             async with session.get(url) as resp:
                 resp.raise_for_status()
                 async for chunk in resp.content.iter_chunked(1024 * 1024):
                     compressed.write(chunk)
+            LOGGER.info(
+                'Downloaded %s bytes of primary metadata for %s in %.1f seconds',
+                compressed.tell(),
+                repo_name,
+                time.monotonic() - download_start,
+            )
             compressed.seek(0)
             if url.endswith('.gz'):
                 uncompressed = gzip.GzipFile(fileobj=compressed)
@@ -464,7 +473,14 @@ class RepodataLoader:
             else:
                 raise IOError(f'Unknown compression for: {url}')
             with uncompressed:
-                return RepodataLoader._parse_primary(uncompressed)
+                # Parsing large primary metadata is synchronous; keep the event loop
+                # available to drain other repository downloads.
+                parse_start = time.monotonic()
+                rpms = await asyncio.to_thread(RepodataLoader._parse_primary, uncompressed)
+                LOGGER.info(
+                    'Parsed %s RPMs for %s in %.1f seconds', len(rpms), repo_name, time.monotonic() - parse_start
+                )
+                return rpms
 
     @staticmethod
     async def _fetch_remote_compressed(session: aiohttp.ClientSession, url: Optional[str]):
@@ -563,11 +579,11 @@ class RepodataLoader:
                 & retry_if_exception(_is_retryable_repodata_error),
                 before_sleep=before_sleep_log(LOGGER, logging.WARNING),
             )
-            async def fetch_metadata(fetch, url: Optional[str]):
-                return await fetch(session, url)
+            async def fetch_metadata(fetch, url: Optional[str], *args):
+                return await fetch(session, url, *args)
 
             primary_rpms, modules_bytes = await asyncio.gather(
-                fetch_metadata(self._fetch_primary_rpms, primary_url),
+                fetch_metadata(self._fetch_primary_rpms, primary_url, repo_name),
                 fetch_metadata(self._fetch_remote_compressed, modules_url),
             )
 

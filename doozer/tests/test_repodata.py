@@ -1,6 +1,7 @@
 import asyncio
 import gzip
 import lzma
+import threading
 import weakref
 from io import BytesIO, StringIO
 from typing import Optional
@@ -950,6 +951,42 @@ class TestRepodataLoader(IsolatedAsyncioTestCase):
                 response.read.assert_not_awaited()
                 response.raise_for_status.assert_called_once()
 
+    async def test_primary_parse_does_not_block_other_downloads(self):
+        payload = gzip.compress(self.PRIMARY_XML)
+        parse_started = asyncio.Event()
+        release_parse = threading.Event()
+        parser_timed_out = False
+        loop = asyncio.get_running_loop()
+        parse_primary = RepodataLoader._parse_primary
+
+        def slow_parse(stream):
+            nonlocal parser_timed_out
+            loop.call_soon_threadsafe(parse_started.set)
+            parser_timed_out = not release_parse.wait(1)
+            return parse_primary(stream)
+
+        async def chunks(size):
+            yield payload
+
+        response = Mock()
+        response.content.iter_chunked.side_effect = chunks
+        session = Mock()
+        session.get.return_value = AsyncMock()
+        session.get.return_value.__aenter__.return_value = response
+
+        with patch.object(RepodataLoader, '_parse_primary', new=slow_parse):
+            task = asyncio.create_task(
+                RepodataLoader._fetch_primary_rpms(session, 'https://example.invalid/primary.xml.gz')
+            )
+            try:
+                await asyncio.wait_for(parse_started.wait(), 2)
+            finally:
+                release_parse.set()
+            rpms = await task
+
+        self.assertFalse(parser_timed_out)
+        self.assertEqual([rpm.nevra for rpm in rpms], ['example-0:1.2-3.x86_64'])
+
     def test_primary_parser_releases_completed_packages(self):
         package = self.PRIMARY_XML.split(b'<package', 1)[1].split(b'</package>', 1)[0]
         xml = (
@@ -1160,13 +1197,14 @@ data:
             raise ValueError("url")
 
         _fetch_remote_compressed.side_effect = _fake_fetch_remote_compressed
-        _fetch_primary_rpms.side_effect = lambda session, url: RepodataLoader._parse_primary(
+        _fetch_primary_rpms.side_effect = lambda session, url, name: RepodataLoader._parse_primary(
             BytesIO(_fake_fetch_remote_compressed(session, url))
         )
         repodata = await loader.load(repo_name, repo_url)
         _fetch_primary_rpms.assert_awaited_once_with(
             ANY,
             "https://example.com/repos/test/x86_64/os/repodata/06ed3172b751202671416050ea432945e54a36ee1ab8ef2cc71307234343f1ef-primary.xml.gz",
+            repo_name,
         )
         _fetch_remote_compressed.assert_any_await(
             ANY,

@@ -1105,34 +1105,37 @@ class GenPayloadCli:
         """
 
         self.logger.debug("detecting images with group RPMs installed that are not the latest builds...")
-        for dgk, build_inspector in assembly_inspector.get_group_release_images().items():
-            if build_inspector:
-                image_meta = build_inspector.get_image_meta()
-                if self.runtime.build_system == 'brew':
-                    non_latest_rpms = await build_inspector.find_non_latest_rpms()
-                else:  # konflux
-                    non_latest_rpms = await build_inspector.find_non_latest_rpms(self.package_rpm_finder)
+        images = [
+            (dgk, inspector) for dgk, inspector in assembly_inspector.get_group_release_images().items() if inspector
+        ]
 
-                for arch, arch_non_latest_rpms in non_latest_rpms.items():
-                    # This could indicate an issue with scan-sources or that an image is no longer successfully building
-                    # It could also mean that images are pinning content, which may be expected, so allow permits.
-                    for installed_nevra, newest_nevra, repo in arch_non_latest_rpms:
-                        nevr, _ = installed_nevra.rsplit(".", maxsplit=1)
-                        rpm_name = parse_nvr(nevr)['name']
-                        is_exempt, pattern = image_meta.is_rpm_exempt(rpm_name)
-                        if is_exempt:
-                            self.logger.warning(
-                                "%s is exempt from rpm change detection by '%s'", installed_nevra, pattern
-                            )
-                            continue
-                        self.assembly_issues.append(
-                            AssemblyIssue(
-                                f"Found outdated RPM ({installed_nevra}) installed in {build_inspector.get_nvr()} ({arch})"
-                                f" when {newest_nevra} was available in repo {repo}",
-                                component=dgk,
-                                code=AssemblyIssueCode.OUTDATED_RPMS_IN_STREAM_BUILD,
-                            )
+        if self.runtime.build_system == 'brew':
+            results = [await inspector.find_non_latest_rpms() for _, inspector in images]
+        else:  # konflux
+            results = await asyncio.gather(
+                *(inspector.find_non_latest_rpms(self.package_rpm_finder) for _, inspector in images)
+            )
+
+        for (dgk, build_inspector), non_latest_rpms in zip(images, results):
+            image_meta = build_inspector.get_image_meta()
+            for arch, arch_non_latest_rpms in non_latest_rpms.items():
+                # This could indicate an issue with scan-sources or that an image is no longer successfully building
+                # It could also mean that images are pinning content, which may be expected, so allow permits.
+                for installed_nevra, newest_nevra, repo in arch_non_latest_rpms:
+                    nevr, _ = installed_nevra.rsplit(".", maxsplit=1)
+                    rpm_name = parse_nvr(nevr)['name']
+                    is_exempt, pattern = image_meta.is_rpm_exempt(rpm_name)
+                    if is_exempt:
+                        self.logger.warning("%s is exempt from rpm change detection by '%s'", installed_nevra, pattern)
+                        continue
+                    self.assembly_issues.append(
+                        AssemblyIssue(
+                            f"Found outdated RPM ({installed_nevra}) installed in {build_inspector.get_nvr()} ({arch})"
+                            f" when {newest_nevra} was available in repo {repo}",
+                            component=dgk,
+                            code=AssemblyIssueCode.OUTDATED_RPMS_IN_STREAM_BUILD,
                         )
+                    )
 
     @start_as_current_span_async(TRACER, "GenPayloadCli.detect_inconsistent_images")
     async def detect_inconsistent_images(self, assembly_inspector: AssemblyInspector):

@@ -623,7 +623,14 @@ class TestRepoAwareImageConsistency(IsolatedAsyncioTestCase):
 
     async def test_konflux_uses_installed_binaries_not_all_source_outputs(self):
         """Konflux checks installed binary identities conservatively across possible arches."""
-        self.add_repo("packages", [self.rpm(name="kernel-devel")])
+        self.add_repo(
+            "packages",
+            [self.rpm(name="kernel-devel")],
+            baseurl={
+                "x86_64": "https://ocp-artifacts.example.invalid/repo/x86_64/",
+                "aarch64": "https://ocp-artifacts.example.invalid/repo/aarch64/",
+            },
+        )
         build = MagicMock(spec=KonfluxBuildRecordInspector)
         build.get_image_meta.return_value = self.meta
         build.get_all_installed_package_build_dicts.return_value = {"kernel": self.installed}
