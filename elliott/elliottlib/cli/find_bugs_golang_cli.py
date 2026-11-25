@@ -9,7 +9,7 @@ import requests
 from artcommonlib.release_util import get_patch_from_release, isolate_el_version_in_release
 from artcommonlib.rhcos import get_container_configs
 from artcommonlib.rpm_utils import parse_nvr
-from doozerlib.cli.get_nightlies import find_rc_nightlies
+from doozerlib.cli.get_nightlies import find_rc_nightlies, get_public_nightly_image_references
 from prettytable import PrettyTable
 from pyartcd.util import get_release_name_for_assembly
 from semver.version import Version
@@ -20,7 +20,12 @@ from elliottlib.cli.common import cli, click_coroutine
 from elliottlib.cli.find_builds_cli import _fetch_builds_by_kind_rpm
 from elliottlib.cli.get_golang_report_cli import golang_report_for_version
 from elliottlib.exceptions import ElliottFatalError
-from elliottlib.util import get_golang_container_nvrs, get_golang_rpm_nvrs, get_nvrs_from_release
+from elliottlib.util import (
+    get_golang_container_nvrs,
+    get_golang_rpm_nvrs,
+    get_nvrs_from_image_references,
+    get_nvrs_from_release,
+)
 from pyartcd import constants as pyartcd_constants
 
 LOGGER = logging.getLogger(__name__)
@@ -118,7 +123,7 @@ class FindBugsGolangCli:
         # cache
         self.pullspec = pullspec
         self.flaw_bugs: Dict[int, BugzillaBug] = {}
-        self.go_nvr_map = {}
+        self.go_nvr_map = None
         self.rpm_nvrps = None
 
         self.jira_tracker: JIRABugTracker = self._runtime.get_bug_tracker("jira")
@@ -324,32 +329,34 @@ class FindBugsGolangCli:
     async def is_fixed_golang_builder(
         self, bug: JIRABug, tracker_fixed_in: Set[Version]
     ) -> (bool, str, List[str], List[str]):
-        if not self.pullspec:
-            self._logger.info('Fetching latest accepted nightly...')
-            # we fetch pending and rejected nightlies as well since
-            # we only need to determine if image builds are complete and have the fix
-            nightlies = await find_rc_nightlies(
-                self._runtime, arches={'x86_64'}, allow_pending=True, allow_rejected=True
-            )
-            if len(nightlies['x86_64']) < 1:
-                raise ElliottFatalError("Could not find any accepted nightlies. Please investigate")
-            self.pullspec = nightlies['x86_64'][0]['pullSpec']
+        if self.go_nvr_map is None:
+            nightly = None
+            pullspec = self.pullspec
+            if not pullspec:
+                self._logger.info('Fetching latest public nightly...')
+                # Pending and rejected nightlies can still show whether component builds contain the fix.
+                nightlies = await find_rc_nightlies(
+                    self._runtime, arches={'x86_64'}, allow_pending=True, allow_rejected=True
+                )
+                nightly = nightlies['x86_64'][0]
+                pullspec = nightly['pullSpec']
 
-        if not self.go_nvr_map:
-            self._logger.info(f"Fetching go build nvrs for {self.pullspec}...")
+            self._logger.info(f"Fetching go build nvrs for {pullspec}...")
             rhcos_images = {c['name'] for c in get_container_configs(self._runtime)}
+            registry_config = self._runtime.registry_config
             try:
-                nvr_map = await get_nvrs_from_release(
-                    self.pullspec, rhcos_images, registry_config=self._runtime.registry_config
-                )
+                if nightly is None:
+                    nvr_map = await get_nvrs_from_release(pullspec, rhcos_images, registry_config=registry_config)
+                else:
+                    tags = await get_public_nightly_image_references(nightly['name'], 'x86_64')
+                    nvr_map = await get_nvrs_from_image_references(tags, rhcos_images, registry_config=registry_config)
             except Exception as e:
-                self._logger.error(
-                    "Does pullspec exist? To override use --pullspec. "
-                    f"Could not fetch go build nvrs for {self.pullspec}: {e}. Will ignore {bug.id}"
-                )
-                return False, '', [], []
+                raise ElliottFatalError(
+                    f"Could not read release payload {pullspec} for Go tracker verification: {e}"
+                ) from e
             nvrs = [(n, vr_tuple[0], vr_tuple[1]) for n, vr_tuple in nvr_map.items()]
             self.go_nvr_map = get_golang_container_nvrs(nvrs, self._logger, exact=True)
+            self.pullspec = pullspec
 
         return self._is_fixed(bug, tracker_fixed_in, self.go_nvr_map)
 
@@ -654,12 +661,11 @@ class FindBugsGolangCli:
             "golang_actual",
         ]
 
-        fixed_bugs, unfixed_bugs, updated_bugs = [], [], []
+        # Complete verification before changing Jira. A later payload read can fail in a mixed RPM/image sweep.
+        results = []
         for bug in bugs:
             component = bug.whiteboard_component
-            art_managed = (component == constants.GOLANG_BUILDER_CVE_COMPONENT) or (component in self._runtime.rpm_map)
             logger.info(f"{bug.id} has security component: {component}")
-            fixed, comment, component_builds, parent_golang_builds = False, '', [], []
 
             tracker_fixed_in = golang_cves_fixed_in.get(bug.cve_id)
             if not tracker_fixed_in:
@@ -675,7 +681,12 @@ class FindBugsGolangCli:
                 fixed, comment, component_builds, parent_golang_builds = await self.is_fixed_rpm(
                     bug, component, tracker_fixed_in=tracker_fixed_in
                 )
+            results.append((bug, fixed, comment, component_builds, parent_golang_builds))
 
+        fixed_bugs, unfixed_bugs, updated_bugs = [], [], []
+        for bug, fixed, comment, component_builds, parent_golang_builds in results:
+            component = bug.whiteboard_component
+            art_managed = (component == constants.GOLANG_BUILDER_CVE_COMPONENT) or (component in self._runtime.rpm_map)
             table.add_row(
                 [
                     bug.id,

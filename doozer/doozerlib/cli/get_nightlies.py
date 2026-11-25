@@ -1,11 +1,13 @@
 import asyncio
 import json
+import re
 from typing import Dict, List, Sequence, Set, Tuple
+from urllib.parse import quote
 
 import aiohttp
 import click
 from artcommonlib import exectools, logutil
-from artcommonlib.arch_util import brew_arch_for_go_arch
+from artcommonlib.arch_util import brew_arch_for_go_arch, go_arch_for_brew_arch
 from artcommonlib.constants import COREOS_RHEL10_STREAMS
 from artcommonlib.format_util import green_print, red_print, yellow_print
 from artcommonlib.model import Model
@@ -14,6 +16,7 @@ from artcommonlib.util import uses_konflux_imagestream_override
 from tenacity import retry, stop_after_attempt, wait_fixed
 
 from doozerlib.cli import cli, click_coroutine
+from doozerlib.constants import RC_BASE_URL
 from doozerlib.rhcos import RHCOSBuildInspector
 from doozerlib.runtime import Runtime
 from doozerlib.util import rc_api_url
@@ -282,6 +285,25 @@ async def find_rc_nightlies(
         raise NoMatchingNightlyException(f"Found no nightlies in state {allowed_phases} matching {unmatched}")
 
     return nightlies_for_arch
+
+
+async def get_public_nightly_image_references(nightly_name: str, arch: str) -> list[dict]:
+    """Read the digest-pinned component references for one public nightly."""
+    go_arch = go_arch_for_brew_arch(arch)
+    base_url = RC_BASE_URL.format(arch=go_arch)
+    url = f'{base_url}/releasetag/{quote(nightly_name, safe="")}/json'
+    async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=30)) as session:
+        async with session.get(url) as response:
+            response.raise_for_status()
+            release = await response.json()
+
+    if release['metadata']['version'] != nightly_name or release['config']['architecture'] != go_arch:
+        raise ValueError(f'Release Controller metadata does not match {nightly_name} ({go_arch})')
+
+    references = release['references']['spec']['tags']
+    if not references or any(not re.fullmatch(r'.+@sha256:[0-9a-f]{64}', tag['from']['name']) for tag in references):
+        raise ValueError(f'Release Controller metadata for {nightly_name} lacks digest-pinned component references')
+    return references
 
 
 def get_nightly_tag_base(major: int, minor: int, build_system: str) -> str:

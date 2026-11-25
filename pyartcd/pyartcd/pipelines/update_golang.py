@@ -14,10 +14,13 @@ from artcommonlib.constants import (
     BREW_HUB,
     GOLANG_BUILDER_IMAGE_NAME,
     GOLANG_NVR_LABEL,
+    REGISTRY_QUAY_OCP_RELEASE_DEV,
+    REGISTRY_REDHAT_IO,
 )
 from artcommonlib.github_auth import get_github_client_for_org
 from artcommonlib.konflux.konflux_build_record import ArtifactType, Engine, KonfluxBuildOutcome, KonfluxBuildRecord
 from artcommonlib.konflux.konflux_db import KonfluxDb
+from artcommonlib.registry_config import RegistryConfig
 from artcommonlib.release_util import isolate_assembly_in_release, isolate_el_version_in_release
 from artcommonlib.rpm_utils import parse_nvr
 from artcommonlib.util import new_roundtrip_yaml_handler, resolve_konflux_namespace_by_product
@@ -240,7 +243,22 @@ async def move_golang_bugs(
         cmd.append('--rpms-only')
     if dry_run:
         cmd.append('--dry-run')
-    await exectools.cmd_assert_async(cmd, log_stdout=True)
+
+    quay_auth_file = os.getenv('QUAY_AUTH_FILE')
+    if rpms_only or not quay_auth_file:
+        await exectools.cmd_assert_async(cmd, log_stdout=True)
+        return
+
+    # Public nightly references come from the Release Controller. Registry auth is for the images.
+    source_files = [quay_auth_file]
+    registries = [REGISTRY_QUAY_OCP_RELEASE_DEV]
+    if redhat_auth_file := os.getenv('KONFLUX_OPERATOR_INDEX_AUTH_FILE'):
+        source_files.insert(0, redhat_auth_file)
+        registries.append(REGISTRY_REDHAT_IO)
+
+    with RegistryConfig(source_files=source_files, registries=registries) as auth_file:
+        cmd.insert(1, f'--registry-config={auth_file}')
+        await exectools.cmd_assert_async(cmd, log_stdout=True)
 
 
 class UpdateGolangPipeline:
