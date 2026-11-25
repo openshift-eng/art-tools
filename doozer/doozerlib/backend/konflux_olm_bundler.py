@@ -760,9 +760,9 @@ class KonfluxOlmBundleRebaser:
         return component_to_meta
 
     def _release_image_pins(self, metadata: ImageMetadata) -> dict[str, str]:
-        """Map LP release pins by component name, including generated assembly aliases."""
+        """Map release pins by component name, including generated assembly aliases."""
         releases = metadata.runtime.get_releases_config()
-        if self.group.startswith('openshift-') or assembly_type(releases, self.assembly) == AssemblyTypes.STREAM:
+        if assembly_type(releases, self.assembly) == AssemblyTypes.STREAM:
             return {}
         # gen-assembly-lp uses component names as member keys, which can differ
         # from image YAML filenames (e.g. quay-quay-container vs quay-quay).

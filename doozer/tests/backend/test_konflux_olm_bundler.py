@@ -2758,9 +2758,35 @@ class TestNamedReleasePins(IsolatedAsyncioTestCase):
         with self.assertRaisesRegex(KonfluxOlmBundleRebaseError, 'Expected assembly pin'):
             await self.rebaser._resolve_operands_from_db(self.metadata, self.refs, {}, {})
 
-    def test_stream_and_ocp_do_not_gain_pin_exception(self):
+    def test_stream_does_not_gain_pin_exception(self):
         self.releases['releases']['3.18.3']['assembly']['type'] = 'stream'
         self.assertEqual(self.rebaser._release_image_pins(self.metadata), {})
+
+    @patch('doozerlib.backend.konflux_olm_bundler.util.oc_image_info_for_arch_async')
+    async def test_ocp_release_uses_exact_assembly_pin(self, inspect):
         self.releases['releases']['3.18.3']['assembly']['type'] = 'standard'
         self.rebaser.group = 'openshift-4.18'
-        self.assertEqual(self.rebaser._release_image_pins(self.metadata), {})
+        inspect.return_value = self.info
+        result = await self.rebaser._resolve_operands_from_db(self.metadata, self.refs, {}, {})
+        self.assertEqual(result['quay-rhel9'][2], self.pin)
+        self.db.get_build_record_by_nvr.assert_awaited_once_with(self.pin, strict=True, exclude_large_columns=True)
+        self.operand.get_latest_konflux_build.assert_not_awaited()
+
+    @patch('doozerlib.backend.konflux_olm_bundler.util.oc_image_info_for_arch_async')
+    async def test_ocp_release_unpinned_operator_uses_basis_cutoff(self, inspect):
+        self.rebaser.group = 'openshift-5.0'
+        self.releases['releases']['3.18.3']['assembly']['members']['images'] = []
+        cutoff = datetime(2026, 11, 25, 7, 49, 47, tzinfo=timezone.utc)
+        self.metadata.runtime.assembly_basis_event = cutoff
+        self.build.nvr = self.pin.replace('.p3.', '.p2.')
+        self.build.release = self.build.release.replace('.p3.', '.p2.')
+        self.info['config']['config']['Labels']['release'] = self.build.release
+        self.operand.get_latest_konflux_build.return_value = self.build
+        inspect.return_value = self.info
+
+        result = await self.rebaser._resolve_operands_from_db(self.metadata, self.refs, {}, {})
+
+        self.assertEqual(result['quay-rhel9'][2], self.build.nvr)
+        self.operand.get_latest_konflux_build.assert_awaited_once_with(
+            assembly='3.18.3', el_target='el9', exclude_large_columns=True, completed_before=cutoff
+        )
