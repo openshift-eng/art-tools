@@ -759,3 +759,82 @@ def test_rpa_binds_image_and_bundle_repositories_to_their_components(tmp_path, o
         assert all('missing delivery repository' in error for error in errors)
     else:
         assert errors == []
+
+
+@pytest.mark.parametrize(
+    'group,image,expected',
+    [
+        ({'branch': 'rhaos-4.18-rhel-9'}, {'enabled_repos': ['rhel-8-baseos-rpms']}, True),
+        ({'branch': 'rhaos-4.18-rhel-9'}, {'enabled_repos': ['rhel-98-baseos-rpms']}, False),
+        ({'el_target': 9}, {'el_target': 8, 'enabled_repos': ['rhel-8-baseos-rpms']}, False),
+        (
+            {'branch': 'rhaos-4.18-rhel-9'},
+            {'distgit': {'branch': 'rhaos-4.18-rhel-8'}, 'enabled_repos': ['rhel-9-baseos-rpms']},
+            True,
+        ),
+        ({'branch': 'rhaos-4.18-rhel-9'}, {'enabled_repos': ['custom-repo']}, False),
+    ],
+)
+def test_enabled_repos_match_component_target(group, image, expected):
+    errors = checks.validate_enabled_repo_targets(image, group)
+    assert bool(errors) == expected
+    if expected:
+        assert 'enabled_repos' in errors[0]
+
+
+@pytest.mark.parametrize(
+    'group,rpm,expected',
+    [
+        (
+            {'branch': 'rhaos-4.9-rhel-8'},
+            {'targets': ['rhaos-4.9-rhel-9-candidate'], 'enabled_repos': ['rhel-9-baseos-rpms']},
+            False,
+        ),
+        (
+            {'branch': 'rhaos-4.9-rhel-8'},
+            {'targets': ['rhaos-4.9-rhel-9-candidate'], 'enabled_repos': ['rhel-8-baseos-rpms']},
+            True,
+        ),
+        (
+            {
+                'branch': 'rhaos-4.9-rhel-8',
+                'default_rpm_build_profile': 'default',
+                'build_profiles': {'rpm': {'default': {'targets': ['rhaos-4.9-rhel-9-candidate']}}},
+            },
+            {'enabled_repos': ['rhel-9-baseos-rpms']},
+            False,
+        ),
+        (
+            {'branch': 'rhaos-4.9-rhel-8'},
+            {
+                'targets': ['rhaos-4.9-rhel-8-candidate', 'rhaos-4.9-rhel-9-candidate'],
+                'enabled_repos': ['rhel-9-baseos-rpms'],
+            },
+            False,
+        ),
+        ({'branch': 'rhaos-4.9-rhel-8'}, {'enabled_repos': ['rhel-8-baseos-rpms']}, False),
+    ],
+)
+def test_rpm_enabled_repos_use_effective_build_targets(group, rpm, expected):
+    assert bool(checks.validate_enabled_repo_targets(rpm, group, rpm=True)) == expected
+
+
+@pytest.mark.parametrize('rpm', [False, True])
+@pytest.mark.parametrize('component_branch', [False, True])
+def test_enabled_repos_resolve_templated_branch(rpm, component_branch):
+    branch = 'rhaos-4.18-rhel-{EL}'
+    group = {'vars': {'EL': 9}, 'branch': 'rhaos-4.18-rhel-8' if component_branch else branch}
+    data = {'enabled_repos': ['rhel-8-baseos-rpms']}
+    if component_branch:
+        data['distgit'] = {'branch': branch}
+    errors = checks.validate_enabled_repo_targets(data, group, rpm=rpm)
+    assert any('RHEL 9' in error for error in errors)
+
+
+def test_enabled_repos_skip_unresolved_branch_target():
+    assert (
+        checks.validate_enabled_repo_targets(
+            {'enabled_repos': ['rhel-8-baseos-rpms']}, {'branch': 'rhaos-4.18-rhel-{UNKNOWN}'}, rpm=True
+        )
+        == []
+    )

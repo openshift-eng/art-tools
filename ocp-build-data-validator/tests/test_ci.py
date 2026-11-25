@@ -7,6 +7,33 @@ import pytest
 from validator import checks, ci
 
 
+def test_validator_checks_image_enabled_repo_target(tmp_path):
+    repository(tmp_path)
+    (tmp_path / 'group.yml').write_text(
+        'name: quay-3.18\nbranch: rhaos-3.18-rhel-9\nrepos:\n  rhel-8-baseos-rpms: {}\n'
+    )
+    image = tmp_path / 'images/test.yml'
+    image.write_text(
+        'name: test/image\nowners: [test@example.com]\nfor_release: false\nfrom:\n  image: quay.io/example/base:latest\nenabled_repos: [rhel-8-baseos-rpms]\n'
+    )
+    errors = ci.validate(tmp_path, [Path('images/test.yml')], True, None, None, None)
+    assert any(
+        'images/test.yml' in error and 'rhel-8-baseos-rpms' in error and 'RHEL 9' in error for error in errors
+    ), errors
+
+
+def test_validator_uses_rpm_target_instead_of_group_branch(tmp_path):
+    repository(tmp_path)
+    (tmp_path / 'group.yml').write_text('name: openshift-4.9\nbranch: rhaos-4.9-rhel-8\n')
+    (tmp_path / 'rpms').mkdir()
+    (tmp_path / 'rpms/test.yml').write_text(
+        'name: test\ncontent: {}\nowners: [test@example.com]\n'
+        'targets: [rhaos-4.9-rhel-9-candidate]\nenabled_repos: [rhel-9-baseos-rpms]\n'
+    )
+    errors = ci.validate(tmp_path, [Path('rpms/test.yml')], True, None, None, None)
+    assert errors == []
+
+
 @pytest.mark.parametrize('host', ['registry.access.redhat.com', 'registry.access.redhat.io'])
 @pytest.mark.parametrize('port', ['', ':443'])
 @pytest.mark.parametrize('location', ['stream', 'parent', 'builder'])
