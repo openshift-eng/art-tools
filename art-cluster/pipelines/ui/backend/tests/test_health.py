@@ -234,6 +234,49 @@ class HealthTests(unittest.TestCase):
         self.assertEqual(result["currentChain"]["issues"], [])
         self.assertIn(runs[-1]["uid"], {item["uid"] for item in result["currentChain"]["attempts"]})
 
+    def test_rebuilt_scan_that_only_recovers_fbc_keeps_the_original_build_chain(self):
+        runs = complete_chain()
+        runs[-1]["status"] = "Failed"
+        scan_retry = run("scan-retry", PIPELINES[0], rebuiltFrom="uid-scan", created="2026-10-08T11:00:00Z")
+        fbc_retry = run(
+            "fbc-retry",
+            PIPELINES[3],
+            parent="bundle",
+            status="Running",
+            rebuiltFrom="uid-fbc-420",
+            recoveryScan="scan-retry",
+            target="4.20",
+            created="2026-10-08T12:00:00Z",
+        )
+        runs.extend([scan_retry, fbc_retry])
+        result = build_health(runs)[0]
+        self.assertEqual(result["health"], "Failed")
+        self.assertEqual(result["currentChain"]["status"], "Running")
+
+        fbc_retry.update(status="Succeeded", completed="2026-10-08T12:05:00Z")
+        result = build_health(runs)[0]
+        chain = result["currentChain"]
+        self.assertEqual(result["health"], "Succeeded")
+        self.assertEqual(result["latestScan"]["name"], "scan-retry")
+        self.assertEqual(chain["root"]["name"], "scan")
+        self.assertEqual(
+            [[item["name"] for item in stage["runs"]] for stage in chain["stages"]],
+            [["scan"], ["images"], ["bundle"], ["fbc-419", "fbc-retry"]],
+        )
+        self.assertIn("uid-scan-retry", {item["uid"] for item in chain["attempts"]})
+        self.assertIn("uid-fbc-420", {item["uid"] for item in chain["attempts"] if item["status"] == "Failed"})
+
+    def test_rebuilt_scan_with_a_new_build_follows_the_new_build(self):
+        runs = complete_chain()
+        scan_retry = run("scan-retry", PIPELINES[0], rebuiltFrom="uid-scan", created="2026-10-08T11:00:00Z")
+        new_images = run(
+            "new-images", PIPELINES[1], parent="scan-retry", status="Failed", created="2026-10-08T12:00:00Z"
+        )
+        result = build_health(runs + [scan_retry, new_images])[0]
+        self.assertEqual(result["health"], "Failed")
+        self.assertEqual(result["currentChain"]["stages"][0]["runs"][0]["name"], "scan-retry")
+        self.assertEqual(result["currentChain"]["failures"][0]["name"], "new-images")
+
     def test_bundle_recovery_uses_its_new_fbc_children_for_all_targets(self):
         runs = complete_chain()
         runs[2]["status"] = "Failed"
