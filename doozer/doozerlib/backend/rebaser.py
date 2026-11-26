@@ -1957,7 +1957,7 @@ class KonfluxRebaser:
                     filename = urllib.parse.urlparse(yarn_artifact).path.split('/')[-1]
                     line = line.replace(
                         'echo "need yarn at ${CACHED_YARN}"',
-                        f"npm install -g /cachi2/output/deps/generic/{filename}",
+                        f"npm install -g /prefetch/output/deps/generic/{filename}",
                     )
                     self._logger.info(f"yarn line overridden. Using pre-fetched yarn from hermetic path: {filename}")
                 else:
