@@ -3,7 +3,7 @@ import os
 
 import click
 import yaml
-from artcommonlib import exectools
+from artcommonlib import exectools, redis
 from artcommonlib.telemetry import start_as_current_span_async
 from opentelemetry import trace
 from opentelemetry.trace import StatusCode
@@ -107,12 +107,21 @@ class Ocp4ScanPipeline:
 
         # Handle image source changes
         self.handle_source_changes()
+        dispatch_error = None
+        try:
+            await self.handle_public_rebuilds()
+        except Exception as exc:
+            dispatch_error = exc
+            self.logger.exception('Failed to dispatch public rebuilds for %s', self.version)
+            self.issues.append({'name': f'openshift-{self.version}', 'issue': 'Failed to dispatch public rebuilds'})
 
         # Handle RHCOS changes or inconsistencies
         await self.handle_rhcos_changes()
 
         self._report_issues()
         await self._handle_scan_issues()
+        if dispatch_error is not None:
+            raise dispatch_error
         self._finalize()
 
     def check_params(self):
@@ -315,6 +324,31 @@ class Ocp4ScanPipeline:
             assembly='stream',
             image_list=changed_ocp_images,
             rpm_list=changed_rpm,
+        )
+
+    async def handle_public_rebuilds(self):
+        request = self.report.get('public_rebuild')
+        if self.command_failed or not request or not request['images']:
+            return
+        images = request['images']
+        if self.runtime.dry_run:
+            self.logger.info('Would queue public rebuild for %s', ', '.join(images))
+            return
+        if jenkins.is_ocp4_public_rebuild_queued(self.version, self.assembly):
+            self.logger.info('A public rebuild is already queued for %s', self.version)
+            return
+
+        # Keep retries scoped to public work, even when rebasing fails before a build record exists.
+        retry_key = f'public-rebuild:openshift-{self.version}:{self.assembly}'
+        if not await redis.call('set', retry_key, 'requested', nx=True, ex=request['retry_interval_seconds']):
+            self.logger.info('A public rebuild was recently requested for %s', self.version)
+            return
+        jenkins.start_ocp4_konflux(
+            build_version=self.version,
+            assembly=self.assembly,
+            image_list=images,
+            public_rebuild=True,
+            block_until_building=False,
         )
 
     @start_as_current_span_async(TRACER, "ocp4-scan-konflux.handle-rhcos-changes")

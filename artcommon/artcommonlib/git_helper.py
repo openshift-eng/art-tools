@@ -55,7 +55,16 @@ def validate_git_remote_url(url: str) -> None:
         raise ValueError('Git repository URLs must not contain embedded credentials; use configured authentication')
 
 
-def git_clone(remote_url: str, target_dir: str, gitargs=[], set_env={}, timeout=0, git_cache_dir: Optional[str] = None):
+def git_clone(
+    remote_url: str,
+    target_dir: str,
+    gitargs=[],
+    set_env={},
+    timeout=0,
+    git_cache_dir: Optional[str] = None,
+    *,
+    recurse_submodules: bool = True,
+):
     # Do not change the outer scope param list
     gitargs = copy.copy(gitargs)
     set_env = dict(set_env)
@@ -92,7 +101,8 @@ def git_clone(remote_url: str, target_dir: str, gitargs=[], set_env={}, timeout=
         exectools.fire_and_forget(repo_dir, 'git fetch --all', env=cache_env)
         gitargs.extend(['--dissociate', '--reference-if-able', repo_dir])
 
-    gitargs.append('--recurse-submodules')
+    if recurse_submodules:
+        gitargs.append('--recurse-submodules')
 
     LOGGER.info(f'Cloning to: {target_dir}')
 

@@ -43,6 +43,7 @@ from artcommonlib.util import (
     get_art_prod_image_repo_for_version,
     uses_konflux_imagestream_override,
 )
+from artcommonlib.variants import BuildVariant
 from elliottlib.util import chunk
 from opentelemetry import trace
 from tenacity import retry, stop_after_attempt, wait_fixed
@@ -493,6 +494,7 @@ class GenPayloadCli:
         # store generated payload entries: {arch -> dict of payload entries}
         self.payload_entries_for_arch: Dict[str, Dict[str, PayloadEntry]] = {}
         self.private_payload_entries_for_arch: Dict[str, Dict[str, PayloadEntry]] = {}
+        self.private_stream_build_overrides: Dict[str, BuildRecordInspector] = {}
         # for gathering issues that are found while evaluating the payload:
         self.assembly_issues: List[AssemblyIssue] = list()
         self.private_only = False
@@ -504,6 +506,7 @@ class GenPayloadCli:
         # Track mismatched siblings.
         # This will be used to prevent syncing out mismatched siblings for development releases per ART-13996
         self.mismatched_siblings = []
+        self.private_mismatched_siblings: Set[str] = set()
 
     @start_as_current_span_async(TRACER, "releases:gen-payload", record_resources=True)
     async def run(self):
@@ -556,6 +559,13 @@ class GenPayloadCli:
         with TRACER.start_as_current_span("Calls AssemblyInspector.__init__"):
             assembly_inspector = AssemblyInspector(rt, rt.build_retrying_koji_client())
             await assembly_inspector.initialize(lookup_mode='both')
+            if (
+                rt.build_system == 'konflux'
+                and rt.variant == BuildVariant.OCP
+                and rt.assembly == 'stream'
+                and not self.multi_model
+            ):
+                self.private_stream_build_overrides = await assembly_inspector.find_private_stream_build_overrides()
 
         self.payload_entries_for_arch, self.private_payload_entries_for_arch = await self.generate_payload_entries(
             assembly_inspector
@@ -935,6 +945,16 @@ class GenPayloadCli:
                     self.mismatched_siblings.append(sibling_component)
                     self.logger.warning(f"Also excluding sibling {sibling.get_nvr()} due to mismatch")
 
+        if self.private_stream_build_overrides:
+            private_images = [
+                self.private_stream_build_overrides.get(img.get_image_meta().distgit_key, img) for img in group_images
+            ]
+            self.private_mismatched_siblings = {
+                img.get_image_meta().distgit_key
+                for pair in self.payload_generator.find_mismatched_siblings(private_images)
+                for img in pair
+            }
+
         self.assembly_issues.extend(issues)
         span.set_attribute("doozer.result.issues", list(map(lambda it: it.to_dict(), issues)))
 
@@ -1225,6 +1245,7 @@ class GenPayloadCli:
                 arch,
                 self.full_component_repo(repo_type=RepositoryType.PRIVATE),
                 registry_config=registry_config,
+                build_overrides=self.private_stream_build_overrides,
             )
             private_entries_for_arch[arch] = private_entries
             if self.private_only:
@@ -1534,6 +1555,8 @@ class GenPayloadCli:
             if el_target:
                 where_filter["el_target"] = el_target
 
+            old_bri = payload_bri.get(dtk_key)
+            private_bri = self.private_stream_build_overrides.get(dtk_key, old_bri)
             matching_record: Optional[KonfluxBuildRecord] = None
             async for record in konflux_db.search_builds_by_fields(
                 where=where_filter,
@@ -1543,8 +1566,19 @@ class GenPayloadCli:
                 if record.embargoed:
                     logger.debug("Skipping embargoed DTK build %s", record.nvr)
                     continue
+                if (
+                    self.runtime.variant == BuildVariant.OCP
+                    and self.runtime.assembly == 'stream'
+                    and private_bri
+                    and private_bri.is_under_embargo()
+                    and not await assembly_inspector.public_build_contains_private_fix(
+                        private_bri.get_build_obj(), record
+                    )
+                ):
+                    logger.info("Skipping DTK build %s because its private fix could not be verified", record.nvr)
+                    continue
                 matching_record = record
-                break  # first non-embargoed match wins
+                break
 
             if not matching_record:
                 logger.warning(
@@ -1555,7 +1589,6 @@ class GenPayloadCli:
                 continue
 
             # Found a matching DTK build — prepare the swap across all arches.
-            old_bri = payload_bri.get(dtk_key)
             old_nvr = old_bri.get_nvr() if old_bri else "unknown"
             new_bri = KonfluxBuildRecordInspector(self.runtime, matching_record)
             logger.info(
@@ -1837,8 +1870,11 @@ class GenPayloadCli:
 
         mirror_rhcos = self.runtime.group_config.get('rhcos', {}).get('mirror_to_release_dev', False)
 
+        mismatched_siblings = set(self.mismatched_siblings)
+        if private:
+            mismatched_siblings.update(self.private_mismatched_siblings)
         for tag_name, payload_entry in payload_entries.items():
-            if payload_entry.image_meta and payload_entry.image_meta.distgit_key in self.mismatched_siblings:
+            if payload_entry.image_meta and payload_entry.image_meta.distgit_key in mismatched_siblings:
                 self.logger.warning(
                     f"Skipping mirroring of {payload_entry.image_meta.distgit_key} "
                     f"due to mismatched sibling source commits."
@@ -1935,11 +1971,14 @@ class GenPayloadCli:
             # from simply-not-selected, so disable deprecated-tag detection.
             full_payload_tag_names = None
 
+        mismatched_siblings = set(self.mismatched_siblings)
+        if private_mode:
+            mismatched_siblings.update(self.private_mismatched_siblings)
         for payload_tag_name, payload_entry in payload_entries.items():
             # Skip mismatched siblings - they were not mirrored and should not be in the imagestream
             if (
                 payload_entry.image_meta
-                and payload_entry.image_meta.distgit_key in self.mismatched_siblings
+                and payload_entry.image_meta.distgit_key in mismatched_siblings
                 and (self.runtime.assembly_type == AssemblyTypes.STREAM or self.private_only)
             ):
                 self.logger.warning(
@@ -3050,7 +3089,12 @@ class PayloadGenerator:
         return f"{dest_repo}:{tag}"
 
     def find_payload_entries(
-        self, assembly_inspector: AssemblyInspector, arch: str, dest_repo: str, registry_config: str = None
+        self,
+        assembly_inspector: AssemblyInspector,
+        arch: str,
+        dest_repo: str,
+        registry_config: str = None,
+        build_overrides: Optional[Dict[str, BuildRecordInspector]] = None,
     ) -> (Dict[str, PayloadEntry], List[AssemblyIssue]):
         """
         Returns a list of images which should be included in the architecture specific release payload.
@@ -3059,10 +3103,13 @@ class PayloadGenerator:
         :param arch: The brew architecture name to create the list for.
         :param dest_repo: The registry/org/repo into which the image should be mirrored.
         :param registry_config: Optional path to registry auth config file.
+        :param build_overrides: Optional builds for the private stream payload.
         :return: Map[payload_tag_name] -> PayloadEntry.
         """
 
-        members: Dict[str, PayloadEntry] = self._find_initial_payload_entries(assembly_inspector, arch, dest_repo)
+        members: Dict[str, PayloadEntry] = self._find_initial_payload_entries(
+            assembly_inspector, arch, dest_repo, build_overrides
+        )
         members = self._replace_missing_payload_entries(members, arch)
         rhcos_members, issues = self._find_rhcos_payload_entries(
             assembly_inspector, arch, registry_config=registry_config
@@ -3071,11 +3118,17 @@ class PayloadGenerator:
         return members, issues
 
     def _find_initial_payload_entries(
-        self, assembly_inspector: AssemblyInspector, arch: str, dest_repo: str
+        self,
+        assembly_inspector: AssemblyInspector,
+        arch: str,
+        dest_repo: str,
+        build_overrides: Optional[Dict[str, BuildRecordInspector]] = None,
     ) -> Dict[str, PayloadEntry]:
         # Maps release payload tag name to the PayloadEntry for the image.
         members: Dict[str, Optional[PayloadEntry]] = dict()
-        for payload_tag, image_inspector in self.get_group_payload_tag_mapping(assembly_inspector, arch).items():
+        for payload_tag, image_inspector in self.get_group_payload_tag_mapping(
+            assembly_inspector, arch, build_overrides
+        ).items():
             if not image_inspector:
                 # There is no build for this payload tag for this CPU arch. This
                 # will be filled in later in this method for the final list.
@@ -3254,7 +3307,10 @@ class PayloadGenerator:
         return annotations
 
     def get_group_payload_tag_mapping(
-        self, assembly_inspector: AssemblyInspector, arch: str
+        self,
+        assembly_inspector: AssemblyInspector,
+        arch: str,
+        build_overrides: Optional[Dict[str, BuildRecordInspector]] = None,
     ) -> Dict[str, Optional[ImageInspector]]:
         """
         Each payload tag name maps to exactly one release imagemeta.
@@ -3267,7 +3323,10 @@ class PayloadGenerator:
         members: Dict[str, Optional[ImageInspector]] = (
             dict()
         )  # Maps release payload tag name to the archive which should populate it
-        for dgk, build_inspector in assembly_inspector.get_group_release_images().items():
+        builds = assembly_inspector.get_group_release_images()
+        if build_overrides:
+            builds = {**builds, **build_overrides}
+        for dgk, build_inspector in builds.items():
             if build_inspector is None:
                 # There was no build for this image found associated with the assembly.
                 # In this case, don't put the tag_name into the imagestream. This is not good,

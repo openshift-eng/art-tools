@@ -113,6 +113,7 @@ class KonfluxOcpPipeline:
         use_mass_rebuild_locks: bool = False,
         network_mode: Optional[str] = None,
         ignore_automation_freeze: bool = False,
+        public_rebuild: bool = False,
     ):
         self.runtime = runtime
         self.assembly = assembly
@@ -134,6 +135,7 @@ class KonfluxOcpPipeline:
         self.use_mass_rebuild_locks = use_mass_rebuild_locks
         self.network_mode = network_mode
         self.ignore_automation_freeze = ignore_automation_freeze
+        self.public_rebuild = public_rebuild
 
         # If build plan includes more than half or excludes less than half or rebuilds everything, it's a mass rebuild
         self.mass_rebuild = False
@@ -155,6 +157,16 @@ class KonfluxOcpPipeline:
         self.build_plan = BuildPlan(BuildStrategy(image_build_strategy), BuildStrategy(rpm_build_strategy))
         self.image_list = [image.strip() for image in image_list.split(',')] if image_list else []
         self.rpm_list = [rpm.strip() for rpm in rpm_list.split(',')] if rpm_list else []
+        if public_rebuild:
+            self.image_list = [image for image in self.image_list if image]
+        if public_rebuild and (
+            assembly != 'stream'
+            or skip_rebase
+            or self.build_plan.image_build_strategy != BuildStrategy.ONLY
+            or not self.image_list
+            or self.build_plan.rpm_build_strategy != BuildStrategy.NONE
+        ):
+            raise ValueError('A public rebuild requires a stream image list, rebasing, and no RPM builds')
 
         self.group_images = []
         self.rebase_failures = []
@@ -236,6 +248,8 @@ class KonfluxOcpPipeline:
                 f"--message='Updating Dockerfile version and release {version}-{input_release}'",
             ]
         )
+        if self.public_rebuild:
+            cmd.append('--public-rebuild')
         if self.network_mode:
             cmd.extend(['--network-mode', self.network_mode])
         if not self.runtime.dry_run:
@@ -257,7 +271,7 @@ class KonfluxOcpPipeline:
 
         try:
             await exectools.cmd_assert_async(cmd)
-            if not self.runtime.dry_run:
+            if not self.runtime.dry_run and not self.public_rebuild:
                 await update_rebase_fail_counters(
                     context=rebase_counter_context,
                 )
@@ -284,7 +298,7 @@ class KonfluxOcpPipeline:
 
             rebase_counter_context.failed_images = failed_images
             rebase_counter_context.skipped_due_to_parent = skipped_due_to_parent
-            if not self.runtime.dry_run:
+            if not self.runtime.dry_run and not self.public_rebuild:
                 await update_rebase_fail_counters(context=rebase_counter_context)
 
             # Exclude images that failed or were skipped due to parent from the build step
@@ -410,22 +424,23 @@ class KonfluxOcpPipeline:
         if description_parts:
             jenkins.update_description('<br/>'.join(description_parts) + '<br/>')
 
-        failed_entries = {
-            entry['name']: entry for entry in record_log.get('image_build_konflux', []) if int(entry['status'])
-        }
-        await update_build_fail_counters(
-            context=BuildFailCounterContext(
-                group=f'openshift-{self.version}',
-                assembly=self.assembly,
-                build_variant=BuildVariant.OCP,
-                jenkins_url=os.getenv('BUILD_URL'),
-                built_images=built_images,
-                failed_images=failed_images,
-                failed_entries=failed_entries,
-                reset_counter=reset_fail_counter,
-                increment_counter=increment_fail_counter,
+        if not self.public_rebuild:
+            failed_entries = {
+                entry['name']: entry for entry in record_log.get('image_build_konflux', []) if int(entry['status'])
+            }
+            await update_build_fail_counters(
+                context=BuildFailCounterContext(
+                    group=f'openshift-{self.version}',
+                    assembly=self.assembly,
+                    build_variant=BuildVariant.OCP,
+                    jenkins_url=os.getenv('BUILD_URL'),
+                    built_images=built_images,
+                    failed_images=failed_images,
+                    failed_entries=failed_entries,
+                    reset_counter=reset_fail_counter,
+                    increment_counter=increment_fail_counter,
+                )
             )
-        )
 
         if not built_images:
             # Nothing to do, skipping build-sync
@@ -1141,6 +1156,7 @@ class KonfluxOcpPipeline:
     help='Ignore global and group freeze_automation policy for this run; build locks still apply',
 )
 @click.option("--skip-rebase", is_flag=True, help="(For testing) Skip the rebase step")
+@click.option('--public-rebuild', is_flag=True, help='Build stream images from public source and public parents.')
 @click.option("--skip-bundle-build", is_flag=True, help="(For testing) Skip the bundle build step")
 @click.option("--skip-build-sync-konflux", is_flag=True, help="(For testing) Skip the build-sync-konflux step")
 @click.option(
@@ -1214,6 +1230,7 @@ async def ocp4(
     build_priority: Optional[str],
     use_mass_rebuild_locks: bool,
     network_mode: Optional[str],
+    public_rebuild: bool = False,
 ):
     if not kubeconfig:
         kubeconfig = os.environ.get('KONFLUX_SA_KUBECONFIG')
@@ -1244,6 +1261,7 @@ async def ocp4(
         use_mass_rebuild_locks=use_mass_rebuild_locks,
         network_mode=network_mode,
         ignore_automation_freeze=ignore_automation_freeze,
+        public_rebuild=public_rebuild,
     )
 
     if ignore_locks:

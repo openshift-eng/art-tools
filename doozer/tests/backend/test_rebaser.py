@@ -1,4 +1,5 @@
 import asyncio
+import json
 import os
 import re
 import stat
@@ -10,10 +11,12 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import semver
 from artcommonlib.model import Missing, Model
+from artcommonlib.pushd import Dir
 from artcommonlib.variants import BuildVariant
 from dockerfile_parse import DockerfileParser
 from doozerlib import util
 from doozerlib.backend.rebaser import KonfluxRebaser, _get_cpe_product_name, _get_cpe_version
+from doozerlib.image import ImageMetadata
 from doozerlib.source_resolver import SourceResolution, SourceResolver
 
 
@@ -1519,6 +1522,26 @@ class TestRebaserResolveMemberParentRegistryRedhat(IsolatedAsyncioTestCase):
         self.addCleanup(self.directory.cleanup)
         self.base_dir = Path(self.directory.name)
 
+    async def test_public_rebuild_uses_public_member_and_rejects_embargoed_pin(self):
+        parent = MagicMock()
+        parent.branch_el_target.return_value = 9
+        parent.should_trigger_base_image_release.return_value = False
+        public = MagicMock(
+            embargoed=False, release='202611211200.p2.g1234567.el9', image_pullspec='quay.io/public@sha256:abc'
+        )
+        parent.get_latest_build = AsyncMock(return_value=public)
+        runtime = MagicMock(group='openshift-4.22')
+        runtime.resolve_image.return_value = None
+        runtime.late_resolve_image.return_value = parent
+        rebaser = KonfluxRebaser(runtime, self.base_dir, MagicMock(), 'unsigned', public_rebuild=True)
+
+        self.assertEqual(await rebaser._resolve_member_parent('parent', 'unused'), (public.image_pullspec, False))
+        self.assertIs(parent.get_latest_build.await_args.kwargs['embargoed'], False)
+
+        public.release = '202611211200.p3.g1234567.el9'
+        with self.assertRaisesRegex(IOError, 'No eligible public build for parent parent'):
+            await rebaser._resolve_member_parent('parent', 'unused')
+
     async def test_resolve_member_parent_uses_rh_when_art_base_and_labels_present(self):
         parent = MagicMock()
         parent.distgit_key = "golang-builder"
@@ -2040,6 +2063,39 @@ class TestPrivateFixDetectionE2E(IsolatedAsyncioTestCase):
             pull_url=pull_url,
         )
 
+    async def test_public_rebuild_uses_kube_variables_from_selected_checkout(self):
+        source = self._create_source_resolution(self.PUBLIC_COMMIT, 'https://github.com/openshift/router')
+        kube_dockerfile = self.source_dir / 'openshift-hack/images/hyperkube/Dockerfile.rhel'
+        kube_dockerfile.parent.mkdir(parents=True)
+        kube_dockerfile.write_text('FROM scratch\nLABEL io.openshift.build.versions="kubernetes=1.30.0"\n')
+        df_path = self.base_dir / 'Dockerfile'
+        df_path.write_text('FROM scratch\nENV KUBE_GIT_VERSION=old\n')
+        runtime = MagicMock()
+        runtime.variant = BuildVariant.OCP
+        metadata = ImageMetadata(
+            runtime,
+            MagicMock(
+                key='test-image', data={'name': 'test-image', 'content': {'source': {'git': {'url': source.url}}}}
+            ),
+        )
+        rebaser = KonfluxRebaser(runtime, self.base_dir, MagicMock(), 'unsigned', public_rebuild=True)
+
+        def rev_parse(cmd):
+            self.assertEqual(cmd, ['git', 'rev-parse', 'HEAD'])
+            self.assertEqual(Dir.getpath(), self.source_dir)
+            return source.commit_hash, ''
+
+        with (
+            patch('doozerlib.metadata.exectools.cmd_assert', side_effect=rev_parse),
+            patch('doozerlib.metadata.exectools.cmd_gather', return_value=(1, '', '')),
+        ):
+            await rebaser._update_environment_variables(metadata, source, df_path, {'OS_GIT_VERSION': '4.18'}, {})
+
+        envs = DockerfileParser(str(df_path)).envs
+        self.assertEqual(envs['KUBE_GIT_VERSION'], f'v1.30.0+{source.commit_hash_short}')
+        self.assertEqual(envs['KUBE_GIT_COMMIT'], self.PUBLIC_COMMIT)
+        runtime.source_resolver.resolve_source.assert_not_called()
+
     async def test_e2e_private_commit_detected_as_embargoed(self):
         """E2E: Private commit f1ffd09 from openshift-priv should be detected as embargoed.
 
@@ -2405,6 +2461,51 @@ class TestFromPlatformPreservation(IsolatedAsyncioTestCase):
 
         self.assertEqual(parents, ["registry.example.com/golang:1.25", "registry.example.com/rhel9"])
         rebaser._pin_parent_to_platform.assert_not_awaited()
+
+    async def test_public_rebuild_requires_anonymous_access_and_pins_direct_parent(self):
+        pullspec = 'registry.example.com:5000/ns/repo:latest'
+        dfp = self._dfp('FROM upstream\n')
+        metadata = MagicMock(config={'from': {'image': pullspec}})
+        runtime = MagicMock(registry_config='/private/auth.json')
+        rebaser = KonfluxRebaser(runtime, self.base_dir, MagicMock(), 'unsigned', public_rebuild=True)
+        info = [
+            {'digest': 'sha256:amd64', 'listDigest': 'sha256:list'},
+            {'digest': 'sha256:arm64', 'listDigest': 'sha256:list'},
+        ]
+
+        async def lookup(cmd, **_):
+            self.assertEqual(cmd[-1], pullspec)
+            auth_file = Path(next(arg.split('=', 1)[1] for arg in cmd if arg.startswith('--registry-config=')))
+            self.assertEqual(json.loads(auth_file.read_text()), {'auths': {}})
+            return 0, json.dumps(info), ''
+
+        with patch('doozerlib.backend.rebaser.exectools.cmd_gather_async', side_effect=lookup) as gather:
+            parents, private_fix = await rebaser._resolve_parents(metadata, dfp)
+        gather.assert_awaited_once()
+        self.assertEqual(parents, ['registry.example.com:5000/ns/repo@sha256:list'])
+        self.assertFalse(private_fix)
+
+    async def test_public_rebuild_rejects_unverified_or_embargoed_direct_parent(self):
+        pullspec = 'quay.io/ns/repo@sha256:image'
+        dfp = self._dfp('FROM upstream\n')
+        metadata = MagicMock(config={'from': {'image': pullspec}})
+        runtime = MagicMock()
+        rebaser = KonfluxRebaser(runtime, self.base_dir, MagicMock(), 'unsigned', public_rebuild=True)
+        embargoed = {'digest': 'sha256:image', 'config': {'config': {'Labels': {'release': '1.p3.el9'}}}}
+
+        with patch('doozerlib.backend.rebaser.exectools.cmd_gather_async', side_effect=ChildProcessError('denied')):
+            with self.assertRaisesRegex(IOError, 'Could not verify anonymous access'):
+                await rebaser._resolve_parents(metadata, dfp)
+        for info, error in [({'digest': 'sha256:other'}, 'verify the manifest digest'), (embargoed, 'is embargoed')]:
+            with self.subTest(error=error):
+                with patch(
+                    'doozerlib.backend.rebaser.exectools.cmd_gather_async', return_value=(0, json.dumps(info), '')
+                ):
+                    with self.assertRaisesRegex(IOError, error):
+                        await rebaser._resolve_parents(metadata, dfp)
+
+        regular_rebase = KonfluxRebaser(runtime, self.base_dir, MagicMock(), 'unsigned')
+        self.assertEqual(await regular_rebase._resolve_parents(metadata, dfp), ([pullspec], False))
 
     async def test_resolve_parents_opt_in_rejects_variable_platform(self):
         dfp = self._dfp("FROM --platform=$BUILDPLATFORM golang AS builder\nFROM base\n")

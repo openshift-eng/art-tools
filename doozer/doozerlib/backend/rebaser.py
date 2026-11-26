@@ -103,6 +103,7 @@ class KonfluxRebaser:
         image_repo: str = constants.KONFLUX_DEFAULT_IMAGE_REPO,
         extra_labels: Optional[Dict[str, str]] = None,
         build_args: Optional[Dict[str, str]] = None,
+        public_rebuild: bool = False,
     ) -> None:
         self._runtime = runtime
         self._base_dir = base_dir
@@ -110,6 +111,7 @@ class KonfluxRebaser:
         self.repo_type = repo_type
         self.upcycle = upcycle
         self.force_private_bit = force_private_bit
+        self.public_rebuild = public_rebuild
         self._record_logger = record_logger
         self._source_modifier_factory = source_modifier_factory
         self._logger = logger or LOGGER
@@ -187,9 +189,12 @@ class KonfluxRebaser:
             # If this image has an upstream source, resolve it
             if metadata.has_source():
                 self._logger.info(f"Resolving source for {metadata.qualified_key}")
-                source = cast(
-                    SourceResolution, await exectools.to_thread(self._source_resolver.resolve_source, metadata)
+                resolve_source = (
+                    self._source_resolver.resolve_public_source
+                    if self.public_rebuild
+                    else self._source_resolver.resolve_source
                 )
+                source = cast(SourceResolution, await exectools.to_thread(resolve_source, metadata))
             else:
                 raise IOError(
                     f"Image {metadata.qualified_key} doesn't have upstream source. This is no longer supported."
@@ -348,6 +353,8 @@ class KonfluxRebaser:
                 for image in downstream_parents
             ]
 
+        if self.public_rebuild and private_fix:
+            raise IOError(f'{metadata.distgit_key}: public rebuild resolved an embargoed input')
         if private_fix:
             self._logger.warning("The source of image %s contains private fixes.", metadata.distgit_key)
         else:
@@ -518,12 +525,58 @@ class KonfluxRebaser:
         digest = info.get("digest")
         if not digest:
             raise IOError(f"Could not resolve the {platform} digest of parent image {pullspec}")
+        return self._parent_by_digest(pullspec, digest)
+
+    @staticmethod
+    def _parent_by_digest(pullspec: str, digest: str) -> str:
         repo = pullspec.split("@", 1)[0]
         name_start = repo.rfind("/") + 1
         tag_sep = repo.rfind(":")
         if tag_sep >= name_start:
             repo = repo[:tag_sep]
         return f"{repo}@{digest}"
+
+    async def _resolve_public_direct_parent(self, pullspec: str) -> str:
+        """Require anonymous access and pin the exact manifest verified by the registry."""
+        if pullspec == 'scratch':
+            return pullspec
+        named_ref, _, requested_digest = pullspec.partition('@')
+        if is_release_embargoed(named_ref, 'konflux', default=False):
+            raise IOError(f'Direct parent {pullspec} is embargoed')
+
+        # The shared image info cache can return results from an authenticated lookup.
+        with TemporaryDirectory() as temp_dir:
+            auth_file = Path(temp_dir) / 'auth.json'
+            auth_file.write_text('{"auths": {}}', encoding='utf-8')
+            try:
+                _, output, _ = await exectools.cmd_gather_async(
+                    [
+                        'oc',
+                        'image',
+                        'info',
+                        '--show-multiarch',
+                        '-o',
+                        'json',
+                        f'--registry-config={auth_file}',
+                        '--',
+                        pullspec,
+                    ],
+                    timeout=60,
+                )
+            except (ChildProcessError, TimeoutError) as exc:
+                raise IOError(f'Could not verify anonymous access to direct parent {pullspec}') from exc
+
+        info = json.loads(output)
+        manifests = info if isinstance(info, list) else [info]
+        digests = {manifest.get('listDigest') or manifest.get('digest') for manifest in manifests}
+        if len(digests) != 1 or not (digest := digests.pop()) or (requested_digest and digest != requested_digest):
+            raise IOError(f'Could not verify the manifest digest for direct parent {pullspec}')
+
+        for manifest in manifests:
+            labels = manifest.get('config', {}).get('config', {}).get('Labels') or {}
+            if is_release_embargoed(labels.get('release') or '', 'konflux', default=False):
+                raise IOError(f'Direct parent {pullspec} is embargoed')
+        return self._parent_by_digest(pullspec, digest)
 
     @staticmethod
     def _apply_downstream_parents(metadata: ImageMetadata, dfp: DockerfileParser, parents: List[str]):
@@ -582,7 +635,10 @@ class KonfluxRebaser:
             if "member" in parent:
                 mapped_images.append(await self._resolve_member_parent(parent["member"], original_parent))
             elif "image" in parent:
-                mapped_images.append((parent["image"], False))
+                pullspec = parent["image"]
+                if self.public_rebuild:
+                    pullspec = await self._resolve_public_direct_parent(pullspec)
+                mapped_images.append((pullspec, False))
             elif "stream" in parent:
                 mapped_images.append(
                     (await self._resolve_stream_parent(metadata, parent['stream'], original_parent, dfp), False)
@@ -618,7 +674,10 @@ class KonfluxRebaser:
                         )
                     downstream_parents[i] = await self._pin_parent_to_platform(downstream_parents[i], platform)
 
-        private_fix = any(private_fix for _, private_fix in mapped_images)
+        private_fix = any(
+            private_fix or (self.public_rebuild and is_release_embargoed(pullspec, 'konflux', default=False))
+            for pullspec, private_fix in mapped_images
+        )
         return downstream_parents, private_fix
 
     async def _registry_pullspec_status(self, pullspec: str) -> tuple[bool, str]:
@@ -656,20 +715,26 @@ class KonfluxRebaser:
 
         private_fix = False
         if not parent_loaded:
-            if not self._runtime.ignore_missing_base:
+            if not self._runtime.ignore_missing_base and not self.public_rebuild:
                 raise IOError(f"Parent image {member} is not loaded.")
-            if self._runtime.latest_parent_version or self._runtime.assembly_basis_event:
+            if self.public_rebuild or self._runtime.latest_parent_version or self._runtime.assembly_basis_event:
                 parent_metadata = self._runtime.late_resolve_image(member)
                 if not parent_metadata:
                     raise IOError(f"Metadata config for parent image {member} is not found.")
 
+                visibility = {'embargoed': False} if self.public_rebuild else {}
                 build = await parent_metadata.get_latest_build(
                     el_target=self._get_el_target_string(parent_metadata.branch_el_target()),
                     engine=Engine.KONFLUX,
                     group=self.derived_group,
                     exclude_large_columns=True,
+                    **visibility,
                 )
 
+                if self.public_rebuild and (
+                    not build or build.embargoed or is_release_embargoed(build.release, 'konflux')
+                ):
+                    raise IOError(f'No eligible public build for parent {member}')
                 if not build:
                     raise IOError(f"A build of parent image {member} is not found.")
                 if parent_metadata.should_trigger_base_image_release():
@@ -898,7 +963,7 @@ class KonfluxRebaser:
         # update_distgit_dir makes a distinction between None and {}
         env_vars_from_source = {}
         with exectools.Dir(source_dir):
-            env_vars_from_source.update(metadata.extract_kube_env_vars())
+            env_vars_from_source.update(metadata.extract_kube_env_vars(source.source_path))
 
             # See if the config is telling us a file other than "Dockerfile" defines the
             # distgit image content.
@@ -1072,9 +1137,7 @@ class KonfluxRebaser:
                 source_dockerfile_subpath = dockerfile_name
             else:
                 source_dockerfile_subpath = "{}/{}".format(sub_path, dockerfile_name)
-            # there ought to be a better way to determine the source alias that was registered:
-            source_root = self._source_resolver.resolve_source(metadata).source_path
-            source_alias = metadata.config.content.source.get('alias', os.path.basename(source_root))
+            source_alias = metadata.config.content.source.get('alias', Path(source.source_path).name)
 
             if self._record_logger:
                 self._record_logger.add_record(
@@ -2663,7 +2726,7 @@ class KonfluxRebaser:
 
         if do_set_build_variables:
             all_envs_to_remove.update(build_update_envs)
-            env_vars_from_source = metadata.extract_kube_env_vars()
+            env_vars_from_source = metadata.extract_kube_env_vars(source.source_path if source else None)
             all_envs_to_remove.update(env_vars_from_source)
 
         while True:

@@ -1,4 +1,5 @@
 import functools
+import json
 import logging
 import os
 import time
@@ -6,7 +7,7 @@ import uuid
 from enum import Enum
 from html import escape
 from typing import Optional
-from urllib.parse import unquote, urlparse
+from urllib.parse import unquote, urljoin, urlparse
 
 import requests
 from jenkinsapi.build import Build
@@ -372,6 +373,7 @@ def start_build(
     block_until_complete: bool = False,
     watch_building_delay: int = 5,
     return_build_url: bool = False,
+    strict_parameters: bool = False,
 ) -> Optional[str] | tuple[Optional[str], str]:
     """
     Starts a new Jenkins build
@@ -383,6 +385,7 @@ def start_build(
     :param block_until_complete: False by default. Will block until the new build completes
     :param watch_building_delay: Poll rate for building state
     :param return_build_url: Return the started build URL with its result
+    :param strict_parameters: Reject parameters the job does not define
 
     Returns the build result if block_until_complete is True, None otherwise. When
     return_build_url is True, also returns the URL for the started build.
@@ -392,7 +395,23 @@ def start_build(
     job_name = job.value
     logger.info('Starting new build for job: %s', job_name)
     job = jenkins_client.get_job(job_name)
-    queue_item = job.invoke(build_params=params)
+    if strict_parameters:
+        # Jenkins validates names on the build form. buildWithParameters silently ignores unknown names.
+        if not job.has_params():
+            raise ValueError(f'Jenkins job {job_name} does not accept build parameters')
+        build_url = f'{job.baseurl.rstrip("/")}/build'
+        response = jenkins_client.requester.post_and_confirm_status(
+            build_url,
+            data={
+                'json': json.dumps({'parameter': [{'name': name, 'value': value} for name, value in params.items()]})
+            },
+            valid=[201],
+            allow_redirects=False,
+        )
+        queue_path = urlparse(response.headers['location']).path
+        queue_item = QueueItem(urljoin(build_url, queue_path), jenkins_client)
+    else:
+        queue_item = job.invoke(build_params=params)
 
     if not (block_until_building or block_until_complete):
         logger.info('Queued new build for job: %s', job_name)
@@ -445,6 +464,7 @@ def start_ocp4_konflux(
     rpm_list: list = None,
     limit_arches: list = None,
     dry_run: bool = False,
+    public_rebuild: bool = False,
     **kwargs,
 ) -> Optional[str]:
     params = {
@@ -465,16 +485,35 @@ def start_ocp4_konflux(
     if limit_arches:
         params['LIMIT_ARCHES'] = ','.join(limit_arches)
 
-    # SKIP_PLASHETS defaults to True for manual builds, setting to False for scheduled
-    params['SKIP_PLASHETS'] = False
+    # Public image-only refreshes use the existing stream plashets.
+    params['SKIP_PLASHETS'] = public_rebuild
+    if public_rebuild:
+        params['PUBLIC_REBUILD'] = True
+        params['IMAGE_BUILD_STRATEGY'] = 'only'
+        params['RPM_BUILD_STRATEGY'] = 'none'
 
     params['DRY_RUN'] = dry_run
 
     return start_build(
         job=Jobs.OCP4_KONFLUX,
         params=params,
+        strict_parameters=public_rebuild,
         **kwargs,
     )
+
+
+def is_ocp4_public_rebuild_queued(version: str, assembly: str) -> bool:
+    init_jenkins()
+    job = jenkins_client.get_job(Jobs.OCP4_KONFLUX.value)
+    for queued in jenkins_client.get_queue().get_queue_items_for_job(job.name):
+        params = queued.get_parameters() or {}
+        if (
+            str(params.get('PUBLIC_REBUILD')).lower() == 'true'
+            and params.get('BUILD_VERSION') == version
+            and params.get('ASSEMBLY') == assembly
+        ):
+            return True
+    return False
 
 
 def start_ocp4_scan_konflux(version: str, **kwargs) -> Optional[str]:

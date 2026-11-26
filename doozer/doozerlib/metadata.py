@@ -557,11 +557,12 @@ class Metadata(MetadataBase):
 
         return maintainer.get('project', issue_project), maintainer.get('component', jira_component)
 
-    def extract_kube_env_vars(self) -> Dict[str, str]:
+    def extract_kube_env_vars(self, source_path: str | pathlib.Path | None = None) -> Dict[str, str]:
         """
         Analyzes the source_base_dir for the hyperkube Dockerfile in which the release's k8s version
         is defined. Side effect is cloning distgit
         and upstream source if it has not already been done.
+        :param source_path: Use this checkout when the caller has already resolved the source.
         :return: A Dict of environment variables that should be added to the Dockerfile / rpm spec.
                 Variables like KUBE_GIT_VERSION, KUBE_GIT_COMMIT, KUBE_GIT_MINOR, ...
                 May be empty if there is no kube information in the source dir.
@@ -569,7 +570,9 @@ class Metadata(MetadataBase):
         envs = dict()
         if not self.has_source():  # distgit only. Return empty.
             return envs
-        upstream_source_path: pathlib.Path = pathlib.Path(self.runtime.source_resolver.resolve_source(self).source_path)
+        if source_path is None:
+            source_path = self.runtime.source_resolver.resolve_source(self).source_path
+        upstream_source_path = pathlib.Path(source_path)
 
         with Dir(upstream_source_path):
             out, _ = exectools.cmd_assert(["git", "rev-parse", "HEAD"])
