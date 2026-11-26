@@ -1095,6 +1095,7 @@ class TestCrossArchReconciliation(unittest.IsolatedAsyncioTestCase):
 
     def _make_generator(self) -> RpmLockfilePrototypeGenerator:
         gen = RpmLockfilePrototypeGenerator.__new__(RpmLockfilePrototypeGenerator)
+        gen._inherited_versions = {}
         gen.logger = MagicMock()
         gen._resolver = MagicMock()
         gen._container = MagicMock()

@@ -13,6 +13,7 @@ import yaml
 from doozerlib.lockfile_prototype.constants import RPM_LOCKFILE_ENTRY_POINT
 from doozerlib.lockfile_prototype.models import (
     LockfileData,
+    RepoEntry,
     RpmsInConfig,
 )
 from doozerlib.lockfile_prototype.resolver import RpmResolver
@@ -38,6 +39,51 @@ class TestRpmResolver(unittest.TestCase):
             }
         ],
     }
+
+    @patch("doozerlib.lockfile_prototype.resolver.cmd_gather_async")
+    def test_arch_specific_exclusions_are_isolated_and_merged(self, mock_gather):
+        captured = []
+
+        async def mock_cmd(cmd, **kwargs):
+            config = yaml.safe_load(Path(cmd[-1]).read_text())
+            captured.append(config)
+            arch = config['arches'][0]
+            self.assertEqual(config['packagesFromContainerfile'], {'file': '/build/Dockerfile', 'stageNum': 1})
+            self.assertEqual(cmd[cmd.index('--image') + 1], 'quay.io/coreos/base@sha256:abc')
+            Path(cmd[cmd.index('--outfile') + 1]).write_text(
+                yaml.safe_dump({'arches': [{'arch': arch, 'packages': []}]})
+            )
+            return 0, '', ''
+
+        mock_gather.side_effect = mock_cmd
+        config = RpmsInConfig(arches=['aarch64', 's390x'], contentOrigin={'repos': []}, packages=['gcc'])
+        original = config.model_dump()
+        repos = {
+            arch: [
+                RepoEntry(
+                    repoid='baseos', baseurl=f'https://example/{arch}', options={'excludepkgs': f'libgcc-0:2-1.{arch}'}
+                )
+            ]
+            for arch in config.arches
+        }
+        with tempfile.TemporaryDirectory() as directory:
+            resolver = RpmResolver(working_dir=Path(directory))
+            result = asyncio.run(
+                resolver.resolve(
+                    config,
+                    image_pullspec='quay.io/coreos/base@sha256:abc',
+                    containerfile_path='/build/Dockerfile',
+                    stage_num=1,
+                    repos_by_arch=repos,
+                )
+            )
+        self.assertEqual(config.model_dump(), original)
+        self.assertEqual([entry.arch for entry in result.arches], ['aarch64', 's390x'])
+        self.assertEqual(len(captured), 2)
+        for arch, entry in zip(config.arches, captured):
+            self.assertEqual(entry['arches'], [arch])
+            self.assertEqual(entry['contentOrigin']['repos'][0]['excludepkgs'], f'libgcc-0:2-1.{arch}')
+            self.assertEqual(entry['packages'], ['gcc'])
 
     @patch("doozerlib.lockfile_prototype.resolver.cmd_gather_async")
     def test_resolve_bare_mode(self, mock_gather):

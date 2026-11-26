@@ -6,7 +6,7 @@ import re
 from collections import OrderedDict
 from copy import deepcopy
 from multiprocessing import Event
-from typing import Any, Dict, List, Optional, Set, Tuple, cast
+from typing import TYPE_CHECKING, Any, Dict, List, Optional, Set, Tuple, cast
 
 from artcommonlib import util as artlib_util
 from artcommonlib.constants import GOLANG_BUILDER_IMAGE_NAME
@@ -25,6 +25,9 @@ from doozerlib.build_info import BrewBuildRecordInspector
 from doozerlib.distgit import pull_image
 from doozerlib.metadata import Metadata, RebuildHint, RebuildHintCode
 from doozerlib.source_resolver import SourceResolver
+
+if TYPE_CHECKING:
+    from doozerlib.image_rpms import InstalledRpm
 
 
 def extract_golang_version_from_pullspec(pullspec: str) -> Optional[Tuple[int, int]]:
@@ -139,6 +142,8 @@ class ImageMetadata(Metadata):
         """ Event that is set when this image is being rebased. """
         self.rebase_status = False
         """ True if this image has been successfully rebased. """
+        self.lockfile_inherited_rpms: dict[str, tuple['InstalledRpm', ...]] = {}
+        """ Known preserved parent RPMs, propagated across same-run rebases. """
         self.lockfile_packages: list[str] = []
         """ Resolved RPM package names from lockfile, used by child images for conflict detection. """
         self.build_event = Event()

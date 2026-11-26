@@ -13,6 +13,7 @@ import yaml
 from dockerfile_parse import DockerfileParser
 
 from doozerlib.lockfile_prototype.constants import DEFAULT_RPM_LOCKFILE_NAME
+from doozerlib.lockfile_prototype.container_utils import ContainerImageHelper
 from doozerlib.lockfile_prototype.dockerfile_transforms import (
     add_installroot_gpg_key_import,
     strip_bare_updates,
@@ -24,6 +25,7 @@ from doozerlib.lockfile_prototype.dynamic_packages import (
     transform_dynamic_package_script,
 )
 from doozerlib.lockfile_prototype.generator import RpmLockfilePrototypeGenerator
+from doozerlib.lockfile_prototype.inherited_rpms import RpmInventory, stage_references
 from doozerlib.lockfile_prototype.resolver import RpmResolver
 
 
@@ -37,6 +39,7 @@ async def generate_lockfile(
     parent_members: list | None = None,
     shared_dnf_cache: TemporaryDirectory | None = None,
     shared_digest_cache: dict[str, str] | None = None,
+    container_helper: ContainerImageHelper | None = None,
     logger: logging.Logger | None = None,
 ) -> TemporaryDirectory | None:
     """
@@ -57,6 +60,7 @@ async def generate_lockfile(
         shared_digest_cache (dict[str, str] | None): Shared digest resolution cache
             across images. Avoids repeating expensive (and failing) network calls
             for the same pullspec.
+        container_helper (ContainerImageHelper | None): Shared image inspection cache for the rebase run.
         logger (logging.Logger | None): Logger instance.
     Return Value(s):
         TemporaryDirectory | None: The shared cache (created if None was passed in).
@@ -70,23 +74,35 @@ async def generate_lockfile(
 
     resolver = RpmResolver(working_dir=working_dir, logger=_logger, cache_dir=shared_dnf_cache.name)
     generator = RpmLockfilePrototypeGenerator(
-        repos, working_dir=working_dir, resolver=resolver, digest_cache=digest_cache
+        repos, working_dir=working_dir, resolver=resolver, digest_cache=digest_cache, container_helper=container_helper
     )
 
     fallback: dict[int, list[str]] = {}
     parent_dirs: dict[int, Path] = {}
-    if parent_members and downstream_parents:
-        for stage_num, pullspec in enumerate(downstream_parents):
-            for parent in parent_members or []:
-                if parent is None:
-                    continue
-                if parent.distgit_key in pullspec:
-                    if parent.lockfile_packages:
-                        fallback[stage_num] = parent.lockfile_packages
-                    parent_dir = base_dir / parent.qualified_key
-                    if parent_dir.is_dir():
-                        parent_dirs[stage_num] = parent_dir
-                    break
+    parent_inventories: dict[int, RpmInventory] = {}
+    entries = DockerfileParser(str(dest_dir / "Dockerfile")).structure
+    references = stage_references(entries)
+    image_from = metadata.config.get("from", {})
+    configured_parents = list(image_from.get("builder", []))
+    if any(key in image_from for key in ("member", "stream", "image")):
+        configured_parents.append(image_from)
+    members = {parent.distgit_key: parent for parent in parent_members or [] if parent is not None}
+    external_stage = 0
+    for stage_num, _ in enumerate(downstream_parents or []):
+        if stage_num in references:
+            continue
+        parent_config = configured_parents[external_stage] if external_stage < len(configured_parents) else {}
+        external_stage += 1
+        parent = members.get(parent_config.get("member"))
+        if parent is None:
+            continue
+        if parent.lockfile_packages:
+            fallback[stage_num] = parent.lockfile_packages
+        if parent.lockfile_inherited_rpms:
+            parent_inventories[stage_num] = parent.lockfile_inherited_rpms
+        parent_dir = base_dir / parent.qualified_key
+        if parent_dir.is_dir():
+            parent_dirs[stage_num] = parent_dir
 
     await generator.generate_lockfile(
         metadata,
@@ -94,6 +110,7 @@ async def generate_lockfile(
         downstream_parents=downstream_parents,
         fallback_installed=fallback or None,
         parent_source_dirs=parent_dirs or None,
+        parent_inherited_rpms=parent_inventories or None,
     )
 
     lockfile_path = dest_dir / DEFAULT_RPM_LOCKFILE_NAME
@@ -107,6 +124,7 @@ async def generate_lockfile(
                     pkg_names.add(name)
         metadata.lockfile_packages = sorted(pkg_names)
 
+    metadata.lockfile_inherited_rpms = generator.inherited_rpms
     metadata.lockfile_upgrades_dropped = generator.upgrades_dropped
 
     return shared_dnf_cache

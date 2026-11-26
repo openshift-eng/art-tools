@@ -23,6 +23,7 @@ from artcommonlib.util import oc_image_info_for_arch_async
 from packageurl import PackageURL
 
 from doozerlib.constants import BREW_REGISTRY_BASE_URL, REGISTRY_PROXY_BASE_URL
+from doozerlib.image_rpms import get_image_rpm_inventory
 from doozerlib.lockfile_prototype.constants import DEFAULT_PLATFORM, DIGEST_PREFIX, RPM_PSEUDO_PACKAGES
 from doozerlib.lockfile_prototype.utils import build_env
 
@@ -38,6 +39,8 @@ class ContainerImageHelper:
         self.logger = logger or logutil.get_logger(__name__)
         self._digest_cache: dict[str, str] = digest_cache if digest_cache is not None else {}
         self._digest_locks: dict[str, asyncio.Lock] = {}
+        self._package_cache: dict[tuple[str, str], tuple[str, ...]] = {}
+        self._package_locks: dict[tuple[str, str], asyncio.Lock] = {}
 
     @staticmethod
     def _proxy_pullspec(pullspec: str) -> str:
@@ -124,15 +127,25 @@ class ContainerImageHelper:
         Return Value(s):
             list[str]: Sorted unique package names installed in the image.
         """
+        if DIGEST_PREFIX not in image_pullspec:
+            image_pullspec = await self.resolve_to_digest(image_pullspec)
         query_pullspec = self._proxy_pullspec(image_pullspec)
         platform = f"linux/{go_arch_for_brew_arch(arch)}"
-        self.logger.info("Discovering installed packages for %s [arch=%s, platform=%s]", image_pullspec, arch, platform)
-        packages = await self._get_installed_packages_from_sbom(query_pullspec, platform)
-        if packages:
-            return packages
-
-        self.logger.info("No usable SBOM for %s [platform=%s]; extracting RPMDB", image_pullspec, platform)
-        return (await self.get_installed_packages_from_rpmdb(image_pullspec, arch)) or []
+        key = (query_pullspec, platform)
+        lock = self._package_locks.setdefault(key, asyncio.Lock())
+        async with lock:
+            if key in self._package_cache:
+                return list(self._package_cache[key])
+            self.logger.info(
+                "Discovering installed packages for %s [arch=%s, platform=%s]", image_pullspec, arch, platform
+            )
+            packages = await self._get_installed_packages_from_sbom(query_pullspec, platform)
+            if not packages:
+                self.logger.info("No usable SBOM for %s [platform=%s]; extracting RPMDB", image_pullspec, platform)
+                packages = await self.get_installed_packages_from_rpmdb(query_pullspec, arch)
+            if packages is not None and DIGEST_PREFIX in query_pullspec:
+                self._package_cache[key] = tuple(packages)
+            return list(packages or [])
 
     async def get_installed_packages_from_rpmdb(self, image_pullspec: str, arch: str) -> list[str] | None:
         """
@@ -148,15 +161,21 @@ class ContainerImageHelper:
         Return Value(s):
             list[str] | None: Sorted package names, or None when querying failed.
         """
-        query_pullspec = self._proxy_pullspec(image_pullspec)
-        platform = f"linux/{go_arch_for_brew_arch(arch)}"
+        if DIGEST_PREFIX not in image_pullspec:
+            image_pullspec = await self.resolve_to_digest(image_pullspec)
+        try:
+            inventory = await get_image_rpm_inventory(image_pullspec, arch)
+        except Exception as exc:
+            self.logger.warning("Unable to discover installed RPMs from %s [%s]: %s", image_pullspec, arch, exc)
+            return None
+        packages = sorted({rpm.name for rpm in inventory})
         self.logger.info(
-            "Discovering installed packages from RPMDB for %s [arch=%s, platform=%s]",
+            "Found %d packages in RPMDB for %s [platform=%s]",
+            len(packages),
             image_pullspec,
-            arch,
-            platform,
+            f"linux/{go_arch_for_brew_arch(arch)}",
         )
-        return await self._get_installed_packages_from_rpmdb(query_pullspec, platform, image_pullspec)
+        return packages
 
     async def _get_installed_packages_from_sbom(self, image_pullspec: str, platform: str) -> list[str]:
         """
@@ -382,114 +401,6 @@ class ContainerImageHelper:
         except (binascii.Error, KeyError, TypeError, ValueError):
             return None
         return predicate if isinstance(predicate, dict) else None
-
-    @staticmethod
-    def _parse_package_names(stdout: str) -> list[str]:
-        """
-        Parse RPM package names from command output.
-
-        Arg(s):
-            stdout (str): Newline-separated RPM package names.
-        Return Value(s):
-            list[str]: Sorted unique package names excluding RPM pseudo-packages.
-        """
-        return sorted(
-            {line.strip() for line in stdout.splitlines() if line.strip() and line.strip() not in RPM_PSEUDO_PACKAGES}
-        )
-
-    @staticmethod
-    def _find_rpmdb_directories(extract_dir: Path) -> list[Path]:
-        """
-        Find candidate RPM database directories in an extracted image path.
-
-        Arg(s):
-            extract_dir (Path): Directory containing the extracted RPM database.
-        Return Value(s):
-            list[Path]: Candidate directories, preferring the extraction root.
-        """
-        directories = []
-        if any((extract_dir / database_file).is_file() for database_file in ("rpmdb.sqlite", "Packages")):
-            directories.append(extract_dir)
-        for database_file in ("rpmdb.sqlite", "Packages"):
-            for path in extract_dir.rglob(database_file):
-                if path.is_file() and path.parent not in directories:
-                    directories.append(path.parent)
-        return directories
-
-    async def _get_installed_packages_from_rpmdb(
-        self, image_pullspec: str, platform: str, original_pullspec: str
-    ) -> list[str] | None:
-        """
-        Extract and query an image RPM database with host-side tools.
-
-        Arg(s):
-            image_pullspec (str): Image pullspec passed to ``oc image extract``.
-            platform (str): Image platform in ``os/architecture`` form.
-            original_pullspec (str): Original image pullspec used for logging.
-        Return Value(s):
-            list[str] | None: Sorted unique package names, or None on command failure.
-        """
-        rpmdb_paths = ("/usr/lib/sysimage/rpm/", "/var/lib/rpm/")
-        with tempfile.TemporaryDirectory() as tmpdir:
-            for index, rpmdb_path in enumerate(rpmdb_paths):
-                extract_dir = Path(tmpdir) / f"rpmdb-{index}"
-                extract_dir.mkdir()
-                self.logger.info(
-                    "Extracting RPMDB for %s [platform=%s] from %s", original_pullspec, platform, rpmdb_path
-                )
-                extract_cmd = [
-                    "oc",
-                    "image",
-                    "extract",
-                    image_pullspec,
-                    "--path",
-                    f"{rpmdb_path}:{extract_dir}",
-                    "--confirm",
-                    "--filter-by-os",
-                    platform,
-                    *self._registry_config_arg(),
-                ]
-                try:
-                    rc, _, stderr = await cmd_gather_async(extract_cmd, check=False)
-                except Exception as exc:
-                    self.logger.warning("Failed to extract RPM database from %s: %s", image_pullspec, exc)
-                    continue
-                if rc != 0:
-                    self.logger.debug("RPMDB path %s unavailable for %s: %s", rpmdb_path, image_pullspec, stderr[:200])
-                    continue
-
-                rpmdb_directories = self._find_rpmdb_directories(extract_dir)
-                if not rpmdb_directories:
-                    self.logger.debug("No RPM database files found at %s in %s", rpmdb_path, image_pullspec)
-                    continue
-
-                for rpmdb_dir in rpmdb_directories:
-                    query_cmd = [
-                        "rpm",
-                        "--dbpath",
-                        f"{rpmdb_dir}",
-                        "-qa",
-                        "--qf",
-                        r"%{NAME}\n",
-                    ]
-                    try:
-                        rc, stdout, stderr = await cmd_gather_async(query_cmd, check=False)
-                    except Exception as exc:
-                        self.logger.warning("Failed to query RPM database from %s: %s", original_pullspec, exc)
-                        continue
-                    if rc == 0:
-                        packages = self._parse_package_names(stdout)
-                        self.logger.info(
-                            "Found %d packages in RPMDB for %s [platform=%s]",
-                            len(packages),
-                            original_pullspec,
-                            platform,
-                        )
-                        return packages
-                    self.logger.debug("RPMDB query failed for %s: %s", original_pullspec, stderr[:200])
-
-        self.logger.warning("Unable to discover installed packages from %s [platform=%s]", original_pullspec, platform)
-        return None
 
     @staticmethod
     def _registry_config_arg() -> list[str]:

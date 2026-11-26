@@ -28,7 +28,8 @@ from doozerlib.lockfile_prototype.constants import (
     SYSTEM_PYTHON,
     VALID_PKG_NAME,
 )
-from doozerlib.lockfile_prototype.models import LockfileData, RpmsInConfig
+from doozerlib.lockfile_prototype.lockfile_merger import merge_lockfiles
+from doozerlib.lockfile_prototype.models import LockfileData, RepoEntry, RpmsInConfig
 from doozerlib.lockfile_prototype.utils import build_env
 
 
@@ -68,6 +69,7 @@ class RpmResolver:
         image_pullspec: str | None = None,
         containerfile_path: str | None = None,
         stage_num: int | None = None,
+        repos_by_arch: dict[str, list[RepoEntry]] | None = None,
     ) -> LockfileData:
         """
         Resolve RPM packages by running rpm-lockfile-prototype via
@@ -89,9 +91,27 @@ class RpmResolver:
                 Dockerfile for automatic package extraction.
             stage_num (int | None): 1-indexed stage number to extract
                 packages from (None = last stage).
+            repos_by_arch (dict | None): Per-architecture repositories and
+                exclusions. Each architecture is resolved independently.
         Return Value(s):
             LockfileData: Resolved lockfile.
         """
+        if repos_by_arch is not None:
+            results = []
+            for arch in config.arches:
+                arch_config = config.model_copy(deep=True)
+                arch_config.arches = [arch]
+                arch_config.contentOrigin = {"repos": repos_by_arch[arch]}
+                results.append(
+                    await self.resolve(
+                        arch_config,
+                        image_pullspec=image_pullspec,
+                        containerfile_path=containerfile_path,
+                        stage_num=stage_num,
+                    )
+                )
+            return merge_lockfiles(results)
+
         if containerfile_path:
             pfc_spec: dict = {"file": containerfile_path}
             if stage_num is not None:
