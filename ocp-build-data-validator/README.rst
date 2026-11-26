@@ -59,6 +59,17 @@ Validations
    member base-image chains; compares pinned builder images with CI upstream
    image tags. No registry queries are made, and unversioned toolchains are skipped.
 
+Source checks in Prow
+---------------------
+
+For an ocp-build-data pull request, the shared validator checks GitHub sources
+only for changed images and RPMs. Changes to group.yml, streams.yml, repository
+definitions, or metadata deletions trigger checks for all components. Local
+metadata, dependency, RPA and Pyxis validation still runs on the full checkout.
+Runs without a metadata pull request, including release rehearsals, check all
+sources. This reduces GitHub API usage without skipping shared configuration
+changes; source changes outside build data still require a full audit.
+
 Production FBC catalogs
 -----------------------
 
