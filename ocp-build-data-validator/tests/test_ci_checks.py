@@ -759,3 +759,49 @@ def test_rpa_binds_image_and_bundle_repositories_to_their_components(tmp_path, o
         assert all('missing delivery repository' in error for error in errors)
     else:
         assert errors == []
+
+
+@pytest.mark.parametrize(
+    'headers, body, expected',
+    [
+        (
+            {'X-RateLimit-Remaining': '0', 'X-RateLimit-Reset': '1795700000'},
+            {'message': 'API rate limit exceeded'},
+            ['rate limit exceeded', 'remaining=0', 'reset=1795700000'],
+        ),
+        (
+            {'Retry-After': '60'},
+            {'message': 'You have exceeded a secondary rate limit'},
+            ['secondary rate limit', 'retry-after=60'],
+        ),
+        (
+            {'X-RateLimit-Remaining': '42'},
+            {'message': 'Resource not accessible by integration'},
+            ['access denied', 'remaining=42'],
+        ),
+    ],
+)
+def test_github_api_403_reports_safe_diagnostics(headers, body, expected):
+    session = Mock()
+    response = session.get.return_value
+    response.status_code = 403
+    response.headers = requests.structures.CaseInsensitiveDict(headers)
+    response.json.return_value = body
+    client = checks.GitHubClient(session, token='secret-token')
+    with pytest.raises(checks.RemoteError) as error:
+        client.exists('team/operator', None, 'main')
+    assert all(item in str(error.value) for item in expected)
+    assert 'secret-token' not in str(error.value)
+
+
+def test_github_api_403_does_not_log_untrusted_response_content():
+    session = Mock()
+    response = session.get.return_value
+    response.status_code = 403
+    response.headers = {'X-RateLimit-Remaining': 'secret-token', 'Retry-After': 'secret-token'}
+    response.json.return_value = {'message': 'secret-token'}
+    client = checks.GitHubClient(session, token='secret-token')
+    with pytest.raises(checks.RemoteError) as error:
+        client.exists('team/operator', None, 'main')
+    assert '403' in str(error.value)
+    assert 'secret-token' not in str(error.value)
