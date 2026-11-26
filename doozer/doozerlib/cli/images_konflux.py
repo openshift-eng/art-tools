@@ -1,4 +1,5 @@
 import asyncio
+import copy
 import json
 import logging
 import os
@@ -1369,11 +1370,9 @@ class BundleStageReleaseRelatedImagesCli:
                     f"CSV version tag {tag!r} from bundle {bundle_build.nvr} for operator {record.nvr} "
                     "exceeds the 128-character tag limit"
                 )
-            release_data = {
-                "mapping": {
-                    "components": [{"name": record.get_konflux_component_name(), "componentTags": [tag]}],
-                },
-            }
+            release_data = await self._get_stage_release_data(
+                konflux_client, release_plan_name, record.get_konflux_component_name(), tag
+            )
 
         # Dedup by component name within this operator: an operator can list itself among its operands.
         components: Dict[str, dict] = {}
@@ -1423,6 +1422,45 @@ class BundleStageReleaseRelatedImagesCli:
         )
         self._logger.info("Stage release succeeded for operator %s (%s): %s", operator_name, record.nvr, release_url)
         return release_url
+
+    async def _get_stage_release_data(
+        self, konflux_client: KonfluxClient, release_plan_name: str, component_name: str, tag: str
+    ) -> dict:
+        """Add the CSV tag to a complete copy of the operator's admitted mapping.
+
+        Older collect-data tasks union array entries as whole objects rather than
+        merging them by component name. A tags-only entry therefore stays separate
+        from the RPA entry and fails check-data-keys. Copy the entire component so
+        repositories and component-specific publishing settings survive either merge.
+        """
+        plan = (await konflux_client._get(API_VERSION, KIND_RELEASE_PLAN, release_plan_name)).to_dict()
+        plan_components = plan.get("spec", {}).get("data", {}).get("mapping", {}).get("components", [])
+        if any(component.get("name") == component_name for component in plan_components):
+            # A second publishing mapping can overwrite the CSV tag during the
+            # legacy apply-mapping fold, even if each individual entry is valid.
+            raise DoozerFatalError(
+                f"Component '{component_name}' has a mapping in ReleasePlan '{release_plan_name}'; "
+                "use --stage-release-plan to retain that plan's configured tagging behavior"
+            )
+        admission = plan.get("status", {}).get("releasePlanAdmission", {}).get("name") or ""
+        namespace, separator, name = admission.partition("/")
+        if not separator or not namespace or not name or "/" in name:
+            raise DoozerFatalError(
+                f"ReleasePlan '{release_plan_name}' has no matched ReleasePlanAdmission; cannot add CSV tag {tag}"
+            )
+        rpa = (await konflux_client._get(API_VERSION, "ReleasePlanAdmission", name, namespace=namespace)).to_dict()
+        components = rpa.get("spec", {}).get("data", {}).get("mapping", {}).get("components", [])
+        matches = [component for component in components if component.get("name") == component_name]
+        if len(matches) != 1 or not matches[0].get("repositories"):
+            raise DoozerFatalError(
+                f"Component '{component_name}' must have exactly one mapping with non-empty repositories "
+                f"in ReleasePlanAdmission '{admission}'; cannot add CSV tag {tag}"
+            )
+        component = copy.deepcopy(matches[0])
+        tags = component.setdefault("componentTags", [])
+        if tag not in tags:
+            tags.append(tag)
+        return {"mapping": {"components": [component]}}
 
     async def _stage_release(
         self,

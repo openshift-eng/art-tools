@@ -1,3 +1,4 @@
+import copy
 import json
 import unittest
 from pathlib import Path
@@ -5,6 +6,8 @@ from types import SimpleNamespace
 from unittest import mock
 
 import click
+import jq
+import jsonschema
 from artcommonlib.build_priority import BuildPriorityPolicy
 from artcommonlib.conforma import resolve_stage_policy
 from artcommonlib.konflux.konflux_build_record import (
@@ -817,6 +820,18 @@ class TestBundleStageReleaseRelatedImagesCli(unittest.IsolatedAsyncioTestCase):
         mock_resolve.assert_called_once_with("openshift-opentelemetry-operator", 3, 11)
 
     @staticmethod
+    def _rpa_component(name):
+        return {
+            "name": name,
+            "canonicalName": "example/operator",
+            "repositories": [
+                {"url": f"registry.stage.redhat.io/example/{name}", "tags": ["repo-tag"]},
+                {"url": f"quay.io/example/{name}"},
+            ],
+            "componentTags": ["existing-tag"],
+        }
+
+    @staticmethod
     def _mock_konflux_client(released_condition):
         client = mock.AsyncMock()
         client.resource_url = mock.Mock(return_value="https://konflux/url")
@@ -825,7 +840,30 @@ class TestBundleStageReleaseRelatedImagesCli(unittest.IsolatedAsyncioTestCase):
         created_release = mock.Mock()
         created_release.metadata.name = "release-xyz"
         client._create = mock.AsyncMock(side_effect=[created_snapshot, created_release])
-        client._get = mock.AsyncMock(return_value={})
+
+        async def get_resource(api_version, kind, name, **kwargs):
+            if kind == "ReleasePlan":
+                data = {"status": {"releasePlanAdmission": {"name": "managed-ns/stage-rpa"}}}
+            elif kind == "ReleasePlanAdmission":
+                data = {
+                    "spec": {
+                        "data": {
+                            "mapping": {
+                                "components": [
+                                    TestBundleStageReleaseRelatedImagesCli._rpa_component(
+                                        f"operator-{letter}-component"
+                                    )
+                                    for letter in ("a", "b")
+                                ]
+                            }
+                        }
+                    }
+                }
+            else:
+                data = {}
+            return mock.Mock(to_dict=mock.Mock(return_value=data))
+
+        client._get = mock.AsyncMock(side_effect=get_resource)
         client.wait_for_release = mock.AsyncMock(return_value={"status": {"conditions": [released_condition]}})
         return client
 
@@ -920,10 +958,139 @@ class TestBundleStageReleaseRelatedImagesCli(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(release["spec"]["releasePlan"], "acm-advisory-stage-2-16")
         self.assertEqual(
             release["spec"]["data"]["mapping"]["components"],
-            [{"name": "operator-a-component", "componentTags": ["v2.16.7-rc.1_build.9"]}],
+            [dict(self._rpa_component("operator-a-component"), componentTags=["existing-tag", "v2.16.7-rc.1_build.9"])],
         )
         self.assertEqual(release["metadata"]["annotations"]["art.redhat.com/operator-nvr"], "operator-a-1-1")
         client.wait_for_release.assert_awaited_once_with("release-xyz")
+
+    @mock.patch("doozerlib.cli.images_konflux.load_csv_from_bundle", return_value={"spec": {"version": "1.5.6"}})
+    @mock.patch("doozerlib.cli.images_konflux.get_referenced_images")
+    @mock.patch("doozerlib.cli.images_konflux.KonfluxDb")
+    async def test_stage_mapping_survives_release_service_merge_and_schema(self, mock_db, mock_refs, mock_csv):
+        """Use upstream jq programs and the full schema, rather than mocking the data merge."""
+        fixtures = Path(__file__).parents[1] / "resources" / "release-service"
+        schema = json.loads((fixtures / "dataKeys.json").read_text())
+        operator = self._operator_record("operator-a")
+        runtime = self._make_runtime(product="coo", group="coo-1.5")
+        self._prepare_run(runtime, [operator.name], records=[operator])
+        mock_refs.return_value = [self._ref("operator-a-component"), self._ref("operand-comp")]
+        rpa_data = {
+            "mapping": {
+                "defaults": {"tags": ["v1.5", "sha-{{ digest_sha }}"], "pushSourceContainer": True},
+                "components": [
+                    self._rpa_component("operator-a-component"),
+                    {"name": "operand-comp", "repositories": [{"url": "quay.io/example/operand"}]},
+                    {"name": "bundle-comp", "repositories": [{"url": "quay.io/example/bundle"}]},
+                ],
+            }
+        }
+        original_rpa = copy.deepcopy(rpa_data)
+        client = self._mock_konflux_client({"type": "Released", "status": "True", "reason": "Succeeded"})
+        original_get = client._get.side_effect
+
+        async def get_resource(api_version, kind, name, **kwargs):
+            if kind == "ReleasePlanAdmission":
+                return mock.Mock(to_dict=mock.Mock(return_value={"spec": {"data": rpa_data}}))
+            return await original_get(api_version, kind, name, **kwargs)
+
+        client._get.side_effect = get_resource
+        cli = self._make_cli(runtime)
+
+        async def bundle_builds(**kwargs):
+            yield self._ref("bundle-comp")
+
+        cli._db_for_bundles.search_builds_by_fields = bundle_builds
+        await cli._stage_release_operator(client, operator, "coo-advisory-stage-auto-1-5", "stream")
+        release = client._create.call_args_list[1].args[0]
+        release_data = release["spec"]["data"]
+        self.assertEqual(rpa_data, original_rpa, "Tag injection must not mutate the RPA data")
+        for revision in ("legacy", "current"):
+            with self.subTest(merge=revision):
+                merge = jq.compile((fixtures / f"merge-{revision}.jq").read_text())
+                # collect-data precedence: collectors, Release, RP, RPA.
+                merged = {}
+                for source in (
+                    release_data,
+                    {"mapping": {"components": [rpa_data["mapping"]["components"][1]]}},
+                    rpa_data,
+                ):
+                    merged = merge.input_value([merged, source]).first()
+                merged["systems"] = [{"systemName": "mapping"}]
+                jsonschema.Draft7Validator(schema).validate(merged)
+                self.assertEqual(merged["mapping"]["defaults"], rpa_data["mapping"]["defaults"])
+                # apply-mapping folds same-named entries with jq's recursive object multiplication.
+                mapped = (
+                    jq.compile("sort_by(.name) | group_by(.name) | map(reduce .[] as $c ({}; . * $c))")
+                    .input_value(merged["mapping"]["components"])
+                    .first()
+                )
+                by_name = {c["name"]: c for c in mapped}
+                self.assertEqual(set(by_name), {c["name"] for c in rpa_data["mapping"]["components"]})
+                for expected in rpa_data["mapping"]["components"]:
+                    component = by_name[expected["name"]]
+                    self.assertEqual(component["repositories"], expected["repositories"])
+                    if component["name"] == "operator-a-component":
+                        self.assertEqual(component["canonicalName"], expected["canonicalName"])
+                        self.assertEqual(set(component["componentTags"]), {"existing-tag", "v1.5.6"})
+                    else:
+                        self.assertNotIn("componentTags", component)
+
+    @mock.patch("doozerlib.cli.images_konflux.KonfluxDb")
+    async def test_tag_mapping_rejects_missing_or_incomplete_operator_before_creating_resources(self, mock_db):
+        runtime = self._make_runtime(product="coo", group="coo-1.5")
+        cli = self._make_cli(runtime)
+        for components in (
+            [],
+            [{"name": "operator-a-component"}],
+            [{"name": "operator-a-component", "repositories": []}],
+            [self._rpa_component("other-component")],
+            [self._rpa_component("operator-a-component")] * 2,
+        ):
+            with self.subTest(components=components):
+                client = self._mock_konflux_client({})
+                client._get.side_effect = [
+                    mock.Mock(to_dict=lambda: {"status": {"releasePlanAdmission": {"name": "managed-ns/stage-rpa"}}}),
+                    mock.Mock(to_dict=lambda: {"spec": {"data": {"mapping": {"components": components}}}}),
+                ]
+                with self.assertRaisesRegex(DoozerFatalError, "operator-a-component.*repositories"):
+                    await cli._get_stage_release_data(client, "coo-stage", "operator-a-component", "v1.5.6")
+                client._create.assert_not_awaited()
+
+    @mock.patch("doozerlib.cli.images_konflux.KonfluxDb")
+    async def test_tag_mapping_requires_a_matched_admission(self, mock_db):
+        cli = self._make_cli(self._make_runtime(product="coo", group="coo-1.5"))
+        for admission in (None, "", "not-namespaced", "managed-ns/", "/rpa"):
+            with self.subTest(admission=admission):
+                client = self._mock_konflux_client({})
+                data = {"status": {"releasePlanAdmission": {"name": admission}}}
+                client._get.side_effect = [mock.Mock(to_dict=lambda: data)]
+                with self.assertRaisesRegex(DoozerFatalError, "coo-stage.*matched ReleasePlanAdmission"):
+                    await cli._get_stage_release_data(client, "coo-stage", "operator-a-component", "v1.5.6")
+                client._create.assert_not_awaited()
+
+    @mock.patch("doozerlib.cli.images_konflux.KonfluxDb")
+    async def test_tag_mapping_rejects_operator_overrides_in_release_plan(self, mock_db):
+        cli = self._make_cli(self._make_runtime(product="coo", group="coo-1.5"))
+        client = self._mock_konflux_client({})
+        override = dict(self._rpa_component("operator-a-component"), componentTags=["z-rp-tag"])
+        plan = {
+            "status": {"releasePlanAdmission": {"name": "managed-ns/stage-rpa"}},
+            "spec": {"data": {"mapping": {"components": [override]}}},
+        }
+        client._get.side_effect = [mock.Mock(to_dict=lambda: plan)]
+        with self.assertRaisesRegex(DoozerFatalError, "operator-a-component.*--stage-release-plan"):
+            await cli._get_stage_release_data(client, "coo-stage", "operator-a-component", "v1.5.6")
+        client._create.assert_not_awaited()
+
+    @mock.patch("doozerlib.cli.images_konflux.KonfluxDb")
+    async def test_tag_mapping_does_not_duplicate_existing_csv_tag(self, mock_db):
+        cli = self._make_cli(self._make_runtime(product="coo", group="coo-1.5"))
+        client = self._mock_konflux_client({})
+        data = await cli._get_stage_release_data(client, "coo-stage", "operator-a-component", "existing-tag")
+        self.assertEqual(data["mapping"]["components"], [self._rpa_component("operator-a-component")])
+        client._get.assert_any_await(
+            "appstudio.redhat.com/v1alpha1", "ReleasePlanAdmission", "stage-rpa", namespace="managed-ns"
+        )
 
     @mock.patch("doozerlib.cli.images_konflux.load_csv_from_bundle")
     @mock.patch("doozerlib.cli.images_konflux.get_referenced_images")
@@ -996,6 +1163,7 @@ class TestBundleStageReleaseRelatedImagesCli(unittest.IsolatedAsyncioTestCase):
         self, mock_resolve, mock_db_class, mock_client_cls, mock_get_refs, mock_load_csv
     ):
         """Two operators sharing an operand get one Release each; the shared operand is in both."""
+        mock_client_cls.from_kubeconfig.return_value = self._mock_konflux_client({})
         mock_resolve.return_value = "acm-advisory-stage-2-16"
         runtime = self._make_runtime(product="rhacm2", version_str="2.16.0", major=4, minor=21)
         self._prepare_run(runtime, ["operator-a", "operator-b"])
@@ -1028,11 +1196,11 @@ class TestBundleStageReleaseRelatedImagesCli(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(second.kwargs["operator_nvr"], "operator-b-1-1")
         self.assertEqual(
             first.kwargs["release_data"]["mapping"]["components"],
-            [{"name": "operator-a-component", "componentTags": ["v2.16.1"]}],
+            [dict(self._rpa_component("operator-a-component"), componentTags=["existing-tag", "v2.16.1"])],
         )
         self.assertEqual(
             second.kwargs["release_data"]["mapping"]["components"],
-            [{"name": "operator-b-component", "componentTags": ["v2.16.2"]}],
+            [dict(self._rpa_component("operator-b-component"), componentTags=["existing-tag", "v2.16.2"])],
         )
 
         statuses = [call.kwargs["status"] for call in runtime.record_logger.add_record.call_args_list]
@@ -1046,6 +1214,7 @@ class TestBundleStageReleaseRelatedImagesCli(unittest.IsolatedAsyncioTestCase):
     async def test_run_continues_after_invalid_csv_version(
         self, mock_resolve, mock_db_class, mock_client_cls, mock_get_refs, mock_load_csv
     ):
+        mock_client_cls.from_kubeconfig.return_value = self._mock_konflux_client({})
         mock_resolve.return_value = "acm-advisory-stage-2-16"
         runtime = self._make_runtime(product="rhacm2", version_str="2.16.0", major=4, minor=21)
         self._prepare_run(runtime, ["operator-a", "operator-b"])
