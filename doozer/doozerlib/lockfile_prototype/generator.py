@@ -1512,6 +1512,12 @@ class RpmLockfilePrototypeGenerator:
                         f"{distgit_key}: stage {stage_num}: Dockerfile pin pass produced conflicting EVRs "
                         f"for {package.name} on {arch_entry.arch}: {previous} and {evr}"
                     )
+        mismatches = self._detect_cross_arch_mismatches(merged)
+        if mismatches:
+            raise RuntimeError(
+                f"{distgit_key}: stage {stage_num}: Dockerfile pin pass produced cross-arch version mismatches: "
+                f"{self._format_mismatches(mismatches)}"
+            )
         return merged
 
     def _write_lockfile(self, lockfile: LockfileData | None, path: Path, distgit_key: str) -> None:

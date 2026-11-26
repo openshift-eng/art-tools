@@ -500,6 +500,48 @@ class TestRpmLockfilePrototypeGenerator(unittest.TestCase):
         self.assertEqual(candidates["x86_64"], {"common", "x86-only", "/usr/sbin/udevadm"})
         self.assertEqual(candidates["ppc64le"], {"common", "/usr/sbin/udevadm"})
 
+    def test_dockerfile_pins_must_match_across_architectures(self):
+        meta = self._make_mock_image_meta()
+        generator = self._make_generator()
+        generator.downstream_parents = ["quay.io/test/base@sha256:abc123"]
+        generator._container.get_installed_packages = AsyncMock(return_value=["libatomic"])
+
+        with TemporaryDirectory() as tmpdir:
+            dest_dir = Path(tmpdir)
+            (dest_dir / "Dockerfile").write_text("FROM quay.io/test/base:latest\nRUN dnf install -y libatomic\n")
+            for ppc_evr in ("0:14.3.1-4.4.el10", "14.3.1-4.5.el10_2"):
+                with self.subTest(ppc_evr=ppc_evr):
+                    pins = [
+                        LockfileData(
+                            arches=[
+                                ArchResult(
+                                    arch=arch,
+                                    packages=[
+                                        PackageEntry(
+                                            name="libatomic",
+                                            evr=evr,
+                                            url=f"https://repo/libatomic.{arch}.rpm",
+                                            repoid="baseos",
+                                        )
+                                    ],
+                                )
+                            ]
+                        )
+                        for arch, evr in (("x86_64", "14.3.1-4.4.el10"), ("ppc64le", ppc_evr))
+                    ]
+                    generator._resolver.resolve = AsyncMock(side_effect=[LockfileData(), *pins])
+                    if ppc_evr.startswith("0:"):
+                        asyncio.run(generator.generate_lockfile(meta, dest_dir))
+                        lockfile = LockfileData.model_validate(
+                            yaml.safe_load((dest_dir / "rpms.lock.yaml").read_text())
+                        )
+                        self.assertEqual({entry.arch for entry in lockfile.arches}, {"x86_64", "ppc64le"})
+                    else:
+                        with self.assertRaisesRegex(
+                            RuntimeError, r"Dockerfile pin pass produced cross-arch version mismatches: libatomic"
+                        ):
+                            asyncio.run(generator.generate_lockfile(meta, dest_dir))
+
     def test_no_rpms_stage_is_not_rendered(self):
         meta = self._make_mock_image_meta()
         meta.config.get.return_value = {"builder": [{"no_rpms": True}]}
