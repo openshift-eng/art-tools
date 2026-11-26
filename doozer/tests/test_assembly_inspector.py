@@ -19,6 +19,51 @@ from yarl import URL
 
 
 class TestAssemblyInspector(IsolatedAsyncioTestCase):
+    async def test_check_image_source_repository(self):
+        private_url = "https://example.com/private/component"
+        public_url = "https://example.com/public/component"
+        pinned_commit = "a" * 40
+        runtime = MagicMock(
+            releases_config=Model({"releases": {"custom": {"assembly": {"type": "custom", "visibility": "private"}}}}),
+            group_config=Model({"public_upstreams": [{"private": private_url, "public": public_url}]}),
+        )
+        image = MagicMock(distgit_key="component")
+        image.config = Model(
+            {
+                "content": {
+                    "source": {
+                        "git": {"url": "git@example.com:private/component.git", "branch": {"target": pinned_commit}}
+                    }
+                }
+            }
+        )
+        image.get_assembly_rpm_package_dependencies.return_value = ({}, {})
+
+        cases = [
+            ("custom", KonfluxBuildRecordInspector, private_url, pinned_commit, None),
+            ("custom", KonfluxBuildRecordInspector, public_url, pinned_commit, None),
+            ("custom", KonfluxBuildRecordInspector, f"{private_url}-other", pinned_commit, "git source"),
+            ("custom", KonfluxBuildRecordInspector, private_url, "b" * 40, "git commit"),
+            ("stream", KonfluxBuildRecordInspector, private_url, pinned_commit, "git source"),
+            ("custom", BrewBuildRecordInspector, private_url, pinned_commit, "git source"),
+        ]
+        for assembly, inspector_type, source_url, commit, expected_issue in cases:
+            with self.subTest(assembly=assembly, build=inspector_type.__name__, source=source_url, commit=commit):
+                runtime.assembly = assembly
+                build = MagicMock(spec=inspector_type)
+                build.get_image_meta.return_value = image
+                build.get_all_installed_package_build_dicts.return_value = {}
+                build.get_rhel_base_version.return_value = None
+                build.get_source_git_url.return_value = source_url
+                build.get_source_git_commit.return_value = commit
+
+                issues = await AssemblyInspector(runtime).check_group_image_consistency(build, None)
+                if expected_issue:
+                    self.assertEqual([issue.code for issue in issues], [AssemblyIssueCode.IMPERMISSIBLE])
+                    self.assertIn(expected_issue, issues[0].msg)
+                else:
+                    self.assertEqual(issues, [])
+
     async def test_check_installed_packages_for_rpm_delivery(self):
         # Test a standard release with a package tagged into my-ship-ok-tag
         rt = MagicMock(
