@@ -412,20 +412,6 @@ class KonfluxImageBuilder:
                         # This should never happen in real builds - only expected in dry-run mode
                         raise IOError("PipelineRun succeeded but IMAGE_URL or IMAGE_DIGEST missing from results")
 
-                # Required callbacks gate the image outcome before ITS and base-image release.
-                if outcome is KonfluxBuildOutcome.SUCCESS and callback and definitive_image_pullspec is not None:
-                    try:
-                        if callback.allows_dependents_before_completion(metadata):
-                            metadata.build_status = True
-                            metadata.build_event.set()
-                        record['post_build_pipeline'] = await callback.run(metadata, definitive_image_pullspec)
-                    except Exception as e:
-                        logger.exception('Post-build callback failed for %s', metadata.distgit_key)
-                        record['post_build_error'] = str(e)
-                        outcome = KonfluxBuildOutcome.POST_BUILD_ERROR
-                        metadata.build_status = False
-                        post_build_failed = True
-
                 # Run enterprise-contract (EC) verification after a successful build
                 should_run_ec = (
                     outcome is KonfluxBuildOutcome.SUCCESS
@@ -585,6 +571,21 @@ class KonfluxImageBuilder:
                         except Exception:
                             logger.exception("Golang builder shipment MR creation failed (non-fatal)")
 
+                # Run required callbacks last, after successful ITS and any required release.
+                if outcome is KonfluxBuildOutcome.SUCCESS and callback and definitive_image_pullspec is not None:
+                    try:
+                        if callback.allows_dependents_before_completion(metadata):
+                            metadata.build_status = True
+                            metadata.build_event.set()
+                        record['post_build_pipeline'] = await callback.run(metadata, definitive_image_pullspec)
+                    except Exception as e:
+                        logger.exception('Post-build callback failed for %s', metadata.distgit_key)
+                        record['post_build_error'] = str(e)
+                        outcome = KonfluxBuildOutcome.POST_BUILD_ERROR
+                        metadata.build_status = False
+                        post_build_failed = True
+
+                if not self._config.dry_run:
                     build_record = await self.update_konflux_db(
                         metadata,
                         build_repo,

@@ -4,10 +4,10 @@ Post-build callbacks that gate Konflux image build outcomes.
 POLICY -- read before adding or configuring a callback here.
 
 These callbacks run inside the image build pipeline: after the image
-PipelineRun succeeds but *before* ITS/Enterprise Contract, base-image
-release, and the final build record. They sit on the critical path of the
-OCP build-and-release train, so work added here slows that train for
-*every* team and release, not just yours.
+PipelineRun, enabled ITS/Enterprise Contract checks, and any required
+release succeed, immediately before the final build record. They sit on
+the critical path of the OCP build-and-release train, so work added here
+slows that train for *every* team and release, not just yours.
 
 If you are thinking of registering a callback to run extra testing at
 build time: you almost certainly should not. Build time is the wrong layer
@@ -34,8 +34,8 @@ Why build-time callbacks are costly and dangerous:
 Rules:
   - The default answer is "no". Callbacks are reserved for release-gating
     coordination that genuinely cannot run anywhere else (e.g. the RHCOS
-    node/extensions pair that must be tested and promoted between build and
-    release).
+    node/extensions pair that must be tested before floating-tag
+    promotion).
   - Keep any callback fast, bounded, and non-flaky. No heavy test execution
     inline; no unbounded waits.
   - Adding a new callback, or setting `konflux.post_build` on an image, is a
@@ -65,7 +65,7 @@ LOGGER = logging.getLogger(__name__)
 
 
 class KonfluxPostBuildCallback(Protocol):
-    """Run after the image PipelineRun, before ITS, release, and final recording."""
+    """Run after ITS and any required release, before final recording."""
 
     def allows_dependents_before_completion(self, metadata: ImageMetadata) -> bool: ...
 
