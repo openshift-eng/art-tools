@@ -932,6 +932,7 @@ def start_build_plashets(
     dry_run=False,
     version=None,
     ignore_automation_freeze=False,
+    override_nvrs=None,
     **kwargs,
 ) -> Optional[str]:
     params = {
@@ -945,6 +946,7 @@ def start_build_plashets(
         'DRY_RUN': dry_run,
         'VERSION': version,
         'IGNORE_AUTOMATION_FREEZE': ignore_automation_freeze,
+        'OVERRIDE_NVRS': ','.join(override_nvrs) if override_nvrs else '',
     }
 
     return start_build(

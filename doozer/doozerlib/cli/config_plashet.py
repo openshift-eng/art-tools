@@ -792,6 +792,14 @@ def config_plashet(ctx, base_dir, brew_root, name, signing_key_id, **kwargs):
     help='If specified, embargoed/unshipped RPMs will be included in the plashet',
 )
 @click.option('--inherit', required=False, default=False, is_flag=True, help='Descend into brew tag inheritance')
+@click.option(
+    '--replace',
+    multiple=True,
+    metavar='RPM_PACKAGE_NVR',
+    required=False,
+    help='Include this exact package NVR in the plashet regardless of brew tag or assembly "is" pinning. '
+    'The NVR is fetched directly from Brew and does not need to be tagged anywhere.',
+)
 def from_tags(
     config: SimpleNamespace,
     brew_tag: Tuple[Tuple[str, str], ...],
@@ -804,6 +812,7 @@ def from_tags(
     include_previous: bool,
     include_embargoed: bool,
     inherit: bool,
+    replace: Tuple[str, ...] = (),
 ):
     """
     The repositories are filled with RPMs derived from the list of
@@ -836,6 +845,15 @@ def from_tags(
     event_info = koji_proxy.getEvent(event)
     errata_session = requests.session()
     builder = PlashetBuilder(koji_proxy, logger=logger)
+
+    # --replace builds are fetched directly from Brew by NVR; they take precedence over
+    # anything found via brew tag membership or assembly "is"/group-dependency pinning.
+    replace_builds: Dict[str, Dict] = {}
+    for nvr in replace:
+        replace_build = koji_proxy.getBuild(nvr, strict=True)
+        package_name = replace_build['package_name']
+        logger.info('Will force-include --replace NVR %s for package %s', nvr, package_name)
+        replace_builds[package_name] = replace_build
 
     # Extract target OpenShift version from the group to scope OpenShift version semantics
     target_openshift_version = None
@@ -943,6 +961,18 @@ def from_tags(
                         dep_build["nvr"],
                     )
             component_builds.update(group_deps)
+
+        # --replace overrides always win, regardless of tag membership or assembly pinning.
+        for component, replace_build in replace_builds.items():
+            if component in component_builds and replace_build["id"] != component_builds[component]["id"]:
+                logger.warning(
+                    "Overriding nvr %s with explicitly replaced nvr %s (--replace)...",
+                    component_builds[component]["nvr"],
+                    replace_build["nvr"],
+                )
+            pinned_nvres[component] = to_nvre(replace_build)
+            component_builds[component] = replace_build
+        signable_components |= replace_builds.keys()
 
         for build in component_builds.values():
             package_name = build['package_name']

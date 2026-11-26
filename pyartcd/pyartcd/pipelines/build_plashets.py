@@ -34,6 +34,7 @@ class BuildPlashetsPipeline:
         copy_links=False,
         version=None,
         ignore_automation_freeze=False,
+        override_nvrs=None,
     ):
         self.runtime = runtime
         self.group = group
@@ -45,6 +46,7 @@ class BuildPlashetsPipeline:
         self.copy_links = copy_links
         self.version = version
         self.ignore_automation_freeze = ignore_automation_freeze
+        self.override_nvrs = list(override_nvrs) if override_nvrs else []
 
         self.slack_client = runtime.new_slack_client()
 
@@ -96,6 +98,7 @@ class BuildPlashetsPipeline:
                 copy_links=self.copy_links,
                 dry_run=self.runtime.dry_run,
                 version=self.version,
+                override_nvrs=self.override_nvrs,
             )
             self.runtime.logger.info('Built plashets: %s', json.dumps(plashets_built, indent=4))
 
@@ -181,6 +184,14 @@ class BuildPlashetsPipeline:
     default='',
     help='OCP version for resolving MAJOR/MINOR vars in golang groups (e.g. 4.18). Required for golang groups, ignored for other groups.',
 )
+@click.option(
+    '--override-nvr',
+    'override_nvrs',
+    multiple=True,
+    required=False,
+    help='(optional, repeatable) Force-include this package NVR in the plashet regardless of brew tag '
+    'membership or assembly pinning. The NVR must already exist in Brew.',
+)
 @pass_runtime
 @click_coroutine
 async def build_plashets_cli(
@@ -194,6 +205,7 @@ async def build_plashets_cli(
     copy_links: bool,
     ignore_automation_freeze: bool,
     version: str,
+    override_nvrs: tuple,
 ):
     # Auto-generate release timestamp if not provided
     if not release:
@@ -225,6 +237,7 @@ async def build_plashets_cli(
         copy_links=copy_links,
         version=version or None,
         ignore_automation_freeze=ignore_automation_freeze,
+        override_nvrs=list(override_nvrs),
     )
 
     lock = Lock.PLASHET

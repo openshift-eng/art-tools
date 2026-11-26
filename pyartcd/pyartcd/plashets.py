@@ -218,6 +218,7 @@ async def build_plashets(
     copy_links: bool = False,
     dry_run: bool = False,
     version: str | None = None,
+    override_nvrs: Optional[Sequence[str]] = None,
 ) -> dict:
     """
     Unless no RPMs have changed, create multiple yum repos (one for each arch) of RPMs
@@ -234,6 +235,8 @@ async def build_plashets(
     :param data_gitref: Doozer data path git [branch / tag / sha] to use
     :param dry_run: do not actually run the command, just log it
     :param copy_links: transform symlink into referent file/dir
+    :param override_nvrs: (optional) package NVRs to force-include in the plashet regardless of brew tag
+        membership or assembly pinning (requires the NVR to already exist in Brew)
 
     Returns a list describing the plashets that have been built. The dict will look like this:
     {
@@ -385,6 +388,7 @@ async def build_plashets(
             dry_run=dry_run,
             doozer_working=doozer_working,
             version=version,
+            override_nvrs=override_nvrs,
         )
 
         logger.info('Plashet repo for %s created: %s', repo.name, local_path)
@@ -434,6 +438,7 @@ async def build_plashet_from_tags(
     doozer_working: str = 'doozer-working',
     dry_run: bool = False,
     version: str | None = None,
+    override_nvrs: Optional[Sequence[str]] = None,
 ):
     """
     Builds Plashet repo with "from-tags"
@@ -488,6 +493,8 @@ async def build_plashet_from_tags(
             ]
         )
     from_tags_args.append("--inherit")
+    for nvr in override_nvrs or []:
+        from_tags_args.extend(["--replace", nvr])
     cmd.extend(from_tags_args)
     if include_embargoed:
         cmd.append("--include-embargoed")

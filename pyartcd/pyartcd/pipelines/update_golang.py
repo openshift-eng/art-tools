@@ -282,6 +282,7 @@ class UpdateGolangPipeline:
         network_mode: str | None = None,
         major_bump: bool = False,
         assembly: str = DEFAULT_GOLANG_ASSEMBLY,
+        force_plashet_build: bool = False,
     ):
         self.runtime = runtime
         self.dry_run = runtime.dry_run
@@ -301,6 +302,7 @@ class UpdateGolangPipeline:
         self.external_golang_rpms = external_golang_rpms
         self.network_mode = network_mode
         self.major_bump = major_bump
+        self.force_plashet_build = force_plashet_build
         if assembly not in GOLANG_ASSEMBLIES:
             raise ValueError(f"Unsupported golang assembly {assembly!r}; expected one of {GOLANG_ASSEMBLIES}")
         if assembly == "test" and build_system in ("brew", "both"):
@@ -469,6 +471,7 @@ class UpdateGolangPipeline:
             f"(building {self.assembly} images on {self.build_system}{external_repos_msg}) :construction:"
         )
 
+        plashets_built = False
         if self.external_golang_rpms:
             _LOGGER.warning(
                 "Using golang RPMs from external repos. Skipping tagging and availability checks. "
@@ -492,6 +495,7 @@ class UpdateGolangPipeline:
 
             # Build plashets for golang RPMs before building images
             await self._build_golang_plashets(go_version, el_nvr_map.keys())
+            plashets_built = True
         else:
             matching_vars = sorted(
                 var_name for var_name, major_minor in allowed_major_minors.items() if major_minor == build_major_minor
@@ -502,6 +506,18 @@ class UpdateGolangPipeline:
                 build_major_minor,
                 ", ".join(matching_vars),
             )
+
+        if self.force_plashet_build and not plashets_built:
+            _LOGGER.info(
+                "--force-plashet-build is set: forcing the provided NVRs into the golang plashets "
+                "regardless of brew tag state: %s",
+                list(el_nvr_map.values()),
+            )
+            await self._slack_client.say_in_thread(
+                ":construction: --force-plashet-build is set: building golang plashets with the given NVRs "
+                "forced in, regardless of brew tag state :construction:"
+            )
+            await self._build_golang_plashets(go_version, el_nvr_map.keys(), override_nvrs=el_nvr_map)
 
         # Check if openshift-golang-builder image builds exist for the provided compiler builds
         brew_nvrs = {}
@@ -766,7 +782,7 @@ class UpdateGolangPipeline:
                 return True
         return False
 
-    async def _build_golang_plashets(self, go_version, el_versions):
+    async def _build_golang_plashets(self, go_version, el_versions, override_nvrs: dict[int, str] | None = None):
         go_v = ".".join(go_version.split(".")[:2])
         _LOGGER.info("Building golang plashets for go %s, RHEL versions: %s", go_v, list(el_versions))
 
@@ -774,7 +790,10 @@ class UpdateGolangPipeline:
             group = self.GOLANG_DATA_BRANCH
             version = self.ocp_version
             repo_name = f"rhel-{el_v}-golang-rpms"
+            el_override_nvrs = [override_nvrs[el_v]] if override_nvrs else None
             _LOGGER.info("Triggering plashet build for group=%s, repo=%s", group, repo_name)
+            if el_override_nvrs:
+                _LOGGER.info("Forcing NVR(s) into the plashet regardless of brew tag: %s", el_override_nvrs)
             await self._slack_client.say_in_thread(f"Building golang plashet: group={group}, repo={repo_name}")
 
             result = jenkins.start_build_plashets(
@@ -787,6 +806,7 @@ class UpdateGolangPipeline:
                 dry_run=self.dry_run,
                 data_path=self.data_path,
                 data_gitref=self.data_gitref,
+                override_nvrs=el_override_nvrs,
             )
             if result != "SUCCESS":
                 raise RuntimeError(f"Plashet build for {group} failed with result: {result}")
@@ -1457,6 +1477,13 @@ class UpdateGolangPipeline:
     help='Indicates a major.minor golang version bump (e.g. 1.22 -> 1.23). '
     'Permits validation of go_latest even when the new version does not match current group.yml vars.',
 )
+@click.option(
+    '--force-plashet-build',
+    is_flag=True,
+    default=False,
+    help='Force building golang plashets for the given GO_NVRS, even if the golang version does not match '
+    'GO_LATEST (i.e. plashets would otherwise be skipped). Defaults to False.',
+)
 @pass_runtime
 @click_coroutine
 async def update_golang(
@@ -1479,6 +1506,7 @@ async def update_golang(
     network_mode: str | None,
     assembly: str,
     major_bump: bool,
+    force_plashet_build: bool,
 ):
     if not runtime.dry_run and not confirm:
         _LOGGER.info('--confirm is not set, running in dry-run mode')
@@ -1510,5 +1538,6 @@ async def update_golang(
         network_mode,
         major_bump,
         assembly,
+        force_plashet_build,
     )
     await pipeline.run()
