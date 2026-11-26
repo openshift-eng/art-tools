@@ -24,6 +24,7 @@ from doozerlib.backend.konflux_image_builder import (
 from doozerlib.backend.konflux_post_build import RhcosNodeImagePostBuild
 from doozerlib.backend.pipelinerun_utils import PipelineRunInfo
 from doozerlib.util import GolangBuilderComponentNameError, konflux_golang_builder_component_name
+from parameterized import parameterized
 
 
 class TestKonfluxImageBuilder(unittest.IsolatedAsyncioTestCase):
@@ -1657,15 +1658,73 @@ class TestKonfluxImageBuilder(unittest.IsolatedAsyncioTestCase):
         # Only 2 database updates: PENDING + final SUCCESS (no registry update)
         self.assertEqual(mock_update_db.await_count, 2)
 
-    async def test_failed_post_build_callback_fails_record_before_its_and_release(self):
+    @parameterized.expand(
+        [
+            ('after_release', True, True, True, None),
+            ('after_its', True, True, False, None),
+            ('after_ec', True, False, False, None),
+            ('after_custom_its', False, True, False, None),
+            ('without_its_or_release', False, False, False, None),
+            ('release_without_its', False, False, True, None),
+            ('ec_failure', True, True, True, 'ec'),
+            ('its_failure', True, True, True, 'its'),
+            ('release_failure', True, True, True, 'release'),
+            ('callback_failure_after_release', True, True, True, 'callback'),
+        ]
+    )
+    async def test_post_build_callback_runs_last(self, _name, ec_enabled, its_enabled, release_enabled, failing_stage):
         metadata = self._metadata()
         metadata.config.konflux.get.side_effect = lambda key, default=None: (
             'rhcos_node_image' if key == 'post_build' else default
         )
-        metadata.get_konflux_build_attempts.return_value = 2
-        metadata.should_trigger_base_image_release.return_value = True
+        metadata.get_konflux_build_attempts.return_value = 2 if failing_stage == 'callback' else 1
+        metadata.should_trigger_base_image_release.return_value = release_enabled
+        self.builder._config.skip_ec_verify = not ec_enabled
+        self.builder._config.integration_test_scenarios = ('custom-test',) if its_enabled else ()
+        steps = []
+        outcomes = []
+
+        async def verify_ec(**kwargs):
+            self.assertFalse(metadata.build_status)
+            metadata.build_event.set.assert_not_called()
+            steps.append('ec')
+            return MagicMock(ec_failed=failing_stage == 'ec', ec_pipeline_url='https://example.com/ec')
+
+        async def run_its(**kwargs):
+            self.assertFalse(metadata.build_status)
+            metadata.build_event.set.assert_not_called()
+            steps.append('its')
+            return MagicMock(blocking_failed=failing_stage == 'its', pipeline_urls=[])
+
+        release_result = MagicMock(
+            released_pullspec='' if failing_stage == 'release' else 'registry.example/image@sha256:released',
+            release_pipeline='https://example.com/release',
+        )
+
+        async def release(*args):
+            self.assertFalse(metadata.build_status)
+            metadata.build_event.set.assert_not_called()
+            steps.append('release')
+            return release_result
+
+        async def run_callback(*args):
+            steps.append('callback')
+            if failing_stage == 'callback':
+                raise RuntimeError('RHCOS pair test failed')
+            return 'https://example.com/post-build'
+
+        async def update_db(*args, **kwargs):
+            outcome = args[3]
+            outcomes.append(outcome)
+            if outcome is not KonfluxBuildOutcome.PENDING:
+                steps.append('record')
+                if release_enabled and 'release' in steps:
+                    self.assertEqual(kwargs['release_pipeline'], release_result.release_pipeline)
+                    self.assertEqual(kwargs['released_pullspec'], release_result.released_pullspec)
+            return MagicMock(record_id='1')
+
         callback = MagicMock()
-        callback.run = AsyncMock(side_effect=RuntimeError('RHCOS pair test failed'))
+        callback.run = AsyncMock(side_effect=run_callback)
         callback.allows_dependents_before_completion.return_value = True
         self.builder._config.post_build_callbacks = {'rhcos_node_image': callback}
 
@@ -1699,33 +1758,53 @@ class TestKonfluxImageBuilder(unittest.IsolatedAsyncioTestCase):
             patch.object(self.builder, '_parse_dockerfile', return_value=('test-uuid', 'test-component', '1.0', '1')),
             patch.object(self.builder, '_wait_for_parent_members', new=AsyncMock(return_value=[])),
             patch.object(self.builder, '_start_build', new=AsyncMock(return_value=initial_pipelinerun)) as start_build,
-            patch.object(
-                self.builder, 'update_konflux_db', new=AsyncMock(return_value=MagicMock(record_id='1'))
-            ) as update_db,
-            patch.object(self.builder, '_trigger_base_image_release', new=AsyncMock()) as release,
+            patch.object(self.builder, 'update_konflux_db', new=AsyncMock(side_effect=update_db)),
+            patch.object(self.builder, '_trigger_base_image_release', new=AsyncMock(side_effect=release)),
             patch.object(self.builder, '_validate_build_attestation_and_signature', new=AsyncMock()),
-            patch.object(self.builder._konflux_client, 'verify_enterprise_contract', new=AsyncMock()) as verify_ec,
+            patch.object(
+                self.builder._konflux_client, 'verify_enterprise_contract', new=AsyncMock(side_effect=verify_ec)
+            ),
+            patch.object(
+                self.builder._konflux_client, 'run_integration_test_scenarios', new=AsyncMock(side_effect=run_its)
+            ),
             patch(
                 'doozerlib.backend.konflux_image_builder.KonfluxBuildOutcome.extract_from_pipelinerun_succeeded_condition',
                 return_value=KonfluxBuildOutcome.SUCCESS,
             ),
         ):
-            with self.assertRaisesRegex(KonfluxImageBuildError, 'RHCOS pair test failed'):
+            if failing_stage:
+                with self.assertRaises(KonfluxImageBuildError):
+                    await self.builder.build(metadata)
+            else:
                 await self.builder.build(metadata)
 
+        expected_steps = []
+        for stage, enabled in [
+            ('ec', ec_enabled),
+            ('its', its_enabled),
+            ('release', release_enabled),
+            ('callback', True),
+        ]:
+            if enabled:
+                expected_steps.append(stage)
+                if stage == failing_stage:
+                    break
+        self.assertEqual(steps, expected_steps + ['record'])
+        expected_outcome = {
+            'ec': KonfluxBuildOutcome.ITS_ERROR,
+            'its': KonfluxBuildOutcome.ITS_ERROR,
+            'release': KonfluxBuildOutcome.RELEASE_ERROR,
+            'callback': KonfluxBuildOutcome.POST_BUILD_ERROR,
+            None: KonfluxBuildOutcome.SUCCESS,
+        }[failing_stage]
+        self.assertEqual(outcomes, [KonfluxBuildOutcome.PENDING, expected_outcome])
         self.assertEqual(start_build.await_count, 1)
-        self.assertEqual(
-            [call.args[3] for call in update_db.await_args_list],
-            [
-                KonfluxBuildOutcome.PENDING,
-                KonfluxBuildOutcome.POST_BUILD_ERROR,
-            ],
-        )
-        self.assertFalse(metadata.build_status)
+        self.assertEqual(metadata.build_status, failing_stage is None)
         metadata.build_event.set.assert_called()
-        callback.build_failed.assert_called_once_with(metadata)
-        verify_ec.assert_not_awaited()
-        release.assert_not_awaited()
+        if failing_stage:
+            callback.build_failed.assert_called_once_with(metadata)
+        else:
+            callback.build_failed.assert_not_called()
 
     @patch('doozerlib.backend.konflux_post_build.jenkins.start_build')
     async def test_failed_rhcos_pair_job_fails_only_owning_extensions(self, start_job):
