@@ -55,7 +55,9 @@ def select_files(root: Path, base: str | None = None) -> list[Path]:
         return all_files(root)
     revision = resolve_commit(root, base)
     result = subprocess.run(
-        ['git', '-C', str(root), 'diff', '--name-only', '-z', revision, 'HEAD', '--'], capture_output=True, check=True
+        ['git', '-C', str(root), 'diff', '--relative', '--name-only', '-z', revision, 'HEAD', '--'],
+        capture_output=True,
+        check=True,
     )
     changed = [Path(path) for path in result.stdout.decode().split('\0') if path and metadata_file(Path(path))]
     if any(
@@ -164,6 +166,7 @@ def validate(
     application: str | None,
     registry_auth_file: Path | None = None,
     pyxis_root: Path | None = None,
+    source_files: set[Path] | None = None,
 ) -> list[str]:
     """Collect file and repository errors while keeping WIP findings nonblocking."""
     errors = []
@@ -222,7 +225,11 @@ def validate(
                 file_errors.extend(semantic_errors)
                 if not semantic_errors:
                     valid_images[relative.stem] = data
-            if not schema_only and relative.parts[0] in {'images', 'rpms'}:
+            if (
+                not schema_only
+                and relative.parts[0] in {'images', 'rpms'}
+                and (source_files is None or relative in source_files)
+            ):
                 file_errors.extend(checks.validate_sources(data, group, client, image=relative.parts[0] == 'images'))
         except (ValueError, KeyError, TypeError, OSError, YAMLError) as error:
             file_errors.append(str(error))
@@ -282,7 +289,9 @@ def main(argv=None) -> int:
             raise ValueError('GitHub token file is empty')
         if args.registry_auth_file and not args.registry_auth_file.is_file():
             raise ValueError('Registry auth file does not exist')
+        base = args.base_ref or prow_base_ref()
         selected = select_files(root, args.base_ref)
+        source_files = set(select_files(root, base)) if base and not args.base_ref else None
         errors = validate(
             root,
             selected,
@@ -292,8 +301,8 @@ def main(argv=None) -> int:
             args.application,
             args.registry_auth_file,
             args.pyxis_root,
+            source_files,
         )
-        base = args.base_ref or prow_base_ref()
         if base:
             errors.extend(validate_version_change(root, base))
     except subprocess.CalledProcessError:

@@ -247,6 +247,22 @@ def test_regular_change_selects_changed_metadata_only(tmp_path):
     assert ci.select_files(tmp_path, base) == [Path('images/a.yml')]
 
 
+@pytest.mark.parametrize('outside_change', [False, True])
+def test_select_files_limits_changes_to_nested_build_data_root(tmp_path, outside_change):
+    repository(tmp_path)
+    nested = tmp_path / 'build-data'
+    nested.mkdir()
+    git(tmp_path, 'mv', 'group.yml', 'images', 'build-data/')
+    git(tmp_path, 'commit', '-m', 'move build data')
+    base = git(tmp_path, 'rev-parse', 'HEAD').decode().strip()
+    (nested / 'images/a.yml').write_text('mode: disabled\nname: updated\n')
+    if outside_change:
+        (tmp_path / 'group.yml').write_text('name: unrelated\n')
+    git(tmp_path, 'add', '.')
+    git(tmp_path, 'commit', '-m', 'change nested and outside metadata')
+    assert ci.select_files(nested, base) == [Path('images/a.yml')]
+
+
 def test_shared_change_and_image_deletion_revalidate_remaining_files(tmp_path):
     """Shared change and image deletion revalidate remaining files."""
     base = repository(tmp_path)
@@ -558,3 +574,40 @@ def test_ci_reports_private_source_and_component_mapping_failures(tmp_path, mock
             for e in errors
         )
     assert all('test-read-only-token' not in error for error in errors)
+
+
+@pytest.mark.parametrize(
+    'change, expected',
+    [
+        ('image', {'first'}),
+        ('group', {'first', 'second'}),
+        ('none', set()),
+        ('rehearsal', {'first', 'second'}),
+    ],
+)
+def test_prow_limits_source_checks_but_keeps_full_local_validation(tmp_path, monkeypatch, mocker, change, expected):
+    repository(tmp_path)
+    for name in ('first', 'second'):
+        (tmp_path / 'images' / f'{name}.yml').write_text(
+            f'name: {name}\nowners: [test@example.com]\ndelivery:\n  delivery_repo_names: [{name}]\n'
+        )
+    git(tmp_path, 'add', '.')
+    git(tmp_path, 'commit', '-m', 'metadata baseline')
+    base = git(tmp_path, 'rev-parse', 'HEAD').decode().strip()
+    if change == 'image':
+        with (tmp_path / 'images/first.yml').open('a') as output:
+            output.write('for_payload: false\n')
+    elif change == 'group':
+        with (tmp_path / 'group.yml').open('a') as output:
+            output.write('description: updated\n')
+    git(tmp_path, 'add', '.')
+    git(tmp_path, 'commit', '--allow-empty', '-m', 'proposed change')
+    refs = {'org': 'openshift-eng', 'repo': 'ocp-build-data', 'base_sha': base, 'pulls': [{'number': 1}]}
+    job = {'refs': refs} if change != 'rehearsal' else {'refs': {'org': 'openshift', 'repo': 'release'}}
+    monkeypatch.setenv('JOB_SPEC', json.dumps(job))
+    schema = mocker.patch('validator.ci.schema.validate', return_value=None)
+    mocker.patch('validator.checks.validate_fbc_catalogs', return_value=[])
+    sources = mocker.patch('validator.checks.validate_sources', return_value=[])
+    assert ci.main(['--repo', str(tmp_path)]) == 0
+    assert {call.args[0]['name'] for call in sources.call_args_list} == expected
+    assert {'images/first.yml', 'images/second.yml'} <= {call.args[0] for call in schema.call_args_list}

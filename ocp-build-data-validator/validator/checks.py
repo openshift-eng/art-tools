@@ -299,8 +299,32 @@ class GitHubClient:
             except requests.RequestException:
                 raise RemoteError(f'GitHub unavailable while checking {repository}; retry the job') from None
             if response.status_code not in (200, 404):
+                details = []
+                if response.status_code == 403 and self.authenticated:
+                    try:
+                        body = response.json()
+                    except (ValueError, TypeError):
+                        body = None
+                    message = body.get('message') if isinstance(body, dict) else None
+                    message = message.lower() if isinstance(message, str) else ''
+                    remaining = response.headers.get('X-RateLimit-Remaining')
+                    if 'secondary rate limit' in message:
+                        details.append('secondary rate limit')
+                    elif remaining == '0' or 'api rate limit exceeded' in message:
+                        details.append('rate limit exceeded')
+                    elif 'resource not accessible' in message:
+                        details.append('access denied')
+                    for header, label in (
+                        ('X-RateLimit-Remaining', 'remaining'),
+                        ('X-RateLimit-Reset', 'reset'),
+                        ('Retry-After', 'retry-after'),
+                    ):
+                        value = response.headers.get(header)
+                        if isinstance(value, str) and re.fullmatch(r'[0-9]{1,12}', value):
+                            details.append(f'{label}={value}')
+                diagnostic = f' ({", ".join(details)})' if details else ''
                 raise RemoteError(
-                    f'GitHub returned HTTP {response.status_code} for {repository}; check access/rate limits'
+                    f'GitHub returned HTTP {response.status_code} for {repository}{diagnostic}; check access/rate limits'
                 )
             found = response.status_code == 200
             if found and kind is not None and self.authenticated:
