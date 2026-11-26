@@ -1161,6 +1161,18 @@ class RpmLockfilePrototypeGenerator:
                 arch_entry.module_metadata = merged_modules
 
     @staticmethod
+    def _locked_evrs(lockfile: LockfileData) -> dict[str, dict[str, str]]:
+        """
+        Index resolved binary RPM versions by package name and architecture.
+        """
+        versions: dict[str, dict[str, str]] = {}
+        for arch_entry in lockfile.arches:
+            for pkg in arch_entry.packages:
+                if pkg.name and pkg.evr:
+                    versions.setdefault(pkg.name, {})[arch_entry.arch] = pkg.evr.removeprefix("0:")
+        return versions
+
+    @staticmethod
     def _detect_cross_arch_mismatches(lockfile: LockfileData) -> dict[str, dict[str, str]]:
         """
         Detect packages with different EVR versions across architectures.
@@ -1172,20 +1184,46 @@ class RpmLockfilePrototypeGenerator:
                 {arch: evr} for packages with differing versions.
                 Empty if all versions are consistent.
         """
-        pkg_versions: dict[str, dict[str, str]] = {}
-        for arch_entry in lockfile.arches:
-            for pkg in arch_entry.packages:
-                if pkg.name and pkg.evr:
-                    pkg_versions.setdefault(pkg.name, {})[arch_entry.arch] = pkg.evr
-
         mismatches: dict[str, dict[str, str]] = {}
-        for name, arch_evrs in pkg_versions.items():
+        for name, arch_evrs in RpmLockfilePrototypeGenerator._locked_evrs(lockfile).items():
             if len(arch_evrs) < 2:
                 continue
             unique_evrs = set(arch_evrs.values())
             if len(unique_evrs) > 1:
                 mismatches[name] = arch_evrs
         return mismatches
+
+    async def _inherited_version_targets(
+        self, lockfile: LockfileData, arches: list[str], image_pullspec: str
+    ) -> tuple[dict[str, str], dict[str, dict[str, set[str]]]]:
+        """
+        Find dependencies that must match versions retained by other architectures.
+        """
+        locked = self._locked_evrs(lockfile)
+        if not any(len(versions) < len(arches) for versions in locked.values()):
+            return {}, {}
+
+        inventory = await self._resolver.get_installed_evrs(
+            ContainerImageHelper._proxy_pullspec(image_pullspec), arches
+        )
+        if inventory.keys() != set(arches):
+            return {}, {}
+
+        targets: dict[str, str] = {}
+        for name, resolved in locked.items():
+            inherited = {
+                arch: packages[name]
+                for arch, packages in inventory.items()
+                if arch not in resolved and name in packages
+            }
+            inherited_evrs = set().union(*inherited.values())
+            if not inherited_evrs or inherited_evrs == set(resolved.values()):
+                continue
+            if len(inherited_evrs) > 1:
+                details = ", ".join(f"{arch}={sorted(evrs)}" for arch, evrs in sorted(inherited.items()))
+                raise RuntimeError(f"{image_pullspec}: conflicting inherited RPM versions for {name}: {details}")
+            targets[name] = next(iter(inherited_evrs))
+        return targets, inventory
 
     @staticmethod
     def _compute_version_pins(mismatches: dict[str, dict[str, str]]) -> list[str]:
@@ -1278,20 +1316,21 @@ class RpmLockfilePrototypeGenerator:
             return None
 
         mismatches = self._detect_cross_arch_mismatches(first_pass)
-        if not mismatches:
+        inherited_targets, inventory = (
+            await self._inherited_version_targets(first_pass, arches, image_pullspec)
+            if image_pullspec and len(arches) > 1
+            else ({}, {})
+        )
+        if not mismatches and not inherited_targets:
             return first_pass
 
+        mismatched_names = mismatches.keys() | inherited_targets.keys()
         self.logger.warning(
-            f"{distgit_key}: stage {stage_num}: cross-arch version mismatches in "
-            f"{len(mismatches)} packages: {sorted(mismatches.keys())}"
+            f"{distgit_key}: stage {stage_num}: cross-arch version mismatches: {sorted(mismatched_names)}"
         )
-
-        version_pins = self._compute_version_pins(mismatches)
-        self.logger.debug(
-            f"{distgit_key}: stage {stage_num}: re-resolving with {len(version_pins)} version pins: {version_pins}"
+        version_pins = self._compute_version_pins(
+            {name: evrs for name, evrs in mismatches.items() if name not in inherited_targets}
         )
-
-        mismatched_names = set(mismatches.keys())
         pinned_packages = [p for p in packages if p not in mismatched_names] + version_pins
         pinned_arch_specific_packages = {
             arch: [package for package in arch_packages if package not in mismatched_names]
@@ -1300,6 +1339,18 @@ class RpmLockfilePrototypeGenerator:
         pinned_arch_specific_packages = {
             arch: arch_packages for arch, arch_packages in pinned_arch_specific_packages.items() if arch_packages
         }
+        first_versions = self._locked_evrs(first_pass)
+        for name, evr in inherited_targets.items():
+            for arch in first_versions[name]:
+                pinned_arch_specific_packages.setdefault(arch, []).append(format_version_pin(name, evr))
+            self.logger.info(
+                "%s: stage %s: pinning %s to inherited EVR %s for %s",
+                distgit_key,
+                stage_num,
+                name,
+                evr,
+                sorted(first_versions[name]),
+            )
         pinned_reinstall = (
             [p for p in reinstall_packages if p not in mismatched_names] if reinstall_packages else reinstall_packages
         )
@@ -1328,17 +1379,29 @@ class RpmLockfilePrototypeGenerator:
             raise RuntimeError(
                 f"{distgit_key}: stage {stage_num}: cross-arch version reconciliation failed. "
                 f"Version-pinned re-resolution error: {e}. "
-                f"Mismatched packages: {self._format_mismatches(mismatches)}"
+                f"Mismatched packages: {self._format_mismatches(mismatches)}. "
+                f"Inherited targets from {image_pullspec}: {inherited_targets}"
             ) from e
 
         if not second_pass:
             raise RuntimeError(
                 f"{distgit_key}: stage {stage_num}: cross-arch version reconciliation failed. "
                 f"Re-resolution returned no results. "
-                f"Mismatched packages: {self._format_mismatches(mismatches)}"
+                f"Mismatched packages: {self._format_mismatches(mismatches)}. "
+                f"Inherited targets from {image_pullspec}: {inherited_targets}"
             )
 
         remaining = self._detect_cross_arch_mismatches(second_pass)
+        second_versions = self._locked_evrs(second_pass)
+        for name, evr in inherited_targets.items():
+            resolved = second_versions.get(name, {})
+            for arch in first_versions[name].keys() | resolved.keys():
+                effective = {resolved[arch]} if arch in resolved else inventory.get(arch, {}).get(name, set())
+                if effective != {evr}:
+                    raise RuntimeError(
+                        f"{distgit_key}: stage {stage_num}: cross-arch version reconciliation failed for {name} "
+                        f"on {arch}: expected inherited EVR {evr} from {image_pullspec}, got {sorted(effective)}"
+                    )
         if remaining:
             raise RuntimeError(
                 f"{distgit_key}: stage {stage_num}: cross-arch version reconciliation failed. "

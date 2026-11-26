@@ -253,6 +253,7 @@ class TestRpmLockfilePrototypeGenerator(unittest.TestCase):
     def _make_mock_resolver(self) -> MagicMock:
         resolver = MagicMock(spec=RpmResolver)
         resolver.resolve = AsyncMock(return_value=FAKE_LOCKFILE_DATA.model_copy(deep=True))
+        resolver.get_installed_evrs.return_value = {}
         return resolver
 
     def _make_generator(self) -> RpmLockfilePrototypeGenerator:
@@ -1274,6 +1275,60 @@ class TestCrossArchReconciliation(unittest.IsolatedAsyncioTestCase):
         self.assertIn("reconciliation failed", str(ctx.exception))
         self.assertIn("libeconf", str(ctx.exception))
         self.assertEqual(gen._resolve_stage_with_retry.await_count, 2)
+
+    async def test_reconciliation_pins_dependency_to_inherited_version(self):
+        gen = self._make_generator()
+        gen._resolver.get_installed_evrs = AsyncMock(
+            return_value={
+                "aarch64": {"libatomic": {"14.3.1-4.4.el10"}},
+                "ppc64le": {"libatomic": {"14.3.1-4.4.el10"}},
+                "s390x": {},
+                "x86_64": {},
+            }
+        )
+        first = self._make_lockfile({"s390x": [("libatomic", "14.3.1-4.5.el10_2", "https://repo/new.rpm")]})
+        pinned = self._make_lockfile({"s390x": [("libatomic", "14.3.1-4.4.el10", "https://repo/old.rpm")]})
+        gen._resolve_stage_with_retry = AsyncMock(side_effect=[first, pinned, first, LockfileData()])
+        args = (
+            [],
+            ["aarch64", "ppc64le", "s390x", "x86_64"],
+            ["openvswitch3.5"],
+            "registry.example.com/coreos/base@sha256:test",
+            "rhcos-node-image-rhel10",
+            0,
+        )
+        self.assertEqual(await gen._resolve_with_reconciliation(*args), pinned)
+        retry = gen._resolve_stage_with_retry.await_args
+        self.assertEqual(retry.args[2], ["openvswitch3.5"])
+        self.assertEqual(retry.kwargs["arch_specific_packages"], {"s390x": ["libatomic-14.3.1-4.4.el10"]})
+
+        with self.assertRaisesRegex(RuntimeError, "libatomic on s390x: expected inherited EVR"):
+            await gen._resolve_with_reconciliation(*args)
+
+    async def test_reconciliation_rejects_conflicting_inherited_versions(self):
+        gen = self._make_generator()
+        gen._resolver.get_installed_evrs = AsyncMock(
+            return_value={
+                "aarch64": {"libatomic": {"14.3.1-4.4.el10"}},
+                "ppc64le": {"libatomic": {"14.3.1-4.5.el10_2"}},
+                "s390x": {},
+            }
+        )
+        first = self._make_lockfile({"s390x": [("libatomic", "14.3.1-4.5.el10_2", "https://repo/new.rpm")]})
+        gen._resolve_stage_with_retry = AsyncMock(return_value=first)
+
+        with self.assertRaisesRegex(
+            RuntimeError, "conflicting inherited RPM versions for libatomic: aarch64=.*ppc64le="
+        ):
+            await gen._resolve_with_reconciliation(
+                [],
+                ["aarch64", "ppc64le", "s390x"],
+                ["openvswitch3.5"],
+                "registry.example.com/coreos/base@sha256:test",
+                "rhcos-node-image-rhel10",
+                0,
+            )
+        gen._resolve_stage_with_retry.assert_awaited_once()
 
 
 class TestExtractRhelVersionFromPullspec(unittest.TestCase):
