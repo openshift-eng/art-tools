@@ -1540,15 +1540,14 @@ async def release_to_base_repo(runtime, nvr, expected_pullspec=None):
     # The oc-mirror CDN job requests this release for a selected public build.
     # Routine oc-mirror builds do not trigger silent publication.
     on_demand = runtime.product == "oc-mirror"
-    if on_demand:
-        if runtime.group != source_row.group or source_row.name != "oc-mirror":
-            raise DoozerFatalError(f"{image_nvr} is not an oc-mirror source build in {runtime.group}")
-        try:
-            embargoed = source_row.embargoed or is_nvr_embargoed(image_nvr)
-        except ValueError as exc:
-            raise DoozerFatalError(f"Cannot determine the visibility of {image_nvr}: {exc}") from exc
-        if embargoed:
-            raise DoozerFatalError(f"Cannot publish embargoed oc-mirror build {image_nvr}")
+    if on_demand and (runtime.group != source_row.group or source_row.name != "oc-mirror"):
+        raise DoozerFatalError(f"{image_nvr} is not an oc-mirror source build in {runtime.group}")
+    try:
+        embargoed = source_row.embargoed or is_nvr_embargoed(image_nvr)
+    except ValueError as exc:
+        raise DoozerFatalError(f"Cannot determine the visibility of {image_nvr}: {exc}") from exc
+    if embargoed:
+        raise DoozerFatalError(f"Cannot publish embargoed {runtime.product} build {image_nvr}")
 
     metadata = runtime.image_map.get(source_row.name)
     is_golang_builder = metadata.is_golang_builder() if metadata else GOLANG_BUILDER_IMAGE_NAME in image_nvr

@@ -516,6 +516,7 @@ class KonfluxImageBuilder:
                     if (
                         outcome is KonfluxBuildOutcome.SUCCESS
                         and metadata.should_trigger_base_image_release()
+                        and not is_release_embargoed(release, 'konflux')
                         and definitive_image_pullspec is not None
                     ):
                         release_result = await self._trigger_base_image_release(

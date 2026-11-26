@@ -1378,6 +1378,12 @@ class TestKonfluxImageBuilder(unittest.IsolatedAsyncioTestCase):
 
     async def test_trigger_base_image_release_success_flow(self):
         """SUCCESS after base snapshot release refreshes Konflux DB without swapping image_pullspec to RH."""
+        await self._assert_base_image_build_outcome(embargoed=False)
+
+    async def test_embargoed_base_image_build_succeeds_without_publication(self):
+        await self._assert_base_image_build_outcome(embargoed=True)
+
+    async def _assert_base_image_build_outcome(self, *, embargoed):
         metadata = self._metadata()
         metadata.should_trigger_base_image_release.return_value = True
         dest_dir = self.builder._config.base_dir.joinpath(metadata.qualified_key)
@@ -1406,12 +1412,15 @@ class TestKonfluxImageBuilder(unittest.IsolatedAsyncioTestCase):
         }
         self.mock_konflux_client.wait_for_pipelinerun = AsyncMock(return_value=completed_pipelinerun)
 
+        release = "1.p3" if embargoed else "1.p2"
         with (
             patch(
                 "doozerlib.backend.konflux_image_builder.BuildRepo.from_local_dir",
                 new=AsyncMock(return_value=build_repo),
             ),
-            patch.object(self.builder, "_parse_dockerfile", return_value=("test-uuid", "test-component", "1.0", "1")),
+            patch.object(
+                self.builder, "_parse_dockerfile", return_value=("test-uuid", "test-component", "1.0", release)
+            ),
             patch.object(self.builder, "_wait_for_parent_members", new=AsyncMock(return_value=[])),
             patch.object(self.builder, "_start_build", new=AsyncMock(return_value=initial_pipelinerun)),
             patch.object(
@@ -1440,15 +1449,19 @@ class TestKonfluxImageBuilder(unittest.IsolatedAsyncioTestCase):
             )
             await self.builder.build(metadata)
 
-        mock_trigger_release.assert_awaited_once()
-
-        # PENDING write + single completion write (SUCCESS after base image snapshot-release)
+        # A base image can finish successfully while its public release is held.
         self.assertEqual(mock_update_db.await_count, 2)
         success_call_args = mock_update_db.await_args_list[1][0]
         self.assertEqual(success_call_args[3], KonfluxBuildOutcome.SUCCESS)
         success_call_kwargs = mock_update_db.await_args_list[1].kwargs
-        self.assertEqual(success_call_kwargs.get("release_pipeline"), "https://example.com/rel")
-        self.assertEqual(success_call_kwargs.get("released_pullspec"), "registry.example/pull:test")
+        if embargoed:
+            mock_trigger_release.assert_not_awaited()
+            self.assertEqual(success_call_kwargs.get("release_pipeline"), "")
+            self.assertEqual(success_call_kwargs.get("released_pullspec"), "")
+        else:
+            mock_trigger_release.assert_awaited_once()
+            self.assertEqual(success_call_kwargs.get("release_pipeline"), "https://example.com/rel")
+            self.assertEqual(success_call_kwargs.get("released_pullspec"), "registry.example/pull:test")
 
     async def test_trigger_base_image_release_failure_flow(self):
         """Test base image release failure handling when _trigger_base_image_release returns None."""
@@ -1485,7 +1498,9 @@ class TestKonfluxImageBuilder(unittest.IsolatedAsyncioTestCase):
                 "doozerlib.backend.konflux_image_builder.BuildRepo.from_local_dir",
                 new=AsyncMock(return_value=build_repo),
             ),
-            patch.object(self.builder, "_parse_dockerfile", return_value=("test-uuid", "test-component", "1.0", "1")),
+            patch.object(
+                self.builder, "_parse_dockerfile", return_value=("test-uuid", "test-component", "1.0", "1.p2")
+            ),
             patch.object(self.builder, "_wait_for_parent_members", new=AsyncMock(return_value=[])),
             patch.object(self.builder, "_start_build", new=AsyncMock(return_value=initial_pipelinerun)),
             patch.object(
@@ -1564,7 +1579,9 @@ class TestKonfluxImageBuilder(unittest.IsolatedAsyncioTestCase):
                 "doozerlib.backend.konflux_image_builder.BuildRepo.from_local_dir",
                 new=AsyncMock(return_value=build_repo),
             ),
-            patch.object(self.builder, "_parse_dockerfile", return_value=("test-uuid", "test-component", "1.0", "1")),
+            patch.object(
+                self.builder, "_parse_dockerfile", return_value=("test-uuid", "test-component", "1.0", "1.p2")
+            ),
             patch.object(self.builder, "_wait_for_parent_members", new=AsyncMock(return_value=[])),
             patch.object(self.builder, "_start_build", new=AsyncMock(return_value=initial_pipelinerun)),
             patch.object(
@@ -1755,7 +1772,9 @@ class TestKonfluxImageBuilder(unittest.IsolatedAsyncioTestCase):
                 'doozerlib.backend.konflux_image_builder.BuildRepo.from_local_dir',
                 new=AsyncMock(return_value=build_repo),
             ),
-            patch.object(self.builder, '_parse_dockerfile', return_value=('test-uuid', 'test-component', '1.0', '1')),
+            patch.object(
+                self.builder, '_parse_dockerfile', return_value=('test-uuid', 'test-component', '1.0', '1.p2')
+            ),
             patch.object(self.builder, '_wait_for_parent_members', new=AsyncMock(return_value=[])),
             patch.object(self.builder, '_start_build', new=AsyncMock(return_value=initial_pipelinerun)) as start_build,
             patch.object(self.builder, 'update_konflux_db', new=AsyncMock(side_effect=update_db)),
