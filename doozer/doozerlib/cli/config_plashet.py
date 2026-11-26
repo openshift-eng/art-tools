@@ -16,7 +16,7 @@ import yaml
 from artcommonlib import exectools
 from artcommonlib.assembly import AssemblyTypes, assembly_type
 from artcommonlib.build_util import find_latest_builds
-from artcommonlib.build_visibility import BuildVisibility, get_visibility_suffix
+from artcommonlib.build_visibility import VISIBILITY_SUFFIX, BuildVisibility
 from artcommonlib.logutil import get_logger
 from artcommonlib.release_util import isolate_el_version_in_release
 from artcommonlib.rpm_utils import _rpmvercmp, compare_nvr, parse_nvr
@@ -843,11 +843,11 @@ def from_tags(
         target_openshift_version = runtime.get_major_minor_fields()
 
     # Gather up all nvrs tagged in the embargoed brew tags into a set.
-    embargoed_tag_nvrs = set()
-    embargoed_tag_nvrs.update(embargoed_nvr)
+    embargoed_tag_nvrs = {strip_epoch(nvr) for nvr in embargoed_nvr}
     for ebt in embargoed_brew_tag:
         for build in koji_proxy.listTagged(ebt, latest=False, inherit=False, event=event, type='rpm'):
-            embargoed_tag_nvrs.add(to_nvre(build))
+            embargoed_tag_nvrs.add(build['nvr'])
+    private_suffixes = {suffixes[BuildVisibility.PRIVATE] for suffixes in VISIBILITY_SUFFIX.values()}
     logger.info('Will treat the following nvrs as potentially embargoed: {}'.format(embargoed_tag_nvrs))
 
     actual_embargoed_nvres = list()  # A list of nvres detected as embargoed
@@ -856,6 +856,7 @@ def from_tags(
     historical_nvres = set()
     nvr_product_version = {}
     for tag, product_version in brew_tag:
+        released_build_ids = set()
         released_package_nvre_obj = {}  # maps released package names to the most recently released package nvr object (e.g { 'name': ...,  }
         if tag.endswith(('-candidate', '-hotfix')):
             """
@@ -869,9 +870,18 @@ def from_tags(
             b'{"error":"Unable to add build \'cri-o-1.16.6-2.rhaos4.3.git4936f44.el7\' which is older than cri-o-1.16.6-16.dev.rhaos4.3.git4936f44.el7"}'
             """
             released_tag = tag[: tag.rfind('-')]
+            released_build_ids.update(
+                build['id']
+                for build in koji_proxy.listTagged(released_tag, latest=False, inherit=True, event=event, type='rpm')
+            )
             for build in koji_proxy.listTagged(released_tag, latest=True, inherit=True, event=event, type='rpm'):
                 package_name = build['package_name']
                 released_package_nvre_obj[package_name] = parse_nvr(to_nvre(build))
+
+        def is_embargoed(build):
+            return build['id'] not in released_build_ids and (
+                not private_suffixes.isdisjoint(build['release'].split('.')) or build['nvr'] in embargoed_tag_nvrs
+            )
 
         # candidate rpms for plashet; keys are rpm component names, values are Brew build dicts
         component_builds: Dict[str, Dict] = {}
@@ -942,18 +952,6 @@ def from_tags(
             if package_name in released_package_nvre_obj:
                 released_nvre_obj = released_package_nvre_obj[package_name]
 
-            def is_embargoed(an_nvre):
-                # .p1/.p3 or inclusion in the embargoed_tag_nvrs indicates this rpm is embargoed OR *was* embargoed.
-                # We can ignore it if it has already shipped.
-                test_nvre_obj = parse_nvr(an_nvre)
-                if (
-                    released_nvre_obj is None or compare_nvr(test_nvre_obj, released_nvre_obj) > 0
-                ):  # If this nvr hasn't shipped
-                    pflag = get_visibility_suffix(runtime.build_system, BuildVisibility.PRIVATE)
-                    if f'.{pflag}' in (an_nvre or '') or strip_epoch(an_nvre) in embargoed_tag_nvrs:  # It's embargoed!
-                        return True
-                return False
-
             if package_name in config.exclude_package:
                 logger.info(f'Skipping tagged but command line excluded package: {nvre}')
                 continue
@@ -962,7 +960,7 @@ def from_tags(
                 logger.info(f'Skipping tagged but not command line included package: {nvre}')
                 continue
 
-            if is_embargoed(nvre):
+            if is_embargoed(build):
                 # An embargoed build has not been shipped.
                 actual_embargoed_nvres.append(nvre)  # Record that at the time of build, this was considered embargoed
 
@@ -983,7 +981,7 @@ def from_tags(
                     # Also skip the current latest build.
                     next(tag_history)
                     # Filter out any historical embargoed builds.
-                    tag_history = itertools.filterfalse(lambda build: is_embargoed(to_nvre(build)), tag_history)
+                    tag_history = itertools.filterfalse(is_embargoed, tag_history)
                     # Find the latest build in historical builds for the runtime assembly.
                     unembargoed_latest = next(find_latest_builds(tag_history, assembly), None)
                     if unembargoed_latest is None:
@@ -1044,11 +1042,11 @@ def from_tags(
                         plashet_concerns.append(
                             f'Unable to include previous for {package_name} because history {history_nvre} is newer than latest tagged {nvre}'
                         )
-                    if include_embargoed is False and is_embargoed(history_nvre):
-                        # smh.. history is still under embargo. What you are guys doing?!
+                    if not include_embargoed and is_embargoed(history_latest):
                         plashet_concerns.append(
                             f'Unable to include previous for {package_name} because history {history_nvre} is under embargo'
                         )
+                        continue
                     historical_nvres.add(history_nvre)
                     nvr_product_version[strip_epoch(history_nvre)] = product_version
 
