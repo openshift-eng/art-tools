@@ -8,6 +8,7 @@ from artcommonlib.assembly import (
     AssemblyIssue,
     AssemblyIssueCode,
     AssemblyTypes,
+    assembly_is_private,
     assembly_permits,
     assembly_rhcos_config,
     assembly_type,
@@ -656,16 +657,21 @@ class AssemblyInspector:
         """
         content_git_url = image_meta.config.content.source.git.url
         if content_git_url:
-            # Make sure things are in https form so we can compare
-            content_git_url, _, _ = SourceResolver.get_public_upstream(
+            public_git_url, _, _ = SourceResolver.get_public_upstream(
                 content_git_url, self.runtime.group_config.public_upstreams
             )
+            expected_git_urls = {public_git_url}
+            if isinstance(build_record_inspector, KonfluxBuildRecordInspector) and assembly_is_private(
+                self.runtime.releases_config, self.runtime.assembly
+            ):
+                expected_git_urls.add(artutil.convert_remote_git_to_https(content_git_url))
             build_git_url = artutil.convert_remote_git_to_https(build_record_inspector.get_source_git_url())
-            if content_git_url != build_git_url:
+            if build_git_url not in expected_git_urls:
                 # Impermissible as artist can just fix upstream git source in assembly definition
+                expected = " or ".join(sorted(expected_git_urls))
                 issues.append(
                     AssemblyIssue(
-                        f'Expected image git source from metadata {content_git_url} but found {build_git_url} as the upstream source of the brew build',
+                        f'Expected image git source from metadata {expected} but found {build_git_url} in the build record',
                         component=dgk,
                     )
                 )
