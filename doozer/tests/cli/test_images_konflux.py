@@ -1043,6 +1043,8 @@ class TestBundleStageReleaseRelatedImagesCli(unittest.IsolatedAsyncioTestCase):
             [],
             [{"name": "operator-a-component"}],
             [{"name": "operator-a-component", "repositories": []}],
+            [{"name": "operator-a-component", "repositories": "quay.io/example/operator"}],
+            [{"name": "operator-a-component", "repositories": {"url": "quay.io/example/operator"}}],
             [self._rpa_component("other-component")],
             [self._rpa_component("operator-a-component")] * 2,
         ):
@@ -1059,7 +1061,21 @@ class TestBundleStageReleaseRelatedImagesCli(unittest.IsolatedAsyncioTestCase):
     @mock.patch("doozerlib.cli.images_konflux.KonfluxDb")
     async def test_tag_mapping_requires_a_matched_admission(self, mock_db):
         cli = self._make_cli(self._make_runtime(product="coo", group="coo-1.5"))
-        for admission in (None, "", "not-namespaced", "managed-ns/", "/rpa"):
+        for admission in (
+            None,
+            "",
+            "not-namespaced",
+            "managed-ns/",
+            "/rpa",
+            "managed-ns/rpa name",
+            "Managed-ns/rpa",
+            "managed.ns/rpa",
+            "managed-ns/rpa..name",
+            "managed-ns/-rpa",
+            "managed-ns/rpa/extra",
+            f"{'n' * 64}/rpa",
+            f"managed-ns/{'r' * 254}",
+        ):
             with self.subTest(admission=admission):
                 client = self._mock_konflux_client({})
                 data = {"status": {"releasePlanAdmission": {"name": admission}}}
@@ -1067,6 +1083,48 @@ class TestBundleStageReleaseRelatedImagesCli(unittest.IsolatedAsyncioTestCase):
                 with self.assertRaisesRegex(DoozerFatalError, "coo-stage.*matched ReleasePlanAdmission"):
                     await cli._get_stage_release_data(client, "coo-stage", "operator-a-component", "v1.5.6")
                 client._create.assert_not_awaited()
+
+    @mock.patch("doozerlib.cli.images_konflux.KonfluxDb")
+    async def test_tag_mapping_treats_null_plan_data_as_absent(self, mock_db):
+        cli = self._make_cli(self._make_runtime(product="coo", group="coo-1.5"))
+        for spec in ({"data": None}, {"data": {"mapping": None}}, {"data": {"mapping": {"components": None}}}):
+            with self.subTest(spec=spec):
+                client = self._mock_konflux_client({})
+                get_resource = client._get.side_effect
+                plan = {"spec": spec, "status": {"releasePlanAdmission": {"name": "managed-ns/stage-rpa"}}}
+
+                async def get_with_null_plan(api_version, kind, name, **kwargs):
+                    if kind == "ReleasePlan":
+                        return mock.Mock(to_dict=lambda: plan)
+                    return await get_resource(api_version, kind, name, **kwargs)
+
+                client._get.side_effect = get_with_null_plan
+                data = await cli._get_stage_release_data(client, "coo-stage", "operator-a-component", "v1.5.6")
+                self.assertEqual(
+                    data["mapping"]["components"],
+                    [dict(self._rpa_component("operator-a-component"), componentTags=["existing-tag", "v1.5.6"])],
+                )
+
+    @mock.patch("doozerlib.cli.images_konflux.KonfluxDb")
+    async def test_tag_mapping_accepts_valid_admission_names(self, mock_db):
+        cli = self._make_cli(self._make_runtime(product="coo", group="coo-1.5"))
+        for namespace, name in (("managed-ns", "stage.rpa"), ("n" * 63, "r" * 253)):
+            with self.subTest(namespace=namespace, name=name):
+                client = self._mock_konflux_client({})
+                get_resource = client._get.side_effect
+                plan = {"status": {"releasePlanAdmission": {"name": f"{namespace}/{name}"}}}
+
+                async def get_with_plan(api_version, kind, resource_name, **kwargs):
+                    if kind == "ReleasePlan":
+                        return mock.Mock(to_dict=lambda: plan)
+                    return await get_resource(api_version, kind, resource_name, **kwargs)
+
+                client._get.side_effect = get_with_plan
+                data = await cli._get_stage_release_data(client, "coo-stage", "operator-a-component", "v1.5.6")
+                self.assertEqual(data["mapping"]["components"][0]["componentTags"], ["existing-tag", "v1.5.6"])
+                client._get.assert_any_await(
+                    "appstudio.redhat.com/v1alpha1", "ReleasePlanAdmission", name, namespace=namespace
+                )
 
     @mock.patch("doozerlib.cli.images_konflux.KonfluxDb")
     async def test_tag_mapping_rejects_operator_overrides_in_release_plan(self, mock_db):

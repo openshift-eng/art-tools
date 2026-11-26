@@ -28,6 +28,7 @@ from artcommonlib.util import (
     product_version_from_group_name,
     resolve_konflux_fbc_stage_release_plan,
     validate_build_priority,
+    validate_k8s_dns_label,
 )
 from artcommonlib.variants import BuildVariant
 from kubernetes.dynamic import exceptions as k8s_exceptions
@@ -1434,7 +1435,9 @@ class BundleStageReleaseRelatedImagesCli:
         repositories and component-specific publishing settings survive either merge.
         """
         plan = (await konflux_client._get(API_VERSION, KIND_RELEASE_PLAN, release_plan_name)).to_dict()
-        plan_components = plan.get("spec", {}).get("data", {}).get("mapping", {}).get("components", [])
+        plan_data = plan.get("spec", {}).get("data") or {}
+        plan_mapping = plan_data.get("mapping") or {}
+        plan_components = plan_mapping.get("components") or []
         if any(component.get("name") == component_name for component in plan_components):
             # A second publishing mapping can overwrite the CSV tag during the
             # legacy apply-mapping fold, even if each individual entry is valid.
@@ -1443,15 +1446,24 @@ class BundleStageReleaseRelatedImagesCli:
                 "use --stage-release-plan to retain that plan's configured tagging behavior"
             )
         admission = plan.get("status", {}).get("releasePlanAdmission", {}).get("name") or ""
-        namespace, separator, name = admission.partition("/")
-        if not separator or not namespace or not name or "/" in name:
+        namespace, separator, name = admission.partition("/") if isinstance(admission, str) else ("", "", "")
+        try:
+            validate_k8s_dns_label(namespace, "ReleasePlanAdmission namespace")
+            if (
+                not separator
+                or len(name) > 253
+                or not re.fullmatch(r"[a-z0-9](?:[-a-z0-9]*[a-z0-9])?(?:\.[a-z0-9](?:[-a-z0-9]*[a-z0-9])?)*", name)
+            ):
+                raise ValueError("Invalid ReleasePlanAdmission name")
+        except ValueError:
             raise DoozerFatalError(
-                f"ReleasePlan '{release_plan_name}' has no matched ReleasePlanAdmission; cannot add CSV tag {tag}"
-            )
+                f"ReleasePlan '{release_plan_name}' has no valid matched ReleasePlanAdmission; cannot add CSV tag {tag}"
+            ) from None
         rpa = (await konflux_client._get(API_VERSION, "ReleasePlanAdmission", name, namespace=namespace)).to_dict()
         components = rpa.get("spec", {}).get("data", {}).get("mapping", {}).get("components", [])
         matches = [component for component in components if component.get("name") == component_name]
-        if len(matches) != 1 or not matches[0].get("repositories"):
+        repositories = matches[0].get("repositories") if len(matches) == 1 else None
+        if not isinstance(repositories, list) or not repositories:
             raise DoozerFatalError(
                 f"Component '{component_name}' must have exactly one mapping with non-empty repositories "
                 f"in ReleasePlanAdmission '{admission}'; cannot add CSV tag {tag}"
