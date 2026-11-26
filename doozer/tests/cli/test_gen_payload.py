@@ -1115,6 +1115,7 @@ class TestGenPayloadCli(IsolatedAsyncioTestCase):
         raw_config = Model(dict(content=dict(source=source_config)))
         meta = MagicMock()
         meta.raw_config = raw_config
+        meta.config = Model(raw_config.primitive())
         meta.distgit_key = distgit_key
         meta.is_payload = is_payload
         inspector = MagicMock()
@@ -1145,6 +1146,18 @@ class TestGenPayloadCli(IsolatedAsyncioTestCase):
         )
         result = rgp_cli.PayloadGenerator.find_mismatched_siblings([img_a, img_b])
         self.assertEqual(len(result), 0, "allow_mismatched_siblings flag should suppress the mismatch")
+
+    def test_find_mismatched_siblings_honors_assembly_override(self):
+        source_url = "https://github.com/openshift/repo.git"
+        img_a = self._make_sibling_inspector(source_url, "aaa", "image-a")
+        img_b = self._make_sibling_inspector(source_url, "bbb", "image-b")
+        source = img_b.get_image_meta().config.content.source
+        source.git.url = "https://github.com/openshift/fork.git"
+
+        self.assertEqual(rgp_cli.PayloadGenerator.find_mismatched_siblings([img_a, img_b]), [(img_b, img_a)])
+
+        source.allow_mismatched_siblings = True
+        self.assertEqual(rgp_cli.PayloadGenerator.find_mismatched_siblings([img_a, img_b]), [])
 
     def test_find_mismatched_siblings_allow_flag_only_on_flagged(self):
         """The flag only excludes the flagged image; unflagged siblings from different repos still compare."""
