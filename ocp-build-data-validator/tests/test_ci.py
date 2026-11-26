@@ -247,6 +247,22 @@ def test_regular_change_selects_changed_metadata_only(tmp_path):
     assert ci.select_files(tmp_path, base) == [Path('images/a.yml')]
 
 
+@pytest.mark.parametrize('outside_change', [False, True])
+def test_select_files_limits_changes_to_nested_build_data_root(tmp_path, outside_change):
+    repository(tmp_path)
+    nested = tmp_path / 'build-data'
+    nested.mkdir()
+    git(tmp_path, 'mv', 'group.yml', 'images', 'build-data/')
+    git(tmp_path, 'commit', '-m', 'move build data')
+    base = git(tmp_path, 'rev-parse', 'HEAD').decode().strip()
+    (nested / 'images/a.yml').write_text('mode: disabled\nname: updated\n')
+    if outside_change:
+        (tmp_path / 'group.yml').write_text('name: unrelated\n')
+    git(tmp_path, 'add', '.')
+    git(tmp_path, 'commit', '-m', 'change nested and outside metadata')
+    assert ci.select_files(nested, base) == [Path('images/a.yml')]
+
+
 def test_shared_change_and_image_deletion_revalidate_remaining_files(tmp_path):
     """Shared change and image deletion revalidate remaining files."""
     base = repository(tmp_path)

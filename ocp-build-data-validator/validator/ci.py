@@ -55,7 +55,9 @@ def select_files(root: Path, base: str | None = None) -> list[Path]:
         return all_files(root)
     revision = resolve_commit(root, base)
     result = subprocess.run(
-        ['git', '-C', str(root), 'diff', '--name-only', '-z', revision, 'HEAD', '--'], capture_output=True, check=True
+        ['git', '-C', str(root), 'diff', '--relative', '--name-only', '-z', revision, 'HEAD', '--'],
+        capture_output=True,
+        check=True,
     )
     changed = [Path(path) for path in result.stdout.decode().split('\0') if path and metadata_file(Path(path))]
     if any(
