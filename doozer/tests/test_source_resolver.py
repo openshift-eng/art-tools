@@ -1,7 +1,8 @@
 from datetime import datetime, timezone
 from pathlib import Path
-from unittest import TestCase
-from unittest.mock import Mock, patch
+from tempfile import TemporaryDirectory
+from unittest import IsolatedAsyncioTestCase, TestCase
+from unittest.mock import AsyncMock, MagicMock, Mock, patch
 
 from artcommonlib import constants, exectools
 from artcommonlib.model import Missing, Model
@@ -428,8 +429,18 @@ class SourceResolverTestCase(TestCase):
         mock_auth.assert_called_once_with(url="https://github.com/openshift/repo")
 
 
-class TestSourceResolutionIsForkBuild(TestCase):
-    """Tests for the is_fork_build property of SourceResolution."""
+class TestSourceResolutionIsForkBuild(IsolatedAsyncioTestCase):
+    """Tests for fork detection and public fork source verification."""
+
+    def setUp(self):
+        directory = TemporaryDirectory()
+        self.addCleanup(directory.cleanup)
+        self.source_dir = Path(directory.name)
+        self.source = self._make_source_resolution(
+            url='git@github.com:openshift-priv/router.git',
+            pull_url='git@github.com:developer/router-fork.git',
+        )
+        self.source.commit_hash = 'a' * 40
 
     def _make_source_resolution(self, url: str, pull_url=None):
         """Helper to create a SourceResolution with the given url and pull_url."""
@@ -472,3 +483,70 @@ class TestSourceResolutionIsForkBuild(TestCase):
             pull_url="git@github.com:myuser/router-fork.git",
         )
         self.assertTrue(source.is_fork_build)
+
+    def _mock_github_response(self, status=200, refs=None):
+        patcher = patch('doozerlib.source_resolver.aiohttp.ClientSession')
+        client = patcher.start()
+        self.addCleanup(patcher.stop)
+        session = MagicMock()
+        client.return_value.__aenter__.return_value = session
+        response = session.get.return_value.__aenter__.return_value
+        response.status = status
+        response.json = AsyncMock(return_value=refs if refs is not None else [])
+        return client, session, response
+
+    def _git(self, *args):
+        output, _ = exectools.cmd_assert(['git', '-C', str(self.source_dir), *args])
+        return output.strip()
+
+    async def test_verifies_exact_commit_at_anonymous_branch_tip(self):
+        client, session, _ = self._mock_github_response(
+            refs=[{'ref': 'refs/heads/test', 'object': {'sha': self.source.commit_hash}}]
+        )
+
+        self.assertTrue(await SourceResolver.is_fork_commit_public(self.source, self.source_dir))
+        self.assertFalse(client.call_args.kwargs['trust_env'])
+        session.get.assert_called_once_with(
+            'https://api.github.com/repos/developer/router-fork/git/matching-refs/',
+            allow_redirects=False,
+        )
+
+    async def test_checks_ancestry_against_advertised_branch_and_annotated_tag(self):
+        self._git('init', '--initial-branch=test')
+        self._git('config', 'user.name', 'Test')
+        self._git('config', 'user.email', 'test@example.com')
+        self._git('commit', '--allow-empty', '--no-gpg-sign', '-m', 'source')
+        self.source.commit_hash = self._git('rev-parse', 'HEAD')
+        self._git('commit', '--allow-empty', '--no-gpg-sign', '-m', 'next')
+        self._git('tag', '--annotate', '--no-sign', '-m', 'snapshot', 'snapshot')
+        _, _, response = self._mock_github_response()
+
+        for name, tip in (
+            ('refs/heads/test', self._git('rev-parse', 'HEAD')),
+            ('refs/tags/snapshot', self._git('rev-parse', 'refs/tags/snapshot')),
+        ):
+            with self.subTest(ref=name):
+                response.json.return_value = [{'ref': name, 'object': {'sha': tip}}]
+                self.assertTrue(await SourceResolver.is_fork_commit_public(self.source, self.source_dir))
+
+        response.json.return_value = [
+            {'ref': 'refs/heads/test', 'object': {'sha': 'b' * 40}},
+            {'ref': 'refs/pull/1/head', 'object': {'sha': self.source.commit_hash}},
+        ]
+        self.assertFalse(await SourceResolver.is_fork_commit_public(self.source, self.source_dir))
+
+    async def test_unverifiable_github_response_fails_closed(self):
+        _, session, response = self._mock_github_response()
+        for status in (302, 403, 404, 429, 500):
+            with self.subTest(status=status):
+                response.status = status
+                self.assertFalse(await SourceResolver.is_fork_commit_public(self.source, self.source_dir))
+
+        session.get.return_value.__aenter__.side_effect = TimeoutError
+        self.assertFalse(await SourceResolver.is_fork_commit_public(self.source, self.source_dir))
+
+    async def test_non_github_pull_url_fails_closed(self):
+        client, _, _ = self._mock_github_response()
+        self.source.pull_url = 'https://git.example.com/developer/router-fork.git'
+        self.assertFalse(await SourceResolver.is_fork_commit_public(self.source, self.source_dir))
+        client.assert_not_called()

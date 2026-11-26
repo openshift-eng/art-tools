@@ -10,6 +10,7 @@ from unittest import IsolatedAsyncioTestCase, TestCase
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import semver
+from artcommonlib import exectools
 from artcommonlib.model import Missing, Model
 from artcommonlib.variants import BuildVariant
 from dockerfile_parse import DockerfileParser
@@ -1894,9 +1895,19 @@ class TestPrivateFixDetection(IsolatedAsyncioTestCase):
             url='git@github.com:openshift-priv/router.git',
             pull_url='git@github.com:developer/router-fork.git',
         )
-        with patch.object(util, 'is_commit_in_public_upstream_async', new_callable=AsyncMock) as public_check:
+        with patch.object(SourceResolver, 'is_fork_commit_public', return_value=False) as public_check:
             self.assertIs(await rebaser._source_contains_private_fixes(source, self.base_dir), True)
-        public_check.assert_not_awaited()
+        public_check.assert_awaited_once_with(source, self.base_dir)
+
+    async def test_checks_dockerfile_for_verified_public_fork(self):
+        rebaser = self._make_rebaser()
+        source = self._make_source_resolution(
+            url='git@github.com:openshift-priv/router.git',
+            pull_url='https://github.com/developer/router-fork.git',
+        )
+        with patch.object(SourceResolver, 'is_fork_commit_public', return_value=True) as public_check:
+            self.assertIsNone(await rebaser._source_contains_private_fixes(source, self.base_dir))
+        public_check.assert_awaited_once_with(source, self.base_dir)
 
     async def test_marks_detached_private_source_private_without_public_branch(self):
         rebaser = self._make_rebaser()
@@ -1913,6 +1924,39 @@ class TestPrivateFixDetection(IsolatedAsyncioTestCase):
         )
         source = replace(source, branch='HEAD')
         self.assertIs(await rebaser._source_contains_private_fixes(source, self.base_dir), True)
+
+    async def test_detached_source_uses_public_ref_when_available(self):
+        rebaser = self._make_rebaser()
+        rebaser._runtime.group_config = Model(
+            {
+                'public_upstreams': [
+                    {
+                        'private': 'https://github.com/openshift-priv',
+                        'public': 'https://github.com/openshift',
+                        'public_branch': 'release-4.18',
+                    },
+                ],
+            }
+        )
+
+        def git(*args):
+            exectools.cmd_assert(['git', '-C', str(self.base_dir), *args])
+
+        git('init', '--initial-branch=release-4.18')
+        git('config', 'user.name', 'Test')
+        git('config', 'user.email', 'test@example.com')
+        git('remote', 'add', 'origin', 'https://github.com/openshift-priv/router')
+        git('commit', '--allow-empty', '--no-gpg-sign', '-m', 'source')
+        git('checkout', '--detach')
+
+        resolver = SourceResolver(str(self.base_dir), None, rebaser._runtime.group_config)
+        source = resolver.register_source_alias('router', str(self.base_dir))
+        self.assertEqual(source.branch, 'HEAD')
+        self.assertFalse(source.has_public_upstream)
+        self.assertTrue(await rebaser._source_contains_private_fixes(source, self.base_dir))
+
+        git('update-ref', 'refs/remotes/public_upstream/release-4.18', source.commit_hash)
+        self.assertFalse(await rebaser._source_contains_private_fixes(source, self.base_dir))
 
     async def test_no_private_fix_when_no_public_upstream(self):
         """Test: has_public_upstream=False -> private_fix=False.

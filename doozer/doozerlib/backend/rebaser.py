@@ -1075,7 +1075,8 @@ class KonfluxRebaser:
 
     async def _source_contains_private_fixes(self, source: SourceResolution, source_dir: Path) -> bool | None:
         if source.is_fork_build:
-            # Fork content has no verified public ancestry.
+            if await SourceResolver.is_fork_commit_public(source, source_dir):
+                return None  # Keep the Dockerfile release and parent embargo checks.
             return True
 
         public_branch = source.public_upstream_branch
@@ -1088,7 +1089,17 @@ class KonfluxRebaser:
             return None
         if not public_branch or SourceResolver.is_branch_commit_hash(public_branch):
             return True
-        return not await util.is_commit_in_public_upstream_async(source.commit_hash, public_branch, source_dir)
+        try:
+            return not await util.is_commit_in_public_upstream_async(source.commit_hash, public_branch, source_dir)
+        except OSError:
+            if source.branch != 'HEAD':
+                raise
+            self._logger.warning(
+                'Could not verify detached source %s against public branch %s; treating it as private.',
+                source.commit_hash,
+                public_branch,
+            )
+            return True
 
     @staticmethod
     def extract_version_release_private_fix(
