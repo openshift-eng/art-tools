@@ -1330,6 +1330,68 @@ class TestCrossArchReconciliation(unittest.IsolatedAsyncioTestCase):
             )
         gen._resolve_stage_with_retry.assert_awaited_once()
 
+    async def test_reconciliation_checks_dependency_introduced_by_retry(self):
+        gen = self._make_generator()
+        gen._resolver.get_installed_evrs = AsyncMock(return_value={"aarch64": {"compat": {"1.0-1.el10"}}, "s390x": {}})
+        first = self._make_lockfile(
+            {
+                "aarch64": [("libatomic", "1.0-1.el10", "https://arm/libatomic-1.rpm")],
+                "s390x": [("libatomic", "2.0-1.el10", "https://z/libatomic-2.rpm")],
+            }
+        )
+        for evr in ("1.0-1.el10", "2.0-1.el10"):
+            with self.subTest(evr=evr):
+                retry = self._make_lockfile(
+                    {
+                        "aarch64": [("libatomic", "1.0-1.el10", "https://arm/libatomic-1.rpm")],
+                        "s390x": [
+                            ("libatomic", "1.0-1.el10", "https://z/libatomic-1.rpm"),
+                            ("compat", evr, "https://z/compat.rpm"),
+                        ],
+                    }
+                )
+                gen._resolve_stage_with_retry = AsyncMock(side_effect=[first, retry])
+                result = gen._resolve_with_reconciliation(
+                    [],
+                    ["aarch64", "s390x"],
+                    ["openvswitch3.5"],
+                    "registry.example.com/coreos/base@sha256:test",
+                    "test-image",
+                    0,
+                )
+                if evr == "1.0-1.el10":
+                    self.assertEqual(await result, retry)
+                else:
+                    with self.assertRaisesRegex(RuntimeError, r"compat \(s390x=2.0-1.el10\).*1.0-1.el10"):
+                        await result
+
+    async def test_dockerfile_pin_pass_rejects_conflicting_dependency_evr(self):
+        gen = self._make_generator()
+        reconciled = self._make_lockfile(
+            {"s390x": [("libatomic", "14.3.1-4.4.el10", "https://repo/libatomic-4.4.rpm")]}
+        )
+        gen._resolver.resolve = AsyncMock(
+            return_value=self._make_lockfile(
+                {
+                    "s390x": [
+                        ("openvswitch3.5", "3.5.0-1.el10", "https://repo/openvswitch.rpm"),
+                        ("libatomic", "14.3.1-4.5.el10_2", "https://repo/libatomic-4.5.rpm"),
+                    ],
+                }
+            )
+        )
+
+        with self.assertRaisesRegex(RuntimeError, "conflicting EVRs for libatomic on s390x"):
+            await gen._pin_missing_dockerfile_packages(
+                reconciled,
+                ["openvswitch3.5"],
+                [],
+                ["s390x"],
+                "registry.example.com/coreos/base@sha256:test",
+                "test-image",
+                0,
+            )
+
 
 class TestExtractRhelVersionFromPullspec(unittest.TestCase):
     def test_rhel_8_golang_tag(self):
