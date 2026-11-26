@@ -1,5 +1,6 @@
 import logging
 import os
+import re
 import shutil
 import urllib.parse
 from dataclasses import dataclass
@@ -7,6 +8,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Dict, Optional, Tuple, cast
 
+import aiohttp
 from artcommonlib import assertion, constants, exectools
 from artcommonlib import util as art_util
 from artcommonlib.git_helper import git_clone
@@ -68,8 +70,7 @@ class SourceResolution:
         """True if building from a fork (pull_url differs from push url).
 
         When url_pull is set in image metadata to a different URL than url,
-        it indicates a fork-based test build. In this case, embargo detection
-        should fall back to Dockerfile extraction.
+        it indicates a fork-based test build.
         """
         return self.pull_url is not None and self.pull_url != self.url
 
@@ -316,6 +317,60 @@ class SourceResolver:
             self.register_source_alias(alias, source_dir)
 
             return self.source_resolutions[alias]
+
+    @staticmethod
+    async def is_fork_commit_public(source: SourceResolution, source_dir: Path) -> bool:
+        """Verify that the resolved commit is reachable from an anonymously advertised fork ref."""
+        if not source.pull_url or not re.fullmatch(r'[0-9a-f]{40}', source.commit_hash):
+            return False
+
+        try:
+            url = art_util.ensure_github_https_url(source.pull_url)
+            match = re.fullmatch(r'https://github\.com/([a-z0-9-]+)/([a-z0-9_.-]+)', url, re.IGNORECASE)
+            if not match or match[2] in ('.', '..'):
+                return False
+            repository = f'{match[1]}/{match[2]}'
+            refs_url = f'https://api.github.com/repos/{repository}/git/matching-refs/'
+            # An authenticated read could also see refs in a private fork.
+            async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=10), trust_env=False) as session:
+                async with session.get(refs_url, allow_redirects=False) as response:
+                    if response.status != 200:
+                        LOGGER.warning(
+                            'Could not verify public refs for GitHub fork %s: HTTP %s', repository, response.status
+                        )
+                        return False
+                    public_tips = {
+                        ref['object']['sha']
+                        for ref in await response.json()
+                        if ref['ref'].startswith(('refs/heads/', 'refs/tags/'))
+                    }
+
+            if source.commit_hash in public_tips:
+                return True
+            if not public_tips:
+                return False
+
+            # A matching object ID ties the local ancestry proof to a current public ref.
+            _, containing_tips, _ = await exectools.cmd_gather_async(
+                [
+                    'git',
+                    '--no-replace-objects',
+                    '-C',
+                    str(source_dir),
+                    'for-each-ref',
+                    f'--contains={source.commit_hash}',
+                    '--format=%(objectname)',
+                    'refs/heads',
+                    'refs/remotes',
+                    'refs/tags',
+                ],
+                env={**os.environ, 'GIT_NO_LAZY_FETCH': '1'},
+                timeout=10,
+            )
+            return bool(public_tips.intersection(containing_tips.splitlines()))
+        except (aiohttp.ClientError, OSError, ValueError, TypeError, KeyError, AttributeError):
+            LOGGER.warning('Could not verify public refs for the fork of %s', source.https_url)
+            return False
 
     @staticmethod
     def detect_remote_source_branch(

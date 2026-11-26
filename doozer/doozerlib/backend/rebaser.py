@@ -303,25 +303,11 @@ class KonfluxRebaser:
         # Load Dockerfile from the build repo
         dfp = await exectools.to_thread(DockerfileParser, str(df_path))
 
-        # Determine if this image contains private fixes
+        # Determine if this image contains private fixes.
+        if private_fix is None and source and source_dir:
+            private_fix = await self._source_contains_private_fixes(source, source_dir)
         if private_fix is None:
-            if source and source_dir and source.has_public_upstream and not source.is_fork_build:
-                # If the private org branch commit doesn't exist in the public org,
-                # this image contains private fixes
-                is_commit_in_public_upstream = await util.is_commit_in_public_upstream_async(
-                    source.commit_hash, source.public_upstream_branch, source_dir
-                )
-
-                if (
-                    not SourceResolver.is_branch_commit_hash(source.public_upstream_branch)
-                    and not is_commit_in_public_upstream
-                ):
-                    private_fix = True
-            else:
-                # If we don't have upstream source, we need to extract the private_fix_bit from the Dockerfile in the build repo
-                _, _, prev_private_fix = self.extract_version_release_private_fix(dfp)
-                if prev_private_fix:
-                    private_fix = True
+            _, _, private_fix = self.extract_version_release_private_fix(dfp)
 
         self.uuid_tag = f"{version}-{self._runtime.uuid}"
 
@@ -1086,6 +1072,34 @@ class KonfluxRebaser:
                     source_dockerfile_subpath=source_dockerfile_subpath,
                     dockerfile=str(dest_dir.joinpath('Dockerfile')),
                 )
+
+    async def _source_contains_private_fixes(self, source: SourceResolution, source_dir: Path) -> bool | None:
+        if source.is_fork_build:
+            if await SourceResolver.is_fork_commit_public(source, source_dir):
+                return None  # Keep the Dockerfile release and parent embargo checks.
+            return True
+
+        public_branch = source.public_upstream_branch
+        has_public_upstream = source.has_public_upstream
+        if source.branch == 'HEAD':
+            _, public_branch, has_public_upstream = SourceResolver.get_public_upstream(
+                source.url, self._runtime.group_config.public_upstreams
+            )
+        if not has_public_upstream:
+            return None
+        if not public_branch or SourceResolver.is_branch_commit_hash(public_branch):
+            return True
+        try:
+            return not await util.is_commit_in_public_upstream_async(source.commit_hash, public_branch, source_dir)
+        except OSError:
+            if source.branch != 'HEAD':
+                raise
+            self._logger.warning(
+                'Could not verify detached source %s against public branch %s; treating it as private.',
+                source.commit_hash,
+                public_branch,
+            )
+            return True
 
     @staticmethod
     def extract_version_release_private_fix(
