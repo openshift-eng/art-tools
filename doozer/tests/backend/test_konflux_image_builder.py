@@ -21,7 +21,7 @@ from doozerlib.backend.konflux_image_builder import (
     KonfluxImageBuildError,
     _normalize_version,
 )
-from doozerlib.backend.konflux_post_build import RhcosNodeImagePostBuild
+from doozerlib.backend.konflux_post_build import KonfluxPostBuildError, RhcosNodeImagePostBuild
 from doozerlib.backend.pipelinerun_utils import PipelineRunInfo
 from doozerlib.util import GolangBuilderComponentNameError, konflux_golang_builder_component_name
 from parameterized import parameterized
@@ -1367,12 +1367,14 @@ class TestKonfluxImageBuilder(unittest.IsolatedAsyncioTestCase):
                 ["x86_64"],
                 "5",
                 release_pipeline="https://release.example/pipeline",
+                post_build_pipeline="https://jenkins.example/post-build/5",
                 released_pullspec="registry.redhat.io/foo:bar",
             )
 
         mock_add_build = metadata.runtime.konflux_db.add_build
         mock_add_build.assert_called_once()
         persisted = mock_add_build.call_args[0][0]
+        self.assertEqual(persisted.post_build_pipeline, "https://jenkins.example/post-build/5")
         self.assertEqual(persisted.release_pipeline, "https://release.example/pipeline")
         self.assertEqual(persisted.released_pullspec, "registry.redhat.io/foo:bar")
 
@@ -1673,6 +1675,7 @@ class TestKonfluxImageBuilder(unittest.IsolatedAsyncioTestCase):
         ]
     )
     async def test_post_build_callback_runs_last(self, _name, ec_enabled, its_enabled, release_enabled, failing_stage):
+        self.builder._record_logger = MagicMock()
         metadata = self._metadata()
         metadata.config.konflux.get.side_effect = lambda key, default=None: (
             'rhcos_node_image' if key == 'post_build' else default
@@ -1710,7 +1713,7 @@ class TestKonfluxImageBuilder(unittest.IsolatedAsyncioTestCase):
         async def run_callback(*args):
             steps.append('callback')
             if failing_stage == 'callback':
-                raise RuntimeError('RHCOS pair test failed')
+                raise KonfluxPostBuildError('RHCOS pair test failed', 'https://jenkins.example/post-build/5')
             return 'https://example.com/post-build'
 
         async def update_db(*args, **kwargs):
@@ -1718,6 +1721,11 @@ class TestKonfluxImageBuilder(unittest.IsolatedAsyncioTestCase):
             outcomes.append(outcome)
             if outcome is not KonfluxBuildOutcome.PENDING:
                 steps.append('record')
+                expected_pipeline = {
+                    'callback': 'https://jenkins.example/post-build/5',
+                    None: 'https://example.com/post-build',
+                }.get(failing_stage, '')
+                self.assertEqual(kwargs['post_build_pipeline'], expected_pipeline)
                 if release_enabled and 'release' in steps:
                     self.assertEqual(kwargs['release_pipeline'], release_result.release_pipeline)
                     self.assertEqual(kwargs['released_pullspec'], release_result.released_pullspec)
@@ -1798,6 +1806,10 @@ class TestKonfluxImageBuilder(unittest.IsolatedAsyncioTestCase):
             None: KonfluxBuildOutcome.SUCCESS,
         }[failing_stage]
         self.assertEqual(outcomes, [KonfluxBuildOutcome.PENDING, expected_outcome])
+        if failing_stage == 'callback':
+            logged_record = self.builder._record_logger.add_record.call_args.kwargs
+            self.assertEqual(logged_record['outcome'], 'post_build_error')
+            self.assertEqual(logged_record['post_build_pipeline'], 'https://jenkins.example/post-build/5')
         self.assertEqual(start_build.await_count, 1)
         self.assertEqual(metadata.build_status, failing_stage is None)
         metadata.build_event.set.assert_called()

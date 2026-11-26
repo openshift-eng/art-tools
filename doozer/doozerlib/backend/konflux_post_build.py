@@ -64,6 +64,14 @@ from pyartcd import jenkins
 LOGGER = logging.getLogger(__name__)
 
 
+class KonfluxPostBuildError(RuntimeError):
+    """A failed callback with the URL of its external pipeline, when available."""
+
+    def __init__(self, message: str, pipeline_url: str):
+        super().__init__(message)
+        self.pipeline_url = pipeline_url
+
+
 class KonfluxPostBuildCallback(Protocol):
     """Run after ITS and any required release, before final recording."""
 
@@ -244,12 +252,12 @@ class RhcosNodeImagePostBuild:
             block_until_complete=True,
             return_build_url=True,
         )
-        if result != 'SUCCESS':
-            raise RuntimeError(f'RHCOS {label} post-build job failed (result={result}): {url}')
         try:
             jenkins.update_description(f'<br/>RHCOS {label} post-build: <a href="{url}">job</a><br/>')
         except Exception:
             LOGGER.warning('Could not add RHCOS post-build link to parent job', exc_info=True)
+        if result != 'SUCCESS':
+            raise KonfluxPostBuildError(f'RHCOS {label} post-build job failed (result={result}): {url}', url)
         return url
 
 

@@ -70,6 +70,20 @@ class TestKonfluxBuildOutcome(TestCase):
 
 
 class TestKonfluxBuild(TestCase):
+    def test_post_build_pipeline_round_trip_preserves_build_id(self):
+        legacy = KonfluxBuildRecord()
+        failed = KonfluxBuildRecord(
+            outcome=KonfluxBuildOutcome.POST_BUILD_ERROR,
+            post_build_pipeline='https://jenkins.example/post-build/5',
+        )
+        restored = KonfluxBuildRecord(**failed.to_dict())
+
+        self.assertEqual(legacy.post_build_pipeline, '')
+        self.assertEqual(restored.post_build_pipeline, failed.post_build_pipeline)
+        self.assertEqual(restored.outcome, KonfluxBuildOutcome.POST_BUILD_ERROR)
+        failed.post_build_pipeline = 'https://jenkins.example/post-build/6'
+        self.assertEqual(failed.build_id, failed.generate_build_id())
+
     def test_empty_build(self):
         build_1 = KonfluxBuildRecord()
         build_2 = KonfluxBuildRecord()

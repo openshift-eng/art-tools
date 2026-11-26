@@ -108,6 +108,7 @@ class KonfluxRecord:
         'nvr',
         'ec_pipeline_url',
         'release_pipeline',
+        'post_build_pipeline',
         'released_pullspec',
     ]
 
@@ -347,6 +348,7 @@ class KonfluxBuildRecord(KonfluxRecord):
         release_pipeline: str = '',
         released_pullspec: str = '',
         build_variant: BuildVariant | None = None,
+        post_build_pipeline: str | None = None,
     ):
         super().__init__(
             name,
@@ -383,6 +385,7 @@ class KonfluxBuildRecord(KonfluxRecord):
         self.hermetic = hermetic
         self.artifact_type = artifact_type if isinstance(artifact_type, ArtifactType) else ArtifactType(artifact_type)
         self.ec_pipeline_url = ec_pipeline_url
+        self.post_build_pipeline = post_build_pipeline or ''
         self.release_pipeline = release_pipeline
         self.released_pullspec = released_pullspec
         self.init_uuids(record_id, build_id, nvr)

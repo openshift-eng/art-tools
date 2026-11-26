@@ -538,12 +538,13 @@ class TestUtil(IsolatedAsyncioTestCase):
 
     def test_categorize_failed_images_by_outcome(self):
         """Failure outcomes are mapped to build, ITS, and release categories."""
-        failed_images = ["build-failure", "its-failure", "release-failure", "unknown-failure"]
+        failed_images = ["build-failure", "its-failure", "release-failure", "post-build-failure", "unknown-failure"]
         failed_entries = {
             "build-failure": {"outcome": "build_error"},
             "its-failure": {"outcome": "its_error"},
             "release-failure": {"outcome": "release_error"},
             "unknown-failure": {"outcome": "unexpected_error"},
+            "post-build-failure": {"outcome": "post_build_error"},
         }
 
         categories = util.categorize_failed_images(failed_images, failed_entries)
@@ -551,6 +552,7 @@ class TestUtil(IsolatedAsyncioTestCase):
         self.assertEqual(categories.build, ["build-failure", "unknown-failure"])
         self.assertEqual(categories.its, ["its-failure"])
         self.assertEqual(categories.release, ["release-failure"])
+        self.assertEqual(categories.post_build, ["post-build-failure"])
 
     def test_failed_image_categories_validate_image_lists(self):
         """Failure categories reject values that are not image lists."""
@@ -568,6 +570,7 @@ class TestUtil(IsolatedAsyncioTestCase):
             build=["build-failure"],
             its=["its-failure"],
             release=["release-failure"],
+            post_build=["post-build-failure"],
         )
         failed_entries = {
             "build-failure": {
@@ -577,6 +580,12 @@ class TestUtil(IsolatedAsyncioTestCase):
             "its-failure": {
                 "nvrs": "its-1.0-1",
                 "ec_pipeline_url": "https://its/1",
+            },
+            "post-build-failure": {
+                "task_id": "post-build-task",
+                "outcome": "post_build_error",
+                "nvrs": "post-build-1.0-1",
+                "post_build_pipeline": "https://post-build/1",
             },
             "release-failure": {
                 "nvrs": "release-1.0-1",
@@ -601,6 +610,7 @@ class TestUtil(IsolatedAsyncioTestCase):
                 "count:build-failure:konflux:openshift-4.18:build-failure",
                 "count:ec-failure:konflux:openshift-4.18:its-failure",
                 "count:release-failure:konflux:openshift-4.18:release-failure",
+                "count:post-build-failure:konflux:openshift-4.18:post-build-failure",
             ],
         )
         mock_increment.assert_any_await(
@@ -611,12 +621,20 @@ class TestUtil(IsolatedAsyncioTestCase):
             pipeline_url="https://its/1",
         )
 
+        mock_increment.assert_any_await(
+            "count:post-build-failure:konflux:openshift-4.18:post-build-failure",
+            build_variant="ocp",
+            jenkins_url="https://jenkins/1",
+            nvr="post-build-1.0-1",
+            pipeline_url="https://post-build/1",
+        )
+
     async def test_update_build_fail_counters(self):
         """Build counters reset successes and update only meaningful failures."""
         mock_reset = AsyncMock()
         mock_increment = AsyncMock()
         mock_logger = MagicMock()
-        failed_images = ["build-failure", "its-failure", "release-failure", "parent-failure"]
+        failed_images = ["build-failure", "its-failure", "release-failure", "post-build-failure", "parent-failure"]
         failed_entries = {
             "build-failure": {
                 "task_id": "build-task",
@@ -629,6 +647,12 @@ class TestUtil(IsolatedAsyncioTestCase):
                 "outcome": "its_error",
                 "nvrs": "its-1.0-1",
                 "ec_pipeline_url": "https://its/1",
+            },
+            "post-build-failure": {
+                "task_id": "post-build-task",
+                "outcome": "post_build_error",
+                "nvrs": "post-build-1.0-1",
+                "post_build_pipeline": "https://post-build/1",
             },
             "release-failure": {
                 "task_id": "release-task",
@@ -663,6 +687,7 @@ class TestUtil(IsolatedAsyncioTestCase):
                 "count:build-failure:konflux:openshift-4.18:successful-image",
                 "count:ec-failure:konflux:openshift-4.18:successful-image",
                 "count:release-failure:konflux:openshift-4.18:successful-image",
+                "count:post-build-failure:konflux:openshift-4.18:successful-image",
             },
         )
         self.assertEqual(
@@ -671,6 +696,7 @@ class TestUtil(IsolatedAsyncioTestCase):
                 "count:build-failure:konflux:openshift-4.18:build-failure",
                 "count:ec-failure:konflux:openshift-4.18:its-failure",
                 "count:release-failure:konflux:openshift-4.18:release-failure",
+                "count:post-build-failure:konflux:openshift-4.18:post-build-failure",
             ],
         )
         mock_logger.info.assert_called_once()

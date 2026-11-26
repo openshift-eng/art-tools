@@ -8,6 +8,7 @@ from artcommonlib.konflux.konflux_build_record import KonfluxBuildOutcome
 from artcommonlib.model import Model
 from doozerlib.backend.konflux_post_build import (
     POST_BUILD_CALLBACKS,
+    KonfluxPostBuildError,
     RhcosNodeImagePostBuild,
     build_post_build_callbacks,
     register_post_build,
@@ -57,17 +58,20 @@ class TestRhcosNodeImagePostBuild(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(params['NODE_IMAGE'], _pullspec('a'))
         self.assertEqual(params['EXTENSIONS_IMAGE'], _pullspec('b'))
 
+    @patch('doozerlib.backend.konflux_post_build.jenkins.update_description')
     @patch('doozerlib.backend.konflux_post_build.jenkins.start_build')
-    async def test_failed_pair_job_fails_the_owning_extensions(self, start_build):
+    async def test_failed_pair_job_fails_the_owning_extensions(self, start_build, update_description):
         start_build.return_value = ('FAILURE', 'https://jenkins.example/post-build/2')
         callback = RhcosNodeImagePostBuild(self.runtime, {self.node.distgit_key, self.extensions.distgit_key})
 
         # The node defers and is not gated on the pair job outcome.
         self.assertEqual(await callback.run(self.node, _pullspec('a')), '')
         # The extensions owns the trigger, so it surfaces the pair job failure.
-        with self.assertRaisesRegex(RuntimeError, 'result=FAILURE'):
+        with self.assertRaisesRegex(KonfluxPostBuildError, 'result=FAILURE') as raised:
             await callback.run(self.extensions, _pullspec('b'))
 
+        self.assertEqual(raised.exception.pipeline_url, 'https://jenkins.example/post-build/2')
+        self.assertIn('https://jenkins.example/post-build/2', update_description.call_args.args[0])
         self.assertEqual(start_build.call_count, 1)
 
     async def test_failed_partner_build_fails_the_owner(self):

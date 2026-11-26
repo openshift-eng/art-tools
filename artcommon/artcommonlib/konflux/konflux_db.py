@@ -690,6 +690,8 @@ class KonfluxDb:
             if origin is typing.Union:
                 # Get the non-None type from Optional[X]
                 args = typing.get_args(field_type)
+                if type(None) in args:
+                    mode = 'NULLABLE'
                 field_type = next((arg for arg in args if arg is not type(None)), field_type)
             elif origin is types.UnionType and type(None) in typing.get_args(field_type):
                 # PEP 604 optional annotations need nullable BigQuery fields.

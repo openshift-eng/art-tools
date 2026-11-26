@@ -780,6 +780,7 @@ class TestKonfluxDB(IsolatedAsyncioTestCase):
             SchemaField('release_pipeline', 'STRING', 'REQUIRED'),
             SchemaField('released_pullspec', 'STRING', 'REQUIRED'),
             SchemaField('build_variant', 'STRING', 'NULLABLE'),
+            SchemaField('post_build_pipeline', 'STRING', 'NULLABLE'),
         ]
         self.db.bind(KonfluxBuildRecord)
         self.assertEqual(self.db.generate_build_schema(), expected_fields)
@@ -824,19 +825,19 @@ class TestKonfluxDB(IsolatedAsyncioTestCase):
     def test_generate_fbc_builds_schema(self):
         expected_fields = [
             SchemaField('name', 'STRING', 'REQUIRED'),
-            SchemaField('group', 'STRING', 'REQUIRED'),
+            SchemaField('group', 'STRING', 'NULLABLE'),
             SchemaField('version', 'STRING', 'REQUIRED'),
             SchemaField('release', 'STRING', 'REQUIRED'),
-            SchemaField('assembly', 'STRING', 'REQUIRED'),
+            SchemaField('assembly', 'STRING', 'NULLABLE'),
             SchemaField('source_repo', 'STRING', 'REQUIRED'),
             SchemaField('commitish', 'STRING', 'REQUIRED'),
             SchemaField('rebase_repo_url', 'STRING', 'REQUIRED'),
             SchemaField('rebase_commitish', 'STRING', 'REQUIRED'),
             SchemaField('start_time', 'TIMESTAMP', 'REQUIRED'),
-            SchemaField('end_time', 'TIMESTAMP', 'REQUIRED'),
+            SchemaField('end_time', 'TIMESTAMP', 'NULLABLE'),
             SchemaField('engine', 'STRING', 'REQUIRED'),
-            SchemaField('image_pullspec', 'STRING', 'REQUIRED'),
-            SchemaField('image_tag', 'STRING', 'REQUIRED'),
+            SchemaField('image_pullspec', 'STRING', 'NULLABLE'),
+            SchemaField('image_tag', 'STRING', 'NULLABLE'),
             SchemaField('outcome', 'STRING', 'REQUIRED'),
             SchemaField('art_job_url', 'STRING', 'REQUIRED'),
             SchemaField('build_pipeline_url', 'STRING', 'REQUIRED'),
