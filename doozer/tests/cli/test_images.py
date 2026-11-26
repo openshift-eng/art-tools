@@ -183,7 +183,7 @@ class TestReleaseToBaseRepo(unittest.TestCase):
 
     def test_inserts_followup_row_after_snapshot_release(self):
         runtime = self._runtime_with_base_image()
-        nvr = "ose-base-container-v4.22-1.el9"
+        nvr = "ose-base-container-v4.22-1.p2.el9"
         source = KonfluxBuildRecord(
             name="openshift-enterprise-base-rhel9",
             group=runtime.group,
@@ -243,6 +243,24 @@ class TestReleaseToBaseRepo(unittest.TestCase):
         self.assertEqual(followup.released_pullspec, release_out.released_pullspec)
         self.assertNotEqual(followup.record_id, "prior-id")
 
+    def test_embargoed_base_build_cannot_be_published(self):
+        runtime = self._runtime_with_base_image()
+        for flag, suffix in ((False, "p3"), (True, "p2")):
+            with self.subTest(embargoed=flag, suffix=suffix):
+                nvr = f"ose-base-container-v4.22-1.{suffix}.el9"
+                row = KonfluxBuildRecord(
+                    name="openshift-enterprise-base-rhel9",
+                    group=runtime.group,
+                    nvr=nvr,
+                    image_pullspec="quay.io/base@sha256:abc",
+                    embargoed=flag,
+                )
+                runtime.konflux_db.get_build_record_by_nvr = AsyncMock(return_value=row)
+                with patch("doozerlib.cli.images.BaseImageHandler") as handler:
+                    with self.assertRaisesRegex(DoozerFatalError, "Cannot publish embargoed"):
+                        _invoke_release_to_base_repo_inner(runtime, nvr)
+                    handler.assert_not_called()
+
     def test_oc_mirror_only_publishes_public_source_builds_on_demand(self):
         runtime = self._runtime_with_base_image()
         runtime.group = "oc-mirror-2.0"
@@ -282,7 +300,7 @@ class TestReleaseToBaseRepo(unittest.TestCase):
         runtime.group = "logging-6.6"
         runtime.product = "openshift-logging"
         runtime.variant = BuildVariant.OCP
-        nvr = "logging-base-container-v6.6-1.el9"
+        nvr = "logging-base-container-v6.6-1.p2.el9"
         source = KonfluxBuildRecord(
             name="openshift-enterprise-base-rhel9",
             group=runtime.group,
@@ -322,7 +340,7 @@ class TestReleaseToBaseRepo(unittest.TestCase):
         runtime = self._runtime_with_base_image()
         runtime.product = "unknown-product"
         runtime.variant = BuildVariant.LOGGING
-        nvr = "ose-base-container-v4.22-1.el9"
+        nvr = "ose-base-container-v4.22-1.p2.el9"
         source = KonfluxBuildRecord(
             name="openshift-enterprise-base-rhel9",
             group=runtime.group,
@@ -381,7 +399,7 @@ class TestReleaseToBaseRepo(unittest.TestCase):
         md.distgit_key = "openshift-golang-builder"
         runtime.image_map = {"openshift-golang-builder": md}
 
-        nvr = "openshift-golang-builder-container-v1.23.10-1.el9"
+        nvr = "openshift-golang-builder-container-v1.23.10-1.p2.el9"
         source = KonfluxBuildRecord(
             name="openshift-golang-builder",
             group=runtime.group,
@@ -423,7 +441,7 @@ class TestReleaseToBaseRepo(unittest.TestCase):
     def test_release_to_base_repo_raises_when_released_pullspec_empty(self):
         """Release failure (empty pullspec) must fail CLI — matches konflux_image_builder semantics."""
         runtime = self._runtime_with_base_image()
-        nvr = "ose-base-container-v4.22-1.el9"
+        nvr = "ose-base-container-v4.22-1.p2.el9"
         source = KonfluxBuildRecord(
             name="openshift-enterprise-base-rhel9",
             group=runtime.group,

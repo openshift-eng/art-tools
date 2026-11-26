@@ -1521,14 +1521,14 @@ class TestRebaserResolveMemberParentRegistryRedhat(IsolatedAsyncioTestCase):
         self.addCleanup(self.directory.cleanup)
         self.base_dir = Path(self.directory.name)
 
-    async def test_resolve_member_parent_uses_rh_when_art_base_and_labels_present(self):
+    async def test_resolve_same_run_base_parent_by_visibility(self):
         parent = MagicMock()
-        parent.distgit_key = "golang-builder"
-        parent.qualified_key = "openshift/golang-builder"
-        parent.private_fix = False
-        parent.image_name_short = "golang-builder"
-        parent.get_component_name.return_value = "openshift-golang-builder-container"
+        parent.distgit_key = "ose-base"
+        parent.qualified_key = "openshift/ose-base"
+        parent.image_name_short = "ose-base"
+        parent.get_component_name.return_value = "ose-base-container"
         parent.should_trigger_base_image_release.return_value = True
+        parent.get_konflux_image_repo.return_value = "quay.io/fake"
 
         runtime = MagicMock()
         runtime.resolve_image.return_value = parent
@@ -1539,13 +1539,22 @@ class TestRebaserResolveMemberParentRegistryRedhat(IsolatedAsyncioTestCase):
         rebaser.image_repo = "quay.io/fake"
         rebaser.uuid_tag = "v4.18-abc"
         rebaser.derived_group = "openshift-4.18"
-        rebaser._rebased_nvr_info["golang-builder"] = ("v1.21", "1.el9")
-
-        resolved, _embargo = await rebaser._resolve_member_parent("golang-builder", "ignored")
-        self.assertEqual(
-            resolved,
-            "registry.redhat.io/openshift/golang-builder:openshift-golang-builder-container-v1.21-1.el9",
-        )
+        for private_fix, release, expected_public in (
+            (False, "1.p2.el9", True),
+            (True, "1.p3.el9", False),
+            (False, "1.p3.el9", False),
+            (False, "1.el9", False),
+        ):
+            with self.subTest(private_fix=private_fix, release=release):
+                parent.private_fix = private_fix
+                rebaser._rebased_nvr_info["ose-base"] = ("v4.18", release)
+                resolved, embargoed = await rebaser._resolve_member_parent("ose-base", "ignored")
+                expected = (
+                    f"registry.redhat.io/openshift/art-images-base:ose-base-container-v4.18-{release}"
+                    if expected_public
+                    else "quay.io/fake:ose-base-v4.18-abc"
+                )
+                self.assertEqual((resolved, embargoed), (expected, not expected_public))
 
     async def test_resolve_member_parent_late_resolve_uses_rh_delivery_tag(self):
         """Late-resolve (DB) golang-builder: openshift/golang-builder on RH if reachable, else Konflux digest."""
@@ -1654,16 +1663,13 @@ class TestRebaserResolveMemberParentRegistryRedhat(IsolatedAsyncioTestCase):
         self.assertIn(rh_pullspec, str(ctx.exception))
         self.assertNotIn("was never published to art-images-base", str(ctx.exception))
 
-    async def test_resolve_member_parent_late_resolve_uses_db_released_pullspec_when_set(self):
+    async def test_resolve_late_base_parent_by_visibility(self):
         parent = MagicMock()
-        parent.distgit_key = "golang-builder"
+        parent.distgit_key = "ose-base"
         parent.should_trigger_base_image_release.return_value = True
         parent.branch_el_target.return_value = 9
         kb = MagicMock()
-        kb.nvr = "openshift-golang-builder-container-v1.21-1.el9"
         kb.image_pullspec = "quay.io/k@sha256:beef"
-        kb.released_pullspec = "registry.redhat.io/openshift/released@sha256:dead"
-        kb.embargoed = True
         parent.get_latest_build = AsyncMock(return_value=kb)
 
         runtime = MagicMock()
@@ -1682,9 +1688,16 @@ class TestRebaserResolveMemberParentRegistryRedhat(IsolatedAsyncioTestCase):
             side_effect=AssertionError("_registry_pullspec_status should not be consulted")
         )
 
-        resolved, emb = await rebaser._resolve_member_parent("golang-builder", "orig")
-        self.assertEqual(resolved, kb.released_pullspec)
-        self.assertTrue(emb)
+        delivery_pullspec = "registry.redhat.io/openshift/art-images-base@sha256:dead"
+        for embargoed, released_pullspec in ((False, delivery_pullspec), (True, ""), (True, delivery_pullspec)):
+            with self.subTest(embargoed=embargoed, released_pullspec=released_pullspec):
+                kb.embargoed = embargoed
+                kb.nvr = f"ose-base-container-v4.18-1.p{3 if embargoed else 2}.el9"
+                kb.released_pullspec = released_pullspec
+                expected = kb.image_pullspec if embargoed else released_pullspec
+                self.assertEqual(await rebaser._resolve_member_parent("ose-base", "orig"), (expected, embargoed))
+
+        rebaser._registry_pullspec_status.assert_not_awaited()
 
     async def test_resolve_member_parent_keeps_quay_for_regular_member(self):
         parent = MagicMock()

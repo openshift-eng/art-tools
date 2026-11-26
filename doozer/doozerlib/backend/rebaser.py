@@ -401,17 +401,6 @@ class KonfluxRebaser:
                 await file.write("\n!/.oit/**\n")
                 await file.write("\n!labels.json\n")
 
-    def _rebased_member_image_nvr(self, parent_metadata: ImageMetadata) -> str:
-        """NVR from parent's rebase (same as Dockerfile labels / Konflux DB): component-version-release."""
-        nvr_info = self._rebased_nvr_info.get(parent_metadata.distgit_key)
-        if not nvr_info:
-            raise IOError(
-                f"Parent image {parent_metadata.distgit_key} has no rebased NVR in this KonfluxRebaser session; "
-                f"expected a successful rebase_to for that image first."
-            )
-        version, release = nvr_info
-        return f"{parent_metadata.get_component_name()}-{version}-{release}"
-
     @staticmethod
     def _identify_stage_references(dfp: DockerfileParser) -> List[bool]:
         """
@@ -658,7 +647,7 @@ class KonfluxRebaser:
 
                 if not build:
                     raise IOError(f"A build of parent image {member} is not found.")
-                if parent_metadata.should_trigger_base_image_release():
+                if not build.embargoed and parent_metadata.should_trigger_base_image_release():
                     released_pullspec = (build.released_pullspec or "").strip()
                     if released_pullspec:
                         return released_pullspec, build.embargoed
@@ -684,6 +673,8 @@ class KonfluxRebaser:
                     raise IOError(
                         f"Late-resolved parent {member}: could not read {rh_pullspec} from art-images-base: {detail}"
                     )
+                if not build.image_pullspec:
+                    raise IOError(f"Konflux build {build.nvr} for parent image {member} has no image pullspec.")
                 return build.image_pullspec, build.embargoed
 
             return original_parent, False
@@ -697,9 +688,18 @@ class KonfluxRebaser:
                     "This indicates a bug in Doozer. Please report this issue.",
                 )
             private_fix = parent_metadata.private_fix
-            if parent_metadata.should_trigger_base_image_release():
-                parent_nvr = self._rebased_member_image_nvr(parent_metadata)
-                return util.rh_art_images_base_pullspec(parent_nvr), private_fix
+            if not private_fix and parent_metadata.should_trigger_base_image_release():
+                nvr_info = self._rebased_nvr_info.get(parent_metadata.distgit_key)
+                if not nvr_info:
+                    raise IOError(
+                        f"Parent image {parent_metadata.distgit_key} has no rebased NVR in this KonfluxRebaser session; "
+                        "expected a successful rebase_to for that image first."
+                    )
+                version, release = nvr_info
+                private_fix = is_release_embargoed(release, 'konflux')
+                if not private_fix:
+                    parent_nvr = f"{parent_metadata.get_component_name()}-{version}-{release}"
+                    return util.rh_art_images_base_pullspec(parent_nvr), private_fix
             parent_image_repo = parent_metadata.get_konflux_image_repo(default=self.image_repo)
             return f"{parent_image_repo}:{parent_metadata.image_name_short}-{self.uuid_tag}", private_fix
 
