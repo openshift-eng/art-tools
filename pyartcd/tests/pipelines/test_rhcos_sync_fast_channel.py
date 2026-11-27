@@ -9,6 +9,7 @@ from pyartcd.pipelines.rhcos_sync_fast_channel import (
     _ArchSyncOutcome,
     rhcos_sync_fast_channel,
 )
+from tenacity import wait_none
 
 
 def _triggered(arch: str, tag: str, result: str = "SUCCESS", url: str = "https://jenkins/rhcos_sync/1"):
@@ -473,3 +474,119 @@ class TestRhcosSyncFastChannelPipeline(IsolatedAsyncioTestCase):
         self.assertIn("RuntimeError", combined)
         self.assertIn("amd64", str(ctx.exception))
         self.assertIn("RuntimeError", str(ctx.exception))
+
+    async def test_handle_arch_retries_transient_cincinnati_then_succeeds(self):
+        # A transient blip on the Cincinnati graph fetch (_latest_fast_channel_version) is
+        # retried; the arch then succeeds end-to-end and triggers the downstream build.
+        pipeline = RhcosSyncFastChannelPipeline(_make_runtime(dry_run=False), version="4.19")
+        latest = AsyncMock(side_effect=[ConnectionError("cincinnati blip"), "4.19.54"])
+        with (
+            # Neutralize the tenacity wait so the retry adds no real sleep.
+            patch("pyartcd.pipelines.rhcos_sync_fast_channel.wait_fixed", return_value=wait_none()),
+            patch.object(pipeline, "_latest_fast_channel_version", new=latest),
+            patch("pyartcd.pipelines.rhcos_sync_fast_channel.RhcosSyncPipeline") as MockRSP,
+            patch("pyartcd.pipelines.rhcos_sync_fast_channel.jenkins") as mock_jenkins,
+        ):
+            MockRSP.return_value.check_needs_happening = AsyncMock(return_value=True)
+            mock_jenkins.start_rhcos_sync.return_value = ("SUCCESS", "https://jenkins/rhcos_sync/99")
+            mock_jenkins.get_propagatable_params.return_value = {}
+            outcome = await pipeline._handle_arch("amd64")
+
+        # The scan was retried (first attempt raised, second returned a version).
+        self.assertEqual(latest.await_count, 2)
+        # After the retry succeeded, the arch triggered and awaited the downstream build.
+        self.assertEqual(outcome.tag, "4.19.54-x86_64")
+        self.assertTrue(outcome.triggered)
+        self.assertEqual(outcome.result, "SUCCESS")
+        mock_jenkins.start_rhcos_sync.assert_called_once()
+
+    async def test_handle_arch_retries_transient_needs_happening_then_succeeds(self):
+        # A transient blip on check_needs_happening (oc adm release info / mirror check) is
+        # retried; the arch then succeeds.
+        pipeline = RhcosSyncFastChannelPipeline(_make_runtime(dry_run=False), version="4.19")
+        check = AsyncMock(side_effect=[TimeoutError("oc blip"), True])
+        with (
+            patch("pyartcd.pipelines.rhcos_sync_fast_channel.wait_fixed", return_value=wait_none()),
+            patch.object(pipeline, "_latest_fast_channel_version", new=AsyncMock(return_value="4.19.54")),
+            patch("pyartcd.pipelines.rhcos_sync_fast_channel.RhcosSyncPipeline") as MockRSP,
+            patch("pyartcd.pipelines.rhcos_sync_fast_channel.jenkins") as mock_jenkins,
+        ):
+            MockRSP.return_value.check_needs_happening = check
+            mock_jenkins.start_rhcos_sync.return_value = ("SUCCESS", "https://jenkins/rhcos_sync/98")
+            mock_jenkins.get_propagatable_params.return_value = {}
+            outcome = await pipeline._handle_arch("amd64")
+
+        # check_needs_happening was retried (first attempt raised, second returned True).
+        self.assertEqual(check.await_count, 2)
+        self.assertEqual(outcome.tag, "4.19.54-x86_64")
+        self.assertTrue(outcome.triggered)
+        mock_jenkins.start_rhcos_sync.assert_called_once()
+
+    async def test_handle_arch_does_not_retry_downstream_trigger(self):
+        # The downstream Jenkins trigger is deliberately NOT retried: a transient failure there
+        # must propagate on the first attempt (re-triggering a real build is undesirable).
+        pipeline = RhcosSyncFastChannelPipeline(_make_runtime(dry_run=False), version="4.19")
+        start = MagicMock(side_effect=ConnectionError("jenkins blip"))
+        with (
+            patch("pyartcd.pipelines.rhcos_sync_fast_channel.wait_fixed", return_value=wait_none()),
+            patch.object(pipeline, "_latest_fast_channel_version", new=AsyncMock(return_value="4.19.54")),
+            patch("pyartcd.pipelines.rhcos_sync_fast_channel.RhcosSyncPipeline") as MockRSP,
+            patch("pyartcd.pipelines.rhcos_sync_fast_channel.jenkins") as mock_jenkins,
+        ):
+            MockRSP.return_value.check_needs_happening = AsyncMock(return_value=True)
+            mock_jenkins.get_propagatable_params.return_value = {}
+            mock_jenkins.start_rhcos_sync = start
+            with self.assertRaises(ConnectionError):
+                await pipeline._handle_arch("amd64")
+
+        # Called exactly once — no retry around the downstream trigger.
+        self.assertEqual(start.call_count, 1)
+
+    async def test_run_persistent_scan_failure_retried_then_collected_type_only(self):
+        # SECURITY + behavior: a persistent transient-scan exception is retried up to the max
+        # attempts, still raises, and is collected by run() as a failure surfacing ONLY the
+        # exception type — never the raw exception text (which may carry internal hostnames or
+        # credentials from oc/kubeconfig stderr).
+        sensitive = "internal-host.secret.example.com/token=SUPERSECRET"
+        runtime = _make_runtime(dry_run=False)
+        pipeline = RhcosSyncFastChannelPipeline(runtime, version="4.19", arches=["amd64"])
+        latest = AsyncMock(side_effect=ConnectionError(f"cincinnati down {sensitive}"))
+        with (
+            patch("pyartcd.pipelines.rhcos_sync_fast_channel.wait_fixed", return_value=wait_none()),
+            patch.object(pipeline, "_latest_fast_channel_version", new=latest),
+            patch("pyartcd.pipelines.rhcos_sync_fast_channel.RhcosSyncPipeline"),
+            patch("pyartcd.pipelines.rhcos_sync_fast_channel.jenkins") as mock_jenkins,
+        ):
+            with self.assertRaises(RuntimeError) as ctx:
+                await pipeline.run()
+
+        # Retried up to the max (3 attempts) before giving up.
+        self.assertEqual(latest.await_count, 3)
+        # The downstream trigger is never attempted when the scan ultimately fails.
+        mock_jenkins.start_rhcos_sync.assert_not_called()
+
+        # (a) The aggregate error surfaces arch + exception type, but not the raw text.
+        self.assertIn("amd64", str(ctx.exception))
+        self.assertIn("ConnectionError", str(ctx.exception))
+        self.assertNotIn(sensitive, str(ctx.exception))
+
+        # (b) No log call (any level) — including the before_sleep retry logs — leaks the
+        # sensitive marker; arch + exception type remain present for triage.
+        logged = []
+        for log_method in (
+            runtime.logger.error,
+            runtime.logger.warning,
+            runtime.logger.info,
+        ):
+            for log_call in log_method.call_args_list:
+                args = log_call.args
+                if not args:
+                    continue
+                try:
+                    logged.append(args[0] % args[1:] if len(args) > 1 else args[0])
+                except (TypeError, ValueError):
+                    logged.append(" ".join(str(a) for a in args))
+        combined = "\n".join(logged)
+        self.assertNotIn(sensitive, combined)
+        self.assertIn("amd64", combined)
+        self.assertIn("ConnectionError", combined)
