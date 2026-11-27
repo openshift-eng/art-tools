@@ -41,6 +41,7 @@ from doozerlib.exceptions import ParentRebaseFailedError
 from doozerlib.image import ImageMetadata, extract_builder_info_from_pullspec
 from doozerlib.lockfile import ArtifactLockfileGenerator, RPMLockfileGenerator
 from doozerlib.lockfile_prototype.constants import LockfileBackend
+from doozerlib.lockfile_prototype.container_utils import ContainerImageHelper
 from doozerlib.record_logger import RecordLogger
 from doozerlib.repos import Repos
 from doozerlib.runtime import Runtime
@@ -117,6 +118,7 @@ class KonfluxRebaser:
         self.artifact_lockfile_generator = ArtifactLockfileGenerator(runtime=runtime)
         self._shared_dnf_cache: TemporaryDirectory | None = None
         self._shared_digest_cache: dict[str, str] = {}
+        self._container_helper = ContainerImageHelper(logger=self._logger, digest_cache=self._shared_digest_cache)
         self.image_repo = image_repo
         self.uuid_tag = ''
         self.variant = variant
@@ -1259,6 +1261,7 @@ class KonfluxRebaser:
             working_dir=Path(self._runtime.working_dir),
             shared_dnf_cache=self._shared_dnf_cache,
             shared_digest_cache=self._shared_digest_cache,
+            container_helper=self._container_helper,
             logger=self._logger,
         )
 
