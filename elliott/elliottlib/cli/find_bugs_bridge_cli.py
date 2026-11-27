@@ -383,6 +383,7 @@ class FindBugsBridgeCli:
         description = self._build_description(source_bug, image_meta)
         issue_type = getattr(source_bug.bug.fields.issuetype, "name", "Bug")
         components = [{"name": component.name} for component in getattr(source_bug.bug.fields, "components", [])]
+        affects_versions = [{"name": version.name} for version in getattr(source_bug.bug.fields, "versions", [])]
         fields = {
             "summary": summary,
             "description": description,
@@ -390,7 +391,7 @@ class FindBugsBridgeCli:
             "components": components,
             "labels": [BRIDGE_LABEL],
         }
-        fields["versions"] = []
+        fields["versions"] = affects_versions
         priority = getattr(getattr(source_bug.bug.fields, "priority", None), "name", None)
         if priority:
             fields["priority"] = {"name": priority}
@@ -479,6 +480,10 @@ class FindBugsBridgeCli:
         mirror_components = sorted(c.name for c in getattr(mirror_fields, "components", []))
         desired_components = sorted(c["name"] for c in fields.get("components", []))
         if mirror_components != desired_components:
+            return True
+        mirror_versions = sorted(v.name for v in getattr(mirror_fields, "versions", []))
+        desired_versions = sorted(v["name"] for v in fields.get("versions", []))
+        if mirror_versions != desired_versions:
             return True
         mirror_priority = getattr(getattr(mirror_fields, "priority", None), "name", None)
         desired_priority = fields.get("priority", {}).get("name") if "priority" in fields else None
