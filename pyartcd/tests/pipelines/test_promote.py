@@ -168,7 +168,6 @@ class TestPromotePipeline(IsolatedAsyncioTestCase):
                     MagicMock(config={}, working_dir=Path("/path/to/working"), dry_run=False),
                     group="openshift-4.22",
                     assembly="art1",
-                    signing_env="prod",
                     data_path="https://example.com/build-data",
                     data_gitref=gitref,
                 )
@@ -186,7 +185,6 @@ class TestPromotePipeline(IsolatedAsyncioTestCase):
             MagicMock(config={}, working_dir=Path("/path/to/working"), dry_run=False),
             group="openshift-4.22",
             assembly="art1",
-            signing_env="prod",
         )
         pipeline.private_only = True
         pipeline._registry_config = "/path/to/registry-auth.json"
@@ -235,7 +233,6 @@ class TestPromotePipeline(IsolatedAsyncioTestCase):
             MagicMock(config={}, working_dir=Path("/path/to/working"), dry_run=False),
             group="openshift-4.22",
             assembly="art1",
-            signing_env="prod",
         )
         pipeline.private_only = True
         pipeline.get_multi_image_digest = AsyncMock(return_value=None)
@@ -264,7 +261,6 @@ class TestPromotePipeline(IsolatedAsyncioTestCase):
             MagicMock(config={}, working_dir=Path("/path/to/working"), dry_run=False),
             group="openshift-4.22",
             assembly="art1",
-            signing_env="prod",
         )
         pipeline.private_only = True
         repo = "quay.io/openshift-release-dev/ocp-release-priv"
@@ -305,9 +301,7 @@ class TestPromotePipeline(IsolatedAsyncioTestCase):
             working_dir=Path("/path/to/working"),
             dry_run=False,
         )
-        pipeline = await PromotePipeline.create(
-            runtime, group="openshift-4.10", assembly="4.10.99", signing_env="prod", skip_sigstore=True
-        )
+        pipeline = await PromotePipeline.create(runtime, group="openshift-4.10", assembly="4.10.99", skip_sigstore=True)
         with self.assertRaisesRegex(ValueError, "must be explicitly defined"):
             await pipeline.run()
         load_group_config.assert_awaited_once()
@@ -342,7 +336,6 @@ class TestPromotePipeline(IsolatedAsyncioTestCase):
             runtime,
             group="openshift-4.22",
             assembly="art1",
-            signing_env="prod",
             data_path=build_data,
             data_gitref=build_data_ref,
         )
@@ -419,9 +412,7 @@ class TestPromotePipeline(IsolatedAsyncioTestCase):
             working_dir=Path("/path/to/working"),
             dry_run=False,
         )
-        pipeline = await PromotePipeline.create(
-            runtime, group="openshift-4.10", assembly="stream", signing_env="prod", skip_sigstore=True
-        )
+        pipeline = await PromotePipeline.create(runtime, group="openshift-4.10", assembly="stream", skip_sigstore=True)
         with self.assertRaisesRegex(ValueError, "not supported"):
             await pipeline.run()
         load_group_config.assert_awaited_once()
@@ -454,9 +445,7 @@ class TestPromotePipeline(IsolatedAsyncioTestCase):
             dry_run=False,
             new_slack_client=MagicMock(return_value=AsyncMock()),
         )
-        pipeline = await PromotePipeline.create(
-            runtime, group="openshift-4.10", assembly="art0001", signing_env="prod", skip_sigstore=True
-        )
+        pipeline = await PromotePipeline.create(runtime, group="openshift-4.10", assembly="art0001", skip_sigstore=True)
         with self.assertRaisesRegex(ValueError, "patch_version is not set"):
             await pipeline.run()
         load_group_config.assert_awaited_once()
@@ -536,7 +525,6 @@ class TestPromotePipeline(IsolatedAsyncioTestCase):
             assembly="art0001",
             skip_attached_bug_check=True,
             skip_mirror_binaries=True,
-            signing_env="prod",
             skip_sigstore=True,
         )
         get_image_stream.return_value = {"status": {"tags": []}}
@@ -610,9 +598,7 @@ class TestPromotePipeline(IsolatedAsyncioTestCase):
         runtime.new_slack_client.return_value = AsyncMock()
         runtime.new_slack_client.return_value.say.return_value = {'message': {'ts': ''}}
         runtime.new_slack_client.return_value.bind_channel = MagicMock()
-        pipeline = await PromotePipeline.create(
-            runtime, group="openshift-4.10", assembly="4.10.99", signing_env="prod", skip_sigstore=True
-        )
+        pipeline = await PromotePipeline.create(runtime, group="openshift-4.10", assembly="4.10.99", skip_sigstore=True)
 
         with self.assertRaisesRegex(ValueError, "missing the required `upgrades` field"):
             await pipeline.run()
@@ -652,9 +638,7 @@ class TestPromotePipeline(IsolatedAsyncioTestCase):
         runtime.new_slack_client.return_value.say.return_value = {'message': {'ts': ''}}
         runtime.new_slack_client.return_value.bind_channel = MagicMock()
 
-        pipeline = await PromotePipeline.create(
-            runtime, group="openshift-4.10", assembly="4.10.99", signing_env="prod", skip_sigstore=True
-        )
+        pipeline = await PromotePipeline.create(runtime, group="openshift-4.10", assembly="4.10.99", skip_sigstore=True)
         pipeline.check_blocker_bugs = AsyncMock()
 
         with self.assertRaisesRegex(VerificationError, "No associated image advisory"):
@@ -695,9 +679,7 @@ class TestPromotePipeline(IsolatedAsyncioTestCase):
         runtime.new_slack_client.return_value.say.return_value = {'message': {'ts': ''}}
         runtime.new_slack_client.return_value.bind_channel = MagicMock()
 
-        pipeline = await PromotePipeline.create(
-            runtime, group="openshift-4.10", assembly="4.10.99", signing_env="prod", skip_sigstore=True
-        )
+        pipeline = await PromotePipeline.create(runtime, group="openshift-4.10", assembly="4.10.99", skip_sigstore=True)
         pipeline.check_blocker_bugs = AsyncMock()
         pipeline._drop_empty_advisories = AsyncMock()
         pipeline.change_advisory_state_qe = AsyncMock()
@@ -747,9 +729,7 @@ class TestPromotePipeline(IsolatedAsyncioTestCase):
         runtime.new_slack_client.return_value.say.return_value = {'message': {'ts': ''}}
         runtime.new_slack_client.return_value.bind_channel = MagicMock()
 
-        pipeline = await PromotePipeline.create(
-            runtime, group="openshift-4.10", assembly="4.10.99", signing_env="prod", skip_sigstore=True
-        )
+        pipeline = await PromotePipeline.create(runtime, group="openshift-4.10", assembly="4.10.99", skip_sigstore=True)
         pipeline.check_blocker_bugs = AsyncMock()
         pipeline._drop_empty_advisories = AsyncMock()
         pipeline.change_advisory_state_qe = AsyncMock()
@@ -866,7 +846,6 @@ class TestPromotePipeline(IsolatedAsyncioTestCase):
             group="openshift-4.10",
             assembly="4.10.99",
             skip_mirror_binaries=True,
-            signing_env="prod",
             skip_sigstore=True,
         )
         pipeline.check_blocker_bugs = AsyncMock()
@@ -1038,7 +1017,7 @@ class TestPromotePipeline(IsolatedAsyncioTestCase):
             working_dir=Path("/path/to/working"),
             dry_run=False,
         )
-        pipeline = PromotePipeline(runtime, group="openshift-4.10", assembly="4.10.99", signing_env="prod")
+        pipeline = PromotePipeline(runtime, group="openshift-4.10", assembly="4.10.99")
         get_image_stream.return_value = {"status": {"tags": []}}
         previous_list = ["4.10.98", "4.10.97", "4.9.99"]
         metadata = {"description": "whatever", "url": "https://access.redhat.com/errata/RHBA-2099:2222"}
@@ -1162,7 +1141,7 @@ class TestPromotePipeline(IsolatedAsyncioTestCase):
             working_dir=Path("/path/to/working"),
             dry_run=False,
         )
-        pipeline = PromotePipeline(runtime, group="openshift-4.10", assembly="4.10.99", signing_env="prod")
+        pipeline = PromotePipeline(runtime, group="openshift-4.10", assembly="4.10.99")
         previous_list = ["4.10.98", "4.10.97", "4.9.99"]
         metadata = {"description": "whatever", "url": "https://access.redhat.com/errata/RHBA-2099:2222"}
 
@@ -1270,7 +1249,7 @@ class TestPromotePipeline(IsolatedAsyncioTestCase):
             working_dir=Path("/path/to/working"),
             dry_run=False,
         )
-        pipeline = PromotePipeline(runtime, group="openshift-4.10", assembly="4.10.99", signing_env="prod")
+        pipeline = PromotePipeline(runtime, group="openshift-4.10", assembly="4.10.99")
         previous_list = ["4.10.98", "4.10.97", "4.9.99"]
         metadata = {"description": "whatever", "url": "https://access.redhat.com/errata/RHBA-2099:2222"}
 
@@ -1402,7 +1381,7 @@ class TestPromotePipeline(IsolatedAsyncioTestCase):
             working_dir=Path("/path/to/working"),
             dry_run=False,
         )
-        pipeline = PromotePipeline(runtime, group="openshift-4.10", assembly="4.10.99", signing_env="prod")
+        pipeline = PromotePipeline(runtime, group="openshift-4.10", assembly="4.10.99")
         previous_list = ["4.10.98", "4.10.97", "4.9.99"]
         metadata = {"description": "whatever", "url": "https://access.redhat.com/errata/RHBA-2099:2222"}
 
@@ -1700,9 +1679,7 @@ class TestPromotePipeline(IsolatedAsyncioTestCase):
             working_dir=Path("/path/to/working"),
             dry_run=False,
         )
-        pipeline = PromotePipeline(
-            runtime, group="openshift-4.10", assembly="4.10.99", use_multi_hack=True, signing_env="prod"
-        )
+        pipeline = PromotePipeline(runtime, group="openshift-4.10", assembly="4.10.99", use_multi_hack=True)
         previous_list = ["4.10.98", "4.10.97", "4.9.99"]
         metadata = {"description": "whatever", "url": "https://access.redhat.com/errata/RHBA-2099:2222"}
 
@@ -1931,9 +1908,7 @@ class TestPromotePipeline(IsolatedAsyncioTestCase):
         runtime.new_slack_client.return_value.say.return_value = {'message': {'ts': ''}}
         runtime.new_slack_client.return_value.bind_channel = MagicMock()
 
-        pipeline = await PromotePipeline.create(
-            runtime, group="openshift-4.10", assembly="4.10.99", signing_env="prod", skip_sigstore=True
-        )
+        pipeline = await PromotePipeline.create(runtime, group="openshift-4.10", assembly="4.10.99", skip_sigstore=True)
         pipeline.change_advisory_state_qe = AsyncMock()
 
         with self.assertRaisesRegex(ValueError, "Shipment config is defined but image advisory is also defined"):
@@ -1981,9 +1956,7 @@ class TestPromotePipeline(IsolatedAsyncioTestCase):
         runtime.new_slack_client.return_value.say.return_value = {'message': {'ts': ''}}
         runtime.new_slack_client.return_value.bind_channel = MagicMock()
 
-        pipeline = await PromotePipeline.create(
-            runtime, group="openshift-4.10", assembly="4.10.99", signing_env="prod", skip_sigstore=True
-        )
+        pipeline = await PromotePipeline.create(runtime, group="openshift-4.10", assembly="4.10.99", skip_sigstore=True)
 
         with self.assertRaisesRegex(ValueError, "Shipment config is defined but url is not defined"):
             await pipeline.run()
@@ -2037,9 +2010,7 @@ class TestPromotePipeline(IsolatedAsyncioTestCase):
         runtime.new_slack_client.return_value.say.return_value = {'message': {'ts': ''}}
         runtime.new_slack_client.return_value.bind_channel = MagicMock()
 
-        pipeline = await PromotePipeline.create(
-            runtime, group="openshift-4.10", assembly="4.10.99", signing_env="prod", skip_sigstore=True
-        )
+        pipeline = await PromotePipeline.create(runtime, group="openshift-4.10", assembly="4.10.99", skip_sigstore=True)
 
         with self.assertRaisesRegex(ValueError, "Could not find image shipment config in merge request"):
             await pipeline.run()
@@ -2099,9 +2070,7 @@ class TestPromotePipeline(IsolatedAsyncioTestCase):
         runtime.new_slack_client.return_value.say.return_value = {'message': {'ts': ''}}
         runtime.new_slack_client.return_value.bind_channel = MagicMock()
 
-        pipeline = await PromotePipeline.create(
-            runtime, group="openshift-4.10", assembly="4.10.99", signing_env="prod", skip_sigstore=True
-        )
+        pipeline = await PromotePipeline.create(runtime, group="openshift-4.10", assembly="4.10.99", skip_sigstore=True)
 
         with self.assertRaisesRegex(ValueError, "Could not find live ID in image shipment config"):
             await pipeline.run()
@@ -2176,7 +2145,6 @@ class TestPromotePipeline(IsolatedAsyncioTestCase):
             group="openshift-4.10",
             assembly="4.10.99",
             skip_mirror_binaries=True,
-            signing_env="prod",
             skip_sigstore=True,
         )
 
@@ -2241,7 +2209,7 @@ class TestPromotePipeline(IsolatedAsyncioTestCase):
             working_dir=Path("/path/to/working"),
             dry_run=False,
         )
-        pipeline = PromotePipeline(runtime, group="openshift-4.22", assembly="4.22.1", signing_env="prod")
+        pipeline = PromotePipeline(runtime, group="openshift-4.22", assembly="4.22.1")
         pipeline._logger = MagicMock()
 
         rpm_advisory = MagicMock()
@@ -2275,7 +2243,7 @@ class TestPromotePipeline(IsolatedAsyncioTestCase):
             working_dir=Path("/path/to/working"),
             dry_run=True,
         )
-        pipeline = PromotePipeline(runtime, group="openshift-4.22", assembly="4.22.1", signing_env="prod")
+        pipeline = PromotePipeline(runtime, group="openshift-4.22", assembly="4.22.1")
         pipeline._logger = MagicMock()
 
         rpm_advisory = MagicMock()
@@ -2302,7 +2270,7 @@ class TestPromotePipeline(IsolatedAsyncioTestCase):
             working_dir=Path("/path/to/working"),
             dry_run=False,
         )
-        pipeline = PromotePipeline(runtime, group="openshift-4.10", assembly="4.10.99", signing_env="prod")
+        pipeline = PromotePipeline(runtime, group="openshift-4.10", assembly="4.10.99")
         with tempfile.TemporaryDirectory() as temp_dir:
             Path(temp_dir, "openshift-client-linux-4.3.0-0.nightly-2019-12-06-161135.tar.gz").open("w").close()
             Path(temp_dir, "openshift-client-mac-4.3.0-0.nightly-2019-12-06-161135.tar.gz").open("w").close()
@@ -2322,7 +2290,7 @@ class TestPromotePipeline(IsolatedAsyncioTestCase):
         runtime.working_dir = Path("/tmp")
         runtime.dry_run = False
 
-        pipeline = PromotePipeline(runtime, group="openshift-4.19", assembly="4.19.0", signing_env="prod")
+        pipeline = PromotePipeline(runtime, group="openshift-4.19", assembly="4.19.0")
 
         payload_shas = {"x86_64": "sha256:abc123"}
         shipment_url = "https://gitlab.example.com/project/-/merge_requests/123"
@@ -2351,7 +2319,7 @@ class TestPromotePipeline(IsolatedAsyncioTestCase):
         runtime.dry_run = False
         runtime.logger = MagicMock()
 
-        pipeline = PromotePipeline(runtime, group="openshift-4.19", assembly="4.19.0", signing_env="prod")
+        pipeline = PromotePipeline(runtime, group="openshift-4.19", assembly="4.19.0")
 
         payload_shas = {"x86_64": "sha256:abc123"}
         shipment_url = "https://gitlab.example.com/project/-/merge_requests/123"
@@ -2371,7 +2339,7 @@ class TestPromotePipeline(IsolatedAsyncioTestCase):
     @patch.dict(os.environ, {"GITHUB_TOKEN": ""})
     async def test_update_qe_repo_dry_run_skips_github(self, mock_github: Mock, mock_get_github_client: Mock, _):
         runtime = MagicMock(working_dir=Path("/tmp"), dry_run=True)
-        pipeline = PromotePipeline(runtime, group="openshift-4.21", assembly="4.21.0", signing_env="stage")
+        pipeline = PromotePipeline(runtime, group="openshift-4.21", assembly="4.21.0")
 
         pipeline._update_qe_repo(
             release_name="4.21.0", release_jira="ART-1234", advisories={"image": 12345, "rpm": 67890}
@@ -2395,7 +2363,7 @@ class TestPromotePipeline(IsolatedAsyncioTestCase):
         runtime.working_dir = Path("/tmp")
         runtime.dry_run = False
 
-        pipeline = PromotePipeline(runtime, group="openshift-4.21", assembly="4.21.0", signing_env="prod")
+        pipeline = PromotePipeline(runtime, group="openshift-4.21", assembly="4.21.0")
 
         mock_upstream_repo = MagicMock()
         mock_fork_repo = MagicMock()
@@ -2459,7 +2427,7 @@ class TestPromotePipeline(IsolatedAsyncioTestCase):
         self, mock_github: Mock, mock_get_github_client: Mock, _
     ):
         runtime = MagicMock(working_dir=Path("/tmp"), dry_run=False)
-        pipeline = PromotePipeline(runtime, group="openshift-4.21", assembly="4.21.0", signing_env="prod")
+        pipeline = PromotePipeline(runtime, group="openshift-4.21", assembly="4.21.0")
         upstream_repo = MagicMock()
         fork_repo = MagicMock()
         mock_github.return_value.get_repo.side_effect = [upstream_repo, fork_repo]
@@ -2490,7 +2458,7 @@ class TestPromotePipeline(IsolatedAsyncioTestCase):
     @patch.dict(os.environ, {"GITHUB_APP_ID": "12345"})
     async def test_update_qe_repo_requires_pat(self, mock_github: Mock, mock_get_github_client: Mock, _):
         runtime = MagicMock(working_dir=Path("/tmp"), dry_run=False)
-        pipeline = PromotePipeline(runtime, group="openshift-4.21", assembly="4.21.0", signing_env="prod")
+        pipeline = PromotePipeline(runtime, group="openshift-4.21", assembly="4.21.0")
 
         for token in (None, ""):
             with self.subTest(token=token), patch.dict(os.environ):
@@ -2526,7 +2494,7 @@ class TestPromotePipeline(IsolatedAsyncioTestCase):
         )
         with tempfile.TemporaryDirectory() as temp_dir:
             runtime.working_dir = Path(temp_dir)
-            pipeline = PromotePipeline(runtime, group="openshift-4.10", assembly="4.10.99", signing_env="prod")
+            pipeline = PromotePipeline(runtime, group="openshift-4.10", assembly="4.10.99")
             pipeline._registry_config = "/tmp/quay-auth.json"
             await pipeline.push_manifest_list("4.10.99", {"schemaVersion": 2})
 
@@ -2591,9 +2559,7 @@ class TestPromotePipeline(IsolatedAsyncioTestCase):
         runtime.new_slack_client.return_value.say.return_value = {'message': {'ts': ''}}
         runtime.new_slack_client.return_value.bind_channel = MagicMock()
 
-        pipeline = await PromotePipeline.create(
-            runtime, group="openshift-4.10", assembly="4.10.99", signing_env="prod", skip_sigstore=True
-        )
+        pipeline = await PromotePipeline.create(runtime, group="openshift-4.10", assembly="4.10.99", skip_sigstore=True)
         pipeline.check_blocker_bugs = AsyncMock()
         pipeline._drop_empty_advisories = AsyncMock()
         pipeline.change_advisory_state_qe = AsyncMock()
@@ -2622,7 +2588,7 @@ class TestPromotePipeline(IsolatedAsyncioTestCase):
         )
         with tempfile.TemporaryDirectory() as temp_dir:
             runtime.working_dir = Path(temp_dir)
-            pipeline = PromotePipeline(runtime, group="openshift-4.10", assembly="4.10.99", signing_env="prod")
+            pipeline = PromotePipeline(runtime, group="openshift-4.10", assembly="4.10.99")
 
             # Mock exectools.cmd_gather_async to return "Found 0 bugs"
             cmd_gather_async.return_value = ("", "Found 0 bugs: ", "")
@@ -2646,7 +2612,7 @@ class TestDoomsdayBackup(IsolatedAsyncioTestCase):
             new_slack_client=MagicMock(return_value=AsyncMock()),
         )
         with patch("pyartcd.jira_client.JIRAClient.from_url", return_value=None):
-            return PromotePipeline(runtime, group="openshift-4.22", assembly="4.22.1", signing_env="prod")
+            return PromotePipeline(runtime, group="openshift-4.22", assembly="4.22.1")
 
     @patch("pyartcd.pipelines.promote.exectools.cmd_gather_async", new_callable=AsyncMock)
     async def test_dry_run_does_not_start_backup_or_require_kubeconfig(self, cmd_gather_async):
@@ -2689,7 +2655,6 @@ class TestPromoteSigningTransport(IsolatedAsyncioTestCase):
             runtime,
             group="openshift-4.10",
             assembly="4.10.99",
-            signing_env="prod",
             **kwargs,
         )
 
@@ -2726,6 +2691,15 @@ class TestPromoteSigningTransport(IsolatedAsyncioTestCase):
         from_environment.assert_called_once_with(
             sig_keyname="redhatrelease2",
         )
+
+    @patch("pyartcd.pipelines.promote.DirectSignatory.from_environment")
+    async def test_preview_artifacts_use_beta_key(self, from_environment):
+        pipeline = self._make_pipeline()
+        from_environment.return_value = AsyncMock()
+
+        await pipeline.sign_artifacts("4.10.99", "ocp-dev-preview", {}, [])
+
+        from_environment.assert_called_once_with(sig_keyname="beta2")
 
 
 class TestDropAdvisory(IsolatedAsyncioTestCase):
@@ -2773,7 +2747,7 @@ class TestCheckAndDropEmptyAdvisory(IsolatedAsyncioTestCase):
         )
         with tempfile.TemporaryDirectory() as temp_dir:
             runtime.working_dir = Path(temp_dir)
-        return PromotePipeline(runtime, group="openshift-4.10", assembly="4.10.99", signing_env="prod")
+        return PromotePipeline(runtime, group="openshift-4.10", assembly="4.10.99")
 
     @patch("pyartcd.jira_client.JIRAClient.from_url", return_value=None)
     @patch("pyartcd.pipelines.promote.get_builds")
@@ -2851,7 +2825,7 @@ class TestDropEmptyAdvisories(IsolatedAsyncioTestCase):
         )
         with tempfile.TemporaryDirectory() as temp_dir:
             runtime.working_dir = Path(temp_dir)
-        pipeline = PromotePipeline(runtime, group="openshift-4.10", assembly="4.10.99", signing_env="prod")
+        pipeline = PromotePipeline(runtime, group="openshift-4.10", assembly="4.10.99")
         pipeline._check_and_drop_empty_advisory = AsyncMock(return_value=True)
 
         advisories = {"rpm": 100, "image": 200, "extras": 300, "rhcos": 400}
@@ -2882,7 +2856,7 @@ class TestDropEmptyAdvisories(IsolatedAsyncioTestCase):
         )
         with tempfile.TemporaryDirectory() as temp_dir:
             runtime.working_dir = Path(temp_dir)
-        pipeline = PromotePipeline(runtime, group="openshift-4.10", assembly="4.10.99", signing_env="prod")
+        pipeline = PromotePipeline(runtime, group="openshift-4.10", assembly="4.10.99")
         pipeline._check_and_drop_empty_advisory = AsyncMock()
 
         advisories = {"image": 200, "extras": 300}
@@ -2903,7 +2877,7 @@ class TestDropEmptyAdvisories(IsolatedAsyncioTestCase):
         )
         with tempfile.TemporaryDirectory() as temp_dir:
             runtime.working_dir = Path(temp_dir)
-        pipeline = PromotePipeline(runtime, group="openshift-4.10", assembly="4.10.99", signing_env="prod")
+        pipeline = PromotePipeline(runtime, group="openshift-4.10", assembly="4.10.99")
         pipeline._check_and_drop_empty_advisory = AsyncMock(side_effect=RuntimeError("API error"))
 
         advisories = {"rpm": 100, "image": 200}
@@ -2928,7 +2902,7 @@ class TestDropEmptyAdvisories(IsolatedAsyncioTestCase):
         )
         with tempfile.TemporaryDirectory() as temp_dir:
             runtime.working_dir = Path(temp_dir)
-        pipeline = PromotePipeline(runtime, group="openshift-4.10", assembly="4.10.99", signing_env="prod")
+        pipeline = PromotePipeline(runtime, group="openshift-4.10", assembly="4.10.99")
         pipeline._check_and_drop_empty_advisory = AsyncMock(side_effect=RuntimeError("API error"))
         pipeline._slack_client.say_in_thread = AsyncMock(side_effect=RuntimeError("Slack down"))
 
@@ -2955,7 +2929,7 @@ class TestFixDocsAfterAdvisoryDrop(IsolatedAsyncioTestCase):
             new_slack_client=MagicMock(return_value=AsyncMock()),
         )
         runtime.working_dir = Path(tempfile.mkdtemp())
-        return PromotePipeline(runtime, group="openshift-4.10", assembly="4.10.99", signing_env="prod")
+        return PromotePipeline(runtime, group="openshift-4.10", assembly="4.10.99")
 
     @patch("pyartcd.jira_client.JIRAClient.from_url", return_value=None)
     async def test_rhcos_drop_is_noop(self, _):
@@ -3164,7 +3138,7 @@ class TestCreateCincinnatiPrs(IsolatedAsyncioTestCase):
             new_slack_client=MagicMock(return_value=AsyncMock()),
         )
         runtime.working_dir = Path(tempfile.mkdtemp())
-        pipeline = PromotePipeline(runtime, group="openshift-4.14", assembly="4.14.76", signing_env="prod")
+        pipeline = PromotePipeline(runtime, group="openshift-4.14", assembly="4.14.76")
         pipeline.skip_ota_notification = True
         return pipeline
 

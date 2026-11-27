@@ -26,7 +26,6 @@ def _make_pipeline(rhcos_file: str, arch: str = "s390x") -> SignRhcosContainersP
     pipeline.runtime = runtime
     pipeline.rhcos_file = Path(rhcos_file)
     pipeline.arch = arch
-    pipeline.signing_env = "stage"
     pipeline.logger = runtime.logger
     return pipeline
 

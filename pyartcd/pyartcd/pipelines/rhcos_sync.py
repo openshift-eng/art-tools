@@ -239,14 +239,12 @@ class RhcosSyncPipeline:
         force: bool = False,
         no_latest: bool = False,
         sign_only: bool = False,
-        signing_env: Optional[str] = None,
     ):
         self.runtime = runtime
         self.release_tag = release_tag
         self.force = force
         self.no_latest = no_latest
         self.sign_only = sign_only
-        self.signing_env = signing_env
         self.logger = runtime.logger
 
         # These are populated during run()
@@ -722,11 +720,6 @@ class RhcosSyncPipeline:
             return
 
         synclist_path = await self._generate_synclist(variant)
-        # Determine signing environment
-        signing_env = self.signing_env
-        if signing_env is None:
-            signing_env = "stage" if self.runtime.dry_run else "prod"
-
         # Run the existing SyncRhcosPipeline
         self.logger.info("Starting boot image sync...")
         pipeline = SyncRhcosPipeline(
@@ -738,7 +731,7 @@ class RhcosSyncPipeline:
             base_dir=self.base_dir,
             synclist=str(synclist_path),
             no_latest=self.no_latest,
-            signing_env=signing_env,
+            sign_checksum=True,
             stream_suffix=variant.stream_suffix,
         )
         await pipeline.run()
@@ -751,10 +744,6 @@ class RhcosSyncPipeline:
         Signs the primary RHCOS stream file plus any additional streams
         extracted from .data.streams (e.g. rhel-10 in OCP 5.x).
         """
-        signing_env = self.signing_env
-        if signing_env is None:
-            signing_env = "stage" if self.runtime.dry_run else "prod"
-
         # Sign the primary RHCOS stream.
         # Use async_run() instead of run() because we are already inside an
         # async event loop — run() calls asyncio.run() which would raise
@@ -766,7 +755,6 @@ class RhcosSyncPipeline:
                 runtime=self.runtime,
                 rhcos_file=str(rhcos_file),
                 arch=self.arch,
-                signing_env=signing_env,
             )
             await primary_pipeline.async_run()
             self.logger.info("Successfully signed primary RHCOS container images")
@@ -791,7 +779,6 @@ class RhcosSyncPipeline:
                     runtime=self.runtime,
                     rhcos_file=str(extra_file),
                     arch=self.arch,
-                    signing_env=signing_env,
                 )
                 await extra_pipeline.async_run()
                 self.logger.info("Successfully signed extra RHCOS stream: %s", stream_name)
@@ -821,12 +808,6 @@ class RhcosSyncPipeline:
     default=False,
     help="Only sign RHCOS container images (skip boot image mirror sync)",
 )
-@click.option(
-    "--signing-env",
-    type=click.Choice(["prod", "stage"]),
-    default=None,
-    help="Signing environment (default: 'prod' for real runs, 'stage' for dry-run)",
-)
 @pass_runtime
 @click_coroutine
 async def rhcos_sync(
@@ -835,7 +816,6 @@ async def rhcos_sync(
     force: bool,
     no_latest: bool,
     sign_only: bool,
-    signing_env: Optional[str],
 ):
     """Sync RHCOS boot images to mirror.openshift.com and sign container images.
 
@@ -859,9 +839,9 @@ async def rhcos_sync(
 
         artcd -vv rhcos-sync --release-tag 4.18.5-x86_64 --sign-only
 
-      Dry-run with explicit signing env:
+      Dry-run:
 
-        artcd -vv --dry-run rhcos-sync --release-tag 4.19.0-ec.0-x86_64 --signing-env stage
+        artcd -vv --dry-run rhcos-sync --release-tag 4.19.0-ec.0-x86_64
     """
     pipeline = RhcosSyncPipeline(
         runtime=runtime,
@@ -869,6 +849,5 @@ async def rhcos_sync(
         force=force,
         no_latest=no_latest,
         sign_only=sign_only,
-        signing_env=signing_env,
     )
     await pipeline.run()

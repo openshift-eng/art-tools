@@ -10,7 +10,7 @@ from pyartcd.pipelines.sync_rhcos import SyncRhcosPipeline
 
 class TestSyncRhcosPipeline(IsolatedAsyncioTestCase):
     async def test_run_requires_direct_credentials_before_staging(self):
-        pipeline = self._make_pipeline(signing_env="prod")
+        pipeline = self._make_pipeline(sign_checksum=True)
         with patch.dict(os.environ, {}, clear=True):
             with self.assertRaisesRegex(ValueError, "DIRECT_SIGNING_KEYTAB"):
                 await pipeline.run()
@@ -31,7 +31,7 @@ class TestSyncRhcosPipeline(IsolatedAsyncioTestCase):
             base_dir="/pub/openshift-v4/x86_64/dependencies/rhcos",
             synclist=str(Path(self.tmpdir) / "synclist.txt"),
             no_latest=False,
-            signing_env=None,
+            sign_checksum=False,
         )
         defaults.update(overrides)
         return SyncRhcosPipeline(**defaults)
@@ -230,14 +230,14 @@ class TestSyncRhcosPipeline(IsolatedAsyncioTestCase):
 
     @patch("pyartcd.pipelines.sync_rhcos.DirectSignatory.from_environment")
     async def test_sign_sha256sum_dry_run_skips_signing(self, mock_from_environment):
-        pipeline = self._make_pipeline(signing_env="stage")
+        pipeline = self._make_pipeline(sign_checksum=True)
         pipeline.runtime.dry_run = True
         await pipeline._sign_sha256sum()
         mock_from_environment.assert_not_called()
 
     @patch("pyartcd.pipelines.sync_rhcos.DirectSignatory.from_environment")
     async def test_sign_sha256sum(self, mock_from_environment):
-        pipeline = self._make_pipeline(signing_env="prod")
+        pipeline = self._make_pipeline(sign_checksum=True)
         pipeline.staging_dir.mkdir(parents=True, exist_ok=True)
         sha256_file = pipeline.staging_dir / "sha256sum.txt"
         sha256_file.write_text("abc123  file.bin\n")
@@ -257,23 +257,6 @@ class TestSyncRhcosPipeline(IsolatedAsyncioTestCase):
         call_kwargs = mock_signatory.sign_message_digest.call_args[1]
         self.assertEqual(call_kwargs["product"], "openshift")
         self.assertEqual(call_kwargs["release_name"], "4.19.0-ec.0")
-
-    @patch("pyartcd.pipelines.sync_rhcos.DirectSignatory.from_environment")
-    async def test_sign_sha256sum_stage(self, mock_from_environment):
-        pipeline = self._make_pipeline(signing_env="stage")
-        pipeline.staging_dir.mkdir(parents=True, exist_ok=True)
-        (pipeline.staging_dir / "sha256sum.txt").write_text("abc123  file.bin\n")
-
-        mock_signatory = AsyncMock()
-        mock_from_environment.return_value = mock_signatory
-        mock_signatory.__aenter__ = AsyncMock(return_value=mock_signatory)
-        mock_signatory.__aexit__ = AsyncMock(return_value=False)
-
-        await pipeline._sign_sha256sum()
-
-        mock_from_environment.assert_called_once_with(
-            sig_keyname="beta2",
-        )
 
     @patch("artcommonlib.exectools.cmd_gather_async", new_callable=AsyncMock)
     async def test_should_update_global_latest_no_next_version(self, mock_cmd):
@@ -353,7 +336,7 @@ class TestSyncRhcosPipeline(IsolatedAsyncioTestCase):
         synclist = Path(self.tmpdir) / "synclist.txt"
         synclist.write_text("https://example.com/rhcos-9.6.20250121-0-qemu.x86_64.qcow2.gz\n")
 
-        pipeline = self._make_pipeline(signing_env="prod", synclist=str(synclist))
+        pipeline = self._make_pipeline(sign_checksum=True, synclist=str(synclist))
 
         def fake_download(urls):
             pipeline.staging_dir.mkdir(parents=True, exist_ok=True)
@@ -376,7 +359,7 @@ class TestSyncRhcosPipeline(IsolatedAsyncioTestCase):
         synclist = Path(self.tmpdir) / "synclist.txt"
         synclist.write_text("https://example.com/rhcos-9.6.20250121-0-qemu.x86_64.qcow2.gz\n")
 
-        pipeline = self._make_pipeline(signing_env=None, synclist=str(synclist))
+        pipeline = self._make_pipeline(sign_checksum=False, synclist=str(synclist))
 
         def fake_download(urls):
             pipeline.staging_dir.mkdir(parents=True, exist_ok=True)

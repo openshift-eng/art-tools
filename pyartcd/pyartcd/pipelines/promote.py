@@ -164,7 +164,6 @@ class PromotePipeline:
         multi_only: bool = False,
         skip_mirror_binaries: bool = False,
         use_multi_hack: bool = False,
-        signing_env: Optional[str] = None,
         data_path: Optional[str] = None,
         data_gitref: Optional[str] = None,
     ) -> None:
@@ -190,11 +189,6 @@ class PromotePipeline:
         self._multi_enabled = False
         self._binaries_cdn_enabled = False
         self.private_only = False
-        if not self.skip_signing and not signing_env:
-            raise ValueError("--signing-env is required unless --skip-signing is set")
-        if not self.skip_sigstore and not signing_env:
-            raise ValueError("--signing-env is required unless --skip-sigstore is set")
-        self.signing_env = signing_env
 
         self._logger = self.runtime.logger
         self._slack_client = self.runtime.new_slack_client()
@@ -680,11 +674,11 @@ class PromotePipeline:
                         await locks.run_with_lock(
                             coro=self.sign_artifacts(release_name, client_type, release_infos, message_digests),
                             lock=lock,
-                            lock_name=lock.value.format(signing_env=self.signing_env),
+                            lock_name=lock.value,
                             lock_id=lock_identifier,
                         )
                     else:
-                        self._logger.warning("[DRY RUN] will sign artifacts without locking")
+                        self._logger.info("[DRY RUN] Skipping direct signing")
                         await self.sign_artifacts(release_name, client_type, release_infos, message_digests)
 
                 # publish rhcos on mirror via rhcos_sync job
@@ -1051,8 +1045,6 @@ class PromotePipeline:
         if self.runtime.dry_run:
             self._logger.info("[DRY RUN] Skipping direct signing")
             return
-        if not self.signing_env:
-            raise ValueError("--signing-env is missing")
         sig_keyname = _get_signing_key_for_client(client_type)
         self._logger.info("About to sign artifacts with key %s", sig_keyname)
         json_digest_sig_dir = self._working_dir / "json_digests"
@@ -3382,7 +3374,6 @@ class PromotePipeline:
 @click.option(
     "--use-multi-hack", is_flag=True, help="Add '-multi' to heterogeneous payload name to workaround a Cincinnati issue"
 )
-@click.option("--signing-env", type=click.Choice(("prod", "stage")), help="Signing server environment: prod or stage")
 @pass_runtime
 @click_coroutine
 async def promote(
@@ -3402,7 +3393,6 @@ async def promote(
     multi_only: bool,
     skip_mirror_binaries: bool,
     use_multi_hack: bool,
-    signing_env: Optional[str],
     data_path: Optional[str],
     data_gitref: Optional[str],
 ):
@@ -3423,7 +3413,6 @@ async def promote(
         multi_only,
         skip_mirror_binaries,
         use_multi_hack,
-        signing_env,
         data_path=data_path,
         data_gitref=data_gitref,
     )

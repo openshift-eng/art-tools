@@ -87,7 +87,6 @@ class DirectSignatory:
         Args:
             client_command: Executable and fixed arguments for the direct signing client.
             sig_keyname: Signing key name passed to the direct client.
-            signing_env: Signing environment, such as ``stage`` or ``prod``.
             keytab_file: Keytab used to initialize the isolated signing credential cache.
             principal: Kerberos principal used with ``keytab_file``.
             ccache_path: Optional credential-cache path. A temporary path is created when omitted.
