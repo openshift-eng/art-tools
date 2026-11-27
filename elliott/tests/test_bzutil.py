@@ -167,6 +167,77 @@ class TestBugTracker(unittest.TestCase):
             strict=True,
         )
 
+    def test_get_corresponding_flaw_bugs_forwards_strict_false(self):
+        # strict=False must be forwarded to get_flaw_bugs so an inaccessible/embargoed
+        # flaw bug is fetched permissively (dropped) instead of raising Fault 102.
+        flaw_a = flexmock(id=1)
+        tracker_bugs = [
+            flexmock(
+                corresponding_flaw_bug_ids=[flaw_a.id],
+                id=10,
+                whiteboard_component="component:foo",
+            ),
+        ]
+        flexmock(BugzillaBugTracker).should_receive("login")
+        flexmock(BugzillaBugTracker).should_receive("get_flaw_bugs").with_args(
+            list, strict=False, verbose=False
+        ).and_return([flaw_a]).once()
+        BugTracker.get_corresponding_flaw_bugs(tracker_bugs, BugzillaBugTracker({}), strict=False)
+
+    def test_get_corresponding_flaw_bugs_forwards_strict_true(self):
+        # strict=True (the default) must be forwarded to get_flaw_bugs.
+        flaw_a = flexmock(id=1)
+        tracker_bugs = [
+            flexmock(
+                corresponding_flaw_bug_ids=[flaw_a.id],
+                id=10,
+                whiteboard_component="component:foo",
+            ),
+        ]
+        flexmock(BugzillaBugTracker).should_receive("login")
+        flexmock(BugzillaBugTracker).should_receive("get_flaw_bugs").with_args(
+            list, strict=True, verbose=False
+        ).and_return([flaw_a]).once()
+        BugTracker.get_corresponding_flaw_bugs(tracker_bugs, BugzillaBugTracker({}), strict=True)
+
+    def test_get_corresponding_flaw_bugs_skips_missing_flaw_when_not_strict(self):
+        # Simulate an inaccessible/embargoed flaw being dropped from the fetched set:
+        # the tracker requests flaw id=2, but only flaw id=1 comes back.
+        # With strict=False this must not raise; the tracker with the missing flaw
+        # is excluded from tracker_flaws (only a warning is logged).
+        flaw_a = flexmock(id=1)
+        tracker_bugs = [
+            flexmock(
+                corresponding_flaw_bug_ids=[flaw_a.id],
+                id=10,
+                whiteboard_component="component:foo",
+            ),
+            flexmock(
+                corresponding_flaw_bug_ids=[2],
+                id=11,
+                whiteboard_component="component:bar",
+            ),
+        ]
+        flexmock(BugzillaBugTracker).should_receive("login")
+        # The lookup must request the *full* flaw-ID set ({1, 2}) permissively
+        # (strict=False, verbose=False); the inaccessible flaw (id=2) is then
+        # dropped from what comes back. Build the expected id list exactly the
+        # way get_corresponding_flaw_bugs does so the match is order-consistent
+        # regardless of set iteration order. This makes the test fail if the
+        # code requested the wrong id set or dropped strict/verbose, so an
+        # inaccessible flaw is distinguished from an id that was never requested.
+        expected_flaw_ids = list(set(sum([t.corresponding_flaw_bug_ids for t in tracker_bugs], [])))
+        self.assertEqual({1, 2}, set(expected_flaw_ids))
+        flexmock(BugzillaBugTracker).should_receive("get_flaw_bugs").with_args(
+            expected_flaw_ids, strict=False, verbose=False
+        ).and_return([flaw_a]).once()
+
+        tracker_flaws, flaw_tracker_map = BugTracker.get_corresponding_flaw_bugs(
+            tracker_bugs, BugzillaBugTracker({}), strict=False
+        )
+        self.assertEqual({10: [flaw_a.id]}, tracker_flaws)
+        self.assertNotIn(11, tracker_flaws)
+
     def test_get_vulnerability_draft_flaws(self):
         regular_flaw = flexmock(id=1, is_vulnerability_draft_bug=lambda: False)
         draft_flaw = flexmock(id=2, is_vulnerability_draft_bug=lambda: True)

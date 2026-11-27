@@ -673,6 +673,7 @@ class BugTracker:
         bug_tracker = flaw_bug_tracker
         flaw_bugs = bug_tracker.get_flaw_bugs(
             list(set(sum([t.corresponding_flaw_bug_ids for t in tracker_bugs], []))),
+            strict=strict,
             verbose=verbose,
         )
         flaw_tracker_map = {bug.id: {'bug': bug, 'trackers': []} for bug in flaw_bugs}
@@ -2009,7 +2010,9 @@ def get_second_fix_trackers(runtime, tracker_bugs: List[JIRABug]) -> List[JIRABu
     """
 
     flaw_bug_tracker = runtime.get_bug_tracker('bugzilla')
-    tracker_flaws, flaw_tracker_map = BugTracker.get_corresponding_flaw_bugs(tracker_bugs, flaw_bug_tracker)
+    tracker_flaws, flaw_tracker_map = BugTracker.get_corresponding_flaw_bugs(
+        tracker_bugs, flaw_bug_tracker, strict=False
+    )
 
     # do a sanity check that a tracker does not have more than one flaw associated with it
     # because it will break our following logic
