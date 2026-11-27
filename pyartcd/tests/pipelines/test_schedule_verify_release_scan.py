@@ -139,6 +139,22 @@ class TestScheduleVerifyReleaseScan(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(mock_jenkins.start_verify_release.call_count, 2)
 
+    @patch("pyartcd.pipelines.scheduled.schedule_verify_release_scan.jenkins")
+    @patch("pyartcd.pipelines.scheduled.schedule_verify_release_scan.GitLabClient")
+    async def test_fail_blocks_repeated_scans_until_removed(self, gitlab_cls, jenkins):
+        mr = _make_mr(
+            42, "Shipment for 4.22.9", ["stage-release-success", "stage-testing-success", "verify-release-fail"]
+        )
+        gitlab_cls.from_url.return_value.list_merge_requests.return_value = [mr]
+        await scan_and_trigger(self.runtime)
+        await scan_and_trigger(self.runtime)
+        jenkins.start_verify_release.assert_not_called()
+        mr.labels.remove("verify-release-fail")
+        await scan_and_trigger(self.runtime)
+        jenkins.start_verify_release.assert_called_once_with(
+            version="4.22", assembly="4.22.9", block_until_building=False
+        )
+
 
 if __name__ == "__main__":
     unittest.main()
