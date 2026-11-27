@@ -34,14 +34,6 @@ def _create_jira_tracker() -> JIRABugTracker:
     return JIRABugTracker(config)
 
 
-def _extract_cve_id_from_labels(labels: List[str]) -> Optional[str]:
-    """Extract CVE ID from JIRA labels (e.g., 'CVE-2025-12345')."""
-    for label in labels:
-        if label.startswith('CVE-'):
-            return label
-    return None
-
-
 def _extract_flaw_bug_ids_from_labels(labels: List[str]) -> List[int]:
     """Extract Bugzilla flaw bug IDs from JIRA labels (e.g., 'flaw:bz#12345')."""
     flaw_ids = []
@@ -74,13 +66,15 @@ async def process_bugs(runtime: Runtime, jira_ids: List[str]) -> ReleaseNotes:
     """Process a list of JIRA IDs and produce a ReleaseNotes object.
 
     For each JIRA:
-      - If it is a Vulnerability type, extract CVE ID, flaw bug IDs, and pscomponent
-        from labels to produce CveAssociation entries and flaw bug references.
+      - If it is a Vulnerability type, read the CVE ID from the official "CVE ID"
+        field and extract flaw bug IDs and pscomponent from labels to produce
+        CveAssociation entries and flaw bug references.
       - All JIRAs are added to the fixed issues list.
 
-    CVE data is extracted from JIRA labels (not custom fields) because non-OpenShift
-    products store this information in labels like 'CVE-xxxx', 'flaw:bz#xxxxx',
-    and 'pscomponent:xxx'.
+    The CVE id comes from the authoritative "CVE ID" custom field (via
+    JIRABug.cve_id). Non-OpenShift products store the remaining data in labels
+    like 'flaw:bz#xxxxx' and 'pscomponent:xxx', so flaw bug ids and pscomponent
+    are still read from labels.
 
     The advisory type is RHSA if any CVE is found, RHBA otherwise.
     """
@@ -108,11 +102,12 @@ async def process_bugs(runtime: Runtime, jira_ids: List[str]) -> ReleaseNotes:
         labels = getattr(jira_bug.bug.fields, 'labels', []) or []
         logger.info("JIRA %s labels: %s", jira_id, labels)
 
-        cve_id = _extract_cve_id_from_labels(labels)
+        cve_id = jira_bug.cve_id
         if not cve_id:
-            msg = f"JIRA {jira_id} is Vulnerability but has no CVE label"
-            logger.error(msg)
-            cve_mapping_errors.append(msg)
+            logger.warning(
+                "JIRA %s is a Vulnerability but has no CVE ID set; treating it as a regular bug",
+                jira_id,
+            )
             continue
 
         pscomponent = _extract_pscomponent_from_labels(labels)

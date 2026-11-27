@@ -4,7 +4,6 @@ from unittest.mock import MagicMock, Mock, patch
 from artcommonlib.jira_config import JIRA_DOMAIN_NAME
 from elliottlib.cli.process_release_from_fbc_bugs_cli import (
     GOLANG_BUILDER_DELIVERY_REPO,
-    _extract_cve_id_from_labels,
     _extract_flaw_bug_ids_from_labels,
     _extract_pscomponent_from_labels,
     process_bugs,
@@ -18,14 +17,6 @@ PATCH_GET_BUILDER_COMPONENTS = "elliottlib.cli.process_release_from_fbc_bugs_cli
 
 class TestLabelExtraction(unittest.TestCase):
     """Tests for the label-based extraction helpers."""
-
-    def test_extract_cve_id_found(self):
-        labels = ["SecurityTracking", "CVE-2025-12345", "pscomponent:oadp/oadp-velero-rhel9"]
-        self.assertEqual(_extract_cve_id_from_labels(labels), "CVE-2025-12345")
-
-    def test_extract_cve_id_not_found(self):
-        labels = ["SecurityTracking", "pscomponent:oadp/oadp-velero-rhel9"]
-        self.assertIsNone(_extract_cve_id_from_labels(labels))
 
     def test_extract_flaw_bug_ids(self):
         labels = ["flaw:bz#98765", "CVE-2025-12345", "flaw:bz#11111"]
@@ -49,12 +40,13 @@ class TestProcessReleaseFromFbcBugs(unittest.IsolatedAsyncioTestCase):
         self.mock_runtime = Mock()
         self.mock_runtime.image_metas.return_value = []
 
-    def _make_jira_bug(self, key, is_vulnerability=False, labels=None):
-        """Helper to create a mocked JIRABug with labels."""
+    def _make_jira_bug(self, key, is_vulnerability=False, labels=None, cve_id=None):
+        """Helper to create a mocked JIRABug with labels and a CVE ID field value."""
         bug = MagicMock()
         bug.id = key
         bug.is_type_vulnerability.return_value = is_vulnerability
         bug.bug.fields.labels = labels or []
+        bug.cve_id = cve_id
         return bug
 
     @patch(PATCH_GET_KONFLUX_COMPONENT)
@@ -86,14 +78,15 @@ class TestProcessReleaseFromFbcBugs(unittest.IsolatedAsyncioTestCase):
     @patch(PATCH_GET_DELIVERY_REPO)
     @patch(PATCH_CREATE_TRACKER)
     async def test_cve_bug_produces_rhsa(self, mock_create_tracker, mock_get_delivery, mock_get_konflux):
-        """A Vulnerability JIRA with CVE labels should produce RHSA with CVE associations and flaw bugs."""
+        """A Vulnerability JIRA with a CVE ID should produce RHSA with CVE associations and flaw bugs."""
         mock_get_delivery.return_value = "oadp-velero-container"
         mock_get_konflux.return_value = "oadp-1-4-oadp-velero"
 
         cve_bug = self._make_jira_bug(
             "OADP-7223",
             is_vulnerability=True,
-            labels=["SecurityTracking", "CVE-2025-12345", "pscomponent:oadp/oadp-velero-rhel9", "flaw:bz#98765"],
+            labels=["SecurityTracking", "pscomponent:oadp/oadp-velero-rhel9", "flaw:bz#98765"],
+            cve_id="CVE-2025-12345",
         )
 
         mock_tracker = Mock()
@@ -127,7 +120,8 @@ class TestProcessReleaseFromFbcBugs(unittest.IsolatedAsyncioTestCase):
         cve_bug = self._make_jira_bug(
             "OADP-7223",
             is_vulnerability=True,
-            labels=["CVE-2025-12345", "pscomponent:oadp/oadp-velero-rhel9", "flaw:bz#98765"],
+            labels=["pscomponent:oadp/oadp-velero-rhel9", "flaw:bz#98765"],
+            cve_id="CVE-2025-12345",
         )
         regular_bug = self._make_jira_bug("OADP-6707")
 
@@ -148,33 +142,41 @@ class TestProcessReleaseFromFbcBugs(unittest.IsolatedAsyncioTestCase):
     @patch(PATCH_GET_KONFLUX_COMPONENT)
     @patch(PATCH_GET_DELIVERY_REPO)
     @patch(PATCH_CREATE_TRACKER)
-    async def test_cve_without_cve_label_raises(self, mock_create_tracker, mock_get_delivery, mock_get_konflux):
-        """A Vulnerability JIRA without a CVE label should raise RuntimeError."""
+    async def test_vulnerability_without_cve_treated_as_regular(
+        self, mock_create_tracker, mock_get_delivery, mock_get_konflux
+    ):
+        """A Vulnerability JIRA with no CVE ID should be treated as a regular bug (no error)."""
         bug = self._make_jira_bug(
             "OADP-9999",
             is_vulnerability=True,
             labels=["SecurityTracking", "pscomponent:oadp/oadp-velero-rhel9"],
+            cve_id=None,
         )
 
         mock_tracker = Mock()
         mock_tracker.get_bug.return_value = bug
         mock_create_tracker.return_value = mock_tracker
 
-        with self.assertRaises(RuntimeError) as ctx:
-            await process_bugs(self.mock_runtime, ["OADP-9999"])
+        result = await process_bugs(self.mock_runtime, ["OADP-9999"])
 
-        self.assertIn("OADP-9999", str(ctx.exception))
-        self.assertIn("no CVE label", str(ctx.exception))
+        self.assertEqual(result.type, "RHBA")
+        self.assertIsNone(result.cves)
+        self.assertIsNotNone(result.issues)
+        fixed_by_source = {(i.id, i.source) for i in result.issues.fixed}
+        self.assertIn(("OADP-9999", JIRA_DOMAIN_NAME), fixed_by_source)
+        mock_get_delivery.assert_not_called()
+        mock_get_konflux.assert_not_called()
 
     @patch(PATCH_GET_KONFLUX_COMPONENT)
     @patch(PATCH_GET_DELIVERY_REPO)
     @patch(PATCH_CREATE_TRACKER)
     async def test_cve_without_pscomponent_label_raises(self, mock_create_tracker, mock_get_delivery, mock_get_konflux):
-        """A Vulnerability with CVE label but no pscomponent label should raise RuntimeError."""
+        """A Vulnerability with a CVE ID but no pscomponent label should raise RuntimeError."""
         bug = self._make_jira_bug(
             "OADP-8888",
             is_vulnerability=True,
-            labels=["CVE-2025-99999", "SecurityTracking"],
+            labels=["SecurityTracking"],
+            cve_id="CVE-2025-99999",
         )
 
         mock_tracker = Mock()
@@ -197,7 +199,8 @@ class TestProcessReleaseFromFbcBugs(unittest.IsolatedAsyncioTestCase):
         bug = self._make_jira_bug(
             "OADP-7777",
             is_vulnerability=True,
-            labels=["CVE-2025-11111", "pscomponent:unknown/unknown-container"],
+            labels=["pscomponent:unknown/unknown-container"],
+            cve_id="CVE-2025-11111",
         )
 
         mock_tracker = Mock()
@@ -221,7 +224,8 @@ class TestProcessReleaseFromFbcBugs(unittest.IsolatedAsyncioTestCase):
         bug = self._make_jira_bug(
             "OADP-7777",
             is_vulnerability=True,
-            labels=["CVE-2025-11111", "pscomponent:oadp/some-rhel9"],
+            labels=["pscomponent:oadp/some-rhel9"],
+            cve_id="CVE-2025-11111",
         )
 
         mock_tracker = Mock()
@@ -244,12 +248,14 @@ class TestProcessReleaseFromFbcBugs(unittest.IsolatedAsyncioTestCase):
         bug1 = self._make_jira_bug(
             "OADP-1111",
             is_vulnerability=True,
-            labels=["CVE-2025-00001", "pscomponent:unknown/repo-a"],
+            labels=["pscomponent:unknown/repo-a"],
+            cve_id="CVE-2025-00001",
         )
         bug2 = self._make_jira_bug(
             "OADP-2222",
             is_vulnerability=True,
-            labels=["CVE-2025-00002", "pscomponent:unknown/repo-b"],
+            labels=["pscomponent:unknown/repo-b"],
+            cve_id="CVE-2025-00002",
         )
 
         mock_tracker = Mock()
@@ -279,10 +285,10 @@ class TestProcessReleaseFromFbcBugs(unittest.IsolatedAsyncioTestCase):
             "OADP-7902",
             is_vulnerability=True,
             labels=[
-                "CVE-2026-32281",
                 f"pscomponent:{GOLANG_BUILDER_DELIVERY_REPO}",
                 "flaw:bz#2456333",
             ],
+            cve_id="CVE-2026-32281",
         )
 
         mock_tracker = Mock()
@@ -315,7 +321,8 @@ class TestProcessReleaseFromFbcBugs(unittest.IsolatedAsyncioTestCase):
         bug = self._make_jira_bug(
             "OADP-7902",
             is_vulnerability=True,
-            labels=["CVE-2026-32281", f"pscomponent:{GOLANG_BUILDER_DELIVERY_REPO}"],
+            labels=[f"pscomponent:{GOLANG_BUILDER_DELIVERY_REPO}"],
+            cve_id="CVE-2026-32281",
         )
 
         mock_tracker = Mock()
@@ -347,12 +354,14 @@ class TestProcessReleaseFromFbcBugs(unittest.IsolatedAsyncioTestCase):
         builder_bug = self._make_jira_bug(
             "OADP-7902",
             is_vulnerability=True,
-            labels=["CVE-2026-32281", f"pscomponent:{GOLANG_BUILDER_DELIVERY_REPO}", "flaw:bz#2456333"],
+            labels=[f"pscomponent:{GOLANG_BUILDER_DELIVERY_REPO}", "flaw:bz#2456333"],
+            cve_id="CVE-2026-32281",
         )
         regular_cve = self._make_jira_bug(
             "OADP-7792",
             is_vulnerability=True,
-            labels=["CVE-2026-32280", "pscomponent:oadp/oadp-velero-rhel9", "flaw:bz#2456339"],
+            labels=["pscomponent:oadp/oadp-velero-rhel9", "flaw:bz#2456339"],
+            cve_id="CVE-2026-32280",
         )
 
         mock_tracker = Mock()
@@ -402,12 +411,14 @@ class TestProcessReleaseFromFbcBugs(unittest.IsolatedAsyncioTestCase):
         cve1 = self._make_jira_bug(
             "OADP-1001",
             is_vulnerability=True,
-            labels=["CVE-2025-00001", "pscomponent:oadp/oadp-velero-rhel9", "flaw:bz#11111"],
+            labels=["pscomponent:oadp/oadp-velero-rhel9", "flaw:bz#11111"],
+            cve_id="CVE-2025-00001",
         )
         cve2 = self._make_jira_bug(
             "OADP-1002",
             is_vulnerability=True,
-            labels=["CVE-2025-00002", "pscomponent:oadp/oadp-operator-rhel9", "flaw:bz#22222"],
+            labels=["pscomponent:oadp/oadp-operator-rhel9", "flaw:bz#22222"],
+            cve_id="CVE-2025-00002",
         )
 
         mock_tracker = Mock()
