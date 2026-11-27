@@ -1166,7 +1166,7 @@ def categorize_failed_images(failed_images: list[str], failed_entries: dict[str,
     """
     Categorize failed images by their Konflux outcome.
 
-    ITS and release outcomes use their dedicated categories. Unknown and build
+    ITS, release, and post-build outcomes use their dedicated categories. Unknown and build
     outcomes fall back to the build-failure category.
 
     Arg(s):
@@ -1178,6 +1178,7 @@ def categorize_failed_images(failed_images: list[str], failed_entries: dict[str,
     build_failures = []
     its_failures = []
     release_failures = []
+    post_build_failures = []
 
     for image in failed_images:
         outcome = failed_entries.get(image, {}).get("outcome", "")
@@ -1185,6 +1186,8 @@ def categorize_failed_images(failed_images: list[str], failed_entries: dict[str,
             its_failures.append(image)
         elif outcome == str(KonfluxBuildOutcome.RELEASE_ERROR):
             release_failures.append(image)
+        elif outcome == str(KonfluxBuildOutcome.POST_BUILD_ERROR):
+            post_build_failures.append(image)
         else:
             build_failures.append(image)
 
@@ -1192,6 +1195,7 @@ def categorize_failed_images(failed_images: list[str], failed_entries: dict[str,
         build=build_failures,
         its=its_failures,
         release=release_failures,
+        post_build=post_build_failures,
     )
 
 
@@ -1214,6 +1218,7 @@ async def increment_failed_image_counters(
         ("build-failure", context.failure_categories.build, "build_pipeline_url"),
         ("ec-failure", context.failure_categories.its, "ec_pipeline_url"),
         ("release-failure", context.failure_categories.release, "release_pipeline"),
+        ("post-build-failure", context.failure_categories.post_build, "post_build_pipeline"),
     )
     increment_tasks = [
         context.increment_counter(
@@ -1233,7 +1238,7 @@ async def update_build_fail_counters(context: BuildFailCounterContext) -> None:
     """
     Update Redis build-failure counters after a Konflux build run.
 
-    Successfully built images reset all build, ITS, and release counters.
+    Successfully built images reset all build, ITS, release, and post-build counters.
     Direct failures increment their categorized counter, while parent-dependent
     failures are logged and excluded. Infrastructure failures are excluded only
     when no image had an attempted build.
@@ -1244,7 +1249,11 @@ async def update_build_fail_counters(context: BuildFailCounterContext) -> None:
     if context.assembly != "stream":
         return
 
-    counter_types = ("build-failure",) if context.build_only else ("build-failure", "ec-failure", "release-failure")
+    counter_types = (
+        ("build-failure",)
+        if context.build_only
+        else ("build-failure", "ec-failure", "release-failure", "post-build-failure")
+    )
     await asyncio.gather(
         *[
             context.reset_counter(f"count:{counter_type}:konflux:{context.group}:{image}")

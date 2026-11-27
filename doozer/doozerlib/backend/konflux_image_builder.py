@@ -35,7 +35,7 @@ from doozerlib.backend.base_image_handler import BaseImageHandler, BaseImageRele
 from doozerlib.backend.build_repo import BuildRepo
 from doozerlib.backend.golang_builder_shipment import GolangBuilderShipmentHandler
 from doozerlib.backend.konflux_client import ImageBuildParams, KonfluxClient
-from doozerlib.backend.konflux_post_build import KonfluxPostBuildCallback
+from doozerlib.backend.konflux_post_build import KonfluxPostBuildCallback, KonfluxPostBuildError
 from doozerlib.backend.pipelinerun_utils import PipelineRunInfo
 from doozerlib.backend.rebaser import KonfluxRebaser
 from doozerlib.image import ImageMetadata
@@ -582,6 +582,8 @@ class KonfluxImageBuilder:
                     except Exception as e:
                         logger.exception('Post-build callback failed for %s', metadata.distgit_key)
                         record['post_build_error'] = str(e)
+                        if isinstance(e, KonfluxPostBuildError):
+                            record['post_build_pipeline'] = e.pipeline_url
                         outcome = KonfluxBuildOutcome.POST_BUILD_ERROR
                         metadata.build_status = False
                         post_build_failed = True
@@ -597,6 +599,7 @@ class KonfluxImageBuilder:
                         ec_pipeline_url=ec_pipeline_url,
                         release_pipeline=release_result.release_pipeline if release_result else '',
                         released_pullspec=release_result.released_pullspec if release_result else '',
+                        post_build_pipeline=record['post_build_pipeline'],
                     )
                     if build_record:
                         record["record_id"] = build_record.record_id
@@ -1260,6 +1263,7 @@ class KonfluxImageBuilder:
         ec_pipeline_url='',
         release_pipeline='',
         released_pullspec='',
+        post_build_pipeline='',
     ) -> Optional[KonfluxBuildRecord]:
         logger = self._logger.getChild(f"[{metadata.distgit_key}]")
         if self._config.dry_run:
@@ -1336,6 +1340,7 @@ class KonfluxImageBuilder:
             'ec_pipeline_url': ec_pipeline_url,
             'release_pipeline': release_pipeline,
             'released_pullspec': released_pullspec,
+            'post_build_pipeline': post_build_pipeline,
         }
 
         # results:

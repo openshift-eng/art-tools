@@ -43,6 +43,7 @@ class FailedImageCategories(BaseModel):
     build: list[str]
     its: list[str]
     release: list[str]
+    post_build: list[str] = Field(default_factory=list)
 
 
 class FailedImageCounterContext(BaseCounterModel):

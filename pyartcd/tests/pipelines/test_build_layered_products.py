@@ -114,6 +114,7 @@ class TestBuildLayeredProductsPipeline(IsolatedAsyncioTestCase):
                 "count:build-failure:konflux:oadp-1.4:oadp-operator",
                 "count:ec-failure:konflux:oadp-1.4:oadp-operator",
                 "count:release-failure:konflux:oadp-1.4:oadp-operator",
+                "count:post-build-failure:konflux:oadp-1.4:oadp-operator",
             },
         )
         mock_increment.assert_awaited_once_with(
@@ -143,7 +144,7 @@ class TestBuildLayeredProductsPipeline(IsolatedAsyncioTestCase):
 
         await self.pipeline.update_build_fail_counters(BuildVariant.OADP)
 
-        self.assertEqual(len(mock_reset.await_args_list), 3)
+        self.assertEqual(len(mock_reset.await_args_list), 4)
         increment_calls = {call.args[0]: call for call in mock_increment.await_args_list}
         self.assertEqual(
             set(increment_calls),
@@ -986,6 +987,7 @@ class TestBuildLayeredProductsPipeline(IsolatedAsyncioTestCase):
                 'count:build-failure:konflux:oadp-1.4:ok',
                 'count:ec-failure:konflux:oadp-1.4:ok',
                 'count:release-failure:konflux:oadp-1.4:ok',
+                'count:post-build-failure:konflux:oadp-1.4:ok',
             ],
         )
         mock_increment.assert_awaited_once_with(

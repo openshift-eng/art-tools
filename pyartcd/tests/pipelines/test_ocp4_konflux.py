@@ -249,12 +249,12 @@ class TestUpdateBuildFailCounters(unittest.IsolatedAsyncioTestCase):
             mock_increment,
         )
 
-        self.assertEqual(mock_reset.call_count, len(built_images) * 3)
+        self.assertEqual(mock_reset.call_count, len(built_images) * 4)
         reset_keys = {call.args[0] for call in mock_reset.call_args_list}
         expected_keys = {
             f"count:{counter_type}:konflux:openshift-4.21:{image}"
             for image in built_images
-            for counter_type in ("build-failure", "ec-failure", "release-failure")
+            for counter_type in ("build-failure", "ec-failure", "release-failure", "post-build-failure")
         }
         self.assertEqual(reset_keys, expected_keys)
         mock_increment.assert_not_called()
