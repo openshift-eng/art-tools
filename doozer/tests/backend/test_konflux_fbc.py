@@ -592,7 +592,7 @@ class TestKonfluxFbcRebaser(unittest.IsolatedAsyncioTestCase):
 
     @patch("doozerlib.opm.generate_dockerfile")
     @patch("pathlib.Path.unlink")
-    @patch("doozerlib.backend.konflux_fbc.load_csv_from_bundle")
+    @patch("doozerlib.backend.konflux_fbc.KonfluxFbcRebaser._load_csv_from_bundle")
     @patch("doozerlib.backend.konflux_fbc.KonfluxFbcRebaser._get_referenced_images")
     @patch("doozerlib.backend.konflux_fbc.DockerfileParser")
     @patch("pathlib.Path.mkdir")
@@ -821,7 +821,7 @@ class TestKonfluxFbcRebaser(unittest.IsolatedAsyncioTestCase):
 
     @patch("doozerlib.opm.generate_dockerfile")
     @patch("pathlib.Path.unlink")
-    @patch("doozerlib.backend.konflux_fbc.load_csv_from_bundle")
+    @patch("doozerlib.backend.konflux_fbc.KonfluxFbcRebaser._load_csv_from_bundle")
     @patch("doozerlib.backend.konflux_fbc.KonfluxFbcRebaser._get_referenced_images")
     @patch("doozerlib.backend.konflux_fbc.DockerfileParser")
     @patch("pathlib.Path.mkdir")
@@ -1312,7 +1312,7 @@ class TestKonfluxFbcRebaser(unittest.IsolatedAsyncioTestCase):
 
     @patch("doozerlib.opm.generate_dockerfile")
     @patch("pathlib.Path.unlink")
-    @patch("doozerlib.backend.konflux_fbc.load_csv_from_bundle")
+    @patch("doozerlib.backend.konflux_fbc.KonfluxFbcRebaser._load_csv_from_bundle")
     @patch("doozerlib.backend.konflux_fbc.KonfluxFbcRebaser._get_referenced_images")
     @patch("doozerlib.backend.konflux_fbc.DockerfileParser")
     @patch("pathlib.Path.mkdir")
@@ -1464,7 +1464,7 @@ class TestKonfluxFbcRebaser(unittest.IsolatedAsyncioTestCase):
 
     @patch("doozerlib.opm.generate_dockerfile")
     @patch("pathlib.Path.unlink")
-    @patch("doozerlib.backend.konflux_fbc.load_csv_from_bundle")
+    @patch("doozerlib.backend.konflux_fbc.KonfluxFbcRebaser._load_csv_from_bundle")
     @patch("doozerlib.backend.konflux_fbc.KonfluxFbcRebaser._get_referenced_images")
     @patch("doozerlib.backend.konflux_fbc.DockerfileParser")
     @patch("pathlib.Path.mkdir")
@@ -1628,7 +1628,7 @@ class TestKonfluxFbcRebaser(unittest.IsolatedAsyncioTestCase):
 
     @patch("doozerlib.opm.generate_dockerfile")
     @patch("pathlib.Path.unlink")
-    @patch("doozerlib.backend.konflux_fbc.load_csv_from_bundle")
+    @patch("doozerlib.backend.konflux_fbc.KonfluxFbcRebaser._load_csv_from_bundle")
     @patch("doozerlib.backend.konflux_fbc.KonfluxFbcRebaser._get_referenced_images")
     @patch("doozerlib.backend.konflux_fbc.DockerfileParser")
     @patch("pathlib.Path.mkdir")
@@ -1812,7 +1812,7 @@ class TestKonfluxFbcRebaser(unittest.IsolatedAsyncioTestCase):
 
     @patch("doozerlib.opm.generate_dockerfile")
     @patch("pathlib.Path.unlink")
-    @patch("doozerlib.backend.konflux_fbc.load_csv_from_bundle")
+    @patch("doozerlib.backend.konflux_fbc.KonfluxFbcRebaser._load_csv_from_bundle")
     @patch("doozerlib.backend.konflux_fbc.KonfluxFbcRebaser._get_referenced_images")
     @patch("doozerlib.backend.konflux_fbc.DockerfileParser")
     @patch("pathlib.Path.mkdir")
@@ -1952,7 +1952,7 @@ class TestKonfluxFbcRebaser(unittest.IsolatedAsyncioTestCase):
 
     @patch("doozerlib.opm.generate_dockerfile")
     @patch("pathlib.Path.unlink")
-    @patch("doozerlib.backend.konflux_fbc.load_csv_from_bundle")
+    @patch("doozerlib.backend.konflux_fbc.KonfluxFbcRebaser._load_csv_from_bundle")
     @patch("doozerlib.backend.konflux_fbc.KonfluxFbcRebaser._get_referenced_images")
     @patch("doozerlib.backend.konflux_fbc.DockerfileParser")
     @patch("pathlib.Path.mkdir")
@@ -2092,7 +2092,7 @@ class TestKonfluxFbcRebaser(unittest.IsolatedAsyncioTestCase):
 
     @patch("doozerlib.opm.generate_dockerfile")
     @patch("pathlib.Path.unlink")
-    @patch("doozerlib.backend.konflux_fbc.load_csv_from_bundle")
+    @patch("doozerlib.backend.konflux_fbc.KonfluxFbcRebaser._load_csv_from_bundle")
     @patch("doozerlib.backend.konflux_fbc.KonfluxFbcRebaser._get_referenced_images")
     @patch("doozerlib.backend.konflux_fbc.DockerfileParser")
     @patch("pathlib.Path.mkdir")
@@ -2248,7 +2248,7 @@ class TestKonfluxFbcRebaser(unittest.IsolatedAsyncioTestCase):
 
     @patch("doozerlib.opm.generate_dockerfile")
     @patch("pathlib.Path.unlink")
-    @patch("doozerlib.backend.konflux_fbc.load_csv_from_bundle")
+    @patch("doozerlib.backend.konflux_fbc.KonfluxFbcRebaser._load_csv_from_bundle")
     @patch("doozerlib.backend.konflux_fbc.KonfluxFbcRebaser._get_referenced_images")
     @patch("doozerlib.backend.konflux_fbc.DockerfileParser")
     @patch("pathlib.Path.mkdir")
@@ -2390,7 +2390,7 @@ class TestKonfluxFbcRebaser(unittest.IsolatedAsyncioTestCase):
 
     @patch("doozerlib.opm.generate_dockerfile")
     @patch("pathlib.Path.unlink")
-    @patch("doozerlib.backend.konflux_fbc.load_csv_from_bundle")
+    @patch("doozerlib.backend.konflux_fbc.KonfluxFbcRebaser._load_csv_from_bundle")
     @patch("doozerlib.backend.konflux_fbc.KonfluxFbcRebaser._get_referenced_images")
     @patch("doozerlib.backend.konflux_fbc.DockerfileParser")
     @patch("pathlib.Path.mkdir")
@@ -2537,7 +2537,7 @@ class TestKonfluxFbcRebaser(unittest.IsolatedAsyncioTestCase):
 
     @patch("doozerlib.opm.generate_dockerfile")
     @patch("pathlib.Path.unlink")
-    @patch("doozerlib.backend.konflux_fbc.load_csv_from_bundle")
+    @patch("doozerlib.backend.konflux_fbc.KonfluxFbcRebaser._load_csv_from_bundle")
     @patch("doozerlib.backend.konflux_fbc.KonfluxFbcRebaser._get_referenced_images")
     @patch("doozerlib.backend.konflux_fbc.DockerfileParser")
     @patch("pathlib.Path.mkdir")
@@ -2676,7 +2676,7 @@ class TestKonfluxFbcRebaser(unittest.IsolatedAsyncioTestCase):
 
     @patch("doozerlib.opm.generate_dockerfile")
     @patch("pathlib.Path.unlink")
-    @patch("doozerlib.backend.konflux_fbc.load_csv_from_bundle")
+    @patch("doozerlib.backend.konflux_fbc.KonfluxFbcRebaser._load_csv_from_bundle")
     @patch("doozerlib.backend.konflux_fbc.KonfluxFbcRebaser._get_referenced_images")
     @patch("doozerlib.backend.konflux_fbc.DockerfileParser")
     @patch("pathlib.Path.mkdir")
@@ -2811,7 +2811,7 @@ class TestKonfluxFbcRebaser(unittest.IsolatedAsyncioTestCase):
 
     @patch("doozerlib.opm.generate_dockerfile")
     @patch("pathlib.Path.unlink")
-    @patch("doozerlib.backend.konflux_fbc.load_csv_from_bundle")
+    @patch("doozerlib.backend.konflux_fbc.KonfluxFbcRebaser._load_csv_from_bundle")
     @patch("doozerlib.backend.konflux_fbc.KonfluxFbcRebaser._get_referenced_images")
     @patch("doozerlib.backend.konflux_fbc.DockerfileParser")
     @patch("pathlib.Path.mkdir")
@@ -2958,7 +2958,7 @@ class TestKonfluxFbcRebaser(unittest.IsolatedAsyncioTestCase):
 
     @patch("doozerlib.opm.generate_dockerfile")
     @patch("pathlib.Path.unlink")
-    @patch("doozerlib.backend.konflux_fbc.load_csv_from_bundle")
+    @patch("doozerlib.backend.konflux_fbc.KonfluxFbcRebaser._load_csv_from_bundle")
     @patch("doozerlib.backend.konflux_fbc.KonfluxFbcRebaser._get_referenced_images")
     @patch("doozerlib.backend.konflux_fbc.DockerfileParser")
     @patch("pathlib.Path.mkdir")
@@ -3101,7 +3101,7 @@ class TestKonfluxFbcRebaser(unittest.IsolatedAsyncioTestCase):
 
     @patch("doozerlib.opm.generate_dockerfile")
     @patch("pathlib.Path.unlink")
-    @patch("doozerlib.backend.konflux_fbc.load_csv_from_bundle")
+    @patch("doozerlib.backend.konflux_fbc.KonfluxFbcRebaser._load_csv_from_bundle")
     @patch("doozerlib.backend.konflux_fbc.KonfluxFbcRebaser._get_referenced_images")
     @patch("doozerlib.backend.konflux_fbc.DockerfileParser")
     @patch("pathlib.Path.mkdir")
@@ -3289,7 +3289,7 @@ class TestKonfluxFbcRebaser(unittest.IsolatedAsyncioTestCase):
 
     @patch("doozerlib.opm.generate_dockerfile")
     @patch("pathlib.Path.unlink")
-    @patch("doozerlib.backend.konflux_fbc.load_csv_from_bundle")
+    @patch("doozerlib.backend.konflux_fbc.KonfluxFbcRebaser._load_csv_from_bundle")
     @patch("doozerlib.backend.konflux_fbc.KonfluxFbcRebaser._get_referenced_images")
     @patch("doozerlib.backend.konflux_fbc.DockerfileParser")
     @patch("pathlib.Path.mkdir")
@@ -3479,7 +3479,7 @@ class TestKonfluxFbcRebaser(unittest.IsolatedAsyncioTestCase):
 
     @patch("doozerlib.opm.generate_dockerfile")
     @patch("pathlib.Path.unlink")
-    @patch("doozerlib.backend.konflux_fbc.load_csv_from_bundle")
+    @patch("doozerlib.backend.konflux_fbc.KonfluxFbcRebaser._load_csv_from_bundle")
     @patch("doozerlib.backend.konflux_fbc.KonfluxFbcRebaser._get_referenced_images")
     @patch("doozerlib.backend.konflux_fbc.DockerfileParser")
     @patch("pathlib.Path.mkdir")
@@ -3646,7 +3646,7 @@ class TestKonfluxFbcRebaser(unittest.IsolatedAsyncioTestCase):
 
     @patch("doozerlib.opm.generate_dockerfile")
     @patch("pathlib.Path.unlink")
-    @patch("doozerlib.backend.konflux_fbc.load_csv_from_bundle")
+    @patch("doozerlib.backend.konflux_fbc.KonfluxFbcRebaser._load_csv_from_bundle")
     @patch("doozerlib.backend.konflux_fbc.KonfluxFbcRebaser._get_referenced_images")
     @patch("doozerlib.backend.konflux_fbc.DockerfileParser")
     @patch("pathlib.Path.mkdir")

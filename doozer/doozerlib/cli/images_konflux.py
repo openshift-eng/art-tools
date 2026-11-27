@@ -31,8 +31,6 @@ from artcommonlib.util import (
 from artcommonlib.variants import BuildVariant
 from kubernetes.dynamic import exceptions as k8s_exceptions
 from opentelemetry import trace
-from ruamel.yaml.error import YAMLError
-from semver import VersionInfo
 
 from doozerlib import constants, util
 from doozerlib.backend.base_image_handler import BaseImageHandler, BaseImageSnapshotInput
@@ -43,7 +41,7 @@ from doozerlib.backend.konflux_client import (
     KIND_SNAPSHOT,
     KonfluxClient,
 )
-from doozerlib.backend.konflux_fbc import get_referenced_images, load_csv_from_bundle
+from doozerlib.backend.konflux_fbc import get_referenced_images
 from doozerlib.backend.konflux_image_builder import KonfluxImageBuilder, KonfluxImageBuilderConfig
 from doozerlib.backend.konflux_olm_bundler import KonfluxOlmBundleBuilder, KonfluxOlmBundleRebaser
 from doozerlib.backend.konflux_post_build import build_post_build_callbacks
@@ -1351,30 +1349,6 @@ class BundleStageReleaseRelatedImagesCli:
         if not bundle_build:
             raise DoozerFatalError(f"Bundle build not found for operator {operator_name} ({record.nvr})")
 
-        release_data = None
-        # An override plan may intentionally exclude the operator from its mapping.
-        if not self.dry_run and not self.stage_release_plan and not runtime.group.startswith("openshift-"):
-            try:
-                csv = await load_csv_from_bundle(bundle_build, "manifests/")
-                version = VersionInfo.parse(csv["spec"]["version"])
-            except (OSError, KeyError, TypeError, ValueError, YAMLError) as exc:
-                raise DoozerFatalError(
-                    f"Cannot read CSV version from bundle {bundle_build.nvr} for operator {record.nvr}: {exc}"
-                ) from exc
-
-            # OCI tags use underscores in place of SemVer's build metadata separator.
-            tag = f"v{version}".replace("+", "_")
-            if len(tag) > 128:
-                raise DoozerFatalError(
-                    f"CSV version tag {tag!r} from bundle {bundle_build.nvr} for operator {record.nvr} "
-                    "exceeds the 128-character tag limit"
-                )
-            release_data = {
-                "mapping": {
-                    "components": [{"name": record.get_konflux_component_name(), "componentTags": [tag]}],
-                },
-            }
-
         # Dedup by component name within this operator: an operator can list itself among its operands.
         components: Dict[str, dict] = {}
         for build in await get_referenced_images(runtime.konflux_db, bundle_build):
@@ -1419,7 +1393,6 @@ class BundleStageReleaseRelatedImagesCli:
             assembly=assembly,
             operator_name=operator_name,
             operator_nvr=record.nvr,
-            release_data=release_data,
         )
         self._logger.info("Stage release succeeded for operator %s (%s): %s", operator_name, record.nvr, release_url)
         return release_url
@@ -1433,7 +1406,6 @@ class BundleStageReleaseRelatedImagesCli:
         assembly: str,
         operator_name: str,
         operator_nvr: str,
-        release_data: Optional[dict] = None,
     ) -> str:
         """Create one Snapshot + Release for one operator's related images and wait for it.
 
@@ -1521,8 +1493,6 @@ class BundleStageReleaseRelatedImagesCli:
             },
             "spec": {"releasePlan": release_plan_name, "snapshot": snapshot_name},
         }
-        if release_data:
-            release_obj["spec"]["data"] = release_data
         created_release = await konflux_client._create(release_obj)
         release_name = created_release.metadata.name
         release_url = konflux_client.resource_url(created_release)
@@ -1561,7 +1531,7 @@ class BundleStageReleaseRelatedImagesCli:
     "--stage-release-plan",
     metavar="NAME",
     default=None,
-    help="Override the auto-resolved Konflux ReleasePlan and use its configured tags.",
+    help="Override the auto-resolved Konflux ReleasePlan name.",
 )
 @click.option(
     '--dry-run', default=False, is_flag=True, help='Do not create Snapshots/Releases, only print what would be done.'
