@@ -10,7 +10,9 @@ from typing import Optional, Sequence, Tuple
 from artcommonlib import exectools
 from artcommonlib.config.plashet import PlashetConfig
 from artcommonlib.config.repo import BrewSource, BrewTag, PlashetRepo, Repo, RepoList
-from artcommonlib.util import isolate_major_minor_in_group
+from artcommonlib.release_util import isolate_el_version_in_release
+from artcommonlib.rpm_utils import parse_nvr
+from artcommonlib.util import isolate_el_version_in_brew_tag, isolate_major_minor_in_group
 
 from pyartcd import constants, util
 from pyartcd.constants import PLASHET_REMOTES
@@ -218,6 +220,7 @@ async def build_plashets(
     copy_links: bool = False,
     dry_run: bool = False,
     version: str | None = None,
+    override_nvrs: Optional[Sequence[str]] = None,
 ) -> dict:
     """
     Unless no RPMs have changed, create multiple yum repos (one for each arch) of RPMs
@@ -234,6 +237,8 @@ async def build_plashets(
     :param data_gitref: Doozer data path git [branch / tag / sha] to use
     :param dry_run: do not actually run the command, just log it
     :param copy_links: transform symlink into referent file/dir
+    :param override_nvrs: (optional) package NVRs to force-include in the plashet regardless of brew tag
+        membership or assembly pinning (requires the NVR to already exist in Brew)
 
     Returns a list describing the plashets that have been built. The dict will look like this:
     {
@@ -366,6 +371,20 @@ async def build_plashets(
         plashet_name_template = string.Template(plashet_config.plashet_dir)
         plashet_name = plashet_name_template.substitute(**variables)
 
+        # Only forward the override NVR(s) relevant to this repo's RHEL version(s), so a
+        # multi-repo build (e.g. el8 + el9) doesn't cross-apply an override meant for one
+        # RHEL version to another repo's build.
+        repo_el_versions = {isolate_el_version_in_brew_tag(tag.name) for tag in config.source.from_tags}
+        repo_el_versions.discard(None)
+        if override_nvrs and repo_el_versions:
+            repo_override_nvrs = [
+                nvr
+                for nvr in override_nvrs
+                if isolate_el_version_in_release(parse_nvr(nvr)['release']) in (None, *repo_el_versions)
+            ]
+        else:
+            repo_override_nvrs = override_nvrs
+
         local_path = await build_plashet_from_tags(
             group_param=group_param,
             assembly=assembly,
@@ -385,6 +404,7 @@ async def build_plashets(
             dry_run=dry_run,
             doozer_working=doozer_working,
             version=version,
+            override_nvrs=repo_override_nvrs,
         )
 
         logger.info('Plashet repo for %s created: %s', repo.name, local_path)
@@ -434,6 +454,7 @@ async def build_plashet_from_tags(
     doozer_working: str = 'doozer-working',
     dry_run: bool = False,
     version: str | None = None,
+    override_nvrs: Optional[Sequence[str]] = None,
 ):
     """
     Builds Plashet repo with "from-tags"
@@ -488,6 +509,8 @@ async def build_plashet_from_tags(
             ]
         )
     from_tags_args.append("--inherit")
+    for nvr in override_nvrs or []:
+        from_tags_args.extend(["--replace", nvr])
     cmd.extend(from_tags_args)
     if include_embargoed:
         cmd.append("--include-embargoed")
