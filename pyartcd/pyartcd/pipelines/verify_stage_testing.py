@@ -8,6 +8,7 @@ from artcommonlib import exectools
 from pyartcd import constants
 from pyartcd.cli import cli, click_coroutine, pass_runtime
 from pyartcd.runtime import Runtime
+from pyartcd.verify_common import notify_verify_result
 
 LOGGER = logging.getLogger(__name__)
 
@@ -177,6 +178,9 @@ class StageTestingPipeline:
     show_default=True,
     help="Output format.",
 )
+@click.option(
+    "--report-to-slack", is_flag=True, default=False, help="Post the final result to the release Slack channel."
+)
 @pass_runtime
 @click_coroutine
 async def verify_stage_testing_cli(
@@ -186,6 +190,7 @@ async def verify_stage_testing_cli(
     poll_interval: int,
     timeout: int,
     output: str,
+    report_to_slack: bool,
 ):
     """Trigger a stage testing Prow job and poll until completion.
 
@@ -206,14 +211,21 @@ async def verify_stage_testing_cli(
     Example:
         artcd verify-stage-testing --version 4.22 --assembly 4.22.9
     """
-    pipeline = StageTestingPipeline(
-        runtime=runtime,
-        version=version,
-        assembly=assembly,
-        poll_interval=poll_interval,
-        timeout=timeout,
-    )
-    result = await pipeline.run()
+    try:
+        pipeline = StageTestingPipeline(
+            runtime=runtime,
+            version=version,
+            assembly=assembly,
+            poll_interval=poll_interval,
+            timeout=timeout,
+        )
+        result = await pipeline.run()
+    except Exception:
+        if report_to_slack:
+            await notify_verify_result(runtime, version, assembly, passed=False)
+        raise
+    if report_to_slack and not result.get("already_passed"):
+        await notify_verify_result(runtime, version, assembly, passed=result.get("passed", False))
 
     if output == "json":
         click.echo(json.dumps(result, indent=2))

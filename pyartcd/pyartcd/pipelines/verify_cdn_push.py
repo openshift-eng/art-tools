@@ -8,6 +8,7 @@ from artcommonlib import exectools
 from pyartcd import constants
 from pyartcd.cli import cli, click_coroutine, pass_runtime
 from pyartcd.runtime import Runtime
+from pyartcd.verify_common import notify_verify_result
 
 LOGGER = logging.getLogger(__name__)
 
@@ -117,6 +118,9 @@ class VerifyCdnPushPipeline:
     show_default=True,
     help="Maximum seconds to wait for all pushes to complete.",
 )
+@click.option(
+    "--report-to-slack", is_flag=True, default=False, help="Post the final result to the release Slack channel."
+)
 @pass_runtime
 @click_coroutine
 async def verify_cdn_push_cli(
@@ -125,6 +129,7 @@ async def verify_cdn_push_cli(
     assembly: str,
     poll_interval: int,
     timeout: int,
+    report_to_slack: bool,
 ):
     """Push advisories to CDN staging and poll until all pushes complete.
 
@@ -135,14 +140,21 @@ async def verify_cdn_push_cli(
     Handles blocking/dependency advisories automatically — advisories that
     depend on others being pushed first are retried on each poll iteration.
     """
-    pipeline = VerifyCdnPushPipeline(
-        runtime=runtime,
-        version=version,
-        assembly=assembly,
-        poll_interval=poll_interval,
-        timeout=timeout,
-    )
-    result = await pipeline.run()
+    try:
+        pipeline = VerifyCdnPushPipeline(
+            runtime=runtime,
+            version=version,
+            assembly=assembly,
+            poll_interval=poll_interval,
+            timeout=timeout,
+        )
+        result = await pipeline.run()
+    except Exception:
+        if report_to_slack:
+            await notify_verify_result(runtime, version, assembly, passed=False)
+        raise
+    if report_to_slack:
+        await notify_verify_result(runtime, version, assembly, passed=result.get("passed", False))
     click.echo(json.dumps(result, indent=2))
     if not result.get("passed"):
         raise SystemExit(1)

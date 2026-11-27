@@ -14,6 +14,7 @@ from artcommonlib.registry_config import RegistryConfig
 from pyartcd import constants
 from pyartcd.cli import cli, click_coroutine, pass_runtime
 from pyartcd.runtime import Runtime
+from pyartcd.verify_common import notify_verify_result
 
 LOGGER = logging.getLogger(__name__)
 
@@ -326,6 +327,9 @@ class VerifyReleasePipeline:
     show_default=True,
     help="Output format.",
 )
+@click.option(
+    "--report-to-slack", is_flag=True, default=False, help="Post the final result to the release Slack channel."
+)
 @pass_runtime
 @click_coroutine
 async def verify_release_cli(
@@ -334,14 +338,22 @@ async def verify_release_cli(
     assembly: str,
     skip_steps: tuple[str, ...],
     output: str,
+    report_to_slack: bool,
 ):
-    pipeline = VerifyReleasePipeline(
-        runtime=runtime,
-        version=version,
-        assembly=assembly,
-        skip_steps=list(skip_steps),
-    )
-    result = await pipeline.run()
+    try:
+        pipeline = VerifyReleasePipeline(
+            runtime=runtime,
+            version=version,
+            assembly=assembly,
+            skip_steps=list(skip_steps),
+        )
+        result = await pipeline.run()
+    except Exception:
+        if report_to_slack:
+            await notify_verify_result(runtime, version, assembly, passed=False)
+        raise
+    if report_to_slack:
+        await notify_verify_result(runtime, version, assembly, passed=result.passed)
     click.echo(render_result(result, output, version, assembly))
     if not result.passed:
         raise SystemExit(1)
