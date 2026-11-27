@@ -29,6 +29,25 @@ class TestGlobalAutomationFreeze(unittest.IsolatedAsyncioTestCase):
             **kwargs,
         )
 
+    @patch.dict(os.environ, {'TASKRUN_NAME': 'build-run-task', 'TEKTON_PIPELINERUN_NAME': 'build-run'}, clear=True)
+    async def test_tekton_initialization_reports_status_without_updating_jenkins(self):
+        pipeline = self.make_pipeline()
+        pipeline.init_build_plan = AsyncMock()
+        with (
+            patch('pyartcd.jenkins.init_jenkins') as init_jenkins,
+            patch('pyartcd.jenkins.update_title') as update_title,
+            patch('pyartcd.jenkins.update_description') as update_description,
+            self.assertLogs('pyartcd.build_status') as logs,
+        ):
+            await pipeline.initialize()
+            pipeline.check_building_images()
+
+        self.assertIn('Build status: - 4.22 [test]', logs.output[0])
+        init_jenkins.assert_not_called()
+        update_title.assert_not_called()
+        update_description.assert_not_called()
+        pipeline.init_build_plan.assert_awaited_once_with()
+
     @patch('pyartcd.pipelines.ocp4_konflux.util.is_build_permitted', new_callable=AsyncMock, return_value=False)
     @patch('pyartcd.pipelines.ocp4_konflux.RegistryConfig')
     @patch.dict(os.environ, {'XDG_RUNTIME_DIR': '/tmp/keep-runtime-dir'}, clear=True)
