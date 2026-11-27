@@ -848,12 +848,17 @@ def from_tags(
 
     # --replace builds are fetched directly from Brew by NVR; they take precedence over
     # anything found via brew tag membership or assembly "is"/group-dependency pinning.
-    replace_builds: Dict[str, Dict] = {}
+    # Bucketed by RHEL version (parsed from each NVR's release) so that a single invocation
+    # covering multiple RHEL versions (e.g. via multiple --brew-tag) only applies each
+    # override to the tag(s) for its own RHEL version, instead of clobbering same-named
+    # packages across versions. NVRs whose RHEL version can't be determined apply to every tag.
+    replace_builds_by_el: Dict[Optional[int], Dict[str, Dict]] = {}
     for nvr in replace:
         replace_build = koji_proxy.getBuild(nvr, strict=True)
         package_name = replace_build['package_name']
-        logger.info('Will force-include --replace NVR %s for package %s', nvr, package_name)
-        replace_builds[package_name] = replace_build
+        replace_el_version = isolate_el_version_in_release(replace_build['release'])
+        logger.info('Will force-include --replace NVR %s for package %s (el%s)', nvr, package_name, replace_el_version)
+        replace_builds_by_el.setdefault(replace_el_version, {})[package_name] = replace_build
 
     # Extract target OpenShift version from the group to scope OpenShift version semantics
     target_openshift_version = None
@@ -963,7 +968,13 @@ def from_tags(
             component_builds.update(group_deps)
 
         # --replace overrides always win, regardless of tag membership or assembly pinning.
-        for component, replace_build in replace_builds.items():
+        # Only apply overrides whose own RHEL version matches this tag's (or whose RHEL
+        # version couldn't be determined, in which case they apply to every tag).
+        applicable_replace_builds = {
+            **replace_builds_by_el.get(None, {}),
+            **replace_builds_by_el.get(el_version, {}),
+        }
+        for component, replace_build in applicable_replace_builds.items():
             if component in component_builds and replace_build["id"] != component_builds[component]["id"]:
                 logger.warning(
                     "Overriding nvr %s with explicitly replaced nvr %s (--replace)...",
@@ -972,7 +983,7 @@ def from_tags(
                 )
             pinned_nvres[component] = to_nvre(replace_build)
             component_builds[component] = replace_build
-        signable_components |= replace_builds.keys()
+        signable_components |= applicable_replace_builds.keys()
 
         for build in component_builds.values():
             package_name = build['package_name']

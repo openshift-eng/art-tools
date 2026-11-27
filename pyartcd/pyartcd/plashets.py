@@ -10,7 +10,9 @@ from typing import Optional, Sequence, Tuple
 from artcommonlib import exectools
 from artcommonlib.config.plashet import PlashetConfig
 from artcommonlib.config.repo import BrewSource, BrewTag, PlashetRepo, Repo, RepoList
-from artcommonlib.util import isolate_major_minor_in_group
+from artcommonlib.release_util import isolate_el_version_in_release
+from artcommonlib.rpm_utils import parse_nvr
+from artcommonlib.util import isolate_el_version_in_brew_tag, isolate_major_minor_in_group
 
 from pyartcd import constants, util
 from pyartcd.constants import PLASHET_REMOTES
@@ -369,6 +371,20 @@ async def build_plashets(
         plashet_name_template = string.Template(plashet_config.plashet_dir)
         plashet_name = plashet_name_template.substitute(**variables)
 
+        # Only forward the override NVR(s) relevant to this repo's RHEL version(s), so a
+        # multi-repo build (e.g. el8 + el9) doesn't cross-apply an override meant for one
+        # RHEL version to another repo's build.
+        repo_el_versions = {isolate_el_version_in_brew_tag(tag.name) for tag in config.source.from_tags}
+        repo_el_versions.discard(None)
+        if override_nvrs and repo_el_versions:
+            repo_override_nvrs = [
+                nvr
+                for nvr in override_nvrs
+                if isolate_el_version_in_release(parse_nvr(nvr)['release']) in (None, *repo_el_versions)
+            ]
+        else:
+            repo_override_nvrs = override_nvrs
+
         local_path = await build_plashet_from_tags(
             group_param=group_param,
             assembly=assembly,
@@ -388,7 +404,7 @@ async def build_plashets(
             dry_run=dry_run,
             doozer_working=doozer_working,
             version=version,
-            override_nvrs=override_nvrs,
+            override_nvrs=repo_override_nvrs,
         )
 
         logger.info('Plashet repo for %s created: %s', repo.name, local_path)

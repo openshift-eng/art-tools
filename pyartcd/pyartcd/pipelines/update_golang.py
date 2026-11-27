@@ -517,6 +517,12 @@ class UpdateGolangPipeline:
                 ":construction: --force-plashet-build is set: building golang plashets with the given NVRs "
                 "forced in, regardless of brew tag state :construction:"
             )
+            # Plashet assembly requires every included package to be signed. Request signing
+            # directly (no tagging into the override/build tag, no availability wait) since
+            # process_build() is intentionally skipped on this path.
+            for el_v, nvr in el_nvr_map.items():
+                await self.ensure_signed(el_v, nvr)
+                await self.ensure_plashet_packages_signed(el_v)
             await self._build_golang_plashets(go_version, el_nvr_map.keys(), override_nvrs=el_nvr_map)
 
         # Check if openshift-golang-builder image builds exist for the provided compiler builds
