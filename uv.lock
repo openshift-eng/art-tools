@@ -963,12 +963,6 @@ wheels = [
 ]
 
 [[package]]
-name = "docopt"
-version = "0.6.2"
-source = { registry = "https://pypi.org/simple" }
-sdist = { url = "https://files.pythonhosted.org/packages/a2/55/8f8cab2afd404cf578136ef2cc5dfb50baa1761b68c9da1fb1e4eed343c9/docopt-0.6.2.tar.gz", hash = "sha256:49b3a825280bd66b3aa83585ef59c4a8c82f2c8a522dbe754a8bc8d08c85c491", size = 25901, upload-time = "2014-06-16T11:18:57.406Z" }
-
-[[package]]
 name = "docutils"
 version = "0.19"
 source = { registry = "https://pypi.org/simple" }
@@ -3204,7 +3198,6 @@ dependencies = [
     { name = "slack-sdk" },
     { name = "specfile", marker = "sys_platform == 'linux'" },
     { name = "sqlalchemy" },
-    { name = "stomp-py" },
     { name = "tenacity" },
     { name = "tomli" },
     { name = "truststore" },
@@ -3281,7 +3274,6 @@ requires-dist = [
     { name = "slack-sdk", specifier = ">=3.39.0" },
     { name = "specfile", marker = "sys_platform == 'linux'", specifier = ">=0.37.1" },
     { name = "sqlalchemy", specifier = ">=2.0.45" },
-    { name = "stomp-py", specifier = "~=8.1.0" },
     { name = "tenacity", specifier = ">=8.5.0" },
     { name = "tomli", specifier = "~=2.0.1" },
     { name = "truststore", specifier = ">=0.10.4" },
@@ -3501,19 +3493,6 @@ wheels = [
     { url = "https://files.pythonhosted.org/packages/43/f8/34e8e86883054b961c2eb88a5b42b89b2bf975723b1acca090966c2d03ff/sspilib-0.5.0-cp314-cp314t-win32.whl", hash = "sha256:9dad272abf3f4cf0bf95d495075d2987f6ba1fb300f8d603661ccac07d11272f", size = 567408, upload-time = "2025-12-03T00:30:48.723Z" },
     { url = "https://files.pythonhosted.org/packages/c4/d8/8c4ba75f925fd9651cb855c47e0e67931a175d6fd41e569193a8d58133ac/sspilib-0.5.0-cp314-cp314t-win_amd64.whl", hash = "sha256:7d7724d5dbb31f68e62465863dfb862fe2793281ce40d0c8f2dc60c8f07998f2", size = 690291, upload-time = "2025-12-03T00:30:49.929Z" },
     { url = "https://files.pythonhosted.org/packages/74/c3/07af17b6fcc2b02af294a8817e30441a502880a04c8d60be2d71e0a1eacc/sspilib-0.5.0-cp314-cp314t-win_arm64.whl", hash = "sha256:8ce23ec740dee025136370ed4ae64b7d1535368321049ef960012a57c93ebe15", size = 534304, upload-time = "2025-12-03T00:30:51.348Z" },
-]
-
-[[package]]
-name = "stomp-py"
-version = "8.1.0"
-source = { registry = "https://pypi.org/simple" }
-dependencies = [
-    { name = "docopt" },
-    { name = "websocket-client" },
-]
-sdist = { url = "https://files.pythonhosted.org/packages/9c/0f/d7f782d0f945d2f37054832c3fbfb5fdd23ff98166ccccc9f6c00cca025e/stomp.py-8.1.0.tar.gz", hash = "sha256:b4737d002684639753fbf12dedecb8aa85e5e260749c947acd49c482db42a594", size = 39808, upload-time = "2022-10-29T18:20:57.177Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/b4/fd/3b44012986027cd0c85bbbb7c79487d6d48f614345797e7332a4511f0d06/stomp.py-8.1.0-py3-none-any.whl", hash = "sha256:49bc4cf5a4b17b6dce6dc2da0cb869f6522f77eff5ba46ee3e26ceb4793be0df", size = 42621, upload-time = "2022-10-29T18:20:54.606Z" },
 ]
 
 [[package]]

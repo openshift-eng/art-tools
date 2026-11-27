@@ -31,12 +31,6 @@ JENKINS_SERVER_URL = 'https://art-jenkins.apps.int.prod-stable-spoke1-dc-iad2.it
 # It shall be used to print clickable logs that redirect the user to the triggered job page
 JENKINS_UI_URL = 'https://art-jenkins.apps.int.prod-stable-spoke1-dc-iad2.itup.redhat.com'
 
-UMB_BROKERS = {
-    "prod": "stomp+ssl://umb.api.redhat.com:61612",
-    "stage": "stomp+ssl://umb.stage.api.redhat.com:61612",
-    "qa": "stomp+ssl://umb.qa.api.redhat.com:61612",
-    "dev": "stomp+ssl://umb.dev.api.redhat.com:61612",
-}
 
 GITHUB_OWNER = "openshift-eng"
 

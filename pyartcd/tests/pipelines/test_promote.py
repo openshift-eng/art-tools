@@ -106,9 +106,9 @@ class TestPromotePipeline(IsolatedAsyncioTestCase):
         "JIRA_TOKEN",
         "QUAY_PASSWORD",
         "QUAY_AUTH_FILE",
-        "SIGNING_CERT",
-        "SIGNING_KEY",
         "REDIS_SERVER_PASSWORD",
+        "DIRECT_SIGNING_KEYTAB",
+        "DIRECT_SIGNING_PRINCIPAL",
         "JENKINS_SERVICE_ACCOUNT",
         "JENKINS_SERVICE_ACCOUNT_TOKEN",
         "AWS_SHARED_CREDENTIALS_FILE",
@@ -125,9 +125,9 @@ class TestPromotePipeline(IsolatedAsyncioTestCase):
                 "JIRA_TOKEN": "fake-jira-token",
                 "QUAY_PASSWORD": "fake-quay-password",
                 "QUAY_AUTH_FILE": "/fake/quay-auth.json",
-                "SIGNING_CERT": "/path/to/signing.crt",
-                "SIGNING_KEY": "/path/to/signing.key",
                 "REDIS_SERVER_PASSWORD": "fake-redis-server-password",
+                "DIRECT_SIGNING_KEYTAB": "/fake/keytab",
+                "DIRECT_SIGNING_PRINCIPAL": "signing@example.com",
                 "JENKINS_SERVICE_ACCOUNT": "fake-jenkins-service-account",
                 "JENKINS_SERVICE_ACCOUNT_TOKEN": "fake-jenkins-service-account-token",
                 "AWS_SHARED_CREDENTIALS_FILE": "/path/to/credentials/file",
@@ -2673,7 +2673,7 @@ class TestDoomsdayBackup(IsolatedAsyncioTestCase):
 
 
 class TestPromoteSigningTransport(IsolatedAsyncioTestCase):
-    def _make_pipeline(self, signing_transport="umb", **kwargs):
+    def _make_pipeline(self, **kwargs):
         runtime = MagicMock(
             config={
                 "build_config": {"ocp_build_data_url": "https://example.com/ocp-build-data.git"},
@@ -2690,20 +2690,12 @@ class TestPromoteSigningTransport(IsolatedAsyncioTestCase):
             group="openshift-4.10",
             assembly="4.10.99",
             signing_env="prod",
-            signing_transport=signing_transport,
             **kwargs,
         )
 
     @patch("pyartcd.jira_client.JIRAClient.from_url", return_value=None)
-    def test_direct_transport_is_stored(self, _):
-        pipeline = self._make_pipeline(signing_transport="direct")
-
-        self.assertEqual(pipeline.signing_transport, "direct")
-
-    @patch("pyartcd.jira_client.JIRAClient.from_url", return_value=None)
-    def test_direct_transport_requires_direct_credentials_not_umb_credentials(self, _):
+    def test_environment_does_not_require_umb_credentials(self, _):
         pipeline = self._make_pipeline(
-            signing_transport="direct",
             skip_sigstore=True,
             skip_build_microshift=True,
             skip_mirror_binaries=True,
@@ -2723,20 +2715,16 @@ class TestPromoteSigningTransport(IsolatedAsyncioTestCase):
             pipeline.check_environment_variables()
 
     @patch("pyartcd.jira_client.JIRAClient.from_url", return_value=None)
-    @patch("pyartcd.pipelines.promote.create_signatory")
-    async def test_sign_artifacts_uses_direct_transport(self, create_signatory, _):
-        pipeline = self._make_pipeline(signing_transport="direct")
+    @patch("pyartcd.pipelines.promote.DirectSignatory.from_environment")
+    async def test_sign_artifacts_uses_direct_transport(self, from_environment, _):
+        pipeline = self._make_pipeline()
         signatory = AsyncMock()
-        create_signatory.return_value = signatory
+        from_environment.return_value = signatory
 
         await pipeline.sign_artifacts("4.10.99", "ocp", {}, [])
 
-        create_signatory.assert_called_once_with(
-            "direct",
-            signing_env="prod",
+        from_environment.assert_called_once_with(
             sig_keyname="redhatrelease2",
-            cert_file=None,
-            key_file=None,
         )
 
 

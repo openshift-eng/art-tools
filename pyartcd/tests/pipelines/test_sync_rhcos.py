@@ -9,9 +9,12 @@ from pyartcd.pipelines.sync_rhcos import SyncRhcosPipeline
 
 
 class TestSyncRhcosPipeline(IsolatedAsyncioTestCase):
-    def test_direct_signing_requires_signing_environment(self):
-        with self.assertRaisesRegex(ValueError, "--signing-env is required for direct signing"):
-            self._make_pipeline(signing_transport="direct")
+    async def test_run_requires_direct_credentials_before_staging(self):
+        pipeline = self._make_pipeline(signing_env="prod")
+        with patch.dict(os.environ, {}, clear=True):
+            with self.assertRaisesRegex(ValueError, "DIRECT_SIGNING_KEYTAB"):
+                await pipeline.run()
+        self.assertFalse(pipeline.staging_dir.exists())
 
     def _make_pipeline(self, **overrides):
         runtime = MagicMock()
@@ -29,7 +32,6 @@ class TestSyncRhcosPipeline(IsolatedAsyncioTestCase):
             synclist=str(Path(self.tmpdir) / "synclist.txt"),
             no_latest=False,
             signing_env=None,
-            signing_transport="umb",
         )
         defaults.update(overrides)
         return SyncRhcosPipeline(**defaults)
@@ -226,41 +228,29 @@ class TestSyncRhcosPipeline(IsolatedAsyncioTestCase):
             delete=True,
         )
 
-    @patch("pyartcd.pipelines.sync_rhcos.create_signatory")
-    async def test_sign_sha256sum_dry_run_skips_all_transports(self, mock_create_signatory):
-        for transport in ("umb", "direct"):
-            with self.subTest(transport=transport):
-                pipeline = self._make_pipeline(signing_env="stage", signing_transport=transport)
-                pipeline.runtime.dry_run = True
-                pipeline.staging_dir.mkdir(parents=True, exist_ok=True)
-                # Valid signing inputs must not make a dry-run contact either signing service.
-                (pipeline.staging_dir / "sha256sum.txt").write_text("abc123  file.bin\n")
-                with patch.dict(os.environ, {"SIGNING_CERT": "/fake/cert", "SIGNING_KEY": "/fake/key"}):
-                    await pipeline._sign_sha256sum()
-                mock_create_signatory.assert_not_called()
-                self.assertFalse((pipeline.staging_dir / "sha256sum.txt.gpg").exists())
+    @patch("pyartcd.pipelines.sync_rhcos.DirectSignatory.from_environment")
+    async def test_sign_sha256sum_dry_run_skips_signing(self, mock_from_environment):
+        pipeline = self._make_pipeline(signing_env="stage")
+        pipeline.runtime.dry_run = True
+        await pipeline._sign_sha256sum()
+        mock_from_environment.assert_not_called()
 
-    @patch("pyartcd.pipelines.sync_rhcos.create_signatory")
-    async def test_sign_sha256sum(self, mock_create_signatory):
+    @patch("pyartcd.pipelines.sync_rhcos.DirectSignatory.from_environment")
+    async def test_sign_sha256sum(self, mock_from_environment):
         pipeline = self._make_pipeline(signing_env="prod")
         pipeline.staging_dir.mkdir(parents=True, exist_ok=True)
         sha256_file = pipeline.staging_dir / "sha256sum.txt"
         sha256_file.write_text("abc123  file.bin\n")
 
         mock_signatory = AsyncMock()
-        mock_create_signatory.return_value = mock_signatory
+        mock_from_environment.return_value = mock_signatory
         mock_signatory.__aenter__ = AsyncMock(return_value=mock_signatory)
         mock_signatory.__aexit__ = AsyncMock(return_value=False)
 
-        with patch.dict(os.environ, {"SIGNING_CERT": "/fake/cert", "SIGNING_KEY": "/fake/key"}):
-            await pipeline._sign_sha256sum()
+        await pipeline._sign_sha256sum()
 
-        mock_create_signatory.assert_called_once_with(
-            "umb",
-            signing_env="prod",
+        mock_from_environment.assert_called_once_with(
             sig_keyname="redhatrelease2",
-            cert_file="/fake/cert",
-            key_file="/fake/key",
         )
 
         mock_signatory.sign_message_digest.assert_awaited_once()
@@ -268,65 +258,22 @@ class TestSyncRhcosPipeline(IsolatedAsyncioTestCase):
         self.assertEqual(call_kwargs["product"], "openshift")
         self.assertEqual(call_kwargs["release_name"], "4.19.0-ec.0")
 
-    @patch("pyartcd.pipelines.sync_rhcos.create_signatory")
-    async def test_sign_sha256sum_stage(self, mock_create_signatory):
+    @patch("pyartcd.pipelines.sync_rhcos.DirectSignatory.from_environment")
+    async def test_sign_sha256sum_stage(self, mock_from_environment):
         pipeline = self._make_pipeline(signing_env="stage")
         pipeline.staging_dir.mkdir(parents=True, exist_ok=True)
         (pipeline.staging_dir / "sha256sum.txt").write_text("abc123  file.bin\n")
 
         mock_signatory = AsyncMock()
-        mock_create_signatory.return_value = mock_signatory
+        mock_from_environment.return_value = mock_signatory
         mock_signatory.__aenter__ = AsyncMock(return_value=mock_signatory)
         mock_signatory.__aexit__ = AsyncMock(return_value=False)
 
-        with patch.dict(os.environ, {"SIGNING_CERT": "/fake/cert", "SIGNING_KEY": "/fake/key"}):
-            await pipeline._sign_sha256sum()
+        await pipeline._sign_sha256sum()
 
-        mock_create_signatory.assert_called_once_with(
-            "umb",
-            signing_env="stage",
+        mock_from_environment.assert_called_once_with(
             sig_keyname="beta2",
-            cert_file="/fake/cert",
-            key_file="/fake/key",
         )
-
-    @patch("pyartcd.pipelines.sync_rhcos.create_signatory")
-    async def test_sign_sha256sum_direct_transport(self, mock_create_signatory):
-        pipeline = self._make_pipeline(signing_env="prod", signing_transport="direct")
-        pipeline.staging_dir.mkdir(parents=True, exist_ok=True)
-        (pipeline.staging_dir / "sha256sum.txt").write_text("abc123  file.bin\n")
-
-        mock_signatory = AsyncMock()
-        mock_create_signatory.return_value = mock_signatory
-
-        with patch.dict(
-            os.environ,
-            {
-                "DIRECT_SIGNING_KEYTAB": "/fake/signing-keytab",
-                "DIRECT_SIGNING_PRINCIPAL": "ocp-art-signing-prod@IPA.REDHAT.COM",
-            },
-        ):
-            await pipeline._sign_sha256sum()
-
-        mock_create_signatory.assert_called_once_with(
-            "direct",
-            signing_env="prod",
-            sig_keyname="redhatrelease2",
-            cert_file=None,
-            key_file=None,
-        )
-
-    async def test_sign_sha256sum_skips_without_creds(self):
-        pipeline = self._make_pipeline(signing_env="prod")
-        pipeline.staging_dir.mkdir(parents=True, exist_ok=True)
-        (pipeline.staging_dir / "sha256sum.txt").write_text("abc123  file.bin\n")
-
-        with patch.dict(os.environ, {}, clear=True):
-            os.environ.pop("SIGNING_CERT", None)
-            os.environ.pop("SIGNING_KEY", None)
-            await pipeline._sign_sha256sum()
-
-        pipeline.runtime.logger.warning.assert_called()
 
     @patch("artcommonlib.exectools.cmd_gather_async", new_callable=AsyncMock)
     async def test_should_update_global_latest_no_next_version(self, mock_cmd):
@@ -414,7 +361,8 @@ class TestSyncRhcosPipeline(IsolatedAsyncioTestCase):
 
         mock_download.side_effect = fake_download
 
-        await pipeline.run()
+        with patch("pyartcd.pipelines.sync_rhcos.get_direct_signing_credentials"):
+            await pipeline.run()
 
         mock_download.assert_awaited_once()
         mock_sign.assert_awaited_once()

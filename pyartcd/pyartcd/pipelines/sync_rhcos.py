@@ -30,7 +30,7 @@ from pyartcd.runtime import Runtime
 from pyartcd.signatory import (
     PROD_SIGNING_KEY_NAME,
     STAGE_SIGNING_KEY_NAME,
-    create_signatory,
+    DirectSignatory,
     get_direct_signing_credentials,
 )
 
@@ -64,7 +64,6 @@ class SyncRhcosPipeline:
         no_latest: bool = False,
         signing_env: Optional[str] = None,
         stream_suffix: str = "",
-        signing_transport: str = "umb",
     ):
         self.runtime = runtime
         self.arch = arch
@@ -76,17 +75,12 @@ class SyncRhcosPipeline:
         self.no_latest = no_latest
         self.signing_env = signing_env
         self.stream_suffix = stream_suffix
-        if signing_transport not in ("umb", "direct"):
-            raise ValueError("signing_transport must be either 'umb' or 'direct'")
-        if signing_transport == "direct" and not signing_env:
-            raise ValueError("--signing-env is required for direct signing")
-        self.signing_transport = signing_transport
         self.logger = runtime.logger
 
         self.staging_dir = Path(runtime.working_dir) / f"staging-{version}-{arch}-{build_id}{stream_suffix}"
 
     async def run(self):
-        if self.signing_transport == "direct" and not self.runtime.dry_run:
+        if self.signing_env and not self.runtime.dry_run:
             get_direct_signing_credentials()
 
         self.logger.info(
@@ -248,33 +242,22 @@ class SyncRhcosPipeline:
         return h.hexdigest()
 
     async def _sign_sha256sum(self):
-        """Sign sha256sum.txt via the configured transport and write sha256sum.txt.gpg."""
+        """Sign sha256sum.txt and write sha256sum.txt.gpg."""
         if self.runtime.dry_run:
-            self.logger.info("[DRY RUN] Skipping sha256sum.txt signing via %s", self.signing_transport)
+            self.logger.info("[DRY RUN] Skipping sha256sum.txt signing")
             return
-        cert_file = os.environ.get("SIGNING_CERT")
-        key_file = os.environ.get("SIGNING_KEY")
-        if self.signing_transport == "umb" and (not cert_file or not key_file):
-            self.logger.warning("SIGNING_CERT/SIGNING_KEY not set; skipping sha256sum.txt signing")
-            return
-
         sig_keyname = PROD_SIGNING_KEY_NAME if self.signing_env == "prod" else STAGE_SIGNING_KEY_NAME
         sha256sum_path = self.staging_dir / "sha256sum.txt"
         gpg_path = self.staging_dir / "sha256sum.txt.gpg"
 
         self.logger.info(
-            "Signing sha256sum.txt with key %s via %s/%s",
+            "Signing sha256sum.txt with key %s in %s",
             sig_keyname,
             self.signing_env,
-            self.signing_transport,
         )
 
-        async with create_signatory(
-            self.signing_transport,
-            signing_env=self.signing_env,
+        async with DirectSignatory.from_environment(
             sig_keyname=sig_keyname,
-            cert_file=cert_file,
-            key_file=key_file,
         ) as signatory:
             with open(sha256sum_path, "rb") as in_file, open(gpg_path, "wb") as sig_file:
                 await signatory.sign_message_digest(
@@ -372,13 +355,6 @@ class SyncRhcosPipeline:
     default=None,
     help="Signing environment for GPG-signing sha256sum.txt (omit to skip signing)",
 )
-@click.option(
-    "--signing-transport",
-    type=click.Choice(["umb", "direct"]),
-    default="umb",
-    show_default=True,
-    help="Signing transport to use for sha256sum.txt",
-)
 @pass_runtime
 @click_coroutine
 async def sync_rhcos(
@@ -391,7 +367,6 @@ async def sync_rhcos(
     synclist: str,
     no_latest: bool,
     signing_env: Optional[str],
-    signing_transport: str,
 ):
     pipeline = SyncRhcosPipeline(
         runtime=runtime,
@@ -403,6 +378,5 @@ async def sync_rhcos(
         synclist=synclist,
         no_latest=no_latest,
         signing_env=signing_env,
-        signing_transport=signing_transport,
     )
     await pipeline.run()
