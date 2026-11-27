@@ -117,6 +117,8 @@ class TestFindBugsBridgeCli(IsolatedAsyncioTestCase):
         source_bug.bug.fields.components[0].name = "Visible"
         source_bug.bug.fields.priority = None
         source_bug.bug.fields.security = None
+        source_bug.bug.fields.versions = [MagicMock()]
+        source_bug.bug.fields.versions[0].name = "4.23.0"
 
         image_meta = MagicMock()
         image_meta.distgit_key = "visible-image"
@@ -132,6 +134,7 @@ class TestFindBugsBridgeCli(IsolatedAsyncioTestCase):
         create_call = self.cli.target_tracker.create_issue.call_args.args[0]
         self.assertEqual(create_call["issuetype"], {"name": "Story"})
         self.assertEqual(create_call["components"], [{"name": "Visible"}])
+        self.assertEqual(create_call["versions"], [{"name": "4.23.0"}])
         self.assertIn(BRIDGE_LABEL, create_call["labels"])
         self.cli.target_tracker.create_issue_link.assert_any_call("Blocks", "OCPBUGS-123", "OCPBUGS-999")
         self.cli.target_tracker.create_issue_link.assert_any_call("Depend", "OCPBUGS-999", "OCPBUGS-123")
@@ -202,6 +205,7 @@ class TestFindBugsBridgeCli(IsolatedAsyncioTestCase):
         existing_mirror.bug.fields.description = self.cli._build_description(source_bug, image_meta)
         existing_mirror.bug.fields.components = source_bug.bug.fields.components
         existing_mirror.bug.fields.priority = None
+        existing_mirror.bug.fields.versions = []
         # All required links present
         existing_mirror.bug.fields.issuelinks = [
             self._link("Blocks", inward_key="OCPBUGS-123"),
@@ -240,6 +244,7 @@ class TestFindBugsBridgeCli(IsolatedAsyncioTestCase):
         existing_mirror.bug.fields.description = self.cli._build_description(source_bug, image_meta)
         existing_mirror.bug.fields.components = source_bug.bug.fields.components
         existing_mirror.bug.fields.priority = None
+        existing_mirror.bug.fields.versions = []
         existing_mirror.bug.fields.issuelinks = [
             self._link("Blocks", inward_key="OCPBUGS-123"),
             self._link("Depend", outward_key="OCPBUGS-123"),
@@ -276,6 +281,7 @@ class TestFindBugsBridgeCli(IsolatedAsyncioTestCase):
         existing_mirror.bug.fields.description = self.cli._build_description(source_bug, image_meta)
         existing_mirror.bug.fields.components = source_bug.bug.fields.components
         existing_mirror.bug.fields.priority = None
+        existing_mirror.bug.fields.versions = []
         # Only one of three links present
         existing_mirror.bug.fields.issuelinks = [
             self._link("Blocks", inward_key="OCPBUGS-123"),
@@ -335,6 +341,7 @@ class TestFindBugsBridgeCli(IsolatedAsyncioTestCase):
         source_bug.bug.fields.description = ""
         source_bug.bug.fields.priority = None
         source_bug.bug.fields.security = None
+        source_bug.bug.fields.versions = []
 
         image_meta = MagicMock()
         image_meta.distgit_key = "test-image"
@@ -353,6 +360,7 @@ class TestFindBugsBridgeCli(IsolatedAsyncioTestCase):
         source_bug.bug.fields.description = ""
         source_bug.bug.fields.priority = None
         source_bug.bug.fields.security = None
+        source_bug.bug.fields.versions = []
 
         image_meta = MagicMock()
         image_meta.distgit_key = "test-image"
@@ -360,6 +368,68 @@ class TestFindBugsBridgeCli(IsolatedAsyncioTestCase):
         fields = self.cli._build_issue_fields(source_bug, image_meta)
 
         self.assertEqual(fields["summary"], f"Short title [bridge to {self.cli.target_release}]")
+
+    def test_build_issue_fields_copies_affects_versions(self):
+        source_bug = MagicMock()
+        source_bug.summary = "Short title"
+        source_bug.bug.fields.issuetype.name = "Bug"
+        source_bug.bug.fields.components = []
+        source_bug.bug.fields.description = ""
+        source_bug.bug.fields.priority = None
+        source_bug.bug.fields.security = None
+        version_a = MagicMock()
+        version_a.name = "4.23.0"
+        version_b = MagicMock()
+        version_b.name = "4.23.z"
+        source_bug.bug.fields.versions = [version_a, version_b]
+
+        image_meta = MagicMock()
+        image_meta.distgit_key = "test-image"
+
+        fields = self.cli._build_issue_fields(source_bug, image_meta)
+
+        self.assertEqual(fields["versions"], [{"name": "4.23.0"}, {"name": "4.23.z"}])
+
+    def test_build_issue_fields_handles_missing_affects_versions(self):
+        source_bug = MagicMock()
+        source_bug.summary = "Short title"
+        source_bug.bug.fields.issuetype.name = "Bug"
+        source_bug.bug.fields.components = []
+        source_bug.bug.fields.description = ""
+        source_bug.bug.fields.priority = None
+        source_bug.bug.fields.security = None
+        source_bug.bug.fields.versions = []
+
+        image_meta = MagicMock()
+        image_meta.distgit_key = "test-image"
+
+        fields = self.cli._build_issue_fields(source_bug, image_meta)
+
+        self.assertEqual(fields["versions"], [])
+
+    def test_needs_update_detects_changed_affects_versions(self):
+        mirror_bug = MagicMock()
+        mirror_bug.bug.fields.summary = "Visible bug [bridge to 4.23.z]"
+        mirror_bug.bug.fields.description = "desc"
+        mirror_bug.bug.fields.components = []
+        mirror_bug.bug.fields.priority = None
+        mirror_version = MagicMock()
+        mirror_version.name = "4.23.0"
+        mirror_bug.bug.fields.versions = [mirror_version]
+
+        base_fields = {
+            "summary": "Visible bug [bridge to 4.23.z]",
+            "description": "desc",
+            "components": [],
+        }
+
+        # Versions match -> no update needed.
+        matching_fields = dict(base_fields, versions=[{"name": "4.23.0"}])
+        self.assertFalse(self.cli._needs_update(mirror_bug, matching_fields))
+
+        # Versions differ -> update needed.
+        changed_fields = dict(base_fields, versions=[{"name": "4.23.z"}])
+        self.assertTrue(self.cli._needs_update(mirror_bug, changed_fields))
 
     async def test_run_reports_invalid_cases_and_fails_at_end(self):
         self.cli.runtime.initialize = MagicMock()
