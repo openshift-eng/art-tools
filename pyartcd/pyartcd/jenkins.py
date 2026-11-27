@@ -43,7 +43,9 @@ class Jobs(Enum):
     MICROSHIFT_SYNC = 'aos-cd-builds/build%2Fmicroshift_sync'
     RHCOS_SYNC = 'aos-cd-builds/build%2Frhcos_sync'
     BINARIES_CDN_RELEASE = 'aos-cd-builds/build%2Fbinaries-cdn-release'
-    BUILD_PLASHETS = 'aos-cd-builds/build%2Fbuild-plashets'
+    #BUILD_PLASHETS = 'aos-cd-builds/build%2Fbuild-plashets'
+    # TEMP (bvizi): personal hack job for testing untagged-builds-to-plashet-in-golang-builder-test. Remove before merging.
+    BUILD_PLASHETS = 'hack/bvizi/untagged-builds-to-plashet-in-golang-builder-test'
     BUILD_FBC = 'aos-cd-builds/build%2Fbuild-fbc'
     LAYERED_PRODUCTS = 'aos-cd-builds/build%2Flayered-products'
     LAYERED_PRODUCTS_SCAN = 'aos-cd-builds/build%2Flayered-products-scan'
@@ -948,6 +950,8 @@ def start_build_plashets(
         'IGNORE_AUTOMATION_FREEZE': ignore_automation_freeze,
         'OVERRIDE_NVRS': ','.join(override_nvrs) if override_nvrs else '',
     }
+
+    params['ART_TOOLS_COMMIT'] = "kopero2000@untagged-builds-to-plashet-in-golang-builder"
 
     return start_build(
         job=Jobs.BUILD_PLASHETS,
