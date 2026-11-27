@@ -41,6 +41,12 @@ from doozerlib.backend.rebaser import KonfluxRebaser
 from doozerlib.image import ImageMetadata
 from doozerlib.lockfile import DEFAULT_ARTIFACT_LOCKFILE_NAME, DEFAULT_RPM_LOCKFILE_NAME
 from doozerlib.record_logger import RecordLogger
+from doozerlib.rpm_embargo import (
+    EmbargoedRpmError,
+    find_embargoed_rpms,
+    is_release_marked_private,
+    rpm_nvras_from_lockfile,
+)
 from doozerlib.source_resolver import SourceResolution
 from google.cloud.bigquery.retry import DEFAULT_RETRY
 from packageurl import PackageURL
@@ -308,6 +314,11 @@ class KonfluxImageBuilder:
                     f"Couldn't build {metadata.distgit_key} because the following parent images failed to build: {', '.join(failed_parents)}"
                 )
 
+            embargoed_release = is_release_marked_private(release)
+            public_candidate = metadata.runtime.variant is not BuildVariant.OKD and not embargoed_release
+            if public_candidate and not self._config.dry_run:
+                await self._check_public_build_inputs(metadata, df_path)
+
             # Start the build
             logger.info("Starting Konflux image build for %s...", metadata.distgit_key)
             build_attempts = metadata.get_konflux_build_attempts()
@@ -331,6 +342,8 @@ class KonfluxImageBuilder:
                 custom_its_blocking_failed = False
                 post_build_failed = False
                 shipment_refused = False
+                rpm_check_error = None
+                checked_rpms = None
                 image_pullspec = None
                 image_digest = None
                 definitive_image_pullspec = None
@@ -411,6 +424,16 @@ class KonfluxImageBuilder:
                     elif not self._config.dry_run:
                         # This should never happen in real builds - only expected in dry-run mode
                         raise IOError("PipelineRun succeeded but IMAGE_URL or IMAGE_DIGEST missing from results")
+
+                if definitive_image_pullspec and public_candidate:
+                    try:
+                        checked_rpms = await self._check_public_image_rpms(
+                            metadata, definitive_image_pullspec, building_arches
+                        )
+                    except Exception as exc:
+                        logger.exception('RPM embargo check failed for %s', nvr)
+                        rpm_check_error = str(exc)
+                        outcome = KonfluxBuildOutcome.POST_BUILD_ERROR
 
                 # Run enterprise-contract (EC) verification after a successful build
                 should_run_ec = (
@@ -542,6 +565,7 @@ class KonfluxImageBuilder:
 
                     if (
                         outcome is KonfluxBuildOutcome.SUCCESS
+                        and not embargoed_release
                         and metadata.should_create_golang_builder_shipment()
                         and definitive_image_pullspec is not None
                     ):
@@ -574,17 +598,21 @@ class KonfluxImageBuilder:
 
                 # Run required callbacks last, after successful ITS and any required release.
                 if outcome is KonfluxBuildOutcome.SUCCESS and callback and definitive_image_pullspec is not None:
-                    try:
-                        if callback.allows_dependents_before_completion(metadata):
-                            metadata.build_status = True
-                            metadata.build_event.set()
-                        record['post_build_pipeline'] = await callback.run(metadata, definitive_image_pullspec)
-                    except Exception as e:
-                        logger.exception('Post-build callback failed for %s', metadata.distgit_key)
-                        record['post_build_error'] = str(e)
-                        outcome = KonfluxBuildOutcome.POST_BUILD_ERROR
-                        metadata.build_status = False
-                        post_build_failed = True
+                    if embargoed_release:
+                        # Fail the public RHCOS pair while allowing the private build to succeed.
+                        callback.build_failed(metadata)
+                    else:
+                        try:
+                            if callback.allows_dependents_before_completion(metadata):
+                                metadata.build_status = True
+                                metadata.build_event.set()
+                            record['post_build_pipeline'] = await callback.run(metadata, definitive_image_pullspec)
+                        except Exception as e:
+                            logger.exception('Post-build callback failed for %s', metadata.distgit_key)
+                            record['post_build_error'] = str(e)
+                            outcome = KonfluxBuildOutcome.POST_BUILD_ERROR
+                            metadata.build_status = False
+                            post_build_failed = True
 
                 if not self._config.dry_run:
                     build_record = await self.update_konflux_db(
@@ -597,6 +625,8 @@ class KonfluxImageBuilder:
                         ec_pipeline_url=ec_pipeline_url,
                         release_pipeline=release_result.release_pipeline if release_result else '',
                         released_pullspec=release_result.released_pullspec if release_result else '',
+                        checked_rpms=checked_rpms,
+                        embargoed=rpm_check_error is not None,
                     )
                     if build_record:
                         record["record_id"] = build_record.record_id
@@ -610,12 +640,20 @@ class KonfluxImageBuilder:
                         error_message += f": {record['shipment_error']}"
                     if post_build_failed:
                         error_message += f": {record['post_build_error']}"
+                    if rpm_check_error is not None:
+                        error_message += f": {rpm_check_error}"
                     error = KonfluxImageBuildError(
                         error_message,
                         pipelinerun_name,
                         pipelinerun_info.to_dict(),
                     )
-                    if ec_pipeline_url or custom_its_blocking_failed or shipment_refused or post_build_failed:
+                    if (
+                        ec_pipeline_url
+                        or custom_its_blocking_failed
+                        or shipment_refused
+                        or post_build_failed
+                        or rpm_check_error is not None
+                    ):
                         # Post-build, EC, and blocking ITS failures are not recoverable by
                         # rebuilding the same image and repeating the external operation.
                         break
@@ -1079,9 +1117,57 @@ class KonfluxImageBuilder:
         logger.info(f"Created PipelineRun: {self._konflux_client.resource_url(pipelinerun_info.to_dict())}")
         return pipelinerun_info
 
+    async def _check_public_build_inputs(self, metadata: ImageMetadata, df_path: Path) -> None:
+        """Check pinned RPM inputs before claiming a public NVR."""
+        if metadata.get_konflux_network_mode() != 'hermetic':
+            dfp = DockerfileParser(str(df_path))
+            if any(entry['instruction'] in ('ADD', 'COPY') and '--from=' in entry['value'] for entry in dfp.structure):
+                raise EmbargoedRpmError(
+                    'Cannot verify RPMs copied from build stages in a networked build. '
+                    'Use hermetic RPM inputs or rebase with --embargoed.'
+                )
+            return
+
+        lockfile_dir = metadata.config.konflux.cachi2.lockfile.get('path', '.')
+        lockfiles = {df_path.parent / directory / DEFAULT_RPM_LOCKFILE_NAME for directory in ('.', lockfile_dir)}
+        nvras = set().union(*(rpm_nvras_from_lockfile(path) for path in lockfiles))
+        if nvras:
+            await exectools.to_thread(self._assert_public_rpms, metadata, nvras)
+
+    async def _check_public_image_rpms(
+        self, metadata: ImageMetadata, image_pullspec: str, arches: list[str]
+    ) -> Tuple[Set[str], Set[str]]:
+        allow_empty = metadata.config.konflux.get('no_shell', False) or (
+            metadata.config.get('from', {}).get('stream') == 'scratch'
+        )
+        nvras, source_nvrs = await self.get_installed_packages(
+            image_pullspec,
+            arches,
+            self._registry_auth_file_for_image(image_pullspec),
+            include_arch=True,
+            allow_empty=allow_empty,
+        )
+        await exectools.to_thread(self._assert_public_rpms, metadata, nvras, source_nvrs)
+        source_nvrs = await exectools.to_thread(self._resolve_source_package_nvrs, source_nvrs, metadata.runtime)
+        return {nvra.rsplit('.', 1)[0] for nvra in nvras}, source_nvrs
+
+    @staticmethod
+    def _assert_public_rpms(metadata, nvras, source_nvrs=()):
+        with metadata.runtime.shared_koji_client_session() as session:
+            embargoed = find_embargoed_rpms(session, rpm_nvras=nvras, source_nvrs=source_nvrs)
+        if embargoed:
+            raise EmbargoedRpmError(
+                f'Image consumes embargoed RPMs: {", ".join(sorted(embargoed))}. Rebase and rebuild with --embargoed.'
+            )
+
     @staticmethod
     async def get_installed_packages(
-        image_pullspec: str, arches: list[str], registry_auth_file: Optional[str] = None
+        image_pullspec: str,
+        arches: list[str],
+        registry_auth_file: Optional[str] = None,
+        *,
+        include_arch: bool = False,
+        allow_empty: bool = False,
     ) -> Tuple[Set[str], Set[str]]:
         """
         :return: Returns tuple of (package_nvrs, source_rpms) for an image pullspec, assumes that the sbom exists in registry
@@ -1147,7 +1233,8 @@ class KonfluxImageBuilder:
                     continue
 
                 if purl.name and purl.version:
-                    package_nvrs.add(f"{purl.name}-{purl.version}")
+                    nvr = f"{purl.name}-{purl.version}"
+                    package_nvrs.add(f'{nvr}.{arch_qual}' if include_arch else nvr)
 
                 # Old format (Mobster <1.2.1): upstream qualifier points to source RPM
                 # e.g. pkg:rpm/redhat/acl@2.3.1-4.el9?arch=x86_64&upstream=acl-2.3.1-4.el9.src.rpm&distro=rhel-9.8
@@ -1159,14 +1246,14 @@ class KonfluxImageBuilder:
                 elif purl.name and purl.version:
                     source_rpms.add(f"{purl.name}-{purl.version}")
 
-            if not package_nvrs:
+            if not package_nvrs and not allow_empty:
                 LOGGER.warning("No rpms found in sbom for arch %s. Please investigate", arch)
             return package_nvrs, source_rpms
 
         results = await asyncio.gather(*(_get_for_arch(arch) for arch in arches))
         for arch, result in zip(arches, results):
             package_nvrs, source_rpms = result
-            if not package_nvrs:
+            if not package_nvrs and not allow_empty:
                 raise ChildProcessError(f"Could not get rpms from SBOM for arch {arch}")
 
         all_package_nvrs = set()
@@ -1260,6 +1347,8 @@ class KonfluxImageBuilder:
         ec_pipeline_url='',
         release_pipeline='',
         released_pullspec='',
+        checked_rpms=None,
+        embargoed=False,
     ) -> Optional[KonfluxBuildRecord]:
         logger = self._logger.getChild(f"[{metadata.distgit_key}]")
         if self._config.dry_run:
@@ -1309,7 +1398,7 @@ class KonfluxImageBuilder:
             'release': release,
             'el_target': el_target_value,
             'arches': building_arches,
-            'embargoed': is_release_embargoed(release, 'konflux'),
+            'embargoed': embargoed or is_release_embargoed(release, 'konflux'),
             'hermetic': metadata.get_konflux_network_mode() == "hermetic",
             'start_time': datetime.now(tz=timezone.utc),
             'end_time': None,
@@ -1366,7 +1455,9 @@ class KonfluxImageBuilder:
             # Also auto-skip when base image is 'scratch' (consistent with rebaser logic).
             from_stream = metadata.config.get('from', {}).get('stream')
             skip_rpm_extraction = metadata.config.konflux.get("no_shell", False) or from_stream == 'scratch'
-            if skip_rpm_extraction:
+            if checked_rpms is not None:
+                package_nvrs, source_rpms = checked_rpms
+            elif skip_rpm_extraction:
                 logger.info(
                     "Skipping RPM extraction (no_shell=%s, from.stream=%s): image does not use RPMs",
                     metadata.config.konflux.get("no_shell", False),
@@ -1392,15 +1483,20 @@ class KonfluxImageBuilder:
                 }
             )
         elif image_url and image_digest:
-            # Non-SUCCESS outcome, but the image was built and pushed (e.g. its_error).
-            # Record the pullspec/tag so the image can still be referenced, but do NOT perform
-            # installed-RPM/package extraction (this is not a releasable build).
+            # Failed builds may still be requested by the test mirror. Record validated
+            # evidence when it exists, and keep any artifact with unknown RPMs private.
             build_record_params.update(
                 {
                     'image_pullspec': f"{image_url.split(':')[0]}@{image_digest}",
                     'image_tag': image_url.split(':')[-1],
                 }
             )
+            if checked_rpms is not None:
+                package_nvrs, source_rpms = checked_rpms
+                build_record_params['installed_packages'] = sorted(source_rpms)
+                build_record_params['installed_rpms'] = sorted(package_nvrs)
+            elif metadata.runtime.variant is not BuildVariant.OKD:
+                build_record_params['embargoed'] = True
         status = pipelinerun_dict.get('status', {})
         if status:
             start_time = status.get('startTime')

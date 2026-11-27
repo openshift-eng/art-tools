@@ -14,17 +14,21 @@ import os
 import re
 
 import click
+import koji
 from artcommonlib.build_visibility import is_nvr_embargoed
 from artcommonlib.constants import (
+    BREW_HUB,
     KONFLUX_DEFAULT_IMAGE_REPO,
     KONFLUX_IMAGE_TEST_REPO,
     RHCOS_IMAGE_REPO,
     SD_HANDOFF_REPO,
 )
-from artcommonlib.konflux.konflux_build_record import KonfluxBuildOutcome, KonfluxBuildRecord
+from artcommonlib.exectools import to_thread
+from artcommonlib.konflux.konflux_build_record import ArtifactType, KonfluxBuildOutcome, KonfluxBuildRecord
 from artcommonlib.konflux.konflux_db import KonfluxDb
 from artcommonlib.registry_config import RegistryConfig
 from artcommonlib.util import sync_to_quay
+from doozerlib.rpm_embargo import find_embargoed_rpms, rpm_inventory_from_build
 
 from pyartcd import jenkins
 from pyartcd.cli import cli, click_coroutine, pass_runtime
@@ -227,6 +231,16 @@ class SyncNvrToQuayPipeline:
         # SAFETY GUARD: a failed build (e.g. build_error) may have no image to mirror.
         if not record.image_pullspec:
             raise ValueError(f"record {record.record_id} for {nvr} has no image_pullspec; cannot sync")
+
+        if not self.allow_embargoed and record.artifact_type == ArtifactType.IMAGE:
+            nvras, sources = rpm_inventory_from_build(record)
+            if nvras or sources:
+                embargoed = await to_thread(
+                    find_embargoed_rpms, koji.ClientSession(BREW_HUB), rpm_nvras=nvras, source_nvrs=sources
+                )
+                if embargoed:
+                    self._logger.warning('Skipping %s because it contains embargoed RPMs', nvr)
+                    return
 
         # Only apply the build-specific image_tag (empty/omitted when the record has none).
         # sync_to_quay additionally adds the sha256-<digest> GC tag internally. We deliberately

@@ -1,16 +1,23 @@
+import asyncio
 import hashlib
 import html
 import json
 import os
 import re
+from pathlib import Path
+from tempfile import TemporaryDirectory
 from typing import Dict, Optional
 from uuid import uuid4
 
 import click
-from artcommonlib.constants import KONFLUX_DEFAULT_IMAGE_REPO, RHCOS_IMAGE_REPO
-from artcommonlib.exectools import cmd_gather_async
+import koji
+from artcommonlib.build_visibility import is_release_embargoed
+from artcommonlib.constants import BREW_HUB, KONFLUX_DEFAULT_IMAGE_REPO, RHCOS_IMAGE_REPO
+from artcommonlib.exectools import cmd_gather_async, to_thread
 from artcommonlib.registry_config import RegistryConfig
-from artcommonlib.util import sync_to_quay
+from artcommonlib.util import oc_image_info_async, sync_to_quay
+from doozerlib.rpm_embargo import EmbargoedRpmError, find_embargoed_rpms
+from doozerlib.util import oc_image_extract_async
 
 from pyartcd import jenkins
 from pyartcd.cli import cli, click_coroutine, pass_runtime
@@ -187,6 +194,50 @@ class RhcosNodeImagePostBuildPipeline:
         )
         return digest_pullspec
 
+    async def _read_rpm_nvras(self, pullspec: str, *, extensions: bool, auth_file: str) -> set[str]:
+        info = await oc_image_info_async(pullspec, '--show-multiarch', registry_config=auth_file)
+        manifests = info if isinstance(info, list) else [info]
+        arches = set()
+        for manifest in manifests:
+            config = manifest['config']
+            if config.get('os', 'linux') != 'linux':
+                continue
+            release = config.get('config', {}).get('Labels', {}).get('release', '')
+            if is_release_embargoed(release, 'konflux'):
+                raise EmbargoedRpmError(f'RHCOS image {pullspec} has no verified public release label')
+            arches.add(config['architecture'])
+        if not arches:
+            raise ValueError(f'RHCOS image {pullspec} has no Linux manifests to verify')
+
+        image_path = '/usr/share/rpm-ostree/extensions.json' if extensions else '/usr/share/openshift/base/meta.json'
+
+        async def read_arch(go_arch):
+            with TemporaryDirectory() as temp_dir:
+                await oc_image_extract_async(
+                    pullspec, [f'{image_path}:{temp_dir}'], registry_config=auth_file, go_arch=go_arch
+                )
+                metadata = json.loads((Path(temp_dir) / Path(image_path).name).read_text())
+            if extensions:
+                return {f'{name}-{vra}' for name, vra in metadata.items()}
+            packages = metadata['rpmdb.pkglist']
+            if not packages:
+                raise ValueError(f'RHCOS image {pullspec} has an empty RPM inventory for {go_arch}')
+            return {f'{name}-{version}-{release}.{arch}' for name, _, version, release, arch in packages}
+
+        return set().union(*(await asyncio.gather(*(read_arch(arch) for arch in sorted(arches)))))
+
+    async def _assert_public_rpms(self):
+        auth_file = os.environ['RHCOS_QUAY_AUTH_FILE']
+        node_nvras, extensions_nvras = await asyncio.gather(
+            self._read_rpm_nvras(self.node_image, extensions=False, auth_file=auth_file),
+            self._read_rpm_nvras(self.extensions_image, extensions=True, auth_file=auth_file),
+        )
+        embargoed = await to_thread(
+            find_embargoed_rpms, koji.ClientSession(BREW_HUB), rpm_nvras=node_nvras | extensions_nvras
+        )
+        if embargoed:
+            raise EmbargoedRpmError(f'RHCOS pair contains embargoed RPMs: {", ".join(sorted(embargoed))}')
+
     async def _promote(self, tags: Dict[str, str]):
         quay_auth_file = os.environ.get('QUAY_AUTH_FILE')
         rhcos_quay_auth_file = os.environ.get('RHCOS_QUAY_AUTH_FILE')
@@ -327,6 +378,7 @@ class RhcosNodeImagePostBuildPipeline:
             )
             return
 
+        await self._assert_public_rpms()
         client = RhcosJenkinsClient(kubeconfig_env_var='RHCOS_JENKINS_KUBECONFIG')
         build_number = client.trigger_build(
             'build-node-image',
