@@ -46,6 +46,7 @@ from doozerlib.lockfile_prototype.models import (
 from doozerlib.lockfile_prototype.rendered_packages import resolve_rendered_packages
 from doozerlib.lockfile_prototype.resolver import RpmResolver
 from doozerlib.lockfile_prototype.utils import format_version_pin, pick_minimum_evr
+from doozerlib.repodata import Repodata
 from doozerlib.repos import Repos
 
 
@@ -448,6 +449,7 @@ class RpmLockfilePrototypeGenerator:
             dockerfile_path,
             entries,
             no_rpms_stages=no_rpms_stages,
+            configured_packages=list(image_meta.config.konflux.cachi2.lockfile.get("rpms", []) or []),
         )
         lockfile = self._assemble_lockfile(stage_lockfiles, image_meta)
         self._write_lockfile(lockfile, out_file_path, image_meta.distgit_key)
@@ -554,6 +556,7 @@ class RpmLockfilePrototypeGenerator:
         dockerfile_path: Path,
         entries: list[dict],
         no_rpms_stages: set[int] | None = None,
+        configured_packages: list[str] | None = None,
     ) -> list[LockfileData]:
         """
         Resolve RPM packages for each Dockerfile stage.
@@ -568,12 +571,21 @@ class RpmLockfilePrototypeGenerator:
         Stages without RUN commands (and no $(cat ...) extra packages)
         are skipped — they can't install RPMs. The final stage is always
         processed because it may need base image reinstall packages.
+
+        Explicit konflux.cachi2.lockfile.rpms entries apply to every
+        resolved stage, preserving NVR pins when stage lockfiles merge.
         """
         stage_lockfiles: list[LockfileData] = []
         final_stage_num = total_stages - 1
         stages_with_installroot_only = _detect_stages_with_installroot_only(entries)
         if no_rpms_stages is None:
             no_rpms_stages = set()
+        configured_packages = configured_packages or []
+        required_packages = set(configured_packages)
+        required_packages.update(Repodata._detect_nvr_vs_name(pkg)[1] for pkg in configured_packages)
+        pinned_names = {
+            name for pkg in configured_packages for is_nvr, name in [Repodata._detect_nvr_vs_name(pkg)] if is_nvr
+        }
 
         for stage_num in range(total_stages):
             if stage_num in no_rpms_stages:
@@ -597,6 +609,7 @@ class RpmLockfilePrototypeGenerator:
                     continue
 
             extra_packages: list[str] = list(cat_packages.get(stage_num, []))
+            extra_packages.extend(pkg for pkg in configured_packages if pkg not in extra_packages)
             dynamic_package_set = dynamic_packages.get(stage_num)
 
             if bare_context:
@@ -662,6 +675,10 @@ class RpmLockfilePrototypeGenerator:
                         "packages added as upgrade targets for bare update"
                     )
 
+            # An automatic base-image upgrade must not override an explicit NVR pin.
+            if upgrade_pkgs and pinned_names:
+                upgrade_pkgs = [pkg for pkg in upgrade_pkgs if _package_name(pkg) not in pinned_names]
+
             result = await self._resolve_with_reconciliation(
                 repo_list,
                 arches,
@@ -675,6 +692,7 @@ class RpmLockfilePrototypeGenerator:
                 containerfile_install_packages=dockerfile_install_pkgs,
                 bare_context=bare_context,
                 arch_specific_packages=dynamic_arch_specific_packages,
+                required_packages=required_packages,
             )
 
             # Pass 2: pin Dockerfile packages that overlap with the base
@@ -900,6 +918,7 @@ class RpmLockfilePrototypeGenerator:
         containerfile_install_packages: set[str] | None = None,
         bare_context: bool = False,
         arch_specific_packages: dict[str, list[str]] | None = None,
+        required_packages: set[str] | None = None,
     ) -> LockfileData | None:
         """
         Resolve a single stage, retrying after removing unavailable packages.
@@ -986,6 +1005,11 @@ class RpmLockfilePrototypeGenerator:
                 missing = RpmResolver.parse_missing_packages(str(e))
                 if not missing:
                     raise
+                if missing & (required_packages or set()):
+                    raise RuntimeError(
+                        f"{distgit_key}: stage {stage_num}: configured lockfile RPMs unavailable: "
+                        f"{sorted(missing & required_packages)}"
+                    ) from e
                 upgrade_names = {_package_name(package) for package in remaining_upgrade}
                 upgrade_hit = missing & upgrade_names if remaining_upgrade else set()
                 containerfile_upgrade_hit = upgrade_hit & containerfile_install_packages
@@ -1230,6 +1254,7 @@ class RpmLockfilePrototypeGenerator:
         containerfile_install_packages: set[str] | None = None,
         bare_context: bool = False,
         arch_specific_packages: dict[str, list[str]] | None = None,
+        required_packages: set[str] | None = None,
     ) -> LockfileData | None:
         """
         Resolve a stage with cross-arch version reconciliation.
@@ -1273,6 +1298,7 @@ class RpmLockfilePrototypeGenerator:
             containerfile_install_packages=containerfile_install_packages,
             bare_context=bare_context,
             arch_specific_packages=arch_specific_packages,
+            required_packages=required_packages,
         )
         if not first_pass:
             return None
@@ -1323,6 +1349,7 @@ class RpmLockfilePrototypeGenerator:
                 containerfile_install_packages=containerfile_install_packages,
                 bare_context=bare_context,
                 arch_specific_packages=pinned_arch_specific_packages,
+                required_packages=required_packages,
             )
         except RuntimeError as e:
             raise RuntimeError(
