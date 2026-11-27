@@ -11,6 +11,7 @@ from artcommonlib.constants import SHIPMENT_DATA_URL_TEMPLATE
 from artcommonlib.github_auth import build_git_auth_env
 from artcommonlib.gitlab import GitLabClient
 from artcommonlib.product_catalog import get_product_config
+from artcommonlib.util import convert_remote_git_to_https
 from elliottlib.cli.konflux_release_cli import validate_snapshot_against_rpa
 from elliottlib.shipment_model import ShipmentConfig
 from elliottlib.unified_shipment import catalog_target, shipment_files, validate_unified_release
@@ -199,8 +200,12 @@ async def create_unified_shipment(pipeline, plans: list, outcomes: list[dict]) -
         stamp = datetime.now(timezone.utc).strftime('%Y%m%d%H%M%S%f')
         branch = branch_prefix(pipeline.product) + stamp
         await repo.create_branch(branch)
+        provenance_links = []
         for target, config in configs:
             application = config.shipment.metadata.application
+            catalog_source = config.shipment.snapshot.spec.components[0].source.git
+            provenance_url = f'{convert_remote_git_to_https(catalog_source.url)}/blob/{catalog_source.revision}/unified-provenance.json'
+            provenance_links.append(f'- OCP {target}: [`unified-provenance.json`]({provenance_url})')
             path = repo._directory / 'shipment' / pipeline.product / 'unified' / application / 'prod'
             name = f'{pipeline.product}.fbc.ocp{target}.{stamp}.yaml'
             destination = (path / name).resolve()
@@ -210,7 +215,18 @@ async def create_unified_shipment(pipeline, plans: list, outcomes: list[dict]) -
             shipment_data = config.model_dump(exclude_unset=True, exclude_none=True)
             destination.write_text(safe_dump(shipment_data, sort_keys=False))
         await repo.commit_push(f'Add unified FBC shipment for {pipeline.product}')
-        links = sorted({a.imageShipmentMR for _, c in configs for a in c.shipment.unified.assemblies})
+        contributors = sorted(
+            {
+                (a.group, a.assembly, a.revision, a.imageShipmentMR)
+                for _, config in configs
+                for a in config.shipment.unified.assemblies
+            }
+        )
+        links = [
+            f'- {group} / {assembly}: [build-data commit `{revision[:7]}`]({build_data.html_url}/commit/{revision})'
+            f' · [image shipment !{mr_url.rsplit("/", 1)[-1]}]({mr_url})'
+            for group, assembly, revision, mr_url in contributors
+        ]
         mr = await create_shipment_mr_with_retry(
             source,
             {
@@ -218,8 +234,11 @@ async def create_unified_shipment(pipeline, plans: list, outcomes: list[dict]) -
                 'target_branch': 'main',
                 'target_project_id': project.id,
                 'title': f'Draft: Unified FBC shipment for {pipeline.product} ({", ".join(t for t, _ in configs)})',
-                'description': 'Assembly-based unified FBC catalogs. Contributing image shipments:\n\n'
-                + '\n'.join(links),
+                'description': 'Assembly-based unified FBC catalogs.\n\n'
+                '### Contributing assemblies and image shipments\n\n'
+                + '\n'.join(links)
+                + '\n\n### Catalog provenance\n\n'
+                + '\n'.join(provenance_links),
                 'labels': [UNIFIED_LABEL],
                 'remove_source_branch': True,
             },

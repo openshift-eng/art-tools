@@ -147,7 +147,7 @@ def test_complete_publication_is_validated_and_locked(tmp_path, failure, monkeyp
         pullspec=pullspec,
         application='mta-fbc-unified',
         component='mta-fbc-unified-4-18',
-        source_repo='https://github.com/openshift-priv/art-fbc',
+        source_repo='https://github.com/openshift-priv/art-fbc.git',
         source_commit='c' * 40,
         build_url='https://konflux.example/build',
         provenance=provenance,
@@ -159,7 +159,7 @@ def test_complete_publication_is_validated_and_locked(tmp_path, failure, monkeyp
     pipeline = SimpleNamespace(
         runtime=runtime,
         product='mta',
-        data_path='https://github.com/openshift-eng/ocp-build-data',
+        data_path='https://github.com/example/ocp-build-data',
         options={'--registry-auth': None},
     )
     repo = Mock(_directory=tmp_path)
@@ -173,7 +173,7 @@ def test_complete_publication_is_validated_and_locked(tmp_path, failure, monkeyp
     client = Mock()
     project = Mock(id=11)
     client.get_project.return_value = project
-    build_data = Mock()
+    build_data = Mock(html_url='https://github.com/example/ocp-build-data')
     build_data.get_contents.return_value.decoded_content = (
         b'releases:\n  8.2.3:\n    assembly:\n      group:\n        shipment:\n'
         b'          mr: https://gitlab.example/art/shipments/-/merge_requests/1\n'
@@ -235,9 +235,20 @@ def test_complete_publication_is_validated_and_locked(tmp_path, failure, monkeyp
             repo.commit_push.assert_awaited_once()
             assert mr.await_args.args[1]['labels'] == ['unified-fbc']
             assert mr.await_args.args[1]['title'].startswith('Draft:')
+            github.return_value.get_repo.assert_called_once_with('example/ocp-build-data')
+            assert mr.await_args.args[1]['description'] == (
+                'Assembly-based unified FBC catalogs.\n\n'
+                '### Contributing assemblies and image shipments\n\n'
+                f'- mta-8.2 / 8.2.3: [build-data commit `{revision[:7]}`]({build_data.html_url}/commit/{revision})'
+                ' · [image shipment !1](https://gitlab.example/art/shipments/-/merge_requests/1)\n\n'
+                '### Catalog provenance\n\n'
+                '- OCP 4.18: [`unified-provenance.json`]'
+                f'(https://github.com/openshift-priv/art-fbc/blob/{outcome["source_commit"]}/unified-provenance.json)'
+            )
             files = list((tmp_path / 'shipment').rglob('*.yaml'))
             assert len(files) == 1
             shipment = safe_load(files[0].read_text())['shipment']
+            assert shipment['unified']['assemblies'][0]['revision'] == revision
             assert shipment['metadata'] == {
                 'product': 'mta',
                 'application': 'mta-fbc-unified',
