@@ -891,7 +891,7 @@ async def find_builds_konflux_all_types(runtime: Runtime, include_shipped: bool 
 
     This function:
     - Iterates over image metadata from the runtime, filtering out base-only and non-release images.
-    - For each image, queries for the latest build.
+    - Honors explicit assembly pins and queries for the latest non-embargoed build for unpinned images.
     - Separates the results into payload and non-payload image builds.
     - For OLM operator images, fetches the related bundle build records from the database.
     - Returns a dictionary with four categorized lists:
@@ -933,11 +933,13 @@ async def find_builds_konflux_all_types(runtime: Runtime, include_shipped: bool 
     for is_payload, image in image_metas:
         olm_flags.append(image.is_olm_operator)
         payload_flags.append(is_payload)
-        tasks.append(image.get_latest_build(el_target=image.branch_el_target(), exclude_large_columns=True))
+        tasks.append(
+            image.get_latest_build(el_target=image.branch_el_target(), exclude_large_columns=True, embargoed=False)
+        )
     results = await asyncio.gather(*tasks)
     images_not_found: list[str] = [image_metas[i][1].name for i, r in enumerate(results) if r is None]
     if images_not_found:
-        message = f"Failed to find Konflux builds for {len(images_not_found)} images: {images_not_found}"
+        message = f"Failed to find non-embargoed Konflux builds for {len(images_not_found)} images: {images_not_found}"
         LOGGER.error(message)
         raise ElliottFatalError(message)
 
