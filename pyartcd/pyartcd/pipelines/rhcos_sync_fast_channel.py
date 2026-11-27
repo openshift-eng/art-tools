@@ -52,6 +52,7 @@ from typing import List, Optional
 import click
 from artcommonlib.arch_util import GO_ARCHES, brew_arch_for_go_arch, go_arch_for_brew_arch
 from semver import VersionInfo
+from tenacity import RetryCallState, retry, stop_after_attempt, wait_fixed
 
 from pyartcd import constants, jenkins, util
 from pyartcd.cincinnati import CincinnatiAPI
@@ -255,21 +256,46 @@ class RhcosSyncFastChannelPipeline:
             string) and ``url`` are populated. In dry-run, ``tag`` is set but ``triggered``
             is ``False`` and nothing was actually triggered.
         """
-        release_version = await self._latest_fast_channel_version(go_arch)
+
+        def _log_scan_retry(retry_state: RetryCallState) -> None:
+            # SECURITY: log ONLY arch, attempt number and the exception TYPE — never the raw
+            # exception message/stderr (oc/kubeconfig stderr can carry internal hostnames or
+            # credentials), consistent with run()'s redaction policy.
+            exc = retry_state.outcome.exception() if retry_state.outcome else None
+            exc_type = type(exc).__name__ if exc is not None else "unknown"
+            self.logger.warning(
+                "Transient failure scanning arch %s (attempt %d); retrying (%s)",
+                go_arch,
+                retry_state.attempt_number,
+                exc_type,
+            )
+
+        # Only the transient, network-bound scan is retried: the Cincinnati graph fetch and
+        # the needsHappening check (oc adm release info / mirror.openshift.com) occasionally
+        # blip while sibling arches in the same run succeed. The downstream Jenkins trigger
+        # below is deliberately NOT retried. reraise=True so a persistent failure still
+        # propagates to run() and is collected/redacted there exactly as before.
+        @retry(reraise=True, stop=stop_after_attempt(3), wait=wait_fixed(5), before_sleep=_log_scan_retry)
+        async def _scan_arch():
+            latest = await self._latest_fast_channel_version(go_arch)
+            if not latest:
+                return None, None, None
+            # ocp-release quay tags use the brew-arch suffix (e.g. 4.19.54-x86_64,
+            # 4.19.54-aarch64). parse_release_tag() in rhcos_sync.py parses that brew arch
+            # back out of the tag, so build the stable release tag with the brew arch.
+            brew_arch = brew_arch_for_go_arch(go_arch)
+            tag = f"{latest}-{brew_arch}"
+            # Reuse RhcosSyncPipeline's preamble + needsHappening check (no sync/sign here).
+            rsp = RhcosSyncPipeline(runtime=self.runtime, release_tag=tag, force=self.force)
+            needs = await rsp.check_needs_happening()
+            return latest, tag, needs
+
+        release_version, release_tag, needs_happening = await _scan_arch()
         if not release_version:
             self.logger.info("No %s nodes in channel %s; skipping arch", go_arch, self.channel)
             return _ArchSyncOutcome(arch=go_arch, tag=None, triggered=False, result=None, url=None)
 
-        # ocp-release quay tags use the brew-arch suffix (e.g. 4.19.54-x86_64,
-        # 4.19.54-aarch64). parse_release_tag() in rhcos_sync.py parses that brew arch
-        # back out of the tag, so build the stable release tag with the brew arch.
-        brew_arch = brew_arch_for_go_arch(go_arch)
-        release_tag = f"{release_version}-{brew_arch}"
         self.logger.info("Latest %s release in %s: %s (tag=%s)", go_arch, self.channel, release_version, release_tag)
-
-        # Reuse RhcosSyncPipeline's preamble + needsHappening check (no sync/sign here).
-        rsp = RhcosSyncPipeline(runtime=self.runtime, release_tag=release_tag, force=self.force)
-        needs_happening = await rsp.check_needs_happening()
 
         if not needs_happening:
             self.logger.info("RHCOS boot images already current on mirror for %s; no-op", release_tag)
