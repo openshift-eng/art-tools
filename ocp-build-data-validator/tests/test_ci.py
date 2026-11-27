@@ -7,6 +7,28 @@ import pytest
 from validator import checks, ci
 
 
+@pytest.mark.parametrize(
+    'name,version,rejected',
+    [
+        ('quay-3.18', '3.18.0', True),
+        ('quay-3.18', '{MAJOR}.{MINOR}.0', True),
+        ('quay-3.18', 'auto', False),
+        ('quay-3.18', '3.18.1', False),
+        ('openshift-4.18', '4.18.0', False),
+        ('openshift-pipelines-1.19', '1.19.0', True),
+    ],
+)
+def test_lp_zero_version_uses_auto(tmp_path, name, version, rejected):
+    repository(tmp_path)
+    (tmp_path / 'group.yml').write_text(f'name: {name}\nversion: "{version}"\nvars: {{MAJOR: 3, MINOR: 18}}\n')
+    report = tmp_path / 'report.json'
+    result = ci.main(['--repo', str(tmp_path), '--schema-only', '--report', str(report)])
+    errors = json.loads(report.read_text())['errors']
+    assert any('version' in error and 'auto' in error for error in errors) == rejected, errors
+    if rejected:
+        assert result == 1
+
+
 @pytest.mark.parametrize('host', ['registry.access.redhat.com', 'registry.access.redhat.io'])
 @pytest.mark.parametrize('port', ['', ':443'])
 @pytest.mark.parametrize('location', ['stream', 'parent', 'builder'])
@@ -130,7 +152,8 @@ def test_cli_rejects_version_decreases(tmp_path, before, after, decrease, commit
     report = tmp_path / 'report.json'
     result = ci.main(['--repo', str(tmp_path), '--base-ref', base, '--schema-only', '--report', str(report)])
     errors = json.loads(report.read_text())['errors']
-    assert result == int(decrease), errors
+    explicit_zero_version = committed and after.count('.') == 2 and after.endswith('.0')
+    assert result == int(decrease or explicit_zero_version), errors
     assert any('version must not decrease' in error for error in errors) == decrease
 
 

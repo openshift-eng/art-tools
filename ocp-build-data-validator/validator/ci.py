@@ -212,6 +212,16 @@ def validate(
             data = read_metadata(root, relative)
             if data.get('mode') == 'disabled':
                 continue
+            if relative == Path('group.yml'):
+                name = data.get('name')
+                version, _ = version_fields(data)
+                if (
+                    isinstance(name, str)
+                    and not re.fullmatch(r'openshift-(?:[0-9]+|\{[^{}]+\})\.(?:[0-9]+|\{[^{}]+\})', name)
+                    and isinstance(version, str)
+                ):
+                    if re.fullmatch(r'[0-9]+\.[0-9]+\.0', version):
+                        file_errors.append(f'version {version}: use auto instead of an explicit zero z-stream')
             if relative == Path('streams.yml') or relative.parts[0] == 'images':
                 file_errors.extend(checks.validate_registry_pullspecs(data, group.get('vars') or {}))
             error = schema.validate(str(relative), data, str(root / 'images'))
