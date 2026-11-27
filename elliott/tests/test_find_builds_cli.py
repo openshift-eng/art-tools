@@ -1,8 +1,15 @@
+import logging
 import unittest
+from datetime import datetime, timedelta, timezone
 from unittest import IsolatedAsyncioTestCase, TestCase, mock
 from unittest.mock import AsyncMock, MagicMock, patch
 
+from artcommonlib.assembly import assembly_basis_event
+from artcommonlib.gitdata import DataObj
+from artcommonlib.konflux.konflux_build_record import KonfluxBuildRecord, KonfluxBundleBuildRecord
+from artcommonlib.konflux.konflux_db import BuildCache, CacheRecordsType, KonfluxDb
 from artcommonlib.model import Model
+from elliottlib import Runtime
 from elliottlib import errata as erratalib
 from elliottlib.brew import Build
 from elliottlib.cli.find_builds_cli import (
@@ -165,6 +172,105 @@ class TestFindBuildsKonflux(IsolatedAsyncioTestCase):
             await find_builds_konflux(runtime, payload=True, include_shipped=True)
 
 
+class TestKonfluxBuildVisibility(IsolatedAsyncioTestCase):
+    cutoff = datetime(2026, 11, 24, tzinfo=timezone.utc)
+
+    def make_runtime(self, pinned_nvr=None):
+        members = []
+        if pinned_nvr:
+            members.append({'distgit_key': 'test-operator', 'metadata': {'is': {'nvr': pinned_nvr}}})
+        releases = Model(
+            {
+                'releases': {
+                    'ec.3': {
+                        'assembly': {
+                            'type': 'preview',
+                            'basis': {'time': self.cutoff.isoformat()},
+                            'members': {'images': members},
+                        }
+                    }
+                }
+            }
+        )
+        with (
+            patch('artcommonlib.konflux.konflux_db.bigquery.BigQueryClient'),
+            patch.object(KonfluxDb, '_shared_cache', BuildCache()),
+        ):
+            db = KonfluxDb()
+        runtime = Runtime(
+            group='openshift-5.1', assembly='ec.3', build_system='konflux', konflux_db=db, _logger=logging.getLogger()
+        )
+        runtime.releases_config = releases
+        runtime.assembly_basis_event = assembly_basis_event(releases, runtime.assembly, build_system='konflux')
+        metadata = DataObj(
+            'test-operator',
+            'images/test-operator.yml',
+            {'name': 'test-operator', 'el_target': 9, 'update-csv': True},
+        )
+        runtime.image_map['test-operator'] = ImageMetadata(runtime, metadata)
+        return runtime
+
+    def operator_build(self, days_from_cutoff, *, embargoed=False):
+        start_time = self.cutoff + timedelta(days=days_from_cutoff)
+        visibility = 'p3' if embargoed else 'p2'
+        return KonfluxBuildRecord(
+            name='test-operator',
+            group='openshift-5.1',
+            version='v5.1.0',
+            release=f'{start_time:%Y%m%d%H%M}.{visibility}.g1234567.assembly.stream.el9',
+            assembly='stream',
+            el_target='el9',
+            start_time=start_time,
+            embargoed=embargoed,
+        )
+
+    async def test_selects_latest_public_operator_before_assembly_cutoff(self):
+        runtime = self.make_runtime()
+        public = self.operator_build(-2)
+        runtime.konflux_db.cache.add_builds(
+            [self.operator_build(-3), public, self.operator_build(-1, embargoed=True), self.operator_build(1)]
+        )
+        bundle = KonfluxBundleBuildRecord(
+            name='test-operator-bundle',
+            version=f'{public.version}.{public.release}',
+            release='1',
+            operator_nvr=public.nvr,
+            operand_nvrs=[public.nvr],
+        )
+
+        async def bundles():
+            yield bundle
+
+        with patch.object(runtime.konflux_db, 'search_builds_by_fields', return_value=bundles()) as search:
+            builds = await find_builds_konflux_all_types(runtime, include_shipped=True)
+
+        self.assertEqual(builds['non_payload'], [public.nvr])
+        self.assertEqual(builds['olm_builds'], [bundle.nvr])
+        search.assert_called_once_with(where={'operator_nvr': public.nvr, 'outcome': 'success'}, limit=1)
+
+    async def test_honors_an_explicit_embargoed_operator_pin(self):
+        private = self.operator_build(-1, embargoed=True)
+        runtime = self.make_runtime(pinned_nvr=private.nvr)
+        runtime.konflux_db.cache.add_builds([private, self.operator_build(-2)], cache_type=CacheRecordsType.ALL_COLUMNS)
+        bundle = KonfluxBundleBuildRecord(
+            name='test-operator-bundle',
+            version=f'{private.version}.{private.release}',
+            release='1',
+            operator_nvr=private.nvr,
+            operand_nvrs=[private.nvr],
+        )
+
+        async def bundles():
+            yield bundle
+
+        with patch.object(runtime.konflux_db, 'search_builds_by_fields', return_value=bundles()) as search:
+            builds = await find_builds_konflux_all_types(runtime)
+
+        self.assertEqual(builds['non_payload'], [private.nvr])
+        self.assertEqual(builds['olm_builds'], [bundle.nvr])
+        search.assert_called_once_with(where={'operator_nvr': private.nvr, 'outcome': 'success'}, limit=1)
+
+
 class TestFindBuildsKonfluxAllTypes(IsolatedAsyncioTestCase):
     @mock.patch("elliottlib.cli.find_builds_cli.KonfluxBuildRecord")
     @mock.patch("elliottlib.cli.find_builds_cli.KonfluxBundleBuildRecord")
@@ -215,8 +321,12 @@ class TestFindBuildsKonfluxAllTypes(IsolatedAsyncioTestCase):
         self.assertEqual(len(builds_map['olm_builds']), 1)
         self.assertEqual(builds_map['olm_builds'][0], build_3.nvr)
         self.assertEqual(len(builds_map['olm_builds_not_found']), 0)
-        image_meta_1.get_latest_build.assert_called_once_with(el_target="el8", exclude_large_columns=True)
-        image_meta_2.get_latest_build.assert_called_once_with(el_target="el9", exclude_large_columns=True)
+        image_meta_1.get_latest_build.assert_called_once_with(
+            el_target="el8", exclude_large_columns=True, embargoed=False
+        )
+        image_meta_2.get_latest_build.assert_called_once_with(
+            el_target="el9", exclude_large_columns=True, embargoed=False
+        )
 
     @mock.patch("elliottlib.cli.find_builds_cli.assembly_excluded_components", return_value={"image2"})
     @mock.patch("elliottlib.cli.find_builds_cli.KonfluxBuildRecord")
