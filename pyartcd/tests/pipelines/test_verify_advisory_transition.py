@@ -61,7 +61,7 @@ class TestVerifyAdvisoryTransition(unittest.IsolatedAsyncioTestCase):
             self.update.assert_not_called()
 
         self.command.side_effect = run_command
-        await self.pipeline.run()
+        self.assertTrue(await self.pipeline.run())
         commands = [c.args[0] for c in self.command.call_args_list]
         self.assertEqual(commands[0][-1], "verify-metadata-url")
         self.assertEqual(
@@ -140,7 +140,7 @@ class TestVerifyAdvisoryTransition(unittest.IsolatedAsyncioTestCase):
 
     async def test_dry_run_passes_dry_run_to_transitions_and_does_not_mark(self):
         self.runtime.dry_run = True
-        await self.pipeline.run()
+        self.assertFalse(await self.pipeline.run())
         commands = [c.args[0] for c in self.command.call_args_list]
         self.assertEqual(commands[0][-1], "verify-metadata-url")
         for cmd in commands[1:]:
@@ -149,7 +149,7 @@ class TestVerifyAdvisoryTransition(unittest.IsolatedAsyncioTestCase):
 
     async def test_already_completed_run_does_no_work(self):
         self.mr.labels.append("advisory-transition-success")
-        await self.pipeline.run()
+        self.assertFalse(await self.pipeline.run())
         self.command.assert_not_called()
         self.update.assert_not_called()
 
@@ -175,7 +175,7 @@ class TestVerifyAdvisoryTransition(unittest.IsolatedAsyncioTestCase):
                     self.mr.labels = labels
                     self.runtime.dry_run = dry_run
                     with self.assertLogs(MODULE, level="INFO") as logs:
-                        await self.pipeline.run()
+                        self.assertFalse(await self.pipeline.run())
                     self.assertIn("Waiting for stage-release-success", "\n".join(logs.output))
                     self.command.assert_not_called()
                     self.inspect.assert_not_called()
@@ -205,7 +205,7 @@ class TestVerifyAdvisoryTransition(unittest.IsolatedAsyncioTestCase):
                     self.mr.labels = labels
                     self.runtime.dry_run = dry_run
                     with self.assertLogs(MODULE, level="INFO") as logs:
-                        await self.pipeline.run()
+                        self.assertFalse(await self.pipeline.run())
                     self.assertIn("Waiting for prod-release-success", "\n".join(logs.output))
                     self.command.assert_not_called()
                     self.inspect.assert_not_called()

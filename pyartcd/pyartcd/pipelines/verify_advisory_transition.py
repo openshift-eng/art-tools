@@ -11,6 +11,7 @@ from artcommonlib.gitlab import GitLabClient
 from pyartcd import constants, util
 from pyartcd.cli import cli, click_coroutine, pass_runtime
 from pyartcd.runtime import Runtime
+from pyartcd.verify_common import notify_verify_result
 
 LOGGER = logging.getLogger(__name__)
 STAGE_RELEASE_SUCCESS_LABEL = "stage-release-success"
@@ -38,7 +39,7 @@ class VerifyAdvisoryTransitionPipeline:
             f"--working-dir={self.working_dir / 'elliott-working'}",
         ]
 
-    async def run(self):
+    async def run(self) -> bool:
         # load_group_config resolves assembly inheritance through the standard tools.
         config = await util.load_group_config(
             group=self.group, assembly=self.assembly, doozer_data_path=constants.OCP_BUILD_DATA_URL
@@ -49,7 +50,7 @@ class VerifyAdvisoryTransitionPipeline:
 
         gitlab_client = GitLabClient.from_url(mr_url)
         try:
-            await self._run(gitlab_client, mr_url)
+            return await self._run(gitlab_client, mr_url)
         except Exception:
             if not self.runtime.dry_run:
                 try:
@@ -58,16 +59,16 @@ class VerifyAdvisoryTransitionPipeline:
                     LOGGER.exception("Unable to mark advisory transition failure for %s", self.assembly)
             raise
 
-    async def _run(self, gitlab_client: GitLabClient, mr_url: str):
+    async def _run(self, gitlab_client: GitLabClient, mr_url: str) -> bool:
         mr = gitlab_client.get_mr_from_url(mr_url)
         labels = set(mr.labels or [])
         if ADVISORY_TRANSITION_SUCCESS_LABEL in labels:
             LOGGER.info("Advisories already processed for %s, skipping", self.assembly)
-            return
+            return False
         for required_label in (STAGE_RELEASE_SUCCESS_LABEL, PROD_RELEASE_SUCCESS_LABEL):
             if required_label not in labels:
                 LOGGER.info("Waiting for %s before moving advisories for %s", required_label, self.assembly)
-                return
+                return False
         if VERIFY_RELEASE_SUCCESS_LABEL not in labels:
             raise ValueError(f"Shipment MR must have {VERIFY_RELEASE_SUCCESS_LABEL}: {mr_url}")
 
@@ -108,16 +109,20 @@ class VerifyAdvisoryTransitionPipeline:
             # Dry-run transitions leave QE advisories unchanged, so verifying
             # their hypothetical final state would incorrectly fail the preview.
             LOGGER.info("[DRY-RUN] Would verify final advisory states and add %s", ADVISORY_TRANSITION_SUCCESS_LABEL)
-            return
+            return False
         await exectools.cmd_assert_async(elliott_base + ["verify-advisory-status", "--mark"])
+        return True
 
 
 @cli.command("verify-advisory-transition", short_help="Move verified release advisories from QE to REL_PREP")
 @click.option("--version", required=True, help="OCP version (e.g. 4.22)")
 @click.option("--assembly", required=True, help="Assembly name (e.g. 4.22.9)")
+@click.option(
+    "--report-to-slack", is_flag=True, default=False, help="Post the final result to the release Slack channel."
+)
 @pass_runtime
 @click_coroutine
-async def verify_advisory_transition_cli(runtime: Runtime, version: str, assembly: str):
+async def verify_advisory_transition_cli(runtime: Runtime, version: str, assembly: str, report_to_slack: bool):
     """Verify metadata URLs, move QE advisories (excluding MicroShift), and label the MR.
 
     Requires stage-release-success, prod-release-success and verify-release-success
@@ -131,4 +136,11 @@ async def verify_advisory_transition_cli(runtime: Runtime, version: str, assembl
     retry replaces fail with success. Dry runs check metadata and use
     change-state --dry-run without updating the MR.
     """
-    await VerifyAdvisoryTransitionPipeline(runtime, version, assembly).run()
+    try:
+        passed = await VerifyAdvisoryTransitionPipeline(runtime, version, assembly).run()
+    except Exception:
+        if report_to_slack:
+            await notify_verify_result(runtime, version, assembly, passed=False)
+        raise
+    if report_to_slack and passed:
+        await notify_verify_result(runtime, version, assembly, passed=True)
