@@ -7,9 +7,11 @@ import tempfile
 import unittest
 from pathlib import Path
 from tempfile import TemporaryDirectory
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
 
 import yaml
+from dockerfile_parse import DockerfileParser
 from doozerlib.lockfile_prototype.container_utils import ContainerImageHelper
 from doozerlib.lockfile_prototype.generator import (
     RpmLockfilePrototypeGenerator,
@@ -28,6 +30,7 @@ from doozerlib.lockfile_prototype.models import (
     RpmsInConfig,
 )
 from doozerlib.lockfile_prototype.resolver import RpmResolver
+from doozerlib.repodata import Rpm
 
 
 class TestBuildRpmsInYaml(unittest.TestCase):
@@ -1137,12 +1140,13 @@ class TestCrossArchReconciliation(unittest.IsolatedAsyncioTestCase):
         return LockfileData(arches=arches)
 
     def _make_generator(self) -> RpmLockfilePrototypeGenerator:
-        gen = RpmLockfilePrototypeGenerator.__new__(RpmLockfilePrototypeGenerator)
-        gen.logger = MagicMock()
-        gen._resolver = MagicMock()
-        gen._container = MagicMock()
-        gen.downstream_parents = []
-        return gen
+        return RpmLockfilePrototypeGenerator(
+            repos=MagicMock(),
+            working_dir=Path("."),
+            logger=MagicMock(),
+            resolver=MagicMock(),
+            container_helper=MagicMock(),
+        )
 
     def test_detect_no_mismatches(self):
         lockfile = self._make_lockfile(
@@ -1433,6 +1437,118 @@ class TestCrossArchReconciliation(unittest.IsolatedAsyncioTestCase):
                 "test-image",
                 0,
             )
+
+    async def test_dockerfile_pins_check_versions_inherited_on_other_arches(self):
+        gen = self._make_generator()
+        image = "quay.io/example/base@sha256:test"
+        gen.downstream_parents = [image]
+        gen._container.resolve_to_digest = AsyncMock(return_value=image)
+        gen._get_base_image_packages = AsyncMock(
+            return_value=[ArchSpecificPackage(name="target", arches={"only": "s390x"})]
+        )
+        gen._resolve_with_reconciliation = AsyncMock(return_value=LockfileData())
+        gen._resolver.get_installed_evrs = AsyncMock(return_value={"aarch64": {"compat": {"1.0-1"}}, "s390x": {}})
+        entries = [{"instruction": "FROM", "value": image}, {"instruction": "RUN", "value": "dnf install target"}]
+        for evr in ("0:1.0-1", "2.0-1"):
+            with self.subTest(evr=evr):
+                gen._resolver.resolve = AsyncMock(
+                    return_value=self._make_lockfile(
+                        {
+                            "s390x": [
+                                ("compat", evr, "https://repo/compat.rpm"),
+                                ("target", "3.0-1", "https://repo/target.rpm"),
+                            ]
+                        }
+                    )
+                )
+                validation = gen._resolve_all_stages(
+                    1, {}, {}, {0}, set(), [], ["aarch64", "s390x"], "test-image", Path("Dockerfile"), entries
+                )
+                if evr == "2.0-1":
+                    with self.assertRaisesRegex(RuntimeError, r"compat \(s390x=2.0-1\)"):
+                        await validation
+                else:
+                    self.assertEqual(await validation, [gen._resolver.resolve.return_value])
+
+    async def test_versionlocked_alias_constrains_solver_and_recovers_unrelated_packages(self):
+        gen = self._make_generator()
+        repo = MagicMock(cs_optional=False)
+        repo.baseurl.side_effect = lambda repotype, arch: f"https://repo/{arch}/"
+        repo.content_set.return_value = "repo"
+        repo._data.conf = {"extra_options": {"exclude": "existing*"}}
+        repo.get_repodata = AsyncMock(
+            return_value=SimpleNamespace(
+                primary_rpms=[
+                    Rpm.from_nevra("libatomic-0:1.0-1.s390x"),
+                    Rpm.from_nevra("libatomic-0:2.0-1.s390x"),
+                    Rpm.from_nevra("other-0:2.0-1.s390x"),
+                ]
+            )
+        )
+        gen.repos = {"repo": repo}
+        arches = ["aarch64", "s390x"]
+        image = "quay.io/example/base@sha256:test"
+        gen.downstream_parents = [image, "base"]
+        gen._container.resolve_to_digest = AsyncMock(return_value=image)
+        inherited = {"aarch64": {"libatomic": {"1.0-1"}}, "s390x": {}}
+        gen._resolver.get_installed_evrs = AsyncMock(return_value=inherited)
+        with TemporaryDirectory() as tmp:
+            source = Path(tmp)
+            dockerfile = source / "Dockerfile"
+            dockerfile.write_text(
+                f"FROM {image} AS base\n"
+                "RUN echo ready\n"
+                "FROM base\n"
+                'COPY ["setup.sh", "/usr/local/bin/setup"]\n'
+                "RUN /usr/local/bin/setup && dnf install -y target optional-addon\n"
+            )
+            (source / "setup.sh").write_text("dnf versionlock add '*'\n")
+            entries = DockerfileParser(str(dockerfile)).structure
+            await gen._prepare_inherited_constraints(source, entries, arches, {"repo"}, "test-image", set(), {})
+            gen._resolver.get_installed_evrs.assert_awaited_once_with(image, arches)
+            self.assertEqual(gen.inherited_rpms, inherited)
+            old = self._make_lockfile({"s390x": [("libatomic", "0:1.0-1", "https://repo/libatomic.rpm")]})
+            gen._resolver.resolve = AsyncMock(side_effect=[RuntimeError("missing packages: optional-addon"), old])
+            result = await gen._resolve_stage_with_retry(
+                [], arches, [], None, "test-image", 1, containerfile_path=str(dockerfile)
+            )
+            self.assertEqual(result, old)
+            retry = gen._resolver.resolve.await_args
+            self.assertEqual(retry.args[0].excludePackages, ["optional-addon"])
+            z_repo = retry.kwargs["repos_by_arch"]["s390x"][0]
+            self.assertEqual(z_repo.baseurl, "https://repo/s390x/")
+            self.assertEqual(z_repo.options, {"excludepkgs": "existing* libatomic-0:2.0-1.s390x"})
+            self.assertEqual(gen._resolver.resolve.await_args_list[0].kwargs, retry.kwargs)
+
+            gen._resolver.resolve.side_effect = None
+            gen._resolver.resolve.return_value = self._make_lockfile(
+                {
+                    "aarch64": [("libatomic", "2.0-1", "https://repo/aarch64/libatomic.rpm")],
+                    "s390x": [("libatomic", "2.0-1", "https://repo/s390x/libatomic.rpm")],
+                }
+            )
+            with self.assertRaisesRegex(RuntimeError, "inherited RPM version is 1.0-1"):
+                await gen._resolve_stage_with_retry([], arches, [], None, "test-image", 1)
+
+    async def test_rpm_changes_before_lock_cannot_publish_stale_parent_versions(self):
+        gen = self._make_generator()
+        with TemporaryDirectory() as tmp:
+            source = Path(tmp)
+            dockerfile = source / "Dockerfile"
+            dockerfile.write_text(
+                "FROM quay.io/example/base\nRUN microdnf upgrade -y libatomic && dnf versionlock add '*'\n"
+            )
+            entries = DockerfileParser(str(dockerfile)).structure
+            with self.assertRaisesRegex(RuntimeError, "RPM changes outside the wildcard versionlock"):
+                await gen._prepare_inherited_constraints(
+                    source,
+                    entries,
+                    ["aarch64"],
+                    {"repo"},
+                    "test-image",
+                    set(),
+                    {0: {"aarch64": {"libatomic": {"1.0-1"}}}},
+                )
 
 
 class TestExtractRhelVersionFromPullspec(unittest.TestCase):

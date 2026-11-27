@@ -6,6 +6,8 @@ from pydantic import BaseModel, Field, model_serializer
 
 from doozerlib.lockfile_prototype.constants import LOCKFILE_VENDOR, LOCKFILE_VERSION
 
+RpmInventory = dict[str, dict[str, set[str]]]
+
 # ── rpms.in.yaml input models ──
 
 

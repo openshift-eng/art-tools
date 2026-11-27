@@ -7,15 +7,38 @@ import os
 import tempfile
 import unittest
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import AsyncMock, patch
 
 import yaml
 from doozerlib.lockfile_prototype.constants import RPM_LOCKFILE_ENTRY_POINT
 from doozerlib.lockfile_prototype.models import (
     LockfileData,
+    RepoEntry,
     RpmsInConfig,
 )
-from doozerlib.lockfile_prototype.resolver import RpmResolver
+from doozerlib.lockfile_prototype.resolver import ImageRpmInventoryCache, RpmResolver
+
+
+class TestImageRpmInventoryCache(unittest.IsolatedAsyncioTestCase):
+    async def test_shares_successful_digest_queries_across_resolvers(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            shared = ImageRpmInventoryCache()
+            first = RpmResolver(working_dir=Path(tmp), inventory_cache=shared)
+            second = RpmResolver(working_dir=Path(tmp), inventory_cache=shared)
+            query = AsyncMock(side_effect=[None, {"libatomic": {"1.0-1"}}, {"libatomic": {"2.0-1"}}])
+            first._query_installed_evrs = second._query_installed_evrs = query
+            digest = f"sha256:{'a' * 64}"
+            image = f"quay.io/example/base@{digest}"
+
+            self.assertEqual(await first.get_installed_evrs(image, ["s390x"]), {})
+            first_result, second_result = await asyncio.gather(
+                first.get_installed_evrs(image, ["s390x"]),
+                second.get_installed_evrs(f"quay.io/example/mirror@{digest}", ["s390x"]),
+            )
+            self.assertEqual(first_result, {"s390x": {"libatomic": {"1.0-1"}}})
+            self.assertEqual(first_result, second_result)
+            self.assertEqual(query.await_count, 2)
+            self.assertEqual(await second.get_installed_evrs(image, ["aarch64"]), {"aarch64": {"libatomic": {"2.0-1"}}})
 
 
 class TestRpmResolver(unittest.TestCase):
@@ -38,6 +61,48 @@ class TestRpmResolver(unittest.TestCase):
             }
         ],
     }
+
+    @patch("doozerlib.lockfile_prototype.resolver.cmd_gather_async")
+    def test_resolve_with_per_arch_repositories(self, mock_gather):
+        """
+        Give each solver only its architecture's repository candidates.
+        """
+        inputs = []
+
+        async def mock_cmd(cmd, **kwargs):
+            config = yaml.safe_load(Path(cmd[-1]).read_text())
+            inputs.append(config)
+            Path(cmd[cmd.index("--outfile") + 1]).write_text(
+                yaml.safe_dump({"arches": [{"arch": config["arches"][0], "packages": []}]})
+            )
+            return (0, "", "")
+
+        mock_gather.side_effect = mock_cmd
+        with tempfile.TemporaryDirectory() as tmp:
+            resolver = RpmResolver(working_dir=Path(tmp))
+            config = RpmsInConfig(arches=["aarch64", "s390x"], contentOrigin={"repos": []})
+            result = asyncio.run(
+                resolver.resolve(
+                    config,
+                    containerfile_path="/example/Dockerfile",
+                    stage_num=2,
+                    repos_by_arch={
+                        "aarch64": [RepoEntry(repoid="repo", baseurl="https://repo/aarch64")],
+                        "s390x": [
+                            RepoEntry(
+                                repoid="repo",
+                                baseurl="https://repo/s390x",
+                                options={"excludepkgs": "libatomic-0:2.0-1.s390x"},
+                            )
+                        ],
+                    },
+                )
+            )
+        self.assertEqual([arch.arch for arch in result.arches], ["aarch64", "s390x"])
+        self.assertEqual([entry["arches"] for entry in inputs], [["aarch64"], ["s390x"]])
+        self.assertEqual(inputs[1]["contentOrigin"]["repos"][0]["excludepkgs"], "libatomic-0:2.0-1.s390x")
+        self.assertEqual(inputs[1]["packagesFromContainerfile"], {"file": "/example/Dockerfile", "stageNum": 2})
+        self.assertEqual(config.contentOrigin, {"repos": []})
 
     @patch("doozerlib.lockfile_prototype.resolver.cmd_gather_async")
     def test_resolve_bare_mode(self, mock_gather):
