@@ -7,7 +7,7 @@ import tempfile
 import unittest
 from pathlib import Path
 from tempfile import TemporaryDirectory
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import yaml
 from doozerlib.lockfile_prototype.container_utils import ContainerImageHelper
@@ -27,6 +27,7 @@ from doozerlib.lockfile_prototype.models import (
     RepoEntry,
     RpmsInConfig,
 )
+from doozerlib.lockfile_prototype.rebaser_hooks import generate_lockfile
 from doozerlib.lockfile_prototype.resolver import RpmResolver
 
 
@@ -253,6 +254,7 @@ class TestRpmLockfilePrototypeGenerator(unittest.TestCase):
     def _make_mock_resolver(self) -> MagicMock:
         resolver = MagicMock(spec=RpmResolver)
         resolver.resolve = AsyncMock(return_value=FAKE_LOCKFILE_DATA.model_copy(deep=True))
+        resolver.get_installed_evrs.return_value = {}
         return resolver
 
     def _make_generator(self) -> RpmLockfilePrototypeGenerator:
@@ -498,6 +500,48 @@ class TestRpmLockfilePrototypeGenerator(unittest.TestCase):
         candidates = {call.args[3][0]: set(call.args[1]) for call in calls}
         self.assertEqual(candidates["x86_64"], {"common", "x86-only", "/usr/sbin/udevadm"})
         self.assertEqual(candidates["ppc64le"], {"common", "/usr/sbin/udevadm"})
+
+    def test_dockerfile_pins_must_match_across_architectures(self):
+        meta = self._make_mock_image_meta()
+        generator = self._make_generator()
+        generator.downstream_parents = ["quay.io/test/base@sha256:abc123"]
+        generator._container.get_installed_packages = AsyncMock(return_value=["libatomic"])
+
+        with TemporaryDirectory() as tmpdir:
+            dest_dir = Path(tmpdir)
+            (dest_dir / "Dockerfile").write_text("FROM quay.io/test/base:latest\nRUN dnf install -y libatomic\n")
+            for ppc_evr in ("0:14.3.1-4.4.el10", "14.3.1-4.5.el10_2"):
+                with self.subTest(ppc_evr=ppc_evr):
+                    pins = [
+                        LockfileData(
+                            arches=[
+                                ArchResult(
+                                    arch=arch,
+                                    packages=[
+                                        PackageEntry(
+                                            name="libatomic",
+                                            evr=evr,
+                                            url=f"https://repo/libatomic.{arch}.rpm",
+                                            repoid="baseos",
+                                        )
+                                    ],
+                                )
+                            ]
+                        )
+                        for arch, evr in (("x86_64", "14.3.1-4.4.el10"), ("ppc64le", ppc_evr))
+                    ]
+                    generator._resolver.resolve = AsyncMock(side_effect=[LockfileData(), *pins])
+                    if ppc_evr.startswith("0:"):
+                        asyncio.run(generator.generate_lockfile(meta, dest_dir))
+                        lockfile = LockfileData.model_validate(
+                            yaml.safe_load((dest_dir / "rpms.lock.yaml").read_text())
+                        )
+                        self.assertEqual({entry.arch for entry in lockfile.arches}, {"x86_64", "ppc64le"})
+                    else:
+                        with self.assertRaisesRegex(
+                            RuntimeError, r"Dockerfile pin pass produced cross-arch version mismatches: libatomic"
+                        ):
+                            asyncio.run(generator.generate_lockfile(meta, dest_dir))
 
     def test_no_rpms_stage_is_not_rendered(self):
         meta = self._make_mock_image_meta()
@@ -1094,12 +1138,13 @@ class TestCrossArchReconciliation(unittest.IsolatedAsyncioTestCase):
         return LockfileData(arches=arches)
 
     def _make_generator(self) -> RpmLockfilePrototypeGenerator:
-        gen = RpmLockfilePrototypeGenerator.__new__(RpmLockfilePrototypeGenerator)
-        gen.logger = MagicMock()
-        gen._resolver = MagicMock()
-        gen._container = MagicMock()
-        gen.downstream_parents = []
-        return gen
+        return RpmLockfilePrototypeGenerator(
+            repos=MagicMock(),
+            working_dir=Path("."),
+            logger=MagicMock(),
+            resolver=MagicMock(),
+            container_helper=MagicMock(),
+        )
 
     def test_detect_no_mismatches(self):
         lockfile = self._make_lockfile(
@@ -1274,6 +1319,217 @@ class TestCrossArchReconciliation(unittest.IsolatedAsyncioTestCase):
         self.assertIn("reconciliation failed", str(ctx.exception))
         self.assertIn("libeconf", str(ctx.exception))
         self.assertEqual(gen._resolve_stage_with_retry.await_count, 2)
+
+    async def test_reconciliation_pins_dependency_to_inherited_version(self):
+        gen = self._make_generator()
+        gen._resolver.get_installed_evrs = AsyncMock(
+            return_value={
+                "aarch64": {"libatomic": {"14.3.1-4.4.el10"}},
+                "ppc64le": {"libatomic": {"14.3.1-4.4.el10"}},
+                "s390x": {},
+                "x86_64": {},
+            }
+        )
+        first = self._make_lockfile({"s390x": [("libatomic", "14.3.1-4.5.el10_2", "https://repo/new.rpm")]})
+        pinned = self._make_lockfile({"s390x": [("libatomic", "14.3.1-4.4.el10", "https://repo/old.rpm")]})
+        gen._resolve_stage_with_retry = AsyncMock(side_effect=[first, pinned, first, LockfileData()])
+        args = (
+            [],
+            ["aarch64", "ppc64le", "s390x", "x86_64"],
+            ["openvswitch3.5"],
+            "registry.example.com/coreos/base@sha256:test",
+            "rhcos-node-image-rhel10",
+            0,
+        )
+        self.assertEqual(await gen._resolve_with_reconciliation(*args), pinned)
+        retry = gen._resolve_stage_with_retry.await_args
+        self.assertEqual(retry.args[2], ["openvswitch3.5"])
+        self.assertEqual(retry.kwargs["arch_specific_packages"], {"s390x": ["libatomic-14.3.1-4.4.el10"]})
+
+        with self.assertRaisesRegex(RuntimeError, "libatomic on s390x: expected inherited EVR"):
+            await gen._resolve_with_reconciliation(*args)
+
+    async def test_same_run_extensions_use_node_image_versions(self):
+        """
+        Pass base RPM versions through the node's final stage to the extensions solver.
+        """
+        arches = ["aarch64", "s390x"]
+        base = "registry.example.com/coreos/base@sha256:test"
+        promised = "registry.example.com/art-images:node-promised"
+        inventory = {"aarch64": {"libatomic": {"1.0-1"}}, "s390x": {}}
+        initial = self._make_lockfile({arch: [("libatomic", "2.0-1", "https://repo/new.rpm")] for arch in arches})
+        pinned = self._make_lockfile({arch: [("libatomic", "1.0-1", "https://repo/old.rpm")] for arch in arches})
+        metadata = [MagicMock(distgit_key=name, qualified_key=name, config={}) for name in ("node", "extensions")]
+        for image_meta in metadata:
+            image_meta.get_arches.return_value = arches
+            image_meta.get_enabled_repos.return_value = {"repo"}
+            image_meta.is_cross_arch_enabled.return_value = False
+        repo = MagicMock(cs_optional=False)
+        repo.baseurl.return_value = "https://repo/"
+        repo.content_set.return_value = "test-repo"
+        resolver = MagicMock()
+        resolver.get_installed_evrs = AsyncMock(return_value=inventory)
+        resolver.resolve = AsyncMock(side_effect=[LockfileData(), LockfileData(), initial, pinned])
+
+        with TemporaryDirectory() as temporary_dir:
+            root = Path(temporary_dir)
+            node_dir, extensions_dir = (root / image_meta.qualified_key for image_meta in metadata)
+            node_dir.mkdir()
+            (node_dir / "Dockerfile").write_text(
+                f"FROM {base} AS build\n"
+                "COPY build-node-image.sh /tmp/art-build-node-image.sh\n"
+                "RUN bash /tmp/art-build-node-image.sh\n"
+                "FROM build\n"
+                "COPY --from=build /usr/share/buildinfo /usr/share/buildinfo\n"
+            )
+            (node_dir / "build-node-image.sh").write_text(
+                "dnf --disablerepo=* versionlock add '*'\ndnf install -y node\ndnf versionlock clear\n"
+            )
+            (extensions_dir / "extensions").mkdir(parents=True)
+            (extensions_dir / "Dockerfile").write_text(
+                f"FROM {promised}\nRUN sed -e 's/--repo=foo//' extensions/build.sh | bash\n"
+            )
+            (extensions_dir / "extensions/build.sh").write_text(
+                "dnf --disablerepo=* versionlock add '*'\nfor subcommand in install reinstall; do\n"
+                "    dnf \"$subcommand\" --downloadonly libatomic\ndone\ndnf versionlock clear\n"
+            )
+            with (
+                patch("doozerlib.lockfile_prototype.rebaser_hooks.RpmResolver", return_value=resolver),
+                patch.object(ContainerImageHelper, "resolve_to_digest", AsyncMock(return_value=base)),
+            ):
+                cache = await generate_lockfile(metadata[0], node_dir, {"repo": repo}, root, root, [base, "build"])
+                await generate_lockfile(
+                    metadata[1], extensions_dir, {"repo": repo}, root, root, [promised], [metadata[0]], cache
+                )
+                cache.cleanup()
+            self.assertEqual(metadata[0].lockfile_inherited_rpms, inventory)
+            resolver.get_installed_evrs.assert_awaited_once_with(base, arches)
+            self.assertIsNone(resolver.resolve.await_args.kwargs["image_pullspec"])
+            self.assertEqual(
+                resolver.resolve.await_args.args[0].packages,
+                [ArchSpecificPackage(name="libatomic-1.0-1", arches={"only": arch}) for arch in arches],
+            )
+            result = yaml.safe_load((extensions_dir / "rpms.lock.yaml").read_text())
+            self.assertEqual(LockfileData.model_validate(result), pinned)
+
+    async def test_reconciliation_rejects_conflicting_inherited_versions(self):
+        gen = self._make_generator()
+        gen._resolver.get_installed_evrs = AsyncMock(
+            return_value={
+                "aarch64": {"libatomic": {"14.3.1-4.4.el10"}},
+                "ppc64le": {"libatomic": {"14.3.1-4.5.el10_2"}},
+                "s390x": {},
+            }
+        )
+        first = self._make_lockfile({"s390x": [("libatomic", "14.3.1-4.5.el10_2", "https://repo/new.rpm")]})
+        gen._resolve_stage_with_retry = AsyncMock(return_value=first)
+
+        with self.assertRaisesRegex(
+            RuntimeError, "conflicting inherited RPM versions for libatomic: aarch64=.*ppc64le="
+        ):
+            await gen._resolve_with_reconciliation(
+                [],
+                ["aarch64", "ppc64le", "s390x"],
+                ["openvswitch3.5"],
+                "registry.example.com/coreos/base@sha256:test",
+                "rhcos-node-image-rhel10",
+                0,
+            )
+        gen._resolve_stage_with_retry.assert_awaited_once()
+
+    async def test_reconciliation_checks_dependency_introduced_by_retry(self):
+        gen = self._make_generator()
+        gen._resolver.get_installed_evrs = AsyncMock(return_value={"aarch64": {"compat": {"1.0-1.el10"}}, "s390x": {}})
+        first = self._make_lockfile(
+            {
+                "aarch64": [("libatomic", "1.0-1.el10", "https://arm/libatomic-1.rpm")],
+                "s390x": [("libatomic", "2.0-1.el10", "https://z/libatomic-2.rpm")],
+            }
+        )
+        for evr in ("1.0-1.el10", "2.0-1.el10"):
+            with self.subTest(evr=evr):
+                retry = self._make_lockfile(
+                    {
+                        "aarch64": [("libatomic", "1.0-1.el10", "https://arm/libatomic-1.rpm")],
+                        "s390x": [
+                            ("libatomic", "1.0-1.el10", "https://z/libatomic-1.rpm"),
+                            ("compat", evr, "https://z/compat.rpm"),
+                        ],
+                    }
+                )
+                gen._resolve_stage_with_retry = AsyncMock(side_effect=[first, retry])
+                result = gen._resolve_with_reconciliation(
+                    [],
+                    ["aarch64", "s390x"],
+                    ["openvswitch3.5"],
+                    "registry.example.com/coreos/base@sha256:test",
+                    "test-image",
+                    0,
+                )
+                if evr == "1.0-1.el10":
+                    self.assertEqual(await result, retry)
+                else:
+                    with self.assertRaisesRegex(RuntimeError, r"compat \(s390x=2.0-1.el10\).*1.0-1.el10"):
+                        await result
+
+    async def test_dockerfile_pin_pass_rejects_conflicting_dependency_evr(self):
+        gen = self._make_generator()
+        reconciled = self._make_lockfile(
+            {"s390x": [("libatomic", "14.3.1-4.4.el10", "https://repo/libatomic-4.4.rpm")]}
+        )
+        gen._resolver.resolve = AsyncMock(
+            return_value=self._make_lockfile(
+                {
+                    "s390x": [
+                        ("openvswitch3.5", "3.5.0-1.el10", "https://repo/openvswitch.rpm"),
+                        ("libatomic", "14.3.1-4.5.el10_2", "https://repo/libatomic-4.5.rpm"),
+                    ],
+                }
+            )
+        )
+
+        with self.assertRaisesRegex(RuntimeError, "conflicting EVRs for libatomic on s390x"):
+            await gen._pin_missing_dockerfile_packages(
+                reconciled,
+                ["openvswitch3.5"],
+                [],
+                ["s390x"],
+                "registry.example.com/coreos/base@sha256:test",
+                "test-image",
+                0,
+            )
+
+    async def test_dockerfile_pins_check_versions_inherited_on_other_arches(self):
+        gen = self._make_generator()
+        image = "quay.io/example/base@sha256:test"
+        gen.downstream_parents = [image]
+        gen._container.resolve_to_digest = AsyncMock(return_value=image)
+        gen._get_base_image_packages = AsyncMock(
+            return_value=[ArchSpecificPackage(name="target", arches={"only": "s390x"})]
+        )
+        gen._resolve_with_reconciliation = AsyncMock(return_value=LockfileData())
+        gen._resolver.get_installed_evrs = AsyncMock(return_value={"aarch64": {"compat": {"1.0-1"}}, "s390x": {}})
+        entries = [{"instruction": "FROM", "value": image}, {"instruction": "RUN", "value": "dnf install target"}]
+        for evr in ("0:1.0-1", "2.0-1"):
+            with self.subTest(evr=evr):
+                gen._resolver.resolve = AsyncMock(
+                    return_value=self._make_lockfile(
+                        {
+                            "s390x": [
+                                ("compat", evr, "https://repo/compat.rpm"),
+                                ("target", "3.0-1", "https://repo/target.rpm"),
+                            ]
+                        }
+                    )
+                )
+                validation = gen._resolve_all_stages(
+                    1, {}, {}, {0}, set(), [], ["aarch64", "s390x"], "test-image", Path("Dockerfile"), entries
+                )
+                if evr == "2.0-1":
+                    with self.assertRaisesRegex(RuntimeError, r"compat \(s390x=2.0-1\)"):
+                        await validation
+                else:
+                    self.assertEqual(await validation, [gen._resolver.resolve.return_value])
 
 
 class TestExtractRhelVersionFromPullspec(unittest.TestCase):

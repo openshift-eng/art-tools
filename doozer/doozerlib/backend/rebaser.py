@@ -1249,6 +1249,12 @@ class KonfluxRebaser:
     ):
         from doozerlib.lockfile_prototype.rebaser_hooks import generate_lockfile
 
+        if parent_members and self.variant is BuildVariant.OKD:
+            parent_members = [
+                parent
+                for parent in parent_members
+                if parent is not None and not parent.config.content.source.okd_alignment.resolve_as.stream
+            ]
         self._shared_dnf_cache = await generate_lockfile(
             metadata,
             dest_dir,

@@ -7,6 +7,7 @@ available. The venv Python may be a different minor version where
 dnf cannot be imported.
 """
 
+import asyncio
 import logging
 import os
 import re
@@ -23,12 +24,13 @@ from doozerlib.lockfile_prototype.constants import (
     DEFAULT_RPM_LOCKFILE_NAME,
     JENKINS_CACHE_DIR,
     RPM_LOCKFILE_ENTRY_POINT,
+    RPM_PSEUDO_PACKAGES,
     RPMDB_CACHE_ERROR_PATTERNS,
     RPMDB_CACHE_SUBDIR,
     SYSTEM_PYTHON,
     VALID_PKG_NAME,
 )
-from doozerlib.lockfile_prototype.models import LockfileData, RpmsInConfig
+from doozerlib.lockfile_prototype.models import LockfileData, RpmInventory, RpmsInConfig
 from doozerlib.lockfile_prototype.utils import build_env
 
 
@@ -41,7 +43,12 @@ class RpmResolver:
     (common during multi-image rebases) skip redundant downloads.
     """
 
-    def __init__(self, working_dir: Path, logger: logging.Logger | None = None, cache_dir: str | None = None):
+    def __init__(
+        self,
+        working_dir: Path,
+        logger: logging.Logger | None = None,
+        cache_dir: str | None = None,
+    ):
         self.logger = logger or logutil.get_logger(__name__)
         self._working_dir = str(working_dir)
         self._cache_dir_owner = (
@@ -61,6 +68,55 @@ class RpmResolver:
         cache_root = self._xdg_cache_home or (Path(xdg_env) if xdg_env else Path.home() / ".cache")
         self._rpmdb_cache_path = cache_root / RPMDB_CACHE_SUBDIR
         self.logger.info("RPMDB cache path: %s", self._rpmdb_cache_path)
+
+    def _build_env(self) -> dict[str, str]:
+        """
+        Use the same cache and registry settings for resolution and inventory.
+        """
+        env = build_env()
+        env["RPM_LOCKFILE_PROTOTYPE_DNF_CACHE"] = self._cache_path
+        if self._xdg_cache_home:
+            env["XDG_CACHE_HOME"] = str(self._xdg_cache_home)
+        env["TMPDIR"] = self._working_dir
+        return env
+
+    async def get_installed_evrs(self, image_pullspec: str, arches: list[str]) -> RpmInventory:
+        """
+        Read installed EVRs from the same image RPM databases used by the solver.
+        Architectures with unavailable inventories are omitted.
+        """
+        if "@" in image_pullspec and not re.fullmatch(r"[^@]+@sha256:[0-9a-f]{64}", image_pullspec):
+            self.logger.warning("Skipping RPM inventory query for malformed image digest: %s", image_pullspec)
+            return {}
+        inventories = await asyncio.gather(*(self._query_installed_evrs(image_pullspec, arch) for arch in arches))
+        return {arch: inventory for arch, inventory in zip(arches, inventories) if inventory is not None}
+
+    async def _query_installed_evrs(self, image_pullspec: str, arch: str) -> dict[str, set[str]] | None:
+        """
+        Query a temporary copy of the prototype's RPM database, including OSTree images.
+        """
+        with TemporaryDirectory(dir=self._working_dir) as root:
+            script = Path(__file__).with_name("_query_image_rpmdb.py")
+            cmd = [SYSTEM_PYTHON, str(script), root, image_pullspec, arch]
+            env = self._build_env()
+            rc, stdout, stderr = await cmd_gather_async(cmd, check=False, env=env)
+            if rc and self._is_rpmdb_corrupt(stderr):
+                # Extract afresh without deleting a cache other rebases might be reading.
+                with TemporaryDirectory(dir=self._working_dir) as cache_home:
+                    env["XDG_CACHE_HOME"] = cache_home
+                    with TemporaryDirectory(dir=self._working_dir) as fresh_root:
+                        cmd[2] = fresh_root
+                        rc, stdout, stderr = await cmd_gather_async(cmd, check=False, env=env)
+        if rc or not stdout.strip():
+            self.logger.warning("Unable to read inherited RPM versions for %s [%s]: %s", image_pullspec, arch, stderr)
+            return None
+
+        inventory: dict[str, set[str]] = {}
+        for line in stdout.splitlines():
+            name, separator, evr = line.partition("\t")
+            if separator and name not in RPM_PSEUDO_PACKAGES:
+                inventory.setdefault(name, set()).add(evr.removeprefix("0:"))
+        return inventory or None
 
     async def resolve(
         self,
@@ -111,11 +167,7 @@ class RpmResolver:
                 cmd.append("--bare")
             cmd.extend(["--outfile", str(out_file), str(in_file)])
 
-            env = build_env()
-            env["RPM_LOCKFILE_PROTOTYPE_DNF_CACHE"] = self._cache_path
-            if self._xdg_cache_home:
-                env["XDG_CACHE_HOME"] = str(self._xdg_cache_home)
-            env["TMPDIR"] = self._working_dir
+            env = self._build_env()
             rc, stdout, stderr = await cmd_gather_async(cmd, check=False, env=env)
 
             if rc != 0:

@@ -7,7 +7,7 @@ import os
 import tempfile
 import unittest
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import AsyncMock, patch
 
 import yaml
 from doozerlib.lockfile_prototype.constants import RPM_LOCKFILE_ENTRY_POINT
@@ -16,6 +16,20 @@ from doozerlib.lockfile_prototype.models import (
     RpmsInConfig,
 )
 from doozerlib.lockfile_prototype.resolver import RpmResolver
+
+
+class TestImageRpmInventory(unittest.IsolatedAsyncioTestCase):
+    async def test_queries_each_architecture_and_omits_failed_queries(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            resolver = RpmResolver(working_dir=Path(tmp))
+            query = AsyncMock(side_effect=[{"libatomic": {"1.0-1"}}, None])
+            resolver._query_installed_evrs = query
+            digest = f"sha256:{'a' * 64}"
+            image = f"quay.io/example/base@{digest}"
+
+            result = await resolver.get_installed_evrs(image, ["s390x", "aarch64"])
+            self.assertEqual(result, {"s390x": {"libatomic": {"1.0-1"}}})
+            self.assertEqual(query.await_count, 2)
 
 
 class TestRpmResolver(unittest.TestCase):

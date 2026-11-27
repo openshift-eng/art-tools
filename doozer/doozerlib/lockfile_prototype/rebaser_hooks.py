@@ -24,6 +24,7 @@ from doozerlib.lockfile_prototype.dynamic_packages import (
     transform_dynamic_package_script,
 )
 from doozerlib.lockfile_prototype.generator import RpmLockfilePrototypeGenerator
+from doozerlib.lockfile_prototype.models import RpmInventory
 from doozerlib.lockfile_prototype.resolver import RpmResolver
 
 
@@ -68,13 +69,18 @@ async def generate_lockfile(
 
     digest_cache = shared_digest_cache if shared_digest_cache is not None else {}
 
-    resolver = RpmResolver(working_dir=working_dir, logger=_logger, cache_dir=shared_dnf_cache.name)
+    resolver = RpmResolver(
+        working_dir=working_dir,
+        logger=_logger,
+        cache_dir=shared_dnf_cache.name,
+    )
     generator = RpmLockfilePrototypeGenerator(
         repos, working_dir=working_dir, resolver=resolver, digest_cache=digest_cache
     )
 
     fallback: dict[int, list[str]] = {}
     parent_dirs: dict[int, Path] = {}
+    parent_inventories: dict[int, RpmInventory] = {}
     if parent_members and downstream_parents:
         for stage_num, pullspec in enumerate(downstream_parents):
             for parent in parent_members or []:
@@ -86,6 +92,8 @@ async def generate_lockfile(
                     parent_dir = base_dir / parent.qualified_key
                     if parent_dir.is_dir():
                         parent_dirs[stage_num] = parent_dir
+                        if parent.lockfile_inherited_rpms:
+                            parent_inventories[stage_num] = parent.lockfile_inherited_rpms
                     break
 
     await generator.generate_lockfile(
@@ -94,6 +102,7 @@ async def generate_lockfile(
         downstream_parents=downstream_parents,
         fallback_installed=fallback or None,
         parent_source_dirs=parent_dirs or None,
+        parent_inherited_rpms=parent_inventories or None,
     )
 
     lockfile_path = dest_dir / DEFAULT_RPM_LOCKFILE_NAME
@@ -108,6 +117,7 @@ async def generate_lockfile(
         metadata.lockfile_packages = sorted(pkg_names)
 
     metadata.lockfile_upgrades_dropped = generator.upgrades_dropped
+    metadata.lockfile_inherited_rpms = generator.inherited_rpms
 
     return shared_dnf_cache
 
