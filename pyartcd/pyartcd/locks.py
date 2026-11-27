@@ -49,7 +49,7 @@ class Lock(enum.Enum):
     BUILD_KONFLUX = 'lock:build-konflux:{version}:{assembly}'
     MASS_REBUILD = 'lock:mass-rebuild-serializer'
     KONFLUX_MASS_REBUILD = 'lock:konflux-mass-rebuild-serializer'
-    SIGNING = 'lock:signing:{signing_env}'
+    SIGNING = 'lock:signing:prod'
     BUILD_SYNC_KONFLUX = 'lock:build-sync-konflux:{version}'
     BUILD_SYNC_MULTI = 'lock:build-sync-multi:{version}'
     SCAN = 'lock:scan:{version}'

@@ -82,7 +82,6 @@ dependencies = [
     "slack-sdk>=3.39.0",
     "specfile>=0.37.1; sys_platform == 'linux'",
     "sqlalchemy>=2.0.45",
-    "stomp-py~=8.1.0",
     "tenacity>=8.5.0",
     "tomli~=2.0.1",
     "truststore>=0.10.4",

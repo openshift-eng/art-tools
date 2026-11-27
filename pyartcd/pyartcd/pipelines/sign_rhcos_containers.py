@@ -27,7 +27,6 @@ class SignRhcosContainersPipeline:
         runtime: Runtime,
         rhcos_file: str,
         arch: str,
-        signing_env: str | None = None,
         force_resign: bool = False,
     ):
         """
@@ -37,14 +36,12 @@ class SignRhcosContainersPipeline:
             runtime (Runtime): The runtime object
             rhcos_file (str): Path to the rhcos json file
             arch (str): Architecture (e.g., x86_64, aarch64)
-            signing_env (str | None): Signing environment (stage or prod)
             force_resign (bool): Re-sign even when our signature already exists (for backfills).
                 Can also be enabled via the FORCE_RESIGN environment variable.
         """
         self.runtime = runtime
         self.rhcos_file = Path(rhcos_file)
         self.arch = arch
-        self.signing_env = signing_env or "stage"
         self.force_resign = force_resign or os.environ.get("FORCE_RESIGN", "").lower() in ("1", "true", "yes")
         self.logger = self.runtime.logger
 
@@ -140,7 +137,6 @@ class SignRhcosContainersPipeline:
         ``asyncio.run()`` for use from synchronous CLI entry points.
         """
         self.logger.info(f"Signing RHCOS containers from {self.rhcos_file} ({self.arch})")
-        self.logger.info(f"Signing environment: {self.signing_env}")
         self.logger.info(f"Dry run: {self.runtime.dry_run}")
 
         self.logger.info("Extracting RHCOS container digests from stream data...")
@@ -173,12 +169,6 @@ class SignRhcosContainersPipeline:
 @click.option("--rhcos-file", required=True, help="Path to rhcos JSON file")
 @click.option("--arch", required=True, help="Architecture (e.g., x86_64, aarch64, s390x, ppc64le)")
 @click.option(
-    "--signing-env",
-    type=click.Choice(["stage", "prod"]),
-    default="stage",
-    help="Signing environment (determines which KMS key to use)",
-)
-@click.option(
     "--force/--no-force",
     "force",
     default=False,
@@ -190,7 +180,6 @@ def sign_rhcos_containers(
     runtime: Runtime,
     rhcos_file: str,
     arch: str,
-    signing_env: str,
     force: bool,
 ):
     """
@@ -216,14 +205,12 @@ def sign_rhcos_containers(
     Example:
         artcd -v --dry-run sign-rhcos-containers \\
             --rhcos-file /path/to/rhcos.json \\
-            --arch x86_64 \\
-            --signing-env prod
+            --arch x86_64
     """
     pipeline = SignRhcosContainersPipeline(
         runtime=runtime,
         rhcos_file=rhcos_file,
         arch=arch,
-        signing_env=signing_env,
         force_resign=force,
     )
     pipeline.run()

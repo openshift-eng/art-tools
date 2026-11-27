@@ -99,6 +99,7 @@ class TestRhcosSyncVariants(IsolatedAsyncioTestCase):
         http = self._mock_http(existing or {})
         with (
             patch("pyartcd.pipelines.rhcos_sync.aiohttp.ClientSession", return_value=http),
+            patch("pyartcd.pipelines.sync_rhcos.get_direct_signing_credentials"),
             patch.object(SyncRhcosPipeline, "_download_images", new=download),
             patch.object(SyncRhcosPipeline, "_sign_sha256sum", new_callable=AsyncMock) as sign,
             patch.object(
