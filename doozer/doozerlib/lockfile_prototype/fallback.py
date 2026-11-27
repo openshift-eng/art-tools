@@ -9,6 +9,7 @@ commands that generate the target file.
 """
 
 import re
+import shlex
 from pathlib import Path
 
 from dockerfile_parse import DockerfileParser
@@ -18,6 +19,122 @@ _RE_CONDITIONAL_SET = re.compile(r"\$\{(\w+):\+([^}]*)\}")
 _RE_CONDITIONAL_DEFAULT = re.compile(r"\$\{(\w+):-([^}]*)\}")
 _RE_BRACED_VAR = re.compile(r"\$\{(\w+)\}")
 _RE_PLAIN_VAR = re.compile(r"\$(\w+)")
+_RPM_OPERATION = re.compile(
+    r"(?m)(?:^|&&|;)\s*(?:do\s+)?(?P<tool>dnf5?|yum|microdnf|rpm(?:-ostree)?)\s+(?P<args>[^\n;&|]+)"
+)
+_RPM_CHANGES = {
+    "install",
+    "upgrade",
+    "update",
+    "reinstall",
+    "downgrade",
+    "distro-sync",
+    "groupinstall",
+    "remove",
+    "erase",
+    "swap",
+    "override",
+    "uninstall",
+    "groupremove",
+    "autoremove",
+    "--install",
+    "--erase",
+    "--upgrade",
+    "--freshen",
+}
+_RPMDB_PATHS = tuple(Path(path) for path in ("/usr/share/rpm", "/usr/lib/sysimage/rpm", "/var/lib/rpm"))
+
+
+def find_versionlocked_stages(source_dir: Path, entries: list[dict]) -> tuple[set[int], dict[int, int]]:
+    """
+    Find literal wildcard versionlocks and unchanged stages based on an earlier stage.
+    """
+    root = source_dir.resolve()
+    stage = -1
+    aliases: dict[str, int] = {}
+    references: dict[int, int] = {}
+    copied: dict[str, str] = {}
+    commands: dict[int, list[str]] = {}
+    changed_stages: set[int] = set()
+    rpmdb_copies: set[int] = set()
+    for entry in entries:
+        instruction = entry["instruction"]
+        value = entry["value"].replace("\\\n", " ")
+        if instruction == "FROM":
+            stage += 1
+            commands[stage] = []
+            copied = {}
+            image, *alias = [token.lower() for token in value.split() if not token.startswith("--")]
+            if image in aliases:
+                references[stage] = aliases[image]
+            aliases[str(stage)] = stage
+            if len(alias) == 2 and alias[0] == "as":
+                aliases[alias[1]] = stage
+        elif instruction == "COPY" and stage >= 0:
+            source, _, destination = value.strip().partition(" ")
+            if source.endswith(".sh") and destination.strip():
+                copied[destination.strip()] = source
+            target = Path(value.rstrip().split()[-1])
+            if not target.is_absolute() or any(
+                database.is_relative_to(target) or target.is_relative_to(database) for database in _RPMDB_PATHS
+            ):
+                rpmdb_copies.add(stage)
+        elif instruction == "ADD" and stage >= 0:
+            rpmdb_copies.add(stage)
+        elif instruction == "RUN" and stage >= 0:
+            changed_stages.add(stage)
+            commands[stage].append(value)
+            scripts = re.finditer(
+                r"(?:^|&&|;|--mount=\S+\s+)\s*(?:bash\s+)?([\w./-]+\.sh)(?=\s|$|[;&|])"
+                r"|\bsed\s+[^|]+\s([\w./-]+\.sh)\s*\|\s*bash\b",
+                value,
+            )
+            for match in scripts:
+                script = match[1] or match[2]
+                source = copied.get(script, script)
+                for target in re.findall(r"--mount=type=bind,target=([^,\s]+)(?=\s)", value):
+                    source = source.removeprefix(target.rstrip("/") + "/")
+                path = (root / source).resolve()
+                if path.is_relative_to(root) and path.is_file():
+                    commands[stage].append(path.read_text(errors="replace"))
+
+    locked = {
+        stage
+        for stage, bodies in commands.items()
+        if stage not in rpmdb_copies and _preserves_installed_rpms("\n".join(bodies))
+    }
+    unchanged = {stage: parent for stage, parent in references.items() if stage not in changed_stages | rpmdb_copies}
+    return locked, unchanged
+
+
+def _preserves_installed_rpms(commands: str) -> bool:
+    """
+    Require every literal RPM mutation to be protected by a wildcard versionlock.
+    """
+    seen_lock = locked = False
+    for match in _RPM_OPERATION.finditer(commands.replace("\\\n", " ")):
+        tool = match["tool"]
+        try:
+            args = shlex.split(match["args"])
+        except ValueError:
+            return False
+        if "versionlock" in args and tool in {"dnf", "dnf5", "yum"}:
+            operation = args[args.index("versionlock") + 1 :]
+            locked = operation == ["add", "*"] or (locked and operation[:1] == ["list"])
+            seen_lock |= locked
+        elif (operations := _RPM_CHANGES.intersection(args)) or (
+            tool == "rpm" and any(re.fullmatch(r"-[iUFe][a-zA-Z]*", arg) for arg in args)
+        ):
+            bypasses_lock = any(arg.startswith(("--noplugins", "--disableplugin", "--disable-plugin")) for arg in args)
+            if (
+                not locked
+                or bypasses_lock
+                or tool not in {"dnf", "dnf5", "yum"}
+                or operations - {"install", "reinstall", "update", "upgrade"}
+                or "--allowerasing" in args
+            ):
+                return False
+    return seen_lock
 
 
 def _resolve_bash_expansion(text: str, variables: dict[str, str]) -> str:

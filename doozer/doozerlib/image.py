@@ -143,7 +143,6 @@ class ImageMetadata(Metadata):
         self.lockfile_packages: list[str] = []
         """ Resolved RPM package names from lockfile, used by child images for conflict detection. """
         self.lockfile_inherited_rpms: RpmInventory = {}
-        """ Installed RPM versions that this rebase preserves for child images. """
         self.build_event = Event()
         """ Event that is set when this image is being built. """
         self.build_status = False

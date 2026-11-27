@@ -12,7 +12,7 @@ from tempfile import TemporaryDirectory
 import yaml
 from dockerfile_parse import DockerfileParser
 
-from doozerlib.lockfile_prototype.constants import DEFAULT_RPM_LOCKFILE_NAME, DOCKERFILE_NAME
+from doozerlib.lockfile_prototype.constants import DEFAULT_RPM_LOCKFILE_NAME
 from doozerlib.lockfile_prototype.dockerfile_transforms import (
     add_installroot_gpg_key_import,
     strip_bare_updates,
@@ -24,9 +24,8 @@ from doozerlib.lockfile_prototype.dynamic_packages import (
     transform_dynamic_package_script,
 )
 from doozerlib.lockfile_prototype.generator import RpmLockfilePrototypeGenerator
-from doozerlib.lockfile_prototype.inherited_rpms import stage_references
 from doozerlib.lockfile_prototype.models import RpmInventory
-from doozerlib.lockfile_prototype.resolver import ImageRpmInventoryCache, RpmResolver
+from doozerlib.lockfile_prototype.resolver import RpmResolver
 
 
 async def generate_lockfile(
@@ -40,7 +39,6 @@ async def generate_lockfile(
     shared_dnf_cache: TemporaryDirectory | None = None,
     shared_digest_cache: dict[str, str] | None = None,
     logger: logging.Logger | None = None,
-    shared_inventory_cache: ImageRpmInventoryCache | None = None,
 ) -> TemporaryDirectory | None:
     """
     Generate an RPM lockfile using the rpm-lockfile-prototype backend.
@@ -61,8 +59,6 @@ async def generate_lockfile(
             across images. Avoids repeating expensive (and failing) network calls
             for the same pullspec.
         logger (logging.Logger | None): Logger instance.
-        shared_inventory_cache (ImageRpmInventoryCache | None): Image RPM
-            inventories shared across rebases.
     Return Value(s):
         TemporaryDirectory | None: The shared cache (created if None was passed in).
     """
@@ -77,7 +73,6 @@ async def generate_lockfile(
         working_dir=working_dir,
         logger=_logger,
         cache_dir=shared_dnf_cache.name,
-        inventory_cache=shared_inventory_cache,
     )
     generator = RpmLockfilePrototypeGenerator(
         repos, working_dir=working_dir, resolver=resolver, digest_cache=digest_cache
@@ -86,26 +81,20 @@ async def generate_lockfile(
     fallback: dict[int, list[str]] = {}
     parent_dirs: dict[int, Path] = {}
     parent_inventories: dict[int, RpmInventory] = {}
-    dockerfile = dest_dir / DOCKERFILE_NAME
-    if parent_members and downstream_parents and dockerfile.exists():
-        references = stage_references(DockerfileParser(str(dockerfile)).structure)
-        image_from = metadata.config.get("from", {})
-        configured_parents = list(image_from.get("builder", []))
-        if any(key in image_from for key in ("member", "stream", "image")):
-            configured_parents.append(image_from)
-        members = {parent.distgit_key: parent for parent in parent_members if parent is not None}
-        external_stages = (stage for stage in range(len(downstream_parents)) if stage not in references)
-        for stage, config in zip(external_stages, configured_parents):
-            parent = members.get(config.get("member"))
-            if parent is None:
-                continue
-            if parent.lockfile_packages:
-                fallback[stage] = parent.lockfile_packages
-            if parent.lockfile_inherited_rpms:
-                parent_inventories[stage] = parent.lockfile_inherited_rpms
-            parent_dir = base_dir / parent.qualified_key
-            if parent_dir.is_dir():
-                parent_dirs[stage] = parent_dir
+    if parent_members and downstream_parents:
+        for stage_num, pullspec in enumerate(downstream_parents):
+            for parent in parent_members or []:
+                if parent is None:
+                    continue
+                if parent.distgit_key in pullspec:
+                    if parent.lockfile_packages:
+                        fallback[stage_num] = parent.lockfile_packages
+                    parent_dir = base_dir / parent.qualified_key
+                    if parent_dir.is_dir():
+                        parent_dirs[stage_num] = parent_dir
+                        if parent.lockfile_inherited_rpms:
+                            parent_inventories[stage_num] = parent.lockfile_inherited_rpms
+                    break
 
     await generator.generate_lockfile(
         metadata,

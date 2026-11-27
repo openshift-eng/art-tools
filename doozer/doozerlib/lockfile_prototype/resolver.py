@@ -30,19 +30,8 @@ from doozerlib.lockfile_prototype.constants import (
     SYSTEM_PYTHON,
     VALID_PKG_NAME,
 )
-from doozerlib.lockfile_prototype.lockfile_merger import merge_lockfiles
-from doozerlib.lockfile_prototype.models import LockfileData, RepoEntry, RpmInventory, RpmsInConfig
+from doozerlib.lockfile_prototype.models import LockfileData, RpmInventory, RpmsInConfig
 from doozerlib.lockfile_prototype.utils import build_env
-
-
-class ImageRpmInventoryCache:
-    """
-    Share successful immutable image inventories and serialize queries per platform.
-    """
-
-    def __init__(self) -> None:
-        self.inventories: dict[tuple[str, str], dict[str, set[str]]] = {}
-        self.locks: dict[tuple[str, str], asyncio.Lock] = {}
 
 
 class RpmResolver:
@@ -59,10 +48,8 @@ class RpmResolver:
         working_dir: Path,
         logger: logging.Logger | None = None,
         cache_dir: str | None = None,
-        inventory_cache: ImageRpmInventoryCache | None = None,
     ):
         self.logger = logger or logutil.get_logger(__name__)
-        self._inventory_cache = inventory_cache if inventory_cache is not None else ImageRpmInventoryCache()
         self._working_dir = str(working_dir)
         self._cache_dir_owner = (
             None if cache_dir else TemporaryDirectory(prefix="rpm-lockfile-cache-", dir=self._working_dir)
@@ -98,27 +85,11 @@ class RpmResolver:
         Read installed EVRs from the same image RPM databases used by the solver.
         Architectures with unavailable inventories are omitted.
         """
-        inventories = await asyncio.gather(*(self._get_installed_evrs(image_pullspec, arch) for arch in arches))
+        if "@" in image_pullspec and not re.fullmatch(r"[^@]+@sha256:[0-9a-f]{64}", image_pullspec):
+            self.logger.warning("Skipping RPM inventory query for malformed image digest: %s", image_pullspec)
+            return {}
+        inventories = await asyncio.gather(*(self._query_installed_evrs(image_pullspec, arch) for arch in arches))
         return {arch: inventory for arch, inventory in zip(arches, inventories) if inventory is not None}
-
-    async def _get_installed_evrs(self, image_pullspec: str, arch: str) -> dict[str, set[str]] | None:
-        """
-        Cache successful queries by immutable manifest digest and architecture.
-        """
-        digest = re.fullmatch(r"[^@]+@(sha256:[0-9a-f]{64})", image_pullspec)
-        if not digest:
-            if "@" in image_pullspec:
-                self.logger.warning("Skipping RPM inventory query for malformed image digest: %s", image_pullspec)
-                return None
-            return await self._query_installed_evrs(image_pullspec, arch)
-        key = (digest[1], arch)
-        cache = self._inventory_cache
-        async with cache.locks.setdefault(key, asyncio.Lock()):
-            if key not in cache.inventories:
-                inventory = await self._query_installed_evrs(image_pullspec, arch)
-                if inventory is not None:
-                    cache.inventories[key] = inventory
-            return cache.inventories.get(key)
 
     async def _query_installed_evrs(self, image_pullspec: str, arch: str) -> dict[str, set[str]] | None:
         """
@@ -153,7 +124,6 @@ class RpmResolver:
         image_pullspec: str | None = None,
         containerfile_path: str | None = None,
         stage_num: int | None = None,
-        repos_by_arch: dict[str, list[RepoEntry]] | None = None,
     ) -> LockfileData:
         """
         Resolve RPM packages by running rpm-lockfile-prototype via
@@ -175,20 +145,9 @@ class RpmResolver:
                 Dockerfile for automatic package extraction.
             stage_num (int | None): 1-indexed stage number to extract
                 packages from (None = last stage).
-            repos_by_arch (dict[str, list[RepoEntry]] | None): Architecture-specific
-                repository configurations for versionlocked stages.
         Return Value(s):
             LockfileData: Resolved lockfile.
         """
-        if repos_by_arch is not None:
-            results = []
-            for arch in config.arches:
-                arch_config = config.model_copy(
-                    update={"arches": [arch], "contentOrigin": {"repos": repos_by_arch[arch]}}
-                )
-                results.append(await self.resolve(arch_config, image_pullspec, containerfile_path, stage_num))
-            return merge_lockfiles(results)
-
         if containerfile_path:
             pfc_spec: dict = {"file": containerfile_path}
             if stage_num is not None:

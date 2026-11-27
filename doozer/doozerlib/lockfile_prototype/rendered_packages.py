@@ -13,20 +13,6 @@ from doozerlib.lockfile_prototype.dynamic_packages import DynamicPackageResolver
 from doozerlib.lockfile_prototype.models import RepoEntry
 
 
-def parse_copy_tokens(value: str) -> list[str]:
-    """
-    Parse COPY options and operands in shell or JSON form.
-    """
-    value = value.replace("\\\n", " ").strip()
-    match = re.match(r"^((?:--\S+\s+)*)\s*(\[.*)$", value, re.DOTALL)
-    if not match:
-        return shlex.split(value)
-    operands = json.loads(match.group(2))
-    if not isinstance(operands, list) or not all(isinstance(token, str) for token in operands):
-        return []
-    return shlex.split(match.group(1)) + operands
-
-
 async def resolve_rendered_packages(
     source_dir: Path,
     entries: list[dict],
@@ -76,7 +62,15 @@ async def resolve_rendered_packages(
                         env_variables[match.group(1)] = variables[match.group(1)]
             elif entry["instruction"] == "COPY":
                 try:
-                    tokens = parse_copy_tokens(value)
+                    copy_value = value.replace("\\\n", " ").strip()
+                    match = re.match(r"^((?:--\S+\s+)*)\s*(\[.*)$", copy_value, re.DOTALL)
+                    if match:
+                        operands = json.loads(match.group(2))
+                        if not isinstance(operands, list) or not all(isinstance(token, str) for token in operands):
+                            continue
+                        tokens = shlex.split(match.group(1)) + operands
+                    else:
+                        tokens = shlex.split(copy_value)
                 except ValueError:
                     continue
                 from_stage = any(token == "--from" or token.startswith("--from=") for token in tokens)

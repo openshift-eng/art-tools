@@ -11,11 +11,8 @@ import asyncio
 import logging
 import re
 import shlex
-from collections.abc import Iterator
-from dataclasses import dataclass
 from pathlib import Path
 
-import aiohttp
 import yaml
 from artcommonlib import logutil
 from artcommonlib.arch_util import BREW_ARCHES
@@ -36,13 +33,7 @@ from doozerlib.lockfile_prototype.dynamic_packages import (
     DynamicPackageSet,
     discover_dynamic_package_script,
 )
-from doozerlib.lockfile_prototype.fallback import extract_generated_file_content
-from doozerlib.lockfile_prototype.inherited_rpms import (
-    constrain_repo,
-    preserved_versions,
-    stage_package_operations,
-    stage_references,
-)
+from doozerlib.lockfile_prototype.fallback import extract_generated_file_content, find_versionlocked_stages
 from doozerlib.lockfile_prototype.lockfile_merger import merge_lockfiles
 from doozerlib.lockfile_prototype.models import (
     ArchSpecificPackage,
@@ -55,7 +46,7 @@ from doozerlib.lockfile_prototype.models import (
 )
 from doozerlib.lockfile_prototype.rendered_packages import resolve_rendered_packages
 from doozerlib.lockfile_prototype.resolver import RpmResolver
-from doozerlib.lockfile_prototype.utils import format_version_pin, parse_evr, pick_minimum_evr
+from doozerlib.lockfile_prototype.utils import format_version_pin, pick_minimum_evr
 from doozerlib.repos import Repos
 
 
@@ -316,13 +307,6 @@ def build_rpms_in_yaml(
     )
 
 
-@dataclass
-class _VersionlockedStage:
-    inventory: RpmInventory
-    versions: dict[str, str]
-    repos_by_arch: dict[str, list[RepoEntry]]
-
-
 class RpmLockfilePrototypeGenerator:
     """
     Orchestrates RPM lockfile generation using rpm-lockfile-prototype.
@@ -344,11 +328,11 @@ class RpmLockfilePrototypeGenerator:
         self.downstream_parents: list[str] = []
         self.fallback_installed: dict[int, list[str]] = {}
         self.parent_source_dirs: dict[int, Path] = {}
+        self.parent_inherited_rpms: dict[int, RpmInventory] = {}
+        self.inherited_rpms: RpmInventory = {}
         self.logger = logger or logutil.get_logger(__name__)
         self.upgrades_dropped = False
         self._rpmdb_package_cache: dict[tuple[str, str], set[str] | None] = {}
-        self._versionlocked_stages: dict[int, _VersionlockedStage] = {}
-        self.inherited_rpms: RpmInventory = {}
         self._container = container_helper or ContainerImageHelper(logger=self.logger, digest_cache=digest_cache)
         self._resolver = resolver or RpmResolver(working_dir=working_dir, logger=self.logger)
 
@@ -381,11 +365,11 @@ class RpmLockfilePrototypeGenerator:
                 when base images are unreachable.
             parent_source_dirs (dict[int, Path] | None): Per-stage parent build
                 directories for reading files when base images are unreachable.
-            parent_inherited_rpms (dict[int, RpmInventory] | None): RPM versions
-                known to be preserved by parents rebased in the same run.
+            parent_inherited_rpms (dict[int, RpmInventory] | None): Per-stage RPM
+                versions preserved by parents rebased in the same run.
         """
-        self._versionlocked_stages.clear()
         self.inherited_rpms = {}
+        self.parent_inherited_rpms = parent_inherited_rpms or {}
         if downstream_parents is not None:
             self.downstream_parents = downstream_parents
         if fallback_installed is not None:
@@ -414,15 +398,6 @@ class RpmLockfilePrototypeGenerator:
             for i, builder_entry in enumerate(builders):
                 if isinstance(builder_entry, dict) and builder_entry.get('no_rpms', False):
                     no_rpms_stages.add(i)
-        await self._prepare_inherited_constraints(
-            dest_dir,
-            entries,
-            arches,
-            enabled_repos,
-            image_meta.distgit_key,
-            no_rpms_stages | _detect_stages_with_installroot_only(entries),
-            parent_inherited_rpms or {},
-        )
         cat_packages = await self._resolve_cat_packages(entries, self.downstream_parents)
         rendered_packages = await resolve_rendered_packages(
             dest_dir, entries, self.downstream_parents, self._container, repo_list, self.logger, arches, no_rpms_stages
@@ -484,99 +459,6 @@ class RpmLockfilePrototypeGenerator:
         )
         lockfile = self._assemble_lockfile(stage_lockfiles, image_meta)
         self._write_lockfile(lockfile, out_file_path, image_meta.distgit_key)
-
-    async def _prepare_inherited_constraints(
-        self,
-        source_dir: Path,
-        entries: list[dict],
-        arches: list[str],
-        enabled_repos: set[str],
-        distgit_key: str,
-        no_rpms_stages: set[int],
-        parent_inventories: dict[int, RpmInventory],
-    ) -> None:
-        """
-        Resolve inherited RPMs lazily and carry known preserved versions forward.
-        """
-        references = stage_references(entries)
-        inventories: dict[int, RpmInventory] = {}
-        origins: dict[int, int] = {}
-        for stage, operations in stage_package_operations(source_dir, entries, references).items():
-            parent = references.get(stage)
-            if parent is None:
-                inventory = parent_inventories.get(stage, {})
-                origin = stage
-            else:
-                inventory = inventories[parent]
-                origin = origins.get(parent)
-
-            locked = False
-            changes_rpms = False
-            changes_unlocked = False
-            for operation in operations:
-                if operation in {"lock", "unlock"}:
-                    locked = operation == "lock"
-                else:
-                    changes_rpms = True
-                    changes_unlocked |= not locked or operation == "unprotected_change"
-
-            if "lock" in operations and stage not in no_rpms_stages:
-                context = f"{distgit_key}: stage {stage}"
-                if changes_unlocked:
-                    raise RuntimeError(f"{context}: RPM changes outside the wildcard versionlock prevent preservation")
-                if not inventory and origin is not None:
-                    pullspec = await self._determine_stage_pullspec(origin, distgit_key)
-                    if pullspec:
-                        inventory = await self._resolver.get_installed_evrs(
-                            ContainerImageHelper._proxy_pullspec(pullspec), arches
-                        )
-                missing = set(arches) - inventory.keys()
-                if missing:
-                    raise RuntimeError(f"{context}: missing versionlocked parent RPM inventories for {sorted(missing)}")
-                try:
-                    versions = preserved_versions({arch: inventory[arch] for arch in arches})
-                except RuntimeError as exc:
-                    raise RuntimeError(f"{context}: {exc}") from exc
-                constrained = await asyncio.gather(
-                    *(self._constrain_repos_for_arch(enabled_repos, arch, versions) for arch in arches)
-                )
-                self._versionlocked_stages[stage] = _VersionlockedStage(
-                    inventory, versions, dict(zip(arches, constrained))
-                )
-            elif changes_rpms:
-                inventory = {}
-                origin = None
-
-            inventories[stage] = inventory
-            if origin is not None:
-                origins[stage] = origin
-        self.inherited_rpms = inventories.get(max(inventories, default=-1), {})
-
-    async def _constrain_repos_for_arch(
-        self, enabled_repos: set[str], arch: str, versions: dict[str, str]
-    ) -> list[RepoEntry]:
-        """
-        Filter actual repository candidates while preserving existing repo options.
-        """
-
-        async def constrain(name: str, entry: RepoEntry) -> RepoEntry | None:
-            """
-            Apply exclusions using metadata from the same repository and architecture.
-            """
-            try:
-                repodata = await self.repos[name].get_repodata(arch)
-            except aiohttp.ClientResponseError as exc:
-                optional = str(entry.options.get("skip_if_unavailable", False)).lower() in {"1", "true", "yes", "on"}
-                if exc.status == 404 and optional:
-                    self.logger.info("Optional repo %s is absent for %s; omitting it", name, arch)
-                    return None
-                raise
-            return constrain_repo(entry, repodata.primary_rpms, versions)
-
-        repos = await asyncio.gather(
-            *(constrain(name, entry) for name, entry in self._iter_repo_entries(enabled_repos, [arch]))
-        )
-        return [repo for repo in repos if repo is not None]
 
     async def _resolve_cat_packages(
         self,
@@ -697,11 +579,16 @@ class RpmLockfilePrototypeGenerator:
         """
         stage_lockfiles: list[LockfileData] = []
         final_stage_num = total_stages - 1
+        versionlocked, unchanged_references = find_versionlocked_stages(dockerfile_path.parent, entries)
+        preserved_stages: dict[int, RpmInventory] = {}
         stages_with_installroot_only = _detect_stages_with_installroot_only(entries)
         if no_rpms_stages is None:
             no_rpms_stages = set()
 
         for stage_num in range(total_stages):
+            if stage_num in unchanged_references:
+                base_stage = unchanged_references[stage_num]
+                preserved_stages[stage_num] = preserved_stages.get(base_stage, {})
             if stage_num in no_rpms_stages:
                 self.logger.info(f"{distgit_key}: stage {stage_num}: no_rpms=true in config, skipping RPM resolution")
                 continue
@@ -737,9 +624,21 @@ class RpmLockfilePrototypeGenerator:
 
             reinstall_pkgs: list[str] | None = None
             upgrade_pkgs: list[str | ArchSpecificPackage] | None = None
-            versionlocked = self._versionlocked_stages.get(stage_num)
+            preserved: RpmInventory = {}
+            if stage_num in versionlocked and not bare_context:
+                if image_pullspec:
+                    preserved = await self._resolver.get_installed_evrs(
+                        ContainerImageHelper._proxy_pullspec(image_pullspec), arches
+                    )
+                else:
+                    preserved = self.parent_inherited_rpms.get(stage_num, {})
+                if preserved.keys() >= set(arches):
+                    preserved = {arch: preserved[arch] for arch in arches}
+                    preserved_stages[stage_num] = preserved
+                elif preserved or image_pullspec:
+                    raise RuntimeError(f"{distgit_key}: stage {stage_num}: incomplete versionlocked RPM inventory")
             if stage_num == final_stage_num and not bare_context:
-                if image_pullspec and not versionlocked:
+                if image_pullspec and stage_num not in versionlocked:
                     base_pkgs = await self._get_base_image_packages(stage_num, image_pullspec, distgit_key, arches)
                     if base_pkgs:
                         # Use upgrade semantics for base image packages so repos
@@ -760,7 +659,7 @@ class RpmLockfilePrototypeGenerator:
                         if extra:
                             extra_packages = extra_packages + extra
 
-            if stage_num in stages_with_bare_updates and not bare_context and not versionlocked:
+            if stage_num in stages_with_bare_updates and not bare_context and stage_num not in versionlocked:
                 if not image_pullspec:
                     # Check fallback data before dropping upgrades
                     bare_update_base = await self._get_base_image_packages(stage_num, None, distgit_key, arches)
@@ -802,6 +701,7 @@ class RpmLockfilePrototypeGenerator:
                 containerfile_install_packages=dockerfile_install_pkgs,
                 bare_context=bare_context,
                 arch_specific_packages=dynamic_arch_specific_packages,
+                preserved_inventory=preserved,
             )
             before_pins = result
 
@@ -811,11 +711,11 @@ class RpmLockfilePrototypeGenerator:
             # Runs for every image-backed stage, not just final/bare-update.
             if image_pullspec and not bare_context:
                 if dockerfile_install_pkgs or dynamic_package_set:
-                    if versionlocked:
+                    if preserved:
                         stage_base_pkgs = [
                             ArchSpecificPackage(name=name, arches={"only": arch})
-                            for arch in arches
-                            for name in versionlocked.inventory[arch]
+                            for arch, packages in preserved.items()
+                            for name in packages
                         ]
                     elif upgrade_pkgs:
                         stage_base_pkgs = upgrade_pkgs
@@ -841,12 +741,15 @@ class RpmLockfilePrototypeGenerator:
                             result = await self._pin_missing_dockerfile_packages(
                                 result, pin_candidates, repo_list, [arch], image_pullspec, distgit_key, stage_num
                             )
-                    if result and result is not before_pins and len(arches) > 1 and not versionlocked:
-                        await self._validate_inherited_pins(result, image_pullspec, arches, distgit_key, stage_num)
+                    if result and result is not before_pins and (preserved or len(arches) > 1):
+                        await self._validate_inherited_pins(
+                            result, image_pullspec, arches, distgit_key, stage_num, preserved
+                        )
 
             if result:
                 stage_lockfiles.append(result)
 
+        self.inherited_rpms = preserved_stages.get(final_stage_num, {})
         return stage_lockfiles
 
     async def _get_base_image_packages(
@@ -1112,21 +1015,16 @@ class RpmLockfilePrototypeGenerator:
                 mode = "image" if resolver_pullspec else "bare"
                 total = len(remaining_packages) + len(remaining_reinstall) + len(remaining_upgrade)
                 self.logger.info(f"{distgit_key}: stage {stage_num}: resolving {total} extra packages in {mode} mode")
-                return await self._invoke_resolver(
+                return await self._resolver.resolve(
                     in_yaml,
-                    stage_num,
                     image_pullspec=resolver_pullspec,
                     containerfile_path=containerfile_path,
+                    stage_num=stage_num + 1 if containerfile_path else None,
                 )
             except RuntimeError as e:
                 missing = RpmResolver.parse_missing_packages(str(e))
                 if not missing:
                     raise
-                versionlocked = self._versionlocked_stages.get(stage_num)
-                if versionlocked and missing & versionlocked.versions.keys():
-                    raise RuntimeError(
-                        f"{distgit_key}: stage {stage_num}: unable to resolve RPMs at inherited EVRs: {e}"
-                    ) from e
                 upgrade_names = {_package_name(package) for package in remaining_upgrade}
                 upgrade_hit = missing & upgrade_names if remaining_upgrade else set()
                 containerfile_upgrade_hit = upgrade_hit & containerfile_install_packages
@@ -1262,35 +1160,6 @@ class RpmLockfilePrototypeGenerator:
 
         raise RuntimeError(f"{distgit_key}: stage {stage_num}: exceeded {MAX_RESOLUTION_RETRIES} retries")
 
-    async def _invoke_resolver(
-        self,
-        config: RpmsInConfig,
-        stage: int,
-        image_pullspec: str | None,
-        containerfile_path: str | None = None,
-    ) -> LockfileData:
-        """
-        Resolve with stage-specific restrictions and validate the resulting EVRs.
-        """
-        versionlocked = self._versionlocked_stages.get(stage)
-        result = await self._resolver.resolve(
-            config,
-            image_pullspec=image_pullspec,
-            containerfile_path=containerfile_path,
-            stage_num=stage + 1 if containerfile_path else None,
-            **({"repos_by_arch": versionlocked.repos_by_arch} if versionlocked else {}),
-        )
-        if versionlocked:
-            for entry in result.arches:
-                for package in entry.packages:
-                    expected = versionlocked.versions.get(package.name)
-                    if expected and (not package.evr or parse_evr(package.evr) != parse_evr(expected)):
-                        raise RuntimeError(
-                            f"stage {stage}: {entry.arch} resolved {package.name}-{package.evr}; "
-                            f"inherited RPM version is {expected}"
-                        )
-        return result
-
     def _assemble_lockfile(self, stage_lockfiles: list[LockfileData], image_meta: ImageMetadata) -> LockfileData:
         """
         Merge stage lockfiles, filter empty arches, apply cross-arch merge.
@@ -1365,7 +1234,10 @@ class RpmLockfilePrototypeGenerator:
 
     @staticmethod
     def _inherited_version_targets(
-        locked: dict[str, dict[str, str]], inventory: dict[str, dict[str, set[str]]], image_pullspec: str
+        locked: dict[str, dict[str, str]],
+        inventory: RpmInventory,
+        image_pullspec: str,
+        versionlocked: bool = False,
     ) -> dict[str, str]:
         """
         Find dependencies that must match versions retained by other architectures.
@@ -1375,7 +1247,7 @@ class RpmLockfilePrototypeGenerator:
             inherited = {
                 arch: packages[name]
                 for arch, packages in inventory.items()
-                if arch not in resolved and name in packages
+                if (versionlocked or arch not in resolved) and name in packages
             }
             inherited_evrs = set().union(*inherited.values())
             if not inherited_evrs or inherited_evrs == set(resolved.values()):
@@ -1429,6 +1301,7 @@ class RpmLockfilePrototypeGenerator:
         containerfile_install_packages: set[str] | None = None,
         bare_context: bool = False,
         arch_specific_packages: dict[str, list[str]] | None = None,
+        preserved_inventory: RpmInventory | None = None,
     ) -> LockfileData | None:
         """
         Resolve a stage with cross-arch version reconciliation.
@@ -1455,6 +1328,8 @@ class RpmLockfilePrototypeGenerator:
             bare_context (bool): Whether to emit a bare resolution context.
             arch_specific_packages (dict[str, list[str]] | None): Packages restricted
                 to specific architectures.
+            preserved_inventory (RpmInventory | None): Installed versions protected
+                by the stage's wildcard versionlock.
         Return Value(s):
             LockfileData | None: Resolved lockfile with consistent
                 versions, or None if no packages remain.
@@ -1478,9 +1353,12 @@ class RpmLockfilePrototypeGenerator:
 
         mismatches = self._detect_cross_arch_mismatches(first_pass)
         first_versions = self._locked_evrs(first_pass)
-        inventory: dict[str, dict[str, set[str]]] = {}
+        inventory: RpmInventory = preserved_inventory or {}
+        base = image_pullspec or "parent rebased in the same run"
         inherited_targets: dict[str, str] = {}
-        if (
+        if preserved_inventory:
+            inherited_targets = self._inherited_version_targets(first_versions, inventory, base, versionlocked=True)
+        elif (
             image_pullspec
             and len(arches) > 1
             and (mismatches or any(len(versions) < len(arches) for versions in first_versions.values()))
@@ -1549,7 +1427,7 @@ class RpmLockfilePrototypeGenerator:
                 f"{distgit_key}: stage {stage_num}: cross-arch version reconciliation failed. "
                 f"Version-pinned re-resolution error: {e}. "
                 f"Mismatched packages: {self._format_mismatches(mismatches)}. "
-                f"Inherited targets from {image_pullspec}: {inherited_targets}"
+                f"Inherited targets from {base}: {inherited_targets}"
             ) from e
 
         if not second_pass:
@@ -1557,7 +1435,7 @@ class RpmLockfilePrototypeGenerator:
                 f"{distgit_key}: stage {stage_num}: cross-arch version reconciliation failed. "
                 f"Re-resolution returned no results. "
                 f"Mismatched packages: {self._format_mismatches(mismatches)}. "
-                f"Inherited targets from {image_pullspec}: {inherited_targets}"
+                f"Inherited targets from {base}: {inherited_targets}"
             )
 
         remaining = self._detect_cross_arch_mismatches(second_pass)
@@ -1569,15 +1447,17 @@ class RpmLockfilePrototypeGenerator:
                 if effective != {evr}:
                     raise RuntimeError(
                         f"{distgit_key}: stage {stage_num}: cross-arch version reconciliation failed for {name} "
-                        f"on {arch}: expected inherited EVR {evr} from {image_pullspec}, got {sorted(effective)}"
+                        f"on {arch}: expected inherited EVR {evr} from {base}, got {sorted(effective)}"
                     )
-        if image_pullspec and inventory.keys() == set(arches):
-            inherited_mismatches = self._inherited_version_targets(second_versions, inventory, image_pullspec)
+        if inventory.keys() == set(arches):
+            inherited_mismatches = self._inherited_version_targets(
+                second_versions, inventory, base, versionlocked=bool(preserved_inventory)
+            )
             if inherited_mismatches:
                 resolved = self._format_mismatches({name: second_versions[name] for name in inherited_mismatches})
                 raise RuntimeError(
                     f"{distgit_key}: stage {stage_num}: cross-arch version reconciliation failed. "
-                    f"Resolved packages differ from versions inherited from {image_pullspec}: "
+                    f"Resolved packages differ from versions inherited from {base}: "
                     f"{resolved}. Expected inherited versions: {inherited_mismatches}"
                 )
         if remaining:
@@ -1648,10 +1528,8 @@ class RpmLockfilePrototypeGenerator:
                 reinstall_packages=missing,
             )
             try:
-                pin_result = await self._invoke_resolver(in_yaml, stage_num, image_pullspec=resolver_pullspec)
+                pin_result = await self._resolver.resolve(in_yaml, image_pullspec=resolver_pullspec)
             except RuntimeError as e:
-                if stage_num in self._versionlocked_stages:
-                    raise
                 self.logger.warning(
                     f"{distgit_key}: stage {stage_num}: pin pass failed on {arch}, "
                     f"some Dockerfile packages may be unlocked: {e}"
@@ -1693,18 +1571,26 @@ class RpmLockfilePrototypeGenerator:
         return merged
 
     async def _validate_inherited_pins(
-        self, lockfile: LockfileData, image_pullspec: str, arches: list[str], distgit_key: str, stage_num: int
+        self,
+        lockfile: LockfileData,
+        image_pullspec: str,
+        arches: list[str],
+        distgit_key: str,
+        stage_num: int,
+        preserved_inventory: RpmInventory,
     ) -> None:
         """
         Check that dependencies added by pinning agree with RPMs retained by other arches.
         """
         versions = self._locked_evrs(lockfile)
-        if all(len(resolved) == len(arches) for resolved in versions.values()):
+        if not preserved_inventory and all(len(resolved) == len(arches) for resolved in versions.values()):
             return
-        inventory = await self._resolver.get_installed_evrs(
+        inventory = preserved_inventory or await self._resolver.get_installed_evrs(
             ContainerImageHelper._proxy_pullspec(image_pullspec), arches
         )
-        mismatches = self._inherited_version_targets(versions, inventory, image_pullspec)
+        mismatches = self._inherited_version_targets(
+            versions, inventory, image_pullspec, versionlocked=bool(preserved_inventory)
+        )
         if mismatches:
             resolved = self._format_mismatches({name: versions[name] for name in mismatches})
             raise RuntimeError(
@@ -1772,12 +1658,7 @@ class RpmLockfilePrototypeGenerator:
         Return Value(s):
             list[RepoEntry]: Repository entries.
         """
-        return [entry for _, entry in self._iter_repo_entries(enabled_repos, arches)]
-
-    def _iter_repo_entries(self, enabled_repos: set[str], arches: list[str]) -> Iterator[tuple[str, RepoEntry]]:
-        """
-        Yield configured repo names and their corresponding resolver entries.
-        """
+        repo_list: list[RepoEntry] = []
         first_arch = arches[0]
         for repo_name in sorted(enabled_repos):
             try:
@@ -1806,4 +1687,5 @@ class RpmLockfilePrototypeGenerator:
             extra_options = dict(repo._data.conf.get("extra_options", {}))
             if repo.cs_optional:
                 extra_options.setdefault("skip_if_unavailable", True)
-            yield repo_name, RepoEntry(repoid=repoid, baseurl=baseurl_template, options=extra_options)
+            repo_list.append(RepoEntry(repoid=repoid, baseurl=baseurl_template, options=extra_options))
+        return repo_list
