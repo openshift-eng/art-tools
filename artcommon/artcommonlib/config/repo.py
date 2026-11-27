@@ -2,7 +2,7 @@ import string
 import warnings
 from typing import TYPE_CHECKING, Literal
 
-from pydantic import BaseModel, RootModel
+from pydantic import BaseModel, RootModel, model_validator
 
 if TYPE_CHECKING:
     from artcommonlib.config.plashet import PlashetConfig
@@ -22,6 +22,26 @@ class PlashetRepo(BaseModel):
     exclude_packages: list[str] = []
     arches: list[BrewArch] | None = None
     source: "BrewSource"
+    # Name of the public (non-embargoed) sibling repo. Set on the EMBARGOED repo to
+    # symlink its flavor directory to the public sibling's when there is no embargoed content.
+    embargoed_sibling: str | None = None
+    # Opt-in to the embargoed -> public symlink optimization. Set on the embargoed repo.
+    symlink_when_unembargoed: bool = False
+
+    @model_validator(mode="after")
+    def _validate_symlink_fields(self) -> "PlashetRepo":
+        if self.symlink_when_unembargoed:
+            if not self.include_embargoed:
+                raise ValueError(
+                    "symlink_when_unembargoed=True requires include_embargoed=True "
+                    "(the optimization only applies to an embargoed repo symlinking to its public sibling)"
+                )
+            if not self.embargoed_sibling:
+                raise ValueError(
+                    "symlink_when_unembargoed=True requires embargoed_sibling to be set "
+                    "to the name of the public sibling repo"
+                )
+        return self
 
 
 class BrewSource(BaseModel):
@@ -161,4 +181,89 @@ class Repo(BaseModel):
             raise ValueError(f'Unknown repo type: {self.type}')
 
 
-RepoList = RootModel[list[Repo]]
+class RepoList(RootModel[list[Repo]]):
+    @model_validator(mode="after")
+    def _validate_embargoed_siblings(self) -> "RepoList":
+        # Build a lookup of repo name -> Repo for sibling resolution.
+        repos_by_name = {repo.name: repo for repo in self.root}
+
+        # Fields that must be identical between an embargoed repo and its public sibling.
+        # The pair may only differ by flavor: include_embargoed / slug /
+        # embargoed_sibling / symlink_when_unembargoed.
+        shared_fields = (
+            'source',
+            'include_previous_packages',
+            'include_packages',
+            'exclude_packages',
+            'arches',
+        )
+
+        for repo in self.root:
+            plashet = repo.plashet
+            if plashet is None or not plashet.embargoed_sibling:
+                continue
+
+            sibling_name = plashet.embargoed_sibling
+
+            # (a) the named sibling must exist and be a plashet repo.
+            sibling = repos_by_name.get(sibling_name)
+            if sibling is None:
+                raise ValueError(
+                    f"Repo '{repo.name}' declares embargoed_sibling '{sibling_name}', "
+                    f"but no repo with that name exists in the repo list."
+                )
+            if sibling.type != 'plashet' or sibling.plashet is None:
+                raise ValueError(
+                    f"Repo '{repo.name}' declares embargoed_sibling '{sibling_name}', "
+                    f"but '{sibling_name}' is not a plashet repo (type={sibling.type!r})."
+                )
+
+            # (b) SAFETY: the sibling must be PUBLIC. Refuse an embargoed symlink target.
+            if sibling.plashet.include_embargoed:
+                raise ValueError(
+                    f"Repo '{repo.name}' declares embargoed_sibling '{sibling_name}', "
+                    f"but '{sibling_name}' is itself embargoed (include_embargoed=True). "
+                    f"The symlink target MUST be a public (non-embargoed) repo; refusing to "
+                    f"risk embargoed content appearing in a non-embargoed repo."
+                )
+
+            # (c) SAFETY: the pair must use DIFFERENT slugs. The slug determines the flavor's
+            # on-disk directory; if the embargoed repo and its public sibling shared a slug they
+            # would collapse to a single directory, defeating the two-flavor layout the symlink
+            # optimization relies on (and risking an embargoed build overwriting the public one).
+            mine_slug = plashet.slug or repo.name
+            their_slug = sibling.plashet.slug or sibling.name
+            if mine_slug == their_slug:
+                raise ValueError(
+                    f"Repo '{repo.name}' and its embargoed_sibling '{sibling_name}' must have "
+                    f"different slugs, but both resolve to slug {mine_slug!r}. A shared slug "
+                    f"collapses both flavors into one directory."
+                )
+
+            # (d) the pair must be identical except for the flavor-distinguishing fields.
+            for field in shared_fields:
+                mine = getattr(plashet, field)
+                theirs = getattr(sibling.plashet, field)
+                if mine != theirs:
+                    raise ValueError(
+                        f"Repo '{repo.name}' and its embargoed_sibling '{sibling_name}' "
+                        f"must be identical except for the flavor, but field '{field}' differs: "
+                        f"{mine!r} != {theirs!r}."
+                    )
+
+        # Global uniqueness: the slug is the only per-repo variable in the plashet output
+        # path, so two enabled plashet repos sharing a slug would write the same directory
+        # (the second clobbering the first, including a public sibling a symlink relies on).
+        slug_owner: dict[str, str] = {}
+        for repo in self.root:
+            if repo.disabled or repo.type != 'plashet' or repo.plashet is None:
+                continue
+            slug = repo.plashet.slug or repo.name
+            if slug in slug_owner:
+                raise ValueError(
+                    f"Plashet repos '{slug_owner[slug]}' and '{repo.name}' resolve to the same "
+                    f"output path (slug {slug!r}); each plashet repo must have a unique slug."
+                )
+            slug_owner[slug] = repo.name
+
+        return self
