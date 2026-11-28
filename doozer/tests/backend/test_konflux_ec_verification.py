@@ -107,6 +107,12 @@ def _ec_exception_result():
 class TestEcVerificationGating(IsolatedAsyncioTestCase):
     """Test that EC verification is only triggered under the correct conditions."""
 
+    def setUp(self):
+        for method in ("_check_public_build_inputs", "_check_public_image_rpms"):
+            patcher = patch.object(KonfluxImageBuilder, method, new_callable=AsyncMock, return_value=None)
+            patcher.start()
+            self.addCleanup(patcher.stop)
+
     async def test_declares_only_enabled_checks_before_building(self, mock_kc_init):
         for for_release, its_enabled, skip_ec, skip_custom, expected in (
             (True, None, False, False, ['conforma', 'custom']),

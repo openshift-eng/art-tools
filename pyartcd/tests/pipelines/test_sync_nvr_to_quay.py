@@ -9,6 +9,7 @@ from artcommonlib.constants import (
     RHCOS_IMAGE_REPO,
     SD_HANDOFF_REPO,
 )
+from artcommonlib.konflux.konflux_build_record import ArtifactType
 from pyartcd.pipelines.sync_nvr_to_quay import SyncNvrToQuayPipeline, sync_image_to_quay
 from pyartcd.runtime import Runtime
 
@@ -165,6 +166,29 @@ class TestSyncNvrToQuayPipelineValidation(unittest.IsolatedAsyncioTestCase):
 
 
 class TestSyncNvrToQuayPipeline(unittest.IsolatedAsyncioTestCase):
+    @mock.patch("pyartcd.pipelines.sync_nvr_to_quay.koji.ClientSession")
+    @mock.patch("pyartcd.pipelines.sync_nvr_to_quay.find_embargoed_rpms")
+    @mock.patch("pyartcd.pipelines.sync_nvr_to_quay.sync_image_to_quay", new_callable=mock.AsyncMock)
+    async def test_embargoed_rpm_blocks_sync_of_public_labeled_image(self, sync, find_embargoed, brew):
+        private = 'package-1.0-1.p3.el9'
+        record = _make_record()
+        record.artifact_type = ArtifactType.IMAGE
+        record.arches = ['aarch64']
+        record.installed_rpms = [private]
+        record.installed_packages = [private]
+        find_embargoed.return_value = {private}
+        nvr = 'ose-foo-4.18.0-1.p2.el9'
+        pipeline = SyncNvrToQuayPipeline(_make_runtime(), nvrs=[nvr])
+        with mock.patch.object(pipeline, '_resolve_record', new_callable=mock.AsyncMock, return_value=record):
+            await pipeline._sync_nvr(mock.MagicMock(), nvr)
+
+        sync.assert_not_awaited()
+        find_embargoed.assert_called_once_with(
+            brew.return_value,
+            rpm_nvras={f'{private}.aarch64', f'{private}.noarch'},
+            source_nvrs={private},
+        )
+
     @mock.patch("pyartcd.pipelines.sync_nvr_to_quay.sync_to_quay", new_callable=mock.AsyncMock)
     @mock.patch("pyartcd.pipelines.sync_nvr_to_quay.is_nvr_embargoed", return_value=False)
     @mock.patch("pyartcd.pipelines.sync_nvr_to_quay.KonfluxDb")
