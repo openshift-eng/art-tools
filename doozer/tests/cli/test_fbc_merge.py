@@ -9,6 +9,13 @@ import click
 from doozerlib.cli.fbc_merge import fbc_merge_layered
 from doozerlib.runtime import Runtime
 
+from conftest import subprocess_calls_legit
+
+pytestmark = subprocess_calls_legit(
+    "exercises LayeredFbcMerger's branch validation, which shells out to real `git check-ref-format` "
+    "on short fixture strings; no network"
+)
+
 
 class TestFbcMergeLayeredCli(unittest.IsolatedAsyncioTestCase):
     async def test_skip_rebase_bypasses_catalog_preparation(self):

@@ -16,7 +16,13 @@ real script, as a subprocess, with only `go.real` stubbed out).
 
 import pytest
 
+from conftest import subprocess_calls_legit
+
 from .support import extract_tags, load_behavior_cases, run_shim
+
+pytestmark = subprocess_calls_legit(
+    "runs the real golang_builder_FIPS_wrapper.sh shim as a subprocess with go.real stubbed; no network"
+)
 
 CASES = load_behavior_cases()
 

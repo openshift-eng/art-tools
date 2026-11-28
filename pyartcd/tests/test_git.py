@@ -5,8 +5,11 @@ from pathlib import Path
 from artcommonlib.github_auth import build_git_auth_env
 from pyartcd.git import GitRepository
 
+from conftest import subprocess_calls_legit
+
 
 class TestGitRepositoryAuth(unittest.IsolatedAsyncioTestCase):
+    @subprocess_calls_legit("GitRepository.setup runs real `git init`/config against a tmp dir; no network")
     async def test_setup_keeps_gitlab_credentials_out_of_remote_config(self):
         token = "glpat_git_repository_test_secret"
         push_url = "https://gitlab.example.com/group/repo.git"

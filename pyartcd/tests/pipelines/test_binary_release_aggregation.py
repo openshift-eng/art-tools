@@ -14,6 +14,8 @@ from elliottlib.shipment_model import ComponentSource, GitSource, Snapshot, Snap
 from pyartcd.git import GitRepository
 from pyartcd.pipelines import binary_release_konflux as release
 
+from conftest import subprocess_calls_legit
+
 SOURCE_NVR = "oc-mirror-container-2.0-202611121200.p2.assembly.stream.el9"
 AGGREGATE_NVR = "oc-mirror-aggregate-binaries-container-2.0.0-202611121300.p2.assembly.stream.el9"
 IMAGE_REPO = "quay.io/example/oc-mirror-builds"
@@ -237,6 +239,9 @@ class TestBuildAggregate(IsolatedAsyncioTestCase):
             await self.pipeline.build_aggregate(self.source)
         self.commands.assert_not_awaited()
 
+    @subprocess_calls_legit(
+        "builds a real local git fixture repo under a tmp dir to test public-upstream lookup; no network"
+    )
     async def test_recipe_alias_fetches_public_upstream_for_the_private_fix_check(self):
         branch = self.pipeline.group
         member = self.pipeline.aggregation_profile.member
@@ -257,6 +262,8 @@ class TestBuildAggregate(IsolatedAsyncioTestCase):
                 "user.name=Test",
                 "-c",
                 "user.email=test@example.com",
+                "-c",
+                "core.hooksPath=/dev/null",
                 "commit",
                 "-m",
                 "Add recipe",

@@ -7,6 +7,7 @@ from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import click
+from artcommonlib.build_priority import BuildPriorityPolicy
 from artcommonlib.model import Model
 from artcommonlib.variants import BuildVariant
 from click.testing import CliRunner
@@ -16,6 +17,8 @@ from doozerlib.cli import cli
 from doozerlib.cli.__main__ import main  # noqa: F401
 from doozerlib.cli.images_konflux import KonfluxBuildCli, KonfluxRebaseCli
 from doozerlib.image import ImageMetadata
+
+from conftest import subprocess_calls_legit
 
 GROUP_YML = "vars:\n  MAJOR: 4\n  MINOR: 22\nname: openshift-{MAJOR}.{MINOR}\nbranch: rhaos-{MAJOR}.{MINOR}-rhel-9\narches:\n- x86_64\n"
 IMAGE_YML = "name: openshift/ose-installer-rhel9\nowners:\n- a@example.com\n"
@@ -59,6 +62,7 @@ class TestBinaryMetadata(unittest.TestCase):
             _binary_meta().get_konflux_component_name("openshift-4-22-" + "x" * 50)
 
 
+@subprocess_calls_legit("setUp/_commit build a real local git fixture checkout under tmp; no network")
 class TestBinariesSelection(unittest.TestCase):
     def setUp(self):
         # Runtime.initialize() tries to set up a real KonfluxDb, which instantiates a real
@@ -215,9 +219,14 @@ class TestKindAwareClis(unittest.IsolatedAsyncioTestCase):
                 build_args=("RELEASE_VERSION",),
             )
 
+    @patch(
+        "doozerlib.cli.images_konflux.load_build_priority_policy",
+        new_callable=AsyncMock,
+        return_value=BuildPriorityPolicy(),
+    )
     @patch("doozerlib.cli.images_konflux.trace.get_current_span")
     @patch("doozerlib.cli.images_konflux.KonfluxImageBuilder")
-    async def test_build_loads_only_binaries(self, builder_cls, _):
+    async def test_build_loads_only_binaries(self, builder_cls, _, __):
         meta = MagicMock(distgit_key="openshift-install", kind="binary")
         meta.should_trigger_base_image_release.return_value = False
         meta.config.konflux.get.return_value = None

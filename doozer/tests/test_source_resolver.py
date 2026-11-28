@@ -9,6 +9,8 @@ from artcommonlib.model import Missing, Model
 from doozerlib.source_resolver import SourceResolution, SourceResolver
 from flexmock import flexmock
 
+from conftest import subprocess_calls_legit
+
 
 class SourceResolverTestCase(TestCase):
     @staticmethod
@@ -496,7 +498,10 @@ class TestSourceResolutionIsForkBuild(IsolatedAsyncioTestCase):
         return client, session, response
 
     def _git(self, *args):
-        output, _ = exectools.cmd_assert(['git', '-C', str(self.source_dir), *args])
+        # core.hooksPath=/dev/null keeps this fixture repo from running whatever hooks the
+        # developer's machine has configured globally, which could reach the network or touch
+        # files outside this test's tmp dir -- exactly what subprocess_calls_legit forbids.
+        output, _ = exectools.cmd_assert(['git', '-c', 'core.hooksPath=/dev/null', '-C', str(self.source_dir), *args])
         return output.strip()
 
     async def test_verifies_exact_commit_at_anonymous_branch_tip(self):
@@ -511,6 +516,7 @@ class TestSourceResolutionIsForkBuild(IsolatedAsyncioTestCase):
             allow_redirects=False,
         )
 
+    @subprocess_calls_legit("builds a real local git fixture repo under a tmp dir to test ancestry checks; no network")
     async def test_checks_ancestry_against_advertised_branch_and_annotated_tag(self):
         self._git('init', '--initial-branch=test')
         self._git('config', 'user.name', 'Test')

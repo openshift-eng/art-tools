@@ -19,6 +19,13 @@ from doozerlib.backend.konflux_client import KonfluxClient
 from doozerlib.backend.konflux_fbc import get_target_fbc_arches
 from doozerlib.backend.konflux_fbc_merge import LayeredFbcInput, LayeredFbcMerger, merge_layered_catalogs
 
+from conftest import subprocess_calls_legit
+
+pytestmark = subprocess_calls_legit(
+    "LayeredFbcMerger validates group/branch names via validate_git_group_name/validate_git_branch, "
+    "which shell out to real `git check-ref-format` on short fixture strings; no network"
+)
+
 BUNDLE_DIGEST = 'sha256:' + 'b' * 64
 
 

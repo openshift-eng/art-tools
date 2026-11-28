@@ -6,6 +6,12 @@ from pathlib import Path
 import pytest
 from validator import checks, ci
 
+from conftest import subprocess_calls_legit
+
+pytestmark = subprocess_calls_legit(
+    "git()/repository() helpers build a real local git fixture checkout under tmp_path; no network"
+)
+
 
 @pytest.mark.parametrize('host', ['registry.access.redhat.com', 'registry.access.redhat.io'])
 @pytest.mark.parametrize('port', ['', ':443'])

@@ -18,6 +18,8 @@ from doozerlib import util
 from doozerlib.backend.rebaser import KonfluxRebaser, _get_cpe_product_name, _get_cpe_version
 from doozerlib.source_resolver import SourceResolution, SourceResolver
 
+from conftest import subprocess_calls_legit
+
 
 class TestRebaser(TestCase):
     def setUp(self):
@@ -1938,6 +1940,9 @@ class TestPrivateFixDetection(IsolatedAsyncioTestCase):
         source = replace(source, branch='HEAD')
         self.assertIs(await rebaser._source_contains_private_fixes(source, self.base_dir), True)
 
+    @subprocess_calls_legit(
+        "builds a real local git fixture repo under a tmp dir to test public-ref detection; no network"
+    )
     async def test_detached_source_uses_public_ref_when_available(self):
         rebaser = self._make_rebaser()
         rebaser._runtime.group_config = Model(
