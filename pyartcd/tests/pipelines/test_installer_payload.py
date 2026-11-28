@@ -5,6 +5,7 @@ from unittest import IsolatedAsyncioTestCase, TestCase
 from unittest.mock import AsyncMock, patch
 
 import click
+from artcommonlib.build_priority import BuildPriorityPolicy
 from artcommonlib.variants import BuildVariant
 from click.testing import CliRunner
 from doozerlib.cli.images_konflux import images_konflux_build
@@ -17,6 +18,13 @@ class TestInstallerPayload(IsolatedAsyncioTestCase):
         tmpdir = tempfile.TemporaryDirectory()
         self.addCleanup(tmpdir.cleanup)
         self.runtime = Runtime({}, Path(tmpdir.name), dry_run=True)
+        policy_patcher = patch(
+            'pyartcd.pipelines.build_layered_products.load_build_priority_policy',
+            new_callable=AsyncMock,
+            return_value=BuildPriorityPolicy(),
+        )
+        policy_patcher.start()
+        self.addCleanup(policy_patcher.stop)
 
     def pipeline(self, payload=None):
         with patch('pyartcd.pipelines.build_layered_products.tekton.is_tekton_context', return_value=True):
@@ -201,6 +209,11 @@ class TestInstallerPayloadCli(TestCase):
                         patch(
                             'pyartcd.pipelines.build_layered_products.exectools.cmd_assert_async',
                             side_effect=run_doozer,
+                        ),
+                        patch(
+                            'pyartcd.pipelines.build_layered_products.load_build_priority_policy',
+                            new_callable=AsyncMock,
+                            return_value=BuildPriorityPolicy(),
                         ),
                     ):
                         result = CliRunner().invoke(build_layered_products, args, obj=runtime)
