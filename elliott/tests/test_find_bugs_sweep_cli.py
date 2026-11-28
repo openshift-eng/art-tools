@@ -6,6 +6,11 @@ import elliottlib.cli.find_bugs_sweep_cli as sweep_cli
 from artcommonlib.constants import SHIPMENT_DATA_URL_TEMPLATE
 from click.testing import CliRunner
 from elliottlib import constants, errata
+from elliottlib.bug_sweep_plugins.contracts import (
+    PluginDecision,
+    PluginDisposition,
+    PluginResult,
+)
 from elliottlib.bzutil import JIRABugTracker
 from elliottlib.cli.common import Runtime, cli
 from elliottlib.cli.find_bugs_sweep_cli import (
@@ -188,11 +193,12 @@ class FindBugsSweepTestCase(unittest.IsolatedAsyncioTestCase):
     ):
         """When targeted_fixes_only=true but issues.include is empty, raise ValueError."""
         mock_own_issues.return_value = flexmock(include=[], exclude=[])
+        mock_get_bug_ids.return_value = (set(), set())
         find_bugs_obj = sweep_cli.FindBugsSweep()
         bug_tracker = MagicMock(type="jira")
         runtime = MagicMock(debug=False)
 
-        with self.assertRaises(ValueError, msg="targeted_fixes_only=true but issues.include is empty"):
+        with self.assertRaisesRegex(ValueError, "issues.include is empty"):
             await sweep_cli.get_bugs_sweep(runtime, find_bugs_obj, bug_tracker)
 
     @patch("elliottlib.cli.find_bugs_sweep_cli.assembly_own_issues_config")
@@ -203,11 +209,12 @@ class FindBugsSweepTestCase(unittest.IsolatedAsyncioTestCase):
     ):
         """When targeted_fixes_only=true but issues.exclude is non-empty, raise ValueError."""
         mock_own_issues.return_value = flexmock(include=[{"id": "OCPBUGS-1"}], exclude=[{"id": "OCPBUGS-2"}])
+        mock_get_bug_ids.return_value = ({"OCPBUGS-1"}, {"OCPBUGS-2"})
         find_bugs_obj = sweep_cli.FindBugsSweep()
         bug_tracker = MagicMock(type="jira")
         runtime = MagicMock(debug=False)
 
-        with self.assertRaises(ValueError, msg="targeted_fixes_only=true but issues.exclude is non-empty"):
+        with self.assertRaisesRegex(ValueError, "issues.exclude is non-empty"):
             await sweep_cli.get_bugs_sweep(runtime, find_bugs_obj, bug_tracker)
 
     @patch("elliottlib.cli.find_bugs_sweep_cli.get_bug_ids_from_open_shipment_mrs", return_value=set())
@@ -274,6 +281,83 @@ class FindBugsSweepTestCase(unittest.IsolatedAsyncioTestCase):
         self.assertEqual([b.id for b in actual], ["OCPBUGS-1"])
         bug_tracker.filter_attached_bugs.assert_not_called()
         mock_shipment_bugs.assert_not_called()
+
+    @patch("elliottlib.cli.find_bugs_sweep_cli.assembly_targeted_fixes_only", return_value=False)
+    @patch("elliottlib.cli.find_bugs_sweep_cli.get_assembly_bug_ids", return_value=(set(), set()))
+    @patch("elliottlib.cli.find_bugs_sweep_cli.get_sweep_cutoff_timestamp", new_callable=AsyncMock, return_value=0)
+    async def test_plugin_decisions_override_ordinary_sweep_and_reuse_issue_objects(self, *_):
+        runtime = MagicMock(debug=False)
+        tracker = MagicMock(type="jira")
+        included, suppressed, reviewed, ordinary = [Mock(id=f"OCPBUGS-{number}") for number in range(1, 5)]
+        sweep = sweep_cli.FindBugsSweep(art_managed_trackers_only=False)
+        sweep.search = Mock(return_value=[suppressed, reviewed, ordinary])
+        result = PluginResult(
+            "rhcos-rpm",
+            (
+                PluginDecision(included, PluginDisposition.INCLUDE, "included"),
+                PluginDecision(suppressed, PluginDisposition.SUPPRESS, "suppressed"),
+                PluginDecision(reviewed, PluginDisposition.REVIEW, "review"),
+            ),
+            True,
+        )
+        results = []
+        with patch.object(sweep_cli, "_run_evidence_plugins", return_value=(result,)):
+            bugs = await sweep_cli.get_bugs_sweep(
+                runtime,
+                sweep,
+                tracker,
+                filter_attached_bugs=False,
+                evidence_plugins=("rhcos-rpm",),
+                plugin_results=results,
+            )
+
+        self.assertEqual(bugs, [ordinary, included])
+        self.assertEqual(results, [result])
+        tracker.get_bugs.assert_not_called()
+
+    @patch("elliottlib.cli.find_bugs_sweep_cli.assembly_targeted_fixes_only", return_value=False)
+    @patch("elliottlib.cli.find_bugs_sweep_cli.get_assembly_bug_ids", return_value=({123}, set()))
+    @patch("elliottlib.cli.find_bugs_sweep_cli.get_sweep_cutoff_timestamp", new_callable=AsyncMock, return_value=0)
+    async def test_included_numeric_bug_id_is_not_added_twice(self, *_):
+        bug = Mock(id=123)
+        tracker = MagicMock(type="bugzilla")
+        sweep = sweep_cli.FindBugsSweep(art_managed_trackers_only=False)
+        sweep.search = Mock(return_value=[bug])
+
+        bugs = await sweep_cli.get_bugs_sweep(MagicMock(debug=False), sweep, tracker, filter_attached_bugs=False)
+
+        self.assertEqual(bugs, [bug])
+        tracker.get_bugs.assert_called_once_with(set())
+
+    @patch("elliottlib.cli.find_bugs_sweep_cli.assembly_targeted_fixes_only", return_value=False)
+    @patch("elliottlib.cli.find_bugs_sweep_cli.get_assembly_bug_ids", return_value=(set(), set()))
+    @patch("elliottlib.cli.find_bugs_sweep_cli.get_bug_ids_from_open_shipment_mrs", return_value={"OCPBUGS-2"})
+    async def test_review_decisions_are_filtered_for_existing_attachments(self, *_):
+        runtime = MagicMock(debug=False)
+        tracker = MagicMock(type="jira")
+        advisory, shipment, unclaimed = [Mock(id=f"OCPBUGS-{number}") for number in range(1, 4)]
+        tracker.filter_attached_bugs = AsyncMock(return_value=[advisory])
+        sweep = sweep_cli.FindBugsSweep(art_managed_trackers_only=False)
+        sweep.search = Mock(return_value=[])
+        result = PluginResult(
+            "rhcos-rpm",
+            tuple(PluginDecision(bug, PluginDisposition.REVIEW, "review") for bug in (advisory, shipment, unclaimed)),
+            True,
+        )
+        results = []
+
+        with patch.object(sweep_cli, "_run_evidence_plugins", return_value=(result,)):
+            bugs = await sweep_cli.get_bugs_sweep(
+                runtime,
+                sweep,
+                tracker,
+                evidence_plugins=("rhcos-rpm",),
+                plugin_results=results,
+            )
+
+        self.assertEqual(bugs, [])
+        self.assertEqual([decision.issue_key for decision in results[0].decisions], ["OCPBUGS-3"])
+        tracker.filter_attached_bugs.assert_awaited_once_with([advisory, shipment, unclaimed])
 
     @patch('elliottlib.bzutil.JIRABugTracker.filter_attached_bugs')
     @patch('elliottlib.cli.find_bugs_sweep_cli.FindBugsSweep.search')
@@ -992,6 +1076,61 @@ class TestGetBuildsByAdvisoryKind(unittest.TestCase):
         self.assertEqual(result['rpm'], ['rpm-package-1-1.0.0-1.el9'])
         self.assertEqual(result['image'], ['brew-image-container-v1.0.0-1', 'konflux-image-container-v1.0.0-1'])
         self.assertEqual(result['extras'], ['konflux-extras-1.0.0-1.el9'])
+
+
+class TestEvidencePluginLogging(unittest.TestCase):
+    def test_plugin_logging_includes_sanitized_warning_and_decision_details(self):
+        safe_reason = "RHCOS_VERIFICATION_REQUIRES_REVIEW: The latest verifier result is not passing"
+        safe_warning = "JIRA_VERIFICATION_COMMENTS_UNAVAILABLE: Unable to read verification comments"
+        plugin_result = PluginResult(
+            plugin_name="rhcos-rpm",
+            decisions=(
+                PluginDecision(
+                    Mock(id="OCPBUGS-1"),
+                    PluginDisposition.REVIEW,
+                    safe_reason,
+                ),
+            ),
+            domain_search_complete=True,
+            warnings=(safe_warning,),
+        )
+        evaluation = (plugin_result,)
+
+        with (
+            patch.object(sweep_cli, "create_plugins", return_value=(Mock(),)),
+            patch.object(sweep_cli, "evaluate_plugins", return_value=evaluation),
+            self.assertLogs(sweep_cli.logger, level="WARNING") as captured_logs,
+        ):
+            sweep_cli._run_evidence_plugins(Mock(), Mock(), ("rhcos-rpm",), set())
+
+        self.assertIn(safe_reason, "\n".join(captured_logs.output))
+        self.assertIn(safe_warning, "\n".join(captured_logs.output))
+
+
+class TestFindBugsPluginSelection(unittest.IsolatedAsyncioTestCase):
+    async def test_excluding_trackers_skips_tracker_evidence_plugin(self):
+        from elliottlib.cli.find_bugs_cli import FindBugsCli
+
+        runtime = Mock()
+        runtime.get_major_minor.return_value = (4, 22)
+        cli = FindBugsCli(
+            runtime,
+            permissive=False,
+            output="json",
+            cve_only=False,
+            exclude_trackers=True,
+            art_managed_trackers_only=False,
+            evidence_plugins=("rhcos-rpm",),
+        )
+        cli.bug_tracker = Mock()
+        with (
+            patch("elliottlib.cli.find_bugs_cli.get_bugs_sweep", new_callable=AsyncMock, return_value=[]) as sweep,
+            patch("elliottlib.cli.find_bugs_cli.get_builds_by_advisory_kind", return_value={}),
+            patch("elliottlib.cli.find_bugs_cli.categorize_bugs_by_type", return_value=({}, [])),
+        ):
+            await cli.find_bugs()
+
+        self.assertEqual(sweep.await_args.kwargs["evidence_plugins"], ())
 
 
 if __name__ == '__main__':

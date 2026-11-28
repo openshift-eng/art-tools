@@ -1,7 +1,7 @@
 """Unit tests for evidence-plugin contracts and bug-sweep integration."""
 
 import unittest
-from unittest.mock import Mock
+from unittest.mock import Mock, patch
 
 from elliottlib.bug_sweep_plugins.contracts import (
     PluginContext,
@@ -11,8 +11,9 @@ from elliottlib.bug_sweep_plugins.contracts import (
 )
 from elliottlib.bug_sweep_plugins.registry import available_plugin_names, create_plugins
 from elliottlib.bug_sweep_plugins.runner import evaluate_plugins
-from elliottlib.bzutil import Bug
+from elliottlib.bzutil import Bug, JIRABugTracker
 from elliottlib.exceptions import ElliottFatalError
+from elliottlib.rhcos_rpm_evidence.models import TrackerDisposition
 
 
 class _TestBug(Bug):
@@ -113,12 +114,34 @@ class TestPluginRunner(unittest.TestCase):
             evaluate_plugins((duplicate_plugin, duplicate_plugin), Mock())
 
     def test_registry_lists_and_validates_explicit_plugins(self):
-        self.assertEqual(available_plugin_names(), ("jql_sweep",))
+        self.assertEqual(available_plugin_names(), ("jql_sweep", "rhcos-rpm"))
         self.assertEqual(create_plugins(()), ())
         with self.assertRaisesRegex(ValueError, "Unknown bug-sweep plugin"):
             create_plugins(({"name": "missing"},))
         with self.assertRaisesRegex(ValueError, "selected only once"):
             create_plugins(({"name": "missing"}, {"name": "missing"}))
+
+    def test_rhcos_plugin_returns_discovered_issue_objects(self):
+        issue = _TestBug("OCPBUGS-1")
+        tracker = Mock(spec=JIRABugTracker)
+        context = PluginContext(Mock(assembly="4.22.1"), tracker, frozenset())
+        finding = Mock(issue_key=issue.id, disposition=TrackerDisposition.READY_TO_VERIFY, reason="evidence")
+        report = Mock(
+            findings=(finding,),
+            tracker_search_complete=True,
+            warnings=("BREW_CHANGELOG_LOOKUP_FAILED: Changelog lookup failed for build private-package-1-1",),
+        )
+        with (
+            patch("elliottlib.bug_sweep_plugins.rhcos_rpm.JiraRHCOSTrackerRepository") as repository,
+            patch("elliottlib.bug_sweep_plugins.rhcos_rpm.RHCOSRpmEvidenceService") as service,
+        ):
+            repository.return_value.issues_by_key = {issue.id: issue}
+            service.return_value.run.return_value = report
+            results = evaluate_plugins(create_plugins(({"name": "rhcos-rpm"},)), context)
+
+        self.assertIs(results[0].decisions[0].issue, issue)
+        self.assertEqual(results[0].decisions[0].disposition, PluginDisposition.INCLUDE)
+        self.assertEqual(results[0].warnings, ("BREW_CHANGELOG_LOOKUP_FAILED",))
 
 
 if __name__ == "__main__":
