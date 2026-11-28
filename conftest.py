@@ -3,6 +3,11 @@ import subprocess
 
 import pytest
 
+# Functional test suites deliberately spawn the real CLI against real external services --
+# that's their entire point, unlike unit tests. Never apply the guard there; marking them
+# subprocess_calls_legit would be wrong too, since that marker promises no network access.
+_EXEMPT_DIR_NAMES = {'functional_tests', 'tests_functional'}
+
 
 class SubprocessBlocked(RuntimeError):
     """A unit test tried to spawn a real subprocess without opting in via subprocess_calls_legit."""
@@ -42,35 +47,56 @@ def subprocess_calls_legit(reason: str):
     return pytest.mark.subprocess_calls_legit(reason=reason)
 
 
-@pytest.fixture(autouse=True)
-def _block_real_subprocess_calls(request, monkeypatch):
-    """Fail fast on any real subprocess spawn, unless the test opts in with subprocess_calls_legit."""
-    if request.node.get_closest_marker('subprocess_calls_legit') is not None:
-        yield
+_real_popen_init = subprocess.Popen.__init__
+_real_create_subprocess_exec = asyncio.subprocess.create_subprocess_exec
+_real_create_subprocess_shell = asyncio.subprocess.create_subprocess_shell
+
+
+def _blocked_popen_init(self, args, *popen_args, **popen_kwargs):
+    raise SubprocessBlocked(
+        f'real subprocess spawn blocked in unit tests: {args!r}. '
+        f'Mock the call, or mark the test with subprocess_calls_legit(reason=...) if spawning '
+        f'a real process is genuinely the point of the test.'
+    )
+
+
+async def _blocked_create_subprocess_exec(program, *args, **kwargs):
+    raise SubprocessBlocked(
+        f'real subprocess spawn blocked in unit tests: {(program, *args)!r}. '
+        f'Mock the call, or mark the test with subprocess_calls_legit(reason=...) if spawning '
+        f'a real process is genuinely the point of the test.'
+    )
+
+
+async def _blocked_create_subprocess_shell(cmd, *args, **kwargs):
+    raise SubprocessBlocked(
+        f'real subprocess spawn blocked in unit tests: {cmd!r}. '
+        f'Mock the call, or mark the test with subprocess_calls_legit(reason=...) if spawning '
+        f'a real process is genuinely the point of the test.'
+    )
+
+
+def pytest_runtest_setup(item: pytest.Item) -> None:
+    """Block real subprocess spawns for this test item, before any of its fixtures run.
+
+    Using a setup/teardown hook pair rather than an autouse fixture matters: fixture scope
+    ordering means a function-scoped autouse fixture installs its patches *after*
+    session/module/class-scoped fixtures have already run, so those broader-scoped fixtures
+    would be able to spawn real subprocesses unnoticed. These hooks run before every fixture
+    of any scope for the item, and the matching teardown hook runs after all of them.
+    """
+    if _is_exempt(item) or item.get_closest_marker('subprocess_calls_legit') is not None:
         return
+    subprocess.Popen.__init__ = _blocked_popen_init
+    asyncio.subprocess.create_subprocess_exec = _blocked_create_subprocess_exec
+    asyncio.subprocess.create_subprocess_shell = _blocked_create_subprocess_shell
 
-    def _blocked_popen_init(self, args, *popen_args, **popen_kwargs):
-        raise SubprocessBlocked(
-            f'real subprocess spawn blocked in unit tests: {args!r}. '
-            f'Mock the call, or mark the test with subprocess_calls_legit(reason=...) if spawning '
-            f'a real process is genuinely the point of the test.'
-        )
 
-    async def _blocked_create_subprocess_exec(program, *args, **kwargs):
-        raise SubprocessBlocked(
-            f'real subprocess spawn blocked in unit tests: {(program, *args)!r}. '
-            f'Mock the call, or mark the test with subprocess_calls_legit(reason=...) if spawning '
-            f'a real process is genuinely the point of the test.'
-        )
+def pytest_runtest_teardown() -> None:
+    subprocess.Popen.__init__ = _real_popen_init
+    asyncio.subprocess.create_subprocess_exec = _real_create_subprocess_exec
+    asyncio.subprocess.create_subprocess_shell = _real_create_subprocess_shell
 
-    async def _blocked_create_subprocess_shell(cmd, *args, **kwargs):
-        raise SubprocessBlocked(
-            f'real subprocess spawn blocked in unit tests: {cmd!r}. '
-            f'Mock the call, or mark the test with subprocess_calls_legit(reason=...) if spawning '
-            f'a real process is genuinely the point of the test.'
-        )
 
-    monkeypatch.setattr(subprocess.Popen, '__init__', _blocked_popen_init)
-    monkeypatch.setattr(asyncio.subprocess, 'create_subprocess_exec', _blocked_create_subprocess_exec)
-    monkeypatch.setattr(asyncio.subprocess, 'create_subprocess_shell', _blocked_create_subprocess_shell)
-    yield
+def _is_exempt(item: pytest.Item) -> bool:
+    return any(part in _EXEMPT_DIR_NAMES for part in item.path.parts)

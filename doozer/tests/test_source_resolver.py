@@ -498,7 +498,10 @@ class TestSourceResolutionIsForkBuild(IsolatedAsyncioTestCase):
         return client, session, response
 
     def _git(self, *args):
-        output, _ = exectools.cmd_assert(['git', '-C', str(self.source_dir), *args])
+        # core.hooksPath=/dev/null keeps this fixture repo from running whatever hooks the
+        # developer's machine has configured globally, which could reach the network or touch
+        # files outside this test's tmp dir -- exactly what subprocess_calls_legit forbids.
+        output, _ = exectools.cmd_assert(['git', '-c', 'core.hooksPath=/dev/null', '-C', str(self.source_dir), *args])
         return output.strip()
 
     async def test_verifies_exact_commit_at_anonymous_branch_tip(self):

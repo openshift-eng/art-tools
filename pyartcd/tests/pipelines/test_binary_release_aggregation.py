@@ -262,6 +262,8 @@ class TestBuildAggregate(IsolatedAsyncioTestCase):
                 "user.name=Test",
                 "-c",
                 "user.email=test@example.com",
+                "-c",
+                "core.hooksPath=/dev/null",
                 "commit",
                 "-m",
                 "Add recipe",
