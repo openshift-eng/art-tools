@@ -61,6 +61,19 @@ class TestBinaryMetadata(unittest.TestCase):
 
 class TestBinariesSelection(unittest.TestCase):
     def setUp(self):
+        # Runtime.initialize() tries to set up a real KonfluxDb, which instantiates a real
+        # google.cloud.bigquery.Client. In an environment without GCP application-default
+        # credentials, that client construction falls through to shelling out to `gcloud` to
+        # discover a project id, which costs the better part of a second per CLI invocation
+        # (and this test class invokes the CLI multiple times per test). The failure is already
+        # caught and ignored by GroupRuntime.initialize_konflux_db, so mirror that outcome
+        # without paying for the real (and pointless, in this test) network/subprocess probing.
+        konflux_db_patcher = patch(
+            "artcommonlib.runtime.KonfluxDb", side_effect=Exception("KonfluxDb disabled in tests")
+        )
+        konflux_db_patcher.start()
+        self.addCleanup(konflux_db_patcher.stop)
+
         self.tmp = tempfile.TemporaryDirectory()
         self.addCleanup(self.tmp.cleanup)
         self.obd = Path(self.tmp.name, "obd")

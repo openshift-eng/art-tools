@@ -2865,6 +2865,11 @@ class TestDropEmptyAdvisories(IsolatedAsyncioTestCase):
             runtime.working_dir = Path(temp_dir)
         pipeline = PromotePipeline(runtime, group="openshift-4.10", assembly="4.10.99", signing_env="prod")
         pipeline._check_and_drop_empty_advisory = AsyncMock(return_value=True)
+        # Cross-reference cleanup (including a real Errata Tool lookup via get_errata_live_id)
+        # is exercised separately in TestFixDocsAfterAdvisoryDrop; stub it out here so this test
+        # stays focused on _drop_empty_advisories's own bookkeeping and doesn't make a real,
+        # slow (and here, doomed-to-fail) network call to the Errata Tool.
+        pipeline._fix_docs_after_advisory_drop = AsyncMock()
 
         advisories = {"rpm": 100, "image": 200, "extras": 300, "rhcos": 400}
         await pipeline._drop_empty_advisories(advisories)
