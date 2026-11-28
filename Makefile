@@ -26,28 +26,28 @@ pylint:
 	uv run pylint --errors-only .
 
 unit-artcommon:
-	uv run pytest --verbose --color=yes artcommon/tests/
+	uv run pytest artcommon/tests/
 
 unit-doozer:
-	uv run pytest --verbose --color=yes doozer/tests/
+	uv run pytest doozer/tests/
 
 unit-elliott:
-	uv run pytest --verbose --color=yes elliott/tests/
+	uv run pytest elliott/tests/
 
 unit-pyartcd:
-	uv run pytest --verbose --color=yes pyartcd/tests/
+	uv run pytest pyartcd/tests/
 
 unit-ocp-build-data-validator:
-	uv run pytest --verbose --color=yes ocp-build-data-validator/tests/
+	uv run pytest ocp-build-data-validator/tests/
 
 unit:
 	./run-tests-parallel.sh
 
 functional-elliott:
-	uv run pytest --verbose --color=yes elliott/functional_tests/
+	uv run pytest elliott/functional_tests/
 
 functional-doozer:
-	uv run pytest --verbose --color=yes doozer/tests_functional
+	uv run pytest doozer/tests_functional
 
 audit:
 	uv audit --locked --preview-features audit --python-version $(PYTHON_VERSION)

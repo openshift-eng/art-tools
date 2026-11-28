@@ -237,6 +237,9 @@ skip-magic-trailing-comma = false
 # Like Black, automatically detect the appropriate line ending.
 line-ending = "auto"
 
+[tool.pytest.ini_options]
+addopts = "--verbose --color=yes"
+
 [tool.pylint.main]
 # Ignore generated/vendored directories that are not part of the source tree
 ignore-paths = [
