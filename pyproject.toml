@@ -238,7 +238,10 @@ skip-magic-trailing-comma = false
 line-ending = "auto"
 
 [tool.pytest.ini_options]
-addopts = "--verbose --color=yes"
+# --verbose is deliberately not a default here: pytest verbosity is a counter, so baking it
+# into addopts would make a lone `-q` cancel out to normal (not quiet) output. Pass --verbose
+# explicitly wherever per-test names are wanted.
+addopts = "--color=yes"
 
 [tool.pylint.main]
 # Ignore generated/vendored directories that are not part of the source tree

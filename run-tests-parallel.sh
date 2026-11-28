@@ -22,7 +22,7 @@ pids=()
 
 for pkg in "${packages[@]}"; do
     echo "  Starting: $pkg"
-    uv run pytest --color=no "$pkg/tests/" > "$tmpdir/$pkg.out" 2>&1 &
+    uv run pytest --verbose --color=no "$pkg/tests/" > "$tmpdir/$pkg.out" 2>&1 &
     pids+=($!)
 done
 
