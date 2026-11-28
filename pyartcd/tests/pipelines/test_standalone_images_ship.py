@@ -3,7 +3,7 @@ import unittest
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import click
-from pyartcd.pipelines.standalone_images_ship import StandaloneImagesShipPipeline
+from pyartcd.pipelines.standalone_images_ship import SILENT_BY_DEFAULT_COMPONENTS, StandaloneImagesShipPipeline
 
 
 def _make_pipeline(
@@ -11,6 +11,7 @@ def _make_pipeline(
     jiras=None,
     create_mr=False,
     dry_run=False,
+    silent=None,
 ):
     runtime = MagicMock()
     runtime.dry_run = dry_run
@@ -27,6 +28,7 @@ def _make_pipeline(
         prod_release_plan="ocp-art-prod-silent-5.2",
         jiras=jiras,
         create_mr=create_mr,
+        silent=silent,
     )
     return pipeline
 
@@ -58,6 +60,44 @@ class TestParseJiraKey(unittest.TestCase):
     def test_constructor_accepts_valid_jiras(self):
         pipeline = _make_pipeline(jiras=["ART-25199", "ART-26635"])
         self.assertEqual(pipeline.jiras, ["ART-25199", "ART-26635"])
+
+
+class TestResolveSilent(unittest.TestCase):
+    def test_operator_registry_defaults_silent(self):
+        pipeline = _make_pipeline(
+            nvrs=["operator-registry-container-v5.2.0-202611252026.p2.gffec6b4.assembly.stream.el9"]
+        )
+        self.assertTrue(pipeline.silent)
+
+    def test_other_component_defaults_public(self):
+        pipeline = _make_pipeline(nvrs=["some-other-image-container-v1.0.0-1.el9"])
+        self.assertFalse(pipeline.silent)
+
+    def test_explicit_silent_override_wins(self):
+        pipeline = _make_pipeline(nvrs=["some-other-image-container-v1.0.0-1.el9"], silent=True)
+        self.assertTrue(pipeline.silent)
+
+    def test_explicit_public_override_wins(self):
+        pipeline = _make_pipeline(
+            nvrs=["operator-registry-container-v5.2.0-202611252026.p2.gffec6b4.assembly.stream.el9"],
+            silent=False,
+        )
+        self.assertFalse(pipeline.silent)
+
+    def test_mixed_components_without_override_raises(self):
+        with self.assertRaises(ValueError) as ctx:
+            _make_pipeline(
+                nvrs=[
+                    "operator-registry-container-v5.2.0-202611252026.p2.gffec6b4.assembly.stream.el9",
+                    "some-other-image-container-v1.0.0-1.el9",
+                ]
+            )
+        self.assertIn("different default silent/public classification", str(ctx.exception))
+
+    def test_silent_by_default_components_contains_operator_registry(self):
+        # Guard against accidentally renaming/removing the one entry this feature
+        # was built for, without a test noticing.
+        self.assertIn("operator-registry-container", SILENT_BY_DEFAULT_COMPONENTS)
 
 
 class TestCreateShipmentConfig(unittest.TestCase):
@@ -118,6 +158,19 @@ class TestCreateShipmentConfig(unittest.TestCase):
         pipeline.product = "ocp"
         config = pipeline.create_shipment_config(self._snapshot())
 
+        self.assertIsNone(config.shipment.data)
+
+    def test_public_shipment_requires_advisory_and_docs_approval(self):
+        pipeline = _make_pipeline(nvrs=["some-other-image-container-v1.0.0-1.el9"])
+        pipeline.product = "ocp"
+        config = pipeline.create_shipment_config(self._snapshot())
+
+        metadata = config.shipment.metadata
+        self.assertTrue(metadata.advisory_required)
+        self.assertTrue(metadata.docs_approval_required)
+        # openshift-* release notes still come from the RPA rather than being typed
+        # into the shipment file, silent or public (matches binary_release_konflux.py).
+        self.assertTrue(metadata.release_notes_in_rpa)
         self.assertIsNone(config.shipment.data)
 
 
@@ -311,6 +364,27 @@ class TestCliValidation(unittest.TestCase):
         self._invoke(["--nvr", "nvr-one", "--create-mr"])
         kwargs = mock_pipeline_cls.call_args.kwargs
         self.assertTrue(kwargs["create_mr"])
+
+    @patch("pyartcd.pipelines.standalone_images_ship.StandaloneImagesShipPipeline")
+    def test_silent_flag_passed_to_pipeline(self, mock_pipeline_cls):
+        mock_pipeline_cls.return_value.run = AsyncMock()
+        self._invoke(["--nvr", "nvr-one", "--silent"])
+        kwargs = mock_pipeline_cls.call_args.kwargs
+        self.assertIs(kwargs["silent"], True)
+
+    @patch("pyartcd.pipelines.standalone_images_ship.StandaloneImagesShipPipeline")
+    def test_public_flag_passed_to_pipeline(self, mock_pipeline_cls):
+        mock_pipeline_cls.return_value.run = AsyncMock()
+        self._invoke(["--nvr", "nvr-one", "--public"])
+        kwargs = mock_pipeline_cls.call_args.kwargs
+        self.assertIs(kwargs["silent"], False)
+
+    @patch("pyartcd.pipelines.standalone_images_ship.StandaloneImagesShipPipeline")
+    def test_silent_defaults_to_none_when_unset(self, mock_pipeline_cls):
+        mock_pipeline_cls.return_value.run = AsyncMock()
+        self._invoke(["--nvr", "nvr-one"])
+        kwargs = mock_pipeline_cls.call_args.kwargs
+        self.assertIsNone(kwargs["silent"])
 
 
 if __name__ == '__main__':

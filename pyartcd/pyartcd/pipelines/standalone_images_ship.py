@@ -17,6 +17,7 @@ from artcommonlib.build_visibility import is_nvr_embargoed
 from artcommonlib.constants import SHIPMENT_DATA_URL_TEMPLATE
 from artcommonlib.github_auth import build_git_auth_env
 from artcommonlib.gitlab import GitLabClient
+from artcommonlib.rpm_utils import parse_nvr
 from artcommonlib.util import new_roundtrip_yaml_handler
 from elliottlib.shipment_model import (
     Environments,
@@ -34,12 +35,27 @@ from pyartcd.runtime import Runtime
 
 yaml = new_roundtrip_yaml_handler()
 
+# Brew/Konflux component (package) names whose standalone-image shipments default to
+# silent (non-advisory, registry-push-only) delivery instead of a normal advisory
+# release. Silent delivery is a property of a *consumer* of this pipeline, not of the
+# pipeline itself — most standalone images should ship through the normal advisory
+# process (the default), so only add a component here when it has a documented need
+# to skip the advisory pipeline. operator-registry needs this so FBC builds across RH
+# can pull a given y-stream's image without an advisory (see ART-25199/ART-14308).
+# The default can always be overridden per-invocation with --silent/--public.
+SILENT_BY_DEFAULT_COMPONENTS = {
+    "operator-registry-container",
+}
+
 
 class StandaloneImagesShipPipeline:
     """
-    Prepare a silent (non-advisory) Konflux shipment MR for one or more standalone
-    image NVRs — images that are not part of the normal OCP release payload, e.g.
-    operator-registry or another standalone-image project.
+    Prepare a Konflux shipment MR for one or more standalone image NVRs — images
+    that are not part of the normal OCP release payload, e.g. operator-registry or
+    another standalone-image project. By default the shipment is a normal advisory
+    release; components listed in SILENT_BY_DEFAULT_COMPONENTS instead default to a
+    silent (non-advisory, registry-push-only) release. Either can be forced per-run
+    via --silent/--public.
 
     This pipeline only resolves the given NVRs into a Konflux snapshot and opens a
     shipment MR against ocp-shipment-data; it does not itself create any Konflux
@@ -70,6 +86,7 @@ class StandaloneImagesShipPipeline:
         create_mr: bool = False,
         shipment_data_repo_url: Optional[str] = None,
         job_url: Optional[str] = None,
+        silent: Optional[bool] = None,
     ) -> None:
         self.logger = logging.getLogger(__name__)
         self.runtime = runtime
@@ -86,6 +103,8 @@ class StandaloneImagesShipPipeline:
         invalid_jiras = [j for j in self.jiras if not self._parse_jira_key(j)]
         if invalid_jiras:
             raise ValueError(f"Invalid Jira issue key(s): {', '.join(invalid_jiras)}")
+
+        self.silent = self._resolve_silent(silent)
 
         # Setup working directories
         self.working_dir = self.runtime.working_dir.absolute()
@@ -150,6 +169,27 @@ class StandaloneImagesShipPipeline:
         if not StandaloneImagesShipPipeline._JIRA_KEY_RE.match(key):
             return ""
         return key
+
+    def _resolve_silent(self, silent_override: Optional[bool]) -> bool:
+        """
+        Determine whether this run should be a silent (non-advisory) shipment.
+
+        An explicit --silent/--public override always wins. Otherwise, the default is
+        derived from each NVR's component name against SILENT_BY_DEFAULT_COMPONENTS.
+        All NVRs in one invocation must agree on the default; mixed components without
+        an explicit override is an error rather than a guess.
+        """
+        if silent_override is not None:
+            return silent_override
+
+        components = {parse_nvr(nvr)['name'] for nvr in self.nvrs}
+        defaults = {component in SILENT_BY_DEFAULT_COMPONENTS for component in components}
+        if len(defaults) > 1:
+            raise ValueError(
+                f"NVR components {sorted(components)} have different default silent/public "
+                "classifications; pass --silent or --public explicitly to disambiguate."
+            )
+        return defaults.pop()
 
     def check_env_vars(self):
         """
@@ -268,13 +308,15 @@ class StandaloneImagesShipPipeline:
 
     def create_shipment_config(self, snapshot: Snapshot) -> ShipmentConfig:
         """
-        Build a silent (non-advisory) shipment configuration for the given snapshot.
+        Build a shipment configuration for the given snapshot, silent or public
+        depending on self.silent (see SILENT_BY_DEFAULT_COMPONENTS / --silent/--public).
         """
         if self.product is None:
             raise RuntimeError("Product is not initialized. Please call run() first.")
 
         application = snapshot.spec.application
-        self.logger.info(f"Creating silent shipment config for application '{application}'...")
+        kind = "silent" if self.silent else "public"
+        self.logger.info(f"Creating {kind} shipment config for application '{application}'...")
 
         metadata = Metadata(
             product=self.product,
@@ -283,15 +325,18 @@ class StandaloneImagesShipPipeline:
             assembly=self.assembly,
             fbc=False,
             # The real "silent" flag: shipment-ci skips its advisory-URL check for a
-            # registry-push-only release. There is no advisory/release-notes payload
-            # for a silent shipment, so docs approval has nothing to check either.
-            advisory_required=False,
-            docs_approval_required=False,
+            # registry-push-only release when advisory_required is false. There is no
+            # advisory/release-notes payload for a silent shipment, so docs approval
+            # has nothing to check either. A public (advisory) shipment leaves both at
+            # their normal defaults (True).
+            advisory_required=not self.silent,
+            docs_approval_required=not self.silent,
             # openshift-* shipments otherwise require data.releaseNotes (Shipment's
-            # own "make_sure_data_is_present_unless_fbc" validator); a silent
-            # shipment has no release notes to give, so declare them N/A via RPA
-            # (matches the convention binary_release_konflux.py already uses for
-            # openshift-*/oc-mirror-2.0 CDN shipments).
+            # own "make_sure_data_is_present_unless_fbc" validator). A silent shipment
+            # has no release notes to give; a public one is expected to have its
+            # release notes managed in the ReleasePlanAdmission rather than typed into
+            # the shipment file (matches the convention binary_release_konflux.py
+            # already uses for openshift-*/oc-mirror-2.0 shipments, silent or not).
             release_notes_in_rpa=self.group.startswith("openshift-"),
         )
         environments = Environments(
@@ -416,9 +461,11 @@ class StandaloneImagesShipPipeline:
 
     async def run(self) -> None:
         """
-        Resolve the given NVRs and prepare a silent image shipment MR.
+        Resolve the given NVRs and prepare an image shipment MR (silent or public,
+        see self.silent).
         """
-        self.logger.info(f"Starting standalone-images-ship workflow for {self.group} {self.assembly}")
+        kind = "silent" if self.silent else "public"
+        self.logger.info(f"Starting standalone-images-ship ({kind}) workflow for {self.group} {self.assembly}")
         self.logger.info(f"Processing {len(self.nvrs)} NVR(s): {self.nvrs}")
 
         self.check_env_vars()
@@ -427,7 +474,7 @@ class StandaloneImagesShipPipeline:
         self.product = await self._load_product_from_group_config()
         self.logger.info(f"Loaded product '{self.product}' - continuing workflow for {self.product} {self.assembly}")
 
-        # Refuse to release embargoed (private-fix) NVRs silently.
+        # Refuse to ship embargoed (private-fix) NVRs, silent or public.
         try:
             embargoed_nvrs = [nvr for nvr in self.nvrs if is_nvr_embargoed(nvr)]
         except ValueError as e:
@@ -498,6 +545,18 @@ class StandaloneImagesShipPipeline:
     help="Konflux ReleasePlan name to use for the prod environment.",
 )
 @click.option(
+    "--silent/--public",
+    "silent",
+    default=None,
+    help=(
+        "Force a silent (non-advisory, registry-push-only) or a public (normal advisory) "
+        "shipment. If neither is given, the default is chosen per-NVR's component against "
+        "SILENT_BY_DEFAULT_COMPONENTS in standalone_images_ship.py (currently: "
+        "operator-registry-container). All NVRs in one invocation must agree on the default "
+        "if neither flag is given."
+    ),
+)
+@click.option(
     "--create-mr",
     is_flag=True,
     help="Create a merge request in the shipment data repository (requires GITLAB_TOKEN environment variable)",
@@ -522,28 +581,41 @@ async def standalone_images_ship(
     jiras: tuple,
     stage_release_plan: str,
     prod_release_plan: str,
+    silent: Optional[bool],
     create_mr: bool,
     shipment_data_repo_url: Optional[str],
     job_url: Optional[str],
 ):
     """
-    Prepare a silent (non-advisory) Konflux shipment MR for one or more standalone
-    image NVRs, e.g. operator-registry or another standalone-image project.
+    Prepare a Konflux shipment MR for one or more standalone image NVRs, e.g.
+    operator-registry or another standalone-image project.
 
     This command resolves the given NVRs into a Konflux snapshot and opens a shipment
-    MR using the given stage/prod ReleasePlans, with `metadata.advisory_required` set
-    to false so shipment-ci treats it as a registry-push-only release. It does not
-    create any Konflux Snapshot or Release object itself — shipment-ci's existing
-    generated CI jobs do that once the MR is reviewed and merged.
+    MR using the given stage/prod ReleasePlans. By default the shipment is a normal
+    advisory release; components listed in SILENT_BY_DEFAULT_COMPONENTS (e.g.
+    operator-registry) instead default to a silent shipment, with
+    `metadata.advisory_required` set to false so shipment-ci treats it as a
+    registry-push-only release. Either can be forced with --silent/--public. This
+    command does not create any Konflux Snapshot or Release object itself —
+    shipment-ci's existing generated CI jobs do that once the MR is reviewed and
+    merged.
 
     \b
-    # Operator-registry silent release for 5.2:
+    # Operator-registry silent release for 5.2 (silent is the default for this component):
     $ artcd standalone-images-ship \\
         --group openshift-5.2 --assembly stream \\
         --nvr operator-registry-container-v5.2.0-202611252026.p2.gffec6b4.assembly.stream.el9 \\
         --jira ART-25199 \\
         --stage-release-plan ocp-art-stage-silent-5.2 \\
         --prod-release-plan ocp-art-prod-silent-5.2 \\
+        --create-mr
+
+    \b
+    # A different standalone-image project, shipped as a normal public advisory (the default):
+    $ artcd standalone-images-ship \\
+        --group <group> --assembly <assembly> \\
+        --nvr <nvr> --jira <ISSUE> \\
+        --stage-release-plan <stage-plan> --prod-release-plan <prod-plan> \\
         --create-mr
     """
     pipeline = StandaloneImagesShipPipeline(
@@ -557,6 +629,7 @@ async def standalone_images_ship(
         create_mr=create_mr,
         shipment_data_repo_url=shipment_data_repo_url,
         job_url=job_url,
+        silent=silent,
     )
 
     await pipeline.run()
