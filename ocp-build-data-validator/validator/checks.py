@@ -3,6 +3,7 @@
 import posixpath
 import re
 import subprocess
+import time
 from pathlib import Path
 from urllib.parse import quote
 
@@ -21,6 +22,33 @@ class RemoteError(ValueError):
 
 class RateLimitedError(RemoteError):
     """GitHub signaled a rate limit; retrying later with backoff may succeed."""
+
+    def __init__(self, message: str, retry_after: float | None = None):
+        super().__init__(message)
+        self.retry_after = retry_after
+
+
+def _github_retry_after(response) -> float:
+    """GitHub's documented cooldown: Retry-After, else the reset time, else a 60s minimum."""
+    retry_after = response.headers.get('Retry-After')
+    if isinstance(retry_after, str) and re.fullmatch(r'[0-9]{1,12}', retry_after):
+        return float(retry_after)
+    reset = response.headers.get('X-RateLimit-Reset')
+    if (
+        response.headers.get('X-RateLimit-Remaining') == '0'
+        and isinstance(reset, str)
+        and re.fullmatch(r'[0-9]{1,12}', reset)
+    ):
+        return max(float(reset) - time.time(), 0)
+    return 60.0
+
+
+def _github_rate_limit_wait(retry_state):
+    """Honor GitHub's requested cooldown (Retry-After or reset time) before falling back to backoff."""
+    retry_after = getattr(retry_state.outcome.exception(), 'retry_after', None)
+    if retry_after is not None:
+        return retry_after
+    return wait_exponential(multiplier=2, min=2, max=60)(retry_state)
 
 
 def load_mapping(path: Path) -> dict:
@@ -266,7 +294,10 @@ class GitHubClient:
         self.authenticated = bool(token)
         if token:
             self.session.headers.update({'Accept': 'application/vnd.github+json', 'Authorization': f'Bearer {token}'})
-        retries = Retry(total=3, backoff_factor=1, status_forcelist=(429, 500, 502, 503, 504))
+        # 429 is deliberately excluded: Tenacity (below) owns rate-limit retries so it can
+        # honor Retry-After/reset instead of urllib3 raising RetryError once its own retries
+        # are exhausted.
+        retries = Retry(total=3, backoff_factor=1, status_forcelist=(500, 502, 503, 504))
         self.session.mount('https://api.github.com/', HTTPAdapter(max_retries=retries))
         self.session.mount('https://github.com/', HTTPAdapter(max_retries=retries))
         self.cache = {}
@@ -286,7 +317,7 @@ class GitHubClient:
     @retry(
         reraise=True,
         stop=stop_after_attempt(5),
-        wait=wait_exponential(multiplier=2, min=2, max=60),
+        wait=_github_rate_limit_wait,
         retry=retry_if_exception_type(RateLimitedError),
     )
     def _fetch(self, repository: str, path: str | None, ref: str, kind: str | None) -> bool:
@@ -338,10 +369,12 @@ class GitHubClient:
                         details.append(f'{label}={value}')
             rate_limited = response.status_code == 429 or 'rate limit' in ' '.join(details)
             diagnostic = f' ({", ".join(details)})' if details else ''
-            error_type = RateLimitedError if rate_limited else RemoteError
-            raise error_type(
+            message = (
                 f'GitHub returned HTTP {response.status_code} for {repository}{diagnostic}; check access/rate limits'
             )
+            if not rate_limited:
+                raise RemoteError(message)
+            raise RateLimitedError(message, retry_after=_github_retry_after(response))
         found = response.status_code == 200
         if found and kind is not None and self.authenticated:
             try:

@@ -77,10 +77,10 @@ def get_valid_member_references_for(file):
 
 
 @retry(
-    reraise=True,
     stop=stop_after_attempt(5),
     wait=wait_exponential(multiplier=2, min=2, max=60),
     retry=retry_if_result(lambda response: response.status_code == 429),
+    retry_error_callback=lambda retry_state: retry_state.outcome.result(),
 )
 def _head(url):
     session = global_session.request_session or requests

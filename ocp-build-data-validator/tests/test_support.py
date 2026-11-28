@@ -1,7 +1,9 @@
 import sys
 import unittest
+from unittest.mock import patch
 
 from flexmock import flexmock
+from tenacity import wait_none
 from validator import exceptions, support
 
 
@@ -107,6 +109,11 @@ class TestSupport(unittest.TestCase):
 
         for status_code in [400, 401, 403, 404, 405, 410]:
             (flexmock(support.requests).should_receive('head').and_return(flexmock(status_code=status_code)))
+            self.assertFalse(support.resource_exists('http://a.random/url'))
+
+    def test_resource_exists_returns_false_after_exhausting_persistent_429_retries(self):
+        (flexmock(support.requests).should_receive('head').and_return(flexmock(status_code=429)))
+        with patch.object(support._head.retry, 'wait', wait_none()):
             self.assertFalse(support.resource_exists('http://a.random/url'))
 
     def test_repository_name(self):

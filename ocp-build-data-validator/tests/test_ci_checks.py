@@ -813,3 +813,37 @@ def test_github_api_403_does_not_log_untrusted_response_content():
         client.exists('team/operator', None, 'main')
     assert '403' in str(error.value)
     assert 'secret-token' not in str(error.value)
+
+
+def test_adapter_lets_429_through_instead_of_raising_retry_error():
+    """A persistent 429 must reach _fetch's classification, not urllib3's own RetryError."""
+    client = checks.GitHubClient(token='test-read-only')
+    for prefix in ('https://api.github.com/', 'https://github.com/'):
+        assert 429 not in client.session.get_adapter(prefix).max_retries.status_forcelist
+
+
+def test_persistent_429_retries_then_raises_rate_limited_error():
+    """A 429 that never clears exhausts Tenacity's own retries instead of urllib3's."""
+    session = Mock()
+    session.get.return_value.status_code = 429
+    session.get.return_value.headers = {}
+    client = checks.GitHubClient(session, token='test-read-only')
+    with pytest.raises(checks.RateLimitedError):
+        client.exists('team/operator', None, 'main')
+    assert session.get.call_count == 5
+
+
+def test_github_retry_after_prefers_retry_after_header():
+    response = Mock(headers={'Retry-After': '42'})
+    assert checks._github_retry_after(response) == 42.0
+
+
+def test_github_retry_after_falls_back_to_reset_time(mocker):
+    mocker.patch('validator.checks.time.time', return_value=1000.0)
+    response = Mock(headers={'X-RateLimit-Remaining': '0', 'X-RateLimit-Reset': '1090'})
+    assert checks._github_retry_after(response) == 90.0
+
+
+def test_github_retry_after_defaults_to_one_minute_for_secondary_limits():
+    response = Mock(headers={})
+    assert checks._github_retry_after(response) == 60.0
