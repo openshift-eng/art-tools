@@ -16,6 +16,8 @@ from artcommonlib.github_auth import (
 )
 from github import GithubException
 
+from conftest import subprocess_calls_legit
+
 FAKE_PAT = "test-only-token"
 
 FAKE_PEM = "-----BEGIN RSA PRIVATE KEY-----\nfake\n-----END RSA PRIVATE KEY-----"
@@ -461,6 +463,7 @@ class TestGetGithubGitAuthEnv:
         assert result["GIT_USERNAME"] == "x-access-token"
         assert result["GIT_TERMINAL_PROMPT"] == "0"
 
+    @subprocess_calls_legit("runs the real generated GIT_ASKPASS shell script to verify its own output; no network")
     def test_explicit_auth_env_supports_non_github_username(self):
         token = "glpat_test_secret"
         result = build_git_auth_env(token, username="oauth2")

@@ -249,6 +249,9 @@ line-ending = "auto"
 # multiprocessing's semaphores/thread pools use them internally and have nothing to do with
 # network access.
 addopts = "--color=yes --disable-socket --allow-unix-socket"
+markers = [
+    "subprocess_calls_legit(reason): test legitimately spawns a real subprocess; see conftest.py",
+]
 
 [tool.pylint.main]
 # Ignore generated/vendored directories that are not part of the source tree

@@ -5,6 +5,12 @@ from unittest.mock import patch
 import pytest
 from artcommonlib.git_helper import validate_git_branch, validate_git_group_name, validate_git_remote_url
 
+from conftest import subprocess_calls_legit
+
+pytestmark = subprocess_calls_legit(
+    "validate_git_branch/validate_git_group_name shell out to real `git check-ref-format`; no network"
+)
+
 
 @pytest.mark.parametrize('branch', [None, '', 'codex/topic', 'feature/a+b', 'release/3.18', 'feature/café'])
 def test_literal_branch_names_and_empty_overrides_remain_supported(branch):

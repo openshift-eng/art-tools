@@ -7,6 +7,13 @@ from unittest.mock import AsyncMock, Mock, patch
 import pytest
 from pyartcd.pipelines.merge_layered_fbc import MergeLayeredFbcPipeline
 
+from conftest import subprocess_calls_legit
+
+pytestmark = subprocess_calls_legit(
+    "MergeLayeredFbcPipeline validates branch/group names via validate_git_branch/validate_git_group_name, "
+    "which shell out to real `git check-ref-format` on short fixture strings; no network"
+)
+
 
 def pipeline(tmp_path, target=None, assemblies=('3.18.5', '3.17.9'), **kwargs):
     runtime = Mock(working_dir=tmp_path, doozer_working=tmp_path / 'doozer', dry_run=True)

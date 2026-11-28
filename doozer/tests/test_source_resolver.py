@@ -9,6 +9,8 @@ from artcommonlib.model import Missing, Model
 from doozerlib.source_resolver import SourceResolution, SourceResolver
 from flexmock import flexmock
 
+from conftest import subprocess_calls_legit
+
 
 class SourceResolverTestCase(TestCase):
     @staticmethod
@@ -511,6 +513,7 @@ class TestSourceResolutionIsForkBuild(IsolatedAsyncioTestCase):
             allow_redirects=False,
         )
 
+    @subprocess_calls_legit("builds a real local git fixture repo under a tmp dir to test ancestry checks; no network")
     async def test_checks_ancestry_against_advertised_branch_and_annotated_tag(self):
         self._git('init', '--initial-branch=test')
         self._git('config', 'user.name', 'Test')
