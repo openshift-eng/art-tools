@@ -11,11 +11,16 @@ from artcommonlib.gitdata import SafeFormatter
 from requests.adapters import HTTPAdapter
 from ruamel.yaml import YAML
 from ruamel.yaml.error import YAMLError
+from tenacity import retry, retry_if_exception_type, stop_after_attempt, wait_exponential
 from urllib3.util.retry import Retry
 
 
 class RemoteError(ValueError):
     """A remote service could not provide an authoritative validation result."""
+
+
+class RateLimitedError(RemoteError):
+    """GitHub signaled a rate limit; retrying later with backoff may succeed."""
 
 
 def load_mapping(path: Path) -> dict:
@@ -275,68 +280,78 @@ class GitHubClient:
             path = posixpath.normpath(path)
         key = (repository, path, ref, kind)
         if key not in self.cache:
-            try:
-                if self.authenticated:
-                    endpoint = f'https://api.github.com/repos/{repository}/'
-                    endpoint += (
-                        'contents/' + quote(path, safe='/')
-                        if path is not None
-                        else 'git/ref/heads/' + quote(ref, safe='')
-                    )
-                    response = self.session.get(
-                        endpoint,
-                        params={'ref': ref} if path is not None else {},
-                        timeout=(10, 30),
-                        allow_redirects=False,
-                    )
-                else:
-                    # Match the existing OCP validator without using the anonymous REST quota.
-                    view = 'blob' if path is not None and kind == 'file' else 'tree'
-                    endpoint = f'https://github.com/{repository}/{view}/{quote(ref, safe="")}'
-                    if path is not None:
-                        endpoint += '/' + quote(path, safe='/')
-                    response = self.session.head(endpoint, timeout=(10, 30), allow_redirects=False)
-            except requests.RequestException:
-                raise RemoteError(f'GitHub unavailable while checking {repository}; retry the job') from None
-            if response.status_code not in (200, 404):
-                details = []
-                if response.status_code == 403 and self.authenticated:
-                    try:
-                        body = response.json()
-                    except (ValueError, TypeError):
-                        body = None
-                    message = body.get('message') if isinstance(body, dict) else None
-                    message = message.lower() if isinstance(message, str) else ''
-                    remaining = response.headers.get('X-RateLimit-Remaining')
-                    if 'secondary rate limit' in message:
-                        details.append('secondary rate limit')
-                    elif remaining == '0' or 'api rate limit exceeded' in message:
-                        details.append('rate limit exceeded')
-                    elif 'resource not accessible' in message:
-                        details.append('access denied')
-                    for header, label in (
-                        ('X-RateLimit-Remaining', 'remaining'),
-                        ('X-RateLimit-Reset', 'reset'),
-                        ('Retry-After', 'retry-after'),
-                    ):
-                        value = response.headers.get(header)
-                        if isinstance(value, str) and re.fullmatch(r'[0-9]{1,12}', value):
-                            details.append(f'{label}={value}')
-                diagnostic = f' ({", ".join(details)})' if details else ''
-                raise RemoteError(
-                    f'GitHub returned HTTP {response.status_code} for {repository}{diagnostic}; check access/rate limits'
-                )
-            found = response.status_code == 200
-            if found and kind is not None and self.authenticated:
-                try:
-                    content = response.json()
-                except requests.exceptions.JSONDecodeError:
-                    raise RemoteError(f'GitHub returned an invalid response for {repository}; retry the job') from None
-                found = (kind == 'dir' and isinstance(content, list)) or (
-                    isinstance(content, dict) and content.get('type') == kind
-                )
-            self.cache[key] = found
+            self.cache[key] = self._fetch(repository, path, ref, kind)
         return self.cache[key]
+
+    @retry(
+        reraise=True,
+        stop=stop_after_attempt(5),
+        wait=wait_exponential(multiplier=2, min=2, max=60),
+        retry=retry_if_exception_type(RateLimitedError),
+    )
+    def _fetch(self, repository: str, path: str | None, ref: str, kind: str | None) -> bool:
+        """Perform the GitHub request, retrying with backoff when GitHub signals a rate limit."""
+        try:
+            if self.authenticated:
+                endpoint = f'https://api.github.com/repos/{repository}/'
+                endpoint += (
+                    'contents/' + quote(path, safe='/') if path is not None else 'git/ref/heads/' + quote(ref, safe='')
+                )
+                response = self.session.get(
+                    endpoint,
+                    params={'ref': ref} if path is not None else {},
+                    timeout=(10, 30),
+                    allow_redirects=False,
+                )
+            else:
+                # Match the existing OCP validator without using the anonymous REST quota.
+                view = 'blob' if path is not None and kind == 'file' else 'tree'
+                endpoint = f'https://github.com/{repository}/{view}/{quote(ref, safe="")}'
+                if path is not None:
+                    endpoint += '/' + quote(path, safe='/')
+                response = self.session.head(endpoint, timeout=(10, 30), allow_redirects=False)
+        except requests.RequestException:
+            raise RemoteError(f'GitHub unavailable while checking {repository}; retry the job') from None
+        if response.status_code not in (200, 404):
+            details = []
+            if response.status_code == 403 and self.authenticated:
+                try:
+                    body = response.json()
+                except (ValueError, TypeError):
+                    body = None
+                message = body.get('message') if isinstance(body, dict) else None
+                message = message.lower() if isinstance(message, str) else ''
+                remaining = response.headers.get('X-RateLimit-Remaining')
+                if 'secondary rate limit' in message:
+                    details.append('secondary rate limit')
+                elif remaining == '0' or 'api rate limit exceeded' in message:
+                    details.append('rate limit exceeded')
+                elif 'resource not accessible' in message:
+                    details.append('access denied')
+                for header, label in (
+                    ('X-RateLimit-Remaining', 'remaining'),
+                    ('X-RateLimit-Reset', 'reset'),
+                    ('Retry-After', 'retry-after'),
+                ):
+                    value = response.headers.get(header)
+                    if isinstance(value, str) and re.fullmatch(r'[0-9]{1,12}', value):
+                        details.append(f'{label}={value}')
+            rate_limited = response.status_code == 429 or 'rate limit' in ' '.join(details)
+            diagnostic = f' ({", ".join(details)})' if details else ''
+            error_type = RateLimitedError if rate_limited else RemoteError
+            raise error_type(
+                f'GitHub returned HTTP {response.status_code} for {repository}{diagnostic}; check access/rate limits'
+            )
+        found = response.status_code == 200
+        if found and kind is not None and self.authenticated:
+            try:
+                content = response.json()
+            except requests.exceptions.JSONDecodeError:
+                raise RemoteError(f'GitHub returned an invalid response for {repository}; retry the job') from None
+            found = (kind == 'dir' and isinstance(content, list)) or (
+                isinstance(content, dict) and content.get('type') == kind
+            )
+        return found
 
 
 def validate_sources(data: dict, group: dict, client: GitHubClient, image: bool = True) -> list[str]:

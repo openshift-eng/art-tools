@@ -1,11 +1,19 @@
 """Contracts for the shared LP/OCP CI checks, independent of remote services."""
 
 import subprocess
-from unittest.mock import Mock
+from unittest.mock import Mock, patch
 
 import pytest
 import requests
+from tenacity import wait_none
 from validator import checks
+
+
+@pytest.fixture(autouse=True)
+def _no_rate_limit_retry_delay():
+    """Keep rate-limit retries instant so tests don't sleep through real backoff."""
+    with patch.object(checks.GitHubClient._fetch.retry, 'wait', wait_none()):
+        yield
 
 
 def test_fbc_catalogs_check_each_unique_target_and_report_missing(mocker, tmp_path):
