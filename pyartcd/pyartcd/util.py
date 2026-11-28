@@ -43,6 +43,7 @@ from artcommonlib.util import merge_objects, new_roundtrip_yaml_handler, product
 from doozerlib import util as doozerutil
 from doozerlib.constants import ART_BUILD_HISTORY_URL
 from errata_tool import ErrataConnector
+from redis.exceptions import RedisError as RedisClientError
 from tenacity import before_sleep_log, retry, retry_if_exception_type, stop_after_attempt, wait_fixed
 
 from pyartcd import constants, jenkins, record, tekton
@@ -1055,6 +1056,23 @@ async def reset_fail_counter(branch: str) -> None:
     await redis.delete_keys_by_pattern(f"{branch}:*")
 
 
+def _surface_counter_results(results: list, group: str, action: str) -> None:
+    """
+    Inspect gathered counter results: log Redis errors and re-raise any non-Redis error.
+
+    Redis errors (artcommonlib or redis-py) are best-effort telemetry and are logged as a
+    WARNING (by type, never raw text) so the build continues. Non-Redis exceptions stay fatal.
+    """
+    redis_error = None
+    for result in results:
+        if isinstance(result, (redis.RedisError, RedisClientError)):
+            redis_error = redis_error or result
+        elif isinstance(result, BaseException):
+            raise result
+    if redis_error is not None:
+        logger.warning("Redis error (%s) while %s for group %s", type(redis_error).__name__, action, group)
+
+
 async def update_rebase_fail_counters(
     context: RebaseCounterContext,
 ) -> None:
@@ -1100,10 +1118,15 @@ async def update_rebase_fail_counters(
     skipped_set = set(context.skipped_due_to_parent or [])
     successful_images = [image for image in successful_images if image not in failed_set and image not in skipped_set]
 
-    await asyncio.gather(
-        *[context.reset_counter(f"count:rebase-failure:konflux:{context.group}:{image}") for image in successful_images]
+    # Attempt both phases (increments even if a reset fails), then surface errors.
+    reset_results = await asyncio.gather(
+        *[
+            context.reset_counter(f"count:rebase-failure:konflux:{context.group}:{image}")
+            for image in successful_images
+        ],
+        return_exceptions=True,
     )
-    await asyncio.gather(
+    increment_results = await asyncio.gather(
         *[
             context.increment_counter(
                 f"count:rebase-failure:konflux:{context.group}:{image}",
@@ -1111,7 +1134,11 @@ async def update_rebase_fail_counters(
                 jenkins_url=context.jenkins_url,
             )
             for image in context.failed_images
-        ]
+        ],
+        return_exceptions=True,
+    )
+    _surface_counter_results(
+        list(reset_results) + list(increment_results), context.group, "updating rebase fail counters"
     )
 
 
@@ -1245,12 +1272,14 @@ async def update_build_fail_counters(context: BuildFailCounterContext) -> None:
         return
 
     counter_types = ("build-failure",) if context.build_only else ("build-failure", "ec-failure", "release-failure")
-    await asyncio.gather(
+    # Attempt the reset phase, but keep going so a reset Redis failure does not skip increments.
+    reset_results = await asyncio.gather(
         *[
             context.reset_counter(f"count:{counter_type}:konflux:{context.group}:{image}")
             for image in context.built_images
             for counter_type in counter_types
-        ]
+        ],
+        return_exceptions=True,
     )
 
     counter_failed_images = get_failed_images_for_counter_updates(context.failed_images, context.failed_entries)
@@ -1258,27 +1287,32 @@ async def update_build_fail_counters(context: BuildFailCounterContext) -> None:
         if "parent images failed to build" in context.failed_entries.get(image, {}).get("message", ""):
             logger.info(f"Excluding {image} from counter updates (parent build failure, not a real build issue)")
 
+    increment_results: list = []
     if context.failed_images and not counter_failed_images:
         logger.warning(get_no_attempted_builds_warning(context.group, len(context.failed_images), context.jenkins_url))
-        return
-
-    if context.build_only:
-        failure_categories = FailedImageCategories(
-            build=counter_failed_images,
-            its=[],
-            release=[],
-        )
     else:
-        failure_categories = categorize_failed_images(counter_failed_images, context.failed_entries)
-    await increment_failed_image_counters(
-        context=FailedImageCounterContext(
-            group=context.group,
-            build_variant=context.build_variant,
-            jenkins_url=context.jenkins_url,
-            failure_categories=failure_categories,
-            failed_entries=context.failed_entries,
-            increment_counter=context.increment_counter,
+        if context.build_only:
+            failure_categories = FailedImageCategories(
+                build=counter_failed_images,
+                its=[],
+                release=[],
+            )
+        else:
+            failure_categories = categorize_failed_images(counter_failed_images, context.failed_entries)
+        increment_results = await increment_failed_image_counters(
+            context=FailedImageCounterContext(
+                group=context.group,
+                build_variant=context.build_variant,
+                jenkins_url=context.jenkins_url,
+                failure_categories=failure_categories,
+                failed_entries=context.failed_entries,
+                increment_counter=context.increment_counter,
+                return_exceptions=True,
+            )
         )
+
+    _surface_counter_results(
+        list(reset_results) + list(increment_results), context.group, "updating build fail counters"
     )
 
 
