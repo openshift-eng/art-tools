@@ -2,6 +2,7 @@ import os
 
 import requests
 from ruamel.yaml import YAML
+from tenacity import retry, retry_if_result, stop_after_attempt, wait_exponential
 
 from . import exceptions, global_session
 
@@ -75,14 +76,22 @@ def get_valid_member_references_for(file):
     return set([os.path.splitext(img)[0] for img in os.listdir(images_dir)])
 
 
+@retry(
+    stop=stop_after_attempt(5),
+    wait=wait_exponential(multiplier=2, min=2, max=60),
+    retry=retry_if_result(lambda response: response.status_code == 429),
+    retry_error_callback=lambda retry_state: retry_state.outcome.result(),
+)
+def _head(url):
+    session = global_session.request_session or requests
+    return session.head(url)
+
+
 def resource_exists(url):
     if url.startswith('https://github.com/openshift/ose-ovn-kubernetes'):
         # This is a private repository, and only used for 3.11. This will not change.
         return True
-    if global_session.request_session:
-        return 200 <= global_session.request_session.head(url).status_code < 400
-    else:
-        return 200 <= requests.head(url).status_code < 400
+    return 200 <= _head(url).status_code < 400
 
 
 def get_repository_name(file):
