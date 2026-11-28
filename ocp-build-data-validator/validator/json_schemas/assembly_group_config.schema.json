@@ -968,6 +968,11 @@
     "multi_arch": {"type": "object"},
     "new_payload_versioning_scheme": {"type": "boolean"},
     "operator_image_ref_mode": {"type": "string"},
+    "art_yaml_overrides_enabled": {
+      "description": "Apply per-image art.yaml template variable overrides during operator image rebases. Defaults to false and can only be enabled in openshift-4.23 group.yml.",
+      "type": "boolean",
+      "default": false
+    },
     "operator_channel_stable": {"type": "string"},
     "operator_stable_channel_name": {"type": "string", "description": "Channel name used when operator_channel_stable is default or extra. Defaults to stable when omitted."},
     "signing_advisory": {"type": "integer"},

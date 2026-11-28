@@ -41,6 +41,7 @@ from doozerlib.exceptions import ParentRebaseFailedError
 from doozerlib.image import ImageMetadata, extract_builder_info_from_pullspec
 from doozerlib.lockfile import ArtifactLockfileGenerator, RPMLockfileGenerator
 from doozerlib.lockfile_prototype.constants import LockfileBackend
+from doozerlib.olm.art_yaml import render_art_yaml
 from doozerlib.record_logger import RecordLogger
 from doozerlib.repos import Repos
 from doozerlib.runtime import Runtime
@@ -2906,21 +2907,6 @@ class KonfluxRebaser:
             (e.g., _replace_external_image_refs for processing 'external-images'),
             or None if art.yaml doesn't exist.
         """
-        if version.startswith('v'):
-            version = version[1:]  # strip off leading v
-
-        x, y, z = version.split('.')[0:3]
-        date_time = release.split('.')[0]  # Extract datestamp (YYYYMMDDHHMM[SS])
-
-        replace_args = {
-            'MAJOR': x,
-            'MINOR': y,
-            'SUBMINOR': z,
-            'RELEASE': release,
-            'DATE_TIME': date_time,
-            'FULL_VER': '{}-{}'.format(version, date_time),
-        }
-
         manifests_dir, _, _ = self._get_bundle_paths(csv_config)
         manifests_base = os.path.join(dest_dir, manifests_dir)
         art_yaml = os.path.join(manifests_base, 'art.yaml')
@@ -2932,8 +2918,13 @@ class KonfluxRebaser:
             art_yaml_str = art_file.read()
 
         try:
-            art_yaml_str = art_yaml_str.format(**replace_args)
-            art_yaml_data = yaml.full_load(art_yaml_str)
+            art_yaml_data = render_art_yaml(
+                art_yaml_str,
+                version,
+                release,
+                csv_config.get('art_yaml_overrides', []),
+                group_config=self._runtime.group_config,
+            )
         except Exception as ex:  # exception is low level, need to pull out the details and rethrow
             raise IOError('Error processing art.yaml!\n{}\n\n{}'.format(str(ex), art_yaml_str))
 

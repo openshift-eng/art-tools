@@ -21,6 +21,54 @@ class TestImageDistGit(TestDistgit):
         self.img_dg = distgit.ImageDistGitRepo(self.md, autoclone=False)
         self.img_dg.runtime.group_config = Model()
 
+    def test_update_csv_honors_art_yaml_overrides_switch(self):
+        runtime = self.img_dg.runtime
+        runtime.group_config = Model(
+            {'name': 'openshift-4.23', 'vars': {'MAJOR': 4, 'MINOR': 23}, 'csv_namespace': 'ocp'}
+        )
+        runtime.name_in_bundle_map = {'operator': self.md.distgit_key}
+        runtime.image_map = {self.md.distgit_key: self.md}
+        runtime.uuid = 'test'
+        self.md.image_name_short = 'operator'
+        self.md.config['update-csv'] = {
+            'manifests-dir': 'manifests',
+            'bundle-dir': 'stable',
+            'registry': 'registry.example',
+            'art_yaml_overrides': [
+                {'name': 'MAJOR', 'value': 5, 'search_only': True},
+                {'name': 'MINOR', 'value': 0, 'search_only': True},
+            ],
+        }
+
+        with (
+            tempfile.TemporaryDirectory() as directory,
+            patch.object(self.img_dg, '_find_previous_versions', return_value=[]),
+        ):
+            self.img_dg.distgit_dir = directory
+            bundle = Path(directory) / 'manifests' / 'stable'
+            bundle.mkdir(parents=True)
+            (bundle / 'image-references').write_text(
+                'spec:\n  tags:\n    - name: operator\n      from:\n        name: registry.example/operator:latest\n'
+            )
+            (bundle.parent / 'art.yaml').write_text(
+                'updates:\n  - file: stable/operator.clusterserviceversion.yaml\n'
+                '    update_list:\n      - search: "version: {MAJOR}.{MINOR}.0"\n'
+                '        replace: "version: {FULL_VER}"\n'
+            )
+            csv_file = bundle / 'operator.clusterserviceversion.yaml'
+            for switch, expected_version in (
+                ({}, '5.0.0'),
+                ({'art_yaml_overrides_enabled': True}, '4.23.0-202611250125'),
+            ):
+                with self.subTest(switch=switch):
+                    runtime.group_config.update(switch)
+                    csv_file.write_text('spec:\n  version: 5.0.0\n  image: registry.example/operator:latest\n')
+                    self.img_dg._update_csv('v4.23.0', '202611250125.p2')
+                    self.assertEqual(
+                        csv_file.read_text(),
+                        f'spec:\n  version: {expected_version}\n  image: registry.example/ocp/operator:v4.23.0.test\n',
+                    )
+
     @staticmethod
     def mock_runtime(**kwargs):
         def flexmock_defaults(**inner_kwargs):

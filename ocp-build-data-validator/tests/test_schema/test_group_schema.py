@@ -4,6 +4,24 @@ from validator.schema import group_schema
 
 
 class TestGroupSchema(unittest.TestCase):
+    def test_art_yaml_overrides_enabled_only_for_openshift_4_23(self):
+        flag = 'art_yaml_overrides_enabled'
+        for name, variables, enabled, expected_error in (
+            ('openshift-4.23', {}, True, ''),
+            ('openshift-{MAJOR}.{MINOR}', {'MAJOR': 4, 'MINOR': 23}, True, ''),
+            ('openshift-{MAJOR}.{MINOR}', {'MAJOR': 5, 'MINOR': 0}, True, 'may only be true for openshift-4.23'),
+            ('openshift-4.22', {}, True, 'may only be true for openshift-4.23'),
+            ('layered-product-4.23', {}, True, 'may only be true for openshift-4.23'),
+            ('openshift-5.0', {}, False, ''),
+            ('openshift-4.23', {}, 'true', "is not of type 'boolean'"),
+        ):
+            with self.subTest(name=name, variables=variables, enabled=enabled):
+                result = group_schema.validate('group.yml', {'name': name, 'vars': variables, flag: enabled})
+                if expected_error:
+                    self.assertIn(expected_error, result)
+                else:
+                    self.assertEqual('', result)
+
     def test_ignore_incorrect_nvr_is_boolean(self):
         """The existing group-level NVR override accepts booleans and rejects strings."""
         for value in (True, False):

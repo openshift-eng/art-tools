@@ -293,6 +293,39 @@ class TestImageSchema(unittest.TestCase):
             image_schema.validate('filename', data),
         )
 
+    def test_validate_art_yaml_overrides(self):
+        overrides = [
+            {'name': 'MAJOR', 'value': 5, 'search_only': True},
+            {'name': 'MINOR', 'value': 0, 'search_only': True},
+            {'name': 'DATE_TIME', 'value': '202611250125'},
+        ]
+        data = {'from': {}, 'name': 'test-operator', 'for_release': False}
+        csv_config = {
+            'manifests-dir': 'manifests',
+            'bundle-dir': 'stable',
+            'registry': 'registry.example.com',
+            'valid-subscription-label': '["foo"]',
+        }
+        for suffix in ('', '!', '?', '-'):
+            with self.subTest(suffix=suffix):
+                data['update-csv'] = {**csv_config, f'art_yaml_overrides{suffix}': None if suffix == '-' else overrides}
+                self.assertIsNone(image_schema.validate('filename', data))
+
+        for invalid_overrides in (
+            {'name': 'MAJOR', 'value': 5},
+            [{'name': '', 'value': 5}],
+            [{'name': 'MAJOR'}],
+            [{'value': 5}],
+            [{'name': 'MAJOR', 'value': [5]}],
+            [{'name': 'MAJOR', 'value': 5, 'search_only': 'true'}],
+            [{'name': 'MAJOR', 'value': 5, 'search-only': True}],
+        ):
+            with self.subTest(invalid_overrides=invalid_overrides):
+                data['update-csv'] = {**csv_config, 'art_yaml_overrides': invalid_overrides}
+                error = image_schema.validate('filename', data)
+                self.assertIsNotNone(error)
+                self.assertIn('art_yaml_overrides', error)
+
     def test_validate_with_valid_bridge_release_bug_mirroring_override(self):
         data = {
             'from': {},
