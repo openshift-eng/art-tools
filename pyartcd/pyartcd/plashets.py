@@ -7,6 +7,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Optional, Sequence, Tuple
 
+import yaml
 from artcommonlib import exectools
 from artcommonlib.config.plashet import PlashetConfig
 from artcommonlib.config.repo import BrewSource, BrewTag, PlashetRepo, Repo, RepoList
@@ -334,12 +335,20 @@ async def build_plashets(
     # Build plashet repos one by one.
 
     plashets_built = {}  # hold the information of all built plashet repos
+    # Track per-repo build info (local dirs) so an embargoed repo can locate its
+    # already-built public sibling for the symlink optimization.
+    built_info = {}
     timestamp = datetime.strptime(revision, '%Y%m%d%H%M%S')
     signing_advisory = group_config.get('signing_advisory', '0')
     arches = plashet_config.arches or group_config['arches']
     group_param = group
     if data_gitref:
         group_param += f'@{data_gitref}'
+
+    # Build public siblings before any repo that symlinks to them. sorted() is stable,
+    # so repos that opt into the symlink optimization (which are always the embargoed
+    # flavor) are deferred until after their public siblings have been built.
+    plashet_repos = sorted(plashet_repos, key=lambda r: bool(r.plashet and r.plashet.symlink_when_unembargoed))
 
     for repo in plashet_repos:
         logger.info('Building plashet repo for %s', repo.name)
@@ -366,28 +375,74 @@ async def build_plashets(
         plashet_name_template = string.Template(plashet_config.plashet_dir)
         plashet_name = plashet_name_template.substitute(**variables)
 
-        local_path = await build_plashet_from_tags(
-            group_param=group_param,
-            assembly=assembly,
-            base_dir=local_base_dir,
-            name=plashet_name,
-            arches=arches,
-            include_embargoed=config.include_embargoed,
-            signing_mode=signing_mode,
-            signing_advisory=signing_advisory,
-            embargoed_tags=config.source.embargoed_tags,
-            tag_pvs=tuple((tag.name, tag.product_version) for tag in config.source.from_tags),
-            include_previous_packages=config.include_previous_packages,
-            include_packages=config.include_packages,
-            exclude_packages=config.exclude_packages,
-            repo_subdir=plashet_config.repo_subdir if plashet_config.create_repo_subdirs else None,
-            data_path=data_path,
-            dry_run=dry_run,
-            doozer_working=doozer_working,
-            version=version,
-        )
+        # Decide whether this embargoed repo can be a symlink to its public sibling.
+        symlink_target_path = None
+        if config.symlink_when_unembargoed and config.embargoed_sibling:
+            sibling_info = built_info.get(config.embargoed_sibling)
+            if sibling_info is None:
+                # The public sibling was not built in THIS invocation (e.g. a `repos` filter
+                # selected only the embargoed flavor, or the sibling is disabled). We have no
+                # fresh public plashet to symlink to, so fall back to a full embargoed build.
+                logger.info(
+                    "Public sibling '%s' of '%s' was not built in this invocation; falling back to a full build.",
+                    config.embargoed_sibling,
+                    repo.name,
+                )
+            else:
+                verdict = public_sibling_symlink_safe(sibling_info['localPlashetPath'])
+                if verdict is None:
+                    logger.warning(
+                        "Could not read embargo signal from public sibling '%s' (plashet.yml "
+                        "missing/unreadable); falling back to full build for '%s'",
+                        config.embargoed_sibling,
+                        repo.name,
+                    )
+                elif verdict is False:
+                    logger.info(
+                        "Public sibling '%s' shows an embargo signal; building '%s' fully",
+                        config.embargoed_sibling,
+                        repo.name,
+                    )
+                else:
+                    symlink_target_path = sibling_info['localPlashetPath']
+                    logger.info(
+                        "Public sibling '%s' has no embargoed content or embargo concern; '%s' will be a symlink to it",
+                        config.embargoed_sibling,
+                        repo.name,
+                    )
 
-        logger.info('Plashet repo for %s created: %s', repo.name, local_path)
+        if symlink_target_path is not None:
+            # No embargoed content: create the embargoed flavor as a RELATIVE symlink to the
+            # already-built public sibling directory instead of running a redundant full build.
+            local_path = create_plashet_symlink(
+                base_dir=local_base_dir,
+                plashet_name=plashet_name,
+                target_path=symlink_target_path,
+            )
+            logger.info('Plashet repo for %s created as symlink: %s -> %s', repo.name, local_path, symlink_target_path)
+        else:
+            local_path = await build_plashet_from_tags(
+                group_param=group_param,
+                assembly=assembly,
+                base_dir=local_base_dir,
+                name=plashet_name,
+                arches=arches,
+                include_embargoed=config.include_embargoed,
+                signing_mode=signing_mode,
+                signing_advisory=signing_advisory,
+                embargoed_tags=config.source.embargoed_tags,
+                tag_pvs=tuple((tag.name, tag.product_version) for tag in config.source.from_tags),
+                include_previous_packages=config.include_previous_packages,
+                include_packages=config.include_packages,
+                exclude_packages=config.exclude_packages,
+                repo_subdir=plashet_config.repo_subdir if plashet_config.create_repo_subdirs else None,
+                data_path=data_path,
+                dry_run=dry_run,
+                doozer_working=doozer_working,
+                version=version,
+            )
+
+            logger.info('Plashet repo for %s created: %s', repo.name, local_path)
         if plashet_config.create_symlinks:
             symlink_path = create_latest_symlink(
                 base_dir=local_base_dir, plashet_name=plashet_name, symlink_name=plashet_config.symlink_name
@@ -408,6 +463,10 @@ async def build_plashets(
 
         plashets_built[repo.name] = {
             'plashetDirName': revision,
+            'localPlashetPath': str(local_path),
+        }
+        built_info[repo.name] = {
+            'localBaseDir': str(local_base_dir),
             'localPlashetPath': str(local_path),
         }
 
@@ -440,7 +499,12 @@ async def build_plashet_from_tags(
     """
 
     repo_path = Path(base_dir, name)
-    if repo_path.exists():
+    # A retry after a failed publication may find repo_path as a (possibly dangling) symlink
+    # left by a previous symlink run. shutil.rmtree() refuses a directory symlink on py3.11,
+    # so unlink symlinks first and only rmtree real directories.
+    if repo_path.is_symlink():
+        repo_path.unlink()
+    elif repo_path.exists():
         shutil.rmtree(repo_path)
     cmd = [
         "doozer",
@@ -525,6 +589,160 @@ def create_latest_symlink(base_dir: os.PathLike, plashet_name: str, symlink_name
     return symlink_path
 
 
+def _load_public_plashet_yml(public_plashet_path: os.PathLike) -> dict | None:
+    """
+    Load and parse a plashet's plashet.yml.
+
+    Returns the parsed mapping, or ``None`` if the file is missing/unreadable (signalling the
+    caller to fall back to a full build rather than risk an unsafe assumption).
+    """
+    plashet_yml = Path(public_plashet_path, 'plashet.yml')
+    if not plashet_yml.is_file():
+        return None
+    try:
+        with open(plashet_yml, encoding='utf-8') as f:
+            return yaml.safe_load(f) or {}
+    except (OSError, yaml.YAMLError) as e:
+        logger.warning("Failed to read %s: %s", plashet_yml, e)
+        return None
+
+
+def read_detected_as_embargoed(public_plashet_path: os.PathLike) -> list | None:
+    """
+    Read the authoritative embargo signal from a public plashet's plashet.yml.
+
+    Returns the list of NVREs detected as embargoed (``extra.embargo_info.detected_as_embargoed``).
+    An empty list means no embargoed content was *detected*.
+
+    Returns ``None`` if the plashet.yml could not be found/read, signalling the caller to
+    fall back to a full build rather than risk an unsafe assumption.
+    """
+    data = _load_public_plashet_yml(public_plashet_path)
+    if data is None:
+        return None
+    return data.get('extra', {}).get('embargo_info', {}).get('detected_as_embargoed', [])
+
+
+def _mentions_embargo(obj) -> bool:
+    """
+    Recursively scan the string *values* (not dict keys) of ``obj`` for a case-insensitive
+    ``"embargo"`` mention. Keys are skipped so structural names like ``embargo_info`` /
+    ``embargoed_permitted`` do not trivially trigger a match.
+    """
+    if isinstance(obj, str):
+        return 'embargo' in obj.lower()
+    if isinstance(obj, dict):
+        return any(_mentions_embargo(v) for v in obj.values())
+    if isinstance(obj, (list, tuple)):
+        return any(_mentions_embargo(v) for v in obj)
+    return False
+
+
+def public_sibling_symlink_safe(public_plashet_path: os.PathLike) -> bool | None:
+    """
+    Decide whether an embargoed flavor may safely be a symlink to this public sibling.
+
+    An empty ``detected_as_embargoed`` list is NOT sufficient: when ``include_previous_packages``
+    would pull an embargoed historical build, the public build omits it and records a concern
+    like "Unable to include previous ... under embargo" WITHOUT adding it to
+    ``detected_as_embargoed`` -- so the embargoed full build could still differ. We therefore
+    require BOTH that ``detected_as_embargoed`` is empty AND that no embargo-related concern is
+    present (scanning ``extra.embargo_info`` and the ``assemble.concerns`` list, plus a top-level
+    ``concerns`` list for robustness).
+
+    Returns:
+        ``True``  -> safe to symlink (no embargoed content, no embargo concern),
+        ``False`` -> an embargo signal is present; build the embargoed flavor fully,
+        ``None``  -> plashet.yml missing/unreadable; caller should fall back to a full build.
+    """
+    data = _load_public_plashet_yml(public_plashet_path)
+    if data is None:
+        return None
+    embargo_info = data.get('extra', {}).get('embargo_info', {}) or {}
+    if embargo_info.get('detected_as_embargoed'):
+        return False
+    concerns = data.get('assemble', {}).get('concerns', []) or []
+    top_level_concerns = data.get('concerns', []) or []
+    if _mentions_embargo(embargo_info) or _mentions_embargo(concerns) or _mentions_embargo(top_level_concerns):
+        return False
+    return True
+
+
+def _is_within(child: os.PathLike, parent: os.PathLike) -> bool:
+    """True when ``child`` resolves to ``parent`` itself or to a path nested under it."""
+    child_abs = os.path.abspath(child)
+    parent_abs = os.path.abspath(parent)
+    return child_abs == parent_abs or child_abs.startswith(parent_abs + os.sep)
+
+
+def create_plashet_symlink(base_dir: os.PathLike, plashet_name: str, target_path: os.PathLike) -> str:
+    """
+    Create the plashet directory for a flavor as a RELATIVE symlink pointing at an
+    already-built plashet directory (``target_path``), instead of building it from tags.
+
+    The symlink is created relative so that it survives the per-flavor rsync (``--links``)
+    and resolves correctly on the remote host, where the two flavor base_dirs are siblings.
+
+    Returns the absolute path to the created symlink (mirrors build_plashet_from_tags).
+    """
+    repo_path = Path(base_dir, plashet_name)
+    base_abs = os.path.abspath(base_dir)
+    dest_abs = os.path.abspath(repo_path)
+
+    # SAFETY (path traversal): the destination must stay strictly inside base_dir. Reject an
+    # absolute plashet_name or any ".." that would escape base_dir BEFORE we delete anything.
+    # This is a deliberately LEXICAL check on the requested plashet_name, independent of symlinks.
+    if not dest_abs.startswith(base_abs + os.sep):
+        raise ValueError(
+            f"create_plashet_symlink: plashet_name {plashet_name!r} escapes base_dir {base_dir} "
+            f"(resolved destination {dest_abs!r})."
+        )
+
+    # SAFETY (self-reference/overlap): the lexical check above is NOT enough, because a parent or
+    # ancestor directory of the destination or of the target may itself be a symlink. Two
+    # lexically-different paths can then be the SAME real directory, and clearing the destination
+    # would delete the public content we are about to link to. Canonicalize with realpath before
+    # the overlap checks, but keep the destination's final LEAF component separate (do not follow
+    # it) so an existing leaf symlink at the destination can still be unlinked safely below.
+    base_real = os.path.realpath(base_dir)
+    dest_parent_real = os.path.realpath(repo_path.parent)
+    dest_real = os.path.join(dest_parent_real, repo_path.name)
+    target_real = os.path.realpath(target_path)
+
+    # The REAL destination parent must still live inside the REAL base_dir; otherwise a symlinked
+    # ancestor is redirecting our deletes/writes outside this repo.
+    if not _is_within(dest_parent_real, base_real):
+        raise ValueError(
+            f"create_plashet_symlink: destination parent {dest_parent_real!r} resolves outside "
+            f"base_dir {base_real!r}; refusing to clear a path outside this repo."
+        )
+
+    # Never clear a destination that is, contains, or is contained by the symlink target -- doing
+    # so would delete the very content we are linking to. Compare canonical (realpath) locations.
+    if dest_real == target_real or _is_within(target_real, dest_real) or _is_within(dest_real, target_real):
+        raise ValueError(
+            f"create_plashet_symlink: destination {dest_real!r} overlaps the symlink target "
+            f"{target_real!r}; refusing to create a self-referencing symlink."
+        )
+
+    # Clear any pre-existing destination. Unlink symlinks (including dangling ones) and regular
+    # files; shutil.rmtree only real directories (it rejects directory symlinks on py3.11).
+    if repo_path.is_symlink() or repo_path.is_file():
+        repo_path.unlink()
+    elif repo_path.exists():
+        shutil.rmtree(repo_path)
+    repo_path.parent.mkdir(parents=True, exist_ok=True)
+    # Compute the target relative to the symlink's own directory so it is portable
+    # across the local working dir and the remote ocp-artifacts layout. Build the relative path
+    # from the already-computed RESOLVED locations (realpaths), not from lexical abspaths: an
+    # ancestor directory of the destination can itself be a symlink inside base_dir (which still
+    # passes the guards above), and a lexical relpath would then point the link at the wrong place.
+    # Using the resolved dest_parent_real/target_real keeps the relative link correct in that case.
+    rel_target = os.path.relpath(target_real, start=dest_parent_real)
+    repo_path.symlink_to(rel_target, target_is_directory=True)
+    return os.path.abspath(repo_path)
+
+
 async def copy_to_remote(
     plashet_remote_host: str,
     local_base_dir: os.PathLike,
@@ -559,7 +777,15 @@ async def copy_to_remote(
     if copy_links:
         cmd.append('--copy-links')
     else:
+        # --links preserves symlinks as symlinks. --force lets rsync replace a pre-existing
+        # non-empty remote DIRECTORY with a symlink: an embargoed-only run may have previously
+        # published a full revision directory to the remote, and a later retry that takes the
+        # symlink path must be able to overwrite that directory with the symlink. Without --force
+        # rsync refuses to delete the non-empty directory and the transfer fails.
+        # NOTE: only the --links branch needs this; --copy-links dereferences symlinks into real
+        # content and must stay unchanged. We deliberately do NOT add --delete.
         cmd.append('--links')
+        cmd.append('--force')
     cmd.extend(
         [
             "--progress",
