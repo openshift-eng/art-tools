@@ -377,8 +377,9 @@ class StandaloneImagesShipPipeline:
         return filepath
 
     def _mr_description(self) -> str:
+        kind = "Silent" if self.silent else "Public"
         description = f"Created by job: {self.job_url}\n\n" if self.job_url else ""
-        description += f"Silent image shipment for {self.product} {self.assembly} using standalone-images-ship command"
+        description += f"{kind} image shipment for {self.product} {self.assembly} using standalone-images-ship command"
         if self.jiras:
             description += "\n\nTracking ticket(s):"
             for jira_ref in self.jiras:
@@ -401,7 +402,8 @@ class StandaloneImagesShipPipeline:
 
         await self.shipment_data_repo.create_branch(source_branch)
 
-        commit_message = f"Add silent image shipment configuration for {self.product} {self.assembly}"
+        kind = "Silent" if self.silent else "Public"
+        commit_message = f"Add {kind.lower()} image shipment configuration for {self.product} {self.assembly}"
         filepath = await self._write_shipment_file(shipment_config, "prod", timestamp)
         self.logger.info("Updating shipment file: %s", filepath)
         await self.shipment_data_repo.add_all()
@@ -413,7 +415,7 @@ class StandaloneImagesShipPipeline:
         source_project = self._get_gitlab_project(self.shipment_data_repo_push_url)
         target_project = self._get_gitlab_project(self.shipment_data_repo_pull_url)
 
-        mr_title = f"Draft: Silent shipment for {self.product} {self.assembly}"
+        mr_title = f"Draft: {kind} shipment for {self.product} {self.assembly}"
         mr_description = self._mr_description()
 
         if self.dry_run:

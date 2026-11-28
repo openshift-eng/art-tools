@@ -261,6 +261,58 @@ def _make_pipeline_for_run(nvrs):
     )
 
 
+class TestMrWordingReflectsSilent(unittest.TestCase):
+    """The MR title/description/commit message must say "silent" or "public"
+    depending on self.silent, not always say "silent" regardless (ART-26635 review)."""
+
+    def test_mr_description_silent(self):
+        pipeline = _make_pipeline()  # defaults to silent (operator-registry)
+        pipeline.product = "ocp"
+        self.assertIn("Silent image shipment", pipeline._mr_description())
+
+    def test_mr_description_public(self):
+        pipeline = _make_pipeline(nvrs=["some-other-image-container-v1.0.0-1.el9"])
+        pipeline.product = "ocp"
+        self.assertIn("Public image shipment", pipeline._mr_description())
+        self.assertNotIn("Silent", pipeline._mr_description())
+
+    def _make_pipeline_for_mr(self, silent):
+        nvrs = (
+            ["operator-registry-container-v5.2.0-202611252026.p2.gffec6b4.assembly.stream.el9"]
+            if silent
+            else ["some-other-image-container-v1.0.0-1.el9"]
+        )
+        pipeline = _make_pipeline(nvrs=nvrs, create_mr=True)
+        pipeline.product = "ocp"
+        pipeline.shipment_data_repo = MagicMock()
+        pipeline.shipment_data_repo.create_branch = AsyncMock()
+        pipeline.shipment_data_repo.add_all = AsyncMock()
+        pipeline.shipment_data_repo.log_diff = AsyncMock()
+        pipeline.shipment_data_repo.commit_push = AsyncMock(return_value=True)
+        pipeline._write_shipment_file = AsyncMock(return_value="shipment/ocp/openshift-5.2/openshift-5-2/x.yml")
+        pipeline._get_gitlab_project = MagicMock(return_value=MagicMock(id=1))
+        return pipeline
+
+    def test_commit_message_and_mr_title_silent(self):
+        pipeline = self._make_pipeline_for_mr(silent=True)
+        asyncio.run(pipeline.create_shipment_mr(MagicMock()))
+
+        commit_message = pipeline.shipment_data_repo.commit_push.call_args[0][0]
+        self.assertIn("silent", commit_message)
+        self.assertNotIn("public", commit_message)
+
+    def test_commit_message_and_mr_title_public(self):
+        pipeline = self._make_pipeline_for_mr(silent=False)
+        asyncio.run(pipeline.create_shipment_mr(MagicMock()))
+
+        commit_message = pipeline.shipment_data_repo.commit_push.call_args[0][0]
+        self.assertIn("public", commit_message)
+        self.assertNotIn("silent", commit_message)
+
+        mr_create_kwargs = pipeline._get_gitlab_project.return_value.mergerequests.create.call_args[0][0]
+        self.assertIn("Public shipment", mr_create_kwargs["title"])
+
+
 class TestSetShipmentMrReady(unittest.TestCase):
     def _make_pipeline(self, dry_run=False):
         pipeline = _make_pipeline(create_mr=True, dry_run=dry_run)
